@@ -650,15 +650,15 @@ function resolveProviderItemMetadata(input: {
 
 function resolveCanonicalAlbumTracks(input: {
   releaseGroupMbid?: string | null;
-  releaseMbid?: string | null;
+  editionMbid?: string | null;
   acquisitionPlanId?: number | null;
   libraryId?: number | null;
 }): QueueItemContract["tracks"] | undefined {
-  const releaseMbid = getOptionalString(input.releaseMbid);
+  const editionMbid = getOptionalString(input.editionMbid);
   const releaseGroupMbid = getOptionalString(input.releaseGroupMbid);
   const acquisitionPlanId = getOptionalNumber(input.acquisitionPlanId);
   const libraryId = getOptionalNumber(input.libraryId);
-  if (!releaseMbid && !releaseGroupMbid && !acquisitionPlanId) {
+  if (!editionMbid && !releaseGroupMbid && !acquisitionPlanId) {
     return undefined;
   }
 
@@ -674,13 +674,13 @@ function resolveCanonicalAlbumTracks(input: {
         position?: number | null;
         medium_position?: number | null;
       }>
-    : releaseMbid
+    : editionMbid
     ? db.prepare(`
         SELECT title, position, medium_position
         FROM Tracks
         WHERE edition_mbid = ?
         ORDER BY medium_position ASC, position ASC, id ASC
-      `).all(releaseMbid) as Array<{
+      `).all(editionMbid) as Array<{
         title?: string | null;
         position?: number | null;
         medium_position?: number | null;
@@ -748,7 +748,7 @@ function resolveQueueItemTracks(
     if (contentType === "album") {
       return resolveCanonicalAlbumTracks({
         releaseGroupMbid: getOptionalString(job.payload?.releaseGroupMbid),
-        releaseMbid: getOptionalString(job.payload?.releaseMbid),
+        editionMbid: getOptionalString(job.payload?.editionMbid),
         acquisitionPlanId: getOptionalNumber(job.payload?.acquisitionPlanId),
         libraryId: getOptionalNumber(job.payload?.libraryId),
       });

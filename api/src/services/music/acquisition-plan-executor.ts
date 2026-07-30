@@ -198,7 +198,7 @@ export function buildAcquisitionDownloadCommand(
       provider: header.provider,
       providerId: primarySource.provider_release_id,
       releaseGroupMbid: header.release_group_mbid,
-      releaseMbid: header.edition_mbid,
+      editionMbid: header.edition_mbid,
       albumId: header.release_group_mbid,
       libraryId: header.library_id,
       acquisitionPlanId: header.plan_id,

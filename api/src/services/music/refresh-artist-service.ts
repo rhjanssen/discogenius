@@ -529,7 +529,7 @@ export class RefreshArtistService {
                         status: "probable",
                         confidence: Math.max(base.confidence, 0.9),
                         method: "musicbrainz-recording-isrc-coverage",
-                        releaseMbid: representative.mbid,
+                        editionMbid: representative.mbid,
                         evidence: {
                             ...base.evidence,
                             matchedReleaseMbid: representative.mbid,

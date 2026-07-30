@@ -763,7 +763,7 @@ export async function saveArtistNfoFile(
 
 export type AlbumNfoOptions = {
     releaseGroupMbid?: string | null;
-    releaseMbid?: string | null;
+    editionMbid?: string | null;
     librarySlot?: string | null;
     provider?: string | null;
     providerAlbumId?: string | null;
@@ -889,7 +889,7 @@ export async function saveAlbumNfoFile(
         selected_release_mbid?: string | null;
     } | undefined;
     const canonicalReleaseMbid = textOrNull(
-        options.releaseMbid,
+        options.editionMbid,
         selectedLibrary?.selected_release_mbid,
         (db.prepare(`
             SELECT mbid

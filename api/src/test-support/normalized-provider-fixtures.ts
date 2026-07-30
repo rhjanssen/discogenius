@@ -2,20 +2,20 @@ import type Database from "better-sqlite3";
 
 export interface AcceptedProviderTrackFixture {
   provider: string;
-  providerReleaseId: string;
+  providerEditionId: string;
   providerTrackId: string;
-  releaseMbid: string;
+  editionMbid: string;
   trackMbid: string;
   quality?: string;
 }
 
 export interface AcceptedProviderTrackFixtureIds {
-  providerReleaseItemId: number;
+  providerEditionItemId: number;
   providerTrackItemId: number;
-  providerReleaseMemberId: number;
-  providerReleaseMatchId: number;
+  providerEditionMemberId: number;
+  providerEditionMatchId: number;
   providerTrackMatchId: number;
-  releaseId: number;
+  editionId: number;
   releaseGroupId: number;
   trackId: number;
   recordingId: number;
@@ -25,15 +25,15 @@ export function seedAcceptedProviderReleaseMatch(
   db: Database.Database,
   fixture: {
     provider: string;
-    providerReleaseId: string;
-    releaseMbid: string;
+    providerEditionId: string;
+    editionMbid: string;
   },
-): { providerReleaseItemId: number; providerReleaseMatchId: number; releaseId: number; releaseGroupId: number } {
+): { providerEditionItemId: number; providerEditionMatchId: number; editionId: number; releaseGroupId: number } {
   const release = db.prepare(`
     SELECT release.id, release.release_group_id, release.title
     FROM AlbumEditions release
     WHERE release.mbid = ?
-  `).get(fixture.releaseMbid) as {
+  `).get(fixture.editionMbid) as {
     id: number;
     release_group_id: number;
     title: string;
@@ -42,7 +42,7 @@ export function seedAcceptedProviderReleaseMatch(
     db,
     fixture.provider,
     ["release"],
-    fixture.providerReleaseId,
+    fixture.providerEditionId,
     release.title,
   );
   db.prepare(`
@@ -57,9 +57,9 @@ export function seedAcceptedProviderReleaseMatch(
     WHERE provider_edition_item_id = ? AND edition_id = ?
   `).get(providerRelease.id, release.id) as { id: number };
   return {
-    providerReleaseItemId: providerRelease.id,
-    providerReleaseMatchId: releaseMatch.id,
-    releaseId: release.id,
+    providerEditionItemId: providerRelease.id,
+    providerEditionMatchId: releaseMatch.id,
+    editionId: release.id,
     releaseGroupId: release.release_group_id,
   };
 }
@@ -104,10 +104,10 @@ export function seedAcceptedProviderVideoMatch(
     title?: string;
     durationMs?: number | null;
     availability?: string;
-    providerReleaseId?: string;
+    providerEditionId?: string;
     position?: number;
   },
-): { providerVideoItemId: number; providerVideoMatchId: number; providerReleaseItemId: number | null } {
+): { providerVideoItemId: number; providerVideoMatchId: number; providerEditionItemId: number | null } {
   const title = fixture.title
     ?? String((db.prepare("SELECT title FROM Recordings WHERE id = ?").get(fixture.recordingId) as { title?: string } | undefined)?.title || "");
   const videoItem = providerItem(db, fixture.provider, ["video"], fixture.providerVideoId, title);
@@ -130,16 +130,16 @@ export function seedAcceptedProviderVideoMatch(
     WHERE provider_video_item_id = ? AND recording_id = ?
   `).get(videoItem.id, fixture.recordingId) as { id: number };
 
-  let providerReleaseItemId: number | null = null;
-  if (fixture.providerReleaseId) {
+  let providerEditionItemId: number | null = null;
+  if (fixture.providerEditionId) {
     const releaseItem = providerItem(
       db,
       fixture.provider,
       ["release"],
-      fixture.providerReleaseId,
-      `Release ${fixture.providerReleaseId}`,
+      fixture.providerEditionId,
+      `Release ${fixture.providerEditionId}`,
     );
-    providerReleaseItemId = releaseItem.id;
+    providerEditionItemId = releaseItem.id;
     const position = fixture.position
       ?? (db.prepare(`
           SELECT COUNT(*) AS count FROM ProviderEditionMembers WHERE provider_edition_item_id = ?
@@ -154,7 +154,7 @@ export function seedAcceptedProviderVideoMatch(
   return {
     providerVideoItemId: videoItem.id,
     providerVideoMatchId: videoMatch.id,
-    providerReleaseItemId,
+    providerEditionItemId,
   };
 }
 
@@ -168,20 +168,20 @@ export function seedAcceptedProviderRecordingTrack(
   db: Database.Database,
   fixture: {
     provider: string;
-    providerReleaseId: string;
+    providerEditionId: string;
     providerTrackId: string;
     recordingId: number;
     title: string;
     durationMs?: number | null;
     position?: number;
   },
-): { providerTrackItemId: number; providerReleaseItemId: number; providerReleaseMemberId: number } {
+): { providerTrackItemId: number; providerEditionItemId: number; providerEditionMemberId: number } {
   const releaseItem = providerItem(
     db,
     fixture.provider,
     ["release"],
-    fixture.providerReleaseId,
-    `Release ${fixture.providerReleaseId}`,
+    fixture.providerEditionId,
+    `Release ${fixture.providerEditionId}`,
   );
   const trackItem = providerItem(db, fixture.provider, ["track"], fixture.providerTrackId, fixture.title);
   db.prepare(`
@@ -261,8 +261,8 @@ export function seedAcceptedProviderRecordingTrack(
 
   return {
     providerTrackItemId: trackItem.id,
-    providerReleaseItemId: releaseItem.id,
-    providerReleaseMemberId: member.id,
+    providerEditionItemId: releaseItem.id,
+    providerEditionMemberId: member.id,
   };
 }
 
@@ -274,7 +274,7 @@ export function seedAcceptedProviderTrackMatch(
     SELECT release.id, release.release_group_id, release.title
     FROM AlbumEditions release
     WHERE release.mbid = ?
-  `).get(fixture.releaseMbid) as {
+  `).get(fixture.editionMbid) as {
     id: number;
     release_group_id: number;
     title: string;
@@ -296,7 +296,7 @@ export function seedAcceptedProviderTrackMatch(
     db,
     fixture.provider,
     ["release"],
-    fixture.providerReleaseId,
+    fixture.providerEditionId,
     release.title,
   );
   const providerTrack = providerItem(
@@ -336,7 +336,7 @@ export function seedAcceptedProviderTrackMatch(
       provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
-  `).run(member.id, releaseMatch.providerReleaseMatchId, track.id, track.recording_id);
+  `).run(member.id, releaseMatch.providerEditionMatchId, track.id, track.recording_id);
   const trackMatch = db.prepare(`
     SELECT id
     FROM ProviderTrackMatches
@@ -346,15 +346,15 @@ export function seedAcceptedProviderTrackMatch(
       AND recording_id = ?
     ORDER BY id
     LIMIT 1
-  `).get(member.id, releaseMatch.providerReleaseMatchId, track.id, track.recording_id) as { id: number };
+  `).get(member.id, releaseMatch.providerEditionMatchId, track.id, track.recording_id) as { id: number };
 
   return {
-    providerReleaseItemId: providerRelease.id,
+    providerEditionItemId: providerRelease.id,
     providerTrackItemId: providerTrack.id,
-    providerReleaseMemberId: member.id,
-    providerReleaseMatchId: releaseMatch.providerReleaseMatchId,
+    providerEditionMemberId: member.id,
+    providerEditionMatchId: releaseMatch.providerEditionMatchId,
     providerTrackMatchId: trackMatch.id,
-    releaseId: release.id,
+    editionId: release.id,
     releaseGroupId: release.release_group_id,
     trackId: track.id,
     recordingId: track.recording_id,
@@ -369,13 +369,13 @@ export function seedCanonicalAlbum(
   db: Database.Database,
   fixture: {
     releaseGroupMbid: string;
-    releaseMbid: string;
+    editionMbid: string;
     artistMbid?: string;
     artistName?: string;
     title?: string;
     tracks?: Array<{ trackMbid: string; recordingMbid: string; title?: string; position?: number }>;
   },
-): { releaseGroupId: number; releaseId: number } {
+): { releaseGroupId: number; editionId: number } {
   const artistMbid = fixture.artistMbid ?? "fixture-artist";
   const title = fixture.title ?? fixture.releaseGroupMbid;
   db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
@@ -389,7 +389,7 @@ export function seedCanonicalAlbum(
       mbid, release_group_mbid, artist_mbid, title, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, 1)
   `).run(
-    fixture.releaseMbid,
+    fixture.editionMbid,
     fixture.releaseGroupMbid,
     artistMbid,
     title,
@@ -412,7 +412,7 @@ export function seedCanonicalAlbum(
       ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
     `).run(
       track.trackMbid,
-      fixture.releaseMbid,
+      fixture.editionMbid,
       track.recordingMbid,
       recording.id,
       track.position ?? position,
@@ -422,8 +422,8 @@ export function seedCanonicalAlbum(
   }
 
   const release = db.prepare("SELECT id, release_group_id FROM AlbumEditions WHERE mbid = ?")
-    .get(fixture.releaseMbid) as { id: number; release_group_id: number };
-  return { releaseGroupId: release.release_group_id, releaseId: release.id };
+    .get(fixture.editionMbid) as { id: number; release_group_id: number };
+  return { releaseGroupId: release.release_group_id, editionId: release.id };
 }
 
 /**

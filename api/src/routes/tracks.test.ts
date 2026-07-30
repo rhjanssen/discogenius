@@ -94,7 +94,7 @@ function insertCanonicalTrackFixture() {
   `).run();
 }
 
-function insertLibrarySelection(): { libraryId: number; libraryReleaseId: number } {
+function insertLibrarySelection(): { libraryId: number; libraryEditionId: number } {
   const { db } = dbModule;
   const library = db.prepare("SELECT id FROM Libraries WHERE enabled = 1 ORDER BY id LIMIT 1")
     .get() as { id: number };
@@ -113,10 +113,10 @@ function insertLibrarySelection(): { libraryId: number; libraryReleaseId: number
     ) VALUES (?, ?, 'manual', 0, 'route_test', 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number };
-  return { libraryId: library.id, libraryReleaseId: libraryRelease.id };
+  return { libraryId: library.id, libraryEditionId: libraryRelease.id };
 }
 
-function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: number; releaseGroupId: number; releaseId: number } {
+function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: number; releaseGroupId: number; editionId: number } {
   const { db } = dbModule;
   const selection = insertLibrarySelection();
   const release = db.prepare(`
@@ -169,7 +169,7 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
       planner_version, policy_hash, computed_at
     ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
     RETURNING id
-  `).get(selection.libraryReleaseId) as { id: number };
+  `).get(selection.libraryEditionId) as { id: number };
   const source = db.prepare(`
     INSERT INTO AcquisitionPlanSources (
       plan_id, provider_edition_match_id, role, sort_order
@@ -187,7 +187,7 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
     trackId: track.id,
     recordingId: track.recording_id,
     releaseGroupId: release.release_group_id,
-    releaseId: release.id,
+    editionId: release.id,
   };
 }
 
@@ -327,7 +327,7 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
       '/music/Canonical Track.flac', 'Canonical Track.flac', '/music',
       'Canonical Track.flac', '.flac', 'track', 'LOSSLESS'
     )
-  `).run(plan.libraryId, plan.releaseGroupId, plan.releaseId, plan.trackId, plan.recordingId);
+  `).run(plan.libraryId, plan.releaseGroupId, plan.editionId, plan.trackId, plan.recordingId);
 
   const selected = createMockResponse();
   getRouteHandler("/", "get")({

@@ -2,7 +2,7 @@ export type CanonicalMediumKind = "digital" | "cd" | "vinyl" | "other";
 
 export interface CurationReleaseCandidate {
   releaseGroupId: number;
-  releaseId: number;
+  editionId: number;
   attainableRecordingIds: ReadonlySet<number>;
   official: boolean;
   medium: CanonicalMediumKind;
@@ -36,7 +36,7 @@ function compareAnchorCandidates(
     || Number(right.preferredCountry) - Number(left.preferredCountry)
     || left.mediaCount - right.mediaCount
     || String(left.releaseDate || "9999-99-99").localeCompare(String(right.releaseDate || "9999-99-99"))
-    || left.releaseId - right.releaseId;
+    || left.editionId - right.editionId;
 }
 
 function unionRecordings(
@@ -76,7 +76,7 @@ function finalIrredundancyPass(
   selected: CurationReleaseCandidate[],
   wanted: ReadonlySet<number>,
 ): CurationReleaseCandidate[] {
-  const result = [...selected].sort((left, right) => left.releaseId - right.releaseId);
+  const result = [...selected].sort((left, right) => left.editionId - right.editionId);
   for (let index = result.length - 1; index >= 0; index -= 1) {
     if (result[index].protected) continue;
     const without = result.filter((_, candidateIndex) => candidateIndex !== index);
@@ -92,7 +92,7 @@ function exactMinimumCover(
   const protectedCandidates = candidates.filter((candidate) => candidate.protected);
   const optional = candidates.filter((candidate) => !candidate.protected)
     .sort(compareAnchorCandidates);
-  const protectedIds = new Set(protectedCandidates.map((candidate) => candidate.releaseId));
+  const protectedIds = new Set(protectedCandidates.map((candidate) => candidate.editionId));
   let best: CurationReleaseCandidate[] | null = null;
 
   const visit = (
@@ -111,8 +111,8 @@ function exactMinimumCover(
     if (complete) {
       best = [...protectedCandidates, ...chosen]
         .filter((candidate, candidateIndex, array) =>
-          array.findIndex((entry) => entry.releaseId === candidate.releaseId) === candidateIndex)
-        .sort((left, right) => left.releaseId - right.releaseId);
+          array.findIndex((entry) => entry.editionId === candidate.editionId) === candidateIndex)
+        .sort((left, right) => left.editionId - right.editionId);
       return;
     }
     if (index >= optional.length) return;
@@ -128,7 +128,7 @@ function exactMinimumCover(
     }
 
     const candidate = optional[index];
-    if (!protectedIds.has(candidate.releaseId)) {
+    if (!protectedIds.has(candidate.editionId)) {
       const withCoverage = new Set(covered);
       for (const recordingId of candidate.attainableRecordingIds) withCoverage.add(recordingId);
       visit(index + 1, [...chosen, candidate], withCoverage);
@@ -145,12 +145,12 @@ function deterministicGreedyCover(
   wanted: ReadonlySet<number>,
 ): CurationReleaseCandidate[] {
   const selected = candidates.filter((candidate) => candidate.protected);
-  const selectedIds = new Set(selected.map((candidate) => candidate.releaseId));
+  const selectedIds = new Set(selected.map((candidate) => candidate.editionId));
   const covered = unionRecordings(selected);
 
   while ([...wanted].some((recordingId) => !covered.has(recordingId))) {
     const next = candidates
-      .filter((candidate) => !selectedIds.has(candidate.releaseId))
+      .filter((candidate) => !selectedIds.has(candidate.editionId))
       .map((candidate) => ({
         candidate,
         gain: [...candidate.attainableRecordingIds]
@@ -161,7 +161,7 @@ function deterministicGreedyCover(
         right.gain - left.gain || compareAnchorCandidates(left.candidate, right.candidate))[0];
     if (!next) break;
     selected.push(next.candidate);
-    selectedIds.add(next.candidate.releaseId);
+    selectedIds.add(next.candidate.editionId);
     for (const recordingId of next.candidate.attainableRecordingIds) covered.add(recordingId);
   }
 
@@ -191,24 +191,24 @@ export function curateLibraryReleases(
     .map((group) => [...group].sort(compareAnchorCandidates)[0])
     .filter(Boolean);
   const baseline = [...anchors];
-  const baselineIds = new Set(baseline.map((candidate) => candidate.releaseId));
+  const baselineIds = new Set(baseline.map((candidate) => candidate.editionId));
   const covered = unionRecordings(baseline);
 
   for (const group of [...groups.values()]) {
     for (const candidate of [...group].sort(compareAnchorCandidates)) {
-      if (baselineIds.has(candidate.releaseId)) continue;
+      if (baselineIds.has(candidate.editionId)) continue;
       if (!contributesMissing(candidate, covered)) continue;
       baseline.push(candidate);
-      baselineIds.add(candidate.releaseId);
+      baselineIds.add(candidate.editionId);
       for (const recordingId of candidate.attainableRecordingIds) covered.add(recordingId);
     }
   }
 
   // Extras may become unnecessary after a later group/release fills the same
   // gap. Anchors remain when redundancy is disabled.
-  const anchorIds = new Set(anchors.map((candidate) => candidate.releaseId));
+  const anchorIds = new Set(anchors.map((candidate) => candidate.editionId));
   for (let index = baseline.length - 1; index >= 0; index -= 1) {
-    if (anchorIds.has(baseline[index].releaseId)) continue;
+    if (anchorIds.has(baseline[index].editionId)) continue;
     const without = baseline.filter((_, candidateIndex) => candidateIndex !== index);
     if (coversAll(without, covered)) baseline.splice(index, 1);
   }
@@ -224,8 +224,8 @@ export function curateLibraryReleases(
   }
 
   return {
-    baselineReleaseIds: baseline.map((candidate) => candidate.releaseId).sort((a, b) => a - b),
-    selectedReleaseIds: selected.map((candidate) => candidate.releaseId).sort((a, b) => a - b),
+    baselineReleaseIds: baseline.map((candidate) => candidate.editionId).sort((a, b) => a - b),
+    selectedReleaseIds: selected.map((candidate) => candidate.editionId).sort((a, b) => a - b),
     attainableRecordingIds: wanted,
   };
 }

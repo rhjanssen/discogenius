@@ -474,7 +474,7 @@ export function getCanonicalAlbumDownloadProgress(
 ): { total: number; done: number } | null {
     const canonicalOffer = resolveCanonicalProviderOffer(providerId, 'album', payload);
     const releaseGroupMbid = pickString(payload?.releaseGroupMbid) || canonicalOffer?.release_group_mbid;
-    const releaseMbid = pickString(payload?.releaseMbid)
+    const editionMbid = pickString(payload?.editionMbid)
         || canonicalOffer?.selected_release_mbid
         || canonicalOffer?.edition_mbid;
     const acquisitionPlanId = Number.isInteger(payload?.acquisitionPlanId)
@@ -484,7 +484,7 @@ export function getCanonicalAlbumDownloadProgress(
         ? Number(payload.libraryId)
         : null;
 
-    if (!releaseGroupMbid && !releaseMbid) {
+    if (!releaseGroupMbid && !editionMbid) {
         return null;
     }
 

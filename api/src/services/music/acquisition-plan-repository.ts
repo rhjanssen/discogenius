@@ -11,7 +11,7 @@ export class AcquisitionPlanRepository {
   constructor(private readonly db: Database.Database) {}
 
   replaceCurrentPlan(input: {
-    libraryReleaseId: number;
+    libraryEditionId: number;
     plan: OptimizedAcquisitionPlan;
     plannerVersion: number;
     policyHash: string;
@@ -21,7 +21,7 @@ export class AcquisitionPlanRepository {
     if (!input.policyHash.trim()) throw new Error("Acquisition plan policy hash is required");
     return this.db.transaction(() => {
       this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_edition_id = ?")
-        .run(input.libraryReleaseId);
+        .run(input.libraryEditionId);
       const planRow = this.db.prepare(`
         INSERT INTO AcquisitionPlans (
           library_edition_id, provider, composition, download_mode, state,
@@ -29,7 +29,7 @@ export class AcquisitionPlanRepository {
         ) VALUES (?, ?, ?, ?, 'current', ?, ?, ?, CURRENT_TIMESTAMP)
         RETURNING id
       `).get(
-        input.libraryReleaseId,
+        input.libraryEditionId,
         input.plan.provider,
         input.plan.composition,
         input.plan.downloadMode,
@@ -41,8 +41,8 @@ export class AcquisitionPlanRepository {
       const counts = new Map<number, number>();
       for (const track of input.plan.tracks) {
         counts.set(
-          track.providerReleaseMatchId,
-          (counts.get(track.providerReleaseMatchId) || 0) + 1,
+          track.providerEditionMatchId,
+          (counts.get(track.providerEditionMatchId) || 0) + 1,
         );
       }
       const orderedSources = [...input.plan.sourceIds].sort((left, right) =>
@@ -54,14 +54,14 @@ export class AcquisitionPlanRepository {
         RETURNING id
       `);
       const planSourceIdByMatchId = new Map<number, number>();
-      orderedSources.forEach((providerReleaseMatchId, index) => {
+      orderedSources.forEach((providerEditionMatchId, index) => {
         const source = insertSource.get(
           planRow.id,
-          providerReleaseMatchId,
+          providerEditionMatchId,
           index === 0 ? "primary" : "supplement",
           index,
         ) as { id: number };
-        planSourceIdByMatchId.set(providerReleaseMatchId, source.id);
+        planSourceIdByMatchId.set(providerEditionMatchId, source.id);
       });
 
       const insertTrack = this.db.prepare(`
@@ -71,7 +71,7 @@ export class AcquisitionPlanRepository {
         ) VALUES (?, ?, ?, ?, ?, ?)
       `);
       for (const track of input.plan.tracks) {
-        const sourceId = planSourceIdByMatchId.get(track.providerReleaseMatchId);
+        const sourceId = planSourceIdByMatchId.get(track.providerEditionMatchId);
         if (sourceId == null) {
           throw new Error(`Track ${track.trackId} references an unselected acquisition source`);
         }
@@ -88,20 +88,20 @@ export class AcquisitionPlanRepository {
     })();
   }
 
-  markStale(libraryReleaseId: number): number {
+  markStale(libraryEditionId: number): number {
     return this.db.prepare(`
       UPDATE AcquisitionPlans
       SET state = 'stale', updated_at = CURRENT_TIMESTAMP
       WHERE library_edition_id = ? AND state != 'stale'
-    `).run(libraryReleaseId).changes;
+    `).run(libraryEditionId).changes;
   }
 
-  clear(libraryReleaseId: number): number {
+  clear(libraryEditionId: number): number {
     return this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_edition_id = ?")
-      .run(libraryReleaseId).changes;
+      .run(libraryEditionId).changes;
   }
 
-  getCompletion(libraryReleaseId: number): LibraryReleaseCompletion {
+  getCompletion(libraryEditionId: number): LibraryReleaseCompletion {
     const row = this.db.prepare(`
       SELECT
         COUNT(DISTINCT track.id) AS track_count,
@@ -123,7 +123,7 @@ export class AcquisitionPlanRepository {
        AND file.recording_id = track.recording_id
        AND file.file_class = 'audio'
       WHERE library_release.id = ?
-    `).get(libraryReleaseId) as {
+    `).get(libraryEditionId) as {
       track_count: number;
       assigned_count: number;
       complete_count: number;

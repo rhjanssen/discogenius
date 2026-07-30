@@ -38,7 +38,7 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
         attainableRecordingIds: new Set(),
       },
       releaseGroupIdByReleaseId: new Map([[1, 1]]),
-      scopes: [{ releaseId: 1, libraryArtistId, scopeType: "primary" }],
+      scopes: [{ editionId: 1, libraryArtistId, scopeType: "primary" }],
       curationVersion: 1,
     });
     db.prepare(`

@@ -22,7 +22,7 @@ test("canonical catalogue writes resolve boundaries once and persist integer rel
       primaryArtistId: bastilleId,
       primaryType: "Album",
     });
-    const releaseId = repository.upsertRelease({
+    const editionId = repository.upsertRelease({
       mbid: "release",
       releaseGroupId: groupId,
       title: "Release",
@@ -36,7 +36,7 @@ test("canonical catalogue writes resolve boundaries once and persist integer rel
     });
     const trackId = repository.upsertTrack({
       mbid: "track",
-      releaseId,
+      editionId,
       recordingId,
       mediumPosition: 1,
       position: 1,
@@ -52,10 +52,10 @@ test("canonical catalogue writes resolve boundaries once and persist integer rel
 
     assert.deepEqual(db.prepare(`
       SELECT release_group_id FROM AlbumEditions WHERE id = ?
-    `).get(releaseId), { release_group_id: groupId });
+    `).get(editionId), { release_group_id: groupId });
     assert.deepEqual(db.prepare(`
       SELECT album_edition_id, recording_id FROM Tracks WHERE id = ?
-    `).get(trackId), { album_edition_id: releaseId, recording_id: recordingId });
+    `).get(trackId), { album_edition_id: editionId, recording_id: recordingId });
     assert.deepEqual(db.prepare(`
       SELECT artist_id, ordinal, credited_name, join_phrase
       FROM ReleaseGroupArtistCredits

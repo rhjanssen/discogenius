@@ -51,7 +51,7 @@ export interface CanonicalRecordingInput {
 
 export interface CanonicalTrackInput {
   mbid: string;
-  releaseId: number;
+  editionId: number;
   recordingId: number;
   mediumPosition: number;
   position: number;
@@ -200,7 +200,7 @@ export class CanonicalCatalogRepository {
       RETURNING id
     `).get(
       required(input.mbid, "Track MBID"),
-      input.releaseId,
+      input.editionId,
       input.recordingId,
       input.mediumPosition,
       input.position,
@@ -220,8 +220,8 @@ export class CanonicalCatalogRepository {
     );
   }
 
-  replaceReleaseCredits(releaseId: number, credits: readonly CanonicalCreditInput[]): void {
-    this.replaceCredits("ReleaseArtistCredits", "edition_id", releaseId, credits);
+  replaceReleaseCredits(editionId: number, credits: readonly CanonicalCreditInput[]): void {
+    this.replaceCredits("ReleaseArtistCredits", "edition_id", editionId, credits);
   }
 
   replaceTrackCredits(trackId: number, credits: readonly CanonicalCreditInput[]): void {

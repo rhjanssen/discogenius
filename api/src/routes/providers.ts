@@ -145,7 +145,7 @@ router.get("/:providerId/diagnostics", async (req, res) => {
 router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
   try {
     let albumId = req.params.albumId;
-    const requestedReleaseMbid = typeof req.query.releaseMbid === "string" ? req.query.releaseMbid.trim() : "";
+    const requestedReleaseMbid = typeof req.query.editionMbid === "string" ? req.query.editionMbid.trim() : "";
 
     if (looksLikeMusicBrainzMbid(albumId) || albumId.startsWith("mbid-")) {
       const cleanMbid = albumId.replace(/^mbid-/, "");
@@ -191,7 +191,7 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
             rawTrackNumber: Number(t.position || 0),
             volumeNumber: Number(t.medium_position || 1),
             duration: Math.round(Number(t.length_ms || 0) / 1000),
-            releaseMbid: String(t.edition_mbid),
+            editionMbid: String(t.edition_mbid),
           }));
 
         if (filteredTracks.length > 0) {

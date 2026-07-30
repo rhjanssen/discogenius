@@ -91,7 +91,7 @@ export class ProviderReleaseIngestionService {
   }
 
   ingest(input: ProviderReleaseIngestionInput): {
-    providerReleaseItemId: number;
+    providerEditionItemId: number;
     releaseMatchId: number | null;
     acceptedTrackCount: number;
     ambiguousTrackCount: number;
@@ -134,13 +134,13 @@ export class ProviderReleaseIngestionService {
     }));
 
     return this.db.transaction(() => {
-      const providerReleaseItemId = this.catalog.upsertItem(input.release);
+      const providerEditionItemId = this.catalog.upsertItem(input.release);
       if (input.releaseAudioVariants) {
-        this.catalog.replaceAudioVariants(providerReleaseItemId, input.releaseAudioVariants);
+        this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants);
       }
       if (input.releaseCredits) {
         this.catalog.replaceCredits(
-          providerReleaseItemId,
+          providerEditionItemId,
           this.materializeCredits(input.release.provider, input.releaseCredits),
         );
       }
@@ -162,7 +162,7 @@ export class ProviderReleaseIngestionService {
         return { member, memberItemId };
       });
       const memberIds = this.catalog.replaceReleaseMembers(
-        providerReleaseItemId,
+        providerEditionItemId,
         memberRows.map(({ member, memberItemId }) => ({
           memberItemId,
           mediumPosition: member.mediumPosition,
@@ -215,7 +215,7 @@ export class ProviderReleaseIngestionService {
           ? null
           : target.target.durationSec * 1000;
         trackMatches.push({
-          providerReleaseMemberId: edge.source.memberId,
+          providerEditionMemberId: edge.source.memberId,
           trackId: target.id,
           recordingId: target.recordingId,
           matchState: "accepted",
@@ -245,7 +245,7 @@ export class ProviderReleaseIngestionService {
         const best = rankedTargets[0];
         if (!best || best.score < TRACK_MATCH_THRESHOLD) continue;
         trackMatches.push({
-          providerReleaseMemberId: audioSources[sourceIndex].memberId,
+          providerEditionMemberId: audioSources[sourceIndex].memberId,
           trackId: null,
           recordingId: best.target.recordingId,
           matchState: "ambiguous",
@@ -265,15 +265,15 @@ export class ProviderReleaseIngestionService {
       const ambiguousTrackCount = trackMatches.filter((match) => match.matchState === "ambiguous").length;
       if (acceptedTrackCount === 0) {
         return {
-          providerReleaseItemId,
+          providerEditionItemId,
           releaseMatchId: null,
           acceptedTrackCount,
           ambiguousTrackCount,
         };
       }
       const result = this.matches.replaceReleaseMatch({
-        providerReleaseItemId,
-        releaseId: input.canonicalReleaseId,
+        providerEditionItemId,
+        editionId: input.canonicalReleaseId,
         decision: {
           matchState: "accepted",
           decisionSource: input.decisionSource || "automatic",
@@ -287,7 +287,7 @@ export class ProviderReleaseIngestionService {
         trackMatches,
       });
       return {
-        providerReleaseItemId,
+        providerEditionItemId,
         releaseMatchId: result.releaseMatchId,
         acceptedTrackCount,
         ambiguousTrackCount,

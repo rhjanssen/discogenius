@@ -9,16 +9,16 @@ import { LibraryCurationService } from "./library-curation-service.js";
 
 function seedProviderExactMatch(
   db: Database.Database,
-  releaseId: number,
+  editionId: number,
   trackIds: readonly number[],
 ): void {
-  const providerReleaseItemId = 10_000 + releaseId;
-  const releaseMatchId = 20_000 + releaseId;
+  const providerEditionItemId = 10_000 + editionId;
+  const releaseMatchId = 20_000 + editionId;
   db.prepare(`
     INSERT INTO ProviderItems (
       id, provider, entity_type, provider_id, availability
     ) VALUES (?, 'tidal', 'release', ?, 'available')
-  `).run(providerReleaseItemId, `release-${releaseId}`);
+  `).run(providerEditionItemId, `release-${editionId}`);
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
       id, provider_edition_item_id, edition_id, relation, match_state,
@@ -28,33 +28,33 @@ function seedProviderExactMatch(
     ) VALUES (?, ?, ?, 'exact', 'accepted', 'automatic', 1, 'fixture', 1, ?, ?, ?, 1, 1)
   `).run(
     releaseMatchId,
-    providerReleaseItemId,
-    releaseId,
+    providerEditionItemId,
+    editionId,
     trackIds.length,
     trackIds.length,
     trackIds.length,
   );
   trackIds.forEach((trackId, index) => {
-    const providerTrackItemId = 30_000 + releaseId * 10 + index;
-    const memberId = 40_000 + releaseId * 10 + index;
-    const trackMatchId = 50_000 + releaseId * 10 + index;
+    const providerTrackItemId = 30_000 + editionId * 10 + index;
+    const memberId = 40_000 + editionId * 10 + index;
+    const trackMatchId = 50_000 + editionId * 10 + index;
     const recordingId = (db.prepare("SELECT recording_id FROM Tracks WHERE id = ?")
       .get(trackId) as { recording_id: number }).recording_id;
     db.prepare(`
       INSERT INTO ProviderItems (
       id, provider, entity_type, provider_id, availability
     ) VALUES (?, 'tidal', 'track', ?, 'available')
-    `).run(providerTrackItemId, `track-${releaseId}-${index + 1}`);
+    `).run(providerTrackItemId, `track-${editionId}-${index + 1}`);
     db.prepare(`
       INSERT INTO ProviderEditionMembers (
         id, provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (?, ?, ?, 1, ?)
-    `).run(memberId, providerReleaseItemId, providerTrackItemId, index + 1);
+    `).run(memberId, providerEditionItemId, providerTrackItemId, index + 1);
     db.prepare(`
       INSERT INTO ProviderItemAudioVariants (
         id, provider_item_id, variant_key, quality_class, availability
       ) VALUES (?, ?, 'lossless', 'lossless', 'available')
-    `).run(60_000 + releaseId * 10 + index, providerTrackItemId);
+    `).run(60_000 + editionId * 10 + index, providerTrackItemId);
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
         id, provider_edition_member_id, provider_edition_match_id, track_id,

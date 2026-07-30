@@ -162,7 +162,7 @@ export function matchAppleMusicBundledVideoFiles(params: {
  * match_evidence disc/track numbers (native album layout ≠ hybrid release).
  */
 function resolveCanonicalTrackOnRelease(params: {
-  releaseMbid: string;
+  editionMbid: string;
   trackMbid?: string | null;
   recordingMbid?: string | null;
   isrc?: string | null;
@@ -193,7 +193,7 @@ function resolveCanonicalTrackOnRelease(params: {
         t.position
       LIMIT 1
     `).get(
-      params.releaseMbid,
+      params.editionMbid,
       trackMbid,
       trackMbid,
       recordingMbid,
@@ -242,7 +242,7 @@ function resolveCanonicalTrackOnRelease(params: {
       )
     ORDER BY t.medium_position, t.position
     LIMIT 1
-  `).get(params.releaseMbid, isrc, isrc) as {
+  `).get(params.editionMbid, isrc, isrc) as {
     mbid: string;
     recording_mbid: string;
     title: string;
@@ -254,7 +254,7 @@ function resolveCanonicalTrackOnRelease(params: {
 export function resolveMatchedCanonicalAlbumTrackRow(params: {
   provider: string;
   trackId: string;
-  releaseMbid: string;
+  editionMbid: string;
   fallbackAlbumId: string;
   fallbackAlbumIds?: string[];
   fallbackArtistId: string;
@@ -307,14 +307,14 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       track_match.confidence DESC,
       pi.updated_at DESC
     LIMIT 1
-  `).get(params.provider, params.trackId, params.releaseMbid) as any;
+  `).get(params.provider, params.trackId, params.editionMbid) as any;
 
   if (providerTrack) {
     // Catalog-first: bind via Tracks on the selected/hybrid release only.
     // Never use provider match_evidence disc/track numbers — those are the
     // native album layout (e.g. Come As You Are #1) and mis-number Softly.
     const canonicalTrack = resolveCanonicalTrackOnRelease({
-      releaseMbid: params.releaseMbid,
+      editionMbid: params.editionMbid,
       trackMbid: providerTrack.track_mbid,
       recordingMbid: providerTrack.recording_mbid,
       isrc: providerTrack.isrc,
@@ -363,7 +363,7 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
     params.fallbackAlbumId,
     params.fallbackArtistId,
     params.fallbackQuality,
-    params.releaseMbid,
+    params.editionMbid,
     params.trackId,
   ) as MatchedAlbumTrackRow | undefined;
 

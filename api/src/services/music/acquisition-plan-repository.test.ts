@@ -57,7 +57,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
     `);
     const repository = new AcquisitionPlanRepository(db);
     repository.replaceCurrentPlan({
-      libraryReleaseId: 1,
+      libraryEditionId: 1,
       plannerVersion: 1,
       policyHash: "policy",
       computedAt: "2026-07-29T00:00:00.000Z",
@@ -69,17 +69,17 @@ test("plan replacement is atomic and partial completion counts only imported ass
         tracks: [
           {
             trackId: 1,
-            providerReleaseMatchId: 1,
+            providerEditionMatchId: 1,
             providerTrackMatchId: 1,
-            providerReleaseMemberId: 1,
+            providerEditionMemberId: 1,
             providerAudioVariantId: 1,
             sourceQuality: "lossless",
           },
           {
             trackId: 2,
-            providerReleaseMatchId: 1,
+            providerEditionMatchId: 1,
             providerTrackMatchId: 2,
-            providerReleaseMemberId: 2,
+            providerEditionMemberId: 2,
             providerAudioVariantId: 2,
             sourceQuality: "lossless",
           },

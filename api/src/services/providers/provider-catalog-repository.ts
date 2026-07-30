@@ -149,7 +149,7 @@ export class ProviderCatalogRepository {
   }
 
   replaceReleaseMembers(
-    providerReleaseItemId: number,
+    providerEditionItemId: number,
     members: readonly ProviderReleaseMemberInput[],
   ): number[] {
     const seenPositions = new Set<string>();
@@ -170,7 +170,7 @@ export class ProviderCatalogRepository {
         SELECT id, member_item_id, medium_position, position
         FROM ProviderEditionMembers
         WHERE provider_edition_item_id = ?
-      `).all(providerReleaseItemId) as Array<{
+      `).all(providerEditionItemId) as Array<{
         id: number;
         member_item_id: number;
         medium_position: number;
@@ -204,7 +204,7 @@ export class ProviderCatalogRepository {
         }
         if (current) remove.run(current.id);
         const id = (insert.get(
-          providerReleaseItemId,
+          providerEditionItemId,
           member.memberItemId,
           member.mediumPosition,
           member.position,

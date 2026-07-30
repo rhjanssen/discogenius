@@ -63,8 +63,8 @@ test("Laura Palmer provider release persists one safe assignment and no position
 
     const repository = new ProviderMatchRepository(db);
     const result = repository.replaceReleaseMatch({
-      providerReleaseItemId: providerRelease,
-      releaseId: 1,
+      providerEditionItemId: providerRelease,
+      editionId: 1,
       decision: {
         matchState: "accepted",
         decisionSource: "automatic",
@@ -75,7 +75,7 @@ test("Laura Palmer provider release persists one safe assignment and no position
       targetTrackIds: new Set([1, 2, 3, 4, 5]),
       sourceMemberIds: new Set(memberIds),
       trackMatches: [{
-        providerReleaseMemberId: memberIds[0],
+        providerEditionMemberId: memberIds[0],
         trackId: 1,
         recordingId: 1,
         matchState: "accepted",

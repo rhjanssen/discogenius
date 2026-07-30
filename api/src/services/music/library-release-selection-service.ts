@@ -11,9 +11,9 @@ export interface LibraryAcquisitionPlanView {
 }
 
 export interface LibraryReleaseSelectionView {
-  libraryReleaseId: number;
-  releaseId: number;
-  releaseMbid: string;
+  libraryEditionId: number;
+  editionId: number;
+  editionMbid: string;
   selectionMode: "auto" | "manual";
   locked: boolean;
   plan: LibraryAcquisitionPlanView | null;
@@ -27,7 +27,7 @@ export interface LibrarySelectionView {
 }
 
 export interface ProviderReleaseOfferView {
-  providerReleaseMatchId: number;
+  providerEditionMatchId: number;
   providerItemId: number;
   provider: string;
   providerId: string;
@@ -162,7 +162,7 @@ export class LibraryReleaseSelectionService {
       let offer = offerByMatchId.get(row.provider_edition_match_id);
       if (!offer) {
         offer = {
-          providerReleaseMatchId: row.provider_edition_match_id,
+          providerEditionMatchId: row.provider_edition_match_id,
           providerItemId: row.provider_item_id,
           provider: row.provider,
           providerId: row.provider_id,
@@ -250,9 +250,9 @@ export class LibraryReleaseSelectionService {
         && row.selection_mode
       ) {
         library.selections.push({
-          libraryReleaseId: row.library_edition_id,
-          releaseId: row.edition_id,
-          releaseMbid: row.edition_mbid,
+          libraryEditionId: row.library_edition_id,
+          editionId: row.edition_id,
+          editionMbid: row.edition_mbid,
           selectionMode: row.selection_mode,
           locked: Boolean(row.locked),
           plan: row.plan_id != null
@@ -282,7 +282,7 @@ export class LibraryReleaseSelectionService {
   selectRelease(input: {
     releaseGroupMbid: string;
     libraryId: number;
-    releaseId: number;
+    editionId: number;
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.db.prepare(`
       SELECT release.id AS edition_id, release.release_group_id
@@ -290,13 +290,13 @@ export class LibraryReleaseSelectionService {
       JOIN Albums release_group ON release_group.id = release.release_group_id
       JOIN Libraries library ON library.id = ? AND library.enabled = 1
       WHERE release.id = ? AND release_group.mbid = ?
-    `).get(input.libraryId, input.releaseId, input.releaseGroupMbid) as {
+    `).get(input.libraryId, input.editionId, input.releaseGroupMbid) as {
       edition_id: number;
       release_group_id: number;
     } | undefined;
     if (!target) throw new Error("The selected release does not belong to this enabled library and release group");
 
-    const libraryReleaseId = this.db.transaction(() => {
+    const libraryEditionId = this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO LibraryAlbums (
           library_id, release_group_id, monitored, selection_mode, locked,
@@ -322,12 +322,12 @@ export class LibraryReleaseSelectionService {
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'manual', 1, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING id
-      `).get(input.libraryId, input.releaseId) as { id: number }).id;
+      `).get(input.libraryId, input.editionId) as { id: number }).id;
     })();
 
     const configuredPriority = getConfigSection("streaming")?.provider_priority;
     new AcquisitionPlanningService(this.db).compute({
-      libraryReleaseId,
+      libraryEditionId,
       providerPriority: Array.isArray(configuredPriority)
         ? configuredPriority.map(String)
         : [],

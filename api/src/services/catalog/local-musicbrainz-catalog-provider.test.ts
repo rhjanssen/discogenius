@@ -247,7 +247,7 @@ test("lookupByUPC strips non-digits and maps release hits", async () => {
   const result = await provider.lookupByUPC("0746-4381-1224");
   assert.equal(result.upc, "074643811224");
   assert.equal(result.releases.length, 1);
-  assert.equal(result.releases[0].releaseMbid, "rel-1");
+  assert.equal(result.releases[0].editionMbid, "rel-1");
   assert.equal(result.releases[0].releaseGroupMbid, "rg-1");
   assert.ok(calls[0].includes("barcode%3A074643811224"));
 });

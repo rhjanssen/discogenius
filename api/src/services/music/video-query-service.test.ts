@@ -39,7 +39,7 @@ after(() => {
 
 function seedLibrarySelection(
   releaseGroupMbid: string,
-  releaseMbid: string,
+  editionMbid: string,
   monitored: boolean,
 ): void {
   const library = dbModule.db.prepare(`
@@ -50,7 +50,7 @@ function seedLibrarySelection(
   `).get(releaseGroupMbid) as { id: number };
   const release = dbModule.db.prepare(`
     SELECT id FROM AlbumEditions WHERE mbid = ?
-  `).get(releaseMbid) as { id: number };
+  `).get(editionMbid) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,

@@ -34,7 +34,7 @@ function resetRows() {
 function seedTypedRelease(input: {
   suffix: string;
   provider: string;
-  providerReleaseId: string;
+  providerEditionId: string;
   providerTrackId: string;
   artistName: string;
   albumTitle: string;
@@ -43,7 +43,7 @@ function seedTypedRelease(input: {
 }) {
   const artistMbid = `artist-${input.suffix}`;
   const releaseGroupMbid = `rg-${input.suffix}`;
-  const releaseMbid = `release-${input.suffix}`;
+  const editionMbid = `release-${input.suffix}`;
   const recordingMbid = `recording-${input.suffix}`;
   const trackMbid = `track-${input.suffix}`;
   db.prepare(`
@@ -71,7 +71,7 @@ function seedTypedRelease(input: {
     ) VALUES (?, ?, ?, ?, ?, ?, 1, 1)
     RETURNING id
   `).get(
-    releaseMbid,
+    editionMbid,
     releaseGroup.id,
     releaseGroupMbid,
     artist.id,
@@ -98,7 +98,7 @@ function seedTypedRelease(input: {
   `).get(
     trackMbid,
     release.id,
-    releaseMbid,
+    editionMbid,
     recording.id,
     recordingMbid,
     input.trackTitle,
@@ -108,7 +108,7 @@ function seedTypedRelease(input: {
       provider, entity_type, provider_id, title
     ) VALUES (?, 'release', ?, ?)
     RETURNING id
-  `).get(input.provider, input.providerReleaseId, input.albumTitle) as { id: number };
+  `).get(input.provider, input.providerEditionId, input.albumTitle) as { id: number };
   const providerTrack = db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
@@ -190,11 +190,11 @@ function seedTypedRelease(input: {
   return {
     artistMbid,
     releaseGroupMbid,
-    releaseMbid,
+    editionMbid,
     recordingMbid,
     trackMbid,
     releaseGroupId: releaseGroup.id,
-    releaseId: release.id,
+    editionId: release.id,
     recordingId: recording.id,
     trackId: track.id,
     libraryId: library.id,
@@ -355,7 +355,7 @@ test("download processor resolves canonical album provider offers without legacy
   const graph = seedTypedRelease({
     suffix: "gmtf",
     provider: "tidal",
-    providerReleaseId: "tidal-gmtf-expanded",
+    providerEditionId: "tidal-gmtf-expanded",
     providerTrackId: "tidal-gmtf-track",
     artistName: "Bastille",
     albumTitle: "Give Me the Future",
@@ -368,7 +368,7 @@ test("download processor resolves canonical album provider offers without legacy
     provider: "tidal",
     providerId: "tidal-gmtf-expanded",
     releaseGroupMbid: graph.releaseGroupMbid,
-    releaseMbid: graph.releaseMbid,
+    editionMbid: graph.editionMbid,
     acquisitionPlanId: graph.planId,
     libraryId: graph.libraryId,
     slot: "stereo",
@@ -391,7 +391,7 @@ test("download processor detects canonical track and video files without Provide
   const graph = seedTypedRelease({
     suffix: "media",
     provider: "tidal",
-    providerReleaseId: "tidal-album",
+    providerEditionId: "tidal-album",
     providerTrackId: "tidal-track",
     artistName: "Media Artist",
     albumTitle: "Media Album",
@@ -413,7 +413,7 @@ test("download processor detects canonical track and video files without Provide
   `).run(
     graph.artistMbid,
     graph.releaseGroupId,
-    graph.releaseId,
+    graph.editionId,
     graph.trackId,
     graph.recordingId,
     graph.libraryId,
@@ -477,7 +477,7 @@ test("download processor scopes provider offers when services reuse the same res
   const apple = seedTypedRelease({
     suffix: "apple",
     provider: "apple-music",
-    providerReleaseId: "42",
+    providerEditionId: "42",
     providerTrackId: "7",
     artistName: "Apple Artist",
     albumTitle: "Apple Album",
@@ -487,7 +487,7 @@ test("download processor scopes provider offers when services reuse the same res
   const tidal = seedTypedRelease({
     suffix: "tidal",
     provider: "tidal",
-    providerReleaseId: "42",
+    providerEditionId: "42",
     providerTrackId: "7",
     artistName: "TIDAL Artist",
     albumTitle: "TIDAL Album",
@@ -503,7 +503,7 @@ test("download processor scopes provider offers when services reuse the same res
   `).run(
     tidal.artistMbid,
     tidal.releaseGroupId,
-    tidal.releaseId,
+    tidal.editionId,
     tidal.trackId,
     tidal.recordingId,
     tidal.libraryId,

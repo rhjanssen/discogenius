@@ -24,7 +24,7 @@ after(() => {
 
 function seedMatchedRelease(input: {
   suffix: string;
-  providerReleaseId: string;
+  providerEditionId: string;
   title: string;
   trackTitles: string[];
 }): void {
@@ -94,7 +94,7 @@ function seedMatchedRelease(input: {
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'release', ?, ?)
     RETURNING id
-  `).get(input.providerReleaseId, input.title) as { id: number };
+  `).get(input.providerEditionId, input.title) as { id: number };
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
       provider_edition_item_id, edition_id, relation, match_state,
@@ -106,13 +106,13 @@ function seedMatchedRelease(input: {
 test("TIDAL album progress uses accepted release matches and preserves request order", () => {
   seedMatchedRelease({
     suffix: "first",
-    providerReleaseId: "provider-album-1",
+    providerEditionId: "provider-album-1",
     title: "First Album",
     trackTitles: ["Track One", "Track Two"],
   });
   seedMatchedRelease({
     suffix: "second",
-    providerReleaseId: "provider-album-2",
+    providerEditionId: "provider-album-2",
     title: "Second Album",
     trackTitles: ["Track Three"],
   });

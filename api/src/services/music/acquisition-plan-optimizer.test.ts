@@ -22,13 +22,13 @@ function source(
 ): AcquisitionSourceCandidate {
   return {
     provider: "tidal",
-    providerReleaseMatchId: id,
+    providerEditionMatchId: id,
     relation,
     sourceTrackCount: trackQualities.length,
     albumDownloadSafe: true,
     trackMatches: trackQualities.map(([trackId, quality], index) => ({
       providerTrackMatchId: id * 100 + index,
-      providerReleaseMemberId: id * 1000 + index,
+      providerEditionMemberId: id * 1000 + index,
       trackId,
       variants: [{ id: id * 10 + variantId[quality], quality, available: true }],
     })),

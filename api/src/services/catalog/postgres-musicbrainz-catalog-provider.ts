@@ -544,14 +544,14 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     return curated;
   }
 
-  async getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null> {
+  async getReleaseWithTracks(editionMbid: string): Promise<LidarrRelease | null> {
     const [idRow] = await this.query<{ id: number; release_group: number }>(
       `SELECT id, release_group FROM release WHERE gid = $1`,
-      [releaseMbid],
+      [editionMbid],
     );
     if (!idRow) return null;
     const releases = await this.loadReleasesForGroup(idRow.release_group);
-    const match = releases.find((release) => release.id === releaseMbid);
+    const match = releases.find((release) => release.id === editionMbid);
     return match ? mapMbReleaseToLidarr(match) : null;
   }
 
@@ -589,7 +589,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     );
     return {
       upc: normalized,
-      releases: rows.map((row) => ({ releaseMbid: row.release_gid, releaseGroupMbid: row.rg_gid, title: row.title })),
+      releases: rows.map((row) => ({ editionMbid: row.release_gid, releaseGroupMbid: row.rg_gid, title: row.title })),
     };
   }
 

@@ -442,7 +442,7 @@ test("artist top tracks prefer the default provider popularity and fall back to 
     providerTrackProviderId: string,
     provider: string,
     releaseProviderId: string,
-    releaseId: number,
+    editionId: number,
     canonicalTrackId: number,
     canonicalRecordingId: number,
     position: number,
@@ -461,14 +461,14 @@ test("artist top tracks prefer the default provider popularity and fall back to 
     }
     let releaseMatch = db.prepare(
       "SELECT id FROM ProviderEditionMatches WHERE provider_edition_item_id = ? AND edition_id = ?",
-    ).get(providerRelease.id, releaseId) as { id: number } | undefined;
+    ).get(providerRelease.id, editionId) as { id: number } | undefined;
     if (!releaseMatch) {
       releaseMatch = db.prepare(`
         INSERT INTO ProviderEditionMatches (
           provider_edition_item_id, edition_id, relation, match_state,
           decision_source, confidence, method, matcher_version
         ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1) RETURNING id
-      `).get(providerRelease.id, releaseId) as { id: number };
+      `).get(providerRelease.id, editionId) as { id: number };
     }
     const member = db.prepare(`
       INSERT INTO ProviderEditionMembers (

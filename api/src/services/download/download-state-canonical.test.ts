@@ -150,7 +150,7 @@ function seedCanonicalArtistGraph() {
 
   return {
     releaseGroupId: releaseGroup.id,
-    releaseId: release.id,
+    editionId: release.id,
     stereoLibraryId: stereoLibrary.id,
     track1Id: track1.id,
     track2Id: track2.id,
@@ -363,7 +363,7 @@ test("download completion follows enabled libraries and keeps their track identi
     INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
-  `).run(spatialLibrary.id, graph.releaseId);
+  `).run(spatialLibrary.id, graph.editionId);
   insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
   insertTrackFile("track-2", "recording-2", "provider-track-2", "track-two.flac");
 

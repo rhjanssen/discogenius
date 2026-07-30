@@ -176,7 +176,7 @@ test("matches expanded provider editions even when they contain bonus discs", ()
     assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
     assert.ok(match.confidence >= 0.78);
     assert.equal(match.evidence.candidateTitle, "give me the future");
-    assert.equal(match.releaseMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
+    assert.equal(match.editionMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
     assert.deepEqual(match.evidence.availableReleaseMbids, ["db967b8b-99c1-4adf-8d12-f0ab285390b3"]);
 });
 
@@ -389,7 +389,7 @@ test("uses MusicBrainz external links before UPC and title fallback", () => {
     assert.equal(match.status, "verified");
     assert.equal(match.method, "musicbrainz-release-url");
     assert.equal(match.releaseGroup?.mbid, "linked-rg");
-    assert.equal(match.releaseMbid, "linked-release");
+    assert.equal(match.editionMbid, "linked-release");
     assert.equal(match.evidence.providerUrlMatched, true);
 });
 
@@ -419,7 +419,7 @@ test("does not treat unrelated numeric external URLs as provider release links",
 
     assert.equal(match.method, "musicbrainz-release-title-year-type-track-count");
     assert.equal(match.evidence.providerUrlMatched, false);
-    assert.equal(match.releaseMbid, "apple-linked-release");
+    assert.equal(match.editionMbid, "apple-linked-release");
 });
 
 test("uses Apple Music release URL relationships as provider identity evidence", () => {
@@ -450,7 +450,7 @@ test("uses Apple Music release URL relationships as provider identity evidence",
 
     assert.equal(match.status, "verified");
     assert.equal(match.method, "musicbrainz-release-url");
-    assert.equal(match.releaseMbid, "apple-linked-release");
+    assert.equal(match.editionMbid, "apple-linked-release");
     assert.equal(match.evidence.providerUrlMatched, true);
 });
 
@@ -482,7 +482,7 @@ test("uses Spotify release URL relationships as provider identity evidence", () 
 
     assert.equal(match.status, "verified");
     assert.equal(match.method, "musicbrainz-release-url");
-    assert.equal(match.releaseMbid, "spotify-linked-release");
+    assert.equal(match.editionMbid, "spotify-linked-release");
     assert.equal(match.evidence.providerUrlMatched, true);
 });
 
@@ -548,7 +548,7 @@ test("prefers a full release-title match over a shorter expanded-title prefix", 
 
     assert.equal(match.status, "verified");
     assert.equal(match.releaseGroup?.mbid, "mtv-unplugged-rg");
-    assert.equal(match.releaseMbid, "mtv-unplugged-release");
+    assert.equal(match.editionMbid, "mtv-unplugged-release");
     assert.equal(match.evidence.candidateTitle, "pompeii come as you are mtv unplugged");
     assert.notDeepEqual(match.evidence.ambiguousWith, ["mtv-unplugged-rg"]);
 });
@@ -586,7 +586,7 @@ test("prefers spatial MusicBrainz release disambiguation for Dolby Atmos provide
     }]);
 
     assert.equal(match.status, "verified");
-    assert.equal(match.releaseMbid, "dolby-atmos-release");
+    assert.equal(match.editionMbid, "dolby-atmos-release");
     assert.deepEqual(match.evidence.availableReleaseMbids, ["dolby-atmos-release"]);
 });
 
@@ -632,7 +632,7 @@ test("prefers matching explicit MusicBrainz release disambiguation for explicit 
     }]);
 
     assert.equal(match.status, "verified");
-    assert.equal(match.releaseMbid, "explicit-release");
+    assert.equal(match.editionMbid, "explicit-release");
     assert.deepEqual(match.evidence.availableReleaseMbids, ["explicit-release"]);
 });
 
@@ -671,7 +671,7 @@ test("prefers matching clean MusicBrainz release disambiguation for clean provid
     }]);
 
     assert.equal(match.status, "verified");
-    assert.equal(match.releaseMbid, "clean-release");
+    assert.equal(match.editionMbid, "clean-release");
     assert.deepEqual(match.evidence.availableReleaseMbids, ["clean-release"]);
 });
 
@@ -743,7 +743,7 @@ test("prefers matching media count when ISRC overlap and track count tie", () =>
     }, volumeTieReleaseGroups);
 
     assert.equal(match.method, "musicbrainz-recording-isrc");
-    assert.equal(match.releaseMbid, "063b19f1-three-disc-release");
+    assert.equal(match.editionMbid, "063b19f1-three-disc-release");
     assert.deepEqual(match.evidence.availableReleaseMbids, [
         "0a0bd5a8-two-disc-release",
         "063b19f1-three-disc-release",

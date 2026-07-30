@@ -1083,7 +1083,7 @@ test("provider video related_track_id links directly to the matched audio record
   `).get() as { id: number };
 
   seedAcceptedProviderRecordingTrack(dbModule.db, {
-    provider: "apple-music", providerReleaseId: "apple-album-1", providerTrackId: "apple-song-1",
+    provider: "apple-music", providerEditionId: "apple-album-1", providerTrackId: "apple-song-1",
     recordingId: audio.id, title: "Pompeii", durationMs: 214000,
   });
 
@@ -1134,11 +1134,11 @@ test("provider video album_id scopes title matching to that album's tracks", () 
   `).get() as { id: number };
 
   seedAcceptedProviderRecordingTrack(dbModule.db, {
-    provider: "tidal", providerReleaseId: "tidal-album-42", providerTrackId: "tidal-track-on",
+    provider: "tidal", providerEditionId: "tidal-album-42", providerTrackId: "tidal-track-on",
     recordingId: onAlbum.id, title: "Romeo & Juliet (Live At The Hammersmith Odeon)", durationMs: 457000,
   });
   seedAcceptedProviderRecordingTrack(dbModule.db, {
-    provider: "tidal", providerReleaseId: "tidal-album-99", providerTrackId: "tidal-track-off",
+    provider: "tidal", providerEditionId: "tidal-album-99", providerTrackId: "tidal-track-off",
     recordingId: offAlbum.id, title: "Romeo & Juliet (Live At The Hammersmith Odeon)", durationMs: 457000,
   });
 
@@ -1178,11 +1178,11 @@ test("album-linked video does not fall back to artist-wide audio when in-album t
   `).get() as { id: number };
 
   seedAcceptedProviderRecordingTrack(dbModule.db, {
-    provider: "tidal", providerReleaseId: "tidal-album-miss", providerTrackId: "tidal-track-miss",
+    provider: "tidal", providerEditionId: "tidal-album-miss", providerTrackId: "tidal-track-miss",
     recordingId: onAlbum.id, title: "Other Song", durationMs: 200000,
   });
   seedAcceptedProviderRecordingTrack(dbModule.db, {
-    provider: "tidal", providerReleaseId: "tidal-album-other", providerTrackId: "tidal-track-wide",
+    provider: "tidal", providerEditionId: "tidal-album-other", providerTrackId: "tidal-track-wide",
     recordingId: artistWide.id, title: "Romeo & Juliet", durationMs: 457000,
   });
 

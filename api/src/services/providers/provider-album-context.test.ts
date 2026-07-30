@@ -44,8 +44,8 @@ after(() => {
  */
 function seedTwoPlansDisagreeing(): {
   providerTrackItemId: number;
-  stereo: { libraryId: number; libraryReleaseId: number; planId: number; canonicalTrackId: number; canonicalReleaseId: number };
-  spatial: { libraryId: number; libraryReleaseId: number; planId: number; canonicalTrackId: number; canonicalReleaseId: number };
+  stereo: { libraryId: number; libraryEditionId: number; planId: number; canonicalTrackId: number; canonicalReleaseId: number };
+  spatial: { libraryId: number; libraryEditionId: number; planId: number; canonicalTrackId: number; canonicalReleaseId: number };
 } {
   const { db } = dbModule;
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Bastille')").run();
@@ -66,19 +66,19 @@ function seedTwoPlansDisagreeing(): {
 
   const build = (
     key: string,
-    releaseMbid: string,
-    providerReleaseId: string,
+    editionMbid: string,
+    providerEditionId: string,
     spatial: boolean,
   ) => {
     db.prepare(`
       INSERT INTO AlbumEditions (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title, track_count)
       VALUES (?, 'rg-1', ?, 'artist-mbid', ?, 'Bad Blood', 1)
-    `).run(releaseMbid, releaseGroup.id, artist.id);
-    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as { id: number };
+    `).run(editionMbid, releaseGroup.id, artist.id);
+    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(editionMbid) as { id: number };
     const track = db.prepare(`
       INSERT INTO Tracks (mbid, edition_mbid, album_edition_id, recording_mbid, recording_id, medium_position, position, title, length_ms)
       VALUES (?, ?, ?, 'rec-1', ?, 1, 1, 'Pompeii', 214000) RETURNING id
-    `).get(`trk-${key}`, releaseMbid, release.id, recording.id) as { id: number };
+    `).get(`trk-${key}`, editionMbid, release.id, recording.id) as { id: number };
 
     db.prepare(`
       INSERT INTO quality_profiles (name, allowed_source_formats, preference_order, cutoff, fallback_policy, output_format, transcode_policy)
@@ -104,7 +104,7 @@ function seedTwoPlansDisagreeing(): {
     const providerRelease = db.prepare(`
       INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
       VALUES ('tidal', 'release', ?, 'Bad Blood') RETURNING id
-    `).get(providerReleaseId) as { id: number };
+    `).get(providerEditionId) as { id: number };
     const member = db.prepare(`
       INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
       VALUES (?, ?, 1, 1) RETURNING id
@@ -145,7 +145,7 @@ function seedTwoPlansDisagreeing(): {
 
     return {
       libraryId: library.id,
-      libraryReleaseId: libraryRelease.id,
+      libraryEditionId: libraryRelease.id,
       planId: plan.id,
       canonicalTrackId: track.id,
       canonicalReleaseId: release.id,
@@ -191,8 +191,8 @@ test("an explicit plan, library release, library or canonical scope selects that
   );
   assert.equal(
     resolve(
-      scopeModule.providerSelectedPlanAlbumIdSql({ libraryReleaseId: true }),
-      { libraryReleaseId: seeded.spatial.libraryReleaseId },
+      scopeModule.providerSelectedPlanAlbumIdSql({ libraryEditionId: true }),
+      { libraryEditionId: seeded.spatial.libraryEditionId },
       seeded.providerTrackItemId,
     ),
     "tidal-album-deluxe",

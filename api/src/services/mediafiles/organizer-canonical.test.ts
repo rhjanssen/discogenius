@@ -84,16 +84,16 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "provider-album-1",
+    providerEditionId: "provider-album-1",
     providerTrackId: "provider-track-2",
-    releaseMbid: "release-1",
+    editionMbid: "release-1",
     trackMbid: "track-2",
   });
 
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
     provider: "tidal",
     trackId: "provider-track-2",
-    releaseMbid: "release-1",
+    editionMbid: "release-1",
     fallbackAlbumId: "provider-album-1",
     fallbackArtistId: "artist-local",
     fallbackQuality: "LOSSLESS",
@@ -129,7 +129,7 @@ test("resolveMatchedCanonicalAlbumTrackRow fails closed when catalog track is mi
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
     provider: "tidal",
     trackId: "provider-orphan",
-    releaseMbid: "release-1",
+    editionMbid: "release-1",
     fallbackAlbumId: "provider-album-1",
     fallbackArtistId: "artist-local",
     fallbackQuality: "LOSSLESS",
@@ -160,9 +160,9 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
   // re-match — and must bind to the vol-3 occurrence, not disc 1.
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "243864035",
+    providerEditionId: "243864035",
     providerTrackId: "243864079",
-    releaseMbid: "rel-3vol",
+    editionMbid: "rel-3vol",
     trackMbid: "track-vol3",
   });
   dbModule.db.prepare(`
@@ -173,7 +173,7 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
     provider: "tidal",
     trackId: "243864079",
-    releaseMbid: "rel-3vol",
+    editionMbid: "rel-3vol",
     fallbackAlbumId: "243864035",
     fallbackArtistId: "artist-local",
     fallbackQuality: "HIRES_LOSSLESS",
@@ -208,9 +208,9 @@ test("organizer matches provider-id staging filenames to materialized provider t
   // matches by provider id only — no title/metadata/position fuzzing.
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "provider-album-1",
+    providerEditionId: "provider-album-1",
     providerTrackId: "provider-track-1",
-    releaseMbid: "release-1",
+    editionMbid: "release-1",
     trackMbid: "track-1",
   });
 
@@ -221,7 +221,7 @@ test("organizer matches provider-id staging filenames to materialized provider t
     {
       provider: "tidal",
       releaseGroupMbid: "release-group-1",
-      releaseMbid: "release-1",
+      editionMbid: "release-1",
       artistMbid: "artist-mbid",
       slot: "stereo",
       quality: "LOSSLESS",
@@ -230,7 +230,7 @@ test("organizer matches provider-id staging filenames to materialized provider t
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
     provider: "tidal",
     trackId: matches.get(stagedFile),
-    releaseMbid: "release-1",
+    editionMbid: "release-1",
     fallbackAlbumId: "provider-album-1",
     fallbackAlbumIds: ["provider-album-1"],
     fallbackArtistId: "artist-local",
@@ -754,12 +754,12 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
   // Each track occurs on a DIFFERENT provider album, both accepted-matched onto
   // the one canonical release — the hybrid case membership must express.
   seedAcceptedProviderTrackMatch(dbModule.db, {
-    provider: "tidal", providerReleaseId: "album-primary", providerTrackId: "trk-primary",
-    releaseMbid: "rel-hybrid-tips", trackMbid: "t-primary",
+    provider: "tidal", providerEditionId: "album-primary", providerTrackId: "trk-primary",
+    editionMbid: "rel-hybrid-tips", trackMbid: "t-primary",
   });
   seedAcceptedProviderTrackMatch(dbModule.db, {
-    provider: "tidal", providerReleaseId: "album-secondary", providerTrackId: "trk-secondary",
-    releaseMbid: "rel-hybrid-tips", trackMbid: "t-secondary",
+    provider: "tidal", providerEditionId: "album-secondary", providerTrackId: "trk-secondary",
+    editionMbid: "rel-hybrid-tips", trackMbid: "t-secondary",
   });
 
   const stagedPrimary = path.join(tempDir, "hybrid-tips", "trk-primary.flac");
@@ -789,7 +789,7 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
     {
       provider: "tidal",
       releaseGroupMbid: "rg-hybrid-tips",
-      releaseMbid: "rel-hybrid-tips",
+      editionMbid: "rel-hybrid-tips",
       artistMbid: "artist-mbid",
       slot: "stereo",
       quality: "HIRES_LOSSLESS",
@@ -803,7 +803,7 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
   const secondaryRow = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
     provider: "tidal",
     trackId: "trk-secondary",
-    releaseMbid: "rel-hybrid-tips",
+    editionMbid: "rel-hybrid-tips",
     fallbackAlbumId: "album-primary",
     fallbackAlbumIds: ["album-primary", "album-secondary"],
     fallbackArtistId: "artist-local",
@@ -972,7 +972,7 @@ test("an exact plan source organizes under the job release, not a same-recording
       provider: "tidal",
       providerId: "77661290",
       releaseGroupMbid: "rg-btb",
-      releaseMbid: "rel-btb-deluxe",
+      editionMbid: "rel-btb-deluxe",
       slot: "stereo",
       trackOffers: [
         {
@@ -988,7 +988,7 @@ test("an exact plan source organizes under the job release, not a same-recording
   );
 
   assert.equal(context?.releaseGroupMbid, "rg-btb");
-  assert.equal(context?.releaseMbid, "rel-btb-deluxe");
+  assert.equal(context?.editionMbid, "rel-btb-deluxe");
   assert.notEqual(context?.releaseGroupMbid, "rg-rehab-single");
 
   // Job RG hint must keep identity on BTB even when albumId is the colliding tip.
@@ -1024,5 +1024,5 @@ test("an exact plan source organizes under the job release, not a same-recording
     "77661290",
   );
   assert.equal(contextNoJobRg?.releaseGroupMbid, "rg-btb");
-  assert.equal(contextNoJobRg?.releaseMbid, "rel-btb-deluxe");
+  assert.equal(contextNoJobRg?.editionMbid, "rel-btb-deluxe");
 });

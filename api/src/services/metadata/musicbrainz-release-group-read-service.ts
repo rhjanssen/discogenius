@@ -347,31 +347,31 @@ function listMusicBrainzReleaseVersions(
 
     const offersByReleaseMbid = new Map<string, typeof providerOffers>();
     for (const offer of providerOffers) {
-        const releaseMbid = String(offer.edition_mbid || "").trim();
-        if (!releaseMbid) continue;
-        const offers = offersByReleaseMbid.get(releaseMbid) || [];
+        const editionMbid = String(offer.edition_mbid || "").trim();
+        if (!editionMbid) continue;
+        const offers = offersByReleaseMbid.get(editionMbid) || [];
         offers.push(offer);
-        offersByReleaseMbid.set(releaseMbid, offers);
+        offersByReleaseMbid.set(editionMbid, offers);
     }
 
-    const selectOfferForLibraryClass = (releaseMbid: string, libraryClass: "stereo" | "spatial") => {
-        const offers = offersByReleaseMbid.get(releaseMbid) || [];
+    const selectOfferForLibraryClass = (editionMbid: string, libraryClass: "stereo" | "spatial") => {
+        const offers = offersByReleaseMbid.get(editionMbid) || [];
         return offers.find((offer) => String(offer.library_class || "stereo") === libraryClass) || null;
     };
 
     return releases.map((release) => {
-        const releaseMbid = String(release.mbid);
-        const isStereoSelected = releaseGroup.stereo_release_mbid === releaseMbid;
-        const isSpatialSelected = releaseGroup.spatial_release_mbid === releaseMbid;
+        const editionMbid = String(release.mbid);
+        const isStereoSelected = releaseGroup.stereo_release_mbid === editionMbid;
+        const isSpatialSelected = releaseGroup.spatial_release_mbid === editionMbid;
         const stereoOffer = isStereoSelected
             ? null
-            : selectOfferForLibraryClass(releaseMbid, "stereo");
+            : selectOfferForLibraryClass(editionMbid, "stereo");
         const spatialOffer = includeSpatial && !isSpatialSelected
-            ? selectOfferForLibraryClass(releaseMbid, "spatial")
+            ? selectOfferForLibraryClass(editionMbid, "spatial")
             : null;
 
         return {
-            id: releaseMbid,
+            id: editionMbid,
             title: String(release.title || releaseGroup.title || "Unknown Release"),
             cover_id: imageUrl,
             provider_cover_id: providerCoverUrl,
@@ -540,7 +540,7 @@ function parseRecordingArtistCredits(creditsStr: string | null | undefined): Arr
 }
 
 function getReleaseTrackContracts(
-    releaseMbid: string,
+    editionMbid: string,
     releaseGroupMbid: string,
     albumTitle: string,
     artistName: string,
@@ -563,7 +563,7 @@ function getReleaseTrackContracts(
       WHERE t.edition_mbid = ?
         AND (r.is_video IS NULL OR r.is_video = 0)
       ORDER BY t.medium_position ASC, t.position ASC
-    `).all(releaseMbid) as any[];
+    `).all(editionMbid) as any[];
 
     return rows.map((track) => {
         const parsedCredits = parseRecordingArtistCredits(track.recording_credits);

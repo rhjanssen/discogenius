@@ -395,10 +395,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         }
     };
 
-    const handleSelectReleaseVersion = (releaseMbid: string) => {
-        setSelectedReleaseMbid(releaseMbid);
+    const handleSelectReleaseVersion = (editionMbid: string) => {
+        setSelectedReleaseMbid(editionMbid);
         if (selectedMatch) {
-            void handleSelectMatch(selectedMatch, releaseMbid);
+            void handleSelectMatch(selectedMatch, editionMbid);
         }
     };
 
@@ -498,7 +498,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             videoItems?: Array<{ id: number; providerId: string }>;
             canonical?: {
                 libraryId: number;
-                releaseId: number;
+                editionId: number;
                 mappings: Array<{ unmappedFileId: number; trackId: number }>;
             };
         }) => payload.canonical
@@ -549,7 +549,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         importMutation.mutate({
             canonical: {
                 libraryId: selectedLibraryId,
-                releaseId: selectedReleaseId,
+                editionId: selectedReleaseId,
                 mappings: payloadItems.map((item) => ({
                     unmappedFileId: item.id,
                     trackId: Number(item.providerId),

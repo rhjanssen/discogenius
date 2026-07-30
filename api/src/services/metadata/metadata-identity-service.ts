@@ -258,7 +258,7 @@ export class MetadataIdentityService {
             }
 
             const result = this.result("album", albumId, "verified", 1, "provider-items-canonical-link", undefined, {
-                releaseId: offer.edition_mbid,
+                editionId: offer.edition_mbid,
                 releaseGroupId: offer.release_group_mbid,
             });
             recordIdentityStatus(result, options.provider);

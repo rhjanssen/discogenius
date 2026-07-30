@@ -106,11 +106,11 @@ export class LocalMusicBrainzCatalogProvider implements CatalogProvider {
     return mapMbReleaseGroupToLidarrDetail(rg);
   }
 
-  async getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null> {
+  async getReleaseWithTracks(editionMbid: string): Promise<LidarrRelease | null> {
     // Unlike Servarr Metadata Server, MB exposes a direct /release/{mbid} endpoint with media,
     // tracks and inline recordings + ISRCs.
     const release = await this.fetchJson<MbRelease>(
-      `/release/${encodeURIComponent(releaseMbid)}?inc=recordings+artist-credits+isrcs+labels&fmt=json`,
+      `/release/${encodeURIComponent(editionMbid)}?inc=recordings+artist-credits+isrcs+labels&fmt=json`,
     );
     if (!release || !release.id) {
       return null;
@@ -140,7 +140,7 @@ export class LocalMusicBrainzCatalogProvider implements CatalogProvider {
     const releases = (response.releases || [])
       .filter((release) => release.id)
       .map((release) => ({
-        releaseMbid: String(release.id),
+        editionMbid: String(release.id),
         releaseGroupMbid: release["release-group"]?.id ? String(release["release-group"]?.id) : null,
         title: release.title ?? null,
       }));

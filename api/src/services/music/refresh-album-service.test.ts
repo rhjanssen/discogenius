@@ -36,12 +36,12 @@ after(() => {
 test("artist album upsert stores allowed provider supplements on catalog album and release rows", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "11111111-1111-4111-8111-111111111111";
-  const releaseMbid = "22222222-2222-4222-8222-222222222222";
+  const editionMbid = "22222222-2222-4222-8222-222222222222";
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
-  dbModule.db.prepare("INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(releaseMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
+  dbModule.db.prepare("INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(editionMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
 
   await refreshServiceModule.RefreshAlbumService.upsertArtistAlbum(
     {
@@ -70,16 +70,16 @@ test("artist album upsert stores allowed provider supplements on catalog album a
         status: "verified",
         confidence: 1,
         method: "test",
-        releaseMbid,
+        editionMbid,
         releaseGroup: {
           mbid: releaseGroupMbid,
           title: "Canonical Album",
           primaryType: "Album",
-          releases: [{ mbid: releaseMbid, title: "Canonical Album" }],
+          releases: [{ mbid: editionMbid, title: "Canonical Album" }],
         },
         evidence: {
           providerTitle: "Canonical Album",
-          matchedReleaseMbid: releaseMbid,
+          matchedReleaseMbid: editionMbid,
         },
       },
     },
@@ -103,7 +103,7 @@ test("artist album upsert stores allowed provider supplements on catalog album a
   assert.equal(album.video_cover, "provider-video-cover-id");
   assert.equal(album.popularity, 47);
 
-  const release = dbModule.db.prepare("SELECT barcode, copyright FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as {
+  const release = dbModule.db.prepare("SELECT barcode, copyright FROM AlbumEditions WHERE mbid = ?").get(editionMbid) as {
     barcode: string | null;
     copyright: string | null;
   };
@@ -137,7 +137,7 @@ test("album track scan stores provider track offers linked to the selected canon
   const { streamingProviderManager } = await import("../providers/index.js");
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "11111111-1111-4111-8111-111111111111";
-  const releaseMbid = "22222222-2222-4222-8222-222222222222";
+  const editionMbid = "22222222-2222-4222-8222-222222222222";
   const recordingMbid = "33333333-3333-4333-8333-333333333333";
   const trackMbid = "44444444-4444-4444-8444-444444444444";
 
@@ -217,7 +217,7 @@ test("album track scan stores provider track offers linked to the selected canon
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
   dbModule.db.prepare("INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, media) VALUES (?, ?, ?, ?, ?, ?)").run(
-    releaseMbid,
+    editionMbid,
     releaseGroupMbid,
     artistMbid,
     "Canonical Album",
@@ -228,8 +228,8 @@ test("album track scan stores provider track offers linked to the selected canon
   dbModule.db.prepare(`
     INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, 1, 1, '1', ?)
-  `).run(trackMbid, releaseMbid, recordingMbid, "Track One");
-  const providerReleaseItemId = (dbModule.db.prepare(`
+  `).run(trackMbid, editionMbid, recordingMbid, "Track One");
+  const providerEditionItemId = (dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, provider_type, availability
     ) VALUES ('fake', 'release', ?, ?, 'ALBUM', 'available')
@@ -237,13 +237,13 @@ test("album track scan stores provider track offers linked to the selected canon
   `).get("provider-album-1", "Provider Album") as { id: number }).id;
   const canonicalReleaseId = (dbModule.db.prepare(`
     SELECT id FROM AlbumEditions WHERE mbid = ?
-  `).get(releaseMbid) as { id: number }).id;
+  `).get(editionMbid) as { id: number }).id;
   dbModule.db.prepare(`
     INSERT INTO ProviderEditionMatches (
       provider_edition_item_id, edition_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1)
-  `).run(providerReleaseItemId, canonicalReleaseId);
+  `).run(providerEditionItemId, canonicalReleaseId);
 
   await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", { resolveMusicBrainz: false });
 
@@ -305,7 +305,7 @@ test("album track scan stores provider track offers linked to the selected canon
 test("SoundCloud playlist tracks map to canonical identity by title and duration, not playlist order", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "71111111-1111-4111-8111-111111111111";
-  const releaseMbid = "72222222-2222-4222-8222-222222222222";
+  const editionMbid = "72222222-2222-4222-8222-222222222222";
   const firstRecordingMbid = "73333333-3333-4333-8333-333333333333";
   const secondRecordingMbid = "74444444-4444-4444-8444-444444444444";
   const firstTrackMbid = "75555555-5555-4555-8555-555555555555";
@@ -318,7 +318,7 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, ?, 'Official')
-  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
+  `).run(editionMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
   dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run(firstRecordingMbid, artistMbid, "First Song");
   dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
@@ -327,12 +327,12 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
     INSERT INTO Tracks (
       mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms
     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
-  `).run(firstTrackMbid, releaseMbid, firstRecordingMbid, 1, "1", "First Song", 180000);
+  `).run(firstTrackMbid, editionMbid, firstRecordingMbid, 1, "1", "First Song", 180000);
   dbModule.db.prepare(`
     INSERT INTO Tracks (
       mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms
     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
-  `).run(secondTrackMbid, releaseMbid, secondRecordingMbid, 2, "2", "Second Song", 200000);
+  `).run(secondTrackMbid, editionMbid, secondRecordingMbid, 2, "2", "Second Song", 200000);
   await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
     "soundcloud",
     "sc-playlist",
@@ -355,7 +355,7 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
       },
     ],
     null,
-    releaseMbid,
+    editionMbid,
   );
 
   const offers = dbModule.db.prepare(`
@@ -405,7 +405,7 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
 test("same-release provider superset maps exact-duration version tracks and clears stale positional links", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "81111111-1111-4111-8111-111111111111";
-  const releaseMbid = "82222222-2222-4222-8222-222222222222";
+  const editionMbid = "82222222-2222-4222-8222-222222222222";
   const versions = [
     ["Dave Winnel remix", 245],
     ["Jack Wins remix", 278],
@@ -419,7 +419,7 @@ test("same-release provider superset maps exact-duration version tracks and clea
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, 'Reality (Remixes)', 'Official')
-  `).run(releaseMbid, releaseGroupMbid, artistMbid);
+  `).run(editionMbid, releaseGroupMbid, artistMbid);
 
   const insertRecording = dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, artist_mbid, title)
@@ -435,7 +435,7 @@ test("same-release provider superset maps exact-duration version tracks and clea
     const trackMbid = `84444444-4444-4444-8444-44444444444${index}`;
     const title = `Reality (${version})`;
     insertRecording.run(recordingMbid, artistMbid, title);
-    insertTrack.run(trackMbid, releaseMbid, recordingMbid, index + 1, String(index + 1), title, duration * 1000);
+    insertTrack.run(trackMbid, editionMbid, recordingMbid, index + 1, String(index + 1), title, duration * 1000);
     return { recordingMbid, trackMbid };
   });
 
@@ -455,7 +455,7 @@ test("same-release provider superset maps exact-duration version tracks and clea
       })),
     ],
     null,
-    releaseMbid,
+    editionMbid,
   );
 
   const offers = dbModule.db.prepare(`
@@ -529,7 +529,7 @@ test("same-release provider superset maps exact-duration version tracks and clea
 test("album refresh level does not borrow tracks from a colliding provider ID", () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "55555555-5555-4555-8555-555555555555";
-  const releaseMbid = "66666666-6666-4666-8666-666666666666";
+  const editionMbid = "66666666-6666-4666-8666-666666666666";
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
@@ -540,7 +540,7 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, 'Canonical Album', 'Official')
-  `).run(releaseMbid, releaseGroupMbid, artistMbid);
+  `).run(editionMbid, releaseGroupMbid, artistMbid);
   const tidalReleaseId = (dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, availability
@@ -566,7 +566,7 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
   `).run(tidalReleaseId, tidalTrackId);
   const canonicalReleaseId = (dbModule.db.prepare(`
     SELECT id FROM AlbumEditions WHERE mbid = ?
-  `).get(releaseMbid) as { id: number }).id;
+  `).get(editionMbid) as { id: number }).id;
   dbModule.db.prepare(`
     INSERT INTO ProviderEditionMatches (
       provider_edition_item_id, edition_id, relation, match_state, decision_source,

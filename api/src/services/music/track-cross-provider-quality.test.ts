@@ -136,16 +136,16 @@ test("tracklist remoteOffers include stereo and spatial from different providers
 
   const seedSelection = (options: {
     libraryId: number;
-    releaseMbid: string;
+    editionMbid: string;
     trackMbid: string;
     provider: string;
-    providerReleaseId: string;
+    providerEditionId: string;
     providerTrackId: string;
     qualityClass: "hires-lossless" | "spatial";
     quality: string;
   }) => {
     const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
-      .get(options.releaseMbid) as { id: number };
+      .get(options.editionMbid) as { id: number };
     const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = ?")
       .get(options.trackMbid) as { id: number; recording_id: number };
     const providerRelease = db.prepare(`
@@ -153,7 +153,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
       provider, entity_type, provider_id, title
     ) VALUES (?, 'release', ?, 'Album')
       RETURNING id
-    `).get(options.provider, options.providerReleaseId) as { id: number };
+    `).get(options.provider, options.providerEditionId) as { id: number };
     const providerTrack = db.prepare(`
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
@@ -230,20 +230,20 @@ test("tracklist remoteOffers include stereo and spatial from different providers
 
   seedSelection({
     libraryId: stereoLibrary.id,
-    releaseMbid: "rel-stereo",
+    editionMbid: "rel-stereo",
     trackMbid: "track-1",
     provider: "tidal",
-    providerReleaseId: "tidal-album",
+    providerEditionId: "tidal-album",
     providerTrackId: "tidal-track",
     qualityClass: "hires-lossless",
     quality: "HIRES_LOSSLESS",
   });
   seedSelection({
     libraryId: spatialLibrary.id,
-    releaseMbid: "rel-atmos",
+    editionMbid: "rel-atmos",
     trackMbid: "track-atmos",
     provider: "apple-music",
-    providerReleaseId: "apple-atmos",
+    providerEditionId: "apple-atmos",
     providerTrackId: "apple-track",
     qualityClass: "spatial",
     quality: "DOLBY_ATMOS",

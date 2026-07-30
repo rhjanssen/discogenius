@@ -152,8 +152,8 @@ export const PROVIDER_MEMBER_ALBUM_ID_SQL = providerUnambiguousAlbumIdSql("pi");
 export interface ProviderAlbumContext {
   /** Narrow to one plan: binds @planId. */
   planId?: boolean;
-  /** Narrow to one selected library release: binds @libraryReleaseId. */
-  libraryReleaseId?: boolean;
+  /** Narrow to one selected library release: binds @libraryEditionId. */
+  libraryEditionId?: boolean;
   /** Narrow to one library: binds @libraryId. */
   libraryId?: boolean;
   /** Narrow to the plan row for one canonical track: binds @canonicalTrackId. */
@@ -192,7 +192,7 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
   const itemAlias = context.itemAlias ?? "pi";
   const filters: string[] = [];
   if (context.planId) filters.push("AND acquisition_plan.id = @planId");
-  if (context.libraryReleaseId) filters.push("AND acquisition_plan.library_edition_id = @libraryReleaseId");
+  if (context.libraryEditionId) filters.push("AND acquisition_plan.library_edition_id = @libraryEditionId");
   if (context.libraryId) filters.push("AND plan_library_release.library_id = @libraryId");
   if (context.libraryIdExpr) {
     // NULL expression → no narrowing, so the agree-or-NULL rule still applies.

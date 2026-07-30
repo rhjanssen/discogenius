@@ -133,11 +133,11 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
   try {
     db.pragma("foreign_keys = ON");
     createDomainSchemaV41(db);
-    const libraryReleaseId = seedStandardDeluxeFixture(db);
+    const libraryEditionId = seedStandardDeluxeFixture(db);
     const service = new AcquisitionPlanningService(db);
 
     const highPlanId = service.compute({
-      libraryReleaseId,
+      libraryEditionId,
       providerPriority: ["tidal"],
       plannerVersion: 1,
     });
@@ -165,7 +165,7 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
       WHERE id = 1
     `).run();
     const maxPlanId = service.compute({
-      libraryReleaseId,
+      libraryEditionId,
       providerPriority: ["tidal"],
       plannerVersion: 2,
     });

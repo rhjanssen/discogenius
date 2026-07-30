@@ -215,7 +215,7 @@ function secondaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null
 export class RefreshAlbumService {
     private static getCanonicalAlbumLink(providerId: string, albumId: string): {
         releaseGroupMbid: string | null;
-        releaseMbid: string | null;
+        editionMbid: string | null;
     } {
         const providerItem = db.prepare(`
             SELECT release_group.mbid AS release_group_mbid, release.mbid AS edition_mbid
@@ -237,17 +237,17 @@ export class RefreshAlbumService {
 
         return {
             releaseGroupMbid: providerItem?.release_group_mbid || null,
-            releaseMbid: providerItem?.edition_mbid || null,
+            editionMbid: providerItem?.edition_mbid || null,
         };
     }
 
     private static storeCanonicalAlbumSupplements(input: {
         releaseGroupMbid?: string | null;
-        releaseMbid?: string | null;
+        editionMbid?: string | null;
         album: any;
     }): void {
         const releaseGroupMbid = textOrNull(input.releaseGroupMbid);
-        const releaseMbid = textOrNull(input.releaseMbid);
+        const editionMbid = textOrNull(input.editionMbid);
         const album = input.album || {};
 
         if (releaseGroupMbid) {
@@ -268,7 +268,7 @@ export class RefreshAlbumService {
             );
         }
 
-        if (releaseMbid) {
+        if (editionMbid) {
             db.prepare(`
                 UPDATE AlbumEditions SET
                     copyright = COALESCE(NULLIF(?, ''), copyright),
@@ -276,7 +276,7 @@ export class RefreshAlbumService {
                 WHERE mbid = ?
             `).run(
                 textOrNull(album.copyright),
-                releaseMbid,
+                editionMbid,
             );
         }
     }
@@ -468,14 +468,14 @@ export class RefreshAlbumService {
         }
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
 
-        const hasCredits = canonicalLink.releaseMbid
+        const hasCredits = canonicalLink.editionMbid
             ? db.prepare(`
                 SELECT 1 FROM Tracks t
                 JOIN Recordings r ON r.id = t.recording_id
                 JOIN AlbumEditions release ON release.id = t.album_edition_id
                 WHERE release.mbid = ? AND r.credits IS NOT NULL
                 LIMIT 1
-            `).get(canonicalLink.releaseMbid)
+            `).get(canonicalLink.editionMbid)
             : null;
         if (hasCredits) {
             return AlbumRefreshLevel.DETAILS;
@@ -571,7 +571,7 @@ export class RefreshAlbumService {
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
         this.storeCanonicalAlbumSupplements({
             releaseGroupMbid: canonicalLink.releaseGroupMbid,
-            releaseMbid: canonicalLink.releaseMbid,
+            editionMbid: canonicalLink.editionMbid,
             album: albumData,
         });
         // Advance the offer freshness so adaptive refresh policy sees this scan.
@@ -742,7 +742,7 @@ export class RefreshAlbumService {
             albumId,
             tracks,
             null,
-            canonicalLink.releaseMbid,
+            canonicalLink.editionMbid,
         );
     }
 
@@ -931,7 +931,7 @@ export class RefreshAlbumService {
                         provider: providerId,
                         albumId: String(albumId),
                         releaseGroupMbid: canonicalRelease.release_group_mbid,
-                        releaseMbid: canonicalRelease.mbid,
+                        editionMbid: canonicalRelease.mbid,
                         counterparts,
                     });
                 }
@@ -1078,7 +1078,7 @@ export class RefreshAlbumService {
 
         this.storeCanonicalAlbumSupplements({
             releaseGroupMbid: matchedReleaseGroup?.mbid || null,
-            releaseMbid: matchedReleaseMbid,
+            editionMbid: matchedReleaseMbid,
             album,
         });
 

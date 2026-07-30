@@ -94,7 +94,7 @@ export interface CommandBodyCommon {
   providerId?: string;
   provider?: string;
   releaseGroupMbid?: string;
-  releaseMbid?: string | null;
+  editionMbid?: string | null;
   canonicalTrackId?: string | null;
   canonicalRecordingId?: string | null;
   canonicalTrackMbid?: string | null;
@@ -334,7 +334,7 @@ export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
   items?: Array<{ id: number; providerId: string }>;
   canonical?: {
     libraryId: number;
-    releaseId: number;
+    editionId: number;
     mappings: Array<{
       unmappedFileId: number;
       trackId: number;

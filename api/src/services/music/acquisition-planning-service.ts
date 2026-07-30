@@ -76,7 +76,7 @@ export class AcquisitionPlanningService {
   }
 
   compute(input: {
-    libraryReleaseId: number;
+    libraryEditionId: number;
     providerPriority: readonly string[];
     plannerVersion: number;
   }): number | null {
@@ -93,8 +93,8 @@ export class AcquisitionPlanningService {
       JOIN Libraries library ON library.id = library_release.library_id
       JOIN quality_profiles profile ON profile.id = library.quality_profile_id
       WHERE library_release.id = ?
-    `).get(input.libraryReleaseId) as PlanningContextRow | undefined;
-    if (!context) throw new Error(`Library release ${input.libraryReleaseId} was not found`);
+    `).get(input.libraryEditionId) as PlanningContextRow | undefined;
+    if (!context) throw new Error(`Library release ${input.libraryEditionId} was not found`);
 
     const orderedTrackIds = (this.db.prepare(`
       SELECT id
@@ -103,7 +103,7 @@ export class AcquisitionPlanningService {
       ORDER BY medium_position, position, id
     `).all(context.edition_id) as Array<{ id: number }>).map(({ id }) => id);
     if (orderedTrackIds.length === 0) {
-      this.repository.clear(input.libraryReleaseId);
+      this.repository.clear(input.libraryEditionId);
       return null;
     }
 
@@ -164,7 +164,7 @@ export class AcquisitionPlanningService {
       if (!source) {
         source = {
           provider: row.provider,
-          providerReleaseMatchId: row.provider_edition_match_id,
+          providerEditionMatchId: row.provider_edition_match_id,
           relation: row.relation,
           sourceTrackCount: row.source_track_count,
           albumDownloadSafe: row.relation === "exact",
@@ -176,7 +176,7 @@ export class AcquisitionPlanningService {
       if (!trackMatch) {
         trackMatch = {
           providerTrackMatchId: row.provider_track_match_id,
-          providerReleaseMemberId: row.provider_edition_member_id,
+          providerEditionMemberId: row.provider_edition_member_id,
           trackId: row.track_id,
           variants: [],
         };
@@ -222,11 +222,11 @@ export class AcquisitionPlanningService {
       providerPriority: input.providerPriority,
     });
     if (!plan) {
-      this.repository.clear(input.libraryReleaseId);
+      this.repository.clear(input.libraryEditionId);
       return null;
     }
     return this.repository.replaceCurrentPlan({
-      libraryReleaseId: input.libraryReleaseId,
+      libraryEditionId: input.libraryEditionId,
       plan,
       plannerVersion: input.plannerVersion,
       policyHash,

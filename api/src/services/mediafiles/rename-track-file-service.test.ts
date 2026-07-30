@@ -77,9 +77,9 @@ function seedTrackedFile() {
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "10",
+    providerEditionId: "10",
     providerTrackId: "100",
-    releaseMbid: "rel-one",
+    editionMbid: "rel-one",
     trackMbid: "trk-one",
   });
 
@@ -681,9 +681,9 @@ test("benchmark: 200-row rename preview statement shape", () => {
     run: (providerTrackId: string, trackMbid: string, _recordingMbid: string, title: string) => {
       seedAcceptedProviderTrackMatch(dbModule.db, {
         provider: "tidal",
-        providerReleaseId: "album-1",
+        providerEditionId: "album-1",
         providerTrackId,
-        releaseMbid: "release-mbid-1",
+        editionMbid: "release-mbid-1",
         trackMbid,
       });
       dbModule.db.prepare(`
@@ -964,12 +964,12 @@ test("RenameTrackFileService replicates album sidecars by ProviderItems release 
   // Both provider releases resolve to the SAME canonical release through accepted
   // release matches — that shared canonical identity, not the provider titles, is
   // what makes the cover replicable across the stereo and spatial copies.
-  for (const [providerReleaseId, providerTrackId] of [["10", "100"], ["20", "200"]]) {
+  for (const [providerEditionId, providerTrackId] of [["10", "100"], ["20", "200"]]) {
     seedAcceptedProviderTrackMatch(dbModule.db, {
       provider: "tidal",
-      providerReleaseId,
+      providerEditionId,
       providerTrackId,
-      releaseMbid: "release-mbid-1",
+      editionMbid: "release-mbid-1",
       trackMbid: "track-mbid-1",
     });
   }

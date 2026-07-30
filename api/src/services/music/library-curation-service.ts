@@ -212,7 +212,7 @@ export class LibraryCurationService {
       for (const row of scopeRows) {
         const scopes = candidateScopes.get(row.edition_id) || [];
         scopes.push({
-          releaseId: row.edition_id,
+          editionId: row.edition_id,
           libraryArtistId: row.library_artist_id,
           scopeType: row.scope_type,
           reason: `canonical_${row.scope_type}`,
@@ -273,7 +273,7 @@ export class LibraryCurationService {
       if (attainableRecordingIds.size === 0 && !protectedReleaseIds.has(release.edition_id)) continue;
       candidates.push({
         releaseGroupId: release.release_group_id,
-        releaseId: release.edition_id,
+        editionId: release.edition_id,
         attainableRecordingIds,
         official: !release.status || release.status.toLowerCase() === "official",
         medium: mediumKind(release.media),
@@ -286,10 +286,10 @@ export class LibraryCurationService {
 
     const result = curateLibraryReleases(candidates, Boolean(library.redundancy_enabled));
     const releaseGroupIdByReleaseId = new Map(
-      candidates.map((candidate) => [candidate.releaseId, candidate.releaseGroupId]),
+      candidates.map((candidate) => [candidate.editionId, candidate.releaseGroupId]),
     );
-    const selectedScopes = result.selectedReleaseIds.flatMap((releaseId) =>
-      candidateScopes.get(releaseId) || []);
+    const selectedScopes = result.selectedReleaseIds.flatMap((editionId) =>
+      candidateScopes.get(editionId) || []);
     this.repository.replaceAutomaticCuration({
       libraryId: input.libraryId,
       result,
@@ -308,7 +308,7 @@ export class LibraryCurationService {
     `).all(input.libraryId, ...result.selectedReleaseIds) as Array<{ id: number }>;
     for (const libraryRelease of selectedLibraryReleases) {
       this.acquisitionPlanning.compute({
-        libraryReleaseId: libraryRelease.id,
+        libraryEditionId: libraryRelease.id,
         providerPriority: input.providerPriority,
         plannerVersion: input.acquisitionPlannerVersion,
       });

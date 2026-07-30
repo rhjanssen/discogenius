@@ -71,9 +71,9 @@ function seedMusicBrainzMetadata() {
       // typed match authority (ProviderEditionMembers + accepted Provider*Matches).
       seedAcceptedProviderTrackMatch(dbModule.db, {
           provider: "tidal",
-          providerReleaseId: "200",
+          providerEditionId: "200",
           providerTrackId: "300",
-          releaseMbid: "album-mbid-200",
+          editionMbid: "album-mbid-200",
           trackMbid: "track-mbid-300",
       });
       dbModule.db.prepare(`
@@ -124,7 +124,7 @@ test("Jellyfin NFO files use canonical local metadata and include MusicBrainz ID
     await metadataFilesModule.saveArtistNfoFile("100", artistPath);
     await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", albumPath, {
         releaseGroupMbid: "release-group-mbid-200",
-        releaseMbid: "album-mbid-200",
+        editionMbid: "album-mbid-200",
         provider: "tidal",
         providerAlbumId: "200",
     });
@@ -212,16 +212,16 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
     // boundary (quality is no longer a ProviderItems scalar).
     const stereoIds = seedAcceptedProviderTrackMatch(dbModule.db, {
         provider: "tidal",
-        providerReleaseId: "stereo-release",
+        providerEditionId: "stereo-release",
         providerTrackId: "stereo-track",
-        releaseMbid: "album-mbid-stereo",
+        editionMbid: "album-mbid-stereo",
         trackMbid: "track-stereo",
     });
     const spatialIds = seedAcceptedProviderTrackMatch(dbModule.db, {
         provider: "tidal",
-        providerReleaseId: "spatial-release",
+        providerEditionId: "spatial-release",
         providerTrackId: "spatial-track",
-        releaseMbid: "album-mbid-spatial",
+        editionMbid: "album-mbid-spatial",
         trackMbid: "track-spatial",
     });
     dbModule.db.prepare(`
@@ -305,9 +305,9 @@ test("lyrics fall back across providers for the same canonical recording", async
     // so the lyric lookup can fall back across providers through typed matches.
     seedAcceptedProviderTrackMatch(dbModule.db, {
         provider: "apple-music",
-        providerReleaseId: "apple-release-200",
+        providerEditionId: "apple-release-200",
         providerTrackId: "apple-track-300",
-        releaseMbid: "album-mbid-200",
+        editionMbid: "album-mbid-200",
         trackMbid: "track-mbid-300",
     });
 
@@ -460,7 +460,7 @@ test("album NFO uses the selected canonical release and one exact provider relea
     const albumPath = path.join(tempDir, "composite-album.nfo");
     await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", albumPath, {
         releaseGroupMbid: "release-group-mbid-200",
-        releaseMbid: "album-mbid-200",
+        editionMbid: "album-mbid-200",
         librarySlot: "stereo",
         provider: "tidal",
         providerAlbumId: "200",
@@ -582,7 +582,7 @@ test("Bad Blood NFO cannot cross providers when Apple and TIDAL IDs collide", as
     const nfoPath = path.join(tempDir, "bad-blood.nfo");
     await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", nfoPath, {
         releaseGroupMbid: "release-group-mbid-200",
-        releaseMbid: "album-mbid-200",
+        editionMbid: "album-mbid-200",
         librarySlot: "stereo",
         provider: "apple-music",
         providerAlbumId: "1705033078",

@@ -51,7 +51,7 @@ function writeTestConfig(overrides?: {
 function seedLibraryReleaseSelection(options: {
   key: string;
   releaseGroupMbid: string;
-  releaseMbid: string;
+  editionMbid: string;
   monitored: boolean;
   spatial?: boolean;
   rootPath?: string;
@@ -108,7 +108,7 @@ function seedLibraryReleaseSelection(options: {
   `).get(options.releaseGroupMbid) as { id: number };
   const release = db.prepare(`
     SELECT id FROM AlbumEditions WHERE mbid = ?
-  `).get(options.releaseMbid) as { id: number };
+  `).get(options.editionMbid) as { id: number };
 
   db.prepare(`
     INSERT INTO LibraryAlbums (
@@ -210,9 +210,9 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "10",
+    providerEditionId: "10",
     providerTrackId: "100",
-    releaseMbid: "release-mbid-1",
+    editionMbid: "release-mbid-1",
     trackMbid: "track-mbid-1",
   });
 
@@ -559,15 +559,15 @@ dbModule.db.prepare(`
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "10",
+    providerEditionId: "10",
     providerTrackId: "100",
-    releaseMbid: "release-mbid-1",
+    editionMbid: "release-mbid-1",
     trackMbid: "track-mbid-1",
   });
   const libraryId = seedLibraryReleaseSelection({
     key: "identity-stereo",
     releaseGroupMbid: "rg-mbid-1",
-    releaseMbid: "release-mbid-1",
+    editionMbid: "release-mbid-1",
     monitored: true,
     rootPath: configModule.Config.getMusicPath(),
   });
@@ -678,9 +678,9 @@ dbModule.db.prepare(`
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "provider-album-1",
+    providerEditionId: "provider-album-1",
     providerTrackId: "provider-track-1",
-    releaseMbid: "selected-release-mbid",
+    editionMbid: "selected-release-mbid",
     trackMbid: "selected-track-mbid",
   });
 
@@ -971,9 +971,9 @@ dbModule.db.prepare(`
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "10",
+    providerEditionId: "10",
     providerTrackId: "100",
-    releaseMbid: "release-mbid-1",
+    editionMbid: "release-mbid-1",
     trackMbid: "track-mbid-1",
   });
 
@@ -982,14 +982,14 @@ dbModule.db.prepare(`
   const stereoLibraryId = seedLibraryReleaseSelection({
     key: "dual-stereo",
     releaseGroupMbid: "rg-mbid-1",
-    releaseMbid: "release-mbid-1",
+    editionMbid: "release-mbid-1",
     monitored: true,
     rootPath: stereoRoot,
   });
   const spatialLibraryId = seedLibraryReleaseSelection({
     key: "dual-spatial",
     releaseGroupMbid: "rg-mbid-1",
-    releaseMbid: "release-mbid-1",
+    editionMbid: "release-mbid-1",
     monitored: true,
     spatial: true,
     rootPath: spatialRoot,
@@ -1152,7 +1152,7 @@ dbModule.db.prepare(`
   const nonspatialLibraryId = seedLibraryReleaseSelection({
     key: "inline-main",
     releaseGroupMbid: "rg-mbid-pompeii",
-    releaseMbid: "release-mbid-pompeii",
+    editionMbid: "release-mbid-pompeii",
     monitored: true,
   });
 
@@ -1389,7 +1389,7 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
   seedLibraryReleaseSelection({
     key: "inline-gate",
     releaseGroupMbid: "rg-mbid-inline-gate",
-    releaseMbid: "release-mbid-inline-gate",
+    editionMbid: "release-mbid-inline-gate",
     monitored: false,
   });
   dbModule.db.prepare(`
@@ -1465,13 +1465,13 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
   const nonspatialLibraryId = seedLibraryReleaseSelection({
     key: "inline-nonspatial-pref",
     releaseGroupMbid: "rg-mbid-stereo-pref",
-    releaseMbid: "release-mbid-stereo-pref",
+    editionMbid: "release-mbid-stereo-pref",
     monitored: true,
   });
   const spatialLibraryId = seedLibraryReleaseSelection({
     key: "inline-spatial-pref",
     releaseGroupMbid: "rg-mbid-stereo-pref",
-    releaseMbid: "release-mbid-stereo-pref",
+    editionMbid: "release-mbid-stereo-pref",
     monitored: true,
     spatial: true,
   });

@@ -913,11 +913,11 @@ const AlbumPage = () => {
   const librarySelectionMutation = useMutation({
     mutationFn: async ({
       libraryId,
-      releaseId,
+      editionId,
     }: {
       libraryId: number;
-      releaseId: number;
-    }) => api.setAlbumLibraryRelease(albumId!, libraryId, releaseId),
+      editionId: number;
+    }) => api.setAlbumLibraryRelease(albumId!, libraryId, editionId),
     onSuccess: async (releaseAvailability) => {
       queryClient.setQueryData(
         albumReleaseAvailabilityQueryKey(albumId),
@@ -947,16 +947,16 @@ const AlbumPage = () => {
 
   const handleSelectReleaseForLibrary = useCallback((
     libraryId: number,
-    releaseId: number,
+    editionId: number,
   ) => {
     if (!albumId) {
       return;
     }
 
-    setPendingSelectionKey(`${libraryId}:${releaseId}`);
+    setPendingSelectionKey(`${libraryId}:${editionId}`);
     librarySelectionMutation.mutate({
       libraryId,
-      releaseId,
+      editionId,
     });
   }, [albumId, librarySelectionMutation]);
 

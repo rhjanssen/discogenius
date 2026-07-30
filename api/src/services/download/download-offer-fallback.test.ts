@@ -42,9 +42,9 @@ function resetRows() {
  */
 function seedAlbumOffer(fixture: {
   provider: string;
-  providerReleaseId: string;
+  providerEditionId: string;
   providerTrackId: string;
-  releaseMbid: string;
+  editionMbid: string;
   trackMbid: string;
   variants: Array<{
     qualityClass: "lossy" | "lossless" | "hires-lossless" | "spatial";
@@ -56,19 +56,19 @@ function seedAlbumOffer(fixture: {
 }) {
   const ids = seedAcceptedProviderTrackMatch(db, {
     provider: fixture.provider,
-    providerReleaseId: fixture.providerReleaseId,
+    providerEditionId: fixture.providerEditionId,
     providerTrackId: fixture.providerTrackId,
-    releaseMbid: fixture.releaseMbid,
+    editionMbid: fixture.editionMbid,
     trackMbid: fixture.trackMbid,
   });
   if (fixture.availability) {
     db.prepare("UPDATE ProviderItems SET availability = ? WHERE id IN (?, ?)")
-      .run(fixture.availability, ids.providerReleaseItemId, ids.providerTrackItemId);
+      .run(fixture.availability, ids.providerEditionItemId, ids.providerTrackItemId);
   }
   for (const variant of fixture.variants) {
     // Album-level offers read the release item's own variants; track-level
     // offers read the track item's. Seed both so one fixture serves either.
-    seedProviderAudioVariant(db, { ...variant, providerItemId: ids.providerReleaseItemId });
+    seedProviderAudioVariant(db, { ...variant, providerItemId: ids.providerEditionItemId });
     seedProviderAudioVariant(db, { ...variant, providerItemId: ids.providerTrackItemId });
   }
   return ids;
@@ -86,7 +86,7 @@ test("listRankedAlbumOffers prefers neutral fidelity, then provider order, and s
   try {
     seedCanonicalAlbum(db, {
       releaseGroupMbid: "rg-1",
-      releaseMbid: "rel-1",
+      editionMbid: "rel-1",
       artistMbid: "artist-1",
       artistName: "Bastille",
       title: "Wild Life",
@@ -95,24 +95,24 @@ test("listRankedAlbumOffers prefers neutral fidelity, then provider order, and s
     // TIDAL is hi-res, so it outranks the two lossless offers regardless of the
     // configured provider order; deezer then apple-music settle by that order.
     seedAlbumOffer({
-      provider: "tidal", providerReleaseId: "td-1", providerTrackId: "td-t1",
-      releaseMbid: "rel-1", trackMbid: "t-wild",
+      provider: "tidal", providerEditionId: "td-1", providerTrackId: "td-t1",
+      editionMbid: "rel-1", trackMbid: "t-wild",
       variants: [{ qualityClass: "hires-lossless", providerQualityLabel: "HIRES_LOSSLESS" }],
     });
     seedAlbumOffer({
-      provider: "deezer", providerReleaseId: "dz-1", providerTrackId: "dz-t1",
-      releaseMbid: "rel-1", trackMbid: "t-wild",
+      provider: "deezer", providerEditionId: "dz-1", providerTrackId: "dz-t1",
+      editionMbid: "rel-1", trackMbid: "t-wild",
       variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
     });
     seedAlbumOffer({
-      provider: "apple-music", providerReleaseId: "am-1", providerTrackId: "am-t1",
-      releaseMbid: "rel-1", trackMbid: "t-wild",
+      provider: "apple-music", providerEditionId: "am-1", providerTrackId: "am-t1",
+      editionMbid: "rel-1", trackMbid: "t-wild",
       variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
     });
     // Unavailable offers are dropped on availability, not on match state.
     seedAlbumOffer({
-      provider: "tidal", providerReleaseId: "td-bad", providerTrackId: "td-bad-t",
-      releaseMbid: "rel-1", trackMbid: "t-wild", availability: "unavailable",
+      provider: "tidal", providerEditionId: "td-bad", providerTrackId: "td-bad-t",
+      editionMbid: "rel-1", trackMbid: "t-wild", availability: "unavailable",
       variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
     });
 
@@ -139,17 +139,17 @@ test("listRankedTrackOffers keeps hi-res ahead of a preferred lossless provider"
 
   try {
     seedCanonicalAlbum(db, {
-      releaseGroupMbid: "rg-hires", releaseMbid: "rel-hires",
+      releaseGroupMbid: "rg-hires", editionMbid: "rel-hires",
       tracks: [{ trackMbid: "track-mbid", recordingMbid: "rec-mbid" }],
     });
     seedAlbumOffer({
-      provider: "tidal", providerReleaseId: "td-hires", providerTrackId: "t-1",
-      releaseMbid: "rel-hires", trackMbid: "track-mbid",
+      provider: "tidal", providerEditionId: "td-hires", providerTrackId: "t-1",
+      editionMbid: "rel-hires", trackMbid: "track-mbid",
       variants: [{ qualityClass: "hires-lossless", providerQualityLabel: "HIRES_LOSSLESS" }],
     });
     seedAlbumOffer({
-      provider: "apple-music", providerReleaseId: "am-hires", providerTrackId: "a-1",
-      releaseMbid: "rel-hires", trackMbid: "track-mbid",
+      provider: "apple-music", providerEditionId: "am-hires", providerTrackId: "a-1",
+      editionMbid: "rel-hires", trackMbid: "track-mbid",
       variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
     });
 
@@ -165,7 +165,7 @@ test("listRankedTrackOffers keeps hi-res ahead of a preferred lossless provider"
 
 test("a track whose parent release is unavailable is excluded, its available siblings are not", () => {
   seedCanonicalAlbum(db, {
-    releaseGroupMbid: "rg-parent-gate", releaseMbid: "rel-parent-gate",
+    releaseGroupMbid: "rg-parent-gate", editionMbid: "rel-parent-gate",
     tracks: [{ trackMbid: "track-parent-gate", recordingMbid: "recording-parent-gate" }],
   });
   // Schema 41 has no parentless provider track: membership on a provider release
@@ -173,20 +173,20 @@ test("a track whose parent release is unavailable is excluded, its available sib
   // offers" case is no longer expressible. The surviving rule is the parent
   // availability gate.
   seedAlbumOffer({
-    provider: "soundcloud", providerReleaseId: "rejected-playlist",
+    provider: "soundcloud", providerEditionId: "rejected-playlist",
     providerTrackId: "legacy-live-child",
-    releaseMbid: "rel-parent-gate", trackMbid: "track-parent-gate",
+    editionMbid: "rel-parent-gate", trackMbid: "track-parent-gate",
     availability: "unavailable",
     variants: [{ qualityClass: "lossy", providerQualityLabel: "LOW" }],
   });
   seedAlbumOffer({
-    provider: "tidal", providerReleaseId: "live-album", providerTrackId: "live-child",
-    releaseMbid: "rel-parent-gate", trackMbid: "track-parent-gate",
+    provider: "tidal", providerEditionId: "live-album", providerTrackId: "live-child",
+    editionMbid: "rel-parent-gate", trackMbid: "track-parent-gate",
     variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
   });
   seedAlbumOffer({
-    provider: "deezer", providerReleaseId: "deezer-album", providerTrackId: "sibling-track",
-    releaseMbid: "rel-parent-gate", trackMbid: "track-parent-gate",
+    provider: "deezer", providerEditionId: "deezer-album", providerTrackId: "sibling-track",
+    editionMbid: "rel-parent-gate", trackMbid: "track-parent-gate",
     variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
   });
 
@@ -203,22 +203,22 @@ test("a track whose parent release is unavailable is excluded, its available sib
 
 test("listRankedTrackOffers keeps stereo and spatial fallbacks in their requested slot", () => {
   seedCanonicalAlbum(db, {
-    releaseGroupMbid: "rg-slot", releaseMbid: "rel-slot",
+    releaseGroupMbid: "rg-slot", editionMbid: "rel-slot",
     tracks: [{ trackMbid: "track-slot", recordingMbid: "rec-slot" }],
   });
   seedAlbumOffer({
-    provider: "tidal", providerReleaseId: "td-slot", providerTrackId: "stereo-track",
-    releaseMbid: "rel-slot", trackMbid: "track-slot",
+    provider: "tidal", providerEditionId: "td-slot", providerTrackId: "stereo-track",
+    editionMbid: "rel-slot", trackMbid: "track-slot",
     variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
   });
   seedAlbumOffer({
-    provider: "tidal", providerReleaseId: "td-slot-atmos", providerTrackId: "spatial-track",
-    releaseMbid: "rel-slot", trackMbid: "track-slot",
+    provider: "tidal", providerEditionId: "td-slot-atmos", providerTrackId: "spatial-track",
+    editionMbid: "rel-slot", trackMbid: "track-slot",
     variants: [{ qualityClass: "spatial", providerQualityLabel: "DOLBY_ATMOS", spatialFormat: "DOLBY_ATMOS" }],
   });
   seedAlbumOffer({
-    provider: "youtube-music", providerReleaseId: "yt-slot", providerTrackId: "yt-track",
-    releaseMbid: "rel-slot", trackMbid: "track-slot",
+    provider: "youtube-music", providerEditionId: "yt-slot", providerTrackId: "yt-track",
+    editionMbid: "rel-slot", trackMbid: "track-slot",
     variants: [{ qualityClass: "lossy", providerQualityLabel: "YOUTUBE_LOSSY" }],
   });
 
@@ -254,29 +254,29 @@ test("listRankedTrackOffers derives spatial capability from the parent album and
 
   try {
     seedCanonicalAlbum(db, {
-      releaseGroupMbid: "rg-dual", releaseMbid: "rel-dual",
+      releaseGroupMbid: "rg-dual", editionMbid: "rel-dual",
       tracks: [{ trackMbid: "track-dual", recordingMbid: "rec-dual" }],
     });
     // Apple carries BOTH a stereo and an Atmos variant; TIDAL is Atmos-only.
     seedAlbumOffer({
-      provider: "apple-music", providerReleaseId: "apple-dual-album",
+      provider: "apple-music", providerEditionId: "apple-dual-album",
       providerTrackId: "apple-dual-track",
-      releaseMbid: "rel-dual", trackMbid: "track-dual",
+      editionMbid: "rel-dual", trackMbid: "track-dual",
       variants: [
         { qualityClass: "lossless", providerQualityLabel: "LOSSLESS", variantKey: "stereo" },
         { qualityClass: "spatial", providerQualityLabel: "DOLBY_ATMOS", spatialFormat: "DOLBY_ATMOS", variantKey: "atmos" },
       ],
     });
     seedAlbumOffer({
-      provider: "tidal", providerReleaseId: "tidal-atmos-album",
+      provider: "tidal", providerEditionId: "tidal-atmos-album",
       providerTrackId: "tidal-atmos-track",
-      releaseMbid: "rel-dual", trackMbid: "track-dual",
+      editionMbid: "rel-dual", trackMbid: "track-dual",
       variants: [{ qualityClass: "spatial", providerQualityLabel: "DOLBY_ATMOS", spatialFormat: "DOLBY_ATMOS" }],
     });
     seedAlbumOffer({
-      provider: "deezer", providerReleaseId: "deezer-stereo-album",
+      provider: "deezer", providerEditionId: "deezer-stereo-album",
       providerTrackId: "deezer-stereo-track",
-      releaseMbid: "rel-dual", trackMbid: "track-dual",
+      editionMbid: "rel-dual", trackMbid: "track-dual",
       variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
     });
 
@@ -318,26 +318,26 @@ test("listRankedAlbumOffers derives spatial variants and ranks Atmos ahead of 36
 
   try {
     seedCanonicalAlbum(db, {
-      releaseGroupMbid: "rg-spatial", releaseMbid: "rel-spatial",
+      releaseGroupMbid: "rg-spatial", editionMbid: "rel-spatial",
       artistMbid: "artist-spatial", artistName: "Bakermat", title: "The Spirit",
       tracks: [{ trackMbid: "track-spirit", recordingMbid: "rec-spirit" }],
     });
     seedAlbumOffer({
-      provider: "apple-music", providerReleaseId: "apple-dual", providerTrackId: "apple-dual-t",
-      releaseMbid: "rel-spatial", trackMbid: "track-spirit",
+      provider: "apple-music", providerEditionId: "apple-dual", providerTrackId: "apple-dual-t",
+      editionMbid: "rel-spatial", trackMbid: "track-spirit",
       variants: [
         { qualityClass: "lossless", providerQualityLabel: "LOSSLESS", variantKey: "stereo" },
         { qualityClass: "spatial", providerQualityLabel: "DOLBY_ATMOS", spatialFormat: "DOLBY_ATMOS", variantKey: "atmos" },
       ],
     });
     seedAlbumOffer({
-      provider: "tidal", providerReleaseId: "tidal-360", providerTrackId: "tidal-360-t",
-      releaseMbid: "rel-spatial", trackMbid: "track-spirit",
+      provider: "tidal", providerEditionId: "tidal-360", providerTrackId: "tidal-360-t",
+      editionMbid: "rel-spatial", trackMbid: "track-spirit",
       variants: [{ qualityClass: "spatial", providerQualityLabel: "SONY_360RA", spatialFormat: "SONY_360RA" }],
     });
     seedAlbumOffer({
-      provider: "deezer", providerReleaseId: "deezer-stereo", providerTrackId: "deezer-stereo-t",
-      releaseMbid: "rel-spatial", trackMbid: "track-spirit",
+      provider: "deezer", providerEditionId: "deezer-stereo", providerTrackId: "deezer-stereo-t",
+      editionMbid: "rel-spatial", trackMbid: "track-spirit",
       variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
     });
 

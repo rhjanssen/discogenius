@@ -17,7 +17,7 @@ export interface ProviderMatchDecision {
 }
 
 export interface ProviderTrackMatchInput extends ProviderMatchDecision {
-  providerReleaseMemberId: number;
+  providerEditionMemberId: number;
   trackId: number | null;
   recordingId: number;
   durationDeltaMs?: number | null;
@@ -213,8 +213,8 @@ export class ProviderMatchRepository {
   }
 
   replaceReleaseMatch(input: {
-    providerReleaseItemId: number;
-    releaseId: number;
+    providerEditionItemId: number;
+    editionId: number;
     decision: ProviderMatchDecision;
     targetTrackIds: ReadonlySet<number>;
     sourceMemberIds: ReadonlySet<number>;
@@ -226,7 +226,7 @@ export class ProviderMatchRepository {
     const acceptedAssignments = input.trackMatches
       .filter((match) => match.matchState === "accepted" && match.trackId != null)
       .map((match) => ({
-        sourceMemberId: match.providerReleaseMemberId,
+        sourceMemberId: match.providerEditionMemberId,
         targetTrackId: match.trackId!,
       }));
     const relation = determineProviderReleaseRelation({
@@ -290,8 +290,8 @@ export class ProviderMatchRepository {
           updated_at = CURRENT_TIMESTAMP
         RETURNING id
       `).get(
-        input.providerReleaseItemId,
-        input.releaseId,
+        input.providerEditionItemId,
+        input.editionId,
         relation.relation,
         input.decision.matchState,
         input.decision.decisionSource,
@@ -352,7 +352,7 @@ export class ProviderMatchRepository {
         if (
           match.decisionSource === "automatic"
           && (
-            manualSourceIds.has(match.providerReleaseMemberId)
+            manualSourceIds.has(match.providerEditionMemberId)
             || (match.trackId != null && manualTargetTrackIds.has(match.trackId))
             || manualRecordingIds.has(match.recordingId)
           )
@@ -360,7 +360,7 @@ export class ProviderMatchRepository {
           continue;
         }
         insertTrackMatch.run(
-          match.providerReleaseMemberId,
+          match.providerEditionMemberId,
           releaseMatch.id,
           match.trackId,
           match.recordingId,

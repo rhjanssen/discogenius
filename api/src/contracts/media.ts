@@ -132,9 +132,9 @@ export interface LibraryReleaseGroupAvailabilityContract {
     name: string;
     qualityProfile: string;
     selections: Array<{
-      libraryReleaseId: number;
-      releaseId: number;
-      releaseMbid: string;
+      libraryEditionId: number;
+      editionId: number;
+      editionMbid: string;
       selectionMode: "auto" | "manual";
       locked: boolean;
       plan: {
@@ -157,7 +157,7 @@ export interface LibraryReleaseGroupAvailabilityContract {
     mediumCount: number | null;
     trackCount: number | null;
     offers: Array<{
-      providerReleaseMatchId: number;
+      providerEditionMatchId: number;
       providerItemId: number;
       provider: string;
       providerId: string;
@@ -478,9 +478,9 @@ export function parseLibraryReleaseGroupAvailabilityContract(
             const selection = expectRecord(selectionItem, label);
             const plan = selection.plan == null ? null : expectRecord(selection.plan, `${label}.plan`);
             return {
-              libraryReleaseId: expectNumber(selection.libraryReleaseId, `${label}.libraryReleaseId`),
-              releaseId: expectNumber(selection.releaseId, `${label}.releaseId`),
-              releaseMbid: expectString(selection.releaseMbid, `${label}.releaseMbid`),
+              libraryEditionId: expectNumber(selection.libraryEditionId, `${label}.libraryEditionId`),
+              editionId: expectNumber(selection.editionId, `${label}.editionId`),
+              editionMbid: expectString(selection.editionMbid, `${label}.editionMbid`),
               selectionMode: expectString(selection.selectionMode, `${label}.selectionMode`) as "auto" | "manual",
               locked: expectBoolean(selection.locked, `${label}.locked`),
               plan: plan == null ? null : {
@@ -512,7 +512,7 @@ export function parseLibraryReleaseGroupAvailabilityContract(
           const offerLabel = `${label}.offers[${offerIndex}]`;
           const offer = expectRecord(offerItem, offerLabel);
           return {
-            providerReleaseMatchId: expectNumber(offer.providerReleaseMatchId, `${offerLabel}.providerReleaseMatchId`),
+            providerEditionMatchId: expectNumber(offer.providerEditionMatchId, `${offerLabel}.providerEditionMatchId`),
             providerItemId: expectNumber(offer.providerItemId, `${offerLabel}.providerItemId`),
             provider: expectString(offer.provider, `${offerLabel}.provider`),
             providerId: expectString(offer.providerId, `${offerLabel}.providerId`),

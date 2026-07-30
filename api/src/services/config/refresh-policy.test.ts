@@ -43,7 +43,7 @@ function seedArtist() {
     .run("artist-mbid", "Canonical Artist");
 }
 
-function seedAlbum(releaseGroupMbid: string, releaseMbid: string, date: string) {
+function seedAlbum(releaseGroupMbid: string, editionMbid: string, date: string) {
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -51,7 +51,7 @@ function seedAlbum(releaseGroupMbid: string, releaseMbid: string, date: string) 
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date)
     VALUES (?, ?, ?, ?, ?)
-  `).run(releaseMbid, releaseGroupMbid, "artist-mbid", "Canonical Album Release", date);
+  `).run(editionMbid, releaseGroupMbid, "artist-mbid", "Canonical Album Release", date);
 }
 
 function insertProviderItem(overrides: Partial<Record<string, unknown>>) {

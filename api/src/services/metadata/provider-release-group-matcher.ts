@@ -48,7 +48,7 @@ export type ProviderReleaseGroupMatch = {
     status: ProviderReleaseGroupMatchStatus;
     confidence: number;
     method: string;
-    releaseMbid?: string | null;
+    editionMbid?: string | null;
     releaseGroup?: MusicBrainzReleaseGroupForMatching;
     evidence: {
         providerTitle: string;
@@ -640,7 +640,7 @@ export function matchProviderAlbumToReleaseGroup(
             status: "unmatched",
             confidence: 0,
             method: "musicbrainz-release-group-title",
-            releaseMbid: null,
+            editionMbid: null,
             evidence: {
                 providerTitle: album.title,
                 providerVersion: album.version ?? null,
@@ -717,7 +717,7 @@ export function matchProviderAlbumToReleaseGroup(
         status,
         confidence: best.confidence,
         method,
-        releaseMbid: best.matchedReleaseMbid,
+        editionMbid: best.matchedReleaseMbid,
         releaseGroup: best.releaseGroup,
         evidence: {
             providerTitle: album.title,

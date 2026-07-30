@@ -7,13 +7,13 @@ import {
 
 function candidate(
   releaseGroupId: number,
-  releaseId: number,
+  editionId: number,
   recordings: number[],
   overrides: Partial<CurationReleaseCandidate> = {},
 ): CurationReleaseCandidate {
   return {
     releaseGroupId,
-    releaseId,
+    editionId,
     attainableRecordingIds: new Set(recordings),
     official: true,
     medium: "digital",

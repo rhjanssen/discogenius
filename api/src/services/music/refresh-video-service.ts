@@ -79,7 +79,7 @@ function persistNormalizedProviderVideo(input: {
     // several provider releases.
     const providerAlbumId = nullableText(input.video.album_id ?? input.video.albumId);
     if (providerAlbumId) {
-        const providerReleaseItemId = catalog.upsertItem({
+        const providerEditionItemId = catalog.upsertItem({
             provider: input.provider,
             entityType: "release",
             providerId: providerAlbumId,
@@ -89,19 +89,19 @@ function persistNormalizedProviderVideo(input: {
             SELECT id FROM ProviderEditionMembers
             WHERE provider_edition_item_id = ? AND member_item_id = ?
             LIMIT 1
-        `).get(providerReleaseItemId, providerVideoItemId) as { id: number } | undefined;
+        `).get(providerEditionItemId, providerVideoItemId) as { id: number } | undefined;
         if (!existingMember) {
             const nextPosition = Number((db.prepare(`
                 SELECT COALESCE(MAX(position), 0) + 1 AS next
                 FROM ProviderEditionMembers
                 WHERE provider_edition_item_id = ? AND medium_position = 1
-            `).get(providerReleaseItemId) as { next: number }).next);
+            `).get(providerEditionItemId) as { next: number }).next);
             db.prepare(`
                 INSERT OR IGNORE INTO ProviderEditionMembers (
                     provider_edition_item_id, member_item_id, medium_position, position,
                     contextual_title
                 ) VALUES (?, ?, 1, ?, ?)
-            `).run(providerReleaseItemId, providerVideoItemId, nextPosition, nullableText(input.video.title));
+            `).run(providerEditionItemId, providerVideoItemId, nextPosition, nullableText(input.video.title));
         }
     }
 
@@ -1897,7 +1897,7 @@ export class RefreshVideoService {
         provider: string;
         albumId: string;
         releaseGroupMbid?: string | null;
-        releaseMbid?: string | null;
+        editionMbid?: string | null;
         counterparts: Array<{
             providerId: string;
             albumId: string;
@@ -1955,7 +1955,7 @@ export class RefreshVideoService {
                 artist_mbid: artistMbid,
                 artist_name: counterpart.artistName ?? null,
                 release_group_mbid: input.releaseGroupMbid ?? null,
-                edition_mbid: input.releaseMbid ?? null,
+                edition_mbid: input.editionMbid ?? null,
                 quality: counterpart.quality ?? null,
                 _explicitAudioMatch: explicitAudioMatch,
             };

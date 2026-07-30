@@ -40,7 +40,7 @@ after(() => {
 function seedSoundCloudMixtapeCatalog() {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "375227dd-11c1-4fec-afc0-f4c37a6de604";
-  const releaseMbid = "b8f50118-3d3c-4826-a4b3-cf6228a97515";
+  const editionMbid = "b8f50118-3d3c-4826-a4b3-cf6228a97515";
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Bastille");
   dbModule.db.prepare(`
@@ -57,7 +57,7 @@ function seedSoundCloudMixtapeCatalog() {
     INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, 'Official', '2012-02-17', 1, 2)
-  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
+  `).run(editionMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
   const canonicalTracks = [
     { id: "sc-track-mbid-1", recording: "sc-recording-mbid-1", title: "Adagio for Strings", duration: 239 },
     { id: "sc-track-mbid-2", recording: "sc-recording-mbid-2", title: "Falling", duration: 225 },
@@ -73,14 +73,14 @@ function seedSoundCloudMixtapeCatalog() {
     `).run(
       track.id,
       track.recording,
-      releaseMbid,
+      editionMbid,
       track.title,
       track.duration * 1000,
       index + 1,
       String(index + 1),
     );
   });
-  return { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks };
+  return { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks };
 }
 
 test("bulk provider tracklists are accepted only when the album is complete", () => {
@@ -218,7 +218,7 @@ test("hybrid candidates retain discovery provenance without publishing direct av
       status: "candidate",
       confidence: 0.24,
       method: "musicbrainz-recording-isrc",
-      releaseMbid: "release-mbid-candidate",
+      editionMbid: "release-mbid-candidate",
       releaseGroup: {
         mbid: "release-group-mbid-candidate",
         title: "Canonical album",
@@ -251,7 +251,7 @@ test("hybrid candidates retain discovery provenance without publishing direct av
 });
 
 test("stored SoundCloud playlist coverage is revalidated and its permalink is backfilled", async () => {
-  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const providerAlbumId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -319,7 +319,7 @@ test("stored SoundCloud playlist coverage is revalidated and its permalink is ba
 });
 
 test("all durable SoundCloud playlist offers are revalidated after the first valid one", async () => {
-  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const validId = "110003151";
   const staleId = "220003151";
   const insertOffer = dbModule.db.prepare(`
@@ -337,7 +337,7 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
     "Other People's Heartache",
     artistMbid,
     releaseGroupMbid,
-    releaseMbid,
+    editionMbid,
     "2030-01-01 00:00:00",
   );
   insertOffer.run(
@@ -345,7 +345,7 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
     "Other People's Heartache",
     artistMbid,
     releaseGroupMbid,
-    releaseMbid,
+    editionMbid,
     "2020-01-01 00:00:00",
   );
 
@@ -401,7 +401,7 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
 });
 
 test("empty stored SoundCloud playlist is rejected and a covering replacement is selected", async () => {
-  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const staleId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -516,7 +516,7 @@ test("provider release-group matching passes spatial quality and release disambi
 
   const match = matches.get("291445075");
   assert.equal(match?.status, "verified");
-  assert.equal(match?.releaseMbid, "dolby-atmos-release");
+  assert.equal(match?.editionMbid, "dolby-atmos-release");
 });
 
 test("matched provider release discovery stores normalized facts without publishing a trackless typed edge", () => {
@@ -538,7 +538,7 @@ test("matched provider release discovery stores normalized facts without publish
         status: "verified",
         confidence: 1,
         method: "musicbrainz-release-upc",
-        releaseMbid: "release-mbid-1",
+        editionMbid: "release-mbid-1",
         releaseGroup: {
           mbid: "release-group-mbid-1",
           title: "Doom Days",
@@ -640,7 +640,7 @@ test("matched provider offers persist the best compatible MusicBrainz release ve
         status: "verified",
         confidence: 1,
         method: "musicbrainz-release-group-title-year-type-track-count",
-        releaseMbid: null,
+        editionMbid: null,
         releaseGroup: {
           mbid: releaseGroupMbid,
           title: "Give Me the Future",

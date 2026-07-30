@@ -162,7 +162,7 @@ export class AlbumCommandService {
                 canonicalTrackMbid: track.mbid || null,
                 canonicalRecordingMbid: track.recording_mbid || null,
                 releaseGroupMbid: track.release_group_mbid || undefined,
-                releaseMbid: track.edition_mbid || null,
+                editionMbid: track.edition_mbid || null,
                 title: displayTitle,
                 artist: artistName,
                 albumTitle: track.album_title || null,

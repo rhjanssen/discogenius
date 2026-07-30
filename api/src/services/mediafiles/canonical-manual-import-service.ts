@@ -9,7 +9,7 @@ export interface CanonicalManualImportMapping {
 
 export interface CanonicalManualImportRequest {
   libraryId: number;
-  releaseId: number;
+  editionId: number;
   mappings: readonly CanonicalManualImportMapping[];
 }
 
@@ -82,8 +82,8 @@ export class CanonicalManualImportService {
     if (!Number.isInteger(request.libraryId) || request.libraryId <= 0) {
       throw new Error("A valid libraryId is required");
     }
-    if (!Number.isInteger(request.releaseId) || request.releaseId <= 0) {
-      throw new Error("A valid releaseId is required");
+    if (!Number.isInteger(request.editionId) || request.editionId <= 0) {
+      throw new Error("A valid editionId is required");
     }
     if (request.mappings.length === 0) {
       throw new Error("At least one canonical file mapping is required");
@@ -96,8 +96,8 @@ export class CanonicalManualImportService {
 
     const release = this.db.prepare(`
       SELECT id, release_group_id FROM AlbumEditions WHERE id = ?
-    `).get(request.releaseId) as { id: number; release_group_id: number } | undefined;
-    if (!release) throw new Error(`Canonical release ${request.releaseId} does not exist`);
+    `).get(request.editionId) as { id: number; release_group_id: number } | undefined;
+    if (!release) throw new Error(`Canonical release ${request.editionId} does not exist`);
 
     const unmappedIds = new Set<number>();
     const trackIds = new Set<number>();
@@ -143,10 +143,10 @@ export class CanonicalManualImportService {
       if (!getUnmapped.get(mapping.unmappedFileId)) {
         throw new Error(`Unmapped file ${mapping.unmappedFileId} no longer exists`);
       }
-      const track = getTrack.get(mapping.trackId, request.releaseId) as CanonicalTrackRow | undefined;
+      const track = getTrack.get(mapping.trackId, request.editionId) as CanonicalTrackRow | undefined;
       if (!track) {
         throw new Error(
-          `Canonical track ${mapping.trackId} is not an audio track on release ${request.releaseId}`,
+          `Canonical track ${mapping.trackId} is not an audio track on release ${request.editionId}`,
         );
       }
       trackById.set(mapping.trackId, track);
@@ -216,7 +216,7 @@ export class CanonicalManualImportService {
       UPDATE TrackFiles
       SET
         library_id = @libraryId,
-        album_edition_id = @releaseId,
+        album_edition_id = @editionId,
         track_id = @trackId,
         recording_id = @recordingId,
         file_class = 'audio',
@@ -266,7 +266,7 @@ export class CanonicalManualImportService {
           reason = excluded.reason,
           selected_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
-      `).run(request.libraryId, request.releaseId);
+      `).run(request.libraryId, request.editionId);
       for (const mapping of request.mappings) {
         const track = trackById.get(mapping.trackId)!;
         const exactFileId = importedFileIdByUnmappedId.get(mapping.unmappedFileId);
@@ -297,7 +297,7 @@ export class CanonicalManualImportService {
         updateImportedFile.run({
           fileId: imported.id,
           libraryId: request.libraryId,
-          releaseId: request.releaseId,
+          editionId: request.editionId,
           trackId: track.id,
           recordingId: track.recording_id,
           provider: provenance?.provider ?? null,

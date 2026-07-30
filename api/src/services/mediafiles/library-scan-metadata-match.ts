@@ -38,15 +38,15 @@ export type CatalogTrackLink = {
     /** Tracks.recording_mbid (= canonical_recording_mbid). */
     recordingMbid: string;
     /** The release the resolved track belongs to (= canonical_release_mbid). */
-    releaseMbid: string;
+    editionMbid: string;
     /** Owning release group (= canonical_release_group_mbid), when known. */
     releaseGroupMbid: string | null;
 };
 
-function releaseGroupForRelease(releaseMbid: string): string | null {
+function releaseGroupForRelease(editionMbid: string): string | null {
     const row = db.prepare(
         "SELECT release_group_mbid FROM AlbumEditions WHERE mbid = ? LIMIT 1",
-    ).get(releaseMbid) as { release_group_mbid: string | null } | undefined;
+    ).get(editionMbid) as { release_group_mbid: string | null } | undefined;
     return row?.release_group_mbid ? String(row.release_group_mbid) : null;
 }
 
@@ -148,7 +148,7 @@ export function resolveCatalogTrackFromEmbeddedMbids(
                 return {
                     trackMbid: onSelected[0].mbid,
                     recordingMbid: onSelected[0].recording_mbid,
-                    releaseMbid: onSelected[0].edition_mbid,
+                    editionMbid: onSelected[0].edition_mbid,
                     releaseGroupMbid,
                 };
             }
@@ -158,7 +158,7 @@ export function resolveCatalogTrackFromEmbeddedMbids(
     return {
         trackMbid: anchor.mbid,
         recordingMbid: anchor.recording_mbid,
-        releaseMbid: anchor.edition_mbid,
+        editionMbid: anchor.edition_mbid,
         releaseGroupMbid,
     };
 }
@@ -583,7 +583,7 @@ export function matchAudioFileByMetadata(
     const preferredAlbumIds = folderAlbumIds(filePath, artistId, tags);
     const isrc = firstIsrc(tags.isrc);
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
-    const releaseMbid = tags.musicbrainzAlbumId?.trim() || null;
+    const editionMbid = tags.musicbrainzAlbumId?.trim() || null;
 
     // Authoritative catalog identity from the file's own embedded MB IDs. This is
     // independent of whether a provider offer still exists, so it both fills the
@@ -594,7 +594,7 @@ export function matchAudioFileByMetadata(
         ? {
             canonicalTrackMbid: catalogLink.trackMbid,
             canonicalRecordingMbid: catalogLink.recordingMbid,
-            canonicalReleaseMbid: catalogLink.releaseMbid,
+            canonicalReleaseMbid: catalogLink.editionMbid,
             canonicalReleaseGroupMbid: catalogLink.releaseGroupMbid,
         }
         : {};
@@ -603,7 +603,7 @@ export function matchAudioFileByMetadata(
     // Discogenius-tagged files), resolve directly against the catalog via
     // TrackFiles rather than walking ProviderItems. This makes rescans O(1) for
     // already-tagged content.
-    if (recordingMbid && releaseMbid) {
+    if (recordingMbid && editionMbid) {
         // TrackFiles has no album_id column (dropped in the schema-split
         // migration) — the release-group MBID is the album key here.
         const directHit = db.prepare(`
@@ -618,7 +618,7 @@ export function matchAudioFileByMetadata(
               AND (tf.library_slot IS NULL OR tf.library_slot = ?)
             ORDER BY tf.verified_at DESC, tf.id DESC
             LIMIT 1
-        `).get(artistId, recordingMbid, releaseMbid, preferredSlot) as {
+        `).get(artistId, recordingMbid, editionMbid, preferredSlot) as {
             provider: string; provider_id: string; album_id: string | null;
             quality: string | null; library_slot: string | null; file_path: string;
         } | undefined;

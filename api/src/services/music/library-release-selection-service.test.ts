@@ -101,16 +101,16 @@ test("manual library release selection persists a locked choice and normalized a
     const after = service.selectRelease({
       releaseGroupMbid: "group-doom-days",
       libraryId: 1,
-      releaseId: 1,
+      editionId: 1,
     });
     assert.deepEqual(after.libraries[0].selections.map((selection) => ({
-      releaseId: selection.releaseId,
+      editionId: selection.editionId,
       selectionMode: selection.selectionMode,
       locked: selection.locked,
       composition: selection.plan?.composition,
       downloadMode: selection.plan?.downloadMode,
     })), [{
-      releaseId: 1,
+      editionId: 1,
       selectionMode: "manual",
       locked: true,
       composition: "single_source",

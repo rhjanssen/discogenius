@@ -122,7 +122,7 @@ dbModule.db.prepare(`
             library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
         ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
     `).run(libraryId, releaseGroupId);
-    const libraryReleaseId = (dbModule.db.prepare(`
+    const libraryEditionId = (dbModule.db.prepare(`
         INSERT INTO LibraryEditions (
             library_id, edition_id, selection_mode, locked, reason, curation_version
         ) VALUES (?, 201, 'auto', 0, 'test', 1)
@@ -131,7 +131,7 @@ dbModule.db.prepare(`
     dbModule.db.prepare(`
         INSERT INTO LibraryEditionScopes (library_edition_id, library_artist_id, scope_type)
         VALUES (?, ?, 'primary')
-    `).run(libraryReleaseId, libraryArtistId);
+    `).run(libraryEditionId, libraryArtistId);
 
     const releaseItemId = (dbModule.db.prepare(`
         INSERT INTO ProviderItems (
@@ -190,7 +190,7 @@ dbModule.db.prepare(`
             planner_version, policy_hash, computed_at
         ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
         RETURNING id
-    `).get(libraryReleaseId) as { id: number }).id;
+    `).get(libraryEditionId) as { id: number }).id;
     const sourceId = (dbModule.db.prepare(`
         INSERT INTO AcquisitionPlanSources (
             plan_id, provider_edition_match_id, role, sort_order

@@ -131,7 +131,7 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
         JOIN ProviderItems artist ON artist.id = credit.artist_item_id
         WHERE credit.item_id = ?
         ORDER BY credit.ordinal
-      `).all(first.providerReleaseItemId),
+      `).all(first.providerEditionItemId),
       [
         {
           ordinal: 0,

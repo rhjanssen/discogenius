@@ -146,11 +146,11 @@ router.get("/:albumId/library-availability", (req, res) => {
 router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["releaseId"], "Library release selection");
+    rejectUnknownKeys(body, ["editionId"], "Library release selection");
     res.json(new LibraryReleaseSelectionService(db).selectRelease({
       releaseGroupMbid: req.params.albumId,
       libraryId: Number.parseInt(req.params.libraryId, 10),
-      releaseId: getRequiredInteger(body, "releaseId"),
+      editionId: getRequiredInteger(body, "editionId"),
     }));
   } catch (error: any) {
     if (isRequestValidationError(error)) {

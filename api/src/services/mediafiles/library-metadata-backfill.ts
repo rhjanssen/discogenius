@@ -483,7 +483,7 @@ class LibraryMetadataBackfillService {
                     try {
                         const updated = await saveAlbumNfoFile(canonicalReleaseGroupMbid, nfoPath, {
                             releaseGroupMbid: canonicalReleaseGroupMbid,
-                            releaseMbid: canonicalReleaseMbid,
+                            editionMbid: canonicalReleaseMbid,
                             librarySlot,
                             provider: album.provider,
                             providerAlbumId: album.id ? String(album.id) : null,

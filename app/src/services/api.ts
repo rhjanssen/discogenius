@@ -755,8 +755,8 @@ class ApiClient {
     return this.request(`/v1/album/${albumId}/monitor`, { method: 'POST' });
   }
 
-  async getProviderAlbumTracks(providerId: string, albumId: string, releaseMbid?: string) {
-    const query = releaseMbid ? `?releaseMbid=${encodeURIComponent(releaseMbid)}` : '';
+  async getProviderAlbumTracks(providerId: string, albumId: string, editionMbid?: string) {
+    const query = editionMbid ? `?editionMbid=${encodeURIComponent(editionMbid)}` : '';
     const tracks = await this.request(`/provider/${providerId}/albums/${albumId}/tracks${query}`) as any[];
     return Array.isArray(tracks)
       ? tracks.map((track) => ({
@@ -1169,12 +1169,12 @@ class ApiClient {
   async setAlbumLibraryRelease(
     albumId: string,
     libraryId: number,
-    releaseId: number,
+    editionId: number,
   ): Promise<LibraryReleaseGroupAvailabilityContract> {
     return this.request(`/v1/album/${albumId}/libraries/${libraryId}/selection`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ releaseId }),
+      body: JSON.stringify({ editionId }),
     }, parseLibraryReleaseGroupAvailabilityContract);
   }
 
@@ -1188,7 +1188,7 @@ class ApiClient {
 
   async canonicalManualImport(payload: {
     libraryId: number;
-    releaseId: number;
+    editionId: number;
     mappings: Array<{
       unmappedFileId: number;
       trackId: number;

@@ -56,7 +56,7 @@ function runMatcher(fixture: Fixture) {
         method: match?.method ?? null,
         confidence: match ? Number(match.confidence.toFixed(3)) : 0,
         releaseGroupMbid: match?.releaseGroup?.mbid ?? null,
-        releaseMbid: match?.releaseMbid ?? null,
+        editionMbid: match?.editionMbid ?? null,
       };
     })
     .sort((a, b) => a.providerId.localeCompare(b.providerId));

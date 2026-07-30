@@ -61,8 +61,8 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
   `).run();
   seedAcceptedProviderReleaseMatch(db, {
     provider: "youtube-music",
-    providerReleaseId: "MPREb_yt_cp",
-    releaseMbid: "release-yt-cp",
+    providerEditionId: "MPREb_yt_cp",
+    editionMbid: "release-yt-cp",
   });
 
   const providerTrack = {
@@ -144,8 +144,8 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
   `).run();
   seedAcceptedProviderReleaseMatch(db, {
     provider: "youtube-music",
-    providerReleaseId: "MPREb_yt_self",
-    releaseMbid: "release-yt-self",
+    providerEditionId: "MPREb_yt_self",
+    editionMbid: "release-yt-self",
   });
 
   const providerTrack = {

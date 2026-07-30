@@ -59,7 +59,7 @@ test("the boundary's TrackFiles update prepares against the active schema", () =
       UPDATE TrackFiles
       SET
         library_id = @libraryId,
-        album_edition_id = @releaseId,
+        album_edition_id = @editionId,
         track_id = @trackId,
         recording_id = @recordingId,
         file_class = 'audio',

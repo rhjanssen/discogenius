@@ -19,7 +19,7 @@ export class ProviderOfferReleaseLinkService {
             return null;
         }
 
-        const directReleaseMbid = String(match.releaseMbid || "").trim();
+        const directReleaseMbid = String(match.editionMbid || "").trim();
         if (directReleaseMbid) {
             return directReleaseMbid;
         }

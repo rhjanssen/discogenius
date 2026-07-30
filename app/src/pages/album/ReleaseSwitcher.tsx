@@ -103,7 +103,7 @@ export interface ReleaseSwitcherProps {
   availability: ReleaseGroupAvailability;
   currentReleaseMbid?: string | null;
   pendingSelectionKey?: string | null;
-  onSelect: (libraryId: number, releaseId: number) => void;
+  onSelect: (libraryId: number, editionId: number) => void;
 }
 
 export function ReleaseSwitcher({
@@ -117,7 +117,7 @@ export function ReleaseSwitcher({
 
   const selectedReleaseIds = new Set(
     availability.libraries.flatMap((library) =>
-      library.selections.map((selection) => selection.releaseId)),
+      library.selections.map((selection) => selection.editionId)),
   );
   const releases = [...availability.releases].sort((left, right) =>
     Number(selectedReleaseIds.has(right.id)) - Number(selectedReleaseIds.has(left.id))
@@ -167,7 +167,7 @@ export function ReleaseSwitcher({
 
             <div className={styles.libraries}>
               {availability.libraries.map((library) => {
-                const selected = library.selections.find((selection) => selection.releaseId === release.id);
+                const selected = library.selections.find((selection) => selection.editionId === release.id);
                 const pending = pendingSelectionKey === `${library.id}:${release.id}`;
                 return (
                   <div key={library.id} className={styles.libraryRow}>

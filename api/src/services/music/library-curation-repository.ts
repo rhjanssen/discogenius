@@ -10,7 +10,7 @@ export interface LibraryBootstrapPaths {
 }
 
 export interface LibraryReleaseScopeInput {
-  releaseId: number;
+  editionId: number;
   libraryArtistId: number;
   scopeType: LibraryScopeType;
   reason?: string | null;
@@ -150,9 +150,9 @@ export class LibraryCurationRepository {
     this.db.transaction(() => {
       const selectedReleaseIds = new Set(input.result.selectedReleaseIds);
       const selectedReleaseGroupIds = new Set<number>();
-      for (const releaseId of selectedReleaseIds) {
-        const releaseGroupId = input.releaseGroupIdByReleaseId.get(releaseId);
-        if (releaseGroupId == null) throw new Error(`Missing release group for release ${releaseId}`);
+      for (const editionId of selectedReleaseIds) {
+        const releaseGroupId = input.releaseGroupIdByReleaseId.get(editionId);
+        if (releaseGroupId == null) throw new Error(`Missing release group for release ${editionId}`);
         selectedReleaseGroupIds.add(releaseGroupId);
       }
 
@@ -201,13 +201,13 @@ export class LibraryCurationRepository {
         RETURNING id
       `);
       const libraryReleaseIdByReleaseId = new Map<number, number>();
-      for (const releaseId of [...selectedReleaseIds].sort((a, b) => a - b)) {
+      for (const editionId of [...selectedReleaseIds].sort((a, b) => a - b)) {
         const row = insertRelease.get(
           input.libraryId,
-          releaseId,
+          editionId,
           input.curationVersion,
         ) as { id: number };
-        libraryReleaseIdByReleaseId.set(releaseId, row.id);
+        libraryReleaseIdByReleaseId.set(editionId, row.id);
       }
 
       const insertScope = this.db.prepare(`
@@ -216,13 +216,13 @@ export class LibraryCurationRepository {
         ) VALUES (?, ?, ?, ?)
       `);
       for (const scope of input.scopes) {
-        const libraryReleaseId = libraryReleaseIdByReleaseId.get(scope.releaseId)
+        const libraryEditionId = libraryReleaseIdByReleaseId.get(scope.editionId)
           ?? (this.db.prepare(`
             SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = ?
-          `).get(input.libraryId, scope.releaseId) as { id: number } | undefined)?.id;
-        if (libraryReleaseId == null) continue;
+          `).get(input.libraryId, scope.editionId) as { id: number } | undefined)?.id;
+        if (libraryEditionId == null) continue;
         insertScope.run(
-          libraryReleaseId,
+          libraryEditionId,
           scope.libraryArtistId,
           scope.scopeType,
           scope.reason ?? null,

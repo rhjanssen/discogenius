@@ -76,7 +76,7 @@ function hydrateCanonicalForeignKeys(releaseGroupMbid: string): void {
 
 function selectLibraryRelease(
   releaseGroupMbid: string,
-  releaseMbid: string,
+  editionMbid: string,
   libraryClass: "stereo" | "spatial" = "stereo",
 ): number {
   const { db } = dbModule;
@@ -119,7 +119,7 @@ function selectLibraryRelease(
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
     .get(releaseGroupMbid) as { id: number };
   const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
-    .get(releaseMbid) as { id: number };
+    .get(editionMbid) as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
@@ -135,7 +135,7 @@ function selectLibraryRelease(
 }
 
 function insertAcceptedReleaseMatch(
-  releaseMbid: string,
+  editionMbid: string,
   provider: string,
   providerId: string,
   title: string,
@@ -149,7 +149,7 @@ function insertAcceptedReleaseMatch(
     RETURNING id
   `).get(provider, providerId, title, providerUrl) as { id: number };
   const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
-    .get(releaseMbid) as { id: number };
+    .get(editionMbid) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
       provider_edition_item_id, edition_id, relation, match_state,
@@ -459,7 +459,7 @@ test("single release group does not inherit album files by shared recording MBID
 test("exact acquisition-plan track wins without positional or ISRC rematching", async () => {
   const artistMbid = "artist-mbid-amy-ost";
   const releaseGroupMbid = "rg-amy-ost";
-  const releaseMbid = "release-amy-ost";
+  const editionMbid = "release-amy-ost";
   const trackMbid = "track-tears-ost";
   const recordingMbid = "recording-tears";
   const isrc = "GBUM70603494";
@@ -476,7 +476,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Amy", "Official", "2015-10-30", 1, 1);
+  `).run(editionMbid, releaseGroupMbid, artistMbid, "Amy", "Official", "2015-10-30", 1, 1);
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, length_ms, isrcs)
     VALUES (?, ?, ?, ?)
@@ -484,11 +484,11 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
   dbModule.db.prepare(`
     INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(trackMbid, releaseMbid, recordingMbid, 1, 10, "10", "Tears Dry on Their Own", 187000);
+  `).run(trackMbid, editionMbid, recordingMbid, 1, 10, "10", "Tears Dry on Their Own", 187000);
   hydrateCanonicalForeignKeys(releaseGroupMbid);
-  const libraryReleaseId = selectLibraryRelease(releaseGroupMbid, releaseMbid);
+  const libraryEditionId = selectLibraryRelease(releaseGroupMbid, editionMbid);
   const releaseMatch = insertAcceptedReleaseMatch(
-    releaseMbid,
+    editionMbid,
     "apple-music",
     "1422677780",
     "Amy",
@@ -546,7 +546,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
       planner_version, policy_hash, computed_at
     ) VALUES (?, 'apple-music', 'single_source', 'tracks', 'current', 1, 'test', CURRENT_TIMESTAMP)
     RETURNING id
-  `).get(libraryReleaseId) as { id: number };
+  `).get(libraryEditionId) as { id: number };
   const source = dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
       plan_id, provider_edition_match_id, role, sort_order
@@ -571,7 +571,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     providerUrl: "https://music.apple.com/album/1422677780",
     quality: "HIRES_LOSSLESS",
     matchStatus: "verified",
-    selectedReleaseMbid: releaseMbid,
+    selectedReleaseMbid: editionMbid,
     providerTrackId: "1422677787",
     providerTrackUrl: "https://music.apple.com/song/1422677787",
   }]);

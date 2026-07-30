@@ -101,7 +101,7 @@ test("canonical manual import pins Library, Release, Track and Recording", async
 
     const summary = await service.import({
       libraryId: 1,
-      releaseId: 10,
+      editionId: 10,
       mappings: [{ unmappedFileId: 1, trackId: 1000 }],
     });
 
@@ -156,7 +156,7 @@ test("changing release rejects stale track assignments before importing", async 
     await assert.rejects(
       service.import({
         libraryId: 1,
-        releaseId: 20,
+        editionId: 20,
         mappings: [{ unmappedFileId: 1, trackId: 1000 }],
       }),
       /not an audio track on release 20/,
@@ -192,7 +192,7 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
 
     const summary = await service.import({
       libraryId: 1,
-      releaseId: 10,
+      editionId: 10,
       mappings: [{ unmappedFileId: 1, trackId: 1000 }],
     });
 
@@ -242,7 +242,7 @@ test("optional provider provenance attaches without becoming canonical identity"
 
     await service.import({
       libraryId: 1,
-      releaseId: 10,
+      editionId: 10,
       mappings: [{ unmappedFileId: 1, trackId: 1000, providerItemId: providerItem.id }],
     });
 
@@ -281,12 +281,12 @@ test("a recording shared by two selected releases keeps the release-track the us
         library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
       ) VALUES (1, 1, 1, 'auto', 0, 'test', 1)
     `).run();
-    for (const releaseId of [10, 20]) {
+    for (const editionId of [10, 20]) {
       db.prepare(`
         INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, locked, reason, curation_version
         ) VALUES (1, ?, 'auto', 0, 'test', 1)
-      `).run(releaseId);
+      `).run(editionId);
     }
 
     const service = new CanonicalManualImportService(db, async () => {
@@ -307,7 +307,7 @@ test("a recording shared by two selected releases keeps the release-track the us
     // The user explicitly imports onto Release B's occurrence of the recording.
     await service.import({
       libraryId: 1,
-      releaseId: 20,
+      editionId: 20,
       mappings: [{ unmappedFileId: 1, trackId: 2100 }],
     });
 
@@ -367,7 +367,7 @@ test("only the newly imported row is updated when the same track exists in anoth
 
     await service.import({
       libraryId: 1,
-      releaseId: 10,
+      editionId: 10,
       mappings: [{ unmappedFileId: 1, trackId: 1000 }],
     });
 
@@ -419,7 +419,7 @@ test("manual import monitors and custom-selects without silently locking", async
 
     await service.import({
       libraryId: 1,
-      releaseId: 10,
+      editionId: 10,
       mappings: [{ unmappedFileId: 1, trackId: 1000 }],
     });
 
@@ -443,7 +443,7 @@ test("manual import monitors and custom-selects without silently locking", async
 
     await service.import({
       libraryId: 1,
-      releaseId: 10,
+      editionId: 10,
       mappings: [{ unmappedFileId: 2, trackId: 1000 }],
     });
 
@@ -477,7 +477,7 @@ test("a reported row outside the target library root fails closed", async () => 
     await assert.rejects(
       () => service.import({
         libraryId: 1,
-        releaseId: 10,
+        editionId: 10,
         mappings: [{ unmappedFileId: 1, trackId: 1000 }],
       }),
       /outside library root/,
@@ -496,7 +496,7 @@ test("a reported row that does not exist fails closed", async () => {
     await assert.rejects(
       () => service.import({
         libraryId: 1,
-        releaseId: 10,
+        editionId: 10,
         mappings: [{ unmappedFileId: 1, trackId: 1000 }],
       }),
       /no such row exists/,
@@ -518,7 +518,7 @@ test("an import claimed without operation identity fails closed", async () => {
     await assert.rejects(
       () => service.import({
         libraryId: 1,
-        releaseId: 10,
+        editionId: 10,
         mappings: [{ unmappedFileId: 1, trackId: 1000 }],
       }),
       /reported 0 imported file id\(s\) but claims 1/,
@@ -539,7 +539,7 @@ test("an operation identity for an unsubmitted mapping fails closed", async () =
     await assert.rejects(
       () => service.import({
         libraryId: 1,
-        releaseId: 10,
+        editionId: 10,
         mappings: [{ unmappedFileId: 1, trackId: 1000 }],
       }),
       /reported unmapped file 99, which was not part of this import request/,

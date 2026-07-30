@@ -147,14 +147,14 @@ function insertTestProviderCandidate(
     artist_metadata_id: number | null;
     artist_mbid: string;
   };
-  const releaseMbid = `${options.releaseGroupMbid}-release`;
+  const editionMbid = `${options.releaseGroupMbid}-release`;
   db.prepare(`
     INSERT OR IGNORE INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title
     ) VALUES (?, ?, ?, ?, ?, ?)
   `).run(
-    releaseMbid,
+    editionMbid,
     releaseGroup.id,
     options.releaseGroupMbid,
     releaseGroup.artist_metadata_id,
@@ -163,7 +163,7 @@ function insertTestProviderCandidate(
   );
   const release = db.prepare(`
     SELECT id FROM AlbumEditions WHERE mbid = ?
-  `).get(releaseMbid) as { id: number };
+  `).get(editionMbid) as { id: number };
   db.prepare(`
     INSERT INTO ProviderItems (
       entity_type, provider, provider_id, title, version, artwork_url

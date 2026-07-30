@@ -22,14 +22,14 @@ export interface AcquisitionAudioVariant {
 
 export interface AcquisitionTrackMatch {
   providerTrackMatchId: number;
-  providerReleaseMemberId: number;
+  providerEditionMemberId: number;
   trackId: number;
   variants: readonly AcquisitionAudioVariant[];
 }
 
 export interface AcquisitionSourceCandidate {
   provider: string;
-  providerReleaseMatchId: number;
+  providerEditionMatchId: number;
   relation: ProviderReleaseRelation;
   sourceTrackCount: number;
   albumDownloadSafe: boolean;
@@ -38,9 +38,9 @@ export interface AcquisitionSourceCandidate {
 
 export interface OptimizedAcquisitionTrack {
   trackId: number;
-  providerReleaseMatchId: number;
+  providerEditionMatchId: number;
   providerTrackMatchId: number;
-  providerReleaseMemberId: number;
+  providerEditionMemberId: number;
   providerAudioVariantId: number;
   sourceQuality: NormalizedAudioQuality;
 }
@@ -107,7 +107,7 @@ function compareOptions(
   return Number(right.cutoffSatisfied) - Number(left.cutoffSatisfied)
     || effectiveQualityScore(profile, right) - effectiveQualityScore(profile, left)
     || right.relationRank - left.relationRank
-    || left.providerReleaseMatchId - right.providerReleaseMatchId
+    || left.providerEditionMatchId - right.providerEditionMatchId
     || left.providerTrackMatchId - right.providerTrackMatchId
     || left.providerAudioVariantId - right.providerAudioVariantId;
 }
@@ -117,10 +117,10 @@ function planFragmentation(
   tracks: readonly OptimizedAcquisitionTrack[],
 ): number {
   if (tracks.length <= 1) return 0;
-  const sourceByTrack = new Map(tracks.map((track) => [track.trackId, track.providerReleaseMatchId]));
+  const sourceByTrack = new Map(tracks.map((track) => [track.trackId, track.providerEditionMatchId]));
   const counts = new Map<number, number>();
   for (const track of tracks) {
-    counts.set(track.providerReleaseMatchId, (counts.get(track.providerReleaseMatchId) || 0) + 1);
+    counts.set(track.providerEditionMatchId, (counts.get(track.providerEditionMatchId) || 0) + 1);
   }
   const principal = [...counts.entries()]
     .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0];
@@ -165,7 +165,7 @@ function buildProviderPlan(
   sources: readonly AcquisitionSourceCandidate[],
 ): CandidatePlan | null {
   if (sources.length === 0) return null;
-  const sourceById = new Map(sources.map((source) => [source.providerReleaseMatchId, source]));
+  const sourceById = new Map(sources.map((source) => [source.providerEditionMatchId, source]));
   const optionsByTrack = new Map<number, TrackOption[]>();
   for (const source of sources) {
     for (const match of source.trackMatches) {
@@ -173,9 +173,9 @@ function buildProviderPlan(
         if (!variant.available || !profile.allowedQualities.has(variant.quality)) continue;
         const option: TrackOption = {
           trackId: match.trackId,
-          providerReleaseMatchId: source.providerReleaseMatchId,
+          providerEditionMatchId: source.providerEditionMatchId,
           providerTrackMatchId: match.providerTrackMatchId,
-          providerReleaseMemberId: match.providerReleaseMemberId,
+          providerEditionMemberId: match.providerEditionMemberId,
           providerAudioVariantId: variant.id,
           sourceQuality: variant.quality,
           qualityRank: qualityRank(profile, variant.quality),
@@ -213,15 +213,15 @@ function buildProviderPlan(
     for (const trackId of orderedTrackIds) {
       const option = [...(optionsByTrack.get(trackId) || [])]
         .filter((candidate) =>
-          allowedSources.has(candidate.providerReleaseMatchId)
-          && !usedMembers.has(candidate.providerReleaseMemberId))
+          allowedSources.has(candidate.providerEditionMatchId)
+          && !usedMembers.has(candidate.providerEditionMemberId))
         .sort((left, right) => compareOptions(profile, left, right))[0];
       if (!option) continue;
-      usedMembers.add(option.providerReleaseMemberId);
+      usedMembers.add(option.providerEditionMemberId);
       tracks.push(option);
     }
     if (tracks.length === 0) continue;
-    const usedSourceIds = [...new Set(tracks.map((track) => track.providerReleaseMatchId))]
+    const usedSourceIds = [...new Set(tracks.map((track) => track.providerEditionMatchId))]
       .sort((a, b) => a - b);
     const singleSource = usedSourceIds.length === 1
       ? sourceById.get(usedSourceIds[0])

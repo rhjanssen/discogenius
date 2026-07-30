@@ -60,9 +60,9 @@ function seedImportedTrack(fileName = "track-one.flac") {
     ) VALUES ('tidal', 'track', '100', 'Track One')`).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
-    providerReleaseId: "10",
+    providerEditionId: "10",
     providerTrackId: "100",
-    releaseMbid: "rel-one",
+    editionMbid: "rel-one",
     trackMbid: "trk-one",
   });
 

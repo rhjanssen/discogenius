@@ -38,7 +38,7 @@ function queueUnmappedImport(items: Array<{ id: number; providerId: string }>): 
 
 function queueCanonicalUnmappedImport(canonical: {
     libraryId: number;
-    releaseId: number;
+    editionId: number;
     mappings: Array<{ unmappedFileId: number; trackId: number; providerItemId?: number | null }>;
 }): Promise<number> {
     const sortedIds = canonical.mappings
@@ -52,7 +52,7 @@ function queueCanonicalUnmappedImport(canonical: {
                 title: "Importing canonical files",
                 description: `Importing ${canonical.mappings.length} mapped file${canonical.mappings.length === 1 ? "" : "s"}`,
             },
-            `canonical-unmapped-import:${canonical.libraryId}:${canonical.releaseId}:${sortedIds.join(",")}`,
+            `canonical-unmapped-import:${canonical.libraryId}:${canonical.editionId}:${sortedIds.join(",")}`,
         ),
     );
 }
@@ -116,7 +116,7 @@ router.post("/canonical-import", async (req, res) => {
         });
         const canonical = {
             libraryId: getRequiredInteger(body, "libraryId"),
-            releaseId: getRequiredInteger(body, "releaseId"),
+            editionId: getRequiredInteger(body, "editionId"),
             mappings,
         };
         const commandId = await queueCanonicalUnmappedImport(canonical);

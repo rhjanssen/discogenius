@@ -63,12 +63,12 @@ export class ServarrMetadataCatalogProvider implements CatalogProvider {
    * is supported only when the release MBID is already known to belong to a
    * group the caller fetched; otherwise returns null.
    */
-  async getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null> {
+  async getReleaseWithTracks(editionMbid: string): Promise<LidarrRelease | null> {
     // Servarr Metadata Server has no `/release/{mbid}` endpoint; release detail is always nested
     // under `/album/{releaseGroupMbid}`. Without the group MBID we cannot
     // resolve it, so this returns null in the Servarr Metadata Server implementation. MB-local
     // overrides this with a direct release lookup.
-    void releaseMbid;
+    void editionMbid;
     return null;
   }
 
@@ -80,10 +80,10 @@ export class ServarrMetadataCatalogProvider implements CatalogProvider {
    */
   async getReleaseWithTracksInGroup(
     releaseGroupMbid: string,
-    releaseMbid: string,
+    editionMbid: string,
   ): Promise<LidarrRelease | null> {
     const detail = await this.service.getAlbumInfo(releaseGroupMbid);
-    return findReleaseInGroup(detail, releaseMbid);
+    return findReleaseInGroup(detail, editionMbid);
   }
 
   async search(query: string, options: CatalogSearchOptions = {}): Promise<CatalogSearchResults> {
