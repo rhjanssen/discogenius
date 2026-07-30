@@ -48,9 +48,9 @@ test("listRankedAlbumOffers prefers neutral fidelity, then provider order, and s
     db.prepare(`
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, availability
-    ) VALUES ('deezer', 'release', 'dz-1', NULL),
-    ('tidal', 'release', 'td-1', NULL),
-    ('apple-music', 'release', 'am-1', NULL),
+    ) VALUES ('deezer', 'release', 'dz-1', 'unknown'),
+    ('tidal', 'release', 'td-1', 'unknown'),
+    ('apple-music', 'release', 'am-1', 'unknown'),
     ('tidal', 'release', 'td-bad', 'unavailable')
     `).run();
 
@@ -79,8 +79,8 @@ test("listRankedTrackOffers keeps hi-res ahead of a preferred lossless provider"
     db.prepare(`
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, availability
-    ) VALUES ('tidal', 'track', 't-1', NULL),
-    ('apple-music', 'track', 'a-1', NULL)
+    ) VALUES ('tidal', 'track', 't-1', 'unknown'),
+    ('apple-music', 'track', 'a-1', 'unknown')
     `).run();
 
     const ranked = listRankedTrackOffers({ trackMbid: "track-mbid", recordingMbid: "rec-mbid" });
@@ -125,9 +125,9 @@ test("listRankedTrackOffers keeps stereo and spatial fallbacks in their requeste
   db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, availability
-    ) VALUES ('tidal', 'track', 'stereo-track', NULL),
-    ('tidal', 'track', 'spatial-track', NULL),
-    ('youtube-music', 'track', 'yt-track', NULL)
+    ) VALUES ('tidal', 'track', 'stereo-track', 'unknown'),
+    ('tidal', 'track', 'spatial-track', 'unknown'),
+    ('youtube-music', 'track', 'yt-track', 'unknown')
   `).run();
 
   const stereo = listRankedTrackOffers({
@@ -171,9 +171,9 @@ test("listRankedTrackOffers derives spatial capability from the parent album and
     db.prepare(`
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, availability
-    ) VALUES ('apple-music', 'track', 'apple-dual-track', NULL),
-    ('tidal', 'track', 'tidal-atmos-track', NULL),
-    ('deezer', 'track', 'deezer-stereo-track', NULL)
+    ) VALUES ('apple-music', 'track', 'apple-dual-track', 'unknown'),
+    ('tidal', 'track', 'tidal-atmos-track', 'unknown'),
+    ('deezer', 'track', 'deezer-stereo-track', 'unknown')
     `).run();
 
     const spatial = listRankedTrackOffers({
@@ -223,9 +223,9 @@ test("listRankedAlbumOffers derives spatial variants and ranks Atmos ahead of 36
     db.prepare(`
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, availability
-    ) VALUES ('apple-music', 'release', 'apple-dual', NULL),
-    ('tidal', 'release', 'tidal-360', NULL),
-    ('deezer', 'release', 'deezer-stereo', NULL)
+    ) VALUES ('apple-music', 'release', 'apple-dual', 'unknown'),
+    ('tidal', 'release', 'tidal-360', 'unknown'),
+    ('deezer', 'release', 'deezer-stereo', 'unknown')
     `).run();
 
     const spatial = listRankedAlbumOffers("rg-spatial", "spatial");
@@ -263,9 +263,9 @@ test("listRankedVideoOffers prefers resolution, then codec, then provider priori
     db.prepare(`
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, availability
-    ) VALUES ('tidal', 'video', 'tv-720', NULL),
-    ('youtube-music', 'video', 'yt-1080', NULL),
-    ('tidal', 'video', 'tv-1080', NULL)
+    ) VALUES ('tidal', 'video', 'tv-720', 'unknown'),
+    ('youtube-music', 'video', 'yt-1080', 'unknown'),
+    ('tidal', 'video', 'tv-1080', 'unknown')
     `).run();
 
     const ranked = listRankedVideoOffers("rec-v");

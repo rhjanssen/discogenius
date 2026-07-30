@@ -360,3 +360,107 @@ export function seedAcceptedProviderTrackMatch(
     recordingId: track.recording_id,
   };
 }
+
+/**
+ * A minimal canonical release group + release + tracks, so a provider fixture has
+ * something real to match against. Idempotent, so tests can call it per case.
+ */
+export function seedCanonicalAlbum(
+  db: Database.Database,
+  fixture: {
+    releaseGroupMbid: string;
+    releaseMbid: string;
+    artistMbid?: string;
+    artistName?: string;
+    title?: string;
+    tracks?: Array<{ trackMbid: string; recordingMbid: string; title?: string; position?: number }>;
+  },
+): { releaseGroupId: number; releaseId: number } {
+  const artistMbid = fixture.artistMbid ?? "fixture-artist";
+  const title = fixture.title ?? fixture.releaseGroupMbid;
+  db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, fixture.artistName ?? "Fixture Artist");
+  db.prepare(`
+    INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, 'album')
+  `).run(fixture.releaseGroupMbid, artistMbid, title);
+  db.prepare(`
+    INSERT OR IGNORE INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, track_count, media_count
+    ) VALUES (?, ?, ?, ?, ?, 1)
+  `).run(
+    fixture.releaseMbid,
+    fixture.releaseGroupMbid,
+    artistMbid,
+    title,
+    fixture.tracks?.length ?? 1,
+  );
+
+  let position = 0;
+  for (const track of fixture.tracks ?? []) {
+    position += 1;
+    db.prepare(`
+      INSERT OR IGNORE INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status)
+      VALUES (?, ?, ?, 0, 'complete')
+    `).run(track.recordingMbid, artistMbid, track.title ?? track.trackMbid);
+    const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+      .get(track.recordingMbid) as { id: number };
+    db.prepare(`
+      INSERT OR IGNORE INTO Tracks (
+        mbid, release_mbid, recording_mbid, recording_id,
+        medium_position, position, number, title
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(
+      track.trackMbid,
+      fixture.releaseMbid,
+      track.recordingMbid,
+      recording.id,
+      track.position ?? position,
+      String(track.position ?? position),
+      track.title ?? track.trackMbid,
+    );
+  }
+
+  const release = db.prepare("SELECT id, release_group_id FROM AlbumReleases WHERE mbid = ?")
+    .get(fixture.releaseMbid) as { id: number; release_group_id: number };
+  return { releaseGroupId: release.release_group_id, releaseId: release.id };
+}
+
+/**
+ * A provider item's SOURCE CAPABILITY. This is what the offer rankers read for
+ * quality — never a local file's imported quality.
+ */
+export function seedProviderAudioVariant(
+  db: Database.Database,
+  fixture: {
+    providerItemId: number;
+    qualityClass: "lossy" | "lossless" | "hires-lossless" | "spatial";
+    variantKey?: string;
+    providerQualityLabel?: string | null;
+    spatialFormat?: string | null;
+    codec?: string | null;
+    bitDepth?: number | null;
+    sampleRate?: number | null;
+    channelCount?: number | null;
+    availability?: string;
+  },
+): number {
+  return Number((db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label,
+      spatial_format, codec, bit_depth, sample_rate, channel_count, availability
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING id
+  `).get(
+    fixture.providerItemId,
+    fixture.variantKey ?? fixture.qualityClass,
+    fixture.qualityClass,
+    fixture.providerQualityLabel ?? null,
+    fixture.spatialFormat ?? null,
+    fixture.codec ?? null,
+    fixture.bitDepth ?? null,
+    fixture.sampleRate ?? null,
+    fixture.channelCount ?? null,
+    fixture.availability ?? "available",
+  ) as { id: number }).id);
+}
