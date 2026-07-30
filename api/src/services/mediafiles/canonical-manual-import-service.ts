@@ -39,7 +39,12 @@ interface ProviderProvenanceRow {
  * track already imported into ANOTHER library.
  */
 export type LegacyManualImportResult = ManualImportSummary & {
-  importedFileIds?: Record<string, number> | Map<number, number>;
+  /**
+   * Required — an importer that reports `imported > 0` must say which rows. The
+   * Map form exists only so an importer keyed by numeric unmapped-file id can
+   * report without stringifying; it is not permission to omit the result.
+   */
+  importedFileIds: Record<string, number> | Map<number, number>;
 };
 
 export type LegacyManualImporter = (
@@ -177,6 +182,26 @@ export class CanonicalManualImportService {
       for (const [unmappedId, fileId] of Object.entries(reported)) {
         if (Number.isInteger(fileId)) importedFileIdByUnmappedId.set(Number(unmappedId), Number(fileId));
       }
+    }
+
+    // `importFiles` is an injectable seam, so verify the contract here too rather
+    // than trust it: the reported entries must agree with the summary's own count
+    // and refer only to mappings we actually submitted. A summary that claims an
+    // import it cannot identify would otherwise fall through the per-mapping
+    // "nothing imported for this mapping" branch below and silently leave the
+    // file without canonical authority.
+    const submittedUnmappedIds = new Set(request.mappings.map((mapping) => mapping.unmappedFileId));
+    for (const unmappedId of importedFileIdByUnmappedId.keys()) {
+      if (!submittedUnmappedIds.has(unmappedId)) {
+        throw new Error(
+          `Legacy importer reported unmapped file ${unmappedId}, which was not part of this import request`,
+        );
+      }
+    }
+    if (importedFileIdByUnmappedId.size !== summary.imported) {
+      throw new Error(
+        `Legacy importer reported ${importedFileIdByUnmappedId.size} imported file id(s) but claims ${summary.imported} imported file(s); refusing to import without exact operation identity`,
+      );
     }
 
     // The importer's reported row is authoritative. Validate it belongs to this

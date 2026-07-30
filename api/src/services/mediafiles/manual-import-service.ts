@@ -30,8 +30,14 @@ export interface ManualImportSummary {
      * Authoritative operation result: requested item id -> the TrackFiles row it
      * created. Callers attach canonical/provider authority to exactly this row
      * instead of rediscovering it by canonical mbid.
+     *
+     * REQUIRED, and exhaustive for `imported`: there is exactly one entry per
+     * imported file, every key is one of the submitted item ids, and the entry
+     * count equals `imported`. A summary that claims an import it cannot identify
+     * is a bug, not a degraded result, so the importer throws instead of
+     * returning one.
      */
-    importedFileIds?: Record<string, number>;
+    importedFileIds: Record<string, number>;
 }
 
 export class ManualImportService {
@@ -281,10 +287,12 @@ export class ManualImportService {
                      AND release_match.match_state = 'accepted'
                     LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
                     LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
-                    WHERE pi.entity_type = 'release' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    WHERE pi.entity_type = 'release'
+                      AND pi.provider = ?
+                      AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
                     ORDER BY pi.updated_at DESC
                     LIMIT 1
-                `).get(albumId) as any : null;
+                `).get(provider.id, albumId) as any : null;
 
                 // Fingerprint + filesystem stats
                 let fingerprint: string | null = null;
@@ -350,10 +358,11 @@ export class ManualImportService {
                          AND video_match.match_state = 'accepted'
                         LEFT JOIN Recordings recording ON recording.id = video_match.recording_id
                         WHERE pi.entity_type = 'video'
+                          AND pi.provider = ?
                           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
                         ORDER BY pi.updated_at DESC
                         LIMIT 1
-                      `).get(item.providerId) as { video_variant?: string | null; recording_title?: string | null } | undefined)
+                      `).get(provider.id, item.providerId) as { video_variant?: string | null; recording_title?: string | null } | undefined)
                     : undefined;
                 const videoTitle = videoVariant?.recording_title || trackData.title;
 
@@ -613,24 +622,32 @@ export class ManualImportService {
                 // videos — both set above); just remove from unmapped.
                 db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(c.id);
 
-                // Track finalization targets (outside transaction, post-commit)
+                // Track finalization targets (outside transaction, post-commit).
+                // Fail closed: the TrackFiles row for this path was just written in
+                // this transaction, so not finding it means the write and read paths
+                // disagree. Counting the item as imported without an operation
+                // identity would hand the caller a file it cannot address, so abort
+                // the batch rather than report an import we cannot name.
                 const libraryFileId = resolveImportedLibraryFileId(c.file.file_path);
-                if (libraryFileId !== null) {
-                    // Authoritative operation result: exactly which TrackFiles row
-                    // this requested item produced. Callers must not rediscover it.
-                    importedFileIds[String(c.id)] = libraryFileId;
-                    const oldDir = path.dirname(c.file.file_path);
-                    const destDir = path.dirname(c.expectedPath);
-                    const targetIds = c.isVideo ? videoInsertedIds : audioInsertedIds;
-                    const targetMappings = c.isVideo ? videoDirMappings : audioDirMappings;
-                    targetIds.push(libraryFileId);
-                    targetMappings.set(oldDir, {
-                        destDir,
-                        artistId: String(c.artistId),
-                        albumId: c.albumId ? String(c.albumId) : null,
-                        libraryRootPath: c.rootPath,
-                    });
+                if (libraryFileId === null) {
+                    throw new Error(
+                        `[Bulk Import] Imported ${c.file.file_path} (item ${c.id}) but no TrackFiles row resolved for it; refusing to report an unidentifiable import`,
+                    );
                 }
+                // Authoritative operation result: exactly which TrackFiles row
+                // this requested item produced. Callers must not rediscover it.
+                importedFileIds[String(c.id)] = libraryFileId;
+                const oldDir = path.dirname(c.file.file_path);
+                const destDir = path.dirname(c.expectedPath);
+                const targetIds = c.isVideo ? videoInsertedIds : audioInsertedIds;
+                const targetMappings = c.isVideo ? videoDirMappings : audioDirMappings;
+                targetIds.push(libraryFileId);
+                targetMappings.set(oldDir, {
+                    destDir,
+                    artistId: String(c.artistId),
+                    albumId: c.albumId ? String(c.albumId) : null,
+                    libraryRootPath: c.rootPath,
+                });
 
                 statusUpdates.push({ albumId: c.albumId, providerId: c.providerId });
             }
@@ -642,7 +659,9 @@ export class ManualImportService {
                 if (su.albumId) {
                     updateAlbumDownloadStatus(su.albumId);
                 } else {
-                    updateArtistDownloadStatusFromMedia(su.providerId);
+                    // Scope to the active provider — an unscoped provider_id can
+                    // collide with another provider's resource.
+                    updateArtistDownloadStatusFromMedia(su.providerId, provider.id);
                 }
             } catch { /* best-effort */ }
         }
@@ -680,6 +699,38 @@ export class ManualImportService {
         }
 
         const imported = statusUpdates.length;
+
+        // The operation result must agree with what the summary claims and with what
+        // was actually submitted. Any disagreement means a caller would attach
+        // canonical/provider authority to the wrong row (or to nothing), so surface
+        // it here rather than let it travel.
+        const requestedIds = new Set(items.map((item) => String(item.id)));
+        const reportedIds = Object.keys(importedFileIds);
+        const unknownKeys = reportedIds.filter((key) => !requestedIds.has(key));
+        if (unknownKeys.length > 0) {
+            throw new Error(
+                `[Bulk Import] importedFileIds reports ${unknownKeys.length} item id(s) that were never submitted: ${unknownKeys.join(", ")}`,
+            );
+        }
+        if (reportedIds.length !== imported) {
+            throw new Error(
+                `[Bulk Import] importedFileIds has ${reportedIds.length} entr(y/ies) but the summary claims ${imported} imported file(s)`,
+            );
+        }
+        const distinctFileIds = new Set(Object.values(importedFileIds));
+        if (distinctFileIds.size !== reportedIds.length) {
+            throw new Error(
+                `[Bulk Import] importedFileIds maps ${reportedIds.length} item(s) onto only ${distinctFileIds.size} distinct TrackFiles row(s)`,
+            );
+        }
+        for (const [key, fileId] of Object.entries(importedFileIds)) {
+            if (!Number.isInteger(fileId) || fileId <= 0) {
+                throw new Error(
+                    `[Bulk Import] importedFileIds[${key}] is not a valid TrackFiles id: ${String(fileId)}`,
+                );
+            }
+        }
+
         return {
             requested: items.length,
             imported,

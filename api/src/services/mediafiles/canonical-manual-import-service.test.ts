@@ -412,7 +412,10 @@ test("manual import monitors and custom-selects without silently locking", async
     db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
     db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
 
-    const service = new CanonicalManualImportService(db, async () => {
+    // Reports the row it created for the item it was actually given — this test
+    // imports twice with different unmapped file ids, and the operation result
+    // must follow the request rather than echo a fixed id.
+    const service = new CanonicalManualImportService(db, async (items) => {
       db.prepare(`
         INSERT INTO TrackFiles (
           id, library_id, album_release_id, track_id, recording_id,
@@ -422,7 +425,13 @@ test("manual import monitors and custom-selects without silently locking", async
           '/library/stereo/a.flac', 'a.flac', 'a.flac', 'flac', 'audio'
         )
       `).run();
-      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
+      return {
+        requested: items.length,
+        imported: 1,
+        duplicates: 0,
+        skipped: 0,
+        importedFileIds: { [String(items[0].id)]: 1 },
+      };
     });
 
     await service.import({
@@ -517,6 +526,61 @@ test("a reported row that does not exist fails closed", async () => {
         mappings: [{ unmappedFileId: 1, trackId: 1000 }],
       }),
       /no such row exists/,
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("an import claimed without operation identity fails closed", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+    // The importer says it imported a file but names no row for it. Silently
+    // treating that as "skipped" would leave a real file on disk with no
+    // canonical authority attached.
+    const service = new CanonicalManualImportService(db, async () =>
+      ({ requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: {} }));
+
+    await assert.rejects(
+      () => service.import({
+        libraryId: 1,
+        releaseId: 10,
+        mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+      }),
+      /reported 0 imported file id\(s\) but claims 1/,
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("an operation identity for an unsubmitted mapping fails closed", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+    // Item 99 was never part of this request — accepting it would let one
+    // request's authority land on another operation's row.
+    const service = new CanonicalManualImportService(db, async () =>
+      ({ requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 99: 1 } }));
+
+    await assert.rejects(
+      () => service.import({
+        libraryId: 1,
+        releaseId: 10,
+        mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+      }),
+      /reported unmapped file 99, which was not part of this import request/,
     );
   } finally {
     db.close();
