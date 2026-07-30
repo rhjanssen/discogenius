@@ -160,6 +160,18 @@ export interface ProviderAlbumContext {
   canonicalTrackId?: boolean;
   /** Narrow to plans for one canonical release: binds @canonicalReleaseId. */
   canonicalReleaseId?: boolean;
+  /**
+   * Alias of the provider track/video item in the enclosing query. Defaults to
+   * `pi`; set it when the outer query names the item something else.
+   */
+  itemAlias?: string;
+  /**
+   * Correlated library context for row-at-a-time callers: a SQL expression from
+   * the enclosing query (e.g. `lf.library_id`) instead of a bound `@libraryId`.
+   * A row whose expression is NULL falls back to the no-context rule — every
+   * relevant current plan must agree — rather than matching every library.
+   */
+  libraryIdExpr?: string;
 }
 
 /**
@@ -177,10 +189,15 @@ export interface ProviderAlbumContext {
  *   falls back to something it can justify.
  */
 export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {}): string {
+  const itemAlias = context.itemAlias ?? "pi";
   const filters: string[] = [];
   if (context.planId) filters.push("AND acquisition_plan.id = @planId");
   if (context.libraryReleaseId) filters.push("AND acquisition_plan.library_release_id = @libraryReleaseId");
   if (context.libraryId) filters.push("AND plan_library_release.library_id = @libraryId");
+  if (context.libraryIdExpr) {
+    // NULL expression → no narrowing, so the agree-or-NULL rule still applies.
+    filters.push(`AND (${context.libraryIdExpr} IS NULL OR plan_library_release.library_id = ${context.libraryIdExpr})`);
+  }
   if (context.canonicalTrackId) filters.push("AND plan_track.track_id = @canonicalTrackId");
   if (context.canonicalReleaseId) filters.push("AND plan_library_release.release_id = @canonicalReleaseId");
 
@@ -211,7 +228,7 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
           ON plan_release_match.id = plan_source.provider_release_match_id
         JOIN ProviderItems plan_release_item
           ON plan_release_item.id = plan_release_match.provider_release_item_id
-        WHERE plan_member.member_item_id = pi.id
+        WHERE plan_member.member_item_id = ${itemAlias}.id
           ${filters.join("\n          ")}
       ) plan_choice
     )
@@ -225,7 +242,10 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
  * else NULL.
  */
 export function providerResolvedAlbumIdSql(context: ProviderAlbumContext = {}): string {
-  return `COALESCE(${providerSelectedPlanAlbumIdSql(context)}, ${PROVIDER_MEMBER_ALBUM_ID_SQL})`;
+  return `COALESCE(
+    ${providerSelectedPlanAlbumIdSql(context)},
+    ${providerUnambiguousAlbumIdSql(context.itemAlias ?? "pi")}
+  )`;
 }
 
 /**

@@ -9,6 +9,7 @@ import { normalizeAudioQualityTag } from "../config/quality.js";
 import { UpgradableSpecification } from "../config/upgradable-specification.js";
 import { readIntEnv } from "../../utils/env.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { providerResolvedAlbumIdSql } from "../providers/provider-item-artist-scope.js";
 
 export type UpgradeDetail = {
     mediaId: string;
@@ -58,17 +59,28 @@ function albumUpgradeKey(provider: string, albumId: string): string {
     return `${provider}\0${albumId}`;
 }
 
+/**
+ * How many track resources this provider's release actually carries. Counted
+ * through ProviderReleaseMembers — the release's own tracklist occurrences —
+ * and scoped by the full provider identity, because a release id is unique only
+ * within a provider.
+ *
+ * The count is what stops a foreign album id with zero tracks from enqueueing a
+ * whole-album re-download, so an unresolvable release must count as zero.
+ */
 function countProviderAlbumTracks(provider: string, albumId: string): number {
     const row = db.prepare(`
-        SELECT COUNT(*) AS cnt
-        FROM ProviderItems
-        WHERE provider = ?
-          AND entity_type = 'track'
-          AND (
-            CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
-            OR CAST(json_extract(match_evidence, '$.albumProviderId') AS TEXT) = CAST(? AS TEXT)
-          )
-    `).get(provider, albumId, albumId) as { cnt: number } | undefined;
+        SELECT COUNT(DISTINCT member.member_item_id) AS cnt
+        FROM ProviderItems release_item
+        JOIN ProviderReleaseMembers member
+          ON member.provider_release_item_id = release_item.id
+        JOIN ProviderItems member_item
+          ON member_item.id = member.member_item_id
+         AND member_item.entity_type = 'track'
+        WHERE release_item.provider = ?
+          AND release_item.entity_type = 'release'
+          AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
+    `).get(provider, albumId) as { cnt: number } | undefined;
     return Number(row?.cnt) || 0;
 }
 
@@ -169,102 +181,148 @@ export class UpgraderService {
         // provider resource to re-download from TrackFiles provider identity and
         // canonical ProviderItems. Never default a missing provider to TIDAL —
         // foreign album/track IDs must stay on their owning backend.
+        // One row per file. The provider resource is resolved by internal identity
+        // first (TrackFiles.provider_item_id), then by the full provider triple
+        // snapshot, then through the typed match edge for the file's canonical
+        // track/recording — never by a bare provider_id, and never by MBID shadow
+        // columns on ProviderItems, which no longer exist.
+        //
+        // Source quality is the provider's SOURCE CAPABILITY: the best available
+        // ProviderItemAudioVariants row for audio, video_quality for video. It is
+        // deliberately not the file's imported quality — that is lf.quality below,
+        // and comparing the two is the whole point of the upgrade check.
         const query = db.prepare(`
         SELECT
             lf.id AS file_id,
             COALESCE(media_item.provider, lf.provider) AS provider,
             CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END AS provider_entity_type,
             COALESCE(
-                media_item.provider_id,
-                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END
+                CAST(media_item.provider_id AS TEXT),
+                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN CAST(lf.provider_id AS TEXT) END
             ) AS media_id,
             CASE WHEN lf.file_type = 'video' THEN 'Music Video' ELSE 'track' END AS media_type,
             COALESCE(
-                CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END,
-                json_extract(media_item.match_evidence, '$.albumProviderId'),
-                media_item.provider_album_id,
-                album_item.provider_id
+                CASE WHEN lf.provider_entity_type = 'release' THEN CAST(lf.provider_id AS TEXT) END,
+                ${providerResolvedAlbumIdSql({ itemAlias: "media_item", libraryIdExpr: "lf.library_id" })}
             ) AS album_id,
-            COALESCE(
-                media_item.quality,
-                media_item.quality,
-                media_item.audio_quality
-            ) AS source_quality,
+            CASE
+                WHEN lf.file_type = 'video' THEN media_item.video_quality
+                ELSE (
+                    SELECT variant.provider_quality_label
+                    FROM ProviderItemAudioVariants variant
+                    WHERE variant.provider_item_id = media_item.id
+                      AND variant.availability NOT IN ('unavailable', 'restricted')
+                      AND variant.provider_quality_label IS NOT NULL
+                    ORDER BY
+                      CASE variant.quality_class
+                        WHEN 'spatial' THEN 0
+                        WHEN 'hires-lossless' THEN 1
+                        WHEN 'lossless' THEN 2
+                        ELSE 3
+                      END,
+                      COALESCE(variant.bit_depth, 0) DESC,
+                      COALESCE(variant.sample_rate, 0) DESC,
+                      variant.id DESC
+                    LIMIT 1
+                )
+            END AS source_quality,
             lf.quality      AS current_quality,
             lf.codec        AS current_codec,
             lf.extension    AS current_extension,
             lf.bit_depth    AS current_bit_depth,
             lf.bitrate      AS current_bitrate,
             lf.sample_rate  AS current_sample_rate,
-            COALESCE(
-                album_item.quality,
-                album_item.quality,
-                album_item.audio_quality
+            -- Album-level source capability, kept as the fallback it always was:
+            -- the best available variant across the resolved provider release's
+            -- member tracks. Correlates on the release item resolved below.
+            (
+                SELECT variant.provider_quality_label
+                FROM ProviderReleaseMembers album_member
+                JOIN ProviderItemAudioVariants variant
+                  ON variant.provider_item_id = album_member.member_item_id
+                WHERE album_member.provider_release_item_id = album_item.id
+                  AND variant.availability NOT IN ('unavailable', 'restricted')
+                  AND variant.provider_quality_label IS NOT NULL
+                ORDER BY
+                  CASE variant.quality_class
+                    WHEN 'spatial' THEN 0
+                    WHEN 'hires-lossless' THEN 1
+                    WHEN 'lossless' THEN 2
+                    ELSE 3
+                  END,
+                  COALESCE(variant.bit_depth, 0) DESC,
+                  COALESCE(variant.sample_rate, 0) DESC,
+                  variant.id DESC
+                LIMIT 1
             ) AS album_quality
         FROM TrackFiles lf
         LEFT JOIN ProviderItems media_item
-          ON media_item.entity_type = CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END
-         AND (lf.provider IS NULL OR media_item.provider = lf.provider)
-         AND (
-                (lf.provider_entity_type IN ('track', 'video') AND CAST(media_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT))
-                OR (lf.track_id IS NOT NULL AND media_item.track_id = lf.track_id)
-                OR (lf.recording_id IS NOT NULL AND media_item.recording_id = lf.recording_id)
-                OR (lf.canonical_track_mbid IS NOT NULL AND media_item.track_mbid = lf.canonical_track_mbid)
-                OR (lf.canonical_recording_mbid IS NOT NULL AND media_item.recording_mbid = lf.canonical_recording_mbid)
+          ON media_item.id = COALESCE(
+                lf.provider_item_id,
+                (
+                  SELECT snapshot.id
+                  FROM ProviderItems snapshot
+                  WHERE snapshot.entity_type = CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END
+                    AND lf.provider IS NOT NULL
+                    AND snapshot.provider = lf.provider
+                    AND lf.provider_entity_type IN ('track', 'video')
+                    AND CAST(snapshot.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+                  LIMIT 1
+                ),
+                (
+                  -- Typed edge for the file's canonical track. Scoped to the file's
+                  -- provider when it has one; a match that hits more than one
+                  -- provider resource resolves to nothing rather than guessing.
+                  SELECT CASE WHEN COUNT(DISTINCT matched.id) = 1 THEN MAX(matched.id) END
+                  FROM ProviderTrackMatches typed_match
+                  JOIN ProviderReleaseMembers typed_member
+                    ON typed_member.id = typed_match.provider_release_member_id
+                  JOIN ProviderItems matched
+                    ON matched.id = typed_member.member_item_id
+                   AND matched.entity_type = 'track'
+                  WHERE lf.file_type <> 'video'
+                    AND typed_match.match_state = 'accepted'
+                    AND (
+                      (lf.track_id IS NOT NULL AND typed_match.track_id = lf.track_id)
+                      OR (lf.recording_id IS NOT NULL AND typed_match.recording_id = lf.recording_id)
+                    )
+                    AND (lf.provider IS NULL OR matched.provider = lf.provider)
+                ),
+                (
+                  -- Same, for a video file: ProviderVideoMatches is the only
+                  -- video -> recording link.
+                  SELECT CASE WHEN COUNT(DISTINCT matched.id) = 1 THEN MAX(matched.id) END
+                  FROM ProviderVideoMatches typed_match
+                  JOIN ProviderItems matched
+                    ON matched.id = typed_match.provider_video_item_id
+                   AND matched.entity_type = 'video'
+                  WHERE lf.file_type = 'video'
+                    AND typed_match.match_state = 'accepted'
+                    AND lf.recording_id IS NOT NULL
+                    AND typed_match.recording_id = lf.recording_id
+                    AND (lf.provider IS NULL OR matched.provider = lf.provider)
+                )
              )
+        -- The provider release the album context resolved to, looked up by the full
+        -- identity so a colliding id from another provider cannot supply its quality.
         LEFT JOIN ProviderItems album_item
-          ON album_item.entity_type = 'album'
-         AND (COALESCE(lf.provider, media_item.provider) IS NULL OR album_item.provider = COALESCE(lf.provider, media_item.provider))
-         AND (
-                (lf.provider_entity_type = 'album' AND CAST(album_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT))
-                OR (json_extract(media_item.match_evidence, '$.albumProviderId') IS NOT NULL
-                    AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.match_evidence, '$.albumProviderId') AS TEXT))
-                OR (media_item.provider_album_id IS NOT NULL
-                    AND CAST(album_item.provider_id AS TEXT) = CAST(media_item.provider_album_id AS TEXT))
-                OR (lf.canonical_release_group_mbid IS NOT NULL AND album_item.release_group_mbid = lf.canonical_release_group_mbid)
-                OR (lf.canonical_release_mbid IS NOT NULL AND album_item.release_mbid = lf.canonical_release_mbid)
-             )
+          ON album_item.entity_type = 'release'
+         AND album_item.provider = COALESCE(media_item.provider, lf.provider)
+         AND CAST(album_item.provider_id AS TEXT) = CAST(
+               COALESCE(
+                 CASE WHEN lf.provider_entity_type = 'release' THEN CAST(lf.provider_id AS TEXT) END,
+                 ${providerResolvedAlbumIdSql({ itemAlias: "media_item", libraryIdExpr: "lf.library_id" })}
+               ) AS TEXT)
         WHERE (lf.file_type = 'track' OR lf.file_type = 'video')
           AND COALESCE(
-                media_item.provider_id,
-                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END
+                CAST(media_item.provider_id AS TEXT),
+                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN CAST(lf.provider_id AS TEXT) END
               ) IS NOT NULL
           ${artistId ? "AND lf.artist_id = ?" : ""}
-        ORDER BY
-          lf.id ASC,
-          CASE
-            WHEN lf.provider_entity_type IN ('track', 'video')
-             AND CAST(media_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT) THEN 0
-            ELSE 1
-          END,
-          CASE
-            WHEN lf.provider_entity_type = 'album'
-             AND CAST(album_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT) THEN 0
-            WHEN json_extract(media_item.match_evidence, '$.albumProviderId') IS NOT NULL
-             AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.match_evidence, '$.albumProviderId') AS TEXT) THEN 1
-            WHEN media_item.provider_album_id IS NOT NULL
-             AND CAST(album_item.provider_id AS TEXT) = CAST(media_item.provider_album_id AS TEXT) THEN 2
-            WHEN lf.canonical_release_mbid IS NOT NULL
-             AND album_item.release_mbid = lf.canonical_release_mbid THEN 3
-            WHEN lf.canonical_release_group_mbid IS NOT NULL
-             AND album_item.release_group_mbid = lf.canonical_release_group_mbid THEN 4
-            ELSE 5
-          END,
-          CASE album_item.library_slot WHEN COALESCE(lf.library_slot, 'stereo') THEN 0 ELSE 1 END,
-          media_item.updated_at DESC,
-          album_item.updated_at DESC,
-          media_item.provider_id ASC,
-          album_item.provider_id ASC
+        ORDER BY lf.id ASC
     `);
 
-        const rawRows = (artistId ? query.all(artistId) : query.all()) as UpgradeCandidateRow[];
-        const rows: UpgradeCandidateRow[] = [];
-        const seenFileIds = new Set<number>();
-        for (const row of rawRows) {
-            if (seenFileIds.has(row.file_id)) continue;
-            seenFileIds.add(row.file_id);
-            rows.push(row);
-        }
+        const rows = (artistId ? query.all(artistId) : query.all()) as UpgradeCandidateRow[];
 
         const result: UpgradeResult = { tracks: 0, videos: 0, albums: 0, details: [] };
         const albumsNeedingUpgrade = new Map<string, AlbumUpgradeTarget>();
