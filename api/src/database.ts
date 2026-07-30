@@ -577,6 +577,11 @@ function createBaselineSchemaV41(): void {
       provider TEXT,
       provider_entity_type TEXT,
       provider_id TEXT,
+      -- Internal provider-resource identity. A provider_id alone is unique only
+      -- within (provider, entity_type), so the triple above is a snapshot and
+      -- THIS is the resolvable link. Nullable: a manually imported file need not
+      -- have any provider resource at all.
+      provider_item_id INTEGER,
       library_slot TEXT NOT NULL DEFAULT 'stereo',                 -- stereo, spatial, video
       library_id INTEGER,
       source_audio_variant_id INTEGER,
@@ -628,6 +633,7 @@ function createBaselineSchemaV41(): void {
       
       FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
       FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(provider_item_id) REFERENCES ProviderItems(id) ON DELETE SET NULL,
       FOREIGN KEY(source_audio_variant_id) REFERENCES ProviderItemAudioVariants(id) ON DELETE SET NULL
     )
   `);
