@@ -24,8 +24,12 @@ export interface AcquisitionTrackMatch {
   providerTrackMatchId: number;
   providerEditionMemberId: number;
   trackId: number;
+  /** Provider-native explicit flag; null when the provider does not say. */
+  explicit?: boolean | null;
   variants: readonly AcquisitionAudioVariant[];
 }
+
+export type PlanExplicitContent = "clean" | "explicit" | "mixed";
 
 export interface AcquisitionSourceCandidate {
   provider: string;
@@ -58,6 +62,10 @@ export interface OptimizedAcquisitionPlan {
   preferredSourceId: number | null;
   /** Canonical tracks this plan actually covers. */
   coverage: number;
+  /** The quality tier this plan was built to target. */
+  qualityTier: NormalizedAudioQuality;
+  /** Whether the plan's tracks are clean, explicit, or a mix. */
+  explicitContent: PlanExplicitContent;
   /** Stable shape identity; see acquisitionPlanKey. */
   planKey: string;
   tracks: OptimizedAcquisitionTrack[];
@@ -67,10 +75,12 @@ interface TrackOption extends OptimizedAcquisitionTrack {
   qualityRank: number;
   cutoffSatisfied: boolean;
   relationRank: number;
+  explicit: boolean | null;
 }
 
 // planKey is derived once the plan is final, so candidates carry everything but.
 interface CandidatePlan extends Omit<OptimizedAcquisitionPlan, "planKey"> {
+  outcomeSignature: string;
   cutoffSatisfied: number;
   qualityScore: number;
   fragmentation: number;
@@ -177,11 +187,103 @@ function compareCandidatePlans(
  * best `single_source` and the best `composite` plan is the useful granularity.
  * Every other subset is dominated by one of those two under the same comparator.
  */
+
+/**
+ * What a plan actually delivers: which canonical tracks, at which source
+ * quality. Two plans with the same signature are the same product for the user
+ * even when they are assembled from different Provider Editions — one direct
+ * match plus ten singles, or one direct match plus one subset match, are not
+ * two choices worth storing or showing.
+ */
+
+function rescoreAgainstProfile(
+  profile: AcquisitionQualityProfile,
+  candidate: CandidatePlan,
+): CandidatePlan {
+  let satisfied = 0;
+  let qualityScore = 0;
+  for (const track of candidate.tracks) {
+    const rank = qualityRank(profile, track.sourceQuality);
+    const meetsCutoff = cutoffSatisfied(profile, track.sourceQuality);
+    if (meetsCutoff) satisfied += 1;
+    qualityScore += effectiveQualityScore(profile, {
+      qualityRank: rank,
+      cutoffSatisfied: meetsCutoff,
+    });
+  }
+  return { ...candidate, cutoffSatisfied: satisfied, qualityScore };
+}
+
+function outcomeSignature(provider: string, tracks: readonly TrackOption[]): string {
+  const pairs = tracks
+    .map((track) => `${track.trackId}:${track.sourceQuality}`)
+    .sort();
+  const explicit = tracks
+    .map((track) => `${track.trackId}:${track.explicit === null ? "?" : track.explicit ? "e" : "c"}`)
+    .sort();
+  return `${provider}|${pairs.join(",")}|${explicit.join(",")}`;
+}
+
+function planExplicitContent(tracks: readonly TrackOption[]): PlanExplicitContent {
+  let sawExplicit = false;
+  let sawClean = false;
+  for (const track of tracks) {
+    if (track.explicit === true) sawExplicit = true;
+    else if (track.explicit === false) sawClean = true;
+  }
+  if (sawExplicit && sawClean) return "mixed";
+  if (sawExplicit) return "explicit";
+  if (sawClean) return "clean";
+  return "mixed";
+}
+
+/**
+ * A profile that aims at one specific tier: that tier is preferred above all
+ * others and is the cutoff, so the search maximises tracks at it and fills the
+ * remainder from lower tiers.
+ *
+ * Enumerating one plan per tier is what keeps the stored set finite. Without it
+ * the optimizer would happily produce "1 track at max + 19 at high", "2 at max
+ * + 18 at high" and every step in between, all of which are strictly worse than
+ * the best plan for their tier.
+ */
+function profileTargeting(
+  profile: AcquisitionQualityProfile,
+  tier: NormalizedAudioQuality,
+): AcquisitionQualityProfile {
+  const rest = profile.preferenceOrder.filter((quality) => quality !== tier);
+  return {
+    allowedQualities: profile.allowedQualities,
+    preferenceOrder: [tier, ...rest],
+    cutoff: tier,
+    continueUpgradesAfterCutoff: false,
+  };
+}
+
+/** Tiers the provider's own variants can actually deliver, best first. */
+function availableTiers(
+  profile: AcquisitionQualityProfile,
+  sources: readonly AcquisitionSourceCandidate[],
+): NormalizedAudioQuality[] {
+  const present = new Set<NormalizedAudioQuality>();
+  for (const source of sources) {
+    for (const match of source.trackMatches) {
+      for (const variant of match.variants) {
+        if (variant.available && profile.allowedQualities.has(variant.quality)) {
+          present.add(variant.quality);
+        }
+      }
+    }
+  }
+  return profile.preferenceOrder.filter((quality) => present.has(quality));
+}
+
 function buildProviderPlans(
   orderedTrackIds: readonly number[],
   profile: AcquisitionQualityProfile,
   sources: readonly AcquisitionSourceCandidate[],
-  preferredSource: AcquisitionSourceCandidate | null = null,
+  preferredSource: AcquisitionSourceCandidate | null,
+  targetTier: NormalizedAudioQuality,
 ): CandidatePlan[] {
   if (sources.length === 0) return [];
   const sourceById = new Map(sources.map((source) => [source.providerEditionMatchId, source]));
@@ -200,6 +302,7 @@ function buildProviderPlans(
           qualityRank: qualityRank(profile, variant.quality),
           cutoffSatisfied: cutoffSatisfied(profile, variant.quality),
           relationRank: relationRank[source.relation],
+          explicit: match.explicit ?? null,
         };
         const options = optionsByTrack.get(match.trackId) || [];
         options.push(option);
@@ -269,6 +372,9 @@ function buildProviderPlans(
         && usedSourceIds.includes(preferredSource.providerEditionMatchId)
         ? preferredSource.providerEditionMatchId
         : null,
+      qualityTier: targetTier,
+      explicitContent: planExplicitContent(tracks),
+      outcomeSignature: outcomeSignature(sources[0].provider, tracks),
       composition: usedSourceIds.length === 1 ? "single_source" : "composite",
       downloadMode: albumSafe ? "album" : "tracks",
       sourceIds: usedSourceIds,
@@ -343,16 +449,49 @@ export function enumerateAcquisitionPlans(input: {
   );
   const preferredKept = (plan: CandidatePlan): number =>
     preferredSource && plan.sourceIds.includes(preferredSource.providerEditionMatchId) ? 0 : 1;
-  const ranked = [...byProvider.values()]
-    .flatMap((sources) =>
-      buildProviderPlans(input.orderedTrackIds, input.profile, sources, preferredSource))
+
+  // One plan per provider, per achievable quality tier, per composition shape.
+  // That is the axis set a user actually chooses along; everything else is a
+  // permutation of the same product.
+  const built: CandidatePlan[] = [];
+  for (const sources of byProvider.values()) {
+    for (const tier of availableTiers(input.profile, sources)) {
+      built.push(...buildProviderPlans(
+        input.orderedTrackIds,
+        profileTargeting(input.profile, tier),
+        sources,
+        preferredSource,
+        tier,
+      ));
+    }
+  }
+
+  // Each candidate was searched under a profile aimed at its own tier, so its
+  // cutoff and quality scores are relative to that target. Re-score every
+  // candidate against the library's real profile before ranking them against
+  // each other, otherwise a lossless-targeted plan looks like it satisfies more
+  // of the cutoff than a hi-res-targeted plan simply because its bar was lower.
+  const ranked = built
+    .map((candidate) => rescoreAgainstProfile(input.profile, candidate))
     .sort((left, right) =>
       preferredKept(left) - preferredKept(right)
       || compareCandidatePlans(left, right, providerPriority));
 
-  return ranked.map((candidate) => {
+  // Collapse plans that deliver an identical result. The survivor is the one
+  // already ranked highest, which prefers fewer sources — so a direct match
+  // beats the composite that reproduces it, and one subset match beats ten
+  // singles that cover the same tracks at the same quality.
+  const seenOutcomes = new Set<string>();
+  const distinct = ranked.filter((candidate) => {
+    if (seenOutcomes.has(candidate.outcomeSignature)) return false;
+    seenOutcomes.add(candidate.outcomeSignature);
+    return true;
+  });
+
+  return distinct.map((candidate) => {
     const {
       coverage,
+      outcomeSignature: _outcomeSignature,
       cutoffSatisfied: _cutoffSatisfied,
       qualityScore: _qualityScore,
       fragmentation: _fragmentation,
@@ -392,10 +531,13 @@ export function optimizeAcquisitionPlan(input: {
 export function acquisitionPlanKey(plan: {
   provider: string;
   composition: string;
+  qualityTier: NormalizedAudioQuality;
+  explicitContent: PlanExplicitContent;
   sourceIds: readonly number[];
   tracks: readonly { sourceQuality: NormalizedAudioQuality }[];
 }): string {
   const sources = [...plan.sourceIds].sort((left, right) => left - right).join(",");
   const qualities = [...new Set(plan.tracks.map((track) => track.sourceQuality))].sort().join("+");
-  return `${plan.provider}|${plan.composition}|${sources}|${qualities}`;
+  return `${plan.provider}|${plan.qualityTier}|${plan.explicitContent}`
+    + `|${plan.composition}|${sources}|${qualities}`;
 }

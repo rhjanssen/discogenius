@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  enumerateAcquisitionPlans,
   optimizeAcquisitionPlan,
   type AcquisitionQualityProfile,
   type AcquisitionSourceCandidate,
@@ -231,4 +232,94 @@ test("a preference keeps planning inside the chosen provider", () => {
   assert.ok(plan);
   assert.equal(plan.provider, "tidal");
   assert.equal(plan.preferredSourceId, 10);
+});
+
+test("plans that deliver an identical result are stored once", () => {
+  // Ten singles covering tracks 1-3 versus one subset match covering the same
+  // three tracks at the same quality: the same product, assembled differently.
+  const subset = source(40, "source_subset", [
+    [1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"],
+  ]);
+  const singles = [1, 2, 3].map((trackId) =>
+    source(50 + trackId, "source_subset", [[trackId, "hires-lossless"]]));
+
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3],
+    profile: max,
+    providerPriority: ["tidal"],
+    sources: [subset, ...singles],
+  });
+
+  const signatures = plans.map((plan) =>
+    plan.tracks.map((track) => `${track.trackId}:${track.sourceQuality}`).sort().join(","));
+  assert.equal(
+    new Set(signatures).size,
+    signatures.length,
+    "no two stored plans may deliver the same tracks at the same quality",
+  );
+  const full = plans.filter((plan) => plan.coverage === 3);
+  assert.equal(full.length, 1, "one plan per distinct outcome");
+  assert.deepEqual(full[0].sourceIds, [40], "the simplest assembly wins");
+});
+
+test("a composite that reproduces the direct match is not stored", () => {
+  const direct = source(60, "exact", [
+    [1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"],
+  ]);
+  const redundantSingles = [1, 2, 3, 4].map((trackId) =>
+    source(70 + trackId, "source_subset", [[trackId, "lossless"]]));
+
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [direct, ...redundantSingles],
+  });
+
+  const fullCoverage = plans.filter((plan) => plan.coverage === 4);
+  assert.equal(fullCoverage.length, 1);
+  assert.equal(fullCoverage[0].composition, "single_source");
+  assert.deepEqual(fullCoverage[0].sourceIds, [60]);
+});
+
+test("each achievable quality tier yields one plan, not every partial upgrade", () => {
+  // Tracks 1-2 exist in hi-res, tracks 3-4 only in lossless.
+  const mixed: AcquisitionSourceCandidate = {
+    provider: "tidal",
+    providerEditionMatchId: 80,
+    relation: "exact",
+    sourceTrackCount: 4,
+    albumDownloadSafe: true,
+    trackMatches: [
+      { providerTrackMatchId: 801, providerEditionMemberId: 8001, trackId: 1,
+        variants: [
+          { id: 8101, quality: "hires-lossless", available: true },
+          { id: 8102, quality: "lossless", available: true },
+        ] },
+      { providerTrackMatchId: 802, providerEditionMemberId: 8002, trackId: 2,
+        variants: [
+          { id: 8103, quality: "hires-lossless", available: true },
+          { id: 8104, quality: "lossless", available: true },
+        ] },
+      { providerTrackMatchId: 803, providerEditionMemberId: 8003, trackId: 3,
+        variants: [{ id: 8105, quality: "lossless", available: true }] },
+      { providerTrackMatchId: 804, providerEditionMemberId: 8004, trackId: 4,
+        variants: [{ id: 8106, quality: "lossless", available: true }] },
+    ],
+  };
+
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: max,
+    providerPriority: ["tidal"],
+    sources: [mixed],
+  });
+
+  // Two achievable tiers, so at most two plans — never "1 hi-res + 3 lossless",
+  // "2 hi-res + 2 lossless", and every step between.
+  assert.ok(plans.length <= 2, `expected at most one plan per tier, got ${plans.length}`);
+  assert.deepEqual(
+    [...new Set(plans.map((plan) => plan.qualityTier))].sort(),
+    ["hires-lossless", "lossless"],
+  );
 });

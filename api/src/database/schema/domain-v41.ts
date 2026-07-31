@@ -482,6 +482,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
       plan_key TEXT NOT NULL DEFAULT '',
       rank INTEGER NOT NULL DEFAULT 0,
       coverage INTEGER NOT NULL DEFAULT 0,
+      quality_tier TEXT NOT NULL DEFAULT 'lossless',
+      explicit_content TEXT NOT NULL DEFAULT 'mixed'
+        CHECK (explicit_content IN ('clean', 'explicit', 'mixed')),
       planner_version INTEGER NOT NULL,
       policy_hash TEXT NOT NULL,
       computed_at TEXT NOT NULL,

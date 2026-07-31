@@ -277,4 +277,47 @@ router.delete("/:albumId/files", (req, res) => {
   }
 });
 
+/**
+ * Choose which persisted acquisition plan a library executes for an edition,
+ * or hand the choice back to the planner.
+ */
+router.patch("/:albumId/libraries/:libraryId/plan", (req, res) => {
+  try {
+    const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["editionId", "planKey", "automatic"], "Library plan selection");
+    const service = new LibraryReleaseSelectionService(db);
+    const editionId = getRequiredInteger(body, "editionId");
+    const libraryId = Number.parseInt(req.params.libraryId, 10);
+    const automatic = getOptionalBoolean(body, "automatic") === true;
+    const planKey = getOptionalString(body, "planKey");
+
+    if (automatic) {
+      if (planKey) {
+        return res.status(400).json({
+          detail: "Specify either planKey or automatic, not both",
+        });
+      }
+      return res.json(service.revertPlanToAutomatic({
+        releaseGroupMbid: req.params.albumId,
+        libraryId,
+        editionId,
+      }));
+    }
+    if (!planKey) {
+      return res.status(400).json({ detail: "planKey is required unless automatic is true" });
+    }
+    res.json(service.choosePlan({
+      releaseGroupMbid: req.params.albumId,
+      libraryId,
+      editionId,
+      planKey,
+    }));
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    res.status(400).json({ detail: error.message });
+  }
+});
+
 export default router;

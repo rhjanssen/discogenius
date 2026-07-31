@@ -23,10 +23,22 @@ export class AcquisitionPlanRepository {
     libraryEditionId: number;
     plans: readonly OptimizedAcquisitionPlan[];
     preferredPlanKey?: string | null;
+    /**
+     * The edition is user-locked. A lock protects the plan choice outright: the
+     * preference is honoured even when a better-covering plan exists, because
+     * the user asked for exactly this one.
+     */
+    lockPreference?: boolean;
     plannerVersion: number;
     policyHash: string;
     computedAt?: string;
-  }): { chosenPlanId: number; chosenPlanKey: string; preferenceHonored: boolean } | null {
+  }): {
+    chosenPlanId: number;
+    chosenPlanKey: string;
+    preferenceHonored: boolean;
+    /** The preferred plan still exists but now covers fewer tracks. */
+    preferenceLostCoverage: boolean;
+  } | null {
     if (!input.policyHash.trim()) throw new Error("Acquisition plan policy hash is required");
     if (input.plans.length === 0) return null;
     for (const plan of input.plans) {
@@ -34,11 +46,19 @@ export class AcquisitionPlanRepository {
     }
 
     const preferredPlanKey = input.preferredPlanKey?.trim() || null;
-    const chosenIndex = preferredPlanKey
+    const candidateIndex = preferredPlanKey
       ? input.plans.findIndex((plan) => plan.planKey === preferredPlanKey)
       : -1;
-    const preferenceHonored = chosenIndex >= 0;
-    const resolvedChosenIndex = preferenceHonored ? chosenIndex : 0;
+    // A manual choice survives replanning only while it still covers as many
+    // canonical tracks as the best alternative does. Switching provider is the
+    // user's call; silently keeping a plan that has decayed from 20 tracks to 15
+    // is not — that is a regression the planner should correct.
+    const bestCoverage = Math.max(...input.plans.map((plan) => plan.coverage));
+    const preferenceHonored = candidateIndex >= 0
+      && (input.lockPreference === true
+        || input.plans[candidateIndex].coverage >= bestCoverage);
+    const resolvedChosenIndex = preferenceHonored ? candidateIndex : 0;
+    const preferenceLostCoverage = candidateIndex >= 0 && !preferenceHonored;
 
     return this.db.transaction(() => {
       this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_edition_id = ?")
@@ -61,6 +81,7 @@ export class AcquisitionPlanRepository {
         chosenPlanId,
         chosenPlanKey: input.plans[resolvedChosenIndex].planKey,
         preferenceHonored,
+        preferenceLostCoverage,
       };
     })();
   }
@@ -103,7 +124,7 @@ export class AcquisitionPlanRepository {
   }> {
     const rows = this.db.prepare(`
       SELECT id, plan_key, provider, composition, download_mode, state,
-             chosen, selection_mode, rank, coverage
+             chosen, selection_mode, rank, coverage, quality_tier, explicit_content
       FROM AcquisitionPlans
       WHERE library_edition_id = ?
       ORDER BY rank, id
@@ -157,8 +178,9 @@ export class AcquisitionPlanRepository {
         INSERT INTO AcquisitionPlans (
           library_edition_id, provider, composition, download_mode, state,
           chosen, selection_mode, plan_key, rank, coverage,
+          quality_tier, explicit_content,
           planner_version, policy_hash, computed_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         RETURNING id
       `).get(
         input.libraryEditionId,
@@ -170,6 +192,8 @@ export class AcquisitionPlanRepository {
         input.plan.planKey,
         input.rank,
         input.plan.coverage,
+        input.plan.qualityTier,
+        input.plan.explicitContent,
         input.plannerVersion,
         input.policyHash,
         input.computedAt || new Date().toISOString(),

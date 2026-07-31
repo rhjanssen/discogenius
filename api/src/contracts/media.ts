@@ -124,6 +124,23 @@ export interface AlbumVersionContract extends AlbumCardContract {
   spatial_quality?: string | null;
 }
 
+export type LibraryAcquisitionPlanContract = {
+  id: number;
+  planKey: string;
+  provider: string;
+  primaryProviderEditionMatchId: number | null;
+  providerEditionMatchIds: number[];
+  composition: "single_source" | "composite";
+  downloadMode: "album" | "tracks";
+  state: "current" | "stale" | "unavailable" | "failed";
+  chosen: boolean;
+  selectionMode: "auto" | "manual";
+  rank: number;
+  coverage: number;
+  qualityTier: string;
+  explicitContent: "clean" | "explicit" | "mixed";
+};
+
 export interface LibraryReleaseGroupAvailabilityContract {
   releaseGroupId: number;
   releaseGroupMbid: string;
@@ -138,14 +155,9 @@ export interface LibraryReleaseGroupAvailabilityContract {
       releaseMbid: string;
       selectionMode: "auto" | "manual";
       locked: boolean;
-      plan: {
-        id: number;
-        provider: string;
-        primaryProviderEditionMatchId: number | null;
-        composition: "single_source" | "composite";
-        downloadMode: "album" | "tracks";
-        state: "current" | "stale" | "unavailable" | "failed";
-      } | null;
+      planSelectionMode: "auto" | "manual";
+      plan: LibraryAcquisitionPlanContract | null;
+      plans: LibraryAcquisitionPlanContract[];
     }>;
   }>;
   releases: Array<{
@@ -486,23 +498,45 @@ export function parseLibraryReleaseGroupAvailabilityContract(
           (selectionItem, selectionIndex) => {
             const label = `libraryReleaseAvailability.libraries[${libraryIndex}].selections[${selectionIndex}]`;
             const selection = expectRecord(selectionItem, label);
-            const plan = selection.plan == null ? null : expectRecord(selection.plan, `${label}.plan`);
+            const parsePlan = (value: unknown, planLabel: string): LibraryAcquisitionPlanContract => {
+              const plan = expectRecord(value, planLabel);
+              return {
+                id: expectNumber(plan.id, `${planLabel}.id`),
+                planKey: expectString(plan.planKey, `${planLabel}.planKey`),
+                provider: expectString(plan.provider, `${planLabel}.provider`),
+                primaryProviderEditionMatchId: plan.primaryProviderEditionMatchId == null
+                  ? null
+                  : expectNumber(plan.primaryProviderEditionMatchId, `${planLabel}.primaryProviderEditionMatchId`),
+                providerEditionMatchIds: expectArray(
+                  plan.providerEditionMatchIds,
+                  `${planLabel}.providerEditionMatchIds`,
+                  (matchId, matchIndex) =>
+                    expectNumber(matchId, `${planLabel}.providerEditionMatchIds[${matchIndex}]`),
+                ),
+                composition: expectString(plan.composition, `${planLabel}.composition`) as "single_source" | "composite",
+                downloadMode: expectString(plan.downloadMode, `${planLabel}.downloadMode`) as "album" | "tracks",
+                state: expectString(plan.state, `${planLabel}.state`) as "current" | "stale" | "unavailable" | "failed",
+                chosen: expectBoolean(plan.chosen, `${planLabel}.chosen`),
+                selectionMode: expectString(plan.selectionMode, `${planLabel}.selectionMode`) as "auto" | "manual",
+                rank: expectNumber(plan.rank, `${planLabel}.rank`),
+                coverage: expectNumber(plan.coverage, `${planLabel}.coverage`),
+                qualityTier: expectString(plan.qualityTier, `${planLabel}.qualityTier`),
+                explicitContent: expectString(plan.explicitContent, `${planLabel}.explicitContent`) as "clean" | "explicit" | "mixed",
+              };
+            };
             return {
               libraryEditionId: expectNumber(selection.libraryEditionId, `${label}.libraryEditionId`),
               editionId: expectNumber(selection.editionId, `${label}.editionId`),
               releaseMbid: expectString(selection.releaseMbid, `${label}.releaseMbid`),
               selectionMode: expectString(selection.selectionMode, `${label}.selectionMode`) as "auto" | "manual",
               locked: expectBoolean(selection.locked, `${label}.locked`),
-              plan: plan == null ? null : {
-                id: expectNumber(plan.id, `${label}.plan.id`),
-                provider: expectString(plan.provider, `${label}.plan.provider`),
-                primaryProviderEditionMatchId: plan.primaryProviderEditionMatchId == null
-                  ? null
-                  : expectNumber(plan.primaryProviderEditionMatchId, `${label}.plan.primaryProviderEditionMatchId`),
-                composition: expectString(plan.composition, `${label}.plan.composition`) as "single_source" | "composite",
-                downloadMode: expectString(plan.downloadMode, `${label}.plan.downloadMode`) as "album" | "tracks",
-                state: expectString(plan.state, `${label}.plan.state`) as "current" | "stale" | "unavailable" | "failed",
-              },
+              planSelectionMode: expectString(
+                selection.planSelectionMode,
+                `${label}.planSelectionMode`,
+              ) as "auto" | "manual",
+              plan: selection.plan == null ? null : parsePlan(selection.plan, `${label}.plan`),
+              plans: expectArray(selection.plans, `${label}.plans`, (planItem, planIndex) =>
+                parsePlan(planItem, `${label}.plans[${planIndex}]`)),
             };
           },
         ),

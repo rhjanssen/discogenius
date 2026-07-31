@@ -65,6 +65,7 @@ interface CandidateRow {
   provider_edition_member_id: number;
   provider_track_match_id: number;
   track_id: number;
+  track_explicit: number | null;
   track_variant_id: number | null;
   track_quality: string | null;
   track_availability: string | null;
@@ -149,6 +150,7 @@ export class AcquisitionPlanningService {
         member.id AS provider_edition_member_id,
         track_match.id AS provider_track_match_id,
         track_match.track_id,
+        member_item.explicit AS track_explicit,
         track_variant.id AS track_variant_id,
         track_variant.quality_class AS track_quality,
         track_variant.availability AS track_availability,
@@ -164,6 +166,8 @@ export class AcquisitionPlanningService {
        AND track_match.track_id IS NOT NULL
       JOIN ProviderEditionMembers member
         ON member.id = track_match.provider_edition_member_id
+      JOIN ProviderItems member_item
+        ON member_item.id = member.member_item_id
       LEFT JOIN ProviderItemAudioVariants track_variant
         ON track_variant.provider_item_id = member.member_item_id
       LEFT JOIN ProviderItemAudioVariants release_variant
@@ -198,6 +202,7 @@ export class AcquisitionPlanningService {
           providerTrackMatchId: row.provider_track_match_id,
           providerEditionMemberId: row.provider_edition_member_id,
           trackId: row.track_id,
+          explicit: row.track_explicit == null ? null : Boolean(row.track_explicit),
           variants: [],
         };
         (source.trackMatches as Array<typeof trackMatch>).push(trackMatch);
@@ -276,6 +281,9 @@ export class AcquisitionPlanningService {
       preferredPlanKey: context.plan_selection_mode === "manual"
         ? context.preferred_plan_key
         : null,
+      // The album lock covers the monitored state, the edition choice and the
+      // provider/plan choice alike.
+      lockPreference: Boolean(context.locked),
       plannerVersion: input.plannerVersion,
       policyHash,
     });
@@ -284,8 +292,9 @@ export class AcquisitionPlanningService {
       return null;
     }
     if (context.plan_selection_mode === "manual" && !result.preferenceHonored) {
-      // The chosen alternative no longer exists. Fall back to the best plan but
-      // drop the stale preference rather than leaving it pointing at nothing.
+      // Either the chosen alternative no longer exists, or it still exists but
+      // now covers fewer canonical tracks than the best plan. Both are grounds
+      // to overrule the user; neither is grounds to do it silently.
       this.db.prepare(`
         UPDATE LibraryEditions
         SET plan_selection_mode = 'auto', preferred_plan_key = NULL,
@@ -293,8 +302,12 @@ export class AcquisitionPlanningService {
         WHERE id = ?
       `).run(input.libraryEditionId);
       console.warn(
-        `[AcquisitionPlanning] Preferred plan ${context.preferred_plan_key} is no longer `
-        + `available for library edition ${input.libraryEditionId}; using the best-ranked plan`,
+        `[AcquisitionPlanning] Preferred plan ${context.preferred_plan_key} for library `
+        + `edition ${input.libraryEditionId} `
+        + (result.preferenceLostCoverage
+          ? "no longer covers as many tracks as the best plan"
+          : "is no longer available")
+        + "; using the best-ranked plan",
       );
     }
     return result.chosenPlanId;

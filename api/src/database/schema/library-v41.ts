@@ -181,6 +181,10 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       -- Optimizer ranking within this edition, 0 = best. Presentation order.
       rank INTEGER NOT NULL DEFAULT 0,
       coverage INTEGER NOT NULL DEFAULT 0,
+      -- The axes a user actually chooses along, alongside composition.
+      quality_tier TEXT NOT NULL DEFAULT 'lossless',
+      explicit_content TEXT NOT NULL DEFAULT 'mixed'
+        CHECK(explicit_content IN ('clean', 'explicit', 'mixed')),
       planner_version INTEGER NOT NULL,
       policy_hash TEXT NOT NULL,
       computed_at DATETIME NOT NULL,
