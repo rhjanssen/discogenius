@@ -5,8 +5,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+import { UpgradableSpecification } from "../config/upgradable-specification.js";
 import {
     buildMetadataWriteArgs,
+    deriveQuality,
     deriveVideoQuality,
     embedAudioCover,
     embedVideoThumbnail,
@@ -197,4 +199,24 @@ test("audio cover replacement preserves M4A MusicBrainz metadata", {
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
+});
+
+test("an unclassifiable container is not reported as lossless", () => {
+  // Claiming LOSSLESS for an unknown extension made the file look like it
+  // already satisfied a lossless cutoff, suppressing allowed upgrades.
+  assert.equal(deriveQuality(".xyz", {}), "UNKNOWN");
+  assert.equal(deriveQuality("", {}), "UNKNOWN");
+});
+
+test("unknown local quality never satisfies a quality cutoff", () => {
+  const profile = UpgradableSpecification.buildEffectiveProfile({
+    audio_quality: "high",
+    video_quality: "fhd",
+    upgrade_existing_files: true,
+    extract_flac: true,
+    convert_video_mp4: true,
+  } as Parameters<typeof UpgradableSpecification.buildEffectiveProfile>[0]);
+
+  assert.equal(UpgradableSpecification.qualityCutoffNotMet(profile, "UNKNOWN"), true);
+  assert.equal(UpgradableSpecification.qualityCutoffNotMet(profile, "LOSSLESS"), false);
 });

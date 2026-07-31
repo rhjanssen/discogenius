@@ -316,7 +316,11 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
         return 'HIGH';
     }
 
-    return 'LOSSLESS'; // Default fallback
+    // An unrecognised container is not evidence of lossless audio. Claiming
+    // LOSSLESS here made the file look like it already met a lossless cutoff,
+    // which silently suppressed every allowed upgrade for it. UNKNOWN
+    // normalizes to no tier, which ranks below any cutoff and stays upgradable.
+    return 'UNKNOWN';
 }
 
 export function requiresBrowserCompatibleAudioStream(source: BrowserCompatibleAudioSource): boolean {
