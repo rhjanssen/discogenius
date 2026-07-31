@@ -969,6 +969,63 @@ const AlbumPage = () => {
     });
   }, [albumId, librarySelectionMutation]);
 
+  const libraryPlanMutation = useMutation({
+    mutationFn: async ({
+      libraryId,
+      editionId,
+      planKey,
+    }: {
+      libraryId: number;
+      editionId: number;
+      planKey: string | null;
+    }) => (planKey == null
+      ? api.revertAlbumLibraryPlan(albumId!, libraryId, editionId)
+      : api.setAlbumLibraryPlan(albumId!, libraryId, editionId, planKey)),
+    onSuccess: async (releaseAvailability, variables) => {
+      queryClient.setQueryData(
+        albumReleaseAvailabilityQueryKey(albumId),
+        releaseAvailability,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: albumPageQueryKey(albumId) }),
+        queryClient.invalidateQueries({ queryKey: albumReleaseAvailabilityQueryKey(albumId) }),
+      ]);
+      dispatchLibraryUpdated();
+      toast({
+        title: variables.planKey == null
+          ? "Acquisition plan set to automatic"
+          : "Acquisition plan updated",
+        description: variables.planKey == null
+          ? "The planner will choose the best plan for this library again."
+          : "This library will acquire the album using the selected plan.",
+      });
+    },
+    onError: (mutationError) => {
+      toast({
+        title: "Failed to change acquisition plan",
+        description: mutationError instanceof Error ? mutationError.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSelectPlanForLibrary = useCallback((
+    libraryId: number,
+    editionId: number,
+    planKey: string,
+  ) => {
+    if (!albumId) return;
+    libraryPlanMutation.mutate({ libraryId, editionId, planKey });
+  }, [albumId, libraryPlanMutation]);
+
+  const handleRevertPlanForLibrary = useCallback((
+    libraryId: number,
+    editionId: number,
+  ) => {
+    if (!albumId) return;
+    libraryPlanMutation.mutate({ libraryId, editionId, planKey: null });
+  }, [albumId, libraryPlanMutation]);
+
   const handleDownloadAlbum = async (slot?: 'stereo' | 'spatial') => {
     if (!album || !hasAnyProviderOffer) return;
     setDownloadingAlbum(true);
@@ -1508,7 +1565,9 @@ const AlbumPage = () => {
 
                   {/* Lock Button — icon shows action (what clicking will do) */}
                   <OverflowItem id="lock" priority={2}>
-                    <AppTooltip content={isLocked ? "Unlock to allow auto-filters to change status" : "Lock to prevent auto-filters from changing status"} relationship="label">
+                    <AppTooltip content={isLocked
+                      ? "Unlock to let curation change the monitored state, edition choice and acquisition plan"
+                      : "Lock the monitored state, edition choice and acquisition plan against curation"} relationship="label">
                       <Button
                         appearance="subtle"
                         icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
@@ -1716,6 +1775,8 @@ const AlbumPage = () => {
               currentReleaseMbid={album.selected_release_mbid || album.stereo_release_mbid || album.spatial_release_mbid}
               pendingSelectionKey={pendingSelectionKey}
               onSelect={handleSelectReleaseForLibrary}
+              onSelectPlan={handleSelectPlanForLibrary}
+              onRevertPlan={handleRevertPlanForLibrary}
             />
           </div>
         ) : otherVersions.length > 0 ? (

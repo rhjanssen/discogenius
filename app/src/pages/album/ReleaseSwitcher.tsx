@@ -4,6 +4,7 @@ import {
   AccordionItem,
   AccordionPanel,
   Badge,
+  Button,
   Card,
   Text,
   makeStyles,
@@ -19,6 +20,8 @@ import type { ReleaseGroupAvailability } from "@/hooks/useAlbumPage";
 type Release = ReleaseGroupAvailability["releases"][number];
 type Library = ReleaseGroupAvailability["libraries"][number];
 type Offer = Release["offers"][number];
+type Selection = Library["selections"][number];
+type AcquisitionPlan = Selection["plans"][number];
 type AudioQuality = Offer["variants"][number]["qualityClass"];
 
 const AUDIO_QUALITIES = new Set<AudioQuality>([
@@ -206,6 +209,23 @@ const useStyles = makeStyles({
   unavailable: {
     color: tokens.colorNeutralForeground3,
   },
+  plans: {
+    display: "flex",
+    flexDirection: "column",
+    rowGap: tokens.spacingVerticalXXS,
+    marginTop: tokens.spacingVerticalXS,
+  },
+  planRow: {
+    display: "flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+  },
+  planLabel: {
+    display: "flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalXS,
+  },
   catalogAccordion: {
     backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: tokens.borderRadiusMedium,
@@ -215,11 +235,28 @@ const useStyles = makeStyles({
   },
 });
 
+const QUALITY_TIER_LABEL: Record<string, string> = {
+  "hires-lossless": "Hi-Res",
+  lossless: "Lossless",
+  lossy: "High",
+  spatial: "Spatial",
+};
+
+function planLabel(plan: AcquisitionPlan): string {
+  const tier = QUALITY_TIER_LABEL[plan.qualityTier] ?? plan.qualityTier;
+  const shape = plan.composition === "composite" ? "combined sources" : "single edition";
+  return `${plan.provider} · ${tier} · ${shape}`;
+}
+
 export interface ReleaseSwitcherProps {
   availability: ReleaseGroupAvailability;
   currentReleaseMbid?: string | null;
   pendingSelectionKey?: string | null;
   onSelect: (libraryId: number, editionId: number, providerEditionMatchId: number) => void;
+  /** Choose which persisted acquisition plan this library executes. */
+  onSelectPlan?: (libraryId: number, editionId: number, planKey: string) => void;
+  /** Hand the plan choice back to the planner. */
+  onRevertPlan?: (libraryId: number, editionId: number) => void;
 }
 
 export function ReleaseSwitcher({
@@ -227,6 +264,8 @@ export function ReleaseSwitcher({
   currentReleaseMbid,
   pendingSelectionKey,
   onSelect,
+  onSelectPlan,
+  onRevertPlan,
 }: ReleaseSwitcherProps) {
   const styles = useStyles();
   if (availability.releases.length === 0) return null;
@@ -327,6 +366,49 @@ export function ReleaseSwitcher({
                       }
                     }}
                   />
+                  {selection && selection.plans.length > 0 && onSelectPlan ? (
+                    <div className={styles.plans}>
+                      <div className={styles.planRow}>
+                        <Text size={100} className={styles.metadata}>
+                          Acquisition plan
+                        </Text>
+                        {selection.planSelectionMode === "manual" ? (
+                          <Badge appearance="tint" color="brand">Chosen by you</Badge>
+                        ) : (
+                          <Badge appearance="tint" color="informative">Automatic</Badge>
+                        )}
+                        {selection.planSelectionMode === "manual" && onRevertPlan ? (
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            onClick={() => onRevertPlan(library.id, release.id)}
+                          >
+                            Use automatic choice
+                          </Button>
+                        ) : null}
+                      </div>
+                      {selection.plans.map((plan) => (
+                        <div key={plan.planKey} className={styles.planRow}>
+                          <Button
+                            size="small"
+                            appearance={plan.chosen ? "primary" : "outline"}
+                            disabled={plan.chosen}
+                            onClick={() => onSelectPlan(library.id, release.id, plan.planKey)}
+                          >
+                            {planLabel(plan)}
+                          </Button>
+                          <Text size={100} className={styles.metadata}>
+                            {plan.coverage} {plan.coverage === 1 ? "track" : "tracks"}
+                          </Text>
+                          {plan.explicitContent !== "mixed" ? (
+                            <Badge appearance="outline" color="subtle">
+                              {plan.explicitContent === "explicit" ? "Explicit" : "Clean"}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

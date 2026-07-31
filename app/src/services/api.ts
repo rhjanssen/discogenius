@@ -1172,6 +1172,33 @@ class ApiClient {
     }, parseLibraryReleaseGroupAvailabilityContract);
   }
 
+  /** Pick which persisted acquisition plan this library executes. */
+  async setAlbumLibraryPlan(
+    albumId: string,
+    libraryId: number,
+    editionId: number,
+    planKey: string,
+  ): Promise<LibraryReleaseGroupAvailabilityContract> {
+    return this.request(`/v1/album/${albumId}/libraries/${libraryId}/plan`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ editionId, planKey }),
+    }, parseLibraryReleaseGroupAvailabilityContract);
+  }
+
+  /** Hand the plan choice back to the planner. */
+  async revertAlbumLibraryPlan(
+    albumId: string,
+    libraryId: number,
+    editionId: number,
+  ): Promise<LibraryReleaseGroupAvailabilityContract> {
+    return this.request(`/v1/album/${albumId}/libraries/${libraryId}/plan`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ editionId, automatic: true }),
+    }, parseLibraryReleaseGroupAvailabilityContract);
+  }
+
   async getManualImportLibraries() {
     return this.request('/unmapped/canonical/libraries');
   }
