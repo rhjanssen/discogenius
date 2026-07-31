@@ -1123,22 +1123,51 @@ export class AudioTagService {
           ORDER BY candidate.updated_at DESC, candidate.provider_id ASC
           LIMIT 1
         )
+      -- Preference tiers as COALESCE'd subqueries rather than one subquery with a
+      -- correlated ORDER BY. SQLite resolves outer aliases inside a JOIN
+      -- subquery's WHERE but NOT inside its ORDER BY, so the original form threw
+      -- "no such column: canonical_track.id" and silently broke audio tagging for
+      -- every imported album — the download embedded no MusicBrainz ids at all.
       LEFT JOIN ProviderEditionMembers provider_member
-        ON provider_member.id = (
-          SELECT candidate_member.id
-          FROM ProviderEditionMembers candidate_member
-          LEFT JOIN ProviderTrackMatches candidate_match
-            ON candidate_match.provider_edition_member_id = candidate_member.id
-           AND candidate_match.match_state = 'accepted'
-          WHERE candidate_member.member_item_id = provider_track.id
-          ORDER BY
-            CASE
-              WHEN candidate_match.track_id = canonical_track.id THEN 0
-              WHEN candidate_match.recording_id = canonical_recording.id THEN 1
-              ELSE 2
-            END,
-            candidate_member.id
-          LIMIT 1
+        ON provider_member.id = COALESCE(
+          -- 1. the membership whose accepted match is this file's canonical track
+          (
+            SELECT candidate_member.id
+            FROM ProviderEditionMembers candidate_member
+            JOIN ProviderTrackMatches candidate_match
+              ON candidate_match.provider_edition_member_id = candidate_member.id
+             AND candidate_match.match_state = 'accepted'
+            WHERE candidate_member.member_item_id = provider_track.id
+              AND candidate_match.track_id = COALESCE(
+                    lf.track_id,
+                    (SELECT resolved_track.id FROM Tracks resolved_track
+                      WHERE resolved_track.mbid = lf.canonical_track_mbid)
+                  )
+            LIMIT 1
+          ),
+          -- 2. ...else one matching its canonical recording
+          (
+            SELECT candidate_member.id
+            FROM ProviderEditionMembers candidate_member
+            JOIN ProviderTrackMatches candidate_match
+              ON candidate_match.provider_edition_member_id = candidate_member.id
+             AND candidate_match.match_state = 'accepted'
+            WHERE candidate_member.member_item_id = provider_track.id
+              AND candidate_match.recording_id = COALESCE(
+                    lf.recording_id,
+                    (SELECT resolved_recording.id FROM Recordings resolved_recording
+                      WHERE resolved_recording.mbid = lf.canonical_recording_mbid)
+                  )
+            LIMIT 1
+          ),
+          -- 3. ...else any membership of this provider track
+          (
+            SELECT candidate_member.id
+            FROM ProviderEditionMembers candidate_member
+            WHERE candidate_member.member_item_id = provider_track.id
+            ORDER BY candidate_member.id
+            LIMIT 1
+          )
         )
       LEFT JOIN ProviderTrackMatches provider_track_match
         ON provider_track_match.provider_edition_member_id = provider_member.id
@@ -1147,34 +1176,54 @@ export class AudioTagService {
         ON provider_canonical_track.id = provider_track_match.track_id
       LEFT JOIN Recordings provider_recording
         ON provider_recording.id = provider_track_match.recording_id
+      -- Preference as COALESCE'd tiers, for the same SQLite reason as the
+      -- membership join above: an outer alias resolves in a subquery's WHERE but
+      -- not in its ORDER BY.
       LEFT JOIN ProviderItems provider_album
-        ON provider_album.id = (
-          SELECT album_candidate.id
-          FROM ProviderItems album_candidate
-          WHERE album_candidate.entity_type = 'release'
-            AND (
-              (
-                lf.provider_entity_type IN ('album', 'release')
-                AND CAST(album_candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-                AND (COALESCE(lf.provider, provider_track.provider) IS NULL OR album_candidate.provider = COALESCE(lf.provider, provider_track.provider))
+        ON provider_album.id = COALESCE(
+          -- 1. the provider edition this membership actually sits on
+          provider_member.provider_edition_item_id,
+          -- 2. ...else the edition the file itself records
+          (
+            SELECT album_candidate.id
+            FROM ProviderItems album_candidate
+            WHERE album_candidate.entity_type = 'release'
+              AND lf.provider_entity_type IN ('album', 'release')
+              AND CAST(album_candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+              AND (
+                COALESCE(lf.provider, provider_track.provider) IS NULL
+                OR album_candidate.provider = COALESCE(lf.provider, provider_track.provider)
               )
-              OR album_candidate.id = provider_member.provider_edition_item_id
-            )
-          ORDER BY CASE WHEN album_candidate.id = provider_member.provider_edition_item_id THEN 0 ELSE 1 END,
-            album_candidate.updated_at DESC
-          LIMIT 1
+            ORDER BY album_candidate.updated_at DESC
+            LIMIT 1
+          )
         )
+      -- Third instance of the same SQLite rule: the "prefer the match pointing at
+      -- this file's own canonical edition" tier moves into a WHERE-correlated
+      -- subquery, and the generic best-match tier follows as the fallback.
       LEFT JOIN ProviderEditionMatches provider_release_match
-        ON provider_release_match.id = (
-          SELECT candidate_release_match.id
-          FROM ProviderEditionMatches candidate_release_match
-          WHERE candidate_release_match.provider_edition_item_id = provider_album.id
-            AND candidate_release_match.match_state = 'accepted'
-          ORDER BY
-            CASE WHEN candidate_release_match.edition_id = canonical_release.id THEN 0 ELSE 1 END,
-            CASE candidate_release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-            candidate_release_match.confidence DESC
-          LIMIT 1
+        ON provider_release_match.id = COALESCE(
+          (
+            SELECT candidate_release_match.id
+            FROM ProviderEditionMatches candidate_release_match
+            WHERE candidate_release_match.provider_edition_item_id = provider_album.id
+              AND candidate_release_match.match_state = 'accepted'
+              AND candidate_release_match.edition_id = lf.album_edition_id
+            ORDER BY
+              CASE candidate_release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+              candidate_release_match.confidence DESC
+            LIMIT 1
+          ),
+          (
+            SELECT candidate_release_match.id
+            FROM ProviderEditionMatches candidate_release_match
+            WHERE candidate_release_match.provider_edition_item_id = provider_album.id
+              AND candidate_release_match.match_state = 'accepted'
+            ORDER BY
+              CASE candidate_release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+              candidate_release_match.confidence DESC
+            LIMIT 1
+          )
         )
       LEFT JOIN AlbumEditions ar
         ON ar.id = COALESCE(canonical_release.id, canonical_track.album_edition_id, provider_release_match.edition_id)
