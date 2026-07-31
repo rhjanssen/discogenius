@@ -6,12 +6,15 @@ import {
   invalidateReleaseGroupDownloadStatus,
 } from "../download/download-state.js";
 import {
+  captureLinkedExtras,
   emptyExtraDeletionResult,
   releaseExtrasForDeletedTrackFiles,
   type ExtraDeletionResult,
 } from "../extras/files/extra-file-deletion.js";
 import { AlbumCommandService } from "../music/album-command-service.js";
 import {
+  describeScope,
+  pathIsInsideScopeRoot,
   resolveDeletionScope,
   scopeIncludesFile,
   type DeletionScope,
@@ -30,6 +33,8 @@ export type DeleteLibraryFilesResult = {
   deleted: number;
   missing: number;
   errors: number;
+  /** Rows refused because their path could not be proven inside the target root. */
+  skippedOutsideRoot: number;
   unmonitored: boolean;
   extras: ExtraDeletionResult;
 };
@@ -73,10 +78,15 @@ function deleteTrackFileRows(
   let deleted = 0;
   let missing = 0;
   let errors = 0;
+  let skippedOutsideRoot = 0;
 
   const deletedTrackFileIds: number[] = [];
   const storedFilePaths: string[] = [];
   const parentsToPrune: Array<{ directory: string; root: string }> = [];
+
+  // The FK from every extra table to TrackFiles is ON DELETE SET NULL, so the
+  // links have to be read while the playable rows still exist.
+  const linkedExtras = captureLinkedExtras(rows.map((row) => row.id));
 
   for (const row of rows) {
     let canRemove = true;
@@ -84,6 +94,18 @@ function deleteTrackFileRows(
       filePath: row.file_path,
       libraryRoot: row.library_root,
     });
+
+    // Owning the row is not permission to delete the path it names. Prove the
+    // resolved path is inside the target Library's configured root first.
+    if (!pathIsInsideScopeRoot(scope, resolvedFilePath)) {
+      console.warn(
+        `[LibraryDelete] Deletion skipped outside managed root for ${describeScope(scope)}: `
+        + `${resolvedFilePath}`,
+      );
+      skippedOutsideRoot += 1;
+      continue;
+    }
+
     const exists = fs.existsSync(resolvedFilePath);
     if (exists) {
       try {
@@ -125,14 +147,19 @@ function deleteTrackFileRows(
   }
 
   const extras = deletedTrackFileIds.length > 0
-    ? releaseExtrasForDeletedTrackFiles({ scope, deletedTrackFileIds, storedFilePaths })
+    ? releaseExtrasForDeletedTrackFiles({
+      scope,
+      deletedTrackFileIds,
+      storedFilePaths,
+      linkedExtras,
+    })
     : emptyExtraDeletionResult();
 
   for (const parent of parentsToPrune) {
     removeEmptyParents(parent.directory, parent.root);
   }
 
-  return { deleted, missing, errors, extras };
+  return { deleted, missing, errors, skippedOutsideRoot, extras };
 }
 
 function selectScopedRows(sql: string, values: unknown[], scope: DeletionScope): TrackFileDeleteRow[] {
@@ -368,6 +395,7 @@ export function deleteLibraryFilesByIds(
       deleted: 0,
       missing: 0,
       errors: 0,
+      skippedOutsideRoot: 0,
       unmonitored: false,
       extras: emptyExtraDeletionResult(),
     };

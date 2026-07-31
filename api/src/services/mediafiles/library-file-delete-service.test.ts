@@ -657,3 +657,158 @@ test("deleting a provider item leaves the local file and nulls its provenance", 
     .get(trackFile.id) as { provider_item_id: number | null };
   assert.equal(row.provider_item_id, null);
 });
+
+// ---------------------------------------------------------------------------
+// Linked-extra ordering and root containment
+// ---------------------------------------------------------------------------
+
+test("deleting one track removes only its own linked extras", () => {
+  seedArtist();
+  seedAlbum("rg-linked");
+  const trackOneId = seedTrack("track-one", "rg-linked");
+  const libraryId = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+
+  // Two playable tracks in one folder, each with its own lyric sidecar.
+  const trackOne = seedTrackFile({
+    libraryId,
+    relativePath: path.join("Artist", "Album", "01 One.flac"),
+    releaseGroupMbid: "rg-linked",
+    trackMbid: "track-one",
+    trackId: trackOneId,
+  });
+  const trackTwo = seedTrackFile({
+    libraryId,
+    relativePath: path.join("Artist", "Album", "02 Two.flac"),
+    releaseGroupMbid: "rg-linked",
+  });
+  const lyricsOne = seedExtra({
+    relativePath: path.join("Artist", "Album", "01 One.lrc"),
+    libraryIds: [libraryId],
+    trackFileId: trackOne.id,
+    fileType: "lyrics",
+  });
+  const lyricsTwo = seedExtra({
+    relativePath: path.join("Artist", "Album", "02 Two.lrc"),
+    libraryIds: [libraryId],
+    trackFileId: trackTwo.id,
+    fileType: "lyrics",
+  });
+
+  const result = deleteModule.deleteTrackLibraryFiles("track-one", { libraryId });
+
+  assert.equal(result.deleted, 1);
+  assert.equal(fs.existsSync(trackOne.filePath), false);
+  assert.equal(fs.existsSync(trackTwo.filePath), true);
+  // The extras FK is ON DELETE SET NULL, so reading the link after deleting the
+  // playable row would have found nothing and left this file behind.
+  assert.equal(fs.existsSync(lyricsOne.filePath), false, "the deleted track's lyrics must go");
+  assert.equal(fs.existsSync(lyricsTwo.filePath), true, "the surviving track keeps its lyrics");
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS c FROM MetadataFiles WHERE id = ?")
+      .get(lyricsOne.id) as { c: number }).c,
+    0,
+  );
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS c FROM MetadataFiles WHERE id = ?")
+      .get(lyricsTwo.id) as { c: number }).c,
+    1,
+  );
+});
+
+test("a row pointing outside the target library root is refused", () => {
+  seedArtist();
+  seedAlbum("rg-outside");
+  const libraryId = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+
+  // A stale/corrupt row whose path escaped the managed root entirely.
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-outside-"));
+  const outsidePath = path.join(outsideDir, "Escaped.flac");
+  fs.writeFileSync(outsidePath, "audio");
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, file_type, library_slot, library_root, library_id,
+      file_path, relative_path, filename, extension, canonical_release_group_mbid
+    ) VALUES (?, 'track', 'stereo', ?, ?, ?, 'Escaped.flac', 'Escaped.flac', 'flac', ?)
+  `).run(ARTIST_ID, outsideDir, libraryId, outsidePath, "rg-outside");
+
+  try {
+    const result = deleteModule.deleteReleaseGroupLibraryFiles("rg-outside", { libraryId });
+
+    assert.equal(result.skippedOutsideRoot, 1);
+    assert.equal(result.deleted, 0);
+    assert.equal(fs.existsSync(outsidePath), true, "a path outside the root is never removed");
+    assert.equal(countTrackFiles(), 1, "and its row survives with it");
+  } finally {
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test("a folder-level cover survives while another library still has media there", () => {
+  seedArtist();
+  seedAlbum("rg-folder-shared");
+  const lossless = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+  const lossy = fixtures.seedTestLibrary(dbModule.db, { name: "Lossy", rootPath: musicRoot });
+
+  seedTrackFile({
+    libraryId: lossless,
+    relativePath: path.join("Artist", "Album", "01 Track.flac"),
+    releaseGroupMbid: "rg-folder-shared",
+  });
+  seedTrackFile({
+    libraryId: lossy,
+    relativePath: path.join("Artist", "Album", "01 Track.mp3"),
+    releaseGroupMbid: "rg-folder-shared",
+  });
+  // A legacy folder extra with no association rows at all.
+  const cover = seedExtra({
+    relativePath: path.join("Artist", "Album", "cover.jpg"),
+    libraryIds: [],
+  });
+
+  deleteModule.deleteReleaseGroupLibraryFiles("rg-folder-shared", { libraryId: lossless });
+
+  assert.equal(
+    fs.existsSync(cover.filePath),
+    true,
+    "the lossy library still has media in this folder",
+  );
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS c FROM MetadataFiles WHERE id = ?")
+      .get(cover.id) as { c: number }).c,
+    1,
+  );
+});
+
+test("a failed physical deletion leaves the linked extras alone too", () => {
+  seedArtist();
+  seedAlbum("rg-fs-extras");
+  const libraryId = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+
+  const trackFile = seedTrackFile({
+    libraryId,
+    relativePath: path.join("Artist", "Album", "01 Track.flac"),
+    releaseGroupMbid: "rg-fs-extras",
+  });
+  const lyrics = seedExtra({
+    relativePath: path.join("Artist", "Album", "01 Track.lrc"),
+    libraryIds: [libraryId],
+    trackFileId: trackFile.id,
+    fileType: "lyrics",
+  });
+
+  const realRm = fs.rmSync;
+  (fs as { rmSync: typeof fs.rmSync }).rmSync = ((target: fs.PathLike, options?: fs.RmOptions) => {
+    if (String(target) === trackFile.filePath) throw new Error("EPERM");
+    return realRm(target, options);
+  }) as typeof fs.rmSync;
+  try {
+    const result = deleteModule.deleteReleaseGroupLibraryFiles("rg-fs-extras", { libraryId });
+    assert.equal(result.errors, 1);
+  } finally {
+    (fs as { rmSync: typeof fs.rmSync }).rmSync = realRm;
+  }
+
+  assert.equal(fs.existsSync(trackFile.filePath), true);
+  assert.equal(fs.existsSync(lyrics.filePath), true, "the sidecar follows its file, not the attempt");
+  assert.equal(countTrackFiles(), 1);
+});

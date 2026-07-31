@@ -174,20 +174,44 @@ function releaseExtra(
  * remaining playable file in that folder, and are physically removed only once
  * no playable file from any Library remains there.
  */
+export type LinkedExtraSnapshot = Array<{ table: ExtraFileTableName; row: ExtraRow }>;
+
+/**
+ * Capture the extras linked to playable files *before* those files are deleted.
+ *
+ * `MetadataFiles.track_file_id`, `LyricFiles.track_file_id` and
+ * `ExtraFiles.track_file_id` are all `ON DELETE SET NULL`. Reading them after
+ * the TrackFiles row is gone returns nothing — the link has already been
+ * erased — so a track's own lyrics and metadata silently outlived it, and worse,
+ * they then looked like unowned folder-level extras to the folder sweep.
+ */
+export function captureLinkedExtras(trackFileIds: readonly number[]): LinkedExtraSnapshot {
+  if (trackFileIds.length === 0) return [];
+  const snapshot: LinkedExtraSnapshot = [];
+  for (const table of EXTRA_TABLES) {
+    for (const row of selectLinkedExtras(table, [...trackFileIds])) {
+      snapshot.push({ table, row });
+    }
+  }
+  return snapshot;
+}
+
 export function releaseExtrasForDeletedTrackFiles(input: {
   scope: DeletionScope;
   deletedTrackFileIds: number[];
   storedFilePaths: string[];
+  /** Linked extras captured before the playable rows were deleted. */
+  linkedExtras?: LinkedExtraSnapshot;
 }): ExtraDeletionResult {
   const result = emptyExtraDeletionResult();
   const { scope, deletedTrackFileIds } = input;
 
-  if (deletedTrackFileIds.length > 0) {
-    for (const table of EXTRA_TABLES) {
-      for (const row of selectLinkedExtras(table, deletedTrackFileIds)) {
-        releaseExtra(table, row, scope, true, result);
-      }
-    }
+  const deletedIds = new Set(deletedTrackFileIds);
+  for (const { table, row } of input.linkedExtras ?? []) {
+    // Only extras whose owner actually went away; a file whose deletion failed
+    // keeps its sidecars.
+    if (row.track_file_id == null || !deletedIds.has(row.track_file_id)) continue;
+    releaseExtra(table, row, scope, true, result);
   }
 
   const directories = new Set(input.storedFilePaths.map(storedDirectory));

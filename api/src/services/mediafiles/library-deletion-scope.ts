@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { getCurrentLibraryRootPath } from "./library-paths.js";
 import { normalizeComparablePath } from "./path-utils.js";
 
 /**
@@ -169,6 +170,42 @@ export function scopeIncludesFile(scope: DeletionScope, row: ScopedFileRow): boo
   }
   const owners = librariesOwningPath(row.file_path);
   return owners.length === 1 && owners[0] === scope.libraryId;
+}
+
+
+/**
+ * Prove a resolved filesystem path sits inside the configured root of the exact
+ * Library being deleted from.
+ *
+ * `library_id` alone is not proof. A row can be stale (the Library root moved),
+ * corrupt, or point outside every managed root entirely, and a scoped deletion
+ * must never remove a file it cannot place inside the target root. Fails closed:
+ * an unknown or ambiguous root yields false.
+ */
+export function pathIsInsideScopeRoot(scope: DeletionScope, resolvedPath: string): boolean {
+  const normalizedPath = normalizeComparablePath(resolvedPath);
+  if (!normalizedPath) return false;
+
+  const roots = scope.kind === "all-libraries"
+    ? (db.prepare("SELECT root_path FROM Libraries WHERE enabled = 1")
+        .all() as Array<{ root_path: string }>).map((row) => row.root_path)
+    : (db.prepare("SELECT root_path FROM Libraries WHERE id = ?")
+        .all(scope.libraryId) as Array<{ root_path: string }>).map((row) => row.root_path);
+
+  const configuredRoots = roots
+    .map((root) => normalizeComparablePath(root))
+    .filter((root) => root.length > 0);
+
+  // No Library rows at all: the installation has no Library boundary yet, so
+  // fall back to the configured media roots the paths were resolved against.
+  const candidateRoots = configuredRoots.length > 0
+    ? configuredRoots
+    : (["music", "spatial", "videos"] as const)
+      .map((key) => normalizeComparablePath(getCurrentLibraryRootPath(key)))
+      .filter((root) => root.length > 0);
+
+  return candidateRoots.some((root) =>
+    normalizedPath === root || normalizedPath.startsWith(`${root}/`));
 }
 
 export function describeScope(scope: DeletionScope): string {
