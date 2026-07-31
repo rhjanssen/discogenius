@@ -5,7 +5,18 @@ import {
   invalidateArtistDownloadStatus,
   invalidateReleaseGroupDownloadStatus,
 } from "../download/download-state.js";
+import {
+  emptyExtraDeletionResult,
+  releaseExtrasForDeletedTrackFiles,
+  type ExtraDeletionResult,
+} from "../extras/files/extra-file-deletion.js";
 import { AlbumCommandService } from "../music/album-command-service.js";
+import {
+  resolveDeletionScope,
+  scopeIncludesFile,
+  type DeletionScope,
+  type DeletionScopeInput,
+} from "./library-deletion-scope.js";
 import {
   LibraryFilesService,
   removeEmptyParents,
@@ -20,7 +31,10 @@ export type DeleteLibraryFilesResult = {
   missing: number;
   errors: number;
   unmonitored: boolean;
+  extras: ExtraDeletionResult;
 };
+
+export type DeleteLibraryFilesOptions = DeletionScopeInput;
 
 type TrackFileDeleteRow = {
   id: number;
@@ -29,13 +43,40 @@ type TrackFileDeleteRow = {
   quality: string | null;
   file_path: string;
   library_root: string;
+  library_id: number | null;
   canonical_release_group_mbid: string | null;
 };
 
-function deleteTrackFileRows(rows: TrackFileDeleteRow[]): Omit<DeleteLibraryFilesResult, "unmonitored"> {
+const TRACK_FILE_DELETE_COLUMNS = `
+  id, artist_id, file_type, quality, file_path, library_root, library_id,
+  canonical_release_group_mbid
+`;
+
+function notFound(message: string): Error & { status?: number } {
+  const error = new Error(message) as Error & { status?: number };
+  error.status = 404;
+  return error;
+}
+
+/**
+ * Delete playable files for one deletion scope.
+ *
+ * Order matters: the filesystem operation happens first, the TrackFiles row is
+ * only dropped once the file is gone (or was already absent), shared extras are
+ * released afterwards, and empty parents are pruned last so a retained extra
+ * still counts as folder content.
+ */
+function deleteTrackFileRows(
+  rows: TrackFileDeleteRow[],
+  scope: DeletionScope,
+): Omit<DeleteLibraryFilesResult, "unmonitored"> {
   let deleted = 0;
   let missing = 0;
   let errors = 0;
+
+  const deletedTrackFileIds: number[] = [];
+  const storedFilePaths: string[] = [];
+  const parentsToPrune: Array<{ directory: string; root: string }> = [];
 
   for (const row of rows) {
     let canRemove = true;
@@ -59,6 +100,8 @@ function deleteTrackFileRows(rows: TrackFileDeleteRow[]): Omit<DeleteLibraryFile
     if (!canRemove) continue;
 
     db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
+    deletedTrackFileIds.push(row.id);
+    storedFilePaths.push(row.file_path);
 
     LibraryFilesService.emitFileDeleted({
       libraryFileId: row.id,
@@ -77,46 +120,61 @@ function deleteTrackFileRows(rows: TrackFileDeleteRow[]): Omit<DeleteLibraryFile
 
     const root = resolveLibraryRootPath(row.library_root, row.file_path);
     if (root) {
-      removeEmptyParents(path.dirname(resolvedFilePath), root);
+      parentsToPrune.push({ directory: path.dirname(resolvedFilePath), root });
     }
   }
 
-  return { deleted, missing, errors };
+  const extras = deletedTrackFileIds.length > 0
+    ? releaseExtrasForDeletedTrackFiles({ scope, deletedTrackFileIds, storedFilePaths })
+    : emptyExtraDeletionResult();
+
+  for (const parent of parentsToPrune) {
+    removeEmptyParents(parent.directory, parent.root);
+  }
+
+  return { deleted, missing, errors, extras };
+}
+
+function selectScopedRows(sql: string, values: unknown[], scope: DeletionScope): TrackFileDeleteRow[] {
+  const rows = db.prepare(sql).all(...values) as TrackFileDeleteRow[];
+  return rows.filter((row) => scopeIncludesFile(scope, row));
 }
 
 /**
- * Manage → Delete files for a release group (optional slot).
- * Removes disk files under configured library roots and TrackFiles rows.
+ * Manage → Delete files for an Album (optional legacy stereo/spatial slot).
+ * Removes disk files and TrackFiles rows owned by the target Library only.
  * Does not delete MusicBrainz/catalog rows.
  */
 export function deleteReleaseGroupLibraryFiles(
   releaseGroupMbid: string,
-  options: { slot?: "stereo" | "spatial" | null; unmonitor?: boolean } = {},
+  options: DeleteLibraryFilesOptions & {
+    slot?: "stereo" | "spatial" | null;
+    unmonitor?: boolean;
+  } = {},
 ): DeleteLibraryFilesResult {
+  const scope = resolveDeletionScope(options);
   const releaseGroup = db.prepare(`
     SELECT mbid FROM Albums WHERE mbid = ?
   `).get(releaseGroupMbid) as { mbid?: string } | undefined;
   if (!releaseGroup?.mbid) {
-    const err = new Error("Album not found") as Error & { status?: number };
-    err.status = 404;
-    throw err;
+    throw notFound("Album not found");
   }
 
   const slot = options.slot === "spatial" || options.slot === "stereo" ? options.slot : null;
-  const rows = (slot
-    ? db.prepare(`
-        SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
-        FROM TrackFiles
-        WHERE canonical_release_group_mbid = ?
-          AND library_slot = ?
-      `).all(releaseGroupMbid, slot)
-    : db.prepare(`
-        SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
-        FROM TrackFiles
-        WHERE canonical_release_group_mbid = ?
-      `).all(releaseGroupMbid)) as TrackFileDeleteRow[];
+  const rows = selectScopedRows(
+    slot
+      ? `SELECT ${TRACK_FILE_DELETE_COLUMNS}
+         FROM TrackFiles
+         WHERE canonical_release_group_mbid = ?
+           AND library_slot = ?`
+      : `SELECT ${TRACK_FILE_DELETE_COLUMNS}
+         FROM TrackFiles
+         WHERE canonical_release_group_mbid = ?`,
+    slot ? [releaseGroupMbid, slot] : [releaseGroupMbid],
+    scope,
+  );
 
-  const result = deleteTrackFileRows(rows);
+  const result = deleteTrackFileRows(rows, scope);
   invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
 
   let unmonitored = false;
@@ -129,27 +187,26 @@ export function deleteReleaseGroupLibraryFiles(
 }
 
 /**
- * Manage → Delete files for an artist across all library roots.
+ * Manage → Delete files for an Artist within one Library.
  * Removes disk files + TrackFiles for the artist; keeps catalog/artist rows.
  */
 export function deleteArtistLibraryFiles(
   artistId: string,
-  options: { unmonitor?: boolean } = {},
+  options: DeleteLibraryFilesOptions & { unmonitor?: boolean } = {},
 ): DeleteLibraryFilesResult {
+  const scope = resolveDeletionScope(options);
   const artist = db.prepare(`
     SELECT id FROM Artists WHERE id = ?
   `).get(artistId) as { id?: number | string } | undefined;
   if (!artist?.id) {
-    const err = new Error("Artist not found") as Error & { status?: number };
-    err.status = 404;
-    throw err;
+    throw notFound("Artist not found");
   }
 
-  const rows = db.prepare(`
-    SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
-    FROM TrackFiles
-    WHERE artist_id = ?
-  `).all(artistId) as TrackFileDeleteRow[];
+  const rows = selectScopedRows(
+    `SELECT ${TRACK_FILE_DELETE_COLUMNS} FROM TrackFiles WHERE artist_id = ?`,
+    [artistId],
+    scope,
+  );
 
   const releaseGroups = new Set(
     rows
@@ -157,7 +214,7 @@ export function deleteArtistLibraryFiles(
       .filter((mbid): mbid is string => Boolean(mbid)),
   );
 
-  const result = deleteTrackFileRows(rows);
+  const result = deleteTrackFileRows(rows, scope);
   for (const releaseGroupMbid of releaseGroups) {
     invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
   }
@@ -175,29 +232,34 @@ export function deleteArtistLibraryFiles(
 }
 
 /**
- * Manage → Delete files for a single track (by track MBID).
- * Removes TrackFiles rows matching the track (and sibling extras keyed to it).
+ * Manage → Delete files for a single canonical Track within one Library.
+ *
+ * Resolution is canonical only. The previous implementation also matched
+ * `provider_id = <track mbid>`, which let an unrelated provider-native id
+ * collide with a canonical Track MBID and delete another file entirely.
  */
 export function deleteTrackLibraryFiles(
   trackMbid: string,
+  options: DeleteLibraryFilesOptions = {},
 ): DeleteLibraryFilesResult {
+  const scope = resolveDeletionScope(options);
   const track = db.prepare(`
-    SELECT mbid FROM Tracks WHERE mbid = ?
-  `).get(trackMbid) as { mbid?: string } | undefined;
+    SELECT id, mbid FROM Tracks WHERE mbid = ?
+  `).get(trackMbid) as { id?: number; mbid?: string } | undefined;
   if (!track?.mbid) {
-    const err = new Error("Track not found") as Error & { status?: number };
-    err.status = 404;
-    throw err;
+    throw notFound("Track not found");
   }
 
-  const rows = db.prepare(`
-    SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
-    FROM TrackFiles
-    WHERE canonical_track_mbid = ?
-       OR CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-  `).all(trackMbid, trackMbid) as TrackFileDeleteRow[];
+  const rows = selectScopedRows(
+    `SELECT ${TRACK_FILE_DELETE_COLUMNS}
+     FROM TrackFiles
+     WHERE canonical_track_mbid = ?
+        OR (? IS NOT NULL AND track_id = ?)`,
+    [trackMbid, track.id ?? null, track.id ?? null],
+    scope,
+  );
 
-  const result = deleteTrackFileRows(rows);
+  const result = deleteTrackFileRows(rows, scope);
   const releaseGroups = new Set(
     rows
       .map((row) => row.canonical_release_group_mbid)
@@ -211,12 +273,14 @@ export function deleteTrackLibraryFiles(
 }
 
 /**
- * Manage → Delete files for a canonical music-video recording.
+ * Manage → Delete files for a canonical music-video Recording within one Library.
  * Removes video + thumbnail/nfo TrackFiles; keeps the catalog Recording.
  */
 export function deleteVideoLibraryFiles(
   videoId: string,
+  options: DeleteLibraryFilesOptions = {},
 ): DeleteLibraryFilesResult {
+  const scope = resolveDeletionScope(options);
   const recording = db.prepare(`
     SELECT id, mbid
     FROM Recordings
@@ -232,9 +296,7 @@ export function deleteVideoLibraryFiles(
   const recordingMbid = recording?.mbid ? String(recording.mbid) : null;
 
   if (recordingId == null) {
-    const err = new Error("Video not found") as Error & { status?: number };
-    err.status = 404;
-    throw err;
+    throw notFound("Video not found");
   }
 
   const providerItems = db.prepare(`
@@ -247,64 +309,79 @@ export function deleteVideoLibraryFiles(
       AND video_match.recording_id = ?
   `).all(recordingId) as Array<{ provider: string; provider_id: string }>;
 
-  const rows = (providerItems.length > 0
-    ? db.prepare(`
-        SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
-        FROM TrackFiles
-        WHERE file_type IN ('video', 'video_thumbnail', 'nfo')
-          AND (
-            recording_id = ?
-            OR (? IS NOT NULL AND canonical_recording_mbid = ?)
-            OR (
-              provider_entity_type = 'video'
-              AND (
-                ${providerItems.map(() =>
-                  "(provider = ? AND CAST(provider_id AS TEXT) = CAST(? AS TEXT))"
-                ).join(" OR ")}
-              )
-            )
-          )
-      `).all(
+  const rows = providerItems.length > 0
+    ? selectScopedRows(
+      `SELECT ${TRACK_FILE_DELETE_COLUMNS}
+       FROM TrackFiles
+       WHERE file_type IN ('video', 'video_thumbnail', 'nfo')
+         AND (
+           recording_id = ?
+           OR (? IS NOT NULL AND canonical_recording_mbid = ?)
+           OR (
+             provider_entity_type = 'video'
+             AND (
+               ${providerItems.map(() =>
+        "(provider = ? AND CAST(provider_id AS TEXT) = CAST(? AS TEXT))"
+      ).join(" OR ")}
+             )
+           )
+         )`,
+      [
         recordingId,
         recordingMbid,
         recordingMbid,
         ...providerItems.flatMap((item) => [item.provider, item.provider_id]),
-      )
-    : db.prepare(`
-        SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
-        FROM TrackFiles
-        WHERE file_type IN ('video', 'video_thumbnail', 'nfo')
-          AND (
-            recording_id = ?
-            OR (? IS NOT NULL AND canonical_recording_mbid = ?)
-          )
-      `).all(recordingId, recordingMbid, recordingMbid)) as TrackFileDeleteRow[];
+      ],
+      scope,
+    )
+    : selectScopedRows(
+      `SELECT ${TRACK_FILE_DELETE_COLUMNS}
+       FROM TrackFiles
+       WHERE file_type IN ('video', 'video_thumbnail', 'nfo')
+         AND (
+           recording_id = ?
+           OR (? IS NOT NULL AND canonical_recording_mbid = ?)
+         )`,
+      [recordingId, recordingMbid, recordingMbid],
+      scope,
+    );
 
-  const result = deleteTrackFileRows(rows);
+  const result = deleteTrackFileRows(rows, scope);
   return { ...result, unmonitored: false };
 }
 
 /**
  * Delete specific TrackFiles by id (disk + DB). Used by track/video manage UIs.
+ *
+ * Exact row identity already names one Library per file, so the scope is only
+ * used to release the right shared-extra associations.
  */
 export function deleteLibraryFilesByIds(
   fileIds: number[],
+  options: DeleteLibraryFilesOptions = {},
 ): DeleteLibraryFilesResult {
   const uniqueIds = Array.from(new Set(
     fileIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0),
   ));
   if (uniqueIds.length === 0) {
-    return { deleted: 0, missing: 0, errors: 0, unmonitored: false };
+    return {
+      deleted: 0,
+      missing: 0,
+      errors: 0,
+      unmonitored: false,
+      extras: emptyExtraDeletionResult(),
+    };
   }
 
+  const scope = resolveDeletionScope(options);
   const placeholders = uniqueIds.map(() => "?").join(",");
-  const rows = db.prepare(`
-    SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
-    FROM TrackFiles
-    WHERE id IN (${placeholders})
-  `).all(...uniqueIds) as TrackFileDeleteRow[];
+  const rows = selectScopedRows(
+    `SELECT ${TRACK_FILE_DELETE_COLUMNS} FROM TrackFiles WHERE id IN (${placeholders})`,
+    uniqueIds,
+    scope,
+  );
 
-  const result = deleteTrackFileRows(rows);
+  const result = deleteTrackFileRows(rows, scope);
   const releaseGroups = new Set(
     rows
       .map((row) => row.canonical_release_group_mbid)
@@ -315,4 +392,3 @@ export function deleteLibraryFilesByIds(
   }
   return { ...result, unmonitored: false };
 }
-

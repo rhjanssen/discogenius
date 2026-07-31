@@ -12,6 +12,10 @@ import {
   setArtistMonitoredState,
 } from "../../services/music/artist-monitoring.js";
 import { MoveArtistService } from "../../services/mediafiles/move-artist-service.js";
+import {
+  deletionScopeFromRequest,
+  scopeToOptions,
+} from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteArtistLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { deleteArtistFromLibrary } from "../../services/music/artist-delete-service.js";
 import { ArtistQueryService } from "../../services/music/artist-query-service.js";
@@ -512,13 +516,23 @@ router.patch("/:artistId", async (req, res) => {
 router.delete("/:artistId/files", (req, res) => {
   try {
     const body = getObjectBody(req.body ?? {});
-    rejectUnknownKeys(body, ["unmonitor"], "Artist delete files");
+    rejectUnknownKeys(body, ["unmonitor", "libraryId", "allLibraries"], "Artist delete files");
     const unmonitor = getOptionalBoolean(body, "unmonitor") === true
       || parseOptionalQueryBoolean(req.query.unmonitor) === true;
-    const result = deleteArtistLibraryFiles(req.params.artistId, { unmonitor });
+    const scope = deletionScopeFromRequest({
+      libraryId: body.libraryId ?? req.query.libraryId,
+      allLibraries: body.allLibraries ?? req.query.allLibraries,
+    });
+    const result = deleteArtistLibraryFiles(req.params.artistId, {
+      ...scopeToOptions(scope),
+      unmonitor,
+    });
     res.json({ success: true, ...result });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    if (error?.status === 400) {
       return res.status(400).json({ detail: error.message });
     }
     if (error?.status === 404) {

@@ -3,6 +3,10 @@ import { db, runWithAsyncBusyRetry } from "../../database.js";
 import { CommandNames } from "../../services/commands/command-names.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
+import {
+  deletionScopeFromRequest,
+  scopeToOptions,
+} from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteVideoLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { getVideoDetail, listVideos } from "../../services/music/video-query-service.js";
 import {
@@ -128,9 +132,16 @@ router.post("/", async (req, res) => {
  */
 router.delete("/:videoId/files", (req, res) => {
   try {
-    const result = deleteVideoLibraryFiles(req.params.videoId);
+    const scope = deletionScopeFromRequest({
+      libraryId: req.query.libraryId,
+      allLibraries: req.query.allLibraries,
+    });
+    const result = deleteVideoLibraryFiles(req.params.videoId, scopeToOptions(scope));
     res.json({ success: true, ...result });
   } catch (error: any) {
+    if (error?.status === 400) {
+      return res.status(400).json({ detail: error.message });
+    }
     if (error?.status === 404) {
       return res.status(404).json({ detail: error.message || "Video not found" });
     }

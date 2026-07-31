@@ -41,7 +41,12 @@ export function deleteArtistFromLibrary(
   let fileErrors = 0;
 
   if (options.deleteFiles === true) {
-    const fileResult = deleteArtistLibraryFiles(artistId, { unmonitor: false });
+    // Removing the artist removes them from every Library at once, so this is
+    // the explicitly named all-Library deletion rather than an omitted scope.
+    const fileResult = deleteArtistLibraryFiles(artistId, {
+      allLibraries: true,
+      unmonitor: false,
+    });
     deletedFiles = fileResult.deleted;
     missingFiles = fileResult.missing;
     fileErrors = fileResult.errors;

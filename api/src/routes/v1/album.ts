@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { AlbumQueryService } from "../../services/music/album-query-service.js";
 import { AlbumCommandService } from "../../services/music/album-command-service.js";
+import {
+  deletionScopeFromRequest,
+  scopeToOptions,
+} from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteReleaseGroupLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { LibraryReleaseSelectionService } from "../../services/music/library-release-selection-service.js";
 import { db } from "../../database.js";
@@ -236,8 +240,9 @@ router.patch("/:albumId", async (req, res) => {
 });
 
 /**
- * Delete files for a release group (Manage → Delete files).
- * Query: slot=stereo|spatial (optional), unmonitor=true (optional).
+ * Delete files for an album (Manage → Delete files).
+ * Query: libraryId=N or allLibraries=true (required when several libraries are
+ * configured), slot=stereo|spatial (optional), unmonitor=true (optional).
  */
 router.delete("/:albumId/files", (req, res) => {
   try {
@@ -245,9 +250,20 @@ router.delete("/:albumId/files", (req, res) => {
     const slotRaw = typeof req.query.slot === "string" ? req.query.slot.trim().toLowerCase() : "";
     const slot = slotRaw === "stereo" || slotRaw === "spatial" ? slotRaw : undefined;
     const unmonitor = parseOptionalQueryBoolean(req.query.unmonitor) === true;
-    const result = deleteReleaseGroupLibraryFiles(albumId, { slot, unmonitor });
+    const scope = deletionScopeFromRequest({
+      libraryId: req.query.libraryId,
+      allLibraries: req.query.allLibraries,
+    });
+    const result = deleteReleaseGroupLibraryFiles(albumId, {
+      ...scopeToOptions(scope),
+      slot,
+      unmonitor,
+    });
     res.json({ success: true, ...result });
   } catch (error: any) {
+    if (error?.status === 400) {
+      return res.status(400).json({ detail: error.message });
+    }
     if (error?.status === 404) {
       return res.status(404).json({ detail: error.message || "Album not found" });
     }

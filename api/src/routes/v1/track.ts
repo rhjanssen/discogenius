@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { db } from "../../database.js";
 import { invalidateReleaseGroupDownloadStatus } from "../../services/download/download-state.js";
+import {
+  deletionScopeFromRequest,
+  scopeToOptions,
+} from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteTrackLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import {
   getTrackDetail,
@@ -161,9 +165,16 @@ router.get("/:trackId/files", (req, res) => {
  */
 router.delete("/:trackId/files", (req, res) => {
   try {
-    const result = deleteTrackLibraryFiles(req.params.trackId);
+    const scope = deletionScopeFromRequest({
+      libraryId: req.query.libraryId,
+      allLibraries: req.query.allLibraries,
+    });
+    const result = deleteTrackLibraryFiles(req.params.trackId, scopeToOptions(scope));
     res.json({ success: true, ...result });
   } catch (error: any) {
+    if (error?.status === 400) {
+      return res.status(400).json({ detail: error.message });
+    }
     if (error?.status === 404) {
       return res.status(404).json({ detail: error.message || "Track not found" });
     }
