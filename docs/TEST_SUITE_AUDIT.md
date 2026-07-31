@@ -1,6 +1,35 @@
 # Test suite audit
 
 Audit date: 2026-07-31
+Re-verified: 2026-07-31 against the checkout at `565c94d`
+
+## Verified baseline at 565c94d
+
+The counts below were re-measured by running the suite, not carried over from a
+commit message.
+
+| Measure | Value |
+| --- | ---: |
+| Tests reported by the runner | 977 |
+| Passing | 967 |
+| Failing | 3 |
+| Skipped | 7 |
+
+The suite at `565c94d` was **not** green, and the "989/989 passing" figure in the
+Codex commit message does not match either the runner or this document. The
+three failures were:
+
+- `deleteReleaseGroupLibraryFiles removes disk files and TrackFiles rows`
+- `resolve expands candidates from provider release evidence when artist search
+  misses the right MB artist`
+- `video-query-service.test.ts` — order-dependent; passes on the runner's
+  isolated retry
+
+All three are resolved by the follow-up commits on this branch, and the suite has
+since grown to 1011 tests with the Library-safe deletion, provider-preference,
+shared-extra ownership, and unknown-quality regressions added.
+
+Do not restate a headline count without running the suite that produced it.
 
 ## Outcome
 
@@ -73,6 +102,12 @@ runtime schema:
 `database-schema-v41.test.ts` also uses `domain-v41`, but correctly: it is the
 schema contract test rather than a production-service test.
 
+Re-verified at `565c94d`: this list of nine is accurate and unchanged. Three
+further files mention `domain-v41` only in comments explaining why they do *not*
+use it (`canonical-manual-import-active-schema.test.ts`,
+`canonical-manual-import-service.test.ts`, `import-operation-identity.test.ts`).
+The conversions remain outstanding.
+
 The release/provider selection regression test was converted to
 `active-schema-fixture.ts` during this audit. The remaining suites should be
 converted one table family at a time and gated with TypeScript plus failing-test
@@ -98,7 +133,8 @@ in `video-match.test.ts`, `video-variant.test.ts`, and
 `refresh-video-support.test.ts`; the service suite now concentrates on
 canonical authority, ambiguity, supplement-only updates, active-schema
 enforcement, legacy repair, exact-file preservation/rehoming, relations, and
-quality facts. The full API gate remains green at 977/977 after the reduction.
+quality facts. The consolidation itself introduced no failures, but note the
+verified baseline above: the gate was 967/977 at `565c94d`, not 977/977.
 
 ## Policy
 

@@ -16,6 +16,27 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
+## Blocked on a schema decision (needs Robert)
+
+- **Persist the exact clicked provider audio variant.** The Release UI offers
+  Lossless, Hi-Res and Atmos as distinct choices, but only
+  `providerEditionMatchId` is sent and stored. `LibraryEditions` has no column
+  for the chosen variant or for an explicit exclusivity flag, so two visibly
+  different clicks collapse to the same persisted state and the variant is
+  re-derived by the planner's own ranking on every replan.
+
+  The fix needs `LibraryEditions.preferred_provider_edition_match_id`,
+  `preferred_audio_quality` and `source_exclusive`. `initDatabase()` is
+  clean-start only (`assertDatabaseVersionCanStart` refuses any
+  `user_version != 41`), so adding them means bumping to schema 42 and forcing a
+  runtime database reset. That is a destructive choice about live data, not an
+  implementation detail — it needs an explicit decision before the columns land.
+
+  Already fixed without a schema change (see `badcc59`): a preferred Provider
+  Edition is now a primary preference rather than an exclusive source lock, it
+  stays pinned as the plan's `primary` source so it survives replanning, and
+  selecting an Edition no longer deletes other deliberately selected Editions.
+
 ## Engineering principles (apply to every planned task below)
 
 These tasks describe *symptoms*. Fix the *root* with one well-designed, universal
