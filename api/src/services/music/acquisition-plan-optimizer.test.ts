@@ -323,3 +323,101 @@ test("each achievable quality tier yields one plan, not every partial upgrade", 
     ["hires-lossless", "lossless"],
   );
 });
+
+
+test("one explicit track makes the whole composite explicit", () => {
+  // Standard source supplies tracks 1-2 and is clean; deluxe supplies 3-4 and
+  // track 4 is explicit. The delivered plan is explicit, never "mixed".
+  const standard: AcquisitionSourceCandidate = {
+    provider: "apple-music",
+    providerEditionMatchId: 90,
+    relation: "source_subset",
+    sourceTrackCount: 2,
+    albumDownloadSafe: false,
+    trackMatches: [
+      { providerTrackMatchId: 901, providerEditionMemberId: 9001, trackId: 1, explicit: false,
+        variants: [{ id: 9101, quality: "lossless", available: true }] },
+      { providerTrackMatchId: 902, providerEditionMemberId: 9002, trackId: 2, explicit: false,
+        variants: [{ id: 9102, quality: "lossless", available: true }] },
+    ],
+  };
+  const deluxe: AcquisitionSourceCandidate = {
+    provider: "apple-music",
+    providerEditionMatchId: 91,
+    relation: "exact",
+    sourceTrackCount: 2,
+    albumDownloadSafe: false,
+    trackMatches: [
+      { providerTrackMatchId: 903, providerEditionMemberId: 9003, trackId: 3, explicit: false,
+        variants: [{ id: 9103, quality: "lossless", available: true }] },
+      { providerTrackMatchId: 904, providerEditionMemberId: 9004, trackId: 4, explicit: true,
+        variants: [{ id: 9104, quality: "lossless", available: true }] },
+    ],
+  };
+
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["apple-music"],
+    sources: [standard, deluxe],
+  });
+
+  const full = plans.find((plan) => plan.coverage === 4);
+  assert.ok(full);
+  assert.equal(full.explicitContent, "explicit");
+  assert.equal(full.explicitnessCounts.explicitTrackCount, 1);
+  assert.equal(full.explicitnessCounts.cleanTrackCount, 3);
+  assert.equal(full.explicitnessCounts.unknownExplicitnessCount, 0);
+});
+
+test("absent explicitness evidence is unknown, never clean", () => {
+  const partial: AcquisitionSourceCandidate = {
+    provider: "tidal",
+    providerEditionMatchId: 95,
+    relation: "exact",
+    sourceTrackCount: 2,
+    albumDownloadSafe: true,
+    trackMatches: [
+      { providerTrackMatchId: 951, providerEditionMemberId: 9501, trackId: 1, explicit: false,
+        variants: [{ id: 9601, quality: "lossless", available: true }] },
+      // No explicit evidence at all for this track.
+      { providerTrackMatchId: 952, providerEditionMemberId: 9502, trackId: 2, explicit: null,
+        variants: [{ id: 9602, quality: "lossless", available: true }] },
+    ],
+  };
+
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [partial],
+  });
+
+  assert.equal(plans[0].explicitContent, "unknown");
+  assert.equal(plans[0].explicitnessCounts.unknownExplicitnessCount, 1);
+});
+
+test("a fully clean plan is classified clean", () => {
+  const clean: AcquisitionSourceCandidate = {
+    provider: "tidal",
+    providerEditionMatchId: 96,
+    relation: "exact",
+    sourceTrackCount: 2,
+    albumDownloadSafe: true,
+    trackMatches: [
+      { providerTrackMatchId: 961, providerEditionMemberId: 9601, trackId: 1, explicit: false,
+        variants: [{ id: 9701, quality: "lossless", available: true }] },
+      { providerTrackMatchId: 962, providerEditionMemberId: 9602, trackId: 2, explicit: false,
+        variants: [{ id: 9702, quality: "lossless", available: true }] },
+    ],
+  };
+
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [clean],
+  });
+
+  assert.equal(plans[0].explicitContent, "clean");
+});

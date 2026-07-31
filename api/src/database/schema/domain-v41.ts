@@ -483,8 +483,11 @@ export function createDomainSchemaV41(db: Database.Database): void {
       rank INTEGER NOT NULL DEFAULT 0,
       coverage INTEGER NOT NULL DEFAULT 0,
       quality_tier TEXT NOT NULL DEFAULT 'lossless',
-      explicit_content TEXT NOT NULL DEFAULT 'mixed'
-        CHECK (explicit_content IN ('clean', 'explicit', 'mixed')),
+      explicit_content TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (explicit_content IN ('explicit', 'clean', 'unknown')),
+      explicit_track_count INTEGER NOT NULL DEFAULT 0,
+      clean_track_count INTEGER NOT NULL DEFAULT 0,
+      unknown_explicitness_count INTEGER NOT NULL DEFAULT 0,
       planner_version INTEGER NOT NULL,
       policy_hash TEXT NOT NULL,
       computed_at TEXT NOT NULL,

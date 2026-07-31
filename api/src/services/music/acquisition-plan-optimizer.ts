@@ -29,7 +29,15 @@ export interface AcquisitionTrackMatch {
   variants: readonly AcquisitionAudioVariant[];
 }
 
-export type PlanExplicitContent = "clean" | "explicit" | "mixed";
+/**
+ * What a plan actually delivers.
+ *
+ * There is deliberately no "mixed": a plan containing one explicit track is an
+ * explicit plan, because that is what the user will hear. "unknown" is the
+ * honest answer when nothing is affirmatively explicit but some selected track
+ * carries no reliable evidence — absent metadata never means clean.
+ */
+export type PlanExplicitContent = "explicit" | "clean" | "unknown";
 
 export interface AcquisitionSourceCandidate {
   provider: string;
@@ -64,8 +72,10 @@ export interface OptimizedAcquisitionPlan {
   coverage: number;
   /** The quality tier this plan was built to target. */
   qualityTier: NormalizedAudioQuality;
-  /** Whether the plan's tracks are clean, explicit, or a mix. */
+  /** What the plan's selected tracks actually deliver. */
   explicitContent: PlanExplicitContent;
+  /** Diagnostic breakdown behind explicitContent. */
+  explicitnessCounts: PlanExplicitnessCounts;
   /** Stable shape identity; see acquisitionPlanKey. */
   planKey: string;
   tracks: OptimizedAcquisitionTrack[];
@@ -224,17 +234,35 @@ function outcomeSignature(provider: string, tracks: readonly TrackOption[]): str
   return `${provider}|${pairs.join(",")}|${explicit.join(",")}`;
 }
 
-function planExplicitContent(tracks: readonly TrackOption[]): PlanExplicitContent {
-  let sawExplicit = false;
-  let sawClean = false;
+export type PlanExplicitnessCounts = {
+  explicitTrackCount: number;
+  cleanTrackCount: number;
+  unknownExplicitnessCount: number;
+};
+
+function explicitnessCounts(tracks: readonly TrackOption[]): PlanExplicitnessCounts {
+  let explicitTrackCount = 0;
+  let cleanTrackCount = 0;
+  let unknownExplicitnessCount = 0;
   for (const track of tracks) {
-    if (track.explicit === true) sawExplicit = true;
-    else if (track.explicit === false) sawClean = true;
+    if (track.explicit === true) explicitTrackCount += 1;
+    else if (track.explicit === false) cleanTrackCount += 1;
+    else unknownExplicitnessCount += 1;
   }
-  if (sawExplicit && sawClean) return "mixed";
-  if (sawExplicit) return "explicit";
-  if (sawClean) return "clean";
-  return "mixed";
+  return { explicitTrackCount, cleanTrackCount, unknownExplicitnessCount };
+}
+
+/**
+ * Explicit as soon as one selected track is affirmatively explicit; clean only
+ * when every selected track is affirmatively known clean; otherwise unknown.
+ *
+ * A composite whose standard source is clean and whose deluxe source carries one
+ * explicit track is an explicit plan — not a "mixed" one.
+ */
+function planExplicitContent(counts: PlanExplicitnessCounts): PlanExplicitContent {
+  if (counts.explicitTrackCount > 0) return "explicit";
+  if (counts.unknownExplicitnessCount > 0) return "unknown";
+  return counts.cleanTrackCount > 0 ? "clean" : "unknown";
 }
 
 /**
@@ -373,7 +401,8 @@ function buildProviderPlans(
         ? preferredSource.providerEditionMatchId
         : null,
       qualityTier: targetTier,
-      explicitContent: planExplicitContent(tracks),
+      explicitContent: planExplicitContent(explicitnessCounts(tracks)),
+      explicitnessCounts: explicitnessCounts(tracks),
       outcomeSignature: outcomeSignature(sources[0].provider, tracks),
       composition: usedSourceIds.length === 1 ? "single_source" : "composite",
       downloadMode: albumSafe ? "album" : "tracks",

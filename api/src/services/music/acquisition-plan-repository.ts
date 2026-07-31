@@ -179,8 +179,9 @@ export class AcquisitionPlanRepository {
           library_edition_id, provider, composition, download_mode, state,
           chosen, selection_mode, plan_key, rank, coverage,
           quality_tier, explicit_content,
+          explicit_track_count, clean_track_count, unknown_explicitness_count,
           planner_version, policy_hash, computed_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         RETURNING id
       `).get(
         input.libraryEditionId,
@@ -194,6 +195,9 @@ export class AcquisitionPlanRepository {
         input.plan.coverage,
         input.plan.qualityTier,
         input.plan.explicitContent,
+        input.plan.explicitnessCounts.explicitTrackCount,
+        input.plan.explicitnessCounts.cleanTrackCount,
+        input.plan.explicitnessCounts.unknownExplicitnessCount,
         input.plannerVersion,
         input.policyHash,
         input.computedAt || new Date().toISOString(),

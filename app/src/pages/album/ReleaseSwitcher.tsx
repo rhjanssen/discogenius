@@ -221,10 +221,12 @@ const useStyles = makeStyles({
     columnGap: tokens.spacingHorizontalS,
     flexWrap: "wrap",
   },
-  planLabel: {
+  planCard: {
     display: "flex",
-    alignItems: "center",
-    columnGap: tokens.spacingHorizontalXS,
+    flexDirection: "column",
+    rowGap: "2px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalXXS,
   },
   catalogAccordion: {
     backgroundColor: tokens.colorNeutralBackground1,
@@ -242,10 +244,52 @@ const QUALITY_TIER_LABEL: Record<string, string> = {
   spatial: "Spatial",
 };
 
-function planLabel(plan: AcquisitionPlan): string {
+const EXPLICIT_LABEL: Record<string, string> = {
+  explicit: "Explicit",
+  clean: "Clean",
+  unknown: "Explicitness unknown",
+};
+
+const RELATION_LABEL: Record<string, string> = {
+  exact: "Exact match",
+  source_superset: "Superset match",
+  source_subset: "Subset match",
+  overlap: "Overlap match",
+};
+
+/** Headline: what you get, not how it is assembled. */
+function planHeadline(plan: AcquisitionPlan): string {
   const tier = QUALITY_TIER_LABEL[plan.qualityTier] ?? plan.qualityTier;
-  const shape = plan.composition === "composite" ? "combined sources" : "single edition";
-  return `${plan.provider} · ${tier} · ${shape}`;
+  return `${plan.provider} · ${tier} · ${EXPLICIT_LABEL[plan.explicitContent] ?? plan.explicitContent}`;
+}
+
+/**
+ * Sub-line: composition and how many provider releases it draws on.
+ *
+ * "Single offer" rather than "Direct offer" — a single-source plan is not
+ * necessarily an exact match, and exact/superset/subset/overlap already name the
+ * match relation separately.
+ */
+function planSourceSummary(plan: AcquisitionPlan, targetTrackCount: number | null): string {
+  const shape = plan.composition === "composite" ? "Combined offer" : "Single offer";
+  const count = plan.providerEditionMatchIds.length || 1;
+  const releases = count === 1
+    ? `Uses 1 ${plan.provider} release`
+    : `Combines ${count} ${plan.provider} releases`;
+  const coverage = targetTrackCount != null
+    ? ` · ${plan.coverage}/${targetTrackCount} Tracks`
+    : ` · ${plan.coverage} Tracks`;
+  return `${shape} · ${releases}${coverage}`;
+}
+
+function planRelationSummary(plan: AcquisitionPlan, release: Release): string | null {
+  const relations = plan.providerEditionMatchIds
+    .map((matchId) => release.offers.find(
+      (offer) => offer.providerEditionMatchId === matchId,
+    )?.relation)
+    .filter((relation): relation is NonNullable<typeof relation> => Boolean(relation))
+    .map((relation) => RELATION_LABEL[relation] ?? relation);
+  return relations.length > 0 ? relations.join(" + ") : null;
 }
 
 export interface ReleaseSwitcherProps {
@@ -387,26 +431,40 @@ export function ReleaseSwitcher({
                           </Button>
                         ) : null}
                       </div>
-                      {selection.plans.map((plan) => (
-                        <div key={plan.planKey} className={styles.planRow}>
-                          <Button
-                            size="small"
-                            appearance={plan.chosen ? "primary" : "outline"}
-                            disabled={plan.chosen}
-                            onClick={() => onSelectPlan(library.id, release.id, plan.planKey)}
-                          >
-                            {planLabel(plan)}
-                          </Button>
-                          <Text size={100} className={styles.metadata}>
-                            {plan.coverage} {plan.coverage === 1 ? "track" : "tracks"}
-                          </Text>
-                          {plan.explicitContent !== "mixed" ? (
-                            <Badge appearance="outline" color="subtle">
-                              {plan.explicitContent === "explicit" ? "Explicit" : "Clean"}
-                            </Badge>
-                          ) : null}
-                        </div>
-                      ))}
+                      {selection.plans.map((plan) => {
+                        const relations = planRelationSummary(plan, release);
+                        const unavailable = plan.state === "unavailable"
+                          || plan.state === "failed";
+                        return (
+                          <div key={plan.planKey} className={styles.planCard}>
+                            <div className={styles.planRow}>
+                              <Button
+                                size="small"
+                                appearance={plan.chosen ? "primary" : "outline"}
+                                disabled={plan.chosen}
+                                onClick={() => onSelectPlan(library.id, release.id, plan.planKey)}
+                              >
+                                {planHeadline(plan)}
+                              </Button>
+                              {plan.chosen ? (
+                                <Badge appearance="tint" color="brand">Executing</Badge>
+                              ) : null}
+                              {plan.state === "stale" ? (
+                                <Badge appearance="tint" color="warning">Stale</Badge>
+                              ) : null}
+                              {unavailable ? (
+                                <Badge appearance="tint" color="danger">Unavailable</Badge>
+                              ) : null}
+                            </div>
+                            <Text size={100} className={styles.metadata}>
+                              {planSourceSummary(plan, release.trackCount)}
+                            </Text>
+                            {relations ? (
+                              <Text size={100} className={styles.metadata}>{relations}</Text>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
                 </div>

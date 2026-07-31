@@ -17,7 +17,7 @@ export interface LibraryAcquisitionPlanView {
   rank: number;
   coverage: number;
   qualityTier: string;
-  explicitContent: "clean" | "explicit" | "mixed";
+  explicitContent: "explicit" | "clean" | "unknown";
 }
 
 export interface LibraryReleaseSelectionView {
@@ -337,7 +337,7 @@ export class LibraryReleaseSelectionService {
         rank: number;
         coverage: number;
         quality_tier: string;
-        explicit_content: "clean" | "explicit" | "mixed";
+        explicit_content: "explicit" | "clean" | "unknown";
         provider_edition_match_id: number | null;
         role: "primary" | "supplement" | null;
       }>;

@@ -138,7 +138,7 @@ export type LibraryAcquisitionPlanContract = {
   rank: number;
   coverage: number;
   qualityTier: string;
-  explicitContent: "clean" | "explicit" | "mixed";
+  explicitContent: "explicit" | "clean" | "unknown";
 };
 
 export interface LibraryReleaseGroupAvailabilityContract {
@@ -521,7 +521,7 @@ export function parseLibraryReleaseGroupAvailabilityContract(
                 rank: expectNumber(plan.rank, `${planLabel}.rank`),
                 coverage: expectNumber(plan.coverage, `${planLabel}.coverage`),
                 qualityTier: expectString(plan.qualityTier, `${planLabel}.qualityTier`),
-                explicitContent: expectString(plan.explicitContent, `${planLabel}.explicitContent`) as "clean" | "explicit" | "mixed",
+                explicitContent: expectString(plan.explicitContent, `${planLabel}.explicitContent`) as "explicit" | "clean" | "unknown",
               };
             };
             return {

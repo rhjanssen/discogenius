@@ -70,6 +70,11 @@ test("plan replacement is atomic and partial completion counts only imported ass
         coverage: 2,
         qualityTier: "lossless",
         explicitContent: "clean",
+        explicitnessCounts: {
+          explicitTrackCount: 0,
+          cleanTrackCount: 2,
+          unknownExplicitnessCount: 0,
+        },
         planKey: "tidal|lossless|clean|single_source|1|lossless",
         tracks: [
           {
