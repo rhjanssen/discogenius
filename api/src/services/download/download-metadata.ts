@@ -529,6 +529,7 @@ export function getCanonicalAlbumDownloadProgress(
                     FROM TrackFiles file
                     JOIN AcquisitionPlans file_plan
                       ON file_plan.id = plan_track.plan_id
+                     AND file_plan.chosen = 1
                     JOIN LibraryEditions file_library_release
                       ON file_library_release.id = file_plan.library_edition_id
                     WHERE file.library_id = file_library_release.library_id

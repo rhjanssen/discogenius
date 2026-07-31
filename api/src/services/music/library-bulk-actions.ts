@@ -296,6 +296,7 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
            AND library_release_group.release_group_id = release.release_group_id
           WHERE release_group.mbid = ?
             AND plan.state = 'current'
+            AND plan.chosen = 1
             AND library_release_group.monitored = 1
           ORDER BY library_release.library_id, plan.id
         `).all(releaseGroupMbid) as Array<{ id: number }>;
@@ -316,7 +317,7 @@ function queueTrackDownloads(trackIds: string[]): number[] {
           SELECT DISTINCT plan.id AS plan_id, track.id AS track_id
           FROM Tracks track
           JOIN AcquisitionPlanTracks plan_track ON plan_track.track_id = track.id
-          JOIN AcquisitionPlans plan ON plan.id = plan_track.plan_id AND plan.state = 'current'
+          JOIN AcquisitionPlans plan ON plan.id = plan_track.plan_id AND plan.state = 'current' AND plan.chosen = 1
           JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
           JOIN AlbumEditions release ON release.id = library_release.edition_id
           JOIN LibraryAlbums release_group

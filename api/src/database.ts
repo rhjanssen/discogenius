@@ -421,7 +421,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 41;
+const BASE_SCHEMA_VERSION = 42;
 
 function getUserTableCount(): number {
   const row = db.prepare(`

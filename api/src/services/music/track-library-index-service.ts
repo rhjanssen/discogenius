@@ -43,7 +43,7 @@ export class TrackLibraryIndexService {
             WHERE file.track_id = track.id AND file.file_class = 'audio'
           ),
           MAX(CASE
-            WHEN plan.state = 'current'
+            WHEN plan.state = 'current' AND plan.chosen = 1
              AND plan_track.id IS NOT NULL
              AND NOT EXISTS (
                SELECT 1
@@ -53,7 +53,7 @@ export class TrackLibraryIndexService {
             THEN 1 ELSE 0
           END),
           MAX(CASE
-            WHEN plan.state = 'current'
+            WHEN plan.state = 'current' AND plan.chosen = 1
              AND plan_track.id IS NOT NULL
              AND EXISTS (
                SELECT 1

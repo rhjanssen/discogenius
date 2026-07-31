@@ -215,6 +215,7 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
         LEFT JOIN AcquisitionPlans plan
           ON plan.id = source.plan_id
          AND plan.state = 'current'
+         AND plan.chosen = 1
         WHERE provider_release.provider = ?
           AND provider_release.entity_type = 'release'
           AND (release_group.mbid = ? OR release.mbid = ?)

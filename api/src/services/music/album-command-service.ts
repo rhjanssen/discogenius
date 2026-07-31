@@ -190,6 +190,7 @@ export class AlbumCommandService {
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE release_group.mbid = ?
               AND plan.state = 'current'
+              AND plan.chosen = 1
               AND library.enabled = 1
               AND (
                 ? IS NULL

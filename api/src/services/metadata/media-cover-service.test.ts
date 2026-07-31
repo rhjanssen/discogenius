@@ -129,14 +129,14 @@ function linkProviderArtworkCandidate(options: {
   db.prepare(`
     INSERT INTO AcquisitionPlans (
       library_edition_id, provider, composition, download_mode, state,
-      planner_version, policy_hash, computed_at
-    ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
-    ON CONFLICT(library_edition_id) DO UPDATE SET
+      chosen, plan_key, planner_version, policy_hash, computed_at
+    ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'fixture', 1, 'test', CURRENT_TIMESTAMP)
+    ON CONFLICT(library_edition_id) WHERE chosen = 1 DO UPDATE SET
       provider = excluded.provider,
       state = 'current'
   `).run(libraryRelease.id, options.provider);
   const plan = db.prepare(`
-    SELECT id FROM AcquisitionPlans WHERE library_edition_id = ?
+    SELECT id FROM AcquisitionPlans WHERE library_edition_id = ? AND chosen = 1
   `).get(libraryRelease.id) as { id: number };
   db.prepare("DELETE FROM AcquisitionPlanSources WHERE plan_id = ?").run(plan.id);
   db.prepare(`

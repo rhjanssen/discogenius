@@ -2238,6 +2238,7 @@ export function loadAlbumProviderArtworkCandidates(
         ON provider_item.id = release_match.provider_edition_item_id
       WHERE release_group.mbid = ?
         AND plan.state = 'current'
+        AND plan.chosen = 1
         AND release_match.match_state = 'accepted'
       ORDER BY
         CASE WHEN EXISTS (

@@ -449,6 +449,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
       locked INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
       reason TEXT,
       curation_version INTEGER NOT NULL,
+      preferred_plan_key TEXT,
+      plan_selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK (plan_selection_mode IN ('auto', 'manual')),
       selected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (library_id, edition_id),
@@ -468,17 +471,26 @@ export function createDomainSchemaV41(db: Database.Database): void {
 
     CREATE TABLE AcquisitionPlans (
       id INTEGER PRIMARY KEY,
-      library_edition_id INTEGER NOT NULL UNIQUE,
+      library_edition_id INTEGER NOT NULL,
       provider TEXT NOT NULL,
       composition TEXT NOT NULL CHECK (composition IN ('single_source', 'composite')),
       download_mode TEXT NOT NULL CHECK (download_mode IN ('album', 'tracks')),
       state TEXT NOT NULL CHECK (state IN ('current', 'stale', 'unavailable', 'failed')),
+      chosen BOOLEAN NOT NULL DEFAULT 1,
+      selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK (selection_mode IN ('auto', 'manual')),
+      plan_key TEXT NOT NULL DEFAULT '',
+      rank INTEGER NOT NULL DEFAULT 0,
+      coverage INTEGER NOT NULL DEFAULT 0,
       planner_version INTEGER NOT NULL,
       policy_hash TEXT NOT NULL,
       computed_at TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (library_edition_id) REFERENCES LibraryEditions(id) ON DELETE CASCADE
     );
+
+    CREATE UNIQUE INDEX idx_domain_acquisition_plans_chosen
+      ON AcquisitionPlans(library_edition_id) WHERE chosen = 1;
 
     CREATE TABLE AcquisitionPlanSources (
       id INTEGER PRIMARY KEY,

@@ -59,7 +59,7 @@ export class DownloadMissingService {
              AND library_release_group.monitored = 1
             LEFT JOIN ArtistMetadata primary_artist
               ON primary_artist.id = release_group.artist_metadata_id
-            WHERE plan.state = 'current'
+            WHERE plan.state = 'current' AND plan.chosen = 1
               AND library.enabled = 1
               AND (
                 ? IS NULL

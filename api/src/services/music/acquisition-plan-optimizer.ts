@@ -56,6 +56,10 @@ export interface OptimizedAcquisitionPlan {
    * contributes, so the preference is still recoverable on the next replan.
    */
   preferredSourceId: number | null;
+  /** Canonical tracks this plan actually covers. */
+  coverage: number;
+  /** Stable shape identity; see acquisitionPlanKey. */
+  planKey: string;
   tracks: OptimizedAcquisitionTrack[];
 }
 
@@ -65,8 +69,8 @@ interface TrackOption extends OptimizedAcquisitionTrack {
   relationRank: number;
 }
 
-interface CandidatePlan extends OptimizedAcquisitionPlan {
-  coverage: number;
+// planKey is derived once the plan is final, so candidates carry everything but.
+interface CandidatePlan extends Omit<OptimizedAcquisitionPlan, "planKey"> {
   cutoffSatisfied: number;
   qualityScore: number;
   fragmentation: number;
@@ -165,13 +169,21 @@ function compareCandidatePlans(
     || left.sourceIds.join(",").localeCompare(right.sourceIds.join(","));
 }
 
-function buildProviderPlan(
+/**
+ * Best plan per composition shape for one provider.
+ *
+ * A library is offered real alternatives — "TIDAL, one edition" versus "TIDAL,
+ * two editions combined" — rather than only the single winner, so returning the
+ * best `single_source` and the best `composite` plan is the useful granularity.
+ * Every other subset is dominated by one of those two under the same comparator.
+ */
+function buildProviderPlans(
   orderedTrackIds: readonly number[],
   profile: AcquisitionQualityProfile,
   sources: readonly AcquisitionSourceCandidate[],
   preferredSource: AcquisitionSourceCandidate | null = null,
-): CandidatePlan | null {
-  if (sources.length === 0) return null;
+): CandidatePlan[] {
+  if (sources.length === 0) return [];
   const sourceById = new Map(sources.map((source) => [source.providerEditionMatchId, source]));
   const optionsByTrack = new Map<number, TrackOption[]>();
   for (const source of sources) {
@@ -211,7 +223,7 @@ function buildProviderPlan(
     for (const sourceId of sourceIds) subsets.push([sourceId]);
   }
 
-  let best: CandidatePlan | null = null;
+  const bestByComposition = new Map<CandidatePlan["composition"], CandidatePlan>();
   const neutralPriority = new Map<string, number>();
   for (const subset of subsets) {
     const allowedSources = new Set(subset);
@@ -277,16 +289,17 @@ function buildProviderPlan(
     // ranking key: the preference is intent, not a scoring hint.
     const keepsPreferred = (plan: CandidatePlan): number =>
       preferredSource && plan.preferredSourceId != null ? 0 : 1;
+    const incumbent = bestByComposition.get(candidate.composition);
     if (
-      !best
-      || keepsPreferred(candidate) - keepsPreferred(best) < 0
-      || (keepsPreferred(candidate) === keepsPreferred(best)
-        && compareCandidatePlans(candidate, best, neutralPriority) < 0)
+      !incumbent
+      || keepsPreferred(candidate) - keepsPreferred(incumbent) < 0
+      || (keepsPreferred(candidate) === keepsPreferred(incumbent)
+        && compareCandidatePlans(candidate, incumbent, neutralPriority) < 0)
     ) {
-      best = candidate;
+      bestByComposition.set(candidate.composition, candidate);
     }
   }
-  return best;
+  return [...bestByComposition.values()];
 }
 
 /**
@@ -299,14 +312,14 @@ function buildProviderPlan(
  * from the same provider may still cover canonical tracks the preferred offer
  * does not carry. Pass `exclusive` for the explicit single-source lock.
  */
-export function optimizeAcquisitionPlan(input: {
+export function enumerateAcquisitionPlans(input: {
   orderedTrackIds: readonly number[];
   profile: AcquisitionQualityProfile;
   sources: readonly AcquisitionSourceCandidate[];
   providerPriority: readonly string[];
   preferredProviderEditionMatchId?: number | null;
   exclusive?: boolean;
-}): OptimizedAcquisitionPlan | null {
+}): OptimizedAcquisitionPlan[] {
   const preferredId = input.preferredProviderEditionMatchId ?? null;
   const preferredSource = preferredId == null
     ? null
@@ -330,22 +343,59 @@ export function optimizeAcquisitionPlan(input: {
   );
   const preferredKept = (plan: CandidatePlan): number =>
     preferredSource && plan.sourceIds.includes(preferredSource.providerEditionMatchId) ? 0 : 1;
-  const plans = [...byProvider.values()]
-    .map((sources) =>
-      buildProviderPlan(input.orderedTrackIds, input.profile, sources, preferredSource))
-    .filter((plan): plan is CandidatePlan => plan != null)
+  const ranked = [...byProvider.values()]
+    .flatMap((sources) =>
+      buildProviderPlans(input.orderedTrackIds, input.profile, sources, preferredSource))
     .sort((left, right) =>
       preferredKept(left) - preferredKept(right)
       || compareCandidatePlans(left, right, providerPriority));
-  const best = plans[0];
-  if (!best) return null;
-  const {
-    coverage: _coverage,
-    cutoffSatisfied: _cutoffSatisfied,
-    qualityScore: _qualityScore,
-    fragmentation: _fragmentation,
-    relationScore: _relationScore,
-    ...plan
-  } = best;
-  return plan;
+
+  return ranked.map((candidate) => {
+    const {
+      coverage,
+      cutoffSatisfied: _cutoffSatisfied,
+      qualityScore: _qualityScore,
+      fragmentation: _fragmentation,
+      relationScore: _relationScore,
+      ...plan
+    } = candidate;
+    return { ...plan, coverage, planKey: acquisitionPlanKey(plan) };
+  });
+}
+
+/**
+ * Best plan only. Kept for callers that genuinely want one answer; the ranked
+ * list is what gets persisted so a library can be offered its alternatives.
+ */
+export function optimizeAcquisitionPlan(input: {
+  orderedTrackIds: readonly number[];
+  profile: AcquisitionQualityProfile;
+  sources: readonly AcquisitionSourceCandidate[];
+  providerPriority: readonly string[];
+  preferredProviderEditionMatchId?: number | null;
+  exclusive?: boolean;
+}): OptimizedAcquisitionPlan | null {
+  return enumerateAcquisitionPlans(input)[0] ?? null;
+}
+
+/**
+ * Stable identity for a plan's shape: provider, the exact set of Provider
+ * Edition sources it draws on, its composition, and the source qualities it
+ * resolves to.
+ *
+ * Plan rows are deleted and rebuilt on every replan, so a user's chosen plan
+ * cannot be remembered by row id. This key survives replanning as long as the
+ * same alternative is still available, and stops existing when it genuinely is
+ * not — which is exactly when the choice should be reported as unavailable
+ * rather than silently swapped.
+ */
+export function acquisitionPlanKey(plan: {
+  provider: string;
+  composition: string;
+  sourceIds: readonly number[];
+  tracks: readonly { sourceQuality: NormalizedAudioQuality }[];
+}): string {
+  const sources = [...plan.sourceIds].sort((left, right) => left - right).join(",");
+  const qualities = [...new Set(plan.tracks.map((track) => track.sourceQuality))].sort().join("+");
+  return `${plan.provider}|${plan.composition}|${sources}|${qualities}`;
 }

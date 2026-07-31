@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import {
-  optimizeAcquisitionPlan,
+  enumerateAcquisitionPlans,
   type AcquisitionQualityProfile,
   type AcquisitionSourceCandidate,
   type NormalizedAudioQuality,
@@ -52,6 +52,8 @@ interface PlanningContextRow {
   preference_order: string;
   cutoff: string;
   continue_upgrades: number;
+  preferred_plan_key: string | null;
+  plan_selection_mode: "auto" | "manual";
   current_primary_provider_edition_match_id: number | null;
 }
 
@@ -97,6 +99,8 @@ export class AcquisitionPlanningService {
         profile.preference_order,
         profile.cutoff,
         profile.continue_upgrades,
+        library_release.preferred_plan_key,
+        library_release.plan_selection_mode,
         primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id
       FROM LibraryEditions library_release
       JOIN Libraries library ON library.id = library_release.library_id
@@ -104,6 +108,7 @@ export class AcquisitionPlanningService {
       LEFT JOIN AcquisitionPlans current_plan
         ON current_plan.library_edition_id = library_release.id
        AND current_plan.state = 'current'
+       AND current_plan.chosen = 1
       LEFT JOIN AcquisitionPlanSources primary_source
         ON primary_source.plan_id = current_plan.id
        AND primary_source.role = 'primary'
@@ -251,7 +256,7 @@ export class AcquisitionPlanningService {
     // The preferred offer is the primary source, not an exclusive lock: the
     // optimizer may still cover missing canonical tracks from another accepted
     // Provider Edition of the same provider unless exclusivity was requested.
-    const plan = optimizeAcquisitionPlan({
+    const plans = enumerateAcquisitionPlans({
       orderedTrackIds,
       profile,
       sources,
@@ -259,15 +264,39 @@ export class AcquisitionPlanningService {
       preferredProviderEditionMatchId,
       exclusive: input.exclusiveSource === true,
     });
-    if (!plan) {
+    if (plans.length === 0) {
       this.repository.clear(input.libraryEditionId);
       return null;
     }
-    return this.repository.replaceCurrentPlan({
+    // The library's standing plan choice outranks the planner's own ordering,
+    // and survives replanning because it is keyed by plan shape, not row id.
+    const result = this.repository.replacePlans({
       libraryEditionId: input.libraryEditionId,
-      plan,
+      plans,
+      preferredPlanKey: context.plan_selection_mode === "manual"
+        ? context.preferred_plan_key
+        : null,
       plannerVersion: input.plannerVersion,
       policyHash,
     });
+    if (!result) {
+      this.repository.clear(input.libraryEditionId);
+      return null;
+    }
+    if (context.plan_selection_mode === "manual" && !result.preferenceHonored) {
+      // The chosen alternative no longer exists. Fall back to the best plan but
+      // drop the stale preference rather than leaving it pointing at nothing.
+      this.db.prepare(`
+        UPDATE LibraryEditions
+        SET plan_selection_mode = 'auto', preferred_plan_key = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(input.libraryEditionId);
+      console.warn(
+        `[AcquisitionPlanning] Preferred plan ${context.preferred_plan_key} is no longer `
+        + `available for library edition ${input.libraryEditionId}; using the best-ranked plan`,
+      );
+    }
+    return result.chosenPlanId;
   }
 }

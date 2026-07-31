@@ -56,17 +56,19 @@ test("plan replacement is atomic and partial completion counts only imported ass
                (2, 3, 'lossless', 'lossless', 'available');
     `);
     const repository = new AcquisitionPlanRepository(db);
-    repository.replaceCurrentPlan({
+    repository.replacePlans({
       libraryEditionId: 1,
       plannerVersion: 1,
       policyHash: "policy",
       computedAt: "2026-07-29T00:00:00.000Z",
-      plan: {
+      plans: [{
         provider: "tidal",
         composition: "single_source",
         downloadMode: "album",
         sourceIds: [1],
         preferredSourceId: null,
+        coverage: 2,
+        planKey: "tidal|single_source|1|lossless",
         tracks: [
           {
             trackId: 1,
@@ -85,7 +87,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
             sourceQuality: "lossless",
           },
         ],
-      },
+      }],
     });
     db.prepare(`
       INSERT INTO TrackFiles (

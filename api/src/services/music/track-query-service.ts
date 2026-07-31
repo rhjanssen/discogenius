@@ -35,6 +35,7 @@ const canonicalTrackSpatialQualityPredicate = `
       JOIN AcquisitionPlans spatial_plan
         ON spatial_plan.id = spatial_plan_track.plan_id
        AND spatial_plan.state = 'current'
+       AND spatial_plan.chosen = 1
       JOIN LibraryEditions spatial_library_release
         ON spatial_library_release.id = spatial_plan.library_edition_id
       JOIN Libraries spatial_library
@@ -75,6 +76,7 @@ const canonicalTrackStereoQualityPredicate = `
       JOIN AcquisitionPlans stereo_plan
         ON stereo_plan.id = stereo_plan_track.plan_id
        AND stereo_plan.state = 'current'
+       AND stereo_plan.chosen = 1
       JOIN LibraryEditions stereo_library_release
         ON stereo_library_release.id = stereo_plan.library_edition_id
       JOIN Libraries stereo_library
@@ -336,6 +338,7 @@ function getTrackSelectSql(whereClause: string): string {
             JOIN AcquisitionPlans quality_plan
               ON quality_plan.id = quality_plan_track.plan_id
              AND quality_plan.state = 'current'
+             AND quality_plan.chosen = 1
             JOIN LibraryEditions quality_library_release
               ON quality_library_release.id = quality_plan.library_edition_id
             JOIN AlbumEditions quality_release
@@ -406,6 +409,7 @@ function getTrackSelectSql(whereClause: string): string {
           JOIN AcquisitionPlans remote_plan
             ON remote_plan.id = remote_plan_track.plan_id
            AND remote_plan.state = 'current'
+           AND remote_plan.chosen = 1
           JOIN LibraryEditions remote_library_release
             ON remote_library_release.id = remote_plan.library_edition_id
           JOIN Libraries remote_library
@@ -486,6 +490,7 @@ function getTrackSelectSql(whereClause: string): string {
         JOIN AcquisitionPlans candidate_plan
           ON candidate_plan.id = candidate_plan_track.plan_id
          AND candidate_plan.state = 'current'
+         AND candidate_plan.chosen = 1
         JOIN LibraryEditions candidate_library_release
           ON candidate_library_release.id = candidate_plan.library_edition_id
          AND candidate_library_release.edition_id = track.album_edition_id
@@ -852,7 +857,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
   const qualityTierFilter = String(input.qualityTier || "").trim();
   const selectedOfferWhere = [
     "filtered_plan_track.track_id = track.id",
-    "filtered_plan.state = 'current'",
+    "filtered_plan.state = 'current' AND filtered_plan.chosen = 1",
     "filtered_release_match.match_state = 'accepted'",
   ];
   if (input.libraryFilter === "spatial") {
@@ -888,6 +893,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
       FROM AcquisitionPlanTracks filtered_plan_track
       JOIN AcquisitionPlans filtered_plan
         ON filtered_plan.id = filtered_plan_track.plan_id
+       AND filtered_plan.chosen = 1
       JOIN LibraryEditions filtered_library_release
         ON filtered_library_release.id = filtered_plan.library_edition_id
        AND filtered_library_release.edition_id = track.album_edition_id
@@ -934,6 +940,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
             JOIN AcquisitionPlans popularity_plan
               ON popularity_plan.id = popularity_plan_track.plan_id
              AND popularity_plan.state = 'current'
+             AND popularity_plan.chosen = 1
             JOIN ProviderTrackMatches popularity_match
               ON popularity_match.id = popularity_plan_track.provider_track_match_id
              AND popularity_match.match_state = 'accepted'

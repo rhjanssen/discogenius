@@ -284,6 +284,7 @@ router.get("/", async (req, res) => {
                 JOIN AcquisitionPlans plan
                   ON plan.library_edition_id = library_release.id
                  AND plan.state = 'current'
+                 AND plan.chosen = 1
                 JOIN AcquisitionPlanSources source
                   ON source.plan_id = plan.id
                  AND source.id = (
@@ -412,6 +413,7 @@ router.get("/", async (req, res) => {
                 JOIN AcquisitionPlans plan
                   ON plan.id = candidate_plan_track.plan_id
                  AND plan.state = 'current'
+                 AND plan.chosen = 1
                 JOIN LibraryEditions library_release
                   ON library_release.id = plan.library_edition_id
                  AND library_release.edition_id = t.album_edition_id

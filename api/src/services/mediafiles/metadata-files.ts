@@ -443,6 +443,7 @@ function resolveAlbumVideoCoverProvider(options?: AlbumVideoCoverDownloadOptions
               ON provider_release.id = release_match.provider_edition_item_id
             WHERE release_group.mbid = ?
               AND plan.state = 'current'
+              AND plan.chosen = 1
               AND release_match.match_state = 'accepted'
             ORDER BY
               plan_source.sort_order,
@@ -849,6 +850,7 @@ export async function saveAlbumNfoFile(
         LEFT JOIN AcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
+         AND plan.chosen = 1
         LEFT JOIN AcquisitionPlanSources plan_source
           ON plan_source.plan_id = plan.id
          AND plan_source.role = 'primary'

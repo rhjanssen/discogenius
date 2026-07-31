@@ -493,6 +493,7 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
         LEFT JOIN AcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
+         AND plan.chosen = 1
         LEFT JOIN AcquisitionPlanSources source
           ON source.plan_id = plan.id
          AND source.role = 'primary'

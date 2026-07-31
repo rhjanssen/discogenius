@@ -137,6 +137,11 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       locked BOOLEAN NOT NULL DEFAULT 0,
       reason TEXT,
       curation_version INTEGER NOT NULL,
+      -- The acquisition plan the user picked, remembered by stable plan_key so
+      -- it survives replanning. Null means "whatever the planner ranks best".
+      preferred_plan_key TEXT,
+      plan_selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK(plan_selection_mode IN ('auto', 'manual')),
       selected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(library_id, edition_id),
@@ -156,17 +161,39 @@ export function createLibrarySchemaV41(db: Database.Database): void {
 
     CREATE TABLE AcquisitionPlans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      library_edition_id INTEGER NOT NULL UNIQUE,
+      library_edition_id INTEGER NOT NULL,
       provider TEXT NOT NULL,
       composition TEXT NOT NULL CHECK(composition IN ('single_source', 'composite')),
       download_mode TEXT NOT NULL CHECK(download_mode IN ('album', 'tracks')),
       state TEXT NOT NULL CHECK(state IN ('current', 'stale', 'unavailable', 'failed')),
+      -- Every viable plan the optimizer produced is persisted, so a library can
+      -- be shown its real alternatives (TIDAL direct, TIDAL composite, Deezer
+      -- direct, ...) instead of only the one that happened to win.
+      chosen BOOLEAN NOT NULL DEFAULT 1,
+      -- Who chose it. 'manual' marks the plan the user picked; automation never
+      -- overwrites a manual choice while the edition stays locked.
+      selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK(selection_mode IN ('auto', 'manual')),
+      -- Stable identity of the plan's shape (provider + ordered source matches
+      -- + variants). Plan rows are regenerated on every replan, so a user's
+      -- choice is remembered by key rather than by row id.
+      plan_key TEXT NOT NULL DEFAULT '',
+      -- Optimizer ranking within this edition, 0 = best. Presentation order.
+      rank INTEGER NOT NULL DEFAULT 0,
+      coverage INTEGER NOT NULL DEFAULT 0,
       planner_version INTEGER NOT NULL,
       policy_hash TEXT NOT NULL,
       computed_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(library_edition_id) REFERENCES LibraryEditions(id) ON DELETE CASCADE
     );
+
+    -- Exactly one chosen plan per selected edition. The old table-level UNIQUE
+    -- on library_edition_id enforced this by making alternatives unstorable.
+    CREATE UNIQUE INDEX idx_acquisition_plans_chosen
+      ON AcquisitionPlans(library_edition_id) WHERE chosen = 1;
+    CREATE UNIQUE INDEX idx_acquisition_plans_key
+      ON AcquisitionPlans(library_edition_id, plan_key);
 
     CREATE TABLE AcquisitionPlanSources (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,6 +245,8 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       ON LibraryEditions(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist
       ON LibraryEditionScopes(library_artist_id, scope_type, library_edition_id);
+    CREATE INDEX idx_acquisition_plans_edition
+      ON AcquisitionPlans(library_edition_id, chosen, rank);
     CREATE INDEX idx_acquisition_sources_plan
       ON AcquisitionPlanSources(plan_id, sort_order);
     CREATE INDEX idx_acquisition_tracks_plan

@@ -93,6 +93,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         LEFT JOIN AcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
+         AND plan.chosen = 1
         LEFT JOIN AcquisitionPlanSources plan_source
           ON plan_source.plan_id = plan.id
          AND plan_source.role = 'primary'
@@ -280,6 +281,7 @@ function listMusicBrainzReleaseVersions(
           JOIN AcquisitionPlans plan
             ON plan.id = source.plan_id
            AND plan.state = 'current'
+           AND plan.chosen = 1
           JOIN LibraryEditions library_release
             ON library_release.id = plan.library_edition_id
           JOIN Libraries library
@@ -299,6 +301,7 @@ function listMusicBrainzReleaseVersions(
           JOIN AcquisitionPlans plan
             ON plan.id = source.plan_id
            AND plan.state = 'current'
+           AND plan.chosen = 1
           JOIN AcquisitionPlanTracks plan_track
             ON plan_track.plan_id = plan.id
           JOIN ProviderItemAudioVariants variant
@@ -858,6 +861,7 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
         JOIN AcquisitionPlans plan
           ON plan.id = plan_track.plan_id
          AND plan.state = 'current'
+         AND plan.chosen = 1
         JOIN LibraryEditions library_release
           ON library_release.id = plan.library_edition_id
         JOIN AlbumEditions release

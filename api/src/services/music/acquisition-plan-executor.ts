@@ -96,7 +96,7 @@ export function buildAcquisitionDownloadCommand(
       ON primary_credit.release_group_id = release_group.id AND primary_credit.ordinal = 0
     LEFT JOIN ArtistMetadata primary_artist
       ON primary_artist.id = release_group.artist_metadata_id
-    WHERE plan.id = ? AND plan.state = 'current'
+    WHERE plan.id = ? AND plan.state = 'current' AND plan.chosen = 1
   `).get(planId) as PlanHeader | undefined;
   if (!header) return null;
 

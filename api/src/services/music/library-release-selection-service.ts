@@ -218,6 +218,7 @@ export class LibraryReleaseSelectionService {
       LEFT JOIN AcquisitionPlans plan
         ON plan.library_edition_id = library_release.id
        AND plan.state = 'current'
+       AND plan.chosen = 1
       LEFT JOIN AcquisitionPlanSources primary_source
         ON primary_source.plan_id = plan.id
        AND primary_source.role = 'primary'
