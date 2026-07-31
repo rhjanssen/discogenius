@@ -16,7 +16,38 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
-## Blocked on a schema decision (needs Robert)
+## Next: edition choice may be overruled when coverage becomes impossible
+
+Not implemented. Everything else from the acquisition-plan design landed
+(schema 42, candidate plans, plan dedup, manual-choice coverage guard, lock
+semantics, album-page plan chooser).
+
+A manual **edition** choice currently always survives curation — the curation
+repository only touches `selection_mode = 'auto' AND locked = 0`. The intended
+rule is narrower: a manual edition choice persists **only while full discography
+coverage is still reachable some other way**.
+
+Worked example: the user picks the standard edition over the deluxe. That is
+fine as long as the deluxe-only tracks are obtainable elsewhere — as individual
+singles, another edition, another provider — in which case curation should
+monitor those instead and leave the override alone. If those tracks are
+reachable *only* through the deluxe edition, curation may overrule the user and
+select it.
+
+Implementation notes:
+
+- The comparison is artist-level, not album-level: `artist-coverage-optimizer.ts`
+  already reasons about canonical coverage across a discography and is the right
+  home for the check.
+- The rule needs "canonical recordings reachable under the current selection"
+  versus "reachable if this edition were selected too". Only a strict loss
+  justifies overruling.
+- An album `locked = 1` exempts the edition from this entirely; the lock now
+  covers monitored state, edition choice and plan choice alike.
+- Overruling must be visible in the same way a reclaimed plan choice is —
+  logged with a reason, not silent.
+
+## Still blocked on a schema decision (needs Robert)
 
 - **Persist the exact clicked provider audio variant.** The Release UI offers
   Lossless, Hi-Res and Atmos as distinct choices, but only
