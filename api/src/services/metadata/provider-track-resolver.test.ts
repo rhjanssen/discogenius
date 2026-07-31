@@ -81,12 +81,12 @@ test("canonical provider track resolution follows the current normalized plan", 
   `).get(providerRelease.id, release.id) as { id: number };
   const trackMatch = db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
-    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 0.98, 'test', 1)
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 0.98, 'test', 1)
     RETURNING id
-  `).get(member.id, releaseMatch.id, track.id, recording.id) as { id: number };
+  `).get(providerTrack.id, member.id, releaseMatch.id, track.id, recording.id) as { id: number };
   const stereoVariant = db.prepare(`
     INSERT INTO ProviderItemAudioVariants (
       provider_item_id, variant_key, quality_class, provider_quality_label,

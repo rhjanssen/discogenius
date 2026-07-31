@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-track-lyrics-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.track-lyrics.test.db");
@@ -10,11 +11,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let materializerModule: typeof import("./track-lyrics-materializer.js");
+let lyricsLibraryId: number;
 
 before(async () => {
   dbModule = await import("../../database.js");
   materializerModule = await import("./track-lyrics-materializer.js");
   dbModule.initDatabase();
+  lyricsLibraryId = seedTestLibrary(dbModule.db, { name: "Lyrics Test", rootPath: tempDir });
 });
 
 after(() => {
@@ -35,15 +38,16 @@ test("import lyric materializer discovers, tracks, and reuses an adjacent sideca
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles(
-      artist_id,
+      artist_id, library_id,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension,
       file_type, quality
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
   `).run(
     "100",
+    lyricsLibraryId,
     "artist-mbid-100",
     "release-group-mbid-200",
     "release-mbid-200",
@@ -97,15 +101,16 @@ test("import lyric materializer saves provider plain lyrics as txt and reuses th
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles(
-      artist_id,
+      artist_id, library_id,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension,
       file_type, quality
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
   `).run(
     "101",
+    lyricsLibraryId,
     "artist-mbid-101",
     "release-group-mbid-201",
     "release-mbid-201",

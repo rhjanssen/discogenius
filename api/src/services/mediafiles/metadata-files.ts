@@ -161,7 +161,7 @@ function textOrNull(...values: unknown[]): string | null {
     return null;
 }
 
-function loadAlbumProviderItem(albumId: string, provider?: string | null): AlbumProviderItemRow | null {
+function loadAlbumProviderItem(albumId: string, provider: string): AlbumProviderItemRow | null {
     return (db.prepare(`
         SELECT
             pi.provider,
@@ -218,13 +218,13 @@ function loadAlbumProviderItem(albumId: string, provider?: string | null): Album
           )
         WHERE pi.entity_type = 'release'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-          AND (? = '' OR pi.provider = ?)
+          AND pi.provider = ?
         ORDER BY pi.updated_at DESC
         LIMIT 1
-    `).get(albumId, String(provider || ""), String(provider || "")) as AlbumProviderItemRow | undefined) ?? null;
+    `).get(albumId, provider) as AlbumProviderItemRow | undefined) ?? null;
 }
 
-function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
+function loadVideoProviderItem(videoId: string, provider: string): VideoProviderItemRow | null {
     return (db.prepare(`
         SELECT
             pi.provider,
@@ -267,10 +267,11 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
         LEFT JOIN AlbumEditions release ON release.id = related_track.album_edition_id
         LEFT JOIN Albums album ON album.id = release.release_group_id
         WHERE pi.entity_type = 'video'
+          AND pi.provider = ?
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
         ORDER BY pi.updated_at DESC
         LIMIT 1
-    `).get(videoId) as VideoProviderItemRow | undefined) ?? null;
+    `).get(provider, videoId) as VideoProviderItemRow | undefined) ?? null;
 }
 
 function parseRecordingCredits(value: unknown): Array<{ id?: string; name?: string; join_phrase?: string }> {
@@ -295,16 +296,17 @@ function parseRecordingCredits(value: unknown): Array<{ id?: string; name?: stri
         .filter((credit) => Boolean(credit.name));
 }
 
-async function getVideoForNfo(videoId: string) {
+async function getVideoForNfo(videoId: string, providerId: string) {
+    const provider = streamingProviderManager.getStreamingProvider(providerId);
     try {
-        const video = await streamingProviderManager.getDefaultStreamingProvider().getVideo?.(videoId);
+        const video = await provider.getVideo?.(videoId);
         if (!video) {
             throw new Error(`provider video ${videoId} not found`);
         }
         return video;
     } catch (error) {
         warnNfoFallback("video", videoId, error);
-        const row = loadVideoProviderItem(videoId);
+        const row = loadVideoProviderItem(videoId, provider.id);
 
         if (!row) throw error;
         const artistId = row.artist_id ? String(row.artist_id) : null;
@@ -1049,12 +1051,15 @@ export async function saveAlbumNfoFile(
  */
 export async function saveVideoNfoFile(
     videoId: string,
-    outputPath: string
+    outputPath: string,
+    providerId?: string | null,
 ): Promise<void> {
-    const provider = streamingProviderManager.getDefaultStreamingProvider();
-    const video = await getVideoForNfo(videoId);
+    const provider = providerId
+        ? streamingProviderManager.getStreamingProvider(providerId)
+        : streamingProviderManager.getDefaultStreamingProvider();
+    const video = await getVideoForNfo(videoId, provider.id);
     const videoRecord = video as any;
-    const localVideo = loadVideoProviderItem(videoId);
+    const localVideo = loadVideoProviderItem(videoId, provider.id);
     const videoArtistId = videoRecord.artist_id || videoRecord.artist?.providerId || localVideo?.artist_id || null;
     const videoArtistName = videoRecord.artist_name || videoRecord.artist?.name || localVideo?.artist_name || null;
     const videoAlbumId = videoRecord.album_id || null;
@@ -1063,7 +1068,7 @@ export async function saveVideoNfoFile(
         ? db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
         : undefined;
     const albumItem = videoAlbumId
-        ? loadAlbumProviderItem(String(videoAlbumId), localVideo?.provider)
+        ? loadAlbumProviderItem(String(videoAlbumId), localVideo?.provider || provider.id)
         : null;
     const albumRow = albumItem ? {
         title: albumItem.release_group_title || albumItem.release_title || albumItem.provider_title,

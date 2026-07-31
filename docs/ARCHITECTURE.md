@@ -24,7 +24,9 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
    artwork, and allowed metadata supplements only.
 4. `TrackFiles` is the canonical on-disk inventory for managed playable media
    (audio and video). `MetadataFiles`, `LyricFiles`, and `ExtraFiles` are the
-   Lidarr-style sidecar inventories.
+   Lidarr-style sidecar inventories. A playable row has exactly one
+   `library_id`; a physical sidecar may belong to several libraries through its
+   normalized `*FileLibraries` association table.
 5. Respect lock semantics (`monitor_lock`) as intentional user state; automation
    must never flip a locked monitor value.
 
@@ -132,9 +134,11 @@ MusicBrainz identity behavior: artist refresh resolves `Artists.mbid` and stores
 match status in `metadata_identity_status`; release-group metadata lives in
 `Albums` (provider album IDs never define album identity); provider UPC/ISRC stay
 in `ProviderItems` and are not copied into catalog columns in normal Servarr mode;
-MusicBrainz videos are `Recordings` with `IsVideo = 1`, provider-only videos are
-provisional recordings until matched. Artwork resolution is metadata-source first
-(Servarr/CAA), provider artwork as fallback.
+MusicBrainz videos are `Recordings` with `IsVideo = 1`. Unmatched provider
+videos remain `ProviderItems`; they do not create provisional recordings.
+Accepted `ProviderVideoMatches` must target an existing MusicBrainz video
+recording. Artwork resolution is metadata-source first (Servarr/CAA), provider
+artwork as fallback.
 
 ## Logging, playback, and events
 
@@ -152,8 +156,9 @@ provisional recordings until matched. Artwork resolution is metadata-source firs
 ## Data and state model
 
 Primary persisted entities: `Artists`/`ArtistMetadata`/`ArtistStatistics`;
-`Albums`/`AlbumReleases`/`Tracks`/`Recordings`;
-`ProviderItems`/`ProviderItemMatches`/`ReleaseGroupSlots`; `TrackFiles`;
+`Albums`/`AlbumEditions`/`Tracks`/`Recordings`;
+`ProviderItems`/`ProviderEditionMembers` and typed `Provider*Matches`;
+`Libraries`/`LibraryAlbums`/`LibraryEditions`; acquisition plans; `TrackFiles`;
 `MetadataFiles`/`LyricFiles`/`ExtraFiles`; `UnmappedFiles`;
 `metadata_identity_status`; `history_events`; `commands`; `scheduled_tasks`;
 `monitoring_runtime_state`; `quality_profiles`; `config`.
@@ -163,23 +168,29 @@ Operational semantics:
 - monitor = eligible for automation; `monitor_lock` = manual override automation
   must not flip; `redundant` = why a release is filtered out of active curation.
 - MusicBrainz tables are the canonical metadata graph. Provider data is a
-  cache/resource layer: `ProviderItems` are offers, `ProviderItemMatches` are
-  provider↔MusicBrainz match evidence (incl. provider UPC/ISRC), and
-  `ReleaseGroupSlots` hold the selected offer per MusicBrainz release-group slot.
-- Stereo and spatial slots are release-specific. A Dolby Atmos offer may have a
-  different UPC and recording/ISRC set from the stereo offer in the same release
-  group, so each `ReleaseGroupSlots` row keeps its own `selected_release_mbid`
-  and selected provider album. Readers must resolve tracks through the slot's
-  selected release, not a release-group-wide representative.
+  resource layer: `ProviderItems` are offers; typed artist, edition, track, and
+  video match tables are the only provider↔MusicBrainz edges; provider UPC/ISRC
+  remains provider-scoped matching evidence.
+- Libraries select concrete `AlbumEditions`, and acquisition plans bind those
+  selections to accepted provider-edition and provider-track matches. Stereo
+  and spatial may select different editions or sources within one album.
+- Configured libraries may share a filesystem root. That never makes a playable
+  file multi-owned: imports must carry `library_id`, and root-only resolution
+  succeeds only for one matching library. Sidecars and extras are different:
+  one physical row is associated with every owning library through
+  `MetadataFileLibraries`, `LyricFileLibraries`, or `ExtraFileLibraries`, and is
+  physically deletable only after its final association is released.
 - Provider rows store only normalized availability/action fields plus compact
   selected-offer snapshots — not raw response blobs — and must not create
   canonical artists/albums/releases/tracks or wanted state by themselves.
-- `Recordings` is the extension point for audio recordings, spatial/alternate
-  mixes, MusicBrainz video recordings, and provider-only provisional videos.
+- `Recordings` is the canonical extension point for MusicBrainz audio
+  recordings, spatial/alternate mixes, and MusicBrainz video recordings.
+  Provider-only videos stay in `ProviderItems` until matched to that canonical
+  graph.
   `RecordingRelations` stores MusicBrainz `music_video_for` links plus inferred
   relations like `same_lyrical_content`.
 - Lyrics are sidecar files in `LyricFiles`; the payload is never stored in
-  metadata tables.
+  metadata tables. `library_slot` remains a placement/format hint, not ownership.
 
 ## Workflow topology
 

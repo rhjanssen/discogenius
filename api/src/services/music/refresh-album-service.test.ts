@@ -245,7 +245,10 @@ test("album track scan stores provider track offers linked to the selected canon
     ) VALUES (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1)
   `).run(providerEditionItemId, canonicalReleaseId);
 
-  await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", { resolveMusicBrainz: false });
+  await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", {
+    provider: "fake",
+    resolveMusicBrainz: false,
+  });
 
   const offer = dbModule.db.prepare(`
     SELECT provider, entity_type, provider_id, isrc, copyright,

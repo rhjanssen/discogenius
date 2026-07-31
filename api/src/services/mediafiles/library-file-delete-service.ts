@@ -211,7 +211,7 @@ export function deleteTrackLibraryFiles(
 }
 
 /**
- * Manage → Delete files for a music video (canonical recording id or provider id).
+ * Manage → Delete files for a canonical music-video recording.
  * Removes video + thumbnail/nfo TrackFiles; keeps the catalog Recording.
  */
 export function deleteVideoLibraryFiles(
@@ -228,23 +228,8 @@ export function deleteVideoLibraryFiles(
     LIMIT 1
   `).get(videoId, videoId) as { id?: number; mbid?: string | null } | undefined;
 
-  let recordingId = recording?.id != null ? Number(recording.id) : null;
-  let recordingMbid = recording?.mbid ? String(recording.mbid) : null;
-
-  if (recordingId == null) {
-    const offer = db.prepare(`
-      SELECT recording_id, recording_mbid
-      FROM ProviderItems
-      WHERE entity_type = 'video'
-        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        AND recording_id IS NOT NULL
-      LIMIT 1
-    `).get(videoId) as { recording_id?: number | null; recording_mbid?: string | null } | undefined;
-    if (offer?.recording_id != null) {
-      recordingId = Number(offer.recording_id);
-      recordingMbid = offer.recording_mbid ? String(offer.recording_mbid) : recordingMbid;
-    }
-  }
+  const recordingId = recording?.id != null ? Number(recording.id) : null;
+  const recordingMbid = recording?.mbid ? String(recording.mbid) : null;
 
   if (recordingId == null) {
     const err = new Error("Video not found") as Error & { status?: number };
@@ -252,19 +237,17 @@ export function deleteVideoLibraryFiles(
     throw err;
   }
 
-  const providerIds = (db.prepare(`
-    SELECT CAST(provider_id AS TEXT) AS provider_id
-    FROM ProviderItems
-    WHERE entity_type = 'video'
-      AND (
-        recording_id = ?
-        OR (? IS NOT NULL AND recording_mbid = ?)
-      )
-  `).all(recordingId, recordingMbid, recordingMbid) as Array<{ provider_id: string }>)
-    .map((row) => row.provider_id)
-    .filter(Boolean);
+  const providerItems = db.prepare(`
+    SELECT item.provider, CAST(item.provider_id AS TEXT) AS provider_id
+    FROM ProviderItems item
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = item.id
+     AND video_match.match_state = 'accepted'
+    WHERE item.entity_type = 'video'
+      AND video_match.recording_id = ?
+  `).all(recordingId) as Array<{ provider: string; provider_id: string }>;
 
-  const rows = (providerIds.length > 0
+  const rows = (providerItems.length > 0
     ? db.prepare(`
         SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
         FROM TrackFiles
@@ -274,10 +257,19 @@ export function deleteVideoLibraryFiles(
             OR (? IS NOT NULL AND canonical_recording_mbid = ?)
             OR (
               provider_entity_type = 'video'
-              AND CAST(provider_id AS TEXT) IN (${providerIds.map(() => "?").join(",")})
+              AND (
+                ${providerItems.map(() =>
+                  "(provider = ? AND CAST(provider_id AS TEXT) = CAST(? AS TEXT))"
+                ).join(" OR ")}
+              )
             )
           )
-      `).all(recordingId, recordingMbid, recordingMbid, ...providerIds)
+      `).all(
+        recordingId,
+        recordingMbid,
+        recordingMbid,
+        ...providerItems.flatMap((item) => [item.provider, item.provider_id]),
+      )
     : db.prepare(`
         SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
         FROM TrackFiles

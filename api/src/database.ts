@@ -922,6 +922,7 @@ function initializeDefaultData() {
   new LibraryCurationRepository(db).bootstrapDefaultLibraries({
     stereoRoot: resolveLibraryRoot(process.env.MUSIC_PATH, "library/stereo-music"),
     spatialRoot: resolveLibraryRoot(process.env.SPATIAL_PATH, "library/spatial-music"),
+    videoRoot: resolveLibraryRoot(process.env.VIDEO_PATH, "library/music-videos"),
   });
 
   recordDatabaseVersionState();

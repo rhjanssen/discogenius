@@ -3,22 +3,29 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { extractAppleEditorialNotes } from "./apple-music/apple-music-catalog.js";
 import {
-  firstProviderEditorialText,
-  listReleaseGroupAlbumOfferCandidates,
-} from "./provider-editorial-text.js";
-import { streamingProviderManager } from "./index.js";
+  seedAcceptedProviderReleaseMatch,
+  seedCanonicalAlbum,
+} from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-provider-editorial-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
+let extractAppleEditorialNotes: typeof import("./apple-music/apple-music-catalog.js").extractAppleEditorialNotes;
+let firstProviderEditorialText: typeof import("./provider-editorial-text.js").firstProviderEditorialText;
+let listReleaseGroupAlbumOfferCandidates:
+  typeof import("./provider-editorial-text.js").listReleaseGroupAlbumOfferCandidates;
+let streamingProviderManager: typeof import("./index.js").streamingProviderManager;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  ({ extractAppleEditorialNotes } = await import("./apple-music/apple-music-catalog.js"));
+  ({ firstProviderEditorialText, listReleaseGroupAlbumOfferCandidates } =
+    await import("./provider-editorial-text.js"));
+  ({ streamingProviderManager } = await import("./index.js"));
 });
 
 after(() => {
@@ -81,11 +88,17 @@ test("firstProviderEditorialText walks provider_priority and returns first non-e
 
 test("listReleaseGroupAlbumOfferCandidates returns matched album offers", () => {
   const releaseGroupMbid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-  dbModule.db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (
-      provider, entity_type, provider_id, title, release_group_mbid, updated_at
-    ) VALUES ('tidal', 'album', 'editorial-test-99', 'Test Album', ?, CURRENT_TIMESTAMP)
-  `).run(releaseGroupMbid);
+  const releaseMbid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  seedCanonicalAlbum(dbModule.db, {
+    releaseGroupMbid,
+    releaseMbid,
+    title: "Test Album",
+  });
+  seedAcceptedProviderReleaseMatch(dbModule.db, {
+    provider: "tidal",
+    providerEditionId: "editorial-test-99",
+    releaseMbid,
+  });
 
   try {
     const candidates = listReleaseGroupAlbumOfferCandidates(releaseGroupMbid);
@@ -93,8 +106,7 @@ test("listReleaseGroupAlbumOfferCandidates returns matched album offers", () => 
   } finally {
     dbModule.db.prepare(`
       DELETE FROM ProviderItems
-      WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = 'editorial-test-99'
-        AND release_group_mbid = ?
-    `).run(releaseGroupMbid);
+      WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = 'editorial-test-99'
+    `).run();
   }
 });

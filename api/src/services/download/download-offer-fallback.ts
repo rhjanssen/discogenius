@@ -11,6 +11,9 @@ export type RankedDownloadOffer = {
   providerId: string;
   quality: string | null;
   providerAlbumId?: string | null;
+  providerItemId?: number;
+  providerAlbumItemId?: number | null;
+  providerAudioVariantId?: number | null;
 };
 
 type AudioOfferRow = {
@@ -20,6 +23,9 @@ type AudioOfferRow = {
   quality_class: string | null;
   spatial_format: string | null;
   provider_album_id?: string | null;
+  provider_item_id: number;
+  provider_album_item_id?: number | null;
+  provider_audio_variant_id?: number | null;
 };
 
 type SpatialRankedDownloadOffer = RankedDownloadOffer & {
@@ -75,6 +81,13 @@ function toDownloadOffer(row: AudioOfferRow): RankedDownloadOffer {
     ...(row.provider_album_id === undefined
       ? {}
       : { providerAlbumId: row.provider_album_id }),
+    providerItemId: row.provider_item_id,
+    ...(row.provider_album_item_id === undefined
+      ? {}
+      : { providerAlbumItemId: row.provider_album_item_id }),
+    ...(row.provider_audio_variant_id === undefined
+      ? {}
+      : { providerAudioVariantId: row.provider_audio_variant_id }),
   };
 }
 
@@ -116,7 +129,8 @@ export function listRankedAlbumOffers(
 
   const slot = String(librarySlot || "").trim().toLowerCase();
   const rows = db.prepare(`
-    SELECT item.provider,
+    SELECT item.id AS provider_item_id,
+           item.provider,
            CAST(item.provider_id AS TEXT) AS provider_id,
            COALESCE(
              variant.provider_quality_label,
@@ -124,7 +138,8 @@ export function listRankedAlbumOffers(
              variant.quality_class
            ) AS quality,
            variant.quality_class,
-           variant.spatial_format
+           variant.spatial_format,
+           variant.id AS provider_audio_variant_id
     FROM ProviderItems item
     JOIN ProviderEditionMatches release_match
       ON release_match.provider_edition_item_id = item.id
@@ -147,9 +162,13 @@ export function listRankedAlbumOffers(
     ));
   }
 
-  // Album offers are audio resources. A spatial-only album remains a valid
-  // last-resort stereo-library acquisition per the configured slot semantics.
-  return dedupeOffers(sortAudioOffers(rows.map(toDownloadOffer)));
+  // Stereo acquisition accepts only a real stereo variant. Spatial-only media
+  // is a separate library class and is never a degraded substitute.
+  return dedupeOffers(sortAudioOffers(
+    rows
+      .filter((row) => rowSlot(row) === "stereo")
+      .map(toDownloadOffer),
+  ));
 }
 
 export function listRankedTrackOffers(options: {
@@ -162,7 +181,8 @@ export function listRankedTrackOffers(options: {
   if (!trackMbid && !recordingMbid) return [];
 
   const rows = db.prepare(`
-    SELECT item.provider,
+    SELECT item.id AS provider_item_id,
+           item.provider,
            CAST(item.provider_id AS TEXT) AS provider_id,
            COALESCE(
              variant.provider_quality_label,
@@ -171,13 +191,16 @@ export function listRankedTrackOffers(options: {
            ) AS quality,
            variant.quality_class,
            variant.spatial_format,
+           variant.id AS provider_audio_variant_id,
+           parent.id AS provider_album_item_id,
            CAST(parent.provider_id AS TEXT) AS provider_album_id
     FROM ProviderItems item
-    JOIN ProviderEditionMembers member ON member.member_item_id = item.id
-    JOIN ProviderItems parent ON parent.id = member.provider_edition_item_id
     JOIN ProviderTrackMatches track_match
-      ON track_match.provider_edition_member_id = member.id
+      ON track_match.provider_track_item_id = item.id
      AND track_match.match_state = 'accepted'
+    LEFT JOIN ProviderEditionMembers member
+      ON member.id = track_match.provider_edition_member_id
+    LEFT JOIN ProviderItems parent ON parent.id = member.provider_edition_item_id
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     JOIN Recordings recording ON recording.id = track_match.recording_id
     LEFT JOIN ProviderItemAudioVariants variant
@@ -188,8 +211,15 @@ export function listRankedTrackOffers(options: {
         (? != '' AND track.mbid = ?)
         OR (? != '' AND recording.mbid = ?)
       )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ProviderTrackMatches conflicting_match
+        WHERE conflicting_match.provider_track_item_id = item.id
+          AND conflicting_match.match_state = 'accepted'
+          AND conflicting_match.recording_id != track_match.recording_id
+      )
       AND ${availabilitySql("item.availability")}
-      AND ${availabilitySql("parent.availability")}
+      AND (parent.id IS NULL OR ${availabilitySql("parent.availability")})
   `).all(trackMbid, trackMbid, recordingMbid, recordingMbid) as AudioOfferRow[];
 
   const slot = String(options.librarySlot || "stereo").trim().toLowerCase();
@@ -205,7 +235,7 @@ export function listRankedTrackOffers(options: {
   // and retaining the first SQLite row made the chosen quality nondeterministic.
   return dedupeOffers(sortAudioOffers(
     rows
-      .filter((row) => rowSlot(row) !== "video")
+      .filter((row) => rowSlot(row) === "stereo")
       .map(toDownloadOffer),
   ));
 }
@@ -215,7 +245,8 @@ export function listRankedVideoOffers(recordingRef: string | null | undefined): 
   if (!key) return [];
 
   const rows = db.prepare(`
-    SELECT item.provider,
+    SELECT item.id AS provider_item_id,
+           item.provider,
            CAST(item.provider_id AS TEXT) AS provider_id,
            item.video_quality AS quality
     FROM ProviderItems item
@@ -227,6 +258,7 @@ export function listRankedVideoOffers(recordingRef: string | null | undefined): 
       AND (CAST(video_match.recording_id AS TEXT) = ? OR recording.mbid = ?)
       AND ${availabilitySql("item.availability")}
   `).all(key, key) as Array<{
+    provider_item_id: number;
     provider: string;
     provider_id: string;
     quality: string | null;
@@ -236,6 +268,7 @@ export function listRankedVideoOffers(recordingRef: string | null | undefined): 
     provider: row.provider,
     providerId: row.provider_id,
     quality: row.quality ?? null,
+    providerItemId: row.provider_item_id,
   })));
 
   return offers.sort((left, right) => compareVideoOffersByQualityThenProvider(

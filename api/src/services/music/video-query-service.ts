@@ -1162,25 +1162,15 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
 }
 
 function resolveVideoRecordingId(videoId: string): string | null {
-  const direct = db.prepare(
-    "SELECT id FROM Recordings WHERE is_video = 1 AND CAST(id AS TEXT) = CAST(? AS TEXT) LIMIT 1",
-  ).get(videoId) as { id?: number | string } | undefined;
+  const direct = db.prepare(`
+    SELECT id
+    FROM Recordings
+    WHERE is_video = 1
+      AND (CAST(id AS TEXT) = CAST(? AS TEXT) OR mbid = ?)
+    LIMIT 1
+  `).get(videoId, videoId) as { id?: number | string } | undefined;
   if (direct?.id != null) {
     return String(direct.id);
   }
-
-  const viaProvider = db.prepare(`
-    SELECT video_match.recording_id
-    FROM ProviderItems provider_item
-    JOIN ProviderVideoMatches video_match
-      ON video_match.provider_video_item_id = provider_item.id
-     AND video_match.match_state = 'accepted'
-    WHERE provider_item.entity_type = 'video'
-      AND CAST(provider_item.provider_id AS TEXT) = CAST(? AS TEXT)
-      AND LOWER(CAST(provider_item.availability AS TEXT))
-          NOT IN ('0', 'false', 'unavailable', 'no', '')
-    ORDER BY video_match.updated_at DESC
-    LIMIT 1
-  `).get(videoId) as { recording_id?: number | string | null } | undefined;
-  return viaProvider?.recording_id != null ? String(viaProvider.recording_id) : null;
+  return null;
 }

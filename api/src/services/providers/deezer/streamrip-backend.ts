@@ -17,6 +17,7 @@ export interface StreamripRunOptions {
 }
 
 export type StreamripErrorKind =
+  | "configuration"
   | "authentication"
   | "entitlement"
   | "geography"
@@ -233,7 +234,9 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
   for (const line of lines) {
     let kind: StreamripErrorKind | null = null;
     let permanent = true;
-    if (/invalid\s+arl|arl\s+(?:expired|invalid)|authentication|not logged in|login required/iu.test(line)) {
+    if (/error processing media item:\s*['"]id['"]|keyerror:\s*['"]id['"]/iu.test(line)) {
+      kind = "configuration";
+    } else if (/invalid\s+arl|arl\s+(?:expired|invalid)|authentication|not logged in|login required/iu.test(line)) {
       kind = "authentication";
     } else if (/wronglicense|license.*(?:denied|invalid)|entitlement|subscription required/iu.test(line)) {
       kind = "entitlement";

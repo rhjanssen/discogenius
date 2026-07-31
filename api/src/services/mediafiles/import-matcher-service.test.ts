@@ -1,147 +1,106 @@
 import assert from "node:assert/strict";
-import { after, before, beforeEach, test } from "node:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { after, beforeEach, test } from "node:test";
+import {
+  closeActiveSchemaDb,
+  openActiveSchemaDb,
+  prepareActiveSchemaEnv,
+  resetActiveSchemaRows,
+} from "../../test-support/active-schema-fixture.js";
 import type { LocalGroup } from "./import-types.js";
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-import-matcher-"));
-process.env.DB_PATH = path.join(tempDir, "discogenius.import-matcher.test.db");
-process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
+const { tempDir } = prepareActiveSchemaEnv("import-matcher");
+const { db, dbModule } = await openActiveSchemaDb();
+const { ImportMatcherService } = await import("./import-matcher-service.js");
 
-let dbModule: typeof import("../../database.js");
-let importMatcherModule: typeof import("./import-matcher-service.js");
+after(() => closeActiveSchemaDb(dbModule, tempDir));
+beforeEach(() => resetActiveSchemaRows(db));
 
-before(async () => {
-  dbModule = await import("../../database.js");
-  dbModule.initDatabase();
-  importMatcherModule = await import("./import-matcher-service.js");
-});
+const ARTIST_MBID = "11111111-1111-4111-8111-111111111111";
+const GROUP_MBID = "22222222-2222-4222-8222-222222222222";
+const RELEASE_MBID = "33333333-3333-4333-8333-333333333333";
+const RECORDING_MBID = "44444444-4444-4444-8444-444444444444";
+const TRACK_MBID = "55555555-5555-4555-8555-555555555555";
+const VIDEO_MBID = "66666666-6666-4666-8666-666666666666";
 
-beforeEach(() => {
-  for (const table of [
-    "TrackFiles", "ProviderItems", "Tracks", "Recordings",
-    "AlbumEditions", "Albums", "ArtistMetadata", "Artists",
-  ]) {
-    dbModule.db.prepare(`DELETE FROM ${table}`).run();
-  }
-});
-
-after(() => {
-  dbModule.closeDatabase();
-  fs.rmSync(tempDir, { recursive: true, force: true });
-});
-
-function seedCanonicalFingerprintMatch() {
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, updated_at
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run( "tidal", "release", "provider-album", "Canonical Album", "2026-01-01T00:00:00.000Z" );
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, updated_at
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run( "tidal", "track", "provider-track", "Canonical Track", "2026-01-01T00:00:00.000Z" );
-  // The track's album context is its release OCCURRENCE, not a scalar column.
-  const albumItemId = (dbModule.db.prepare(`
-    SELECT id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = 'provider-album'
-  `).get() as { id: number }).id;
-  const trackItemId = (dbModule.db.prepare(`
-    SELECT id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = 'provider-track'
-  `).get() as { id: number }).id;
-  dbModule.db.prepare(`
-    INSERT INTO ProviderEditionMembers (
-      provider_edition_item_id, member_item_id, medium_position, position
-    ) VALUES (?, ?, 1, 1)
-  `).run(albumItemId, trackItemId);
-  dbModule.db.prepare(`
-    INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
-      canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
-      provider, provider_entity_type, provider_id, library_slot,
-      file_path, relative_path, library_root, filename, extension, file_type,
-      quality, fingerprint
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "artist-local",
-    "artist-mbid",
-    "release-group-mbid",
-    "release-mbid",
-    "track-mbid",
-    "recording-mbid",
-    "tidal",
-    "track",
-    "provider-track",
-    "stereo",
-    "C:/Music/Canonical Artist/Canonical Track.flac",
-    "Canonical Artist/Canonical Track.flac",
-    "C:/Music",
-    "Canonical Track.flac",
-    "flac",
-    "track",
-    "LOSSLESS",
-    "fingerprint-match",
-  );
+function seedCanonicalAlbum() {
+  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, 'Bastille')").run(ARTIST_MBID);
+  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, 'Bastille', ?)").run(ARTIST_MBID, ARTIST_MBID);
+  db.prepare(`
+    INSERT INTO Albums (id, mbid, artist_mbid, title)
+    VALUES (1, ?, ?, 'Bad Blood')
+  `).run(GROUP_MBID, ARTIST_MBID);
+  db.prepare(`
+    INSERT INTO AlbumEditions (
+      id, mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES (1, ?, 1, ?, ?, 'Bad Blood', 1)
+  `).run(RELEASE_MBID, GROUP_MBID, ARTIST_MBID);
+  db.prepare(`
+    INSERT INTO Recordings (id, mbid, title, length_ms)
+    VALUES (1, ?, 'Pompeii', 214000)
+  `).run(RECORDING_MBID);
+  db.prepare(`
+    INSERT INTO Tracks (
+      id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title, length_ms
+    ) VALUES (1, ?, 1, ?, 1, ?, 1, 1, 'Pompeii', 214000)
+  `).run(TRACK_MBID, RELEASE_MBID, RECORDING_MBID);
 }
 
-function makeGroup(): LocalGroup {
+function audioGroup(): LocalGroup {
   return {
-    id: "group-1",
-    path: "C:/Import/Canonical Artist/Canonical Album",
+    id: "album-folder",
+    path: "C:/Import/Bastille/Bad Blood",
     rootPath: "C:/Import",
     libraryRoot: "music",
     sidecars: [],
-    commonTags: {
-      artist: "Canonical Artist",
-      album: "Canonical Album",
-    },
+    commonTags: { artist: "Bastille", album: "Bad Blood" },
     status: "queued",
-    files: [
-      {
-        path: "C:/Import/Canonical Artist/Canonical Album/Canonical Track.flac",
-        name: "Canonical Track.flac",
-        size: 100,
-        extension: ".flac",
-        fingerprint: "fingerprint-match",
-        metadata: {
-          common: {
-            artist: "Canonical Artist",
-            album: "Canonical Album",
-            title: "Canonical Track",
-          },
-          format: {
-            duration: 180,
-          },
-          native: {},
-          quality: {
-            warnings: [],
-          },
-        } as any,
-      },
-    ],
+    files: [{
+      path: "C:/Import/Bastille/Bad Blood/01 Pompeii.flac",
+      name: "01 Pompeii.flac",
+      size: 100,
+      extension: ".flac",
+      metadata: {
+        common: { artist: "Bastille", album: "Bad Blood", title: "Pompeii" },
+        format: { duration: 214 },
+        native: {},
+        quality: { warnings: [] },
+      } as any,
+    }],
   };
 }
 
-test("fingerprint candidates use canonical ProviderItems without legacy provider rows", async () => {
-  seedCanonicalFingerprintMatch();
-  const matcher = new importMatcherModule.ImportMatcherService();
-  (matcher as any).getProviderAlbum = async (albumId: string) => ({
-    id: albumId,
-    provider_id: albumId,
-    title: "Canonical Album",
-    artist: { name: "Canonical Artist" },
-  });
+test("album discovery returns canonical release-group and Track identities only", async () => {
+  seedCanonicalAlbum();
+  const matches = await new ImportMatcherService().findMatchesForGroup(audioGroup(), "music");
 
-  const evidence = await (matcher as any).getFingerprintCandidates(makeGroup(), "music");
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].item.id, GROUP_MBID);
+  assert.equal(matches[0].itemType, "album");
+  assert.equal(matches[0].trackIdsByFilePath?.[audioGroup().files[0].path], TRACK_MBID);
+  assert.equal(matches[0].autoImportReady, false);
+  assert.match(matches[0].rejections?.[0] || "", /Library and canonical MusicBrainz Edition/);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderItems").get() as { count: number }).count, 0);
+});
 
-  assert.equal(evidence.candidates.length, 1);
-  assert.equal(evidence.candidates[0].provider_id, "provider-album");
-  assert.deepEqual(Array.from(evidence.strongCandidateIds), ["provider-album"]);
-  assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
-  assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
+test("video discovery returns a canonical Recording and never invents provider identity", async () => {
+  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, 'Bastille')").run(ARTIST_MBID);
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, mbid, title, artist_metadata_id, artist_mbid, artist_credit,
+      length_ms, is_video
+    ) VALUES (10, ?, 'Pompeii', 1, ?, 'Bastille', 214000, 1)
+  `).run(VIDEO_MBID, ARTIST_MBID);
+  const group = audioGroup();
+  group.libraryRoot = "videos";
+  group.files[0].extension = ".mkv";
+  group.files[0].name = "Bastille - Pompeii.mkv";
+
+  const matches = await new ImportMatcherService().findMatchesForGroup(group, "video");
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].item.id, VIDEO_MBID);
+  assert.equal(matches[0].itemType, "video");
+  assert.equal(matches[0].autoImportReady, false);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderItems").get() as { count: number }).count, 0);
 });

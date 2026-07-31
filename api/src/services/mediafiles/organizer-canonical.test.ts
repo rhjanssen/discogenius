@@ -7,6 +7,7 @@ import {
   seedAcceptedProviderTrackMatch,
   seedAcceptedProviderVideoMatch,
 } from "../../test-support/normalized-provider-fixtures.js";
+import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-organizer-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -52,6 +53,7 @@ beforeEach(() => {
   config.metadata.save_nfo = true;
   config.metadata.save_lyrics = true;
   configModule.writeConfig(config);
+  seedTestLibrary(dbModule.db, { name: "Organizer Scratch", rootPath: tempDir });
 });
 
 after(() => {
@@ -619,11 +621,11 @@ test("typed plan identity maps a provider source track onto the selected canonic
   `).get(providerRelease.id, hybridRelease.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
-    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
-  `).run(member.id, releaseMatch.id, hybridTrack.id, hybridTrack.recording_id);
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerTrack.id, member.id, releaseMatch.id, hybridTrack.id, hybridTrack.recording_id);
   dbModule.db.prepare(`
     INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
     VALUES ('Identity Test', '{}')

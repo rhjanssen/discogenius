@@ -774,22 +774,20 @@ export class RenameTrackFileService {
       const providerId = String(row.provider_id || "").trim();
       if (!providerId) continue;
       const provider = String(row.provider || "").trim();
-      const byOffer = provider
-        ? db.prepare(`
-            SELECT recording_id FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'track'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-              AND recording_id IS NOT NULL
-            LIMIT 1
-          `).get(provider, providerId) as { recording_id?: number | null } | undefined
-        : db.prepare(`
-            SELECT recording_id FROM ProviderItems
-            WHERE entity_type = 'track'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-              AND recording_id IS NOT NULL
-            LIMIT 1
-          `).get(providerId) as { recording_id?: number | null } | undefined;
+      if (!provider) continue;
+      const byOffer = db.prepare(`
+        SELECT CASE
+          WHEN COUNT(DISTINCT track_match.recording_id) = 1
+          THEN MAX(track_match.recording_id)
+        END AS recording_id
+        FROM ProviderItems provider_track
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_track_item_id = provider_track.id
+         AND track_match.match_state = 'accepted'
+        WHERE provider_track.provider = ?
+          AND provider_track.entity_type = 'track'
+          AND CAST(provider_track.provider_id AS TEXT) = CAST(? AS TEXT)
+      `).get(provider, providerId) as { recording_id?: number | null } | undefined;
       if (byOffer?.recording_id != null) {
         audioRecordingIds.add(Number(byOffer.recording_id));
       }
@@ -814,7 +812,11 @@ export class RenameTrackFileService {
         ON tf.file_type IN ('video', 'video_thumbnail', 'nfo')
        AND (
          tf.recording_id = rr.source_recording_id
-         OR CAST(tf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
+         OR (
+           tf.provider = pi.provider
+           AND tf.provider_entity_type = 'video'
+           AND CAST(tf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
+         )
        )
       WHERE rr.target_recording_id IN (${recordingPlaceholders})
         AND rr.relation_type IN ('provider_video_for', 'music_video_for')

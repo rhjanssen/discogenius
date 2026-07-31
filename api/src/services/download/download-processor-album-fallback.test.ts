@@ -86,10 +86,14 @@ function addTrackMatch(
 ) {
   db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+      track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
-    ) VALUES (?, ?, ?, ?, ?, 'automatic', 0.99, 'test_fixture', 1)
-  `).run(memberId, releaseMatchId, trackId, recordingId, matchState);
+    ) VALUES (
+      (SELECT member_item_id FROM ProviderEditionMembers WHERE id = ?),
+      ?, ?, ?, ?, ?, 'automatic', 0.99, 'test_fixture', 1
+    )
+  `).run(memberId, memberId, releaseMatchId, trackId, recordingId, matchState);
 }
 
 test("fallback tracklist takes numbers from the accepted canonical track", () => {

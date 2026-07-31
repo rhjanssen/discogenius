@@ -253,10 +253,11 @@ export function seedAcceptedProviderRecordingTrack(
     `).get(releaseItem.id, canonicalRelease.album_edition_id) as { id: number };
     db.prepare(`
       INSERT OR IGNORE INTO ProviderTrackMatches (
-        provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
+        provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+        track_id, recording_id,
         match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, NULL, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
-    `).run(member.id, releaseMatch.id, fixture.recordingId);
+      ) VALUES (?, ?, ?, NULL, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
+    `).run(trackItem.id, member.id, releaseMatch.id, fixture.recordingId);
   }
 
   return {
@@ -333,10 +334,17 @@ export function seedAcceptedProviderTrackMatch(
 
   db.prepare(`
     INSERT OR IGNORE INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+      track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
-    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
-  `).run(member.id, releaseMatch.providerEditionMatchId, track.id, track.recording_id);
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
+  `).run(
+    providerTrack.id,
+    member.id,
+    releaseMatch.providerEditionMatchId,
+    track.id,
+    track.recording_id,
+  );
   const trackMatch = db.prepare(`
     SELECT id
     FROM ProviderTrackMatches

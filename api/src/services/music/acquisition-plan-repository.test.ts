@@ -46,10 +46,10 @@ test("plan replacement is atomic and partial completion counts only imported ass
         source_coverage, target_coverage
       ) VALUES (1, 1, 1, 'exact', 'accepted', 'automatic', 1, 'external_id', 1, 2, 2, 2, 1, 1);
       INSERT INTO ProviderTrackMatches (
-        id, provider_edition_member_id, provider_edition_match_id, track_id,
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (1, 1, 1, 1, 1, 'accepted', 'automatic', 1, 'external_id', 1),
-               (2, 2, 1, 2, 2, 'accepted', 'automatic', 1, 'external_id', 1);
+      ) VALUES (1, 2, 1, 1, 1, 1, 'accepted', 'automatic', 1, 'external_id', 1),
+               (2, 3, 2, 1, 2, 2, 'accepted', 'automatic', 1, 'external_id', 1);
       INSERT INTO ProviderItemAudioVariants (
         id, provider_item_id, variant_key, quality_class, availability
       ) VALUES (1, 2, 'lossless', 'lossless', 'available'),

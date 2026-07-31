@@ -153,9 +153,10 @@ test("schema 41 validates provider membership, credits, and track recording iden
     `).run();
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+        track_id, recording_id,
         match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (1, 1, 1, 1, 1, 'accepted', 'automatic', 1, 'external_id', 1)
+      ) VALUES (1, 2, 1, 1, 1, 1, 'accepted', 'automatic', 1, 'external_id', 1)
     `).run();
 
     assert.throws(
@@ -168,9 +169,10 @@ test("schema 41 validates provider membership, credits, and track recording iden
     assert.throws(
       () => db.prepare(`
         INSERT INTO ProviderTrackMatches (
-          provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
+          provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+          track_id, recording_id,
           match_state, decision_source, confidence, method, matcher_version
-        ) VALUES (1, 1, 1, 2, 'accepted', 'automatic', 1, 'external_id', 1)
+        ) VALUES (2, 1, 1, 1, 2, 'accepted', 'automatic', 1, 'external_id', 1)
       `).run(),
       /recording disagrees/,
     );

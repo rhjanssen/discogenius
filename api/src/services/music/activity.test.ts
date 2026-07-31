@@ -3,6 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import {
+    seedAcceptedProviderTrackMatch,
+    seedAcceptedProviderVideoMatch,
+} from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-activity-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.activity.test.db");
@@ -194,47 +198,72 @@ test("activity descriptions resolve download jobs from canonical provider items 
     dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
         .run("artist-mbid", "Canonical Artist");
     dbModule.db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
-        VALUES (?, ?, ?, ?)
-    `).run("release-group-mbid", "artist-mbid", "Canonical Album", "album");
+        INSERT INTO Albums (
+          mbid, artist_mbid, artist_metadata_id, title, primary_type
+        )
+        VALUES (?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?, ?)
+    `).run("release-group-mbid", "artist-mbid", "artist-mbid", "Canonical Album", "album");
     dbModule.db.prepare(`
-        INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
-        VALUES (?, ?, ?, ?, ?, ?)
-    `).run("release-mbid", "release-group-mbid", "artist-mbid", "Canonical Album", 1, 1);
+        INSERT INTO AlbumEditions (
+          mbid, release_group_mbid, release_group_id, artist_mbid,
+          artist_metadata_id, title, track_count, media_count
+        )
+        VALUES (
+          ?, ?, (SELECT id FROM Albums WHERE mbid = ?), ?,
+          (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?, ?, ?
+        )
+    `).run(
+        "release-mbid", "release-group-mbid", "release-group-mbid",
+        "artist-mbid", "artist-mbid", "Canonical Album", 1, 1,
+    );
     dbModule.db.prepare(`
-        INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
-        VALUES (?, ?, ?, ?), (?, ?, ?, ?)
+        INSERT INTO Recordings (
+          mbid, title, artist_mbid, artist_metadata_id, is_video
+        )
+        VALUES
+          (?, ?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?),
+          (?, ?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?)
     `).run(
         "recording-mbid",
         "Canonical Track",
+        "artist-mbid",
         "artist-mbid",
         0,
         "video-recording-mbid",
         "Canonical Video",
         "artist-mbid",
+        "artist-mbid",
         1,
     );
     dbModule.db.prepare(`
-        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
-        VALUES (?, ?, ?, ?, ?, ?)
-    `).run("track-mbid", "release-mbid", "recording-mbid", "Canonical Track", 1, 1);
-    dbModule.db.prepare(`
-        INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-            release_mbid, track_mbid, recording_mbid, title, library_slot,
-            match_status, match_confidence, match_method
-        ) VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO Tracks (
+          mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
+          title, medium_position, position
+        )
+        VALUES (
+          ?, ?, (SELECT id FROM AlbumEditions WHERE mbid = ?), ?,
+          (SELECT id FROM Recordings WHERE mbid = ?), ?, ?, ?
+        )
     `).run(
-        "tidal", "album", "provider-album", "artist-mbid", "release-group-mbid",
-        "release-mbid", null, null, "Canonical Album", "stereo", "verified", 1, "test",
-        "tidal", "track", "provider-track", "artist-mbid", "release-group-mbid",
-        "release-mbid", "track-mbid", "recording-mbid", "Canonical Track", "stereo", "verified", 1, "test",
-        "tidal", "video", "provider-video", "artist-mbid", null,
-        null, null, "video-recording-mbid", "Canonical Video", "video", "verified", 1, "test",
+        "track-mbid", "release-mbid", "release-mbid", "recording-mbid",
+        "recording-mbid", "Canonical Track", 1, 1,
     );
+    seedAcceptedProviderTrackMatch(dbModule.db, {
+        provider: "tidal",
+        providerEditionId: "provider-album",
+        providerTrackId: "provider-track",
+        releaseMbid: "release-mbid",
+        trackMbid: "track-mbid",
+    });
+    const videoRecording = dbModule.db.prepare(
+        "SELECT id FROM Recordings WHERE mbid = 'video-recording-mbid'",
+    ).get() as { id: number };
+    seedAcceptedProviderVideoMatch(dbModule.db, {
+        provider: "tidal",
+        providerVideoId: "provider-video",
+        recordingId: videoRecording.id,
+        title: "Canonical Video",
+    });
 
     const albumJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,

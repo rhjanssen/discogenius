@@ -914,10 +914,17 @@ const AlbumPage = () => {
     mutationFn: async ({
       libraryId,
       editionId,
+      providerEditionMatchId,
     }: {
       libraryId: number;
       editionId: number;
-    }) => api.setAlbumLibraryRelease(albumId!, libraryId, editionId),
+      providerEditionMatchId: number;
+    }) => api.setAlbumLibraryRelease(
+      albumId!,
+      libraryId,
+      editionId,
+      providerEditionMatchId,
+    ),
     onSuccess: async (releaseAvailability) => {
       queryClient.setQueryData(
         albumReleaseAvailabilityQueryKey(albumId),
@@ -948,15 +955,17 @@ const AlbumPage = () => {
   const handleSelectReleaseForLibrary = useCallback((
     libraryId: number,
     editionId: number,
+    providerEditionMatchId: number,
   ) => {
     if (!albumId) {
       return;
     }
 
-    setPendingSelectionKey(`${libraryId}:${editionId}`);
+    setPendingSelectionKey(`${libraryId}:${editionId}:${providerEditionMatchId}`);
     librarySelectionMutation.mutate({
       libraryId,
       editionId,
+      providerEditionMatchId,
     });
   }, [albumId, librarySelectionMutation]);
 

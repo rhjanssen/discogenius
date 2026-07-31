@@ -1141,17 +1141,10 @@ class ApiClient {
     return this.request(`/unmapped${query ? `?${query}` : ''}`);
   }
 
-  async actionUnmappedFile(fileId: number, action: 'map' | 'ignore' | 'unignore' | 'delete', providerId?: string) {
+  async actionUnmappedFile(fileId: number, action: 'ignore' | 'unignore' | 'delete') {
     return this.request(`/unmapped/${fileId}/action`, {
       method: 'POST',
-      body: JSON.stringify({ action, providerId }),
-    });
-  }
-
-  async bulkMapUnmappedFiles(items: Array<{ id: number, providerId: string }>) {
-    return this.request(`/unmapped/bulk-map`, {
-      method: 'POST',
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ action }),
     });
   }
 
@@ -1170,11 +1163,12 @@ class ApiClient {
     albumId: string,
     libraryId: number,
     editionId: number,
+    providerEditionMatchId?: number,
   ): Promise<LibraryReleaseGroupAvailabilityContract> {
     return this.request(`/v1/album/${albumId}/libraries/${libraryId}/selection`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ editionId }),
+      body: JSON.stringify({ editionId, providerEditionMatchId }),
     }, parseLibraryReleaseGroupAvailabilityContract);
   }
 
@@ -1192,10 +1186,22 @@ class ApiClient {
     mappings: Array<{
       unmappedFileId: number;
       trackId: number;
-      providerItemId?: number;
     }>;
   }) {
     return this.request('/unmapped/canonical-import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async canonicalManualVideoImport(payload: {
+    libraryId: number;
+    mappings: Array<{
+      unmappedFileId: number;
+      recordingId: number;
+    }>;
+  }) {
+    return this.request('/unmapped/canonical-video-import', {
       method: 'POST',
       body: JSON.stringify(payload),
     });

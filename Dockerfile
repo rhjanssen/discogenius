@@ -153,6 +153,7 @@ COPY --from=bento4_fetcher /usr/local/bin/mp4decrypt /usr/local/bin/mp4decrypt
 
 # Copy source files needed at runtime (for ES modules)
 COPY --chown=node:node api/src ./api/src
+RUN chmod +x ./api/src/services/providers/deezer/streamrip-bridge.py
 
 # Copy entrypoint that maps container permissions to the requested host uid/gid.
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
@@ -172,7 +173,7 @@ ENV TIDDL_PATH=/config/providers/tidal/.tiddl
 ENV APPLE_MUSIC_DL_BIN=apple-music-dl
 ENV YTMUSICAPI_PYTHON_BIN=/opt/ytmusic-venv/bin/python
 ENV YT_DLP_BIN=/opt/ytmusic-venv/bin/yt-dlp
-ENV STREAMRIP_BIN=/opt/streamrip-venv/bin/rip
+ENV STREAMRIP_BIN=/app/api/src/services/providers/deezer/streamrip-bridge.py
 ENV AMAZON_MUSIC_PYTHON=/opt/amazon-music-venv/bin/python
 ENV SPOTIFY_VOTIFY_BIN=/opt/votify-venv/bin/votify
 # Votify 1.9.9's librespot extra currently resolves old generated protobuf

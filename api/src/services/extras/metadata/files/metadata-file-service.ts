@@ -49,7 +49,7 @@ export class MetadataFileService {
     const base = ExtraFileService.buildBaseRecord(input);
     const metadataType = getMetadataType(input);
 
-    const info = db.prepare(`
+    const row = db.prepare(`
       INSERT INTO MetadataFiles (
         artist_id, track_file_id,
         relative_path, file_path, library_root, extension,
@@ -81,7 +81,8 @@ export class MetadataFileService {
         expected_path = excluded.expected_path,
         needs_rename = excluded.needs_rename,
         last_updated = CURRENT_TIMESTAMP
-    `).run(
+      RETURNING id
+    `).get(
       base.artist_id,
       base.track_file_id,
       base.relative_path,
@@ -101,8 +102,12 @@ export class MetadataFileService {
       base.canonical_recording_mbid,
       base.expected_path,
       base.needs_rename,
-    );
+    ) as { id: number };
 
-    return Number(info.lastInsertRowid || ExtraFileService.findIdByPath("MetadataFiles", input.filePath) || 0);
+    ExtraFileService.associateLibraries("MetadataFiles", row.id, {
+      ...input,
+      trackFileId: base.track_file_id,
+    });
+    return row.id;
   }
 }

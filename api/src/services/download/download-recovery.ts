@@ -31,9 +31,12 @@ export type ExistingLibraryFile = {
 export function getExistingLibraryFiles(
     type: DownloadMediaType,
     providerId: string,
-    provider?: string | null,
+    provider: string,
 ): ExistingLibraryFile[] {
-    const normalizedProvider = String(provider || "").trim() || null;
+    const normalizedProvider = String(provider || "").trim();
+    if (!normalizedProvider) {
+        throw new Error("Download recovery requires the provider identity.");
+    }
     const rows = type === 'album'
         ? db.prepare(`
                 SELECT
@@ -55,10 +58,9 @@ export function getExistingLibraryFiles(
                  AND lf.file_class = 'audio'
                 WHERE provider_release.provider_id = ?
                   AND provider_release.entity_type = 'release'
-                  AND (? IS NULL OR provider_release.provider = ?)
+                  AND provider_release.provider = ?
             `).all(
                 providerId,
-                normalizedProvider,
                 normalizedProvider,
             ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>
         : type === 'track'
@@ -79,10 +81,9 @@ export function getExistingLibraryFiles(
                  AND lf.file_class = 'audio'
                 WHERE provider_track.provider_id = ?
                   AND provider_track.entity_type = 'track'
-                  AND (? IS NULL OR provider_track.provider = ?)
+                  AND provider_track.provider = ?
             `).all(
                 providerId,
-                normalizedProvider,
                 normalizedProvider,
             ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>
           : db.prepare(`
@@ -100,10 +101,9 @@ export function getExistingLibraryFiles(
                  AND lf.file_class = 'video'
                 WHERE provider_video.provider_id = ?
                   AND provider_video.entity_type = 'video'
-                  AND (? IS NULL OR provider_video.provider = ?)
+                  AND provider_video.provider = ?
             `).all(
                 providerId,
-                normalizedProvider,
                 normalizedProvider,
             ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>;
 
@@ -123,7 +123,7 @@ export function getExistingLibraryFiles(
 export function getExistingLibraryMediaIds(
     type: DownloadMediaType,
     providerId: string,
-    provider?: string | null,
+    provider: string,
 ): string[] {
     return getExistingLibraryFiles(type, providerId, provider).map((entry) => entry.mediaId);
 }

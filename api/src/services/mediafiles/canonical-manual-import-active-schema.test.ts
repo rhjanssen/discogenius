@@ -5,16 +5,9 @@ import path from "node:path";
 import { test } from "node:test";
 
 /**
- * canonical-manual-import-service.test.ts builds its fixture from
- * `domain-v41.ts` — the ASPIRATIONAL schema, which is not what production runs.
- * That blind spot let the boundary ship an UPDATE writing
- * TrackFiles.provider_item_id while the active baseline had no such column, so
- * every canonical manual import would have thrown "no such column" at runtime
- * with a fully green suite.
- *
  * This test runs against the ACTIVE baseline schema and prepares the writes the
- * boundary performs, so a column the production writers depend on cannot go
- * missing again without a failure.
+ * canonical manual-import boundary performs, so a production column dependency
+ * cannot disappear behind the aspirational domain-v41 fixture.
  */
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-active-schema-"));
@@ -63,18 +56,11 @@ test("the boundary's TrackFiles update prepares against the active schema", () =
         track_id = @trackId,
         recording_id = @recordingId,
         file_class = 'audio',
-        provider_item_id = @providerItemId,
-        provider = @provider,
-        provider_entity_type = CASE WHEN @providerItemId IS NULL THEN NULL ELSE 'track' END,
-        provider_id = @providerExternalId,
-        source_audio_variant_id = (
-          SELECT id
-          FROM ProviderItemAudioVariants
-          WHERE provider_item_id = @providerItemId
-            AND availability NOT IN ('unavailable', 'restricted')
-          ORDER BY verified_at DESC, id DESC
-          LIMIT 1
-        ),
+        provider_item_id = NULL,
+        provider = NULL,
+        provider_entity_type = NULL,
+        provider_id = NULL,
+        source_audio_variant_id = NULL,
         source_quality = COALESCE(source_quality, quality),
         imported_quality = COALESCE(imported_quality, quality),
         verified_at = CURRENT_TIMESTAMP

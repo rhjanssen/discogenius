@@ -134,6 +134,17 @@ export class ProviderMatchRepository {
     decision: ProviderMatchDecision;
   }): number {
     validateDecision(input.decision);
+    if (input.decision.matchState !== "rejected") {
+      const canonicalTarget = this.db.prepare(`
+        SELECT 1 AS valid
+        FROM Recordings
+        WHERE id = ? AND is_video = 1 AND mbid IS NOT NULL
+        LIMIT 1
+      `).get(input.recordingId) as { valid?: number } | undefined;
+      if (!canonicalTarget?.valid) {
+        throw new Error("Provider video match target must be a canonical video recording");
+      }
+    }
     const manualAccepted = input.decision.decisionSource === "automatic"
       && input.decision.matchState === "accepted"
       ? this.db.prepare(`
@@ -342,11 +353,14 @@ export class ProviderMatchRepository {
       );
       const insertTrackMatch = this.db.prepare(`
         INSERT INTO ProviderTrackMatches (
-          provider_edition_member_id, provider_edition_match_id, track_id,
+          provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
           recording_id, match_state, decision_source, confidence, method,
           evidence, matcher_version, duration_delta_ms, ambiguity_margin,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ) VALUES (
+          (SELECT member_item_id FROM ProviderEditionMembers WHERE id = ?),
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+        )
       `);
       for (const match of input.trackMatches) {
         if (
@@ -360,6 +374,7 @@ export class ProviderMatchRepository {
           continue;
         }
         insertTrackMatch.run(
+          match.providerEditionMemberId,
           match.providerEditionMemberId,
           releaseMatch.id,
           match.trackId,
@@ -376,5 +391,124 @@ export class ProviderMatchRepository {
       }
       return { releaseMatchId: releaseMatch.id, relation };
     })();
+  }
+
+  upsertStandaloneTrackMatch(input: {
+    providerTrackItemId: number;
+    trackId: number | null;
+    recordingId: number;
+    decision: ProviderMatchDecision;
+    durationDeltaMs?: number | null;
+    ambiguityMargin?: number | null;
+  }): number {
+    validateDecision(input.decision);
+    const providerItem = this.db.prepare(`
+      SELECT entity_type FROM ProviderItems WHERE id = ?
+    `).get(input.providerTrackItemId) as { entity_type: string } | undefined;
+    if (providerItem?.entity_type !== "track") {
+      throw new Error(`Provider item ${input.providerTrackItemId} is not a track`);
+    }
+
+    const existing = this.db.prepare(`
+      SELECT id, decision_source
+      FROM ProviderTrackMatches
+      WHERE provider_track_item_id = ?
+        AND provider_edition_member_id IS NULL
+        AND provider_edition_match_id IS NULL
+        AND track_id IS ?
+        AND recording_id = ?
+      LIMIT 1
+    `).get(input.providerTrackItemId, input.trackId, input.recordingId) as
+      { id: number; decision_source: ProviderDecisionSource } | undefined;
+    if (existing?.decision_source === "manual" && input.decision.decisionSource === "automatic") {
+      return existing.id;
+    }
+
+    const manualAccepted = input.decision.decisionSource === "automatic"
+      && input.decision.matchState === "accepted"
+      ? this.db.prepare(`
+          SELECT id
+          FROM ProviderTrackMatches
+          WHERE provider_track_item_id = ?
+            AND id != COALESCE(?, -1)
+            AND match_state = 'accepted'
+            AND decision_source = 'manual'
+          LIMIT 1
+        `).get(input.providerTrackItemId, existing?.id ?? null) as { id: number } | undefined
+      : undefined;
+    const decision = manualAccepted
+      ? {
+          ...input.decision,
+          matchState: "candidate" as const,
+          method: `${input.decision.method}:blocked_by_manual`,
+        }
+      : input.decision;
+
+    if (decision.matchState === "accepted") {
+      this.db.prepare(`
+        UPDATE ProviderTrackMatches
+        SET match_state = 'rejected',
+            method = 'superseded',
+            matcher_version = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE provider_track_item_id = ?
+          AND id != COALESCE(?, -1)
+          AND match_state = 'accepted'
+          AND (? = 'manual' OR decision_source != 'manual')
+      `).run(
+        decision.matcherVersion,
+        input.providerTrackItemId,
+        existing?.id ?? null,
+        decision.decisionSource,
+      );
+    }
+
+    if (existing) {
+      this.db.prepare(`
+        UPDATE ProviderTrackMatches
+        SET match_state = ?,
+            decision_source = ?,
+            confidence = ?,
+            method = ?,
+            evidence = ?,
+            matcher_version = ?,
+            duration_delta_ms = ?,
+            ambiguity_margin = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        decision.matchState,
+        decision.decisionSource,
+        decision.confidence,
+        decision.method,
+        boundedEvidence(decision.evidence),
+        decision.matcherVersion,
+        input.durationDeltaMs ?? null,
+        input.ambiguityMargin ?? null,
+        existing.id,
+      );
+      return existing.id;
+    }
+
+    return Number((this.db.prepare(`
+      INSERT INTO ProviderTrackMatches (
+        provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+        track_id, recording_id, match_state, decision_source, confidence, method,
+        evidence, matcher_version, duration_delta_ms, ambiguity_margin, updated_at
+      ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      RETURNING id
+    `).get(
+      input.providerTrackItemId,
+      input.trackId,
+      input.recordingId,
+      decision.matchState,
+      decision.decisionSource,
+      decision.confidence,
+      decision.method,
+      boundedEvidence(decision.evidence),
+      decision.matcherVersion,
+      input.durationDeltaMs ?? null,
+      input.ambiguityMargin ?? null,
+    ) as { id: number }).id);
   }
 }

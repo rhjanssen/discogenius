@@ -130,12 +130,12 @@ function seedTypedRelease(input: {
   `).get(providerRelease.id, release.id) as { id: number };
   const trackMatch = db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
-    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
-  `).get(member.id, releaseMatch.id, track.id, recording.id) as { id: number };
+  `).get(providerTrack.id, member.id, releaseMatch.id, track.id, recording.id) as { id: number };
   const quality = input.quality ?? "lossless";
   const variant = db.prepare(`
     INSERT INTO ProviderItemAudioVariants (
@@ -546,6 +546,128 @@ test("download processor scopes provider offers when services reuse the same res
   assert.equal(processor.resolveDownloadQuality("7", "track", appleTrackPayload), "HIRES_LOSSLESS");
   assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", appleTrackPayload), false);
   assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", tidalTrackPayload), true);
+});
+
+test("download metadata resolves a standalone Provider Track through its direct accepted match", () => {
+  const processor = new DownloadProcessor() as any;
+  const artist = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES ('standalone-artist', 'Bakermat')
+    RETURNING id
+  `).get() as { id: number };
+  const recording = db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video
+    ) VALUES ('standalone-recording', ?, 'standalone-artist', 'Standalone Song', 0)
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const providerTrack = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('tidal', 'track', 'standalone-track', 'Provider Standalone Song')
+    RETURNING id
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+      track_id, recording_id, match_state, decision_source, confidence, method,
+      matcher_version
+    ) VALUES (?, NULL, NULL, NULL, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerTrack.id, recording.id);
+
+  const offer = processor.resolveCanonicalProviderOffer(
+    "standalone-track",
+    "track",
+    { type: "track", provider: "tidal", providerId: "standalone-track" },
+  );
+  assert.equal(offer?.canonical_track_id, null);
+  assert.equal(offer?.canonical_recording_id, recording.id);
+  assert.equal(offer?.recording_mbid, "standalone-recording");
+  assert.equal(offer?.artist_name, "Bakermat");
+});
+
+test("download metadata fails closed when accepted Provider Track targets disagree without plan context", () => {
+  const processor = new DownloadProcessor() as any;
+  const graph = seedTypedRelease({
+    suffix: "ambiguous-track",
+    provider: "tidal",
+    providerEditionId: "ambiguous-edition",
+    providerTrackId: "ambiguous-track",
+    artistName: "Bastille",
+    albumTitle: "Ambiguous Album",
+    trackTitle: "First Recording",
+  });
+  const secondRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+    VALUES ('recording-ambiguous-second', ?, 'Second Recording', 0)
+    RETURNING id
+  `).get(graph.artistMbid) as { id: number };
+  const providerTrack = db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = 'ambiguous-track'
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_track_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 0.9, 'test-conflict', 1)
+  `).run(providerTrack.id, secondRecording.id);
+
+  assert.equal(
+    processor.resolveCanonicalProviderOffer(
+      "ambiguous-track",
+      "track",
+      { type: "track", provider: "tidal", providerId: "ambiguous-track" },
+    ),
+    null,
+  );
+  assert.equal(
+    processor.resolveCanonicalProviderOffer(
+      "ambiguous-track",
+      "track",
+      {
+        type: "track",
+        provider: "tidal",
+        providerId: "ambiguous-track",
+        acquisitionPlanId: graph.planId,
+      },
+    )?.canonical_track_id,
+    graph.trackId,
+    "an exact acquisition plan is sufficient occurrence context",
+  );
+});
+
+test("download metadata fails closed when accepted Provider Video targets disagree", () => {
+  const processor = new DownloadProcessor() as any;
+  const first = seedTypedVideo({
+    suffix: "ambiguous-video",
+    provider: "tidal",
+    providerVideoId: "ambiguous-video",
+    artistName: "Bastille",
+    title: "First Video",
+  });
+  const second = db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+    VALUES ('video-recording-ambiguous-second', ?, 'Second Video', 1)
+    RETURNING id
+  `).get(first.artistMbid) as { id: number };
+  const providerVideo = db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = 'ambiguous-video'
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 0.9, 'test-conflict', 1)
+  `).run(providerVideo.id, second.id);
+
+  assert.equal(
+    processor.resolveCanonicalProviderOffer(
+      "ambiguous-video",
+      "video",
+      { type: "video", provider: "tidal", providerId: "ambiguous-video" },
+    ),
+    null,
+  );
 });
 
 test("resolveDownloadMetadata uses recording_id join when recording_mbid is null", () => {

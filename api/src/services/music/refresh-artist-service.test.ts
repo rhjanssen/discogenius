@@ -43,35 +43,49 @@ function seedSoundCloudMixtapeCatalog() {
   const releaseMbid = "b8f50118-3d3c-4826-a4b3-cf6228a97515";
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Bastille");
-  dbModule.db.prepare(`
+  const releaseGroup = dbModule.db.prepare(`
     INSERT INTO Albums (
       mbid, artist_mbid, title, primary_type, secondary_types, first_release_date
     ) VALUES (?, ?, ?, 'EP', ?, '2012-02-17')
-  `).run(
+    RETURNING id
+  `).get(
     releaseGroupMbid,
     artistMbid,
     "Other People's Heartache",
     JSON.stringify(["Mixtape/Street"]),
-  );
-  dbModule.db.prepare(`
+  ) as { id: number };
+  const edition = dbModule.db.prepare(`
     INSERT INTO AlbumEditions (
-      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
-    ) VALUES (?, ?, ?, ?, 'Official', '2012-02-17', 1, 2)
-  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
+      mbid, release_group_id, release_group_mbid, artist_mbid, title,
+      status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, 'Official', '2012-02-17', 1, 2)
+    RETURNING id
+  `).get(
+    releaseMbid,
+    releaseGroup.id,
+    releaseGroupMbid,
+    artistMbid,
+    "Other People's Heartache",
+  ) as { id: number };
   const canonicalTracks = [
     { id: "sc-track-mbid-1", recording: "sc-recording-mbid-1", title: "Adagio for Strings", duration: 239 },
     { id: "sc-track-mbid-2", recording: "sc-recording-mbid-2", title: "Falling", duration: 225 },
   ];
   canonicalTracks.forEach((track, index) => {
-    dbModule.db.prepare("INSERT INTO Recordings (mbid, title, length_ms) VALUES (?, ?, ?)")
-      .run(track.recording, track.title, track.duration * 1000);
+    const recording = dbModule.db.prepare(`
+      INSERT INTO Recordings (mbid, artist_mbid, title, length_ms)
+      VALUES (?, ?, ?, ?)
+      RETURNING id
+    `).get(track.recording, artistMbid, track.title, track.duration * 1000) as { id: number };
     dbModule.db.prepare(`
       INSERT INTO Tracks (
-        mbid, recording_mbid, release_mbid, title, length_ms,
-        medium_position, position, number
-      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        mbid, album_edition_id, recording_id, recording_mbid, release_mbid,
+        title, length_ms, medium_position, position, number
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `).run(
       track.id,
+      edition.id,
+      recording.id,
       track.recording,
       releaseMbid,
       track.title,
@@ -80,7 +94,39 @@ function seedSoundCloudMixtapeCatalog() {
       String(index + 1),
     );
   });
-  return { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks };
+  return {
+    artistMbid,
+    releaseGroupMbid,
+    releaseMbid,
+    editionId: edition.id,
+    canonicalTracks,
+  };
+}
+
+function linkSoundCloudPlaylistOffer(options: {
+  providerAlbumId: string;
+  editionId: number;
+  matchState?: "candidate" | "accepted";
+}): number {
+  const item = dbModule.db.prepare(`
+    SELECT id
+    FROM ProviderItems
+    WHERE provider = 'soundcloud'
+      AND entity_type = 'release'
+      AND provider_id = ?
+  `).get(options.providerAlbumId) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'overlap', ?, 'automatic', 0.85, ?, 1)
+  `).run(
+    item.id,
+    options.editionId,
+    options.matchState ?? "accepted",
+    "playlist-tracklist-coverage",
+  );
+  return item.id;
 }
 
 test("bulk provider tracklists are accepted only when the album is complete", () => {
@@ -167,7 +213,7 @@ test("artist metadata seeding queries the explicitly requested provider", async 
   assert.equal(fetchedArtistId, "42");
 });
 
-test("unmatched provider offers retain discovery provenance without claiming canonical ownership", () => {
+test("unmatched provider offers persist native facts without claiming canonical ownership", () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
     provider_id: "314738795",
@@ -184,23 +230,28 @@ test("unmatched provider offers retain discovery provenance without claiming can
   );
 
   const row = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, discovered_from_artist_mbid, match_status
+    SELECT id, title, availability
     FROM ProviderItems
-    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
+    WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = ?
   `).get(album.provider_id) as {
-    artist_mbid: string | null;
-    release_group_mbid: string | null;
-    discovered_from_artist_mbid: string | null;
-    match_status: string;
+    id: number;
+    title: string;
+    availability: string;
   };
+  const directMatchCount = dbModule.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM ProviderEditionMatches
+    WHERE provider_edition_item_id = ?
+  `).get(row.id) as { count: number };
 
-  assert.equal(row.artist_mbid, null);
-  assert.equal(row.release_group_mbid, null);
-  assert.equal(row.discovered_from_artist_mbid, artistMbid);
-  assert.equal(row.match_status, "unmatched");
+  assert.deepEqual(
+    { title: row.title, availability: row.availability },
+    { title: "Happier", availability: "available" },
+  );
+  assert.equal(directMatchCount.count, 0);
 });
 
-test("hybrid candidates retain discovery provenance without publishing direct availability", () => {
+test("hybrid candidates do not publish canonical ownership without a typed edition edge", () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
     provider_id: "candidate-album-1",
@@ -228,11 +279,10 @@ test("hybrid candidates retain discovery provenance without publishing direct av
   );
 
   const offer = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, release_mbid,
-           discovered_from_artist_mbid, match_status
+    SELECT id, title, availability
     FROM ProviderItems
-    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
-  `).get(album.provider_id) as Record<string, string | null>;
+    WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = ?
+  `).get(album.provider_id) as { id: number; title: string; availability: string };
   const directMatchCount = dbModule.db.prepare(`
     SELECT COUNT(*) AS count
     FROM ProviderEditionMatches match
@@ -242,22 +292,20 @@ test("hybrid candidates retain discovery provenance without publishing direct av
       AND item.provider_id = ?
   `).get(album.provider_id) as { count: number };
 
-  assert.equal(offer.artist_mbid, artistMbid);
-  assert.equal(offer.release_group_mbid, "release-group-mbid-candidate");
-  assert.equal(offer.release_mbid, "release-mbid-candidate");
-  assert.equal(offer.discovered_from_artist_mbid, artistMbid);
-  assert.equal(offer.match_status, "candidate");
+  assert.equal(offer.title, "Partial provider edition");
+  assert.equal(offer.availability, "available");
   assert.equal(directMatchCount.count, 0);
 });
 
 test("stored SoundCloud playlist coverage is revalidated and its permalink is backfilled", async () => {
-  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, editionId, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const providerAlbumId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('soundcloud', 'release', ?, ?)
   `).run( providerAlbumId, "Other People's Heartache part 1" );
+  linkSoundCloudPlaylistOffer({ providerAlbumId, editionId });
 
   const artist = { providerId: "sc-user", name: "Nafissa_" };
   const album = {
@@ -305,49 +353,45 @@ test("stored SoundCloud playlist coverage is revalidated and its permalink is ba
     result.matches,
   );
   const stored = dbModule.db.prepare(`
-    SELECT provider_url, availability, match_status
-    FROM ProviderItems
-    WHERE provider = 'soundcloud' AND entity_type = 'album' AND provider_id = ?
-  `).get(providerAlbumId) as {
+    SELECT item.provider_url, item.availability, release_match.match_state
+    FROM ProviderItems item
+    JOIN ProviderEditionMatches release_match
+      ON release_match.provider_edition_item_id = item.id
+     AND release_match.edition_id = ?
+    WHERE item.provider = 'soundcloud'
+      AND item.entity_type = 'release'
+      AND item.provider_id = ?
+  `).get(editionId, providerAlbumId) as {
     provider_url: string | null;
     availability: string | null;
-    match_status: string;
+    match_state: string;
   };
   assert.equal(stored.provider_url, album.url);
   assert.equal(stored.availability, "available");
-  assert.equal(stored.match_status, "probable");
+  assert.equal(stored.match_state, "accepted");
 });
 
 test("all durable SoundCloud playlist offers are revalidated after the first valid one", async () => {
-  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, editionId, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const validId = "110003151";
   const staleId = "220003151";
   const insertOffer = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality, artist_mbid,
-      release_group_mbid, release_mbid, match_status, match_confidence,
-      match_method, availability, updated_at
-    ) VALUES (
-      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
-      'probable', 0.85, 'playlist-tracklist-coverage', 'available', ?
-    )
+      provider, entity_type, provider_id, title, availability, updated_at
+    ) VALUES ('soundcloud', 'release', ?, ?, 'available', ?)
   `);
   insertOffer.run(
     validId,
     "Other People's Heartache",
-    artistMbid,
-    releaseGroupMbid,
-    releaseMbid,
     "2030-01-01 00:00:00",
   );
   insertOffer.run(
     staleId,
     "Other People's Heartache",
-    artistMbid,
-    releaseGroupMbid,
-    releaseMbid,
     "2020-01-01 00:00:00",
   );
+  linkSoundCloudPlaylistOffer({ providerAlbumId: validId, editionId });
+  linkSoundCloudPlaylistOffer({ providerAlbumId: staleId, editionId });
 
   const artist = { providerId: "sc-user", name: "Fan uploader" };
   const makeAlbum = (providerId: string) => ({
@@ -393,26 +437,44 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
   assert.deepEqual(checked, [validId, staleId]);
   assert.deepEqual(result.albums.map((row: any) => row.provider_id), [validId]);
   const stale = dbModule.db.prepare(`
-    SELECT availability, match_status
-    FROM ProviderItems
-    WHERE provider = 'soundcloud' AND entity_type = 'album' AND provider_id = ?
-  `).get(staleId);
-  assert.deepEqual(stale, { availability: "unavailable", match_status: "rejected" });
+    SELECT item.availability, release_match.match_state
+    FROM ProviderItems item
+    JOIN ProviderEditionMatches release_match
+      ON release_match.provider_edition_item_id = item.id
+     AND release_match.edition_id = ?
+    WHERE item.provider = 'soundcloud'
+      AND item.entity_type = 'release'
+      AND item.provider_id = ?
+  `).get(editionId, staleId);
+  assert.deepEqual(stale, { availability: "unavailable", match_state: "rejected" });
 });
 
 test("empty stored SoundCloud playlist is rejected and a covering replacement is selected", async () => {
-  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, editionId, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const staleId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('soundcloud', 'release', ?, ?)
   `).run( staleId, "Other People's Heartache" );
+  const staleReleaseItemId = linkSoundCloudPlaylistOffer({ providerAlbumId: staleId, editionId });
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, availability
     ) VALUES ('soundcloud', 'track', 'stale-child-track', 'Stale Track', 'available')
   `).run();
+  const staleTrackItem = dbModule.db.prepare(`
+    SELECT id
+    FROM ProviderItems
+    WHERE provider = 'soundcloud'
+      AND entity_type = 'track'
+      AND provider_id = 'stale-child-track'
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+  `).run(staleReleaseItemId, staleTrackItem.id);
   const artist = { providerId: "sc-user", name: "Fan uploader" };
   const makeAlbum = (providerId: string) => ({
     providerId,
@@ -452,24 +514,29 @@ test("empty stored SoundCloud playlist is rejected and a covering replacement is
   assert.equal(result.albums[0].provider_id, replacement.providerId);
 
   const stale = dbModule.db.prepare(`
-    SELECT availability, match_status
-    FROM ProviderItems
-    WHERE provider = 'soundcloud' AND entity_type = 'album' AND provider_id = ?
-  `).get(staleId) as { availability: string | null; match_status: string };
+    SELECT item.availability, release_match.match_state
+    FROM ProviderItems item
+    JOIN ProviderEditionMatches release_match
+      ON release_match.provider_edition_item_id = item.id
+     AND release_match.edition_id = ?
+    WHERE item.provider = 'soundcloud'
+      AND item.entity_type = 'release'
+      AND item.provider_id = ?
+  `).get(editionId, staleId) as { availability: string | null; match_state: string };
   const normalizedStale = dbModule.db.prepare(`
     SELECT availability, availability_reason AS availabilityReason
     FROM ProviderItems
     WHERE provider = 'soundcloud' AND entity_type = 'release' AND provider_id = ?
   `).get(staleId) as { availability: string; availabilityReason: string };
   const staleChild = dbModule.db.prepare(`
-    SELECT availability, match_status
+    SELECT availability, availability_reason AS availabilityReason
     FROM ProviderItems
     WHERE provider = 'soundcloud'
       AND entity_type = 'track'
       AND provider_id = 'stale-child-track'
-  `).get() as { availability: string | null; match_status: string };
-  assert.deepEqual(stale, { availability: "unavailable", match_status: "rejected" });
-  assert.deepEqual(staleChild, { availability: "unavailable", match_status: "rejected" });
+  `).get() as { availability: string | null; availabilityReason: string };
+  assert.deepEqual(stale, { availability: "unavailable", match_state: "rejected" });
+  assert.deepEqual(staleChild, { availability: "unavailable", availabilityReason: "empty" });
   assert.deepEqual(normalizedStale, { availability: "unavailable", availabilityReason: "empty" });
 });
 
@@ -551,39 +618,28 @@ test("matched provider release discovery stores normalized facts without publish
   );
 
   const row = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, release_mbid, match_status
-    FROM ProviderItems
-    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
-  `).get(album.provider_id) as {
-    artist_mbid: string | null;
-    release_group_mbid: string | null;
-    release_mbid: string | null;
-    match_status: string;
-  };
-
-  assert.equal(row.artist_mbid, artistMbid);
-  assert.equal(row.release_group_mbid, "release-group-mbid-1");
-  assert.equal(row.release_mbid, "release-mbid-1");
-  assert.equal(row.match_status, "verified");
-
-  const normalized = dbModule.db.prepare(`
     SELECT id, title, availability
     FROM ProviderItems
     WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = ?
-  `).get(album.provider_id) as { id: number; title: string; availability: string };
+  `).get(album.provider_id) as {
+    id: number;
+    title: string;
+    availability: string;
+  };
+
   assert.deepEqual(
-    { title: normalized.title, availability: normalized.availability },
+    { title: row.title, availability: row.availability },
     { title: "Doom Days", availability: "available" },
   );
   const typedMatchCount = dbModule.db.prepare(`
     SELECT COUNT(*) AS count
     FROM ProviderEditionMatches
     WHERE provider_edition_item_id = ?
-  `).get(normalized.id) as { count: number };
+  `).get(row.id) as { count: number };
   assert.equal(typedMatchCount.count, 0);
 });
 
-test("matched provider offers persist the best compatible MusicBrainz release version", () => {
+test("release-group-only provider evidence does not leak a guessed MusicBrainz edition onto native facts", () => {
   const artistMbid = "artist-mbid-bastille";
   const releaseGroupMbid = "release-group-gmtf";
   const standardReleaseMbid = "release-gmtf-standard";
@@ -654,21 +710,25 @@ test("matched provider offers persist the best compatible MusicBrainz release ve
   );
 
   const row = dbModule.db.prepare(`
-    SELECT release_group_mbid, release_mbid, match_status
+    SELECT id, title, availability
     FROM ProviderItems
-    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
+    WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = ?
   `).get(album.provider_id) as {
-    release_group_mbid: string | null;
-    release_mbid: string | null;
-    match_status: string;
+    id: number;
+    title: string;
+    availability: string;
   };
-
-  assert.equal(row.release_group_mbid, releaseGroupMbid);
-  assert.equal(row.release_mbid, expandedReleaseMbid);
-  assert.equal(row.match_status, "verified");
+  const typedMatchCount = dbModule.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM ProviderEditionMatches
+    WHERE provider_edition_item_id = ?
+  `).get(row.id) as { count: number };
+  assert.equal(row.title, "Give Me The Future + Dreams Of The Past");
+  assert.equal(row.availability, "available");
+  assert.equal(typedMatchCount.count, 0);
 });
 
-test("public remote catalog hydrates missing video offers without provider authentication", async () => {
+test("public remote catalog caches unmatched video offers without inventing recordings", async () => {
   const artistMbid = "11111111-1111-4111-8111-111111111111";
   const providerArtistId = "fake-video-artist";
   let videoFetches = 0;
@@ -732,15 +792,25 @@ test("public remote catalog hydrates missing video offers without provider authe
     }),
   });
 
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run(artistMbid, "Video Artist");
+  const canonicalArtist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+    RETURNING id
+  `).get(artistMbid, "Video Artist") as { id: number };
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored, last_scanned) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)")
     .run("artist-local", "Video Artist", artistMbid, 1);
-  dbModule.db.prepare(`
+  const providerArtist = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, 'artist', ?, ?)
-  `).run( "fake-video-provider", providerArtistId, "Video Artist" );
+    RETURNING id
+  `).get( "fake-video-provider", providerArtistId, "Video Artist" ) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'manual', 1, 'test', 1)
+  `).run(providerArtist.id, canonicalArtist.id);
 
   try {
     await refreshServiceModule.RefreshArtistService.matchArtistProviders(
@@ -754,21 +824,42 @@ test("public remote catalog hydrates missing video offers without provider authe
   }
 
   const row = dbModule.db.prepare(`
-    SELECT provider, provider_id, entity_type, artist_mbid, recording_id
-    FROM ProviderItems
-    WHERE provider = ? AND entity_type = 'video' AND provider_id = ?
+    SELECT
+      item.provider,
+      item.provider_id,
+      item.entity_type,
+      item.title
+    FROM ProviderItems item
+    WHERE item.provider = ? AND item.entity_type = 'video' AND item.provider_id = ?
   `).get("fake-video-provider", "fake-video-1") as {
     provider: string;
     provider_id: string;
     entity_type: string;
-    artist_mbid: string;
-    recording_id: number | null;
+    title: string;
   } | undefined;
 
   assert.equal(videoFetches, 1);
   assert.ok(row);
-  assert.equal(row.artist_mbid, artistMbid);
-  assert.ok(row.recording_id);
+  assert.equal(row.title, "Fresh Path Video");
+  assert.equal(
+    (dbModule.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM ProviderItems item
+      JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = item.id
+       AND video_match.match_state = 'accepted'
+      WHERE item.provider = ? AND item.entity_type = 'video' AND item.provider_id = ?
+    `).get("fake-video-provider", "fake-video-1") as { count: number }).count,
+    0,
+  );
+  assert.equal(
+    (dbModule.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM Recordings
+      WHERE artist_mbid = ? AND is_video = 1
+    `).get(artistMbid) as { count: number }).count,
+    0,
+  );
 });
 
 

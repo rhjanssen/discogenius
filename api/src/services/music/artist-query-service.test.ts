@@ -160,12 +160,12 @@ function seedCanonicalArtistPage() {
   `).get(providerRelease.id) as { id: number };
   const trackMatch = db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
-    ) VALUES (?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
+    ) VALUES (?, ?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
-  `).get(releaseMember.id, releaseMatch.id) as { id: number };
+  `).get(providerTrack.id, releaseMember.id, releaseMatch.id) as { id: number };
   const variant = db.prepare(`
     INSERT INTO ProviderItemAudioVariants (
       provider_item_id, variant_key, quality_class, provider_quality_label,
@@ -202,8 +202,8 @@ function seedCanonicalArtistPage() {
       title, length_ms, is_video, metadata_status, release_date, cover_image_id, monitored
     )
     VALUES (
-      501, 'provider-video-1', NULL, ?, 'artist-mbid-1',
-      'Canonical Video', 210000, 1, 'provider_only', '2024-02-01', 'video-cover', 1
+      501, 'video-recording-mbid-1', 'video-recording-mbid-1', ?, 'artist-mbid-1',
+      'Canonical Video', 210000, 1, 'musicbrainz', '2024-02-01', 'video-cover', 1
     )
   `).run(artistMetadata.id);
 
@@ -477,10 +477,10 @@ test("artist top tracks prefer the default provider popularity and fall back to 
     `).get(providerRelease.id, providerTrack.id, position) as { id: number };
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        provider_edition_member_id, provider_edition_match_id, track_id,
+        provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
-    `).run(member.id, releaseMatch.id, canonicalTrackId, canonicalRecordingId);
+      ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    `).run(providerTrack.id, member.id, releaseMatch.id, canonicalTrackId, canonicalRecordingId);
   };
   linkProviderTrack("provider-track-2", "tidal", "provider-album-1", 201, 402, 302, 2);
   linkProviderTrack("apple-track-1", "apple-music", "apple-album-1", 201, 401, 301, 1);

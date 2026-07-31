@@ -24,6 +24,7 @@ import {
     SYNCHRONIZED_LYRIC_EXTENSION,
 } from "../extras/lyrics/lyric-sidecar.js";
 import { resolveAlbumVideoCoverForLibrary } from "./organizer.js";
+import { providerResolvedAlbumIdSql } from "../providers/provider-item-artist-scope.js";
 
 
 
@@ -538,18 +539,15 @@ class LibraryMetadataBackfillService {
           COALESCE(lf.provider, pi.provider) AS provider,
           'track' AS provider_entity_type,
           COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
-          (
-            SELECT CAST(release_item.provider_id AS TEXT)
-            FROM ProviderEditionMembers member
-            JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
-            WHERE member.member_item_id = pi.id
-            ORDER BY member.id
-            LIMIT 1
-          ) AS album_id
+          ${providerResolvedAlbumIdSql({
+              itemAlias: "pi",
+              libraryIdExpr: "lf.library_id",
+          })} AS album_id
         FROM TrackFiles lf
         LEFT JOIN ProviderItems pi
           ON pi.entity_type = 'track'
-         AND (lf.provider IS NULL OR pi.provider = lf.provider)
+         AND lf.provider IS NOT NULL
+         AND pi.provider = lf.provider
          AND (
             (
               lf.provider_id IS NOT NULL
@@ -672,6 +670,7 @@ class LibraryMetadataBackfillService {
             const thumbnailVideos = db.prepare(`
       SELECT
         lf.id AS track_file_id,
+        lf.library_id,
         lf.file_path,
         lf.provider_id AS media_id,
         lf.library_root,
@@ -680,25 +679,17 @@ class LibraryMetadataBackfillService {
         lf.canonical_recording_mbid,
         COALESCE(lf.provider, pi.provider) AS provider,
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
-        (
-          SELECT CAST(release_item.provider_id AS TEXT)
-          FROM ProviderEditionMembers member
-          JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
-          WHERE member.member_item_id = pi.id
-          ORDER BY member.id
-          LIMIT 1
-        ) AS album_id,
+        ${providerResolvedAlbumIdSql({
+            itemAlias: "pi",
+            libraryIdExpr: "lf.library_id",
+        })} AS album_id,
         r.id AS recording_id
       FROM TrackFiles lf
-      LEFT JOIN ProviderItems pi ON pi.rowid = (
-        SELECT candidate.rowid
-        FROM ProviderItems candidate
-        WHERE CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-          AND (lf.provider IS NULL OR candidate.provider = lf.provider)
-          AND candidate.entity_type = 'video'
-        ORDER BY candidate.updated_at DESC
-        LIMIT 1
-      )
+      LEFT JOIN ProviderItems pi
+        ON lf.provider IS NOT NULL
+       AND pi.provider = lf.provider
+       AND pi.entity_type = 'video'
+       AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
       LEFT JOIN ProviderVideoMatches video_match
         ON video_match.provider_video_item_id = pi.id
        AND video_match.match_state = 'accepted'
@@ -708,6 +699,7 @@ class LibraryMetadataBackfillService {
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
     `).all(artistId) as Array<{
                 track_file_id: number;
+                library_id: number;
                 file_path: string;
                 media_id: string | null;
                 library_root: string | null;
@@ -761,6 +753,7 @@ class LibraryMetadataBackfillService {
                             expectedPath: thumbPath,
                             librarySlot: video.library_slot,
                             trackFileId: video.track_file_id,
+                            libraryId: video.library_id,
                             provider: video.provider,
                             providerEntityType: "video",
                             providerId: String(video.provider_id),
@@ -811,6 +804,7 @@ class LibraryMetadataBackfillService {
             const videos = db.prepare(`
       SELECT
         lf.id AS track_file_id,
+        lf.library_id,
         lf.file_path,
         lf.provider_id AS media_id,
         lf.library_root,
@@ -819,20 +813,19 @@ class LibraryMetadataBackfillService {
         lf.canonical_recording_mbid,
         COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
-        (
-          SELECT CAST(release_item.provider_id AS TEXT)
-          FROM ProviderEditionMembers member
-          JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
-          WHERE member.member_item_id = pi.id
-          ORDER BY member.id
-          LIMIT 1
-        ) AS album_id,
+        ${providerResolvedAlbumIdSql({
+            itemAlias: "pi",
+            libraryIdExpr: "lf.library_id",
+        })} AS album_id,
         -- A music video's album identity is the release group of the audio
         -- recording it is related to (provider_video_for), resolved canonically.
         related_release.mbid AS canonical_release_mbid,
         related_group.mbid AS canonical_release_group_mbid
       FROM TrackFiles lf
-      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+      JOIN ProviderItems pi
+        ON pi.provider = lf.provider
+       AND pi.entity_type = 'video'
+       AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
       LEFT JOIN ProviderVideoMatches video_match
         ON video_match.provider_video_item_id = pi.id
        AND video_match.match_state = 'accepted'
@@ -847,6 +840,7 @@ class LibraryMetadataBackfillService {
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
     `).all(artistId) as Array<{
                 track_file_id: number;
+                library_id: number;
                 file_path: string;
                 media_id: string | null;
                 library_root: string | null;
@@ -863,7 +857,7 @@ class LibraryMetadataBackfillService {
             for (const video of videos) {
                 const nfoPath = path.join(path.dirname(video.file_path), `${path.parse(video.file_path).name}.nfo`);
                 try {
-                    await saveVideoNfoFile(String(video.provider_id), nfoPath);
+                    await saveVideoNfoFile(String(video.provider_id), nfoPath, video.provider);
                     this.upsertLibraryFile({
                         artistId,
                         albumId: video.album_id ? String(video.album_id) : null,
@@ -874,6 +868,7 @@ class LibraryMetadataBackfillService {
                         expectedPath: nfoPath,
                         librarySlot: video.library_slot,
                         trackFileId: video.track_file_id,
+                        libraryId: video.library_id,
                         provider: video.provider,
                         providerEntityType: "video",
                         providerId: String(video.provider_id),
@@ -901,22 +896,26 @@ class LibraryMetadataBackfillService {
              ar.name AS artist_name,
              album.title AS album_title
       FROM TrackFiles lf
-      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+      JOIN ProviderItems pi
+        ON pi.provider = lf.provider
+       AND pi.entity_type = 'video'
+       AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
       JOIN ProviderVideoMatches video_match
         ON video_match.provider_video_item_id = pi.id
        AND video_match.match_state = 'accepted'
       JOIN Recordings r ON r.id = video_match.recording_id
       JOIN Artists ar ON ar.id = lf.artist_id
       LEFT JOIN Albums album ON album.id = (
-        SELECT canonical_release.release_group_id
+        SELECT CASE
+          WHEN COUNT(DISTINCT canonical_release.release_group_id) = 1
+          THEN MAX(canonical_release.release_group_id)
+        END
         FROM ProviderEditionMembers member
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
         JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         WHERE member.member_item_id = pi.id
-        ORDER BY release_match.id
-        LIMIT 1
       )
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
@@ -1044,6 +1043,7 @@ class LibraryMetadataBackfillService {
         albumId?: string | null;
         mediaId?: string | null;
         trackFileId?: number | null;
+        libraryId?: number | null;
         filePath: string;
         libraryRoot: string;
         fileType: string;

@@ -205,3 +205,54 @@ test("automatic video matching cannot supersede a manual accepted identity", () 
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("video matches reject missing or non-video canonical targets", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-provider-video-target-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createDomainSchemaV41(db);
+    db.prepare(`
+      INSERT INTO Recordings (id, mbid, title, is_video, metadata_status)
+      VALUES (2, 'audio-recording', 'Audio recording', 0, 'musicbrainz')
+    `).run();
+    const itemId = new ProviderCatalogRepository(db).upsertItem({
+      provider: "tidal",
+      entityType: "video",
+      providerId: "provider-video",
+      title: "Provider video",
+    });
+    const repository = new ProviderMatchRepository(db);
+    const decision = {
+      matchState: "accepted" as const,
+      decisionSource: "automatic" as const,
+      confidence: 0.95,
+      method: "title_artist_duration",
+      matcherVersion: 1,
+    };
+
+    assert.throws(
+      () => repository.upsertVideoMatch({
+        providerVideoItemId: itemId,
+        recordingId: 999,
+        decision,
+      }),
+      /canonical video recording/,
+    );
+    assert.throws(
+      () => repository.upsertVideoMatch({
+        providerVideoItemId: itemId,
+        recordingId: 2,
+        decision,
+      }),
+      /canonical video recording/,
+    );
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM ProviderVideoMatches").get() as { count: number }).count,
+      0,
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

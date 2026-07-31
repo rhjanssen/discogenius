@@ -72,30 +72,44 @@ function seedLibraryGroup(rg: string, monitored: number, lock = 0) {
 }
 
 function seedVideoRecording(monitored: number, providerId: string) {
-  const info = db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored) VALUES (?, ?, ?, 1, ?)")
-    .run(null, "A Video", "artist-mbid", monitored);
-  db.prepare(`INSERT INTO ProviderItems (
+  const recording = db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored)
+    VALUES (?, ?, ?, 1, ?)
+    RETURNING id
+  `).get(`mb-video-${providerId}`, "A Video", "artist-mbid", monitored) as { id: number };
+  const providerItem = db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'video', ?, 'A Video')`).run( providerId );
+    ) VALUES ('tidal', 'video', ?, 'A Video')
+    RETURNING id`).get(providerId) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerItem.id, recording.id);
+  return recording.id;
 }
 
 let tfId = 0;
 function insertFile(o: {
   fileType: string; slot: string; rg?: string | null; rec?: string | null;
+  recordingId?: number | null;
   providerEntityType?: string | null; providerId?: string | null;
 }) {
   tfId += 1;
   const info = db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, library_id, release_group_id,
+      recording_id,
       canonical_release_group_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "art1",
     o.rg ? testLibraryId : null,
     o.rg ? (db.prepare("SELECT id FROM Albums WHERE mbid = ?").get(o.rg) as { id: number }).id : null,
+    o.recordingId ?? null,
     o.rg ?? null,
     o.rec ?? null,
     o.providerId ? "tidal" : null, o.providerEntityType ?? null, o.providerId ?? null, o.slot,
@@ -109,14 +123,26 @@ test("selectUnmonitoredFileRows keeps monitored/locked anchors and selects only 
   seedLibraryGroup("rg-mon", 1);
   seedLibraryGroup("rg-unmon", 0);
   seedLibraryGroup("rg-lock", 0, 1);
-  seedVideoRecording(1, "vp-mon");
-  seedVideoRecording(0, "vp-unmon");
+  const monitoredVideoRecordingId = seedVideoRecording(1, "vp-mon");
+  const unmonitoredVideoRecordingId = seedVideoRecording(0, "vp-unmon");
 
   const fMonAudio = insertFile({ fileType: "track", slot: "stereo", rg: "rg-mon" });        // keep
   const fUnmonAudio = insertFile({ fileType: "track", slot: "stereo", rg: "rg-unmon" });     // SELECT
   const fLockAudio = insertFile({ fileType: "track", slot: "stereo", rg: "rg-lock" });       // keep (locked)
-  const fMonVideo = insertFile({ fileType: "video", slot: "video", providerEntityType: "video", providerId: "vp-mon" });   // keep
-  const fUnmonVideo = insertFile({ fileType: "video", slot: "video", providerEntityType: "video", providerId: "vp-unmon" }); // SELECT
+  const fMonVideo = insertFile({
+    fileType: "video",
+    slot: "video",
+    recordingId: monitoredVideoRecordingId,
+    providerEntityType: "video",
+    providerId: "vp-mon",
+  }); // keep
+  const fUnmonVideo = insertFile({
+    fileType: "video",
+    slot: "video",
+    recordingId: unmonitoredVideoRecordingId,
+    providerEntityType: "video",
+    providerId: "vp-unmon",
+  }); // SELECT
   const fNoAnchor = insertFile({ fileType: "track", slot: "stereo" });                       // keep (unclassifiable)
 
   const selectedIds = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id).sort((a, b) => a - b);

@@ -113,8 +113,11 @@ function resolveQueueItemContentType(job: QueueJobRow): QueueItemContract["type"
 
 function getJobProviderId(job: QueueJobRow): string | null {
   return getOptionalString(job.payload?.providerId)
-    ?? getOptionalString(job.payload?.providerId)
     ?? getOptionalString(job.ref_id);
+}
+
+function getJobProvider(job: QueueJobRow): string | null {
+  return getOptionalString(job.payload?.provider);
 }
 
 function getJobAlbumId(job: QueueJobRow): string | null {
@@ -135,13 +138,14 @@ function getJobAlbumId(job: QueueJobRow): string | null {
     return null;
   }
 
-  const providerItemAlbumId = getProviderItemAlbumId(contentType, providerId);
-  if (providerItemAlbumId) {
-    return providerItemAlbumId;
+  const provider = getJobProvider(job);
+  if (!provider) {
+    return null;
   }
 
-  if (contentType === "album") {
-    return providerId;
+  const providerItemAlbumId = getProviderItemAlbumId(contentType, provider, providerId);
+  if (providerItemAlbumId) {
+    return providerItemAlbumId;
   }
 
   return null;
@@ -164,7 +168,12 @@ function getJobArtistId(job: QueueJobRow): string | null {
     return null;
   }
 
-  const providerItemArtistId = getProviderItemArtistId(contentType, providerId);
+  const provider = getJobProvider(job);
+  if (!provider) {
+    return null;
+  }
+
+  const providerItemArtistId = getProviderItemArtistId(contentType, provider, providerId);
   if (providerItemArtistId) {
     return providerItemArtistId;
   }
@@ -178,49 +187,40 @@ function getProviderItemEntityTypes(contentType: QueueItemContract["type"]): str
   return ["track"];
 }
 
-function getProviderItemAlbumId(contentType: QueueItemContract["type"], providerId: string): string | null {
-  const row = contentType === "album"
+function getProviderItemAlbumId(
+  contentType: QueueItemContract["type"],
+  provider: string,
+  providerId: string,
+): string | null {
+  const rows = contentType === "album"
     ? db.prepare(`
-        SELECT release_group.mbid AS release_group_mbid,
-               release.mbid AS release_mbid
+        SELECT DISTINCT release_group.mbid AS release_group_mbid
         FROM ProviderItems provider_item
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = provider_item.id
          AND release_match.match_state = 'accepted'
         JOIN AlbumEditions release ON release.id = release_match.edition_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
-        WHERE provider_item.provider_id = ?
+        WHERE provider_item.provider = ?
+          AND provider_item.provider_id = ?
           AND provider_item.entity_type = 'release'
-        ORDER BY
-          CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
-          release_match.confidence DESC,
-          release_match.id
-        LIMIT 1
-      `).get(providerId)
+      `).all(provider, providerId)
     : contentType === "track"
       ? db.prepare(`
-          SELECT release_group.mbid AS release_group_mbid,
-                 release.mbid AS release_mbid
+          SELECT DISTINCT release_group.mbid AS release_group_mbid
           FROM ProviderItems provider_item
-          JOIN ProviderEditionMembers member
-            ON member.member_item_id = provider_item.id
           JOIN ProviderTrackMatches track_match
-            ON track_match.provider_edition_member_id = member.id
+            ON track_match.provider_track_item_id = provider_item.id
            AND track_match.match_state = 'accepted'
           JOIN Tracks track ON track.id = track_match.track_id
           JOIN AlbumEditions release ON release.id = track.album_edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
-          WHERE provider_item.provider_id = ?
+          WHERE provider_item.provider = ?
+            AND provider_item.provider_id = ?
             AND provider_item.entity_type = 'track'
-          ORDER BY
-            CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
-            track_match.confidence DESC,
-            track_match.id
-          LIMIT 1
-        `).get(providerId)
+        `).all(provider, providerId)
       : db.prepare(`
-          SELECT release_group.mbid AS release_group_mbid,
-                 release.mbid AS release_mbid
+          SELECT DISTINCT release_group.mbid AS release_group_mbid
           FROM ProviderItems provider_item
           JOIN ProviderVideoMatches video_match
             ON video_match.provider_video_item_id = provider_item.id
@@ -231,23 +231,27 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
           JOIN Tracks track ON track.recording_id = relation.target_recording_id
           JOIN AlbumEditions release ON release.id = track.album_edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
-          WHERE provider_item.provider_id = ?
+          WHERE provider_item.provider = ?
+            AND provider_item.provider_id = ?
             AND provider_item.entity_type = 'video'
-          ORDER BY video_match.confidence DESC, release.date, release.id
-          LIMIT 1
-        `).get(providerId);
-  const scope = row as {
-    release_group_mbid?: string | null;
-    release_mbid?: string | null;
-  } | undefined;
+        `).all(provider, providerId);
+  const albumIds = new Set(
+    (rows as Array<{ release_group_mbid?: string | null }>)
+      .map((row) => getOptionalString(row.release_group_mbid))
+      .filter((value): value is string => value !== null),
+  );
 
-  return getOptionalString(scope?.release_group_mbid) ?? getOptionalString(scope?.release_mbid);
+  return albumIds.size === 1 ? [...albumIds][0] : null;
 }
 
-function getProviderItemArtistId(contentType: QueueItemContract["type"], providerId: string): string | null {
+function getProviderItemArtistId(
+  contentType: QueueItemContract["type"],
+  provider: string,
+  providerId: string,
+): string | null {
   const entityType = getProviderItemEntityTypes(contentType)[0];
-  const row = db.prepare(`
-    SELECT artist.mbid AS artist_mbid
+  const rows = db.prepare(`
+    SELECT DISTINCT artist.mbid AS artist_mbid
     FROM ProviderItems provider_item
     LEFT JOIN ProviderEditionMatches release_match
       ON provider_item.entity_type = 'release'
@@ -276,26 +280,18 @@ function getProviderItemArtistId(contentType: QueueItemContract["type"], provide
         track_group.artist_metadata_id,
         recording.artist_metadata_id
       )
-    WHERE provider_item.provider_id = ?
+    WHERE provider_item.provider = ?
+      AND provider_item.provider_id = ?
       AND provider_item.entity_type = ?
       AND artist.mbid IS NOT NULL
-    ORDER BY
-      CASE WHEN COALESCE(
-        release_match.decision_source,
-        track_match.decision_source,
-        video_match.decision_source
-      ) = 'manual' THEN 0 ELSE 1 END,
-      COALESCE(
-        release_match.confidence,
-        track_match.confidence,
-        video_match.confidence,
-        0
-      ) DESC,
-      provider_item.updated_at DESC
-    LIMIT 1
-  `).get(providerId, entityType) as { artist_mbid?: string | null } | undefined;
+  `).all(provider, providerId, entityType) as Array<{ artist_mbid?: string | null }>;
+  const artistIds = new Set(
+    rows
+      .map((row) => getOptionalString(row.artist_mbid))
+      .filter((value): value is string => value !== null),
+  );
 
-  return getOptionalString(row?.artist_mbid);
+  return artistIds.size === 1 ? [...artistIds][0] : null;
 }
 
 function parseProviderData(value: unknown): Record<string, unknown> {
@@ -423,6 +419,22 @@ function resolveCanonicalAlbumMetadata(input: {
           WHERE plan_track.plan_id = ?
           ORDER BY plan_track.id
           LIMIT 1
+        ),
+        (
+          SELECT COALESCE(variant.provider_quality_label, variant.quality_class)
+          FROM ProviderItemAudioVariants variant
+          WHERE variant.provider_item_id = provider_item.id
+            AND LOWER(CAST(variant.availability AS TEXT))
+                NOT IN ('0', 'false', 'unavailable', 'no', '')
+          ORDER BY
+            CASE variant.quality_class
+              WHEN 'spatial' THEN 0
+              WHEN 'hires-lossless' THEN 1
+              WHEN 'lossless' THEN 2
+              ELSE 3
+            END,
+            variant.id
+          LIMIT 1
         )
       ) AS selected_quality,
       provider_artist.title AS provider_artist_name,
@@ -515,6 +527,7 @@ function resolveCanonicalAlbumMetadata(input: {
 function resolveProviderItemMetadata(input: {
   contentType: QueueItemContract["type"];
   providerId?: string | null;
+  provider?: string | null;
 }): QueueMetadata | null {
   const providerId = getOptionalString(input.providerId);
   if (!providerId) {
@@ -550,12 +563,12 @@ function resolveProviderItemMetadata(input: {
      AND release_match.match_state = 'accepted'
     LEFT JOIN AlbumEditions direct_release ON direct_release.id = release_match.edition_id
     LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
-    LEFT JOIN ProviderEditionMembers member
-      ON provider_item.entity_type = 'track'
-     AND member.member_item_id = provider_item.id
     LEFT JOIN ProviderTrackMatches track_match
-      ON track_match.provider_edition_member_id = member.id
+      ON provider_item.entity_type = 'track'
+     AND track_match.provider_track_item_id = provider_item.id
      AND track_match.match_state = 'accepted'
+    LEFT JOIN ProviderEditionMembers member
+      ON member.id = track_match.provider_edition_member_id
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     LEFT JOIN AlbumEditions track_release ON track_release.id = track.album_edition_id
     LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
@@ -588,6 +601,17 @@ function resolveProviderItemMetadata(input: {
       )
     WHERE provider_item.provider_id = ?
       AND provider_item.entity_type IN (${placeholders(entityTypes)})
+      AND (? IS NULL OR provider_item.provider = ?)
+      AND (
+        track_match.id IS NULL
+        OR NOT EXISTS (
+          SELECT 1
+          FROM ProviderTrackMatches conflicting_match
+          WHERE conflicting_match.provider_track_item_id = provider_item.id
+            AND conflicting_match.match_state = 'accepted'
+            AND conflicting_match.recording_id != track_match.recording_id
+        )
+      )
     ORDER BY
       CASE WHEN COALESCE(
         release_match.decision_source,
@@ -602,7 +626,12 @@ function resolveProviderItemMetadata(input: {
       ) DESC,
       provider_item.updated_at DESC
     LIMIT 1
-  `).get(providerId, ...entityTypes) as {
+  `).get(
+    providerId,
+    ...entityTypes,
+    input.provider || null,
+    input.provider || null,
+  ) as {
     entity_type?: string | null;
     provider?: string | null;
     title?: string | null;
@@ -1236,6 +1265,7 @@ export class DownloadQueueQueryService {
     const providerItemMetadata = (!hasDisplayBasics || !cover) ? resolveProviderItemMetadata({
       contentType,
       providerId,
+      provider: getOptionalString(job.payload?.provider),
     }) : null;
     // Point album items at the internal media-cover proxy — the same source the
     // library grid, artist page and album page use — instead of the raw provider

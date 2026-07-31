@@ -48,6 +48,17 @@ export type CanonicalProviderOffer = {
 type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
 
+function chooseOnlyAgreedCanonicalOffer(
+    rows: CanonicalProviderOffer[],
+    identity: (row: CanonicalProviderOffer) => readonly unknown[],
+): CanonicalProviderOffer | null {
+    if (rows.length === 0) return null;
+    const expected = JSON.stringify(identity(rows[0]));
+    return rows.every((row) => JSON.stringify(identity(row)) === expected)
+        ? rows[0]
+        : null;
+}
+
 export function pickString(value: unknown): string | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return String(value);
@@ -77,7 +88,7 @@ export function resolveCanonicalProviderOffer(
         : null;
 
     if (type === 'album') {
-        const row = db.prepare(`
+        const rows = db.prepare(`
             SELECT
                 provider_release.provider,
                 provider_release.provider_id,
@@ -169,8 +180,7 @@ export function resolveCanonicalProviderOffer(
               CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
               release_match.confidence DESC,
               release_match.id
-            LIMIT 1
-        `).get(
+        `).all(
             acquisitionPlanId,
             acquisitionPlanId,
             acquisitionPlanId,
@@ -181,12 +191,15 @@ export function resolveCanonicalProviderOffer(
             releaseGroupMbid,
             acquisitionPlanId,
             acquisitionPlanId,
-        ) as CanonicalProviderOffer | undefined;
-        return row ?? null;
+        ) as CanonicalProviderOffer[];
+        return chooseOnlyAgreedCanonicalOffer(
+            rows,
+            (row) => [row.canonical_release_id, row.release_mbid, row.release_group_mbid],
+        );
     }
 
     if (type === 'video') {
-        const row = db.prepare(`
+        const rows = db.prepare(`
             SELECT
                 provider_video.provider,
                 provider_video.provider_id,
@@ -220,17 +233,19 @@ export function resolveCanonicalProviderOffer(
               CASE WHEN video_match.decision_source = 'manual' THEN 0 ELSE 1 END,
               video_match.confidence DESC,
               video_match.id
-            LIMIT 1
-        `).get(provider, providerId) as CanonicalProviderOffer | undefined;
-        return row ?? null;
+        `).all(provider, providerId) as CanonicalProviderOffer[];
+        return chooseOnlyAgreedCanonicalOffer(
+            rows,
+            (row) => [row.canonical_recording_id, row.recording_mbid],
+        );
     }
 
-    const row = db.prepare(`
+    const rows = db.prepare(`
         SELECT
             provider_track.provider,
             provider_track.provider_id,
             provider_track.entity_type,
-            release_group.artist_mbid,
+            COALESCE(release_group.artist_mbid, recording_artist.mbid) AS artist_mbid,
             release_group.mbid AS release_group_mbid,
             release.mbid AS release_mbid,
             track.mbid AS track_mbid,
@@ -246,36 +261,44 @@ export function resolveCanonicalProviderOffer(
             release.id AS canonical_release_id,
             recording.title AS canonical_recording_title,
             recording.id AS canonical_recording_id,
-            COALESCE(track_credit.credited_name, artist.name) AS artist_name
+            COALESCE(track_credit.credited_name, artist.name, recording_artist.name) AS artist_name
         FROM ProviderItems provider_track
-        JOIN ProviderEditionMembers release_member
-          ON release_member.member_item_id = provider_track.id
         JOIN ProviderTrackMatches track_match
-          ON track_match.provider_edition_member_id = release_member.id
+          ON track_match.provider_track_item_id = provider_track.id
          AND track_match.match_state = 'accepted'
-        JOIN Tracks track
+        LEFT JOIN Tracks track
           ON track.id = track_match.track_id
         JOIN Recordings recording
           ON recording.id = track_match.recording_id
-        JOIN AlbumEditions release
+        LEFT JOIN AlbumEditions release
           ON release.id = track.album_edition_id
-        JOIN Albums release_group
+        LEFT JOIN Albums release_group
           ON release_group.id = release.release_group_id
         LEFT JOIN ProviderItemAudioVariants variant
-          ON variant.id = (
-            SELECT candidate.id
-            FROM ProviderItemAudioVariants candidate
-            WHERE candidate.provider_item_id = provider_track.id
-            ORDER BY
-              CASE candidate.availability WHEN 'available' THEN 0 ELSE 1 END,
-              candidate.id
-            LIMIT 1
+          ON variant.id = COALESCE(
+            (
+              SELECT plan_track.provider_audio_variant_id
+              FROM AcquisitionPlanTracks plan_track
+              WHERE plan_track.plan_id = ?
+                AND plan_track.provider_track_match_id = track_match.id
+            ),
+            (
+              SELECT candidate.id
+              FROM ProviderItemAudioVariants candidate
+              WHERE candidate.provider_item_id = provider_track.id
+              ORDER BY
+                CASE candidate.availability WHEN 'available' THEN 0 ELSE 1 END,
+                candidate.id
+              LIMIT 1
+            )
           )
         LEFT JOIN TrackArtistCredits track_credit
           ON track_credit.track_id = track.id
          AND track_credit.ordinal = 0
         LEFT JOIN ArtistMetadata artist
           ON artist.id = release_group.artist_metadata_id
+        LEFT JOIN ArtistMetadata recording_artist
+          ON recording_artist.id = recording.artist_metadata_id
         LEFT JOIN ProviderItemCredits provider_credit
           ON provider_credit.item_id = provider_track.id
          AND provider_credit.ordinal = 0
@@ -297,14 +320,22 @@ export function resolveCanonicalProviderOffer(
           CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
           track_match.confidence DESC,
           track_match.id
-        LIMIT 1
-    `).get(
+    `).all(
+        acquisitionPlanId,
         provider,
         providerId,
         acquisitionPlanId,
         acquisitionPlanId,
-    ) as CanonicalProviderOffer | undefined;
-    return row ?? null;
+    ) as CanonicalProviderOffer[];
+    return chooseOnlyAgreedCanonicalOffer(
+        rows,
+        (row) => [
+            row.canonical_track_id,
+            row.canonical_recording_id,
+            row.track_mbid,
+            row.recording_mbid,
+        ],
+    );
 }
 
 export function hasAlbumMetadataReady(albumId: string, payload?: DownloadCommand): boolean {

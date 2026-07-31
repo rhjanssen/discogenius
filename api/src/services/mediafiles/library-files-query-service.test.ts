@@ -46,20 +46,29 @@ function seedCanonicalTrackFileOnly() {
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-mbid", "release-mbid", "recording-mbid", "Only High Quality Track", 1, 1);
-  db.prepare(`
+  const providerTrack = db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run( "tidal", "track", "provider-track", "Only High Quality Track" );
+    RETURNING id
+  `).get( "tidal", "track", "provider-track", "Only High Quality Track" ) as { id: number };
+  const sourceVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label,
+      availability
+    ) VALUES (?, 'high', 'lossy', 'HIGH', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
 
   db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+      provider_item_id, source_audio_variant_id,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension,
       file_type, quality, codec
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "artist-local",
     "artist-mbid",
@@ -67,6 +76,8 @@ function seedCanonicalTrackFileOnly() {
     "release-mbid",
     "track-mbid",
     "recording-mbid",
+    providerTrack.id,
+    sourceVariant.id,
     "tidal",
     "track",
     "provider-track",

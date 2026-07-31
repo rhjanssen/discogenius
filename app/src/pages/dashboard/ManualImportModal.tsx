@@ -461,7 +461,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
     }, [initialFile, initialMatch, isOpen, isVideoImport, targetFiles]);
 
     useEffect(() => {
-        if (!isOpen || isVideoImport) return;
+        if (!isOpen) return;
         api.getManualImportLibraries()
             .then((result: any) => {
                 const nextLibraries = Array.isArray(result) ? result : [];
@@ -471,7 +471,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             .catch((error: Error) => {
                 toast({ title: 'Libraries unavailable', description: error.message, variant: 'destructive' });
             });
-    }, [isOpen, isVideoImport, toast]);
+    }, [isOpen, toast]);
 
     const handleSearch = async (queryToSearch: string = searchQuery) => {
         if (!queryToSearch.trim()) return;
@@ -495,7 +495,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
 
     const importMutation = useMutation({
         mutationFn: async (payload: {
-            videoItems?: Array<{ id: number; providerId: string }>;
+            canonicalVideo?: {
+                libraryId: number;
+                mappings: Array<{ unmappedFileId: number; recordingId: number }>;
+            };
             canonical?: {
                 libraryId: number;
                 editionId: number;
@@ -503,7 +506,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             };
         }) => payload.canonical
             ? api.canonicalManualImport(payload.canonical)
-            : api.bulkMapUnmappedFiles(payload.videoItems || []),
+            : api.canonicalManualVideoImport(payload.canonicalVideo!),
         onSuccess: (data: any) => {
             queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
             dispatchActivityRefresh();
@@ -520,22 +523,38 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             .filter((file) => selectedFiles[file.id] && mappedTracks[file.id])
             .map((file) => ({
                 id: file.id,
-                providerId: mappedTracks[file.id],
+                canonicalId: mappedTracks[file.id],
             }));
 
         if (payloadItems.length === 0) {
             toast({
                 title: 'No Files Chosen',
                 description: isVideoImport
-                    ? 'Select a matching provider video for this file.'
-                    : 'Select at least one file and assign a provider track to it.',
+                    ? 'Select a matching canonical MusicBrainz video Recording for this file.'
+                    : 'Select at least one file and assign a canonical track to it.',
                 variant: 'destructive',
             });
             return;
         }
 
         if (isVideoImport) {
-            importMutation.mutate({ videoItems: payloadItems });
+            if (!selectedLibraryId) {
+                toast({
+                    title: 'Choose Library',
+                    description: 'Canonical video import requires an explicit destination library.',
+                    variant: 'destructive',
+                });
+                return;
+            }
+            importMutation.mutate({
+                canonicalVideo: {
+                    libraryId: selectedLibraryId,
+                    mappings: payloadItems.map((item) => ({
+                        unmappedFileId: item.id,
+                        recordingId: Number(item.canonicalId),
+                    })),
+                },
+            });
             return;
         }
         if (!selectedLibraryId || !selectedReleaseId) {
@@ -552,7 +571,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                 editionId: selectedReleaseId,
                 mappings: payloadItems.map((item) => ({
                     unmappedFileId: item.id,
-                    trackId: Number(item.providerId),
+                    trackId: Number(item.canonicalId),
                 })),
             },
         });
@@ -577,14 +596,14 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                             <>
                                 <Text style={{ display: 'block' }}>
                                     {isVideoImport
-                                        ? <>Match this local video to a provider video release.</>
+                                        ? <>Match this local video to a canonical MusicBrainz Recording.</>
                                         : <>Found <strong>{targetFiles.length}</strong> files ready for manual import in <Badge appearance="outline">{initialFile ? getDirname(initialFile.relative_path) : ''}</Badge></>}
                                 </Text>
 
                                 <div className={styles.searchContainer}>
                                     <Input
                                         className={styles.searchInput}
-                                        placeholder={isVideoImport ? 'Search for the correct provider video...' : 'Search for the correct provider release...'}
+                                        placeholder={isVideoImport ? 'Search for the correct canonical video...' : 'Search for the correct canonical release...'}
                                         value={searchQuery}
                                         onChange={(_, data) => setSearchQuery(data.value)}
                                         onKeyDown={(event) => {
@@ -627,7 +646,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                 {isSearching ? (
                                     <div className={styles.emptyState}>
                                         <Spinner size="large" />
-                                        <Text>Searching provider catalog...</Text>
+                                        <Text>Searching canonical catalog...</Text>
                                     </div>
                                 ) : hasSearched && searchResults.length === 0 ? (
                                     <div className={styles.emptyState}>
@@ -693,34 +712,36 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                     </div>
                                 ) : null}
 
-                                 {!isVideoImport ? (
-                                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', margin: '8px 0' }}>
-                                         <Text weight="semibold" size={200}>Library:</Text>
-                                         <Select
-                                             value={selectedLibraryId == null ? '' : String(selectedLibraryId)}
-                                             onChange={(_, data) => setSelectedLibraryId(Number(data.value))}
-                                             style={{ minWidth: '180px' }}
-                                         >
-                                             {libraries.map((library) => (
-                                                 <option key={library.id} value={library.id}>
-                                                     {library.name} · {library.qualityProfile}
-                                                 </option>
-                                             ))}
-                                         </Select>
-                                         <Text weight="semibold" size={200}>Release:</Text>
-                                         <Select
-                                             value={selectedReleaseMbid}
-                                             onChange={(_, data) => handleSelectReleaseVersion(data.value)}
-                                             style={{ minWidth: '280px' }}
-                                         >
-                                             {releaseVersions.map((v) => (
-                                                 <option key={v.mbid || v.id} value={v.mbid || v.id}>
-                                                     {v.title || 'Release'} {v.version_label ? `(${v.version_label})` : v.track_count ? `(${v.track_count} tracks)` : ''}
-                                                 </option>
-                                             ))}
-                                         </Select>
-                                     </div>
-                                 ) : null}
+                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', margin: '8px 0' }}>
+                                     <Text weight="semibold" size={200}>Library:</Text>
+                                     <Select
+                                         value={selectedLibraryId == null ? '' : String(selectedLibraryId)}
+                                         onChange={(_, data) => setSelectedLibraryId(Number(data.value))}
+                                         style={{ minWidth: '180px' }}
+                                     >
+                                         {libraries.map((library) => (
+                                             <option key={library.id} value={library.id}>
+                                                 {library.name} · {library.qualityProfile}
+                                             </option>
+                                         ))}
+                                     </Select>
+                                     {!isVideoImport ? (
+                                         <>
+                                             <Text weight="semibold" size={200}>Release:</Text>
+                                             <Select
+                                                 value={selectedReleaseMbid}
+                                                 onChange={(_, data) => handleSelectReleaseVersion(data.value)}
+                                                 style={{ minWidth: '280px' }}
+                                             >
+                                                 {releaseVersions.map((v) => (
+                                                     <option key={v.mbid || v.id} value={v.mbid || v.id}>
+                                                         {v.title || 'Release'} {v.version_label ? `(${v.version_label})` : v.track_count ? `(${v.track_count} tracks)` : ''}
+                                                     </option>
+                                                 ))}
+                                             </Select>
+                                         </>
+                                     ) : null}
+                                 </div>
 
                                  {isVideoImport ? (
                                      localFile ? (
@@ -821,7 +842,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                         <Button
                             appearance="primary"
                             icon={importMutation.isPending ? <Spinner size="tiny" /> : <ArrowImport24 />}
-                            disabled={!canImport || importMutation.isPending || !selectedMatch || (!isVideoImport && (!selectedLibraryId || !selectedReleaseId))}
+                            disabled={!canImport || importMutation.isPending || !selectedMatch || !selectedLibraryId || (!isVideoImport && !selectedReleaseId)}
                             onClick={handleImport}
                         >
                             {importMutation.isPending ? 'Importing...' : isVideoImport ? 'Import Video' : 'Import Selected'}

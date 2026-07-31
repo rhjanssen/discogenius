@@ -127,6 +127,11 @@ preview is cluttered with cover/lyric/nfo rows.
   consumers move folder-level images, ExtraService moves track-linked extras).
 - done: **Stop storing sidecars as `TrackFiles` rows.** `file_type` still allows
   `cover`/`lyrics`/`bio`/etc. on `TrackFiles`; migrated non-media rows so `TrackFiles` is audio/video-only (Lidarr's invariant).
+- done: **Normalize shared-root ownership.** A playable `TrackFiles` row has one
+  exact `library_id` and ambiguous root-only imports fail closed. Physical
+  metadata, lyric, and other-extra rows can be referenced by several libraries
+  through `MetadataFileLibraries`, `LyricFileLibraries`, and
+  `ExtraFileLibraries`; releasing one owner cannot delete another owner's file.
 - consolidates: the "Cross-album cover/lyric bleed" item under Tagging below.
 
 ### Artwork — two independent entries (corrected regression ledger)
@@ -189,6 +194,20 @@ naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the lea
 
 ### Repo & container hygiene
 
+- done: **Provider videos fail closed at the canonical boundary.** Provider
+  refresh now caches unmatched video offers without minting `Recordings` or
+  accepted matches. Identity-bearing `ProviderVideoMatches` are constrained in
+  the active and contract schemas and in the repository to existing
+  MusicBrainz video recordings. Legacy provisional assignments are repaired
+  without deleting the physical file; files are rehomed only when a canonical
+  target exists.
+- done: **Test-suite audit and targeted consolidation (first pass).** Confirmed
+  that the near-1,000 count is mostly distinct coverage rather than duplicate
+  execution. Consolidated `refresh-video-service.test.ts` from 26 tests / 1,287
+  lines to 11 tests / 558 lines by removing matcher-detail duplication already
+  covered in focused matcher suites, while retaining authority, ambiguity,
+  legacy-repair, exact-file, schema, and supplement-only behavior. See
+  `docs/TEST_SUITE_AUDIT.md`; further active-schema conversions remain.
 - pending: **Broad legacy cleanup pass** — orphaned files, dead dirs, redundant/legacy
   code, unused exports (extends today's stray-DB/dead-dir removal). Pairs with
   "Repo-wide structure audit" below.
@@ -362,6 +381,13 @@ Today we are **adapters in a folder**, not true plugins: shared
 
 ### Library tools
 
+- done (2026-07-31): real-provider tag-writer preservation sweep across TIDAL
+  AAC, FLAC, and E-AC-3/JOC Atmos plus TIDAL 1080p and Apple 4K video.
+  `node-taglib-sharp` is now the primary `.m4a`/`.mp4` writer for proven
+  iTunes-style containers, with atomic copy, exact tag/cover reread, and
+  technical-structure verification. FFmpeg `mdta/keys` containers are detected
+  and retained on Mutagen; Mediabunny was rejected because its remux changed
+  Atmos signaling and lost custom MP4 tags. See `docs/TAG_IO_STRATEGY.md`.
 - deferred: strip tags for video files (audio strip at artist/album is shipped
   via Manage → Strip Tags + `POST /api/v1/retag/strip`); per-track strip UI.
 - deferred: optional Settings toggle for inline stereo vs spatial — product
@@ -393,9 +419,10 @@ Today we are **adapters in a folder**, not true plugins: shared
 - pending: hybrid / multi-provider album fills — decide whether incomplete
   single-provider coverage should warn (yellow) vs require full set-cover before
   marking an album complete; Lioness-style missing-track cases are the litmus.
-- in progress: release-centric matching — composites persist in
-  `ProviderItemMatches`; still need provider albums to score against **all**
-  candidate MB releases for the artist (not one RG container). Evidence:
+- in progress: release-centric matching — direct decisions persist only in
+  typed edition/track match tables and composite coverage persists in
+  acquisition-plan sources/assignments; still need provider albums to score
+  against **all** candidate MB releases for the artist (not one RG container). Evidence:
   MB external links → UPC/ISRC/recording coverage → title/version/date/type.
   See `docs/MATCHING_SET_COVER_DESIGN.md`.
 - pending: artist-wide coverage optimization before final slot selection
@@ -409,6 +436,10 @@ Today we are **adapters in a folder**, not true plugins: shared
 
 ### Import, monitoring, library
 
+- done (2026-07-31): provider matching no longer manufactures monitoring state.
+  Curation seeds unmonitored catalog artists into enabled library overlays with
+  `monitored=0`; the explicit Monitor action materializes `LibraryArtists` as
+  monitored. Active-schema regression coverage guards both directions.
 - decided (not implemented): Lidarr import-list monitor modes —
   EntireArtist vs SpecificAlbum (album granularity only). Needs import modal
   selector + deferred-monitoring reconciliation.

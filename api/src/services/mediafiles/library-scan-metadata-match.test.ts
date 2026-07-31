@@ -145,10 +145,10 @@ function seedOffer(params: {
         `).get(recording.id, canonicalRelease.edition_id) as { id: number } | undefined;
         db.prepare(`
           INSERT INTO ProviderTrackMatches (
-            provider_edition_member_id, provider_edition_match_id, track_id,
+            provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
             recording_id, match_state, decision_source, confidence, method, matcher_version
-          ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
-        `).run(member.id, releaseMatchId, canonicalTrack?.id ?? null, recording.id);
+          ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+        `).run(track.id, member.id, releaseMatchId, canonicalTrack?.id ?? null, recording.id);
       }
     }
   }

@@ -123,10 +123,11 @@ function seedAcceptedTrackEdge(input: {
   `).get(input.releaseItemId, release.id) as { id: number };
   db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+      track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
-    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 0.99, 'test_fixture', 1)
-  `).run(member.id, releaseMatch.id, track.id, recordingId);
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 0.99, 'test_fixture', 1)
+  `).run(input.memberItemId, member.id, releaseMatch.id, track.id, recordingId);
 }
 
 function insertTrackFile(overrides: Record<string, unknown>) {

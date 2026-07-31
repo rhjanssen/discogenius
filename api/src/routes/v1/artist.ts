@@ -467,21 +467,6 @@ router.get("/:artistId/page", async (req, res) => {
       return res.status(404).json({ detail: "Artist not found" });
     }
 
-    if (
-      page.needs_scan &&
-      MUSICBRAINZ_MBID_RE.test(String(page.artist?.mbid || req.params.artistId)) &&
-      RefreshArtistService.needsInitialRefresh(String(page.artist?.id || req.params.artistId))
-    ) {
-      const artistId = String(page.artist?.id || req.params.artistId);
-      const artistName = String(page.artist?.name || artistId).trim();
-      queueArtistWorkflow({
-        artistId,
-        artistName,
-        workflow: "metadata-refresh",
-        priority: -1,
-      });
-    }
-
     return res.json(page);
   } catch (error: any) {
     console.error('Error fetching artist page from DB:', error);

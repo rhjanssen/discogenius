@@ -131,6 +131,7 @@ export interface LibraryReleaseGroupAvailabilityContract {
     id: number;
     name: string;
     qualityProfile: string;
+    allowedSourceFormats: string[];
     selections: Array<{
       libraryEditionId: number;
       editionId: number;
@@ -140,6 +141,7 @@ export interface LibraryReleaseGroupAvailabilityContract {
       plan: {
         id: number;
         provider: string;
+        primaryProviderEditionMatchId: number | null;
         composition: "single_source" | "composite";
         downloadMode: "album" | "tracks";
         state: "current" | "stale" | "unavailable" | "failed";
@@ -470,6 +472,14 @@ export function parseLibraryReleaseGroupAvailabilityContract(
           library.qualityProfile,
           `libraryReleaseAvailability.libraries[${libraryIndex}].qualityProfile`,
         ),
+        allowedSourceFormats: expectArray(
+          library.allowedSourceFormats,
+          `libraryReleaseAvailability.libraries[${libraryIndex}].allowedSourceFormats`,
+          (format, formatIndex) => expectString(
+            format,
+            `libraryReleaseAvailability.libraries[${libraryIndex}].allowedSourceFormats[${formatIndex}]`,
+          ),
+        ),
         selections: expectArray(
           library.selections,
           `libraryReleaseAvailability.libraries[${libraryIndex}].selections`,
@@ -486,6 +496,9 @@ export function parseLibraryReleaseGroupAvailabilityContract(
               plan: plan == null ? null : {
                 id: expectNumber(plan.id, `${label}.plan.id`),
                 provider: expectString(plan.provider, `${label}.plan.provider`),
+                primaryProviderEditionMatchId: plan.primaryProviderEditionMatchId == null
+                  ? null
+                  : expectNumber(plan.primaryProviderEditionMatchId, `${label}.plan.primaryProviderEditionMatchId`),
                 composition: expectString(plan.composition, `${label}.plan.composition`) as "single_source" | "composite",
                 downloadMode: expectString(plan.downloadMode, `${label}.plan.downloadMode`) as "album" | "tracks",
                 state: expectString(plan.state, `${label}.plan.state`) as "current" | "stale" | "unavailable" | "failed",

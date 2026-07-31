@@ -1,37 +1,73 @@
-import path from "path";
-import { db } from "../../database.js";
-import { IdentificationService, type AlbumCandidateMatch, type IdentifiableFile } from "./identification-service.js";
-import { ImportDecisionEngine } from "../import-decision/engine.js";
+import path from "node:path";
 import type { ImportDecisionMode } from "../import-decision/types.js";
-import { extractTrackStem } from "./import-discovery.js";
-import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
-import { hasSpatialAudioQuality } from "../../utils/spatial-audio.js";
-import { streamingProviderManager } from "../providers/index.js";
+import { CatalogCandidateService } from "./candidate-service.js";
+import {
+    IdentificationService,
+    type IdentifiableFile,
+} from "./identification-service.js";
+import {
+    normalizeComparableText,
+    stringSimilarity,
+} from "./import-matching-utils.js";
 import type {
     ImportCandidate,
+    LocalFile,
     LocalGroup,
-    RootFolderImportProgressEvent,
     ProviderMatch,
+    RootFolderImportProgressEvent,
 } from "./import-types.js";
 
-type DirectGroupIdentifiers = {
-    albumIds: string[];
-    trackIds: string[];
-    videoIds: string[];
-    upcs: string[];
-};
+const EXPLICIT_CANONICAL_SELECTION =
+    "Choose the destination Library and canonical MusicBrainz Edition or video Recording before import.";
 
-type AlbumMatchEvidence = AlbumCandidateMatch & {
-    trackIdsByFilePath: Record<string, string>;
-};
+function fileTitle(file: LocalFile): string {
+    const tagged = String(file.metadata?.common?.title || "").trim();
+    return tagged || path.basename(file.name, file.extension);
+}
 
-type MatchEvidenceSignals = {
-    directCandidateIds?: Set<string>;
-    fingerprintCandidateIds?: Set<string>;
-    fingerprintTrackHints?: Map<string, Record<string, string>>;
-    upcs?: Set<string>;
-};
+function artistName(group: LocalGroup): string {
+    return String(
+        group.commonTags.artist
+        || group.files.find((file) => file.metadata?.common?.artist)?.metadata?.common?.artist
+        || "",
+    ).trim();
+}
 
+function albumTitle(group: LocalGroup): string {
+    return String(
+        group.commonTags.album
+        || group.files.find((file) => file.metadata?.common?.album)?.metadata?.common?.album
+        || path.basename(group.path),
+    ).trim();
+}
+
+function identifiableFiles(group: LocalGroup): {
+    files: IdentifiableFile[];
+    pathById: Map<number, string>;
+} {
+    const pathById = new Map<number, string>();
+    const files = group.files.map((file, index) => {
+        const id = index + 1;
+        pathById.set(id, file.path);
+        return {
+            id,
+            filename: file.name,
+            duration: file.metadata?.format?.duration ?? null,
+            detected_artist: file.metadata?.common?.artist || group.commonTags.artist || null,
+            detected_album: file.metadata?.common?.album || group.commonTags.album || null,
+            detected_track: file.metadata?.common?.title || null,
+            file_path: file.path,
+            relative_path: path.relative(group.rootPath, file.path),
+        };
+    });
+    return { files, pathById };
+}
+
+/**
+ * Root-folder discovery is catalogue-only. It may suggest canonical MusicBrainz
+ * identities for review, but never turns a provider resource into identity and
+ * never auto-imports without an explicit Library + Edition/Recording selection.
+ */
 export class ImportMatcherService {
     async findMatches(
         groups: LocalGroup[],
@@ -39,10 +75,10 @@ export class ImportMatcherService {
         options?: { onProgress?: (event: RootFolderImportProgressEvent) => void },
         mode: ImportDecisionMode = "NewDownload",
     ): Promise<ImportCandidate[]> {
-        const results: ImportCandidate[] = [];
+        void mode;
         const totalFiles = groups.reduce((sum, group) => sum + group.files.length, 0);
-        const totalGroups = groups.length;
         let processedFiles = 0;
+        const results: ImportCandidate[] = [];
 
         if (totalFiles === 0) {
             options?.onProgress?.({
@@ -50,25 +86,23 @@ export class ImportMatcherService {
                 currentFileNum: 0,
                 totalFiles: 0,
                 currentGroupNum: 0,
-                totalGroups,
+                totalGroups: groups.length,
             });
         }
 
         for (let index = 0; index < groups.length; index += 1) {
             const group = groups[index];
-            const matches = await this.matchGroup(group, context, mode);
             results.push({
                 group,
-                matches,
+                matches: await this.matchGroup(group, context),
             });
-
             processedFiles += group.files.length;
             options?.onProgress?.({
                 message: `Reading file ${processedFiles}/${totalFiles}`,
                 currentFileNum: processedFiles,
                 totalFiles,
                 currentGroupNum: index + 1,
-                totalGroups,
+                totalGroups: groups.length,
             });
         }
         return results;
@@ -79,1148 +113,95 @@ export class ImportMatcherService {
         context: "music" | "spatial" | "video" = "music",
         mode: ImportDecisionMode = "NewDownload",
     ): Promise<ProviderMatch[]> {
-        return this.matchGroup(group, context, mode);
-    }
-
-    private getCandidateKey(candidate: any): string | null {
-        const directId = candidate?.id?.toString?.()
-            ?? candidate?.provider_id?.toString?.()
-            ?? candidate?.providerId?.toString?.();
-        if (directId) {
-            return directId;
-        }
-
-        const artistId = candidate?.artist_id?.toString?.() ?? candidate?.artist?.id?.toString?.() ?? candidate?.artists?.[0]?.id?.toString?.();
-        const title = candidate?.title ?? candidate?.name ?? null;
-        if (!artistId || !title) {
-            return null;
-        }
-
-        return `${artistId}:${title}`;
-    }
-
-    private async searchProvider(query: string, type: "albums" | "tracks" | "videos", limit: number): Promise<any[]> {
-        const results = await streamingProviderManager.getDefaultStreamingProvider().search(query, {
-            types: [type],
-            limit,
-        });
-        const items = type === "albums"
-            ? results.albums
-            : type === "tracks"
-                ? results.tracks
-                : results.videos;
-
-        return (items || []).map((item: any) => item?.raw || item);
-    }
-
-    private async getProviderAlbum(albumId: string): Promise<any | null> {
-        const album = await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId);
-        return album?.raw || album || null;
-    }
-
-    private async getProviderTrack(trackId: string): Promise<any | null> {
-        const track = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
-        return track?.raw || track || null;
-    }
-
-    private async getProviderVideo(videoId: string): Promise<any | null> {
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
-        if (!provider.getVideo) {
-            return null;
-        }
-        const video = await provider.getVideo(videoId);
-        return video?.raw || video || null;
-    }
-
-    private async getProviderArtistVideos(artistId: string): Promise<any[]> {
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
-        if (!provider.getArtistVideos) {
-            return [];
-        }
-        const videos = await provider.getArtistVideos(artistId);
-        return videos.map((video: any) => video?.raw || video);
-    }
-
-    private mergeCandidates(...sources: any[][]): any[] {
-        const merged = new Map<string, any>();
-
-        for (const source of sources) {
-            for (const candidate of source) {
-                const key = this.getCandidateKey(candidate);
-                if (!key || merged.has(key)) {
-                    continue;
-                }
-
-                merged.set(key, candidate);
-            }
-        }
-
-        return Array.from(merged.values());
-    }
-
-    private async ensureFingerprints(group: LocalGroup): Promise<void> {
-        const { calculateFingerprint } = await import("./audioUtils.js");
-
-        for (const file of group.files) {
-            if (file.fingerprint !== undefined) {
-                continue;
-            }
-
-            if (![".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".alac", ".aiff"].includes(file.extension)) {
-                file.fingerprint = null;
-                continue;
-            }
-
-            file.fingerprint = await calculateFingerprint(file.path);
-        }
-    }
-
-    private normalizeBarcode(value: unknown): string | null {
-        if (value === null || value === undefined) {
-            return null;
-        }
-
-        const normalized = String(value).replace(/\D/g, "");
-        return normalized.length >= 12 && normalized.length <= 14 ? normalized : null;
-    }
-
-    private extractTextIdentifiers(text: string, identifiers: {
-        albumIds: Set<string>;
-        trackIds: Set<string>;
-        videoIds: Set<string>;
-        upcs: Set<string>;
-    }) {
-        const tidalUrlRegex = /(?:https?:\/\/)?(?:listen\.|www\.)?tidal\.com(?:\/browse)?\/(album|track|video|artist)\/(\d+)/gi;
-        const labeledProviderIdRegex = /\btidal[\s_-]*(album|track|video|artist)(?:[\s_-]*id)?\s*[:=]\s*(\d+)\b/gi;
-        const labeledUpcRegex = /\b(?:upc|barcode|ean)\s*[:=]\s*([\d -]{12,20})\b/gi;
-
-        let match: RegExpExecArray | null;
-        while ((match = tidalUrlRegex.exec(text)) !== null) {
-            const entityType = match[1].toLowerCase();
-            const entityId = match[2];
-            if (entityType === "album") identifiers.albumIds.add(entityId);
-            if (entityType === "track") identifiers.trackIds.add(entityId);
-            if (entityType === "video") identifiers.videoIds.add(entityId);
-        }
-
-        while ((match = labeledProviderIdRegex.exec(text)) !== null) {
-            const entityType = match[1].toLowerCase();
-            const entityId = match[2];
-            if (entityType === "album") identifiers.albumIds.add(entityId);
-            if (entityType === "track") identifiers.trackIds.add(entityId);
-            if (entityType === "video") identifiers.videoIds.add(entityId);
-        }
-
-        while ((match = labeledUpcRegex.exec(text)) !== null) {
-            const upc = this.normalizeBarcode(match[1]);
-            if (upc) {
-                identifiers.upcs.add(upc);
-            }
-        }
-    }
-
-    private collectDirectIdentifiers(group: LocalGroup): DirectGroupIdentifiers {
-        const identifiers = {
-            albumIds: new Set<string>(),
-            trackIds: new Set<string>(),
-            videoIds: new Set<string>(),
-            upcs: new Set<string>(),
-        };
-
-        const addPossibleBarcode = (value: unknown) => {
-            if (Array.isArray(value)) {
-                for (const entry of value) {
-                    addPossibleBarcode(entry);
-                }
-                return;
-            }
-
-            const barcode = this.normalizeBarcode(value);
-            if (barcode) {
-                identifiers.upcs.add(barcode);
-            }
-        };
-
-        this.extractTextIdentifiers(group.path, identifiers);
-
-        const providerIdMatch = group.path.match(/\[TIDAL-(\d+)\]/i);
-        if (providerIdMatch) {
-            identifiers.albumIds.add(providerIdMatch[1]);
-        }
-
-        for (const file of group.files) {
-            this.extractTextIdentifiers(file.path, identifiers);
-
-            const common = (file.metadata?.common || {}) as Record<string, any>;
-            const freeTextValues = [
-                common.comment,
-                common.description,
-                common.website,
-                common.url,
-                common.source,
-                common.grouping,
-            ].flat().filter(Boolean);
-
-            for (const value of freeTextValues) {
-                this.extractTextIdentifiers(String(value), identifiers);
-            }
-
-            addPossibleBarcode(common.barcode);
-            addPossibleBarcode(common.upc);
-            addPossibleBarcode(common.ean);
-
-            const nativeTags = Object.values((file.metadata?.native || {}) as Record<string, Array<{ id?: string; value?: unknown }>>);
-            for (const tagGroup of nativeTags) {
-                for (const tag of tagGroup) {
-                    if (!tag) {
-                        continue;
-                    }
-
-                    this.extractTextIdentifiers(String(tag.id || ""), identifiers);
-
-                    const values = Array.isArray(tag.value) ? tag.value : [tag.value];
-                    for (const value of values) {
-                        if (value === null || value === undefined) {
-                            continue;
-                        }
-
-                        if (typeof value === "string") {
-                            this.extractTextIdentifiers(value, identifiers);
-                            addPossibleBarcode(value);
-                        } else {
-                            addPossibleBarcode(value);
-                            this.extractTextIdentifiers(JSON.stringify(value), identifiers);
-                        }
-                    }
-                }
-            }
-        }
-
-        return {
-            albumIds: Array.from(identifiers.albumIds),
-            trackIds: Array.from(identifiers.trackIds),
-            videoIds: Array.from(identifiers.videoIds),
-            upcs: Array.from(identifiers.upcs),
-        };
-    }
-
-    private async getDirectIdentifierCandidates(
-        identifiers: DirectGroupIdentifiers,
-        context: "music" | "spatial" | "video"
-    ): Promise<any[]> {
-        const resolvedCandidates: any[] = [];
-        const uniqueAlbumIds = Array.from(new Set(identifiers.albumIds));
-        const uniqueVideoIds = Array.from(new Set(identifiers.videoIds));
-        const uniqueUpcs = Array.from(new Set(identifiers.upcs));
-
-        if (context === "video" && uniqueVideoIds.length === 1) {
-            try {
-                const video = await this.getProviderVideo(uniqueVideoIds[0]);
-                if (video) {
-                    resolvedCandidates.push(video);
-                }
-            } catch (error) {
-                console.warn(`[Import] Failed to resolve embedded provider video ID ${uniqueVideoIds[0]}:`, error);
-            }
-        }
-
-        if (context === "video") {
-            return resolvedCandidates;
-        }
-
-        if (uniqueAlbumIds.length === 1) {
-            try {
-                const album = await this.getProviderAlbum(uniqueAlbumIds[0]);
-                if (album) {
-                    resolvedCandidates.push(album);
-                }
-            } catch (error) {
-                console.warn(`[Import] Failed to resolve embedded provider album ID ${uniqueAlbumIds[0]}:`, error);
-            }
-        }
-
-        if (identifiers.trackIds.length > 0) {
-            const albumIdsFromTracks = new Set<string>();
-
-            for (const trackId of identifiers.trackIds) {
-                try {
-                    const track = await this.getProviderTrack(trackId);
-                    const albumId = track?.album_id ?? track?.album?.id ?? track?.album?.providerId;
-                    if (albumId) {
-                        albumIdsFromTracks.add(String(albumId));
-                    }
-                } catch (error) {
-                    console.warn(`[Import] Failed to resolve embedded provider track ID ${trackId}:`, error);
-                }
-
-                if (albumIdsFromTracks.size > 1) {
-                    break;
-                }
-            }
-
-            if (albumIdsFromTracks.size === 1) {
-                const [albumId] = Array.from(albumIdsFromTracks);
-                try {
-                    const album = await this.getProviderAlbum(albumId);
-                    if (album) {
-                        resolvedCandidates.push(album);
-                    }
-                } catch (error) {
-                    console.warn(`[Import] Failed to resolve album ${albumId} from embedded provider track IDs:`, error);
-                }
-            }
-        }
-
-        if (uniqueUpcs.length === 1) {
-            try {
-                const searchCandidates = await this.searchProvider(uniqueUpcs[0], "albums", 5);
-                const exactUpcMatch = searchCandidates.find((candidate) =>
-                    this.normalizeBarcode(candidate?.upc) === uniqueUpcs[0]
-                );
-
-                if (exactUpcMatch) {
-                    resolvedCandidates.push(exactUpcMatch);
-                }
-            } catch (error) {
-                console.warn(`[Import] Failed to resolve embedded UPC ${uniqueUpcs[0]}:`, error);
-            }
-        }
-
-        return this.mergeCandidates(resolvedCandidates);
-    }
-
-    private async getFingerprintCandidates(
-        group: LocalGroup,
-        context: "music" | "spatial" | "video"
-    ): Promise<{ candidates: any[]; strongCandidateIds: Set<string>; trackHintsByCandidateId: Map<string, Record<string, string>> }> {
-        if (context === "video") {
-            return { candidates: [], strongCandidateIds: new Set<string>(), trackHintsByCandidateId: new Map<string, Record<string, string>>() };
-        }
-
-        await this.ensureFingerprints(group);
-        const fingerprints = group.files
-            .map((file) => file.fingerprint)
-            .filter(Boolean) as string[];
-
-        if (fingerprints.length === 0) {
-            return { candidates: [], strongCandidateIds: new Set<string>(), trackHintsByCandidateId: new Map<string, Record<string, string>>() };
-        }
-
-        const candidates: any[] = [];
-        const strongCandidateIds = new Set<string>();
-        const trackHintsByCandidateId = new Map<string, Record<string, string>>();
-        const strongThreshold = Math.max(1, Math.ceil(fingerprints.length * 0.6));
-
-        const placeholders = fingerprints.map(() => "?").join(", ");
-        const rows = db.prepare(`
-            SELECT album_id, COUNT(*) AS matched_files
-            FROM (
-                SELECT COALESCE(
-                    -- The provider release accepted-matched to this file's canonical
-                    -- release (or release group), or named directly by the file.
-                    (
-                        SELECT album_item.provider_id
-                        FROM ProviderItems album_item
-                        LEFT JOIN ProviderEditionMatches album_match
-                          ON album_match.provider_edition_item_id = album_item.id
-                         AND album_match.match_state = 'accepted'
-                        LEFT JOIN AlbumEditions album_release ON album_release.id = album_match.edition_id
-                        LEFT JOIN Albums album_group ON album_group.id = album_release.release_group_id
-                        WHERE album_item.entity_type = 'release'
-                          AND (lf.provider IS NULL OR album_item.provider = lf.provider)
-                          AND (
-                            (lf.provider_entity_type IN ('album', 'release') AND lf.provider_id IS NOT NULL AND album_item.provider_id = lf.provider_id)
-                            OR (lf.canonical_release_mbid IS NOT NULL AND album_release.mbid = lf.canonical_release_mbid)
-                            OR (lf.canonical_release_group_mbid IS NOT NULL AND album_group.mbid = lf.canonical_release_group_mbid)
-                          )
-                        ORDER BY
-                          album_item.updated_at DESC
-                        LIMIT 1
-                    ),
-                    -- Else the release a matching provider TRACK actually occurs on.
-                    (
-                        SELECT album_item.provider_id
-                        FROM ProviderItems track_item
-                        JOIN ProviderEditionMembers track_member
-                          ON track_member.member_item_id = track_item.id
-                        JOIN ProviderItems album_item
-                          ON album_item.id = track_member.provider_edition_item_id
-                        LEFT JOIN ProviderTrackMatches track_match
-                          ON track_match.provider_edition_member_id = track_member.id
-                         AND track_match.match_state = 'accepted'
-                        LEFT JOIN Tracks canonical_track ON canonical_track.id = track_match.track_id
-                        LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
-                        WHERE track_item.entity_type = 'track'
-                          AND (lf.provider IS NULL OR track_item.provider = lf.provider)
-                          AND (
-                            (lf.provider_entity_type = 'track' AND lf.provider_id IS NOT NULL AND track_item.provider_id = lf.provider_id)
-                            OR (lf.canonical_track_mbid IS NOT NULL AND canonical_track.mbid = lf.canonical_track_mbid)
-                            OR (lf.canonical_recording_mbid IS NOT NULL AND canonical_recording.mbid = lf.canonical_recording_mbid)
-                          )
-                        ORDER BY
-                          track_item.updated_at DESC
-                        LIMIT 1
-                    ),
-                    NULL
-                ) AS album_id
-                FROM TrackFiles lf
-                WHERE lf.file_type = 'track'
-                  AND lf.fingerprint IN (${placeholders})
-            ) matched
-            WHERE album_id IS NOT NULL
-            GROUP BY album_id
-            ORDER BY matched_files DESC
-        `).all(...fingerprints) as Array<{ album_id: string; matched_files: number }>;
-
-        for (const row of rows) {
-            try {
-                const album = await this.getProviderAlbum(String(row.album_id));
-                if (!album) {
-                    continue;
-                }
-
-                candidates.push(album);
-                if (row.matched_files >= strongThreshold) {
-                    const candidateKey = this.getCandidateKey(album);
-                    if (candidateKey) {
-                        strongCandidateIds.add(candidateKey);
-                    }
-                }
-            } catch (error) {
-                console.warn(`[Import] Failed to hydrate fingerprint candidate album ${row.album_id}:`, error);
-            }
-        }
-
-        if (rows.length === 0) {
-            const remoteEvidence = await this.getRemoteFingerprintCandidates(group);
-            for (const candidate of remoteEvidence.candidates) {
-                candidates.push(candidate);
-            }
-            for (const candidateId of remoteEvidence.strongCandidateIds) {
-                strongCandidateIds.add(candidateId);
-            }
-            for (const [candidateId, hints] of remoteEvidence.trackHintsByCandidateId.entries()) {
-                trackHintsByCandidateId.set(candidateId, hints);
-            }
-        }
-
-        return { candidates: this.mergeCandidates(candidates), strongCandidateIds, trackHintsByCandidateId };
-    }
-
-    private async getRemoteFingerprintCandidates(
-        group: LocalGroup
-    ): Promise<{ candidates: any[]; strongCandidateIds: Set<string>; trackHintsByCandidateId: Map<string, Record<string, string>> }> {
-        const { generateFingerprint, lookupAcoustId, lookupMusicBrainzRecording } = await import("./fingerprint.js");
-
-        const candidates: any[] = [];
-        const strongCandidateIds = new Set<string>();
-        const trackHintsByCandidateId = new Map<string, Record<string, string>>();
-        const albumsById = new Map<string, any>();
-        const albumMatchedFiles = new Map<string, number>();
-        const albumStrongFiles = new Map<string, number>();
-        const seenRecordingIds = new Set<string>();
-        let fingerprintedFiles = 0;
-
-        for (const file of group.files.slice(0, 3)) {
-            if (![".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".alac", ".aiff"].includes(file.extension)) {
-                continue;
-            }
-
-            let fingerprintResult: { duration: number; fingerprint: string } | null = null;
-            try {
-                fingerprintResult = await generateFingerprint(file.path);
-                file.fingerprint = fingerprintResult.fingerprint;
-                fingerprintedFiles += 1;
-            } catch (error) {
-                console.warn(`[Import] Failed to fingerprint ${file.path} for remote matching:`, error);
-                continue;
-            }
-
-            const fileAlbumIds = new Set<string>();
-            const fileStrongAlbumIds = new Set<string>();
-            const seenTrackIdsForFile = new Set<string>();
-            const recordingIds = await lookupAcoustId(fingerprintResult.fingerprint, fingerprintResult.duration);
-            for (const recordingId of recordingIds.slice(0, 4)) {
-                if (seenRecordingIds.has(recordingId)) {
-                    continue;
-                }
-                seenRecordingIds.add(recordingId);
-
-                const recording = await lookupMusicBrainzRecording(recordingId);
-                if (!recording?.title) {
-                    continue;
-                }
-
-                const primaryArtist = recording.artists[0] || group.commonTags.artist || "";
-                const query = [primaryArtist, recording.title].filter(Boolean).join(" ").trim();
-                if (!query) {
-                    continue;
-                }
-
-                let trackResults: any[] = [];
-                try {
-                    trackResults = await this.searchProvider(query, "tracks", 10);
-                } catch (error) {
-                    console.warn(`[Import] Failed to search provider tracks for fingerprint query "${query}":`, error);
-                    continue;
-                }
-
-                for (const trackResult of trackResults) {
-                    const trackId = trackResult?.id?.toString?.();
-                    if (!trackId || seenTrackIdsForFile.has(trackId)) {
-                        continue;
-                    }
-                    seenTrackIdsForFile.add(trackId);
-
-                    let trackDetails: any = trackResult;
-                    if (!trackDetails?.isrc) {
-                        try {
-                            trackDetails = await this.getProviderTrack(trackId);
-                        } catch (error) {
-                            console.warn(`[Import] Failed to hydrate fingerprint-matched track ${trackId}:`, error);
-                            continue;
-                        }
-                    }
-
-                    const titleScore = stringSimilarity(
-                        normalizeComparableText(recording.title),
-                        normalizeComparableText(trackDetails?.title || trackResult?.title || "")
-                    );
-                    const artistScore = primaryArtist
-                        ? stringSimilarity(
-                            normalizeComparableText(primaryArtist),
-                            normalizeComparableText(trackDetails?.artist_name || trackResult?.artist_name || "")
-                        )
-                        : 0;
-                    const isrcMatch = Boolean(trackDetails?.isrc)
-                        && recording.isrcs.some((isrc) => normalizeComparableText(isrc) === normalizeComparableText(trackDetails.isrc));
-                    const durationMatches = !trackDetails?.duration
-                        || !fingerprintResult.duration
-                        || Math.abs(Number(trackDetails.duration) - Number(fingerprintResult.duration)) <= 5;
-
-                    if (!isrcMatch && titleScore < 0.84) {
-                        continue;
-                    }
-                    if (!isrcMatch && primaryArtist && artistScore < 0.65) {
-                        continue;
-                    }
-                    if (!isrcMatch && !durationMatches) {
-                        continue;
-                    }
-
-                    const albumId = trackDetails?.album_id?.toString?.() ?? trackResult?.album_id?.toString?.();
-                    if (!albumId) {
-                        continue;
-                    }
-
-                    try {
-                        if (!albumsById.has(albumId)) {
-                            const album = await this.getProviderAlbum(albumId);
-                            if (!album) {
-                                continue;
-                            }
-                            albumsById.set(albumId, album);
-                        }
-
-                        fileAlbumIds.add(albumId);
-                        if (isrcMatch || titleScore >= 0.96) {
-                            fileStrongAlbumIds.add(albumId);
-                            const existingHints = trackHintsByCandidateId.get(albumId) || {};
-                            existingHints[file.path] = trackId;
-                            trackHintsByCandidateId.set(albumId, existingHints);
-                        }
-                    } catch (error) {
-                        console.warn(`[Import] Failed to hydrate fingerprint-matched album ${albumId}:`, error);
-                    }
-                }
-            }
-
-            for (const albumId of fileAlbumIds) {
-                albumMatchedFiles.set(albumId, (albumMatchedFiles.get(albumId) || 0) + 1);
-            }
-            for (const albumId of fileStrongAlbumIds) {
-                albumStrongFiles.set(albumId, (albumStrongFiles.get(albumId) || 0) + 1);
-            }
-        }
-
-        const strongThreshold = Math.max(1, Math.ceil(Math.max(fingerprintedFiles, 1) * 0.6));
-        for (const [albumId, album] of albumsById.entries()) {
-            candidates.push(album);
-
-            const candidateKey = this.getCandidateKey(album);
-            if (!candidateKey) {
-                continue;
-            }
-
-            const matchedFiles = albumMatchedFiles.get(albumId) || 0;
-            const strongFiles = albumStrongFiles.get(albumId) || 0;
-            if (matchedFiles >= strongThreshold || strongFiles >= strongThreshold) {
-                strongCandidateIds.add(candidateKey);
-            }
-        }
-
-        return {
-            candidates: this.mergeCandidates(candidates),
-            strongCandidateIds,
-            trackHintsByCandidateId,
-        };
-    }
-
-    private scoreCandidates(
-        group: LocalGroup,
-        candidates: any[],
-        context: "music" | "spatial" | "video",
-        itemType: "album" | "video",
-        evidence?: MatchEvidenceSignals,
-        albumEvidence?: Map<string, AlbumMatchEvidence>,
-        mode: ImportDecisionMode = "NewDownload"
-    ): ProviderMatch[] {
-        const validMatches: ProviderMatch[] = [];
-
-        for (const candidate of candidates) {
-            const candidateId = this.getCandidateKey(candidate);
-            const evaluation = candidateId ? albumEvidence?.get(candidateId) : undefined;
-            const fingerprintTrackHints = candidateId ? evidence?.fingerprintTrackHints?.get(candidateId) : undefined;
-
-            let score = evaluation
-                ? mode === "ExistingFiles"
-                    ? evaluation.closeMatchScore
-                    : evaluation.combinedScore
-                : itemType === "video"
-                    ? this.calculateVideoScore(group, candidate)
-                    : this.calculateScore(group, candidate, context);
-
-            let matchType: ProviderMatch["matchType"] = score > 0.9 ? "exact" : "fuzzy";
-
-            if (candidateId && evidence?.directCandidateIds?.has(candidateId)) {
-                score = Math.max(score, 0.9);
-                matchType = "exact";
-            } else if (candidateId && evidence?.fingerprintCandidateIds?.has(candidateId)) {
-                score = Math.max(score, 0.88);
-                matchType = "fingerprint";
-            } else if (itemType === "album") {
-                const candidateUpc = this.normalizeBarcode(candidate?.upc);
-                if (candidateUpc && evidence?.upcs?.has(candidateUpc)) {
-                    score = Math.max(score, 0.9);
-                    matchType = "exact";
-                }
-            }
-
-            score += this.calculateReleaseCompatibilityAdjustment(group, candidate, context, itemType);
-
-            if (score > 0.4) {
-                let matchedCount = evaluation?.matchedCount;
-                const totalFiles = evaluation?.totalFiles ?? group.files.length;
-                let confidence = mode === "ExistingFiles"
-                    ? evaluation?.closeMatchConfidence ?? evaluation?.confidence
-                    : evaluation?.confidence;
-                const closeMatchScore = evaluation?.closeMatchScore;
-                let closeMatchConfidence = evaluation?.closeMatchConfidence;
-                let coverage = evaluation?.coverage;
-                let trackIdsByFilePath = evaluation?.trackIdsByFilePath;
-
-                if (fingerprintTrackHints && Object.keys(fingerprintTrackHints).length > 0) {
-                    const hintedMatches = Object.keys(fingerprintTrackHints).length;
-                    matchedCount = Math.max(matchedCount ?? 0, hintedMatches);
-                    coverage = totalFiles > 0 ? matchedCount / totalFiles : 0;
-                    const hintedConfidence = coverage >= 1 ? 0.84 : 0.68;
-                    confidence = Math.max(confidence ?? 0, hintedConfidence);
-                    closeMatchConfidence = Math.max(closeMatchConfidence ?? 0, hintedConfidence);
-                    trackIdsByFilePath = {
-                        ...(trackIdsByFilePath || {}),
-                        ...fingerprintTrackHints,
-                    };
-                }
-
-                const normalizedScore = Math.min(score, 1);
-                const normalizedCloseMatchScore = itemType === "album"
-                    ? closeMatchScore ?? normalizedScore
-                    : undefined;
-                const normalizedCloseMatchConfidence = itemType === "album"
-                    ? closeMatchConfidence ?? confidence
-                    : undefined;
-
-                validMatches.push({
-                    item: candidate,
-                    itemType,
-                    score: normalizedScore,
-                    closeMatchScore: normalizedCloseMatchScore,
-                    matchType,
-                    confidence,
-                    closeMatchConfidence: normalizedCloseMatchConfidence,
-                    coverage,
-                    matchedCount,
-                    totalFiles,
-                    autoImportReady: false,
-                    trackIdsByFilePath,
-                });
-            }
-        }
-
-        return this.applyAutoImportPolicy(group, validMatches, itemType, evidence, mode);
-    }
-
-    private groupSuggestsSpatialAudio(group: LocalGroup): boolean {
-        const combinedPath = `${group.path} ${group.files.map((file) => file.name).join(" ")}`.toLowerCase();
-        if (/(dolby[_ -]?atmos|atmos|sony[_ -]?360|360ra|spatial)/.test(combinedPath)) {
-            return true;
-        }
-
-        return group.files.some((file) => {
-            const channels = file.metadata?.format?.numberOfChannels || 0;
-            return channels > 2;
-        });
-    }
-
-    private getLocalExplicitPreference(group: LocalGroup): "explicit" | "clean" | null {
-        const combinedPath = `${group.path} ${group.files.map((file) => file.name).join(" ")}`.toLowerCase();
-        if (/\[(?:e|explicit)\]|(?:^|[\s_-])explicit(?:$|[\s_-])/.test(combinedPath)) {
-            return "explicit";
-        }
-        if (/(?:^|[\s_-])clean(?:$|[\s_-])/.test(combinedPath)) {
-            return "clean";
-        }
-        return null;
-    }
-
-    private calculateReleaseCompatibilityAdjustment(
-        group: LocalGroup,
-        candidate: any,
-        context: "music" | "spatial" | "video",
-        itemType: "album" | "video",
-    ): number {
-        if (itemType === "video") {
-            return 0;
-        }
-
-        let adjustment = 0;
-        const localLooksSpatial = this.groupSuggestsSpatialAudio(group);
-        const localExplicitPreference = this.getLocalExplicitPreference(group);
-        const candidateIsSpatial = hasSpatialAudioQuality([
-            candidate?.quality,
-            candidate?.audio_quality,
-            ...(Array.isArray(candidate?.audioModes) ? candidate.audioModes : []),
-        ]);
-
-        if (context === "music" && candidateIsSpatial && !localLooksSpatial) {
-            adjustment -= 0.18;
-        }
-
-        if (context === "spatial" && candidateIsSpatial) {
-            adjustment += 0.08;
-        }
-
-        if (localExplicitPreference === "explicit") {
-            adjustment += candidate?.explicit ? 0.08 : -0.08;
-        } else if (localExplicitPreference === "clean") {
-            adjustment += candidate?.explicit ? -0.08 : 0.08;
-        }
-
-        return adjustment;
-    }
-
-    private applyAutoImportPolicy(
-        group: LocalGroup,
-        matches: ProviderMatch[],
-        itemType: "album" | "video",
-        evidence?: MatchEvidenceSignals,
-        mode: ImportDecisionMode = "NewDownload",
-    ): ProviderMatch[] {
-        return ImportDecisionEngine.evaluateMatches({
-            group,
-            matches,
-            mode,
-            directCandidateCount: evidence?.directCandidateIds?.size || 0,
-            strongFingerprintCandidateCount: evidence?.fingerprintCandidateIds?.size || 0,
-        });
-    }
-
-    private toIdentifiableFiles(group: LocalGroup): IdentifiableFile[] {
-        return group.files.map((file, index) => ({
-            id: index + 1,
-            filename: file.name,
-            duration: file.metadata?.format?.duration ?? null,
-            detected_artist: group.commonTags.artist || file.metadata?.common?.artist || null,
-            detected_album: group.commonTags.album || file.metadata?.common?.album || null,
-            detected_track: file.metadata?.common?.title || path.parse(file.name).name,
-            file_path: file.path,
-            relative_path: path.relative(group.rootPath, file.path),
-        }));
-    }
-
-    private async buildAlbumMatchEvidence(
-        group: LocalGroup,
-        candidates: any[]
-    ): Promise<Map<string, AlbumMatchEvidence>> {
-        const evidence = new Map<string, AlbumMatchEvidence>();
-        if (candidates.length === 0) {
-            return evidence;
-        }
-
-        const identifiableFiles = this.toIdentifiableFiles(group);
-        if (identifiableFiles.length === 0) {
-            return evidence;
-        }
-
-        const fileById = new Map(identifiableFiles.map((file) => [file.id, file]));
-        const scoredCandidates = await IdentificationService.scoreAlbumCandidates(identifiableFiles, candidates);
-
-        for (const scored of scoredCandidates) {
-            const candidateId = this.getCandidateKey(scored.album);
-            if (!candidateId) {
-                continue;
-            }
-
-            const trackIdsByFilePath: Record<string, string> = {};
-            for (const [fileId, trackId] of Object.entries(scored.mappedTracks)) {
-                const file = fileById.get(Number(fileId));
-                if (!file?.file_path) {
-                    continue;
-                }
-
-                trackIdsByFilePath[file.file_path] = trackId;
-            }
-
-            evidence.set(candidateId, {
-                ...scored,
-                trackIdsByFilePath,
-            });
-        }
-
-        return evidence;
-    }
-
-    private async getTrackBackfilledAlbumCandidates(group: LocalGroup, queries: string[]): Promise<any[]> {
-        const albums: any[] = [];
-        const seenAlbumIds = new Set<string>();
-
-        for (const query of queries) {
-            if (!query) {
-                continue;
-            }
-
-            let trackResults: any[] = [];
-            try {
-                trackResults = await this.searchProvider(query, "tracks", 5);
-            } catch {
-                continue;
-            }
-
-            for (const track of trackResults) {
-                const albumId = track?.album_id?.toString?.()
-                    ?? track?.album?.id?.toString?.()
-                    ?? track?.album?.providerId?.toString?.();
-                if (!albumId || seenAlbumIds.has(albumId)) {
-                    continue;
-                }
-
-                const trackArtist = track?.artist_name?.toLowerCase?.();
-                const groupArtist = group.commonTags.artist?.toLowerCase();
-                if (groupArtist && trackArtist && !trackArtist.includes(groupArtist) && !groupArtist.includes(trackArtist)) {
-                    continue;
-                }
-
-                seenAlbumIds.add(albumId);
-
-                try {
-                    const album = await this.getProviderAlbum(albumId);
-                    if (album) {
-                        albums.push(album);
-                    }
-                } catch (error) {
-                    console.warn(`[Import] Failed to hydrate album ${albumId} from track search:`, error);
-                }
-            }
-        }
-
-        return albums;
+        void mode;
+        return this.matchGroup(group, context);
     }
 
     private async matchGroup(
         group: LocalGroup,
         context: "music" | "spatial" | "video",
-        mode: ImportDecisionMode = "NewDownload"
     ): Promise<ProviderMatch[]> {
-        const { artist, album } = group.commonTags;
-        const directIdentifiers = this.collectDirectIdentifiers(group);
-        const directCandidates = await this.getDirectIdentifierCandidates(directIdentifiers, context);
-        const fingerprintEvidence = await this.getFingerprintCandidates(group, context);
-        const directCandidateIds = new Set(
-            directCandidates
-                .map((candidate) => this.getCandidateKey(candidate))
-                .filter(Boolean) as string[]
-        );
-        const directUpcs = new Set(directIdentifiers.upcs);
+        return context === "video" || group.libraryRoot === "videos"
+            ? this.matchVideo(group)
+            : this.matchAlbum(group);
+    }
 
-        const fallbackTitle = group.files[0]?.metadata?.common?.title
-            || path.parse(group.files[0]?.name || "Unknown").name;
-        const searchTitle = album || fallbackTitle;
+    private async matchAlbum(group: LocalGroup): Promise<ProviderMatch[]> {
+        const candidates = CatalogCandidateService.getReleaseGroupCandidates({
+            artist: artistName(group),
+            album: albumTitle(group),
+            limit: 8,
+        });
+        const { files, pathById } = identifiableFiles(group);
+        const scored = await IdentificationService.scoreAlbumCandidates(files, candidates);
 
-        const queryParts = [artist, searchTitle].filter(Boolean);
-        if (queryParts.length === 0) return [];
+        return scored.map((match) => ({
+            item: match.album,
+            itemType: "album",
+            score: match.combinedScore,
+            closeMatchScore: match.closeMatchScore,
+            matchType: match.combinedScore >= 0.9 ? "exact" : "fuzzy",
+            confidence: match.confidence,
+            closeMatchConfidence: match.closeMatchConfidence,
+            coverage: match.coverage,
+            matchedCount: match.matchedCount,
+            totalFiles: match.totalFiles,
+            autoImportReady: false,
+            trackIdsByFilePath: Object.fromEntries(
+                Object.entries(match.mappedTracks)
+                    .map(([fileId, trackMbid]) => [pathById.get(Number(fileId)), trackMbid])
+                    .filter((entry): entry is [string, string] => Boolean(entry[0])),
+            ),
+            rejections: [EXPLICIT_CANONICAL_SELECTION],
+            typedRejections: [{ reason: EXPLICIT_CANONICAL_SELECTION, type: "permanent" }],
+        }));
+    }
 
-        const query = queryParts.join(" ");
-        let searchCandidates: any[] = [];
-        try {
-            searchCandidates = await this.searchProvider(query, context === "video" ? "videos" : "albums", 5);
-        } catch {
-            searchCandidates = [];
-        }
+    private matchVideo(group: LocalGroup): ProviderMatch[] {
+        const file = group.files[0];
+        if (!file) return [];
+        const localArtist = artistName(group);
+        const localTitle = fileTitle(file);
+        const localDuration = Number(file.metadata?.format?.duration || 0);
+        const candidates = CatalogCandidateService.getVideoRecordingCandidates({
+            artist: localArtist,
+            title: localTitle,
+            limit: 12,
+        });
 
-        let artistVideosCandidates: any[] = [];
-        if (context === "video") {
-            const artistId = this.resolveArtistIdByName(artist);
-            if (artistId) {
-                try {
-                    artistVideosCandidates = (await this.getProviderArtistVideos(artistId)).slice(0, 30);
-                } catch (error) {
-                    console.warn("[Import] Failed to fetch artist-scoped videos:", error);
-                }
-            }
-        }
-
-        const initialCandidates = this.mergeCandidates(
-            directCandidates,
-            fingerprintEvidence.candidates,
-            searchCandidates,
-            artistVideosCandidates,
-        );
-        const trackQueries = context === "video"
-            ? []
-            : Array.from(new Set([
-                [artist, fallbackTitle].filter(Boolean).join(" ").trim(),
-                query,
-                ...group.files
-                    .slice(0, 3)
-                    .map((file) => [artist, extractTrackStem(file.name)].filter(Boolean).join(" ").trim())
-                    .filter(Boolean),
-            ].filter(Boolean)));
-        const trackBackfilledAlbums = context === "video"
-            ? []
-            : await this.getTrackBackfilledAlbumCandidates(group, trackQueries);
-        const candidates = context === "video"
-            ? initialCandidates
-            : this.mergeCandidates(initialCandidates, trackBackfilledAlbums);
-        const albumEvidence = context === "video"
-            ? undefined
-            : await this.buildAlbumMatchEvidence(group, candidates);
-
-        let validMatches = this.scoreCandidates(
-            group,
-            candidates,
-            context,
-            context === "video" ? "video" : "album",
-            {
-                directCandidateIds,
-                fingerprintCandidateIds: fingerprintEvidence.strongCandidateIds,
-                fingerprintTrackHints: fingerprintEvidence.trackHintsByCandidateId,
-                upcs: directUpcs,
-            },
-            albumEvidence,
-            mode
-        );
-
-        if (context !== "video" && validMatches.length === 0) {
-            const mergedAlbums = this.mergeCandidates(
-                directCandidates,
-                fingerprintEvidence.candidates,
-                searchCandidates,
-                trackBackfilledAlbums
-            );
-            const backfilledEvidence = await this.buildAlbumMatchEvidence(group, mergedAlbums);
-            validMatches = this.scoreCandidates(
-                group,
-                mergedAlbums,
-                context,
-                "album",
-                {
-                    directCandidateIds,
-                    fingerprintCandidateIds: fingerprintEvidence.strongCandidateIds,
-                    fingerprintTrackHints: fingerprintEvidence.trackHintsByCandidateId,
-                    upcs: directUpcs,
-                },
-                backfilledEvidence,
-                mode
-            );
-        }
-
-        // Video ambiguity check: if gap between top-1 and top-2 is < 0.15, require manual review
-        if (context === "video" && validMatches.length >= 2) {
-            const sorted = [...validMatches].sort((a, b) => b.score - a.score);
-            if (sorted[0].score - sorted[1].score < 0.15) {
-                const topMatch = sorted[0];
-                const ambiguityReason = "Ambiguous: score gap to next candidate is below threshold";
-                validMatches = validMatches.map((m) =>
-                    m === topMatch
-                        ? {
-                            ...m,
-                            autoImportReady: false,
-                            rejections: [...(m.rejections || []), ambiguityReason],
-                            typedRejections: [...(m.typedRejections || []), { reason: ambiguityReason, type: "temporary" as const }],
-                        }
-                        : m
+        return candidates
+            .map((candidate) => {
+                const titleScore = stringSimilarity(
+                    normalizeComparableText(localTitle),
+                    normalizeComparableText(candidate.title),
                 );
-            }
-        }
-
-        return validMatches;
-    }
-
-    private resolveArtistIdByName(artistName: string | undefined): string | null {
-        if (!artistName) return null;
-        const row = db.prepare("SELECT id FROM Artists WHERE LOWER(name) = LOWER(?) LIMIT 1")
-            .get(artistName) as { id: number } | undefined;
-        return row ? String(row.id) : null;
-    }
-
-    private stripVersionSuffix(title: string): string {
-        return title
-            .replace(/\s*[([]\s*(?:explicit|clean|censored|remaster(?:ed)?|remix|live|deluxe|extended|radio\s*edit|acoustic|instrumental|version|edit|feat\..+?|ft\..+?)\s*[)\]]/gi, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-    }
-
-    private calculateScore(group: LocalGroup, tidalAlbum: any, context: "music" | "spatial" | "video"): number {
-        const localArtist = normalizeComparableText(group.commonTags.artist);
-        const localAlbum = normalizeComparableText(group.commonTags.album);
-        const tidalArtist = normalizeComparableText(tidalAlbum.artist?.name || tidalAlbum.artists?.[0]?.name);
-        const tidalAlbumTitle = normalizeComparableText(tidalAlbum.title);
-        const localLooksSpatial = this.groupSuggestsSpatialAudio(group);
-
-        let weightedScore = 0;
-        let totalWeight = 0;
-
-        if (localArtist && tidalArtist) {
-            weightedScore += stringSimilarity(localArtist, tidalArtist) * 0.45;
-            totalWeight += 0.45;
-        }
-
-        if (localAlbum && tidalAlbumTitle) {
-            weightedScore += stringSimilarity(localAlbum, tidalAlbumTitle) * 0.55;
-            totalWeight += 0.55;
-        }
-
-        if (totalWeight === 0) {
-            return 0;
-        }
-
-        let score = weightedScore / totalWeight;
-
-        if (!localArtist || !localAlbum) {
-            score *= 0.92;
-        }
-
-        const remoteReleaseDate = tidalAlbum.releaseDate || tidalAlbum.release_date;
-        if (group.commonTags.year && remoteReleaseDate) {
-            const localYear = parseInt(group.commonTags.year.toString());
-            const tidalYear = new Date(remoteReleaseDate).getFullYear();
-            if (!isNaN(localYear) && !isNaN(tidalYear) && localYear !== tidalYear) {
-                if (Math.abs(localYear - tidalYear) > 1) {
-                    score -= 0.1;
-                }
-            }
-        }
-
-        if (tidalAlbum.numberOfTracks && group.files.length > 0) {
-            const trackDiff = Math.abs(group.files.length - tidalAlbum.numberOfTracks);
-            if (trackDiff === 0) score += 0.05;
-            else if (trackDiff > 5) score -= 0.1;
-        }
-
-        if (context === "spatial") {
-            const isSpatial = hasSpatialAudioQuality([
-                tidalAlbum.quality,
-                ...(Array.isArray(tidalAlbum.audioModes) ? tidalAlbum.audioModes : []),
-            ]);
-            if (isSpatial) score += 0.2;
-            else score -= 0.3;
-        } else if (context === "music") {
-            const isSpatial = hasSpatialAudioQuality([
-                tidalAlbum.quality,
-                ...(Array.isArray(tidalAlbum.audioModes) ? tidalAlbum.audioModes : []),
-            ]);
-            if (isSpatial && !localLooksSpatial) {
-                score -= 0.18;
-            }
-        }
-
-        return Math.min(Math.max(score, 0), 1);
-    }
-
-    private calculateVideoScore(group: LocalGroup, tidalVideo: any): number {
-        const fallbackTitle = group.files[0]?.metadata?.common?.title
-            || path.parse(group.files[0]?.name || "Unknown").name;
-        const rawLocalTitle = group.commonTags.album || fallbackTitle || "";
-        const rawTidalTitle = tidalVideo.title || "";
-
-        if (!rawLocalTitle || !rawTidalTitle) return 0;
-
-        const localTitle = normalizeComparableText(this.stripVersionSuffix(rawLocalTitle));
-        const tidalTitle = normalizeComparableText(this.stripVersionSuffix(rawTidalTitle));
-        const localArtist = group.commonTags.artist
-            ? normalizeComparableText(group.commonTags.artist)
-            : null;
-        const tidalArtist = normalizeComparableText(
-            tidalVideo.artist?.name || tidalVideo.artists?.[0]?.name || tidalVideo.artist_name || ""
-        );
-
-        const titleScore = stringSimilarity(localTitle, tidalTitle);
-        const artistScore = (localArtist && tidalArtist) ? stringSimilarity(localArtist, tidalArtist) : 0;
-
-        // Duration score: 0→1 over ±30s proximity window; omitted if either side unavailable
-        const localDuration = group.files[0]?.metadata?.format?.duration ?? null;
-        const tidalDuration = tidalVideo.duration ?? null;
-        let durationScore = 0;
-        let durationWeight = 0;
-        if (localDuration != null && tidalDuration != null) {
-            const diff = Math.abs(Number(localDuration) - Number(tidalDuration));
-            durationScore = Math.max(0, 1 - diff / 30);
-            durationWeight = 0.20;
-        }
-
-        // Year score: 1.0 at same year, decays 0.15/year, 0 at ±4+ years; omitted if unavailable
-        const localYear = group.commonTags.year ?? null;
-        const tidalReleaseDate = tidalVideo.release_date ?? null;
-        let yearScore = 0;
-        let yearWeight = 0;
-        if (localYear != null && tidalReleaseDate != null) {
-            const tidalYear = new Date(tidalReleaseDate).getFullYear();
-            if (!isNaN(tidalYear)) {
-                const yearDiff = Math.abs(Number(localYear) - tidalYear);
-                yearScore = yearDiff >= 4 ? 0 : 1 - yearDiff * 0.15;
-                yearWeight = 0.05;
-            }
-        }
-
-        // Version/explicit token compatibility: bonus if both explicit or both clean, penalty if mismatch
-        const pathAndNames = `${group.path} ${group.files.map((f) => f.name).join(" ")}`;
-        const localLooksExplicit = /\[(?:e|explicit)\]|\bexplicit\b/i.test(pathAndNames);
-        const localLooksClean = /\bclean\b/i.test(pathAndNames);
-        let versionScore = 0;
-        let versionWeight = 0;
-        if (tidalVideo.explicit != null && (localLooksExplicit || localLooksClean)) {
-            versionWeight = 0.05;
-            const tidalExplicit = Boolean(tidalVideo.explicit);
-            versionScore = (tidalExplicit && localLooksExplicit) || (!tidalExplicit && localLooksClean) ? 1.0 : 0.0;
-        }
-
-        const artistWeight = (localArtist && tidalArtist) ? 0.25 : 0;
-        const totalWeight = 0.45 + artistWeight + durationWeight + yearWeight + versionWeight;
-
-        const rawScore = (
-            titleScore * 0.45
-            + artistScore * artistWeight
-            + durationScore * durationWeight
-            + yearScore * yearWeight
-            + versionScore * versionWeight
-        ) / (totalWeight || 1);
-
-        // Hard artist-mismatch penalty: cap at 0.35 when artist similarity is very low
-        if (localArtist && tidalArtist && artistScore < 0.25) {
-            return Math.min(rawScore, 0.35);
-        }
-
-        return Math.min(Math.max(rawScore, 0), 1);
+                const candidateArtist = candidate.artist_name || candidate.artist.name;
+                const artistScore = localArtist
+                    ? stringSimilarity(
+                        normalizeComparableText(localArtist),
+                        normalizeComparableText(candidateArtist),
+                    )
+                    : 0.5;
+                const durationScore = localDuration > 0 && candidate.duration
+                    ? Math.max(0, 1 - Math.abs(localDuration - candidate.duration) / 30)
+                    : 0.5;
+                const score = titleScore * 0.6 + artistScore * 0.3 + durationScore * 0.1;
+                return {
+                    item: candidate,
+                    itemType: "video" as const,
+                    score,
+                    matchType: score >= 0.9 ? "exact" as const : "fuzzy" as const,
+                    confidence: score,
+                    coverage: 1,
+                    matchedCount: 1,
+                    totalFiles: 1,
+                    autoImportReady: false,
+                    rejections: [EXPLICIT_CANONICAL_SELECTION],
+                    typedRejections: [{ reason: EXPLICIT_CANONICAL_SELECTION, type: "permanent" as const }],
+                };
+            })
+            .filter((match) => match.score >= 0.55)
+            .sort((left, right) => right.score - left.score);
     }
 }
 

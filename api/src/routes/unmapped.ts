@@ -4,7 +4,6 @@ import { runWithAsyncBusyRetry } from "../database.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { UnmappedFilesService } from "../services/mediafiles/unmapped-files.js";
-import { streamingProviderManager } from "../services/providers/index.js";
 import {
     getEnumValue,
     getObjectBody,
@@ -12,6 +11,7 @@ import {
     getRequiredInteger,
     getRequiredIntegerArray,
     isRequestValidationError,
+    rejectUnknownKeys,
 } from "../utils/request-validation.js";
 
 const router = Router();
@@ -20,18 +20,22 @@ const unmappedFilesService = new UnmappedFilesService();
 const fileActionValues = ["ignore", "unignore", "delete", "map"] as const;
 const bulkActionValues = ["ignore", "unignore", "delete"] as const;
 
-function queueUnmappedImport(items: Array<{ id: number; providerId: string }>): Promise<number> {
-    const sortedIds = items.map((item) => item.id).sort((left, right) => left - right);
-    const refId = `unmapped-import:${sortedIds.join(",")}`;
+function queueCanonicalVideoImport(canonicalVideo: {
+    libraryId: number;
+    mappings: Array<{ unmappedFileId: number; recordingId: number }>;
+}): Promise<number> {
+    const sortedIds = canonicalVideo.mappings
+        .map((mapping) => mapping.unmappedFileId)
+        .sort((left, right) => left - right);
     return runWithAsyncBusyRetry(() =>
         CommandQueueManager.push(
             CommandNames.ImportUnmappedFiles,
             {
-                items,
-                title: "Importing unmapped files",
-                description: `Importing ${items.length} mapped file${items.length === 1 ? "" : "s"}`,
+                canonicalVideo,
+                title: "Importing canonical videos",
+                description: `Importing ${canonicalVideo.mappings.length} mapped video${canonicalVideo.mappings.length === 1 ? "" : "s"}`,
             },
-            refId,
+            `canonical-video-import:${canonicalVideo.libraryId}:${sortedIds.join(",")}`,
         ),
     );
 }
@@ -39,7 +43,7 @@ function queueUnmappedImport(items: Array<{ id: number; providerId: string }>): 
 function queueCanonicalUnmappedImport(canonical: {
     libraryId: number;
     editionId: number;
-    mappings: Array<{ unmappedFileId: number; trackId: number; providerItemId?: number | null }>;
+    mappings: Array<{ unmappedFileId: number; trackId: number }>;
 }): Promise<number> {
     const sortedIds = canonical.mappings
         .map((mapping) => mapping.unmappedFileId)
@@ -105,13 +109,10 @@ router.post("/canonical-import", async (req, res) => {
         }
         const mappings = rawMappings.map((entry, index) => {
             const mapping = getObjectBody(entry, `mappings[${index}] must be a JSON object`);
-            const providerItemId = mapping.providerItemId == null
-                ? undefined
-                : getRequiredInteger(mapping, "providerItemId");
+            rejectUnknownKeys(mapping, ["unmappedFileId", "trackId"], `mappings[${index}]`);
             return {
                 unmappedFileId: getRequiredInteger(mapping, "unmappedFileId"),
                 trackId: getRequiredInteger(mapping, "trackId"),
-                providerItemId,
             };
         });
         const canonical = {
@@ -131,6 +132,58 @@ router.post("/canonical-import", async (req, res) => {
             return res.status(400).json({ error: error.message });
         }
         res.status(500).json({ error: error.message || "Failed to queue canonical import" });
+    }
+});
+
+router.post("/canonical/acoustid", async (req, res) => {
+    try {
+        const body = getObjectBody(req.body);
+        rejectUnknownKeys(body, ["unmappedFileId"]);
+        const result = await unmappedFilesService.identifyFileByAcoustId(
+            getRequiredInteger(body, "unmappedFileId"),
+        );
+        res.json(result);
+    } catch (error: any) {
+        if (isRequestValidationError(error)) {
+            return res.status(400).json({ error: error.message });
+        }
+        const message = error?.message || "AcoustID identification failed";
+        const status = /not found|missing from disk/i.test(message) ? 404 : 422;
+        res.status(status).json({ error: message });
+    }
+});
+
+router.post("/canonical-video-import", async (req, res) => {
+    try {
+        const body = getObjectBody(req.body);
+        rejectUnknownKeys(body, ["libraryId", "mappings"]);
+        if (!Array.isArray(body.mappings) || body.mappings.length === 0) {
+            return res.status(400).json({ error: "mappings must be a non-empty array" });
+        }
+        const mappings = body.mappings.map((entry, index) => {
+            const mapping = getObjectBody(entry, `mappings[${index}] must be a JSON object`);
+            rejectUnknownKeys(mapping, ["unmappedFileId", "recordingId"], `mappings[${index}]`);
+            return {
+                unmappedFileId: getRequiredInteger(mapping, "unmappedFileId"),
+                recordingId: getRequiredInteger(mapping, "recordingId"),
+            };
+        });
+        const canonicalVideo = {
+            libraryId: getRequiredInteger(body, "libraryId"),
+            mappings,
+        };
+        const commandId = await queueCanonicalVideoImport(canonicalVideo);
+        res.status(202).json({
+            success: true,
+            queued: commandId !== -1,
+            commandId,
+            message: `Queued canonical video import for ${mappings.length} file${mappings.length === 1 ? "" : "s"}.`,
+        });
+    } catch (error: any) {
+        if (isRequestValidationError(error)) {
+            return res.status(400).json({ error: error.message });
+        }
+        res.status(500).json({ error: error.message || "Failed to queue canonical video import" });
     }
 });
 
@@ -168,17 +221,10 @@ router.post("/:id/action", async (req, res) => {
                 break;
 
             case "map":
-                {
-                    const commandId = await queueUnmappedImport([{ id, providerId: getRequiredIdentifier(body, "providerId") }]);
-
-                    res.status(202).json({
-                        success: true,
-                        queued: commandId !== -1,
-                        commandId,
-                        message: "Queued unmapped file import",
-                    });
-                    break;
-                }
+                res.status(410).json({
+                    error: "Provider-keyed manual import was removed; use canonical MusicBrainz import",
+                });
+                break;
 
             default:
                 res.status(400).json({ error: "Invalid action" });
@@ -200,14 +246,9 @@ router.post("/identify", async (req, res) => {
         const entityType = typeof body.entityType === "string" ? body.entityType : undefined;
 
         if (entityType === "video") {
-            const providerId = getRequiredIdentifier(body, "providerId");
-            const provider = streamingProviderManager.getDefaultStreamingProvider();
-            const video = provider.getVideo ? await provider.getVideo(providerId) : null;
-            if (!video) {
-                return res.status(404).json({ success: false, error: `Video ${providerId} not found on ${provider.name}` });
-            }
-            res.json({ success: true, entityType: "video", candidate: video });
-            return;
+            return res.status(410).json({
+                error: "Provider-keyed video identification was removed; select a canonical MusicBrainz Recording",
+            });
         }
 
         const fileIds = getRequiredIntegerArray(body, "fileIds");
@@ -233,39 +274,12 @@ router.post("/identify", async (req, res) => {
 
 /**
  * POST /api/unmapped/bulk-map
- * Bulk maps unmapped files to provider tracks.
+ * Provider-keyed bulk mapping was retired in favor of typed canonical imports.
  */
-router.post("/bulk-map", async (req, res) => {
-    try {
-        const body = getObjectBody(req.body);
-        const rawItems = body.items;
-        if (!Array.isArray(rawItems) || rawItems.length === 0) {
-            return res.status(400).json({ error: "Missing or invalid items payload" });
-        }
-
-        const items = rawItems.map((entry, index) => {
-            const item = getObjectBody(entry, `items[${index}] must be a JSON object`);
-            return {
-                id: getRequiredInteger(item, "id"),
-                providerId: getRequiredIdentifier(item, "providerId"),
-            };
-        });
-
-        const commandId = await queueUnmappedImport(items);
-        res.status(202).json({
-            success: true,
-            queued: commandId !== -1,
-            commandId,
-            message: `Queued import for ${items.length} mapped file${items.length === 1 ? "" : "s"}.`,
-        });
-    } catch (e: any) {
-        if (isRequestValidationError(e)) {
-            return res.status(400).json({ error: e.message });
-        }
-
-        console.error(`[Unmapped API] Error bulk mapping files:`, e);
-        res.status(500).json({ error: e.message || "Failed to bulk map files" });
-    }
+router.post("/bulk-map", (_req, res) => {
+    res.status(410).json({
+        error: "Provider-keyed manual import was removed; use canonical MusicBrainz import",
+    });
 });
 
 router.post("/bulk-action", async (req, res) => {

@@ -800,7 +800,11 @@ const TrackList = <T extends TrackListItem>({
                   {numbering === "index"
                     ? index + 1
                     : formatTrackPositionFrom(track, {
-                      multiVolume: hasMultipleVolumes,
+                      // A volume header already supplies the disc context on
+                      // album pages, so repeating it as "V-T" in every row is
+                      // visual noise. Compact lists without headers still need
+                      // the volume prefix to keep positions unambiguous.
+                      multiVolume: hasMultipleVolumes && !showVolumeHeaders,
                       fallbackIndex: index + 1,
                     })}
                 </span>
@@ -1020,6 +1024,7 @@ const TrackList = <T extends TrackListItem>({
     showDownloadedColumn,
     shouldShowLocalQuality,
     showQuality,
+    showVolumeHeaders,
     styles.actionCellContent,
     styles.checkIcon,
     styles.durationText,

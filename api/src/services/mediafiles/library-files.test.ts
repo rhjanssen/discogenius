@@ -18,6 +18,7 @@ let libraryStatsModule: typeof import("../music/library-stats-query-service.js")
 let libraryScanModule: typeof import("./library-scan.js");
 let audioLibraryPathModule: typeof import("./audio-library-path.js");
 let artistStatisticsModule: typeof import("../music/artist-statistics-service.js");
+let extraFileServiceModule: typeof import("../extras/files/extra-file-service.js");
 
 function writeTestConfig(overrides?: {
   artistFolder?: string;
@@ -140,6 +141,7 @@ before(async () => {
   libraryScanModule = await import("./library-scan.js");
   audioLibraryPathModule = await import("./audio-library-path.js");
   artistStatisticsModule = await import("../music/artist-statistics-service.js");
+  extraFileServiceModule = await import("../extras/files/extra-file-service.js");
 
   writeTestConfig();
 });
@@ -169,6 +171,127 @@ beforeEach(() => {
 after(() => {
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("one physical sidecar can be owned by two libraries sharing a root", () => {
+  const { db } = dbModule;
+  const metadataProfile = db.prepare(`
+    SELECT id FROM MetadataProfiles ORDER BY id LIMIT 1
+  `).get() as { id: number };
+  const qualityProfiles = db.prepare(`
+    SELECT id FROM quality_profiles ORDER BY id LIMIT 2
+  `).all() as Array<{ id: number }>;
+  assert.equal(qualityProfiles.length, 2);
+
+  const sharedRoot = path.join(tempDir, "shared-sidecar-root");
+  fs.mkdirSync(sharedRoot, { recursive: true });
+  const coverPath = path.join(sharedRoot, "Artist", "Album", "cover.jpg");
+  fs.mkdirSync(path.dirname(coverPath), { recursive: true });
+  fs.writeFileSync(coverPath, "cover");
+
+  const insertLibrary = db.prepare(`
+    INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id)
+    VALUES (?, ?, ?, ?)
+    RETURNING id
+  `);
+  const lossless = insertLibrary.get(
+    "Shared sidecar lossless",
+    sharedRoot,
+    metadataProfile.id,
+    qualityProfiles[0].id,
+  ) as { id: number };
+  const lossy = insertLibrary.get(
+    "Shared sidecar lossy",
+    sharedRoot,
+    metadataProfile.id,
+    qualityProfiles[1].id,
+  ) as { id: number };
+
+  const firstId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "shared-sidecar-artist",
+    libraryId: lossless.id,
+    albumId: "shared-sidecar-album",
+    filePath: coverPath,
+    libraryRoot: sharedRoot,
+    fileType: "cover",
+  });
+  const secondId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "shared-sidecar-artist",
+    libraryId: lossy.id,
+    albumId: "shared-sidecar-album",
+    filePath: coverPath,
+    libraryRoot: sharedRoot,
+    fileType: "cover",
+  });
+
+  assert.equal(secondId, firstId);
+  assert.deepEqual(
+    extraFileServiceModule.ExtraFileService.libraryIds("MetadataFiles", firstId),
+    [lossless.id, lossy.id],
+  );
+
+  const firstRelease = extraFileServiceModule.ExtraFileService.releaseLibrary(
+    "MetadataFiles",
+    firstId,
+    lossless.id,
+  );
+  assert.equal(firstRelease.mayDeletePhysicalFile, false);
+  assert.deepEqual(firstRelease.remainingLibraryIds, [lossy.id]);
+  assert.equal(fs.existsSync(coverPath), true);
+
+  const finalRelease = extraFileServiceModule.ExtraFileService.releaseLibrary(
+    "MetadataFiles",
+    firstId,
+    lossy.id,
+  );
+  assert.equal(finalRelease.mayDeletePhysicalFile, true);
+  assert.deepEqual(finalRelease.remainingLibraryIds, []);
+});
+
+test("playable files fail closed when a shared root has no explicit library", () => {
+  const { db } = dbModule;
+  const metadataProfile = db.prepare(`
+    SELECT id FROM MetadataProfiles ORDER BY id LIMIT 1
+  `).get() as { id: number };
+  const qualityProfiles = db.prepare(`
+    SELECT id FROM quality_profiles ORDER BY id LIMIT 2
+  `).all() as Array<{ id: number }>;
+  const sharedRoot = path.join(tempDir, "ambiguous-playable-root");
+  const trackPath = path.join(sharedRoot, "Artist", "Album", "01 - Track.flac");
+  fs.mkdirSync(path.dirname(trackPath), { recursive: true });
+  fs.writeFileSync(trackPath, "audio");
+
+  const insertLibrary = db.prepare(`
+    INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id)
+    VALUES (?, ?, ?, ?)
+  `);
+  insertLibrary.run(
+    "Ambiguous playable A",
+    sharedRoot,
+    metadataProfile.id,
+    qualityProfiles[0].id,
+  );
+  insertLibrary.run(
+    "Ambiguous playable B",
+    sharedRoot,
+    metadataProfile.id,
+    qualityProfiles[1].id,
+  );
+
+  assert.throws(
+    () => libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+      artistId: "ambiguous-playable-artist",
+      filePath: trackPath,
+      libraryRoot: sharedRoot,
+      fileType: "track",
+    }),
+    /multiple enabled libraries share the requested root.*provide libraryId/u,
+  );
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM TrackFiles WHERE file_path = ?")
+      .get(trackPath) as { count: number }).count,
+    0,
+  );
 });
 
 test("computeExpectedPath keeps the stored artist folder canonical when naming changes", () => {
@@ -892,6 +1015,13 @@ test("upsertLibraryFile merges duplicate path and media identity rows during res
   `).run("1", "Queen", "Queen", 1);
 
 const root = configModule.Config.getMusicPath();
+  const library = dbModule.db.prepare(`
+    SELECT id
+    FROM Libraries
+    WHERE root_path = ?
+    ORDER BY id
+    LIMIT 1
+  `).get(root) as { id: number };
   const targetPath = path.join(root, "Queen", "01 - Bohemian Rhapsody.flac");
   const stalePath = path.join(root, "Queen", "old.flac");
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -900,18 +1030,21 @@ const root = configModule.Config.getMusicPath();
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, library_slot,
+      artist_id, library_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size, file_type, quality
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "1", "tidal", "track", "101", "stereo", targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "flac", 5, "track", "LOSSLESS",
-    "1", "tidal", "track", "100", "stereo", stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "flac", 5, "track", "LOSSLESS",
+    "1", library.id, "tidal", "track", "101", "stereo", targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "flac", 5, "track", "LOSSLESS",
+    "1", library.id, "tidal", "track", "100", "stereo", stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "flac", 5, "track", "LOSSLESS",
   );
 
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
     albumId: "10",
     mediaId: "100",
+    provider: "tidal",
+    providerEntityType: "track",
+    providerId: "100",
     filePath: targetPath,
     libraryRoot: root,
     fileType: "track",
@@ -1114,6 +1247,45 @@ const root = configModule.Config.getMusicPath();
   assert.equal(staleMetadataFile, undefined);
 });
 
+test("tracked sidecars do not collide when providers reuse the same external ID", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, path, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("sidecar-artist", "Bastille", "Bastille", 1);
+
+  const root = configModule.Config.getMusicPath();
+  const tidalPath = path.join(root, "Bastille", "tidal-shared-id.lrc");
+  const spotifyPath = path.join(root, "Bastille", "spotify-shared-id.lrc");
+  fs.mkdirSync(path.dirname(tidalPath), { recursive: true });
+  fs.writeFileSync(tidalPath, "tidal lyrics");
+  fs.writeFileSync(spotifyPath, "spotify lyrics");
+
+  for (const [provider, filePath] of [["tidal", tidalPath], ["spotify", spotifyPath]] as const) {
+    libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+      artistId: "sidecar-artist",
+      mediaId: "shared-track-id",
+      provider,
+      providerEntityType: "track",
+      providerId: "shared-track-id",
+      filePath,
+      libraryRoot: root,
+      fileType: "lyrics",
+      librarySlot: "stereo",
+    });
+  }
+
+  const rows = dbModule.db.prepare(`
+    SELECT provider, provider_id, file_path
+    FROM LyricFiles
+    WHERE provider_id = 'shared-track-id'
+    ORDER BY provider
+  `).all() as Array<{ provider: string; provider_id: string; file_path: string }>;
+  assert.deepEqual(rows, [
+    { provider: "spotify", provider_id: "shared-track-id", file_path: spotifyPath },
+    { provider: "tidal", provider_id: "shared-track-id", file_path: tidalPath },
+  ]);
+});
+
 test("computeExpectedPath inline vs separated layouts for video files", () => {
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitored)
@@ -1194,6 +1366,9 @@ dbModule.db.prepare(`
     artist_id: "artist-inline-test",
     album_id: "album-inline-test",
     media_id: "video-inline-test",
+    provider: "tidal",
+    provider_entity_type: "video",
+    provider_id: "video-inline-test",
     file_path: path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video.mp4"),
     relative_path: null,
     library_root: "videos",
@@ -1261,6 +1436,9 @@ dbModule.db.prepare(`
     artist_id: "artist-inline-test",
     album_id: "album-inline-test",
     media_id: "video-inline-test",
+    provider: "tidal",
+    provider_entity_type: "video",
+    provider_id: "video-inline-test",
     file_path: "",
     relative_path: null,
     library_root: "videos",
@@ -1276,6 +1454,9 @@ dbModule.db.prepare(`
     artist_id: "artist-inline-test",
     album_id: "album-inline-test",
     media_id: "video-inline-test",
+    provider: "tidal",
+    provider_entity_type: "video",
+    provider_id: "video-inline-test",
     file_path: "",
     relative_path: null,
     library_root: "videos",
@@ -1325,6 +1506,7 @@ dbModule.db.prepare(`
     ...rowVideoSeparated,
     id: 1003,
     media_id: "video-inline-duplicate",
+    provider_id: "video-inline-duplicate",
   });
   // Same audio stem + same Plex type (-video) always shares one primary path.
   // Multi-provider / alternate cuts do not create descriptive or provider-tagged
@@ -1355,6 +1537,7 @@ dbModule.db.prepare(`
     id: 1004,
     album_id: null,
     media_id: "video-inline-unlinked",
+    provider_id: "video-inline-unlinked",
   });
   // No provider_video_for association → separated video library even when layout is inline.
   assert.equal(
@@ -1424,6 +1607,9 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
     artist_id: "artist-inline-gate",
     album_id: null,
     media_id: "video-inline-gate",
+    provider: "tidal",
+    provider_entity_type: "video",
+    provider_id: "video-inline-gate",
     file_path: path.join(tempDir, "library", "videos", "Bastille", "Pompeii.mp4"),
     relative_path: null,
     library_root: "videos",
@@ -1578,12 +1764,19 @@ test("upsertLibraryFile persists video_codec and frame size for music videos", (
   `).run();
 
   const videoRoot = configModule.Config.getVideoPath();
+  const videoLibrary = dbModule.db.prepare(`
+    UPDATE Libraries
+    SET root_path = ?
+    WHERE name = 'Video'
+    RETURNING id
+  `).get(videoRoot) as { id: number };
   const filePath = path.join(videoRoot, "Bastille", "Pompeii.mp4");
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, "fake-video");
 
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "video-artist-1",
+    libraryId: videoLibrary.id,
     mediaId: "video-provider-codec",
     filePath,
     libraryRoot: videoRoot,

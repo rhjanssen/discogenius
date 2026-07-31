@@ -12,6 +12,7 @@ import { getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../down
 import { getExistingLibraryFiles } from "../download/download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import {type CommandModelOf} from "../commands/command-model.js";
+import type { DownloadTrackOffer } from "../commands/command-bodies.js";
 import {CommandNames} from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
@@ -312,10 +313,160 @@ export function persistPreparedImportQuality(
     })();
 }
 
+/**
+ * Persist the provider resource and source variant selected before download on
+ * the exact TrackFiles rows reported by the organizer.
+ *
+ * No provider-id lookup is used to find a file row. The external id is only a
+ * consistency check between the operation result and the exact internal
+ * ProviderItems row carried by the acquisition command.
+ */
+export function persistDownloadedProviderProvenance(
+    libraryId: number | null | undefined,
+    organizeResult: OrganizeResult,
+    trackOffers: readonly DownloadTrackOffer[],
+    acquisitionPlanId?: number | null,
+): void {
+    if (trackOffers.length === 0) {
+        if (acquisitionPlanId != null && organizeResult.processedTrackIds.length > 0) {
+            throw new Error(
+                `[ImportDownload] Acquisition plan ${acquisitionPlanId} imported tracks without exact provider offer identity`,
+            );
+        }
+        return;
+    }
+
+    const loadFile = db.prepare(`
+        SELECT id, provider, provider_entity_type, provider_id, file_type, library_id
+        FROM TrackFiles
+        WHERE id = ?
+    `);
+    const loadProviderItem = db.prepare(`
+        SELECT id, provider, entity_type, provider_id
+        FROM ProviderItems
+        WHERE id = ?
+    `);
+    const loadVariant = db.prepare(`
+        SELECT id, provider_item_id
+        FROM ProviderItemAudioVariants
+        WHERE id = ?
+    `);
+    const update = db.prepare(`
+        UPDATE TrackFiles
+        SET
+          library_id = COALESCE(@libraryId, library_id),
+          provider_item_id = @providerItemId,
+          source_audio_variant_id = @sourceAudioVariantId,
+          provider = @provider,
+          provider_entity_type = 'track',
+          provider_id = @providerExternalId
+        WHERE id = @fileId
+    `);
+
+    db.transaction(() => {
+        for (const providerTrackId of organizeResult.processedTrackIds) {
+            const fileId = organizeResult.importedTrackFileIds[String(providerTrackId)];
+            if (fileId == null) {
+                throw new Error(
+                    `[ImportDownload] No imported TrackFiles row reported for downloaded track ${providerTrackId}`,
+                );
+            }
+            const file = loadFile.get(fileId) as {
+                id: number;
+                provider: string | null;
+                provider_entity_type: string | null;
+                provider_id: string | null;
+                file_type: string;
+                library_id: number | null;
+            } | undefined;
+            if (!file || file.file_type !== "track") {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} for ${providerTrackId} is not an audio track`,
+                );
+            }
+            if (libraryId != null && file.library_id != null && file.library_id !== libraryId) {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} belongs to library ${file.library_id}, not ${libraryId}`,
+                );
+            }
+
+            const candidates = trackOffers.filter((offer) =>
+                String(offer.providerTrackId) === String(providerTrackId)
+                && (!file.provider || offer.provider === file.provider)
+            );
+            if (candidates.length !== 1) {
+                throw new Error(
+                    `[ImportDownload] Downloaded track ${providerTrackId} has ${candidates.length} exact offer contexts; refusing ambiguous provenance`,
+                );
+            }
+            const offer = candidates[0];
+            if (!Number.isInteger(offer.providerTrackItemId) || Number(offer.providerTrackItemId) <= 0) {
+                throw new Error(
+                    `[ImportDownload] Downloaded track ${providerTrackId} has no exact provider_item_id`,
+                );
+            }
+            const providerItem = loadProviderItem.get(offer.providerTrackItemId) as {
+                id: number;
+                provider: string;
+                entity_type: string;
+                provider_id: string;
+            } | undefined;
+            if (
+                !providerItem
+                || providerItem.entity_type !== "track"
+                || providerItem.provider !== offer.provider
+                || String(providerItem.provider_id) !== String(offer.providerTrackId)
+            ) {
+                throw new Error(
+                    `[ImportDownload] Provider item ${offer.providerTrackItemId} does not identify ${offer.provider}:track:${offer.providerTrackId}`,
+                );
+            }
+            if (file.provider && file.provider !== providerItem.provider) {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} belongs to provider ${file.provider}, not ${providerItem.provider}`,
+                );
+            }
+            if (file.provider_entity_type && file.provider_entity_type !== "track") {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} has provider entity type ${file.provider_entity_type}, not track`,
+                );
+            }
+            if (file.provider_id && String(file.provider_id) !== String(providerItem.provider_id)) {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} identifies provider track ${file.provider_id}, not ${providerItem.provider_id}`,
+                );
+            }
+
+            let sourceAudioVariantId: number | null = null;
+            if (offer.providerAudioVariantId != null) {
+                const variant = loadVariant.get(offer.providerAudioVariantId) as {
+                    id: number;
+                    provider_item_id: number;
+                } | undefined;
+                if (!variant || variant.provider_item_id !== providerItem.id) {
+                    throw new Error(
+                        `[ImportDownload] Audio variant ${offer.providerAudioVariantId} does not belong to provider item ${providerItem.id}`,
+                    );
+                }
+                sourceAudioVariantId = variant.id;
+            }
+
+            update.run({
+                fileId,
+                libraryId: libraryId ?? null,
+                providerItemId: providerItem.id,
+                sourceAudioVariantId,
+                provider: providerItem.provider,
+                providerExternalId: providerItem.provider_id,
+            });
+        }
+    })();
+}
+
 function recoverExistingLibraryImport(
     type: string,
     providerId: string,
-    provider?: string | null,
+    provider: string,
 ): OrganizeResult | null {
     const recovered = getExistingLibraryFiles(type as any, providerId, provider);
     if (recovered.length === 0) {
@@ -355,15 +506,29 @@ function providerImportEntityType(type: string): "release" | "track" | "video" {
 function resolveImportHistoryContext(
     type: string,
     providerId: string,
-    provider?: string | null,
+    provider: string,
 ): ImportHistoryContext {
     const entityType = providerImportEntityType(type);
-    const row = db.prepare(`
+    const rows = db.prepare(`
         SELECT
             COALESCE(managed_artist.id, artist.mbid) AS artist_id,
             COALESCE(direct_group.mbid, track_group.mbid) AS album_id,
             COALESCE(track_recording.mbid, video_recording.mbid) AS media_id,
-            COALESCE(variant.provider_quality_label, variant.quality_class) AS quality
+            (
+                SELECT COALESCE(variant.provider_quality_label, variant.quality_class)
+                FROM ProviderItemAudioVariants variant
+                WHERE variant.provider_item_id = pi.id
+                  AND variant.availability = 'available'
+                ORDER BY
+                  CASE variant.quality_class
+                    WHEN 'spatial' THEN 0
+                    WHEN 'hires-lossless' THEN 1
+                    WHEN 'lossless' THEN 2
+                    ELSE 3
+                  END,
+                  variant.id
+                LIMIT 1
+            ) AS quality
         FROM ProviderItems pi
         LEFT JOIN ProviderEditionMatches release_match
           ON pi.entity_type = 'release'
@@ -371,11 +536,9 @@ function resolveImportHistoryContext(
          AND release_match.match_state = 'accepted'
         LEFT JOIN AlbumEditions direct_release ON direct_release.id = release_match.edition_id
         LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
-        LEFT JOIN ProviderEditionMembers member
-          ON pi.entity_type = 'track'
-         AND member.member_item_id = pi.id
         LEFT JOIN ProviderTrackMatches track_match
-          ON track_match.provider_edition_member_id = member.id
+          ON pi.entity_type = 'track'
+         AND track_match.provider_track_item_id = pi.id
          AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks track ON track.id = track_match.track_id
         LEFT JOIN Recordings track_recording ON track_recording.id = track_match.recording_id
@@ -394,30 +557,33 @@ function resolveImportHistoryContext(
             video_recording.artist_metadata_id
           )
         LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
-        LEFT JOIN ProviderItemAudioVariants variant
-          ON variant.provider_item_id = pi.id
-         AND variant.availability = 'available'
         WHERE pi.provider_id = ?
           AND pi.entity_type = ?
-          AND (? IS NULL OR pi.provider = ?)
-        ORDER BY pi.updated_at DESC
-        LIMIT 1
-    `).get(
+          AND pi.provider = ?
+    `).all(
         providerId,
         entityType,
-        provider || null,
-        provider || null,
-    ) as ImportHistoryContextRow | undefined;
+        provider,
+    ) as ImportHistoryContextRow[];
+
+    const agreedValue = (values: Array<string | null | undefined>): string | null => {
+        const distinct = new Set(
+            values
+                .map((value) => value == null ? "" : String(value).trim())
+                .filter(Boolean),
+        );
+        return distinct.size === 1 ? [...distinct][0] : null;
+    };
 
     return {
-        artistId: row?.artist_id != null ? String(row.artist_id) : null,
-        albumId: row?.album_id ?? null,
-        mediaId: type === "album" ? null : row?.media_id ?? null,
-        quality: row?.quality || null,
+        artistId: agreedValue(rows.map((row) => row.artist_id)),
+        albumId: agreedValue(rows.map((row) => row.album_id)),
+        mediaId: type === "album" ? null : agreedValue(rows.map((row) => row.media_id)),
+        quality: agreedValue(rows.map((row) => row.quality)),
     };
 }
 
-function resolveAffectedArtistId(type: string, providerId: string, provider?: string | null): string | null {
+function resolveAffectedArtistId(type: string, providerId: string, provider: string): string | null {
     return resolveImportHistoryContext(type, providerId, provider).artistId;
 }
 
@@ -425,7 +591,7 @@ function resolveExpectedRecoveredTracks(
     type: string,
     providerId: string,
     fallbackCount: number,
-    provider?: string | null,
+    provider: string,
 ): number {
     if (type !== "album") {
         return Math.max(1, fallbackCount);
@@ -437,23 +603,20 @@ function resolveExpectedRecoveredTracks(
     }
 
     const row = db.prepare(`
-        SELECT COUNT(DISTINCT track.id) AS count
+        SELECT COUNT(DISTINCT member.member_item_id) AS count
         FROM ProviderItems provider_release
-        JOIN ProviderEditionMatches release_match
-          ON release_match.provider_edition_item_id = provider_release.id
-         AND release_match.match_state = 'accepted'
-        JOIN Tracks track
-          ON track.album_edition_id = release_match.edition_id
-        JOIN Recordings recording
-          ON recording.id = track.recording_id
+        JOIN ProviderEditionMembers member
+          ON member.provider_edition_item_id = provider_release.id
+        JOIN ProviderItems provider_track
+          ON provider_track.id = member.member_item_id
+         AND provider_track.provider = provider_release.provider
+         AND provider_track.entity_type = 'track'
         WHERE provider_release.provider_id = ?
           AND provider_release.entity_type = 'release'
-          AND (? IS NULL OR provider_release.provider = ?)
-          AND recording.is_video = 0
+          AND provider_release.provider = ?
     `).get(
         normalizedProviderId,
-        provider || null,
-        provider || null,
+        provider,
     ) as { count?: number } | undefined;
 
     return Number(row?.count || fallbackCount);
@@ -605,10 +768,10 @@ export class DownloadedTracksImportService {
         },
     ): Promise<void> {
     const { type, providerId, resolved, originalJobId, path: payloadPath } = job.payload;
-    const provider = String(job.payload.provider || "").trim() || null;
+    const provider = String(job.payload.provider || "").trim();
 
-    if (!type || !providerId) {
-        throw new Error("ImportDownload job is missing the type or provider ID required to finish import.");
+    if (!type || !provider || !providerId) {
+        throw new Error("ImportDownload job is missing the provider, type, or provider ID required to finish import.");
     }
 
     if (type !== "album" && type !== "track" && type !== "video") {
@@ -695,6 +858,7 @@ export class DownloadedTracksImportService {
             });
             organizeResult = await OrganizerService.organizeDownload({
                 type,
+                libraryId: job.payload.libraryId ?? null,
                 providerId,
                 provider: job.payload.provider || null,
                 releaseGroupMbid: job.payload.releaseGroupMbid || null,
@@ -736,6 +900,14 @@ export class DownloadedTracksImportService {
         }
 
         cancellationCheckpoint("after organizing downloaded files");
+        if (type !== "video") {
+            persistDownloadedProviderProvenance(
+                job.payload.libraryId,
+                organizeResult,
+                Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
+                job.payload.acquisitionPlanId,
+            );
+        }
         if (job.payload.libraryId != null && preparedImportQuality.size > 0) {
             persistPreparedImportQuality(
                 job.payload.libraryId,

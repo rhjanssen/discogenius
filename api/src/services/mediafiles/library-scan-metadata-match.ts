@@ -231,15 +231,14 @@ const OFFER_SELECT = `
       pi.title,
       ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS provider_album_id,
       (
-        SELECT recording.mbid
-        FROM ProviderEditionMembers member
-        JOIN ProviderTrackMatches track_match
-          ON track_match.provider_edition_member_id = member.id
-         AND track_match.match_state = 'accepted'
+        SELECT CASE
+          WHEN COUNT(DISTINCT track_match.recording_id) = 1
+          THEN MAX(recording.mbid)
+        END
+        FROM ProviderTrackMatches track_match
         JOIN Recordings recording ON recording.id = track_match.recording_id
-        WHERE member.member_item_id = pi.id
-        ORDER BY track_match.id
-        LIMIT 1
+        WHERE track_match.provider_track_item_id = pi.id
+          AND track_match.match_state = 'accepted'
       ) AS recording_mbid,
       pi.isrc,
       pi.duration_ms / 1000.0 AS duration
@@ -302,7 +301,8 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
         JOIN ProviderItems pi
           ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
          AND pi.entity_type IN ('track', 'video')
-         AND (tf.provider IS NULL OR pi.provider = tf.provider)
+         AND tf.provider IS NOT NULL
+         AND pi.provider = tf.provider
         JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
         JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
         WHERE tf.artist_id = ?
@@ -499,20 +499,14 @@ function findSameFolderDuplicate(
     const rows = db.prepare(`
         SELECT tf.file_path, tf.provider, tf.provider_id, tf.library_slot, tf.quality, tf.duration,
                pi.title,
-               (
-                 SELECT CAST(release_item.provider_id AS TEXT)
-                 FROM ProviderEditionMembers member
-                 JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
-                 WHERE member.member_item_id = pi.id
-                 ORDER BY member.id
-                 LIMIT 1
-               ) AS provider_album_id,
+               ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS provider_album_id,
                pi.duration_ms / 1000.0 AS offer_duration
         FROM TrackFiles tf
         LEFT JOIN ProviderItems pi
           ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
          AND pi.entity_type IN ('track', 'video')
-         AND (tf.provider IS NULL OR pi.provider = tf.provider)
+         AND tf.provider IS NOT NULL
+         AND pi.provider = tf.provider
         WHERE tf.artist_id = ?
           AND tf.file_type = 'track'
           AND tf.provider_id IS NOT NULL

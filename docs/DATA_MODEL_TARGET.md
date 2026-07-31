@@ -34,10 +34,10 @@ Core catalog tables:
 
 - `ArtistMetadata`, `Artists`, `ArtistStatistics`
 - `Albums` for MusicBrainz release groups
-- `AlbumReleases`; release medium/disc shape is stored in `AlbumReleases.data`
+- `AlbumEditions` for MusicBrainz releases
 - `Tracks` for release-specific track positions
-- `Recordings` for recording-level identity, audio recordings, MusicBrainz
-  video recordings, and provider-only provisional videos
+- `Recordings` for canonical recording-level identity: MusicBrainz audio and
+  video recordings
 - `AlbumArtists`, `ArtistReleaseGroups`, `ArtistReleaseGroupCuration`
 - `RecordingRelations`
 
@@ -47,44 +47,43 @@ row at all.
 
 ### Provider Offers And Matches
 
-`ProviderItems` is the provider offer cache. It stores provider-native ids,
-provider album ownership for tracks/videos, quality/availability facts, artwork
-or provider URL supplements, provider UPC/ISRC evidence, compact provider data,
-and canonical links when a match is known.
+`ProviderItems` is the provider resource cache. Its identity is the full
+`(provider, entity_type, provider_id)` triple, or its surrogate `id`.
+`ProviderEditionMembers` represents track/video occurrences on provider
+editions, and `ProviderItemAudioVariants` represents source capabilities.
 
-`ProviderItemMatches` is the provider-to-MusicBrainz match graph. It stores
-candidate/probable/verified/manual/rejected edges from provider resources to
-MusicBrainz artists, releases, tracks, or recordings. Composite release coverage
-is represented here as first-class match rows.
+`ProviderArtistMatches`, `ProviderEditionMatches`, `ProviderTrackMatches`, and
+`ProviderVideoMatches` are the only provider-to-MusicBrainz edges. Provider
+items do not carry MusicBrainz shadow identity.
+
+An unmatched provider video remains a cached `ProviderItems` offer. It must not
+mint a provisional `Recordings` row or an accepted match. Every identity-bearing
+`ProviderVideoMatches` target is an existing MusicBrainz video recording; a
+provider-supplied MBID is matching evidence, not authority to create that row.
 
 There are no active provider catalog tables such as `ProviderAlbums` or
 `ProviderMedia`.
 
 ### Library Overlay
 
-`ReleaseGroupSlots` stores policy and selection per release group and library
-slot. The shipping slots are still fixed as stereo, spatial, and video. A slot
-can select its own MusicBrainz release and provider offer; stereo and spatial
-slots must not be collapsed to one release-group-wide representative.
-
-Future configurable library types should replace fixed slot names with
-library-type ids while preserving monitored and lock semantics.
-
-MusicBrainz release medium/disc shape is release-local data. It is stored in
-`AlbumReleases.data` under the upstream release snapshot (`Media`) and medium
-summaries are derived from that JSON unless a measured hot path later needs a
-separate indexed projection.
+`Libraries`, `LibraryAlbums`, and `LibraryEditions` store per-library curation.
+Acquisition plans choose accepted typed provider matches for a selected edition.
+No album-wide “selected edition” is assumed.
 
 ### File And Sidecar Inventory
 
 `TrackFiles` is the playable media inventory. The name is intentionally
 Lidarr-aligned: Lidarr uses `TrackFile` for managed playable music files. In
 Discogenius it also covers playable music videos because videos are first-class
-downloaded media, not sidecars. It stores file facts, provider provenance,
-canonical identity, quality, and the library slot.
+downloaded media, not sidecars. Each row belongs to exactly one configured
+library through `library_id`; root-only assignment fails closed when zero or
+several libraries match.
 
 `MetadataFiles`, `LyricFiles`, and `ExtraFiles` are the Lidarr-style sidecar
-inventories for artwork, NFO, lyrics, and other extra files.
+inventories for artwork, NFO, lyrics, and other extra files. One physical
+sidecar can be referenced by multiple libraries through
+`MetadataFileLibraries`, `LyricFileLibraries`, or `ExtraFileLibraries`.
+`library_slot` is not an ownership relation.
 
 Existing `canonical_*` file columns and nullable provider-resource shadow ids
 are transitional debt. New work should prefer clear provider provenance fields,
@@ -111,8 +110,8 @@ The provider layer should support multiple providers without schema changes:
   current contract and provider research live in
   `docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md`.
 
-TIDAL is the only fully working provider today. Finishing the Apple Music
-provider in `docs/TASKS.md` is the next real test of this abstraction.
+TIDAL remains the most exercised provider. Every provider, including adapters
+that are experimental or disabled pending credentials, uses the same contract.
 
 ## Catalog Source Direction
 
@@ -153,8 +152,10 @@ Release-centric matching is the desired end state:
 
 1. Provider albums match candidate MusicBrainz releases directly.
 2. Release groups are fetch/grouping containers, not matching constraints.
-3. Composite provider coverage is persisted in `ProviderItemMatches`, not
-   recomputed only at read time.
+3. Direct identity decisions live only in the typed `ProviderEditionMatches`
+   and `ProviderTrackMatches` tables. Multi-source coverage is materialized in
+   `AcquisitionPlanSources` and `AcquisitionPlanTracks`, never in a generic
+   provider-match graph.
 4. Matching evidence order is external streaming links, UPC/ISRC, track/medium
    shape, title/version, date/type, position/duration, and title distance.
 5. Servarr Metadata Server mode must degrade gracefully when UPC/ISRC or external-link data is

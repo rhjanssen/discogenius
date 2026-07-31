@@ -22,6 +22,33 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Recordings").run();
 });
 
+function seedVideoOffer(input: {
+  provider: string;
+  providerId: string;
+  recordingId: number;
+  quality: string;
+  availability?: string;
+  matchState?: "accepted" | "rejected";
+}) {
+  const item = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, availability, video_quality
+    ) VALUES (?, 'video', ?, 'Provider video', ?, ?)
+    RETURNING id
+  `).get(
+    input.provider,
+    input.providerId,
+    input.availability ?? "available",
+    input.quality,
+  ) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, ?, 'automatic', 1, 'test', 1)
+  `).run(item.id, input.recordingId, input.matchState ?? "accepted");
+}
+
 after(() => {
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
@@ -34,12 +61,12 @@ test("an explicit provider offer wins over a colliding canonical recording id", 
       (7, 'apple-recording', 'Apple asset', 1, 'musicbrainz'),
       (42, 'canonical-recording', 'Canonical asset', 1, 'musicbrainz')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, availability
-    ) VALUES ('apple-music', 'video', '42', 'Apple asset', 'available'),
-    ('tidal', 'video', 'tidal-canonical-offer', 'Canonical asset', 'available')
-  `).run();
+  seedVideoOffer({
+    provider: "apple-music", providerId: "42", recordingId: 7, quality: "MP4_2160P",
+  });
+  seedVideoOffer({
+    provider: "tidal", providerId: "tidal-canonical-offer", recordingId: 42, quality: "MP4_1080P",
+  });
 
   assert.deepEqual(resolver.resolveRequestedVideoOffer("apple-music", "42"), {
     provider: "apple-music",
@@ -55,14 +82,20 @@ test("canonical resolution prefers higher resolution within a provider", () => {
     INSERT INTO Recordings (id, mbid, title, is_video, metadata_status)
     VALUES (11, 'canonical-recording', 'Canonical asset', 1, 'musicbrainz')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, availability
-    ) VALUES ('tidal', 'video', 'z-unavailable', 'Canonical asset', 'unavailable'),
-    ('tidal', 'video', 'rejected-4k', 'Canonical asset', 'available'),
-    ('tidal', 'video', 'b-available', 'Canonical asset', 'available'),
-    ('tidal', 'video', 'a-available', 'Canonical asset', 'available')
-  `).run();
+  seedVideoOffer({
+    provider: "tidal", providerId: "z-unavailable", recordingId: 11,
+    quality: "MP4_2160P", availability: "unavailable",
+  });
+  seedVideoOffer({
+    provider: "tidal", providerId: "rejected-4k", recordingId: 11,
+    quality: "MP4_2160P", matchState: "rejected",
+  });
+  seedVideoOffer({
+    provider: "tidal", providerId: "b-available", recordingId: 11, quality: "MP4_1080P",
+  });
+  seedVideoOffer({
+    provider: "tidal", providerId: "a-available", recordingId: 11, quality: "MP4_720P",
+  });
 
   assert.deepEqual(resolver.resolveVideoOfferForProvider("tidal", "11"), {
     provider: "tidal",
@@ -80,12 +113,12 @@ test("preferred offer chooses Apple 4K over a preferred-provider TIDAL 1080p off
     INSERT INTO Recordings (id, mbid, title, is_video, metadata_status)
     VALUES (21, 'shared-recording', 'Shared asset', 1, 'musicbrainz')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, availability
-    ) VALUES ('tidal', 'video', 'tidal-1080', 'Shared asset', 'available'),
-    ('apple-music', 'video', 'apple-4k', 'Shared asset', 'available')
-  `).run();
+  seedVideoOffer({
+    provider: "tidal", providerId: "tidal-1080", recordingId: 21, quality: "MP4_1080P",
+  });
+  seedVideoOffer({
+    provider: "apple-music", providerId: "apple-4k", recordingId: 21, quality: "MP4_2160P",
+  });
 
   assert.deepEqual(resolver.resolvePreferredVideoOffer("21"), {
     provider: "apple-music",

@@ -27,15 +27,14 @@ type ArtistRow = {
 };
 
 type ProviderAlbumOffer = {
-    id: string;
+    provider_item_id: number;
     release_mbid: string | null;
     release_group_mbid: string | null;
-    artist_mbid: string | null;
     title: string | null;
 };
 
 type ProviderTrackOffer = {
-    id: string;
+    provider_item_id: number;
     recording_mbid: string | null;
     recording_id: number | null;
 };
@@ -122,13 +121,10 @@ async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtist
 
 /**
  * Metadata identity is now resolved against the canonical MusicBrainz/Servarr Metadata Server
- * graph. Provider catalog tables are gone: an album/track's canonical link lives
- * on its `ProviderItems` offer (release_group_mbid / release_mbid / recording_mbid /
- * recording_id), populated by the release-group matcher and by-position mapping in
- * RefreshAlbumService.refreshTracks. This service therefore reports identity from
- * those offers and ensures the canonical release-group row is synced; it no longer
- * runs a bespoke per-track ISRC/AcoustID search (retired with the legacy tables —
- * fingerprinting only matters for unknown *local* imports, a separate file path).
+ * graph. ProviderItems contain provider-native facts only; accepted typed match
+ * tables are the sole provider→canonical boundary. This service reports those
+ * decisions and fails closed when colliding provider identities or accepted edges
+ * disagree. Fingerprinting remains an unknown-local-import concern.
  */
 export class MetadataIdentityService {
     static getStatus(
@@ -215,51 +211,56 @@ export class MetadataIdentityService {
     }
 
     /**
-     * Reports a provider album's canonical identity from its ProviderItems offer
-     * and ensures the matched release group is present in the canonical catalog.
-     * The matching itself (provider album → release group) already happened in the
-     * scan; we no longer re-derive it or write provider catalog rows.
+     * Reports a provider edition's canonical identity from accepted typed edition
+     * matches. Several accepted editions may still agree on one release group.
      */
     static async resolveAlbum(albumId: string, options: MetadataIdentityOptions = {}): Promise<MetadataIdentityResult> {
-        const offer = db.prepare(`
+        const offers = db.prepare(`
             SELECT
-                a.provider_id AS id,
-                a.release_mbid AS release_mbid,
-                a.release_group_mbid AS release_group_mbid,
-                a.artist_mbid AS artist_mbid,
-                a.title AS title
-            FROM ProviderItems a
-            WHERE a.entity_type = 'album'
-              AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
-              AND (? IS NULL OR a.provider = ?)
-            ORDER BY a.updated_at DESC
-            LIMIT 1
-        `).get(albumId, options.provider || null, options.provider || null) as ProviderAlbumOffer | undefined;
+                item.id AS provider_item_id,
+                edition.mbid AS release_mbid,
+                album.mbid AS release_group_mbid,
+                item.title
+            FROM ProviderItems item
+            LEFT JOIN ProviderEditionMatches edition_match
+              ON edition_match.provider_edition_item_id = item.id
+             AND edition_match.match_state = 'accepted'
+            LEFT JOIN AlbumEditions edition ON edition.id = edition_match.edition_id
+            LEFT JOIN Albums album ON album.id = edition.release_group_id
+            WHERE item.entity_type = 'release'
+              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR item.provider = ?)
+            ORDER BY item.id, edition_match.id
+        `).all(albumId, options.provider || null, options.provider || null) as ProviderAlbumOffer[];
 
-        if (!offer) {
+        if (offers.length === 0) {
             const result = this.result("album", albumId, "error", 0, "local-row", "Album offer is not in the Discogenius database");
             recordIdentityStatus(result, options.provider);
             return result;
         }
 
-        if (offer.artist_mbid) {
-            await this.resolveArtist(String(offer.artist_mbid), { force: false });
+        const matched = offers.filter((offer) => offer.release_group_mbid);
+        const releaseGroupMbids = [...new Set(matched.map((offer) => offer.release_group_mbid as string))];
+        if (releaseGroupMbids.length > 1) {
+            const result = this.result(
+                "album",
+                albumId,
+                "ambiguous",
+                0,
+                "typed-provider-edition-match",
+                "Accepted provider edition matches disagree on canonical release group",
+                { releaseGroupIds: releaseGroupMbids },
+            );
+            recordIdentityStatus(result, options.provider);
+            return result;
         }
-
-        if (offer.release_group_mbid) {
-            const rgExists = db.prepare("SELECT 1 FROM Albums WHERE mbid = ?").get(offer.release_group_mbid);
-            if (!rgExists) {
-                try {
-                    const { MusicBrainzReleaseGroupReadService } = await import("./musicbrainz-release-group-read-service.js");
-                    await MusicBrainzReleaseGroupReadService.getAlbum(offer.release_group_mbid);
-                } catch (err) {
-                    console.warn(`[MetadataIdentity] Failed to auto-sync release group ${offer.release_group_mbid} for provider album ${albumId}:`, err);
-                }
-            }
-
+        if (releaseGroupMbids.length === 1) {
+            const releaseMbids = [...new Set(
+                matched.map((offer) => offer.release_mbid).filter((value): value is string => Boolean(value)),
+            )];
             const result = this.result("album", albumId, "verified", 1, "provider-items-canonical-link", undefined, {
-                editionId: offer.release_mbid,
-                releaseGroupId: offer.release_group_mbid,
+                ...(releaseMbids.length === 1 ? { editionId: releaseMbids[0] } : {}),
+                releaseGroupId: releaseGroupMbids[0],
             });
             recordIdentityStatus(result, options.provider);
             return result;
@@ -278,32 +279,50 @@ export class MetadataIdentityService {
     }
 
     /**
-     * Reports a provider track's canonical identity from its ProviderItems offer.
-     * Tracks are mapped to canonical recordings by position during the scan, so
-     * there is no per-track MusicBrainz search here anymore.
+     * Reports a provider track's canonical identity from accepted typed track
+     * matches. Edition context is optional; provider item identity is not.
      */
     static async resolveTrack(mediaId: string, options: MetadataIdentityOptions = {}): Promise<MetadataIdentityResult> {
-        const offer = db.prepare(`
+        const offers = db.prepare(`
             SELECT
-                a.provider_id AS id,
-                a.recording_mbid AS recording_mbid,
-                a.recording_id AS recording_id
-            FROM ProviderItems a
-            WHERE a.entity_type = 'track'
-              AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
-              AND (? IS NULL OR a.provider = ?)
-            ORDER BY a.updated_at DESC
-            LIMIT 1
-        `).get(mediaId, options.provider || null, options.provider || null) as ProviderTrackOffer | undefined;
+                item.id AS provider_item_id,
+                recording.mbid AS recording_mbid,
+                track_match.recording_id
+            FROM ProviderItems item
+            LEFT JOIN ProviderTrackMatches track_match
+              ON track_match.provider_track_item_id = item.id
+             AND track_match.match_state = 'accepted'
+            LEFT JOIN Recordings recording ON recording.id = track_match.recording_id
+            WHERE item.entity_type = 'track'
+              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR item.provider = ?)
+            ORDER BY item.id, track_match.id
+        `).all(mediaId, options.provider || null, options.provider || null) as ProviderTrackOffer[];
 
-        if (!offer) {
+        if (offers.length === 0) {
             const result = this.result("track", mediaId, "error", 0, "local-row", "Track offer is not in the Discogenius database");
             recordIdentityStatus(result, options.provider);
             return result;
         }
 
-        if (offer.recording_mbid) {
-            const result = this.result("track", mediaId, "verified", 1, "provider-items-canonical-link", undefined, {
+        const accepted = offers.filter((offer) => offer.recording_id != null);
+        const recordingIds = [...new Set(accepted.map((offer) => Number(offer.recording_id)))];
+        if (recordingIds.length > 1) {
+            const result = this.result(
+                "track",
+                mediaId,
+                "ambiguous",
+                0,
+                "typed-provider-track-match",
+                "Accepted provider track matches disagree on canonical recording",
+                { recordingIds },
+            );
+            recordIdentityStatus(result, options.provider);
+            return result;
+        }
+        const offer = accepted[0];
+        if (offer?.recording_mbid) {
+            const result = this.result("track", mediaId, "verified", 1, "typed-provider-track-match", undefined, {
                 recordingId: offer.recording_mbid,
             });
             recordIdentityStatus(result, options.provider);
@@ -316,7 +335,7 @@ export class MetadataIdentityService {
                 mediaId,
                 "unmatched",
                 0.7,
-                "provider-recording",
+                "typed-provider-track-match",
                 "track maps to a provisional local recording without a MusicBrainz ID",
                 { recordingId: offer.recording_id },
             );
@@ -333,16 +352,37 @@ export class MetadataIdentityService {
         videoId: string,
         options: Pick<MetadataIdentityOptions, "provider"> = {},
     ): MetadataIdentityResult {
-        const offer = db.prepare(`
-            SELECT recording_mbid, recording_id
-            FROM ProviderItems
-            WHERE entity_type = 'video'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-              AND (? IS NULL OR provider = ?)
-            ORDER BY updated_at DESC
-            LIMIT 1
-        `).get(videoId, options.provider || null, options.provider || null) as { recording_mbid?: string | null; recording_id?: number | null } | undefined;
-
+        const offers = db.prepare(`
+            SELECT video_match.recording_id, recording.mbid AS recording_mbid
+            FROM ProviderItems item
+            LEFT JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = item.id
+             AND video_match.match_state = 'accepted'
+            LEFT JOIN Recordings recording ON recording.id = video_match.recording_id
+            WHERE item.entity_type = 'video'
+              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR item.provider = ?)
+            ORDER BY item.id, video_match.id
+        `).all(videoId, options.provider || null, options.provider || null) as Array<{
+            recording_mbid: string | null;
+            recording_id: number | null;
+        }>;
+        const accepted = offers.filter((offer) => offer.recording_id != null);
+        const recordingIds = [...new Set(accepted.map((offer) => Number(offer.recording_id)))];
+        if (recordingIds.length > 1) {
+            const result = this.result(
+                "video",
+                videoId,
+                "ambiguous",
+                0,
+                "typed-provider-video-match",
+                "Accepted provider video matches disagree on canonical recording",
+                { recordingIds },
+            );
+            recordIdentityStatus(result, options.provider);
+            return result;
+        }
+        const offer = accepted[0];
         const recordingMbid = String(offer?.recording_mbid || "").trim();
         if (recordingMbid) {
             const result = this.result("video", videoId, "verified", 1, "musicbrainz-recording", undefined, {
@@ -357,7 +397,7 @@ export class MetadataIdentityService {
             videoId,
             "unmatched",
             offer?.recording_id ? 0.7 : 1,
-            offer?.recording_id ? "provider-recording" : "musicbrainz-video-unmatched",
+            offer?.recording_id ? "typed-provider-video-match" : "musicbrainz-video-unmatched",
             offer?.recording_id
                 ? "provider video is represented as a provisional local recording without a MusicBrainz ID"
                 : "No matching MusicBrainz video recording has been linked yet",

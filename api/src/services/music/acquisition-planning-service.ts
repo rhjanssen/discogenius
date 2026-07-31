@@ -45,11 +45,14 @@ function isAvailable(value: unknown): boolean {
 interface PlanningContextRow {
   library_edition_id: number;
   edition_id: number;
+  selection_mode: "auto" | "manual";
+  locked: number;
   quality_profile_id: number;
   allowed_source_formats: string;
   preference_order: string;
   cutoff: string;
   continue_upgrades: number;
+  current_primary_provider_edition_match_id: number | null;
 }
 
 interface CandidateRow {
@@ -79,19 +82,29 @@ export class AcquisitionPlanningService {
     libraryEditionId: number;
     providerPriority: readonly string[];
     plannerVersion: number;
+    preferredProviderEditionMatchId?: number;
   }): number | null {
     const context = this.db.prepare(`
       SELECT
         library_release.id AS library_edition_id,
         library_release.edition_id,
+        library_release.selection_mode,
+        library_release.locked,
         library.quality_profile_id,
         profile.allowed_source_formats,
         profile.preference_order,
         profile.cutoff,
-        profile.continue_upgrades
+        profile.continue_upgrades,
+        primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id
       FROM LibraryEditions library_release
       JOIN Libraries library ON library.id = library_release.library_id
       JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+      LEFT JOIN AcquisitionPlans current_plan
+        ON current_plan.library_edition_id = library_release.id
+       AND current_plan.state = 'current'
+      LEFT JOIN AcquisitionPlanSources primary_source
+        ON primary_source.plan_id = current_plan.id
+       AND primary_source.role = 'primary'
       WHERE library_release.id = ?
     `).get(input.libraryEditionId) as PlanningContextRow | undefined;
     if (!context) throw new Error(`Library release ${input.libraryEditionId} was not found`);
@@ -214,11 +227,30 @@ export class AcquisitionPlanningService {
       cutoff,
       continueUpgradesAfterCutoff: profile.continueUpgradesAfterCutoff,
       providerPriority: input.providerPriority,
+      preferredProviderEditionMatchId: input.preferredProviderEditionMatchId ?? (
+        context.selection_mode === "manual" && context.locked
+          ? context.current_primary_provider_edition_match_id
+          : null
+      ),
     })).digest("hex");
+    const explicitPreference = input.preferredProviderEditionMatchId;
+    const preservedManualPreference = context.selection_mode === "manual" && context.locked
+      ? context.current_primary_provider_edition_match_id
+      : null;
+    const preferredProviderEditionMatchId = explicitPreference ?? preservedManualPreference;
+    let sources = [...sourceById.values()];
+    if (preferredProviderEditionMatchId != null) {
+      const preferredSource = sourceById.get(preferredProviderEditionMatchId);
+      if (preferredSource) {
+        sources = [preferredSource];
+      } else if (explicitPreference != null) {
+        throw new Error("The selected provider offer has no accepted track matches for this edition");
+      }
+    }
     const plan = optimizeAcquisitionPlan({
       orderedTrackIds,
       profile,
-      sources: [...sourceById.values()],
+      sources,
       providerPriority: input.providerPriority,
     });
     if (!plan) {

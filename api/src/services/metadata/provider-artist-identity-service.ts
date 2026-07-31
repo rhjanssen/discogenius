@@ -670,26 +670,29 @@ export interface ResolveProviderArtistOptions {
 export class ProviderArtistIdentityService {
   static async resolve(provider: string, artist: ProviderArtistIdentityInput, options?: ResolveProviderArtistOptions): Promise<ProviderArtistIdentityResolution> {
     const cached = db.prepare(`
+      WITH accepted AS (
+        SELECT
+          canonical.id AS artist_id,
+          canonical.mbid AS artist_mbid,
+          match.confidence,
+          match.method
+        FROM ProviderItems item
+        JOIN ProviderArtistMatches match
+          ON match.provider_artist_item_id = item.id
+         AND match.match_state = 'accepted'
+        JOIN ArtistMetadata canonical ON canonical.id = match.artist_id
+        WHERE item.provider = ?
+          AND item.entity_type = 'artist'
+          AND item.provider_id = ?
+      )
       SELECT
-        canonical.mbid AS artist_mbid,
-        match.match_state,
-        match.confidence,
-        match.method
-      FROM ProviderItems item
-      JOIN ProviderArtistMatches match
-        ON match.provider_artist_item_id = item.id
-       AND match.match_state = 'accepted'
-      JOIN ArtistMetadata canonical ON canonical.id = match.artist_id
-      WHERE item.provider = ?
-        AND item.entity_type = 'artist'
-        AND item.provider_id = ?
-      ORDER BY
-        CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-        match.updated_at DESC
-      LIMIT 1
+        MAX(artist_mbid) AS artist_mbid,
+        MAX(confidence) AS confidence,
+        MAX(method) AS method
+      FROM accepted
+      HAVING COUNT(DISTINCT artist_id) = 1
     `).get(provider, artist.providerId) as {
       artist_mbid?: string | null;
-      match_state?: string | null;
       confidence?: number | null;
       method?: string | null;
     } | undefined;

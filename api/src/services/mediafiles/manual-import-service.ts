@@ -88,6 +88,8 @@ export class ManualImportService {
             fullPathTemplate: string;
             artistFolder: string;
             canonicalTrackMbid: string | null;
+            canonicalRecordingId: number | null;
+            canonicalRecordingMbid: string | null;
             canonicalReleaseGroupMbid: string | null;
             canonicalArtistMbid: string | null;
         }
@@ -110,7 +112,46 @@ export class ManualImportService {
                 const cleanMbid = item.providerId.replace(/^mbid-/, "");
                 const isMbid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanMbid);
 
-                if (!isVideo && isMbid) {
+                if (isVideo && isMbid) {
+                    const recording = db.prepare(`
+                        SELECT
+                          recording.id AS internal_id,
+                          recording.mbid AS id,
+                          recording.title,
+                          recording.length_ms,
+                          recording.video_variant,
+                          COALESCE(artist.mbid, recording.artist_mbid) AS artist_mbid,
+                          COALESCE(artist.name, recording.artist_credit) AS artist_name
+                        FROM Recordings recording
+                        LEFT JOIN ArtistMetadata artist
+                          ON artist.id = recording.artist_metadata_id
+                        WHERE recording.mbid = ?
+                          AND recording.is_video = 1
+                    `).get(cleanMbid) as {
+                        internal_id: number;
+                        id: string;
+                        title: string;
+                        length_ms: number | null;
+                        video_variant: string | null;
+                        artist_mbid: string | null;
+                        artist_name: string | null;
+                    } | undefined;
+                    if (recording) {
+                        trackData = {
+                            id: recording.id,
+                            providerId: recording.id,
+                            canonicalRecordingId: recording.internal_id,
+                            title: recording.title,
+                            duration: recording.length_ms == null ? null : recording.length_ms / 1000,
+                            video_variant: recording.video_variant,
+                            artist: {
+                                id: recording.artist_mbid,
+                                providerId: recording.artist_mbid,
+                                name: recording.artist_name || "Unknown Artist",
+                            },
+                        };
+                    }
+                } else if (!isVideo && isMbid) {
                     // 1. Try single track match in catalog DB
                     const dbTrack = db.prepare(`
                         SELECT
@@ -247,11 +288,15 @@ export class ManualImportService {
                     const existingArtist = db.prepare("SELECT id FROM Artists WHERE id = ?").get(artistId);
                     if (!existingArtist) {
                         const fallbackName = trackData.artist?.name || trackData.artist_name || "Unknown Artist";
-                        try {
-                            const remoteArtist = await provider.getArtist(artistId);
-                            artistInfo = { name: remoteArtist.name, picture: remoteArtist.picture || null, popularity: remoteArtist.popularity || 0 };
-                        } catch {
+                        if (trackData.canonicalRecordingId) {
                             artistInfo = { name: fallbackName, picture: null, popularity: 0 };
+                        } else {
+                            try {
+                                const remoteArtist = await provider.getArtist(artistId);
+                                artistInfo = { name: remoteArtist.name, picture: remoteArtist.picture || null, popularity: remoteArtist.popularity || 0 };
+                            } catch {
+                                artistInfo = { name: fallbackName, picture: null, popularity: 0 };
+                            }
                         }
                     }
                 }
@@ -267,7 +312,9 @@ export class ManualImportService {
                 const albumId = (trackData.album?.providerId || trackData.album?.id || trackData.album_id)?.toString() || null;
                 const albumIsMbid = !!albumId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(albumId.replace(/^mbid-/, ""));
                 if (albumId && !albumIsMbid) {
-                    try { await RefreshAlbumService.refreshMetadata(albumId); } catch {
+                    try {
+                        await RefreshAlbumService.refreshMetadata(albumId, { provider: provider.id });
+                    } catch {
                         console.warn(`[Bulk Import] Could not refresh album metadata for album ${albumId}`);
                     }
                 }
@@ -362,7 +409,12 @@ export class ManualImportService {
                 const fullPathTemplate = isVideo ? path.join(artistFolder, namingConfig.video_file) : path.join(artistFolder, trackTemplate);
 
                 const videoVariant = isVideo
-                    ? (db.prepare(`
+                    ? (trackData.canonicalRecordingId
+                        ? {
+                            video_variant: trackData.video_variant || null,
+                            recording_title: trackData.title || null,
+                        }
+                        : db.prepare(`
                         SELECT recording.video_variant AS video_variant, recording.title AS recording_title
                         FROM ProviderItems pi
                         LEFT JOIN ProviderVideoMatches video_match
@@ -425,7 +477,13 @@ export class ManualImportService {
                     fileType: isVideo ? "video" : "track",
                     fullPathTemplate,
                     artistFolder,
-                    canonicalTrackMbid: canonicalIdentity?.canonicalTrackMbid || (trackData.id ? String(trackData.id).replace(/^mbid-/, "") : null),
+                    canonicalTrackMbid: isVideo
+                        ? null
+                        : canonicalIdentity?.canonicalTrackMbid || (trackData.id ? String(trackData.id).replace(/^mbid-/, "") : null),
+                    canonicalRecordingId: Number.isInteger(trackData.canonicalRecordingId)
+                        ? Number(trackData.canonicalRecordingId)
+                        : null,
+                    canonicalRecordingMbid: isVideo && isMbid ? cleanMbid : null,
                     canonicalReleaseGroupMbid: canonicalIdentity?.canonicalReleaseGroupMbid || albumRow?.mb_release_group_id || (trackData.album?.id ? String(trackData.album.id).replace(/^mbid-/, "") : null),
                     canonicalArtistMbid: canonicalIdentity?.canonicalArtistMbid || artistRow?.mbid || (trackData.artist?.id ? String(trackData.artist.id).replace(/^mbid-/, "") : null),
                 });
@@ -446,14 +504,14 @@ export class ManualImportService {
         const audioDirMappings = new Map<string, ImportedDirectoryMapping>();
         const videoInsertedIds: number[] = [];
         const videoDirMappings = new Map<string, ImportedDirectoryMapping>();
-        const statusUpdates: Array<{ albumId: string | null; providerId: string }> = [];
+        const statusUpdates: Array<{ albumId: string | null; providerId: string; providerBacked: boolean }> = [];
         // Requested item id -> the TrackFiles row it actually created.
         const importedFileIds: Record<string, number> = {};
 
         // Pre-pass (outside the transaction — RefreshVideoService opens its own):
         // ensure each video's canonical Recordings(is_video=1) + ProviderItems offer
         // so the in-transaction Recordings.monitored flip below has a row to hit.
-        const videoEntries = collected.filter((c) => c.isVideo);
+        const videoEntries = collected.filter((c) => c.isVideo && !c.canonicalRecordingId);
         if (videoEntries.length > 0) {
             const { RefreshVideoService } = await import("../music/refresh-video-service.js");
             for (const c of videoEntries) {
@@ -488,7 +546,16 @@ export class ManualImportService {
                 }
 
                 if (c.isVideo) {
-                    db.prepare(`
+                    if (c.canonicalRecordingId) {
+                        db.prepare(`
+                            UPDATE Recordings
+                            SET monitored = 1,
+                                monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        `).run(c.canonicalRecordingId);
+                    } else {
+                        db.prepare(`
                         UPDATE Recordings
                         SET monitored = 1,
                             monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
@@ -508,11 +575,18 @@ export class ManualImportService {
                               match.id
                             LIMIT 1
                         )
-                    `).run(provider.id, c.providerId);
+                        `).run(provider.id, c.providerId);
+                    }
                 }
 
                 // Check for existing library file
-                const existingLibraryFile = db.prepare(`
+                const existingLibraryFile = (c.canonicalRecordingId
+                    ? db.prepare(`
+                        SELECT id, file_path, relative_path, library_root
+                        FROM TrackFiles
+                        WHERE file_path = ?
+                    `).get(c.file.file_path)
+                    : db.prepare(`
                     SELECT id, file_path, relative_path, library_root FROM TrackFiles
                     WHERE provider = ?
                       AND provider_entity_type = ?
@@ -521,7 +595,7 @@ export class ManualImportService {
                       AND library_slot = ?
                     ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
                     LIMIT 1
-                `).get(provider.id, c.fileType, c.providerId, c.fileType, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo", c.file.file_path) as {
+                `).get(provider.id, c.fileType, c.providerId, c.fileType, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo", c.file.file_path)) as {
                     id: number; file_path: string; relative_path: string | null; library_root: string | null;
                 } | undefined;
 
@@ -550,6 +624,7 @@ export class ManualImportService {
                     db.prepare(`
                         UPDATE TrackFiles SET
                             artist_id=?,
+                            recording_id=?, canonical_recording_mbid=?,
                             canonical_track_mbid=?, canonical_release_group_mbid=?, canonical_artist_mbid=?,
                             provider=?, provider_entity_type=?, provider_id=?, library_slot=?,
                             file_path=?, relative_path=?,
@@ -561,8 +636,12 @@ export class ManualImportService {
                         WHERE id = ?
                     `).run(
                         c.artistId,
+                        c.canonicalRecordingId, c.canonicalRecordingMbid,
                         c.canonicalTrackMbid, c.canonicalReleaseGroupMbid, c.canonicalArtistMbid,
-                        provider.id, c.fileType, c.providerId, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
+                        c.canonicalRecordingId ? null : provider.id,
+                        c.canonicalRecordingId ? null : c.fileType,
+                        c.canonicalRecordingId ? null : c.providerId,
+                        c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
                         c.file.file_path, c.relativePath,
                         c.libraryRootKey, c.file.filename, c.extension, c.stats.size,
                         c.trackData.duration || 0, c.fileType, c.quality, c.needsRename,
@@ -570,19 +649,22 @@ export class ManualImportService {
                         c.fingerprint, c.stats.mtime.toISOString(),
                         existingLibraryFile.id,
                     );
-                    db.prepare(`
-                        DELETE FROM TrackFiles
-                        WHERE provider = ?
-                          AND provider_entity_type = ?
-                          AND provider_id = ?
-                          AND file_type = ?
-                          AND library_slot = ?
-                          AND id != ?
-                    `).run(provider.id, c.fileType, c.providerId, c.fileType, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo", existingLibraryFile.id);
+                    if (!c.canonicalRecordingId) {
+                        db.prepare(`
+                            DELETE FROM TrackFiles
+                            WHERE provider = ?
+                              AND provider_entity_type = ?
+                              AND provider_id = ?
+                              AND file_type = ?
+                              AND library_slot = ?
+                              AND id != ?
+                        `).run(provider.id, c.fileType, c.providerId, c.fileType, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo", existingLibraryFile.id);
+                    }
                 } else {
                     db.prepare(`
                         INSERT INTO TrackFiles (
                             artist_id,
+                            recording_id, canonical_recording_mbid,
                             canonical_track_mbid, canonical_release_group_mbid, canonical_artist_mbid,
                             provider, provider_entity_type, provider_id, library_slot,
                             file_path, relative_path, library_root,
@@ -595,6 +677,7 @@ export class ManualImportService {
                             modified_at, verified_at
                         ) VALUES (
                             @artistId,
+                            @recordingId, @canonicalRecordingMbid,
                             @canonicalTrackMbid, @canonicalReleaseGroupMbid, @canonicalArtistMbid,
                             @provider, @providerEntityType, @providerIdValue, @librarySlot,
                             @filePath, @relativePath, @libraryRoot,
@@ -607,6 +690,8 @@ export class ManualImportService {
                             @modifiedAt, CURRENT_TIMESTAMP
                         )
                         ON CONFLICT(file_path) DO UPDATE SET
+                            recording_id = COALESCE(excluded.recording_id, recording_id),
+                            canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, canonical_recording_mbid),
                             canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, canonical_track_mbid),
                             canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, canonical_release_group_mbid),
                             canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, canonical_artist_mbid),
@@ -633,10 +718,14 @@ export class ManualImportService {
                             verified_at = CURRENT_TIMESTAMP
                     `).run({
                         artistId: c.artistId, albumId: c.albumId, mediaId: c.providerId,
+                        recordingId: c.canonicalRecordingId,
+                        canonicalRecordingMbid: c.canonicalRecordingMbid,
                         canonicalTrackMbid: c.canonicalTrackMbid,
                         canonicalReleaseGroupMbid: c.canonicalReleaseGroupMbid,
                         canonicalArtistMbid: c.canonicalArtistMbid,
-                        provider: provider.id, providerEntityType: c.fileType, providerIdValue: c.providerId,
+                        provider: c.canonicalRecordingId ? null : provider.id,
+                        providerEntityType: c.canonicalRecordingId ? null : c.fileType,
+                        providerIdValue: c.canonicalRecordingId ? null : c.providerId,
                         librarySlot: c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
                         filePath: c.file.file_path, relativePath: c.relativePath,
                         libraryRoot: c.libraryRootKey, filename: c.file.filename,
@@ -691,7 +780,11 @@ export class ManualImportService {
                     libraryRootPath: c.rootPath,
                 });
 
-                statusUpdates.push({ albumId: c.albumId, providerId: c.providerId });
+                statusUpdates.push({
+                    albumId: c.albumId,
+                    providerId: c.providerId,
+                    providerBacked: !c.canonicalRecordingId,
+                });
             }
         })();
 
@@ -700,7 +793,7 @@ export class ManualImportService {
             try {
                 if (su.albumId) {
                     updateAlbumDownloadStatus(su.albumId);
-                } else {
+                } else if (su.providerBacked) {
                     // Scope to the active provider — an unscoped provider_id can
                     // collide with another provider's resource.
                     updateArtistDownloadStatusFromMedia(su.providerId, provider.id);

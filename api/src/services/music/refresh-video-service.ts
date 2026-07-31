@@ -10,7 +10,6 @@ import {
     isLivePerformanceTitle,
     isPlaceholderVideoTitle,
     nullableText,
-    preferredMergedVideoTitle,
     videoAudioTitlesCompatible,
     videoVariantClass,
     type AudioRecordingCandidateRow,
@@ -32,6 +31,7 @@ import { ProviderCatalogRepository } from "../providers/provider-catalog-reposit
 import { ProviderMatchRepository } from "./provider-match-repository.js";
 
 const VIDEO_MATCHER_VERSION = 1;
+const VIDEO_MATCH_AMBIGUITY_MARGIN = 0.03;
 
 function persistNormalizedProviderVideo(input: {
     video: any;
@@ -140,6 +140,14 @@ function persistNormalizedProviderVideo(input: {
             },
         },
     });
+    db.prepare(`
+        UPDATE TrackFiles
+        SET recording_id = ?,
+            canonical_recording_mbid = ?
+        WHERE provider = ?
+          AND (provider_entity_type = 'video' OR library_slot = 'video')
+          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+    `).run(input.recordingId, canonicalMbid, input.provider, providerId);
 }
 
 /** Fill Recordings.title when it is still the placeholder and a real title arrived. */
@@ -178,19 +186,6 @@ function getArtistMetadataId(artistMbid: string | null): number | null {
     return row?.id == null ? null : Number(row.id);
 }
 
-function getRecordingIdByForeignId(recordingMbid: string | null): number | null {
-    if (!recordingMbid) {
-        return null;
-    }
-    const row = db.prepare(`
-        SELECT id
-        FROM Recordings
-        WHERE foreign_recording_id = ? OR mbid = ?
-        LIMIT 1
-    `).get(recordingMbid, recordingMbid) as { id?: number | null } | undefined;
-    return row?.id == null ? null : Number(row.id);
-}
-
 function getAcceptedProviderVideoRecordingId(provider: string, providerId: string): number | null {
     const row = db.prepare(`
         SELECT video_match.recording_id
@@ -198,6 +193,10 @@ function getAcceptedProviderVideoRecordingId(provider: string, providerId: strin
         JOIN ProviderVideoMatches video_match
           ON video_match.provider_video_item_id = item.id
          AND video_match.match_state = 'accepted'
+        JOIN Recordings recording
+          ON recording.id = video_match.recording_id
+         AND recording.is_video = 1
+         AND recording.mbid IS NOT NULL
         WHERE item.provider = ?
           AND item.entity_type = 'video'
           AND item.provider_id = ?
@@ -510,52 +509,17 @@ function ensureProviderVideoRecording(input: {
         : null;
 
     if (recordingMbid) {
-        db.prepare(`
-            INSERT OR IGNORE INTO Recordings (
-                foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-                artist_credit, length_ms, is_video, video_variant, metadata_status, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'musicbrainz', CURRENT_TIMESTAMP)
-        `).run(
-            recordingMbid,
-            recordingMbid,
-            artistMetadataId,
-            artistMbid,
-            groupTitle,
-            nullableText(input.video.artist_name),
-            lengthMs,
-            offerVariant,
-        );
-
-        const existingMb = db.prepare(`
-            SELECT video_variant FROM Recordings WHERE foreign_recording_id = ? OR mbid = ? LIMIT 1
-        `).get(recordingMbid, recordingMbid) as { video_variant: string | null } | undefined;
-        const mergedMbVariant = preferredVideoVariant(existingMb?.video_variant, offerVariant);
-
-        db.prepare(`
-            UPDATE Recordings
-            SET
-                artist_metadata_id = COALESCE(artist_metadata_id, ?),
-                artist_mbid = COALESCE(artist_mbid, ?),
-                title = COALESCE(NULLIF(?, ''), title),
-                artist_credit = COALESCE(artist_credit, ?),
-                length_ms = COALESCE(?, length_ms),
-                video_variant = ?,
-                is_video = 1,
-                metadata_status = 'musicbrainz',
-                updated_at = CURRENT_TIMESTAMP
-            WHERE foreign_recording_id = ? OR mbid = ?
-        `).run(
-            artistMetadataId,
-            artistMbid,
-            groupTitle,
-            nullableText(input.video.artist_name),
-            lengthMs,
-            mergedMbVariant,
-            recordingMbid,
-            recordingMbid,
-        );
-
-        return getRecordingIdByForeignId(recordingMbid);
+        // A provider-supplied MBID is matching evidence, never authority to mint
+        // a canonical row. MusicBrainz/catalog synchronization owns Recordings.
+        const canonicalId = db.prepare(`
+            SELECT id
+            FROM Recordings
+            WHERE (foreign_recording_id = ? OR mbid = ?)
+              AND is_video = 1
+              AND mbid IS NOT NULL
+            LIMIT 1
+        `).get(recordingMbid, recordingMbid) as { id?: number | null } | undefined;
+        return canonicalId?.id == null ? null : Number(canonicalId.id);
     }
 
     // Prefer a compatible canonical MusicBrainz video even when this provider
@@ -578,17 +542,34 @@ function ensureProviderVideoRecording(input: {
             groupTitle,
             offerVariant,
             lengthMs,
-            preserveMbTitle: true,
         });
         backfillPlaceholderVideoTitle(musicBrainzRecordingId, groupTitle);
         return musicBrainzRecordingId;
     }
 
     if (input.existingRecordingId) {
+        const manualAccepted = provider && providerId
+            ? db.prepare(`
+                SELECT 1 AS hit
+                FROM ProviderItems item
+                JOIN ProviderVideoMatches video_match
+                  ON video_match.provider_video_item_id = item.id
+                 AND video_match.recording_id = ?
+                 AND video_match.match_state = 'accepted'
+                 AND video_match.decision_source = 'manual'
+                WHERE item.provider = ?
+                  AND item.entity_type = 'video'
+                  AND item.provider_id = ?
+                LIMIT 1
+            `).get(input.existingRecordingId, provider, providerId) as { hit?: number } | undefined
+            : undefined;
+        if (manualAccepted?.hit) {
+            return input.existingRecordingId;
+        }
         const existing = db.prepare(`
             SELECT id, title, length_ms, mbid, video_variant, release_date
             FROM Recordings
-            WHERE id = ? AND is_video = 1
+            WHERE id = ? AND is_video = 1 AND mbid IS NOT NULL
         `).get(input.existingRecordingId) as {
             id: number;
             title: string | null;
@@ -620,7 +601,7 @@ function ensureProviderVideoRecording(input: {
                 undefined,
                 provider,
                 recordingVideoProvider(existing.id, sameProviderExclude),
-                !existing.mbid,
+                false,
             ),
         );
         const sameProviderCollision = Boolean(
@@ -655,52 +636,14 @@ function ensureProviderVideoRecording(input: {
             artistMetadataId,
             artistMbid,
             artistCredit: nullableText(input.video.artist_name),
-            preserveMbTitle: false,
         });
         return input.existingRecordingId;
     }
 
-    // Cross-provider dedup: another provider may already have minted a
-    // provider-only recording for this same video (e.g. TIDAL and Apple Music
-    // both carry "Don't Want You Back (feat. Kiesza)"). Attach to it instead of
-    // creating a per-provider duplicate.
-    const providerRecordingId = artistMbid
-        ? findProviderOnlyVideoRecordingId(
-            artistMbid,
-            rawTitle,
-            lengthMs,
-            releaseDate,
-            input.video.isrc ?? input.video.isrcs,
-            sameProviderExclude,
-        )
-        : null;
-    if (providerRecordingId) {
-        applyCatalogVideoIdentity(providerRecordingId, {
-            groupTitle,
-            offerVariant,
-            lengthMs,
-            preserveMbTitle: false,
-        });
-        backfillPlaceholderVideoTitle(providerRecordingId, groupTitle);
-        return providerRecordingId;
-    }
-
-    const result = db.prepare(`
-        INSERT INTO Recordings (
-            artist_metadata_id, artist_mbid, title, artist_credit, length_ms,
-            release_date, is_video, video_variant, metadata_status, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'provider_only', CURRENT_TIMESTAMP)
-    `).run(
-        artistMetadataId,
-        artistMbid,
-        groupTitle,
-        nullableText(input.video.artist_name),
-        lengthMs,
-        nullableText(input.video.release_date),
-        offerVariant,
-    );
-
-    return Number(result.lastInsertRowid);
+    // Unmatched provider videos stay provider offers. Creating a Recordings row
+    // here would turn provider metadata into canonical catalog identity and make
+    // every downstream reader trust an invented recording.
+    return null;
 }
 
 function applyCatalogVideoIdentity(
@@ -712,7 +655,6 @@ function applyCatalogVideoIdentity(
         artistMetadataId?: number | null;
         artistMbid?: string | null;
         artistCredit?: string | null;
-        preserveMbTitle: boolean;
     },
 ): void {
     const existing = db.prepare(`
@@ -724,47 +666,30 @@ function applyCatalogVideoIdentity(
     } | undefined;
     if (!existing) return;
 
-    const existingTitle = String(existing.title || "");
-    // Keep MusicBrainz / catalog titles stable. Venue-live marketing text
-    // ("Live at Other Voices") belongs on ProviderItems.title for that offer;
-    // adopting it onto Recordings.title made rename append "(live at …)" to
-    // files that imported under the bare title. Matching still attaches the
-    // offer to this recording_id without mutating the catalog title.
-    const mergedVariant = preferredVideoVariant(existing.video_variant, input.offerVariant);
-    const preferIncomingTitle = !input.preserveMbTitle && !existing.mbid;
-    const nextTitle = preferIncomingTitle
-        ? (preferredMergedVideoTitle(existingTitle, input.groupTitle) || input.groupTitle)
-        : (existingTitle.trim() || input.groupTitle);
-
     db.prepare(`
         UPDATE Recordings
         SET
-            artist_metadata_id = COALESCE(?, artist_metadata_id),
-            artist_mbid = COALESCE(?, artist_mbid),
+            artist_metadata_id = COALESCE(artist_metadata_id, ?),
+            artist_mbid = COALESCE(artist_mbid, ?),
             title = CASE
                 WHEN LOWER(TRIM(COALESCE(title, ''))) IN ('', 'unknown video') THEN ?
-                WHEN ? = 1 THEN ?
                 ELSE title
             END,
             artist_credit = COALESCE(artist_credit, ?),
-            length_ms = COALESCE(?, length_ms),
-            video_variant = ?,
-            is_video = 1,
-            metadata_status = CASE
-                WHEN foreign_recording_id IS NULL THEN 'provider_only'
-                ELSE metadata_status
+            length_ms = COALESCE(length_ms, ?),
+            video_variant = CASE
+                WHEN video_variant IS NULL OR TRIM(video_variant) = '' THEN ?
+                ELSE video_variant
             END,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND is_video = 1 AND mbid IS NOT NULL
     `).run(
         input.artistMetadataId ?? null,
         input.artistMbid ?? null,
         input.groupTitle,
-        preferIncomingTitle ? 1 : 0,
-        nextTitle,
         input.artistCredit ?? null,
         input.lengthMs,
-        mergedVariant,
+        input.offerVariant,
         recordingId,
     );
 }
@@ -886,28 +811,6 @@ function recordingHasOtherOfferFromProvider(
     return Boolean(row?.hit);
 }
 
-function recordingsShareProvider(leftRecordingId: number, rightRecordingId: number): boolean {
-    const row = db.prepare(`
-        SELECT 1 AS hit
-        FROM ProviderItems left_item
-        JOIN ProviderVideoMatches left_match
-          ON left_match.provider_video_item_id = left_item.id
-         AND left_match.match_state = 'accepted'
-        JOIN ProviderItems right_item
-          ON left_item.provider = right_item.provider
-         AND left_item.entity_type = 'video'
-         AND right_item.entity_type = 'video'
-         AND CAST(left_item.provider_id AS TEXT) != CAST(right_item.provider_id AS TEXT)
-        JOIN ProviderVideoMatches right_match
-          ON right_match.provider_video_item_id = right_item.id
-         AND right_match.match_state = 'accepted'
-        WHERE left_match.recording_id = ?
-          AND right_match.recording_id = ?
-        LIMIT 1
-    `).get(leftRecordingId, rightRecordingId) as { hit?: number } | undefined;
-    return Boolean(row?.hit);
-}
-
 function isExactTwinAgainstRecording(
     title: string,
     lengthMs: number | null,
@@ -935,280 +838,6 @@ function isExactTwinAgainstRecording(
         isrcsA: isrcs,
         isrcsB: recording.isrcs ?? recording.provider_isrc,
     });
-}
-
-/**
- * Find an existing provider-only video recording for the artist that describes
- * the SAME video from another provider. Highest identity score wins.
- */
-function findProviderOnlyVideoRecordingId(
-    artistMbid: string,
-    title: string,
-    lengthMs: number | null,
-    releaseDate?: string | null,
-    isrcs?: string | string[] | null,
-    exclude?: { provider: string; providerId: string } | null,
-): number | null {
-    if (!videoComparableTitle(title)) {
-        return null;
-    }
-    const rows = db.prepare(`
-        SELECT
-          r.id,
-          r.title,
-          r.length_ms,
-          r.video_variant,
-          r.release_date,
-          r.isrcs,
-          (
-            SELECT pi.duration_ms / 1000.0
-            FROM ProviderItems pi
-            JOIN ProviderVideoMatches video_match
-              ON video_match.provider_video_item_id = pi.id
-             AND video_match.match_state = 'accepted'
-            WHERE pi.entity_type = 'video'
-              AND video_match.recording_id = r.id
-              AND pi.duration_ms IS NOT NULL
-            ORDER BY pi.updated_at DESC
-            LIMIT 1
-          ) AS provider_duration,
-          (
-            SELECT pi.isrc
-            FROM ProviderItems pi
-            JOIN ProviderVideoMatches video_match
-              ON video_match.provider_video_item_id = pi.id
-             AND video_match.match_state = 'accepted'
-            WHERE pi.entity_type = 'video'
-              AND video_match.recording_id = r.id
-              AND pi.isrc IS NOT NULL
-              AND TRIM(pi.isrc) != ''
-            ORDER BY pi.updated_at DESC
-            LIMIT 1
-          ) AS provider_isrc,
-          (
-            SELECT pi.provider
-            FROM ProviderItems pi
-            JOIN ProviderVideoMatches video_match
-              ON video_match.provider_video_item_id = pi.id
-             AND video_match.match_state = 'accepted'
-            WHERE pi.entity_type = 'video'
-              AND video_match.recording_id = r.id
-            ORDER BY pi.updated_at DESC
-            LIMIT 1
-          ) AS provider
-        FROM Recordings r
-        WHERE r.is_video = 1 AND r.mbid IS NULL AND r.artist_mbid = ?
-    `).all(artistMbid) as Array<{
-        id: number;
-        title: string | null;
-        length_ms: number | null;
-        video_variant: string | null;
-        release_date: string | null;
-        isrcs: string | null;
-        provider_duration: number | null;
-        provider_isrc: string | null;
-        provider: string | null;
-    }>;
-    const incomingProvider = exclude?.provider ?? null;
-    const offerVariant = parseVideoVariant(title);
-    const scored = rows
-        .filter((row) => {
-            if (!exclude?.provider || !exclude.providerId) return true;
-            if (!recordingHasOtherOfferFromProvider(row.id, exclude.provider, exclude.providerId)) {
-                return true;
-            }
-            // Same provider already present: only attach when this is an exact twin.
-            return isExactTwinAgainstRecording(
-                title,
-                lengthMs,
-                releaseDate,
-                isrcs,
-                row,
-            );
-        })
-        .map((row) => ({
-            row,
-            match: scoreVideoIdentityMatch({
-                titleA: title,
-                titleB: String(row.title || ""),
-                lengthMsA: lengthMs,
-                lengthMsB: row.length_ms ?? durationMs(row.provider_duration),
-                variantA: offerVariant,
-                variantB: row.video_variant,
-                releaseDateA: releaseDate,
-                releaseDateB: row.release_date,
-                isrcsA: isrcs,
-                isrcsB: row.isrcs ?? row.provider_isrc,
-                providerA: incomingProvider,
-                providerB: row.provider,
-            }),
-        }))
-        .filter((entry) => entry.match.matched);
-    if (scored.length === 0) {
-        return null;
-    }
-    scored.sort((left, right) =>
-        right.match.score - left.match.score
-        || left.row.id - right.row.id);
-    return Number(scored[0].row.id);
-}
-
-/**
- * Heal duplicate provider-only video recordings for an artist. New provider
- * items only run dedup when they have no recording yet — items that minted a
- * duplicate before dedup existed (or before the qualifier-tolerant rule) keep
- * it forever, so every video refresh sweeps the artist and merges recordings
- * that now qualify as the same video (references repoint to the kept row).
- */
-function dedupeProviderOnlyVideoRecordings(artistMbid: string): number {
-    const rows = db.prepare(`
-        SELECT
-          r.id,
-          r.title,
-          r.length_ms,
-          r.video_variant,
-          r.release_date,
-          r.isrcs,
-          (
-            SELECT pi.duration_ms / 1000.0
-            FROM ProviderItems pi
-            JOIN ProviderVideoMatches video_match
-              ON video_match.provider_video_item_id = pi.id
-             AND video_match.match_state = 'accepted'
-            WHERE pi.entity_type = 'video'
-              AND video_match.recording_id = r.id
-              AND pi.duration_ms IS NOT NULL
-            ORDER BY pi.updated_at DESC
-            LIMIT 1
-          ) AS provider_duration,
-          (
-            SELECT pi.isrc
-            FROM ProviderItems pi
-            JOIN ProviderVideoMatches video_match
-              ON video_match.provider_video_item_id = pi.id
-             AND video_match.match_state = 'accepted'
-            WHERE pi.entity_type = 'video'
-              AND video_match.recording_id = r.id
-              AND pi.isrc IS NOT NULL
-              AND TRIM(pi.isrc) != ''
-            ORDER BY pi.updated_at DESC
-            LIMIT 1
-          ) AS provider_isrc,
-          (
-            SELECT pi.provider
-            FROM ProviderItems pi
-            JOIN ProviderVideoMatches video_match
-              ON video_match.provider_video_item_id = pi.id
-             AND video_match.match_state = 'accepted'
-            WHERE pi.entity_type = 'video'
-              AND video_match.recording_id = r.id
-            ORDER BY pi.updated_at DESC
-            LIMIT 1
-          ) AS provider
-        FROM Recordings r
-        WHERE r.is_video = 1 AND r.mbid IS NULL AND r.artist_mbid = ?
-        ORDER BY r.id
-    `).all(artistMbid) as Array<{
-        id: number;
-        title: string | null;
-        length_ms: number | null;
-        video_variant: string | null;
-        release_date: string | null;
-        isrcs: string | null;
-        provider_duration: number | null;
-        provider_isrc: string | null;
-        provider: string | null;
-    }>;
-    let merged = 0;
-    const kept: Array<{
-        id: number;
-        title: string;
-        length_ms: number | null;
-        video_variant: string | null;
-        release_date: string | null;
-        isrcs: string | null;
-        provider: string | null;
-    }> = [];
-    for (const row of rows) {
-        const title = String(row.title || "");
-        const lengthMs = row.length_ms ?? durationMs(row.provider_duration);
-        const isrcs = row.isrcs ?? row.provider_isrc;
-        const target = kept.find((k) => {
-            const twin = sameProviderVideo(
-                k.title,
-                k.length_ms,
-                title,
-                lengthMs,
-                k.video_variant,
-                row.video_variant || parseVideoVariant(title),
-                k.release_date,
-                row.release_date,
-                k.isrcs,
-                isrcs,
-                k.provider,
-                row.provider,
-            );
-            if (!twin) return false;
-            if (!recordingsShareProvider(k.id, row.id)) return true;
-            return isExactTwinAgainstRecording(title, lengthMs, row.release_date, isrcs, {
-                title: k.title,
-                length_ms: k.length_ms,
-                video_variant: k.video_variant,
-                release_date: k.release_date,
-                isrcs: k.isrcs,
-            });
-        });
-        if (!target) {
-            kept.push({
-                id: row.id,
-                title: catalogVideoDisplayTitle(title),
-                length_ms: lengthMs,
-                video_variant: row.video_variant || parseVideoVariant(title),
-                release_date: row.release_date,
-                isrcs,
-                provider: row.provider,
-            });
-            continue;
-        }
-        const preferredTitle = preferredMergedVideoTitle(target.title, title);
-        const mergedVariant = preferredVideoVariant(
-            target.video_variant || parseVideoVariant(target.title),
-            row.video_variant || parseVideoVariant(title),
-        );
-        target.title = preferredTitle;
-        target.video_variant = mergedVariant;
-        if (row.length_ms != null) target.length_ms = row.length_ms;
-        if (row.release_date) target.release_date = target.release_date || row.release_date;
-        db.prepare(`
-            UPDATE Recordings
-            SET title = ?, video_variant = ?,
-                length_ms = COALESCE(?, length_ms),
-                release_date = COALESCE(release_date, ?),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `).run(preferredTitle, mergedVariant, row.length_ms, row.release_date, target.id);
-        db.prepare(`
-            UPDATE OR REPLACE ProviderVideoMatches
-            SET recording_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE recording_id = ?
-        `).run(target.id, row.id);
-        db.prepare(`UPDATE TrackFiles SET recording_id = ? WHERE recording_id = ?`).run(target.id, row.id);
-        db.prepare(`UPDATE OR IGNORE RecordingRelations SET source_recording_id = ? WHERE source_recording_id = ?`).run(target.id, row.id);
-        db.prepare(`UPDATE OR IGNORE RecordingRelations SET target_recording_id = ? WHERE target_recording_id = ?`).run(target.id, row.id);
-        db.prepare(`DELETE FROM RecordingRelations WHERE source_recording_id = ? OR target_recording_id = ?`).run(row.id, row.id);
-        db.prepare(`
-            UPDATE Recordings
-            SET length_ms = COALESCE(?, length_ms),
-                cover_image_id = COALESCE(cover_image_id, (SELECT cover_image_id FROM Recordings WHERE id = ?)),
-                cover_image_url = COALESCE(cover_image_url, (SELECT cover_image_url FROM Recordings WHERE id = ?)),
-                release_date = COALESCE(release_date, (SELECT release_date FROM Recordings WHERE id = ?)),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `).run(row.length_ms, row.id, row.id, row.id, target.id);
-        db.prepare(`DELETE FROM Recordings WHERE id = ?`).run(row.id);
-        merged += 1;
-    }
-    return merged;
 }
 
 function findMusicBrainzVideoRecordingIdByTitle(
@@ -1291,6 +920,12 @@ function findMusicBrainzVideoRecordingIdByTitle(
     scored.sort((left, right) =>
         right.match.score - left.match.score
         || left.row.id - right.row.id);
+    if (
+        scored.length > 1
+        && scored[0].match.score - scored[1].match.score < VIDEO_MATCH_AMBIGUITY_MARGIN
+    ) {
+        return null;
+    }
     return Number(scored[0].row.id);
 }
 
@@ -1304,6 +939,9 @@ function findMusicBrainzVideoRecordingIdByTitle(
 function repairProviderVideoRecordingAssignments(artistMbid: string): number {
     const rows = db.prepare(`
         SELECT
+            video_match.id AS match_id,
+            video_match.decision_source,
+            video_match.method AS match_method,
             provider_item.provider,
             provider_item.provider_id,
             release_item.provider_id AS provider_album_id,
@@ -1329,7 +967,8 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
               LIMIT 1
             ) AS artist_name,
             video_match.recording_id,
-            recording.artist_mbid
+            recording.artist_mbid,
+            recording.mbid AS canonical_recording_mbid
         FROM ProviderVideoMatches video_match
         JOIN ProviderItems provider_item
           ON provider_item.id = video_match.provider_video_item_id
@@ -1357,6 +996,9 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         ORDER BY provider_item.provider, provider_item.provider_id
     `).all(artistMbid) as Array<{
         provider: string;
+        match_id: number;
+        decision_source: "automatic" | "manual";
+        match_method: string;
         provider_id: string;
         provider_album_id: string | null;
         title: string | null;
@@ -1368,6 +1010,7 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         artist_name: string | null;
         recording_id: number;
         artist_mbid: string | null;
+        canonical_recording_mbid: string | null;
     }>;
 
     const updateTrackFiles = db.prepare(`
@@ -1401,13 +1044,48 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     `);
+    const rejectMatch = db.prepare(`
+        UPDATE ProviderVideoMatches
+        SET match_state = 'rejected',
+            method = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `);
+    const clearInventedFileIdentity = db.prepare(`
+        UPDATE TrackFiles
+        SET recording_id = NULL,
+            canonical_recording_mbid = NULL
+        WHERE provider = ?
+          AND (provider_entity_type = 'video' OR library_slot = 'video')
+          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+          AND recording_id = ?
+    `);
 
     let repaired = 0;
     for (const row of rows) {
-        // A missing provider title cannot safely disprove the existing link.
-        // Leave sparse legacy offers untouched until a provider refresh fills
-        // their metadata rather than splitting them into "Unknown Video" rows.
+        // A sparse offer cannot safely disprove a manual match to a real
+        // MusicBrainz recording. It can never justify a provider-only target.
         if (!nullableText(row.title)) {
+            if (!row.canonical_recording_mbid) {
+                rejectMatch.run("invalid_noncanonical_target", row.match_id);
+                clearInventedFileIdentity.run(row.provider, row.provider_id, row.recording_id);
+                repaired += 1;
+            }
+            continue;
+        }
+        if (row.decision_source === "manual" && row.canonical_recording_mbid) {
+            continue;
+        }
+        if (
+            row.canonical_recording_mbid
+            && (
+                row.match_method === "musicbrainz-recording-url"
+                || row.match_method === "external_id"
+                || row.duration == null
+            )
+        ) {
+            // Direct catalog evidence and sparse provider payloads are not
+            // disproved by a later list response that lacks matching facts.
             continue;
         }
         // Deliberately do NOT pass the currently attached recording's MBID as
@@ -1434,7 +1112,18 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
             artistMbid: row.artist_mbid ?? artistMbid,
             existingRecordingId: row.recording_id,
         });
-        if (!targetRecordingId || targetRecordingId === row.recording_id) {
+        if (!targetRecordingId) {
+            rejectMatch.run(
+                row.canonical_recording_mbid
+                    ? "canonical_match_no_longer_supported"
+                    : "invalid_noncanonical_target",
+                row.match_id,
+            );
+            clearInventedFileIdentity.run(row.provider, row.provider_id, row.recording_id);
+            repaired += 1;
+            continue;
+        }
+        if (targetRecordingId === row.recording_id) {
             continue;
         }
 
@@ -1967,9 +1656,9 @@ export class RefreshVideoService {
         const updateRecordingState = db.prepare(`
             UPDATE Recordings
             SET
-                release_date = COALESCE(?, release_date),
-                cover_image_id = COALESCE(?, cover_image_id),
-                length_ms = COALESCE(?, length_ms),
+                release_date = COALESCE(release_date, ?),
+                cover_image_id = COALESCE(cover_image_id, ?),
+                length_ms = COALESCE(length_ms, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `);
@@ -2010,7 +1699,6 @@ export class RefreshVideoService {
 
             if (artistMbid) {
                 repairProviderVideoRecordingAssignments(artistMbid);
-                dedupeProviderOnlyVideoRecordings(artistMbid);
                 repairProviderVideoAudioRelations(artistMbid);
                 deleteOrphanProviderOnlyVideoRecordings(artistMbid);
             }
@@ -2021,9 +1709,9 @@ export class RefreshVideoService {
         const updateRecordingState = db.prepare(`
             UPDATE Recordings
             SET
-                release_date = COALESCE(?, release_date),
-                cover_image_id = COALESCE(?, cover_image_id),
-                length_ms = COALESCE(?, length_ms),
+                release_date = COALESCE(release_date, ?),
+                cover_image_id = COALESCE(cover_image_id, ?),
+                length_ms = COALESCE(length_ms, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `);
@@ -2100,12 +1788,6 @@ export class RefreshVideoService {
                 if (normalized) sweptArtists.add(normalized);
             }
             for (const normalized of sweptArtists) {
-                // Dedupe before repair so cross-provider twins collapse first;
-                // repair then re-homes offers onto the surviving identity.
-                const merged = dedupeProviderOnlyVideoRecordings(normalized);
-                if (merged > 0) {
-                    console.log(`[RefreshVideoService] Merged ${merged} duplicate provider-only video recording(s) for artist ${normalized}`);
-                }
                 const repaired = repairProviderVideoRecordingAssignments(normalized);
                 if (repaired > 0) {
                     console.log(`[RefreshVideoService] Repaired ${repaired} provider video recording assignment(s) for artist ${normalized}`);

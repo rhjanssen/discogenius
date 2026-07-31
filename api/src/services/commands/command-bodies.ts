@@ -43,8 +43,16 @@ export interface DownloadTrackStateEntry {
 export interface DownloadTrackOffer {
   provider: string;
   providerTrackId: string;
+  /** Exact internal ProviderItems row selected by the acquisition plan. */
+  providerTrackItemId?: number;
   /** Source provider album for this tip (hybrid composites span multiple albums). */
   providerAlbumId?: string | null;
+  /** Exact internal provider-edition item when the offer has edition context. */
+  providerEditionItemId?: number | null;
+  /** Exact source capability selected for this track. */
+  providerAudioVariantId?: number | null;
+  /** Exact acquisition-plan source row that selected this offer. */
+  acquisitionPlanSourceId?: number | null;
   canonicalTrackMbid?: string | null;
   canonicalRecordingMbid?: string | null;
   title?: string;
@@ -262,6 +270,7 @@ export interface RescanFoldersCommand extends CommandBodyCommon {
 
 export interface ImportDownloadCommand extends CommandBodyCommon {
   type: DownloadMediaType;
+  provider: string;
   providerId: string;
   resolved?: ResolvedDownloadMetadata;
   originalJobId?: number;
@@ -331,6 +340,7 @@ export interface ImportProviderArtistsCommand extends CommandBodyCommon {
 }
 
 export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
+  /** @deprecated Provider-keyed manual imports are rejected at the handler boundary. */
   items?: Array<{ id: number; providerId: string }>;
   canonical?: {
     libraryId: number;
@@ -338,7 +348,13 @@ export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
     mappings: Array<{
       unmappedFileId: number;
       trackId: number;
-      providerItemId?: number | null;
+    }>;
+  };
+  canonicalVideo?: {
+    libraryId: number;
+    mappings: Array<{
+      unmappedFileId: number;
+      recordingId: number;
     }>;
   };
 }

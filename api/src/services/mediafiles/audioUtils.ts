@@ -9,6 +9,11 @@ import { exec, execFile, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
+import {
+    clearMediaTagsWithTagLib,
+    replaceMediaCoverWithTagLib,
+    writeMediaTagsWithTagLib,
+} from './media-tag-io.js';
 const IS_WINDOWS = process.platform === "win32";
 const DEFAULT_FFMPEG_BINARY = IS_WINDOWS ? "ffmpeg.exe" : "ffmpeg";
 const DEFAULT_FFPROBE_BINARY = IS_WINDOWS ? "ffprobe.exe" : "ffprobe";
@@ -405,6 +410,13 @@ export function buildMetadataWriteArgs(
 }
 
 export async function writeMetadata(filePath: string, tags: Record<string, string>, removeKeys: string[] = []): Promise<boolean> {
+    const tagLibResult = await writeMediaTagsWithTagLib(filePath, tags, removeKeys);
+    if (tagLibResult.success) {
+        return true;
+    }
+    if (tagLibResult.handled) {
+        console.warn(`[MediaTags] TagLib write failed for ${filePath}; using compatibility backend: ${tagLibResult.error || "unknown error"}`);
+    }
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
     }
@@ -471,6 +483,13 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
  * Uses ffmpeg with `-map_metadata -1` to remove all existing tags before a clean rewrite.
  */
 export async function removeAllTags(filePath: string): Promise<boolean> {
+    const tagLibResult = await clearMediaTagsWithTagLib(filePath);
+    if (tagLibResult.success) {
+        return true;
+    }
+    if (tagLibResult.handled) {
+        console.warn(`[MediaTags] TagLib clear failed for ${filePath}; using compatibility backend: ${tagLibResult.error || "unknown error"}`);
+    }
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return runMutagenBridge(['clear', filePath], filePath);
     }
@@ -628,6 +647,13 @@ export async function embedAudioCover(filePath: string, coverPath: string): Prom
         return false;
     }
 
+    const tagLibResult = await replaceMediaCoverWithTagLib(filePath, coverPath);
+    if (tagLibResult.success) {
+        return true;
+    }
+    if (tagLibResult.handled) {
+        console.warn(`[MediaTags] TagLib cover write failed for ${filePath}; using compatibility backend: ${tagLibResult.error || "unknown error"}`);
+    }
     return runMutagenBridge(['cover', filePath, coverPath], filePath);
 }
 

@@ -214,7 +214,7 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
   }
 });
 
-test("optional provider provenance attaches without becoming canonical identity", async () => {
+test("canonical manual import rejects provider provenance from stale command payloads", async () => {
   fixture();
   try {
     const providerItem = db.prepare(`
@@ -223,42 +223,26 @@ test("optional provider provenance attaches without becoming canonical identity"
       RETURNING id
     `).get() as { id: number };
 
+    let importerCalled = false;
     const service = new CanonicalManualImportService(db, async () => {
-      db.prepare(`
-        INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
-          canonical_track_mbid,
-          file_path, relative_path, filename, extension, file_class
-        ) VALUES (
-          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
-          'track-a',
-          '/library/stereo/Artist/Release A/01 Track A.flac',
-          'Artist/Release A/01 Track A.flac',
-          '01 Track A.flac', 'flac', 'audio'
-        )
-      `).run();
-      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
+      importerCalled = true;
+      return { requested: 0, imported: 0, duplicates: 0, skipped: 0, importedFileIds: {} };
     });
 
-    await service.import({
-      libraryId: 1,
-      editionId: 10,
-      mappings: [{ unmappedFileId: 1, trackId: 1000, providerItemId: providerItem.id }],
-    });
-
-    const row = db.prepare(`
-      SELECT track_id, recording_id, album_edition_id, provider, provider_entity_type, provider_id
-      FROM TrackFiles WHERE id = 1
-    `).get() as Record<string, unknown>;
-    // Provenance is recorded as the provider identity triple, while canonical
-    // identity still comes from the selected Release/Track — never from the
-    // provider row's own title.
-    assert.equal(row.provider, "tidal");
-    assert.equal(row.provider_entity_type, "track");
-    assert.equal(row.provider_id, "tidal-track-1");
-    assert.equal(row.track_id, 1000);
-    assert.equal(row.recording_id, 100);
-    assert.equal(row.album_edition_id, 10);
+    await assert.rejects(
+      () => service.import({
+        libraryId: 1,
+        editionId: 10,
+        mappings: [{
+          unmappedFileId: 1,
+          trackId: 1000,
+          providerItemId: providerItem.id,
+        }],
+      } as unknown as Parameters<CanonicalManualImportService["import"]>[0]),
+      /does not accept providerItemId/,
+    );
+    assert.equal(importerCalled, false, "invalid provider provenance is rejected before filesystem work");
+    assert.equal((db.prepare("SELECT COUNT(*) AS count FROM TrackFiles").get() as { count: number }).count, 0);
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }

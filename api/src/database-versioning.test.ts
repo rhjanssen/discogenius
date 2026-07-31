@@ -49,7 +49,9 @@ test("fresh database initializes the current development baseline", () => {
     "AcquisitionPlans", "AcquisitionPlanSources", "AcquisitionPlanTracks",
     "MediaCoverSelections",
     "RecordingRelations",
-    "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
+    "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles",
+    "MetadataFileLibraries", "LyricFileLibraries", "ExtraFileLibraries",
+    "UnmappedFiles",
     "commands", "scheduled_tasks", "quality_profiles",
     "history_events", "MediaCoverProxyCache",
     "metadata_identity_status",
@@ -246,6 +248,45 @@ test("sidecar tables do not retain legacy album or media identity shadows", () =
     assert.equal(columns.includes("album_id"), false, `Expected ${tableName}.album_id to be absent`);
     assert.equal(columns.includes("media_id"), false, `Expected ${tableName}.media_id to be absent`);
   }
+});
+
+test("libraries may share a root and sidecar ownership stays normalized", () => {
+  const metadataProfile = dbModule.db.prepare(`
+    SELECT id FROM MetadataProfiles ORDER BY id LIMIT 1
+  `).get() as { id: number };
+  const qualityProfiles = dbModule.db.prepare(`
+    SELECT id FROM quality_profiles ORDER BY id LIMIT 2
+  `).all() as Array<{ id: number }>;
+  assert.equal(qualityProfiles.length, 2);
+
+  const sharedRoot = path.join(tempDir, "shared-library-root");
+  const first = dbModule.db.prepare(`
+    INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id)
+    VALUES (?, ?, ?, ?)
+    RETURNING id
+  `).get(
+    "Shared root lossless",
+    sharedRoot,
+    metadataProfile.id,
+    qualityProfiles[0].id,
+  ) as { id: number };
+  const second = dbModule.db.prepare(`
+    INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id)
+    VALUES (?, ?, ?, ?)
+    RETURNING id
+  `).get(
+    "Shared root lossy",
+    sharedRoot,
+    metadataProfile.id,
+    qualityProfiles[1].id,
+  ) as { id: number };
+
+  assert.notEqual(first.id, second.id);
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS count FROM Libraries WHERE root_path = ?")
+      .get(sharedRoot) as { count: number }).count,
+    2,
+  );
 });
 
 test("retired provider catalog tables are absent from the baseline", () => {

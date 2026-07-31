@@ -7,6 +7,7 @@ export type LibraryScopeType = "primary" | "release_credit" | "track_credit";
 export interface LibraryBootstrapPaths {
   stereoRoot: string;
   spatialRoot: string;
+  videoRoot: string;
 }
 
 export interface LibraryReleaseScopeInput {
@@ -19,7 +20,11 @@ export interface LibraryReleaseScopeInput {
 export class LibraryCurationRepository {
   constructor(private readonly db: Database.Database) {}
 
-  bootstrapDefaultLibraries(paths: LibraryBootstrapPaths): { stereoId: number; spatialId: number } {
+  bootstrapDefaultLibraries(paths: LibraryBootstrapPaths): {
+    stereoId: number;
+    spatialId: number;
+    videoId: number;
+  } {
     return this.db.transaction(() => {
       this.db.prepare(`
         INSERT OR IGNORE INTO MetadataProfiles (
@@ -75,18 +80,47 @@ export class LibraryCurationRepository {
         JSON.stringify({ spatial: true }),
         "preserve",
       );
+      this.db.prepare(`
+        INSERT INTO quality_profiles (
+          name, allowed_source_formats, preference_order, cutoff,
+          continue_upgrades, fallback_policy, output_format, transcode_policy
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          allowed_source_formats = excluded.allowed_source_formats,
+          preference_order = excluded.preference_order,
+          cutoff = excluded.cutoff,
+          continue_upgrades = excluded.continue_upgrades,
+          fallback_policy = excluded.fallback_policy,
+          output_format = excluded.output_format,
+          transcode_policy = excluded.transcode_policy,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        "Video",
+        JSON.stringify(["video"]),
+        JSON.stringify(["video"]),
+        "video",
+        0,
+        "unavailable",
+        JSON.stringify({ video: true }),
+        "preserve",
+      );
       const metadataProfileId = (this.db.prepare(`
         SELECT id FROM MetadataProfiles WHERE name = 'Default'
       `).get() as { id: number }).id;
       const qualityProfileRows = this.db.prepare(`
-        SELECT id, name FROM quality_profiles WHERE name IN ('High Quality', 'Spatial')
+        SELECT id, name FROM quality_profiles WHERE name IN ('High Quality', 'Spatial', 'Video')
       `).all() as Array<{ id: number; name: string }>;
       const qualityProfileIdByName = new Map(
         qualityProfileRows.map((profile) => [profile.name, profile.id]),
       );
       const highQualityProfileId = qualityProfileIdByName.get("High Quality");
       const spatialQualityProfileId = qualityProfileIdByName.get("Spatial");
-      if (highQualityProfileId == null || spatialQualityProfileId == null) {
+      const videoQualityProfileId = qualityProfileIdByName.get("Video");
+      if (
+        highQualityProfileId == null
+        || spatialQualityProfileId == null
+        || videoQualityProfileId == null
+      ) {
         throw new Error("Default library quality profiles were not materialized");
       }
       const upsertLibrary = this.db.prepare(`
@@ -112,7 +146,13 @@ export class LibraryCurationRepository {
         metadataProfileId,
         spatialQualityProfileId,
       ) as { id: number }).id;
-      return { stereoId, spatialId };
+      const videoId = (upsertLibrary.get(
+        "Video",
+        paths.videoRoot,
+        metadataProfileId,
+        videoQualityProfileId,
+      ) as { id: number }).id;
+      return { stereoId, spatialId, videoId };
     })();
   }
 

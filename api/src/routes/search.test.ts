@@ -163,12 +163,12 @@ test("local search returns canonical tracks", async () => {
   `).get(providerRelease.id, release.id) as { id: number };
   const trackMatch = dbModule.db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
-    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
-  `).get(member.id, releaseMatch.id, track.id, track.recording_id) as { id: number };
+  `).get(providerTrack.id, member.id, releaseMatch.id, track.id, track.recording_id) as { id: number };
   const variant = dbModule.db.prepare(`
     INSERT INTO ProviderItemAudioVariants (
       provider_item_id, variant_key, quality_class, provider_quality_label,
@@ -225,12 +225,12 @@ test("local search returns canonical videos", async () => {
   const artist = insertCanonicalArtist();
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, artist_metadata_id, artist_mbid,
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
       title, length_ms, is_video, metadata_status, release_date, cover_image_id, monitored
     )
     VALUES (
-      'provider-video-1', ?, 'artist-mbid',
-      'Canonical Search Video', 201000, 1, 'provider_only', '2023-02-03', 'recording-cover', 1
+      'mb-video-search-1', 'mb-video-search-1', ?, 'artist-mbid',
+      'Canonical Search Video', 201000, 1, 'musicbrainz', '2023-02-03', 'recording-cover', 1
     )
     RETURNING id
   `).get(artist.id) as { id: number };

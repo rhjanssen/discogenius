@@ -719,6 +719,19 @@ export class RefreshArtistService {
                   AND entity_type = 'release'
                   AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
             `).run(reason, providerAlbumId);
+            db.prepare(`
+                UPDATE ProviderEditionMatches
+                SET match_state = 'rejected',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE provider_edition_item_id = (
+                  SELECT id
+                  FROM ProviderItems
+                  WHERE provider = 'soundcloud'
+                    AND entity_type = 'release'
+                    AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                )
+                  AND method = ?
+            `).run(providerAlbumId, PLAYLIST_TRACKLIST_COVERAGE_METHOD);
         })();
     }
 

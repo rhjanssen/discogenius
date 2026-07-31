@@ -150,13 +150,17 @@ function providerTrackProjectionJoins(itemAlias: string): string {
       ON ${matchAlias}.id = (
         SELECT candidate_match.id
         FROM ProviderTrackMatches candidate_match
-        JOIN ProviderEditionMembers candidate_member
-          ON candidate_member.id = candidate_match.provider_edition_member_id
-        JOIN ProviderEditionMatches candidate_release_match
-          ON candidate_release_match.id = candidate_match.provider_edition_match_id
-         AND candidate_release_match.match_state = 'accepted'
-        WHERE candidate_member.member_item_id = ${itemAlias}.id
+        WHERE candidate_match.provider_track_item_id = ${itemAlias}.id
           AND candidate_match.match_state = 'accepted'
+          AND candidate_match.recording_id = (
+            SELECT CASE
+              WHEN COUNT(DISTINCT agreed_match.recording_id) = 1
+              THEN MAX(agreed_match.recording_id)
+            END
+            FROM ProviderTrackMatches agreed_match
+            WHERE agreed_match.provider_track_item_id = ${itemAlias}.id
+              AND agreed_match.match_state = 'accepted'
+          )
         ORDER BY
           CASE WHEN candidate_match.track_id IS NULL THEN 1 ELSE 0 END,
           CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
@@ -169,7 +173,30 @@ function providerTrackProjectionJoins(itemAlias: string): string {
     LEFT JOIN ProviderEditionMatches ${releaseMatchAlias}
       ON ${releaseMatchAlias}.id = ${matchAlias}.provider_edition_match_id
      AND ${releaseMatchAlias}.match_state = 'accepted'
-    LEFT JOIN Tracks ${trackAlias} ON ${trackAlias}.id = ${matchAlias}.track_id
+     AND ${releaseMatchAlias}.edition_id = (
+       SELECT CASE
+         WHEN COUNT(DISTINCT agreed_release_match.edition_id) = 1
+         THEN MAX(agreed_release_match.edition_id)
+       END
+       FROM ProviderTrackMatches agreed_track_match
+       JOIN ProviderEditionMatches agreed_release_match
+         ON agreed_release_match.id = agreed_track_match.provider_edition_match_id
+        AND agreed_release_match.match_state = 'accepted'
+       WHERE agreed_track_match.provider_track_item_id = ${itemAlias}.id
+         AND agreed_track_match.match_state = 'accepted'
+     )
+    LEFT JOIN Tracks ${trackAlias}
+      ON ${trackAlias}.id = ${matchAlias}.track_id
+     AND ${trackAlias}.id = (
+       SELECT CASE
+         WHEN COUNT(DISTINCT agreed_track.track_id) = 1
+         THEN MAX(agreed_track.track_id)
+       END
+       FROM ProviderTrackMatches agreed_track
+       WHERE agreed_track.provider_track_item_id = ${itemAlias}.id
+         AND agreed_track.match_state = 'accepted'
+         AND agreed_track.track_id IS NOT NULL
+     )
     LEFT JOIN Recordings ${recordingAlias} ON ${recordingAlias}.id = ${matchAlias}.recording_id
     LEFT JOIN AlbumEditions ${releaseAlias} ON ${releaseAlias}.id = ${releaseMatchAlias}.edition_id
     LEFT JOIN Albums ${groupAlias} ON ${groupAlias}.id = ${releaseAlias}.release_group_id
@@ -231,22 +258,17 @@ function loadProviderTrack(provider: string, providerMediaId: string | number): 
 
 function getProviderItemRecordingId(provider: string, providerMediaId: string): number | null {
   const row = db.prepare(`
-    SELECT track_match.recording_id
+    SELECT CASE
+      WHEN COUNT(DISTINCT track_match.recording_id) = 1
+      THEN MAX(track_match.recording_id)
+    END AS recording_id
     FROM ProviderItems item
-    JOIN ProviderEditionMembers member ON member.member_item_id = item.id
     JOIN ProviderTrackMatches track_match
-      ON track_match.provider_edition_member_id = member.id
+      ON track_match.provider_track_item_id = item.id
      AND track_match.match_state = 'accepted'
-    JOIN ProviderEditionMatches release_match
-      ON release_match.id = track_match.provider_edition_match_id
-     AND release_match.match_state = 'accepted'
     WHERE item.provider = ?
       AND item.entity_type = 'track'
       AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-    ORDER BY
-      CASE track_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-      track_match.confidence DESC
-    LIMIT 1
   `).get(provider, providerMediaId) as { recording_id?: number | null } | undefined;
 
   return row?.recording_id == null ? null : Number(row.recording_id);

@@ -63,10 +63,15 @@ export class CurationService {
       INSERT OR IGNORE INTO LibraryArtists (
         library_id, managed_artist_id, monitored, credited_scope
       )
-      SELECT id, ?, 1, 'release_and_track_credit'
-      FROM Libraries
-      WHERE enabled = 1
-    `).run(managedArtistId);
+      SELECT
+        library.id,
+        ?,
+        CASE WHEN local_artist.monitored = 1 THEN 1 ELSE 0 END,
+        'release_and_track_credit'
+      FROM Libraries library
+      LEFT JOIN Artists local_artist ON local_artist.mbid = ?
+      WHERE library.enabled = 1
+    `).run(managedArtistId, identity.artistMbid);
 
     const libraries = db.prepare(`
       SELECT library.id

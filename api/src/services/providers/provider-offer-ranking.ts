@@ -44,8 +44,8 @@ export function providerAudioQualityRank(
       .qualityMapping
       ?.toNeutralAudio(rawQuality) ?? null;
   } catch {
-    // Unknown/removed provider: retain a best-effort shared classification so
-    // legacy ProviderItems remain rankable during migrations.
+    // An unavailable plugin still gets the shared best-effort classification
+    // from the normalized audio-variant label.
   }
   neutral ??= classifyNeutralAudio(rawQuality);
 
@@ -71,16 +71,14 @@ export function providerAudioQualityRank(
 /**
  * Derive a spatial download request from all known capability tags.
  *
- * A ProviderItems row has one scalar `quality`, but an album can expose stereo
- * and spatial variants at the same provider id. Adapters preserve that
- * multi-axis capability in `match_evidence.providerQualityTags`; projecting it
- * here keeps persisted provider ids stable while still asking the backend for
- * the requested stream.
+ * A provider item can expose several ProviderItemAudioVariants at one provider
+ * id. Project the selected variant's normalized labels into the backend request
+ * without treating source capability as a local file-quality fact.
  */
 export function projectProviderSpatialOffer(
   providerId: string | null | undefined,
   rawQualities: Iterable<string | null | undefined>,
-  legacySpatialProof = false,
+  sourceCapabilityProof = false,
 ): SpatialOfferProjection | null {
   const qualities = Array.from(rawQualities)
     .map((quality) => String(quality ?? "").trim())
@@ -95,8 +93,7 @@ export function projectProviderSpatialOffer(
       .spatial ?? [];
     for (const format of mapped) formats.add(format);
   } catch {
-    // Unknown/removed providers and malformed legacy tags still get the shared
-    // best-effort classification below.
+    // An unavailable plugin still gets the shared best-effort classification.
   }
 
   for (const quality of qualities) {
@@ -111,9 +108,9 @@ export function projectProviderSpatialOffer(
     return { quality: "SONY_360RA", rank: 920 };
   }
 
-  // Older rows sometimes only carry library_slot='spatial'. Before capability
-  // tags were persisted, that slot represented the supported Atmos job.
-  return legacySpatialProof
+  // `quality_class='spatial'` is itself normalized source-capability evidence
+  // even when the provider did not supply a more specific spatial label.
+  return sourceCapabilityProof
     ? { quality: "DOLBY_ATMOS", rank: 1000 }
     : null;
 }

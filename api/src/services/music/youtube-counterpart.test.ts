@@ -50,6 +50,10 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
     .run("rec-audio-yt-cp", "artist-yt-cp", "Pompeii");
   const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-cp") as { id: number }).id;
   db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, metadata_status)
+    VALUES ('rec-video-yt-cp', 'artist-yt-cp', 'Pompeii', 214000, 1, 'musicbrainz')
+  `).run();
+  db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 214000)
   `).run("track-yt-cp", "release-yt-cp", "rec-audio-yt-cp", "Pompeii");
@@ -100,9 +104,14 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
   assert.equal(audioMatch.match_state, "accepted");
 
   const videoOffer = db.prepare(`
-    SELECT id, recording_id
-    FROM ProviderItems
-    WHERE provider = 'youtube-music' AND entity_type = 'video' AND provider_id = 'omv-pompeii'
+    SELECT item.id, match.recording_id
+    FROM ProviderItems item
+    JOIN ProviderVideoMatches match
+      ON match.provider_video_item_id = item.id
+     AND match.match_state = 'accepted'
+    WHERE item.provider = 'youtube-music'
+      AND item.entity_type = 'video'
+      AND item.provider_id = 'omv-pompeii'
   `).get() as {
     id: number;
     recording_id: number;
@@ -132,6 +141,10 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
   db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video) VALUES (?, ?, ?, 0)`)
     .run("rec-audio-yt-self", "artist-yt-self", "SAVE MY SOUL");
   const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-self") as { id: number }).id;
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, metadata_status)
+    VALUES ('rec-video-yt-self', 'artist-yt-self', 'SAVE MY SOUL', 241000, 1, 'musicbrainz')
+  `).run();
   db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 241000)
@@ -179,8 +192,14 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
   assert.ok(stereoOffer.id);
 
   const videoOffer = db.prepare(`
-    SELECT id, recording_id FROM ProviderItems
-    WHERE provider = 'youtube-music' AND entity_type = 'video' AND provider_id = 'ktWGvv6yHeU'
+    SELECT item.id, match.recording_id
+    FROM ProviderItems item
+    JOIN ProviderVideoMatches match
+      ON match.provider_video_item_id = item.id
+     AND match.match_state = 'accepted'
+    WHERE item.provider = 'youtube-music'
+      AND item.entity_type = 'video'
+      AND item.provider_id = 'ktWGvv6yHeU'
   `).get() as { id: number; recording_id: number };
   assert.ok(videoOffer.recording_id);
   assert.notEqual(videoOffer.id, stereoOffer.id, "self-OMV keeps distinct provider track and video facts");

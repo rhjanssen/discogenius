@@ -156,9 +156,15 @@ test("syncMusicBrainzVideosForArtist creates youtube-music offers from free-stre
   assert.ok(recording);
 
   const offer = dbModule.db.prepare(`
-    SELECT provider, provider_id, recording_id, recording_mbid, match_method, match_confidence, provider_url
-    FROM ProviderItems
-    WHERE entity_type = 'video' AND provider_id = ?
+    SELECT item.provider, item.provider_id, match.recording_id,
+           recording.mbid AS recording_mbid, match.method AS match_method,
+           match.confidence AS match_confidence, item.provider_url
+    FROM ProviderItems item
+    JOIN ProviderVideoMatches match
+      ON match.provider_video_item_id = item.id
+     AND match.match_state = 'accepted'
+    JOIN Recordings recording ON recording.id = match.recording_id
+    WHERE item.entity_type = 'video' AND item.provider_id = ?
   `).get("a1xFsoRYrds") as {
     provider: string;
     provider_id: string;

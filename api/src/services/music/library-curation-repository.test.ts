@@ -17,8 +17,11 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
     const libraries = repository.bootstrapDefaultLibraries({
       stereoRoot: "/library/stereo-music",
       spatialRoot: "/library/spatial-music",
+      videoRoot: "/library/music-videos",
     });
     assert.notEqual(libraries.stereoId, libraries.spatialId);
+    assert.notEqual(libraries.videoId, libraries.stereoId);
+    assert.notEqual(libraries.videoId, libraries.spatialId);
 
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
     db.prepare("INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1)").run();

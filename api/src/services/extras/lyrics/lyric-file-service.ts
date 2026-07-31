@@ -21,7 +21,7 @@ export class LyricFileService {
   static upsert(input: ExtraFileUpsertInput): number {
     const base = ExtraFileService.buildBaseRecord(input);
 
-    const info = db.prepare(`
+    const row = db.prepare(`
       INSERT INTO LyricFiles (
         artist_id, track_file_id,
         relative_path, file_path, library_root, extension,
@@ -50,7 +50,8 @@ export class LyricFileService {
         expected_path = excluded.expected_path,
         needs_rename = excluded.needs_rename,
         last_updated = CURRENT_TIMESTAMP
-    `).run(
+      RETURNING id
+    `).get(
       base.artist_id,
       base.track_file_id,
       base.relative_path,
@@ -69,9 +70,13 @@ export class LyricFileService {
       input.canonicalRecordingMbid || null,
       base.expected_path,
       base.needs_rename,
-    );
+    ) as { id: number };
 
-    return Number(info.lastInsertRowid || ExtraFileService.findIdByPath("LyricFiles", input.filePath) || 0);
+    ExtraFileService.associateLibraries("LyricFiles", row.id, {
+      ...input,
+      trackFileId: base.track_file_id,
+    });
+    return row.id;
   }
 
   static findByProviderTrack(provider: string, providerTrackId: string): LyricFileRow | null {

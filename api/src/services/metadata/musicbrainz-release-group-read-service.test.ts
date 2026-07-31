@@ -522,12 +522,13 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
   `).get(trackMbid) as { id: number; recording_id: number };
   const trackMatch = dbModule.db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_edition_member_id, provider_edition_match_id, track_id,
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
-    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
   `).get(
+    providerTrack.id,
     member.id,
     releaseMatch.releaseMatchId,
     canonicalTrack.id,

@@ -249,9 +249,10 @@ export class TiddlBackend implements DownloadBackend {
         } else {
             const isSpatial = isSpatialAudioQuality(request.quality);
             args.push("-q", capTiddlTrackQuality(mapAudioQualityToTiddl(request.quality), isSpatial));
-            // Spatial slot: Atmos only. Stereo slot: allow Atmos so an Atmos-only
-            // release can still fill the stereo slot when no stereo release exists.
-            args.push("--dolby-atmos", isSpatial ? "only" : "allow");
+            // Spatial and stereo are independent media classes. A stereo job
+            // requests the provider's separate stereo stream; it must never
+            // accept an Atmos file as ordinary stereo completion.
+            args.push("--dolby-atmos", isSpatial ? "only" : "none");
             // Audio jobs never pull music videos bundled with the album/artist.
             args.push("--videos", "none");
         }

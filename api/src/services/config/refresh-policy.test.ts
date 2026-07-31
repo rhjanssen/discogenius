@@ -18,7 +18,15 @@ before(async () => {
 });
 
 beforeEach(() => {
-  for (const table of ["ProviderItems", "AlbumEditions", "Albums", "ArtistMetadata", "Artists"]) {
+  for (const table of [
+    "ProviderItems",
+    "Tracks",
+    "Recordings",
+    "AlbumEditions",
+    "Albums",
+    "ArtistMetadata",
+    "Artists",
+  ]) {
     dbModule.db.prepare(`DELETE FROM ${table}`).run();
   }
 });
@@ -70,11 +78,12 @@ function insertProviderItem(overrides: Partial<Record<string, unknown>>) {
     ...overrides,
   };
 
-  dbModule.db.prepare(`
+  return (dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, updated_at
     ) VALUES (@provider, @entity_type, @provider_id, @title, @updated_at)
-  `).run(row);
+    RETURNING id
+  `).get(row) as { id: number }).id;
 }
 
 test("artist release freshness reads canonical Albums without legacy provider rows", () => {
@@ -116,12 +125,12 @@ test("inactive artist policy uses canonical release group dates", () => {
 test("track-set refresh policy reads canonical ProviderItems without legacy media rows", () => {
   seedArtist();
   seedAlbum("release-group-mbid", "release-mbid", dateDaysAgo(120));
-  insertProviderItem({
-    entity_type: "album",
+  const releaseItemId = insertProviderItem({
+    entity_type: "release",
     provider_id: "provider-album",
     title: "Canonical Album",
   });
-  insertProviderItem({
+  const trackItemId = insertProviderItem({
     entity_type: "track",
     provider_id: "provider-track",
     track_mbid: "track-mbid",
@@ -129,6 +138,11 @@ test("track-set refresh policy reads canonical ProviderItems without legacy medi
     title: "Canonical Track",
     updated_at: daysAgo(1),
   });
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+  `).run(releaseItemId, trackItemId);
 
   assert.equal(refreshPolicyModule.shouldRefreshTrackSet({ albumId: "provider-album" }), false);
 
@@ -140,21 +154,26 @@ test("track-set refresh policy reads canonical ProviderItems without legacy medi
 test("track-set refresh policy scopes equal album IDs to the requested provider", () => {
   seedArtist();
   seedAlbum("release-group-mbid", "release-mbid", dateDaysAgo(120));
-  insertProviderItem({
+  const tidalReleaseItemId = insertProviderItem({
     provider: "tidal",
-    entity_type: "album",
+    entity_type: "release",
     provider_id: "42",
     title: "Tidal album",
   });
-  insertProviderItem({
+  const tidalTrackItemId = insertProviderItem({
     provider: "tidal",
     entity_type: "track",
     provider_id: "tidal-track",
     updated_at: daysAgo(1),
   });
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+  `).run(tidalReleaseItemId, tidalTrackItemId);
   insertProviderItem({
     provider: "apple-music",
-    entity_type: "album",
+    entity_type: "release",
     provider_id: "42",
     title: "Apple album",
   });
@@ -171,7 +190,20 @@ test("track-set refresh policy scopes equal album IDs to the requested provider"
 
 test("video refresh policy reads canonical ProviderItems for the artist", () => {
   seedArtist();
-  insertProviderItem({
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_mbid, artist_metadata_id, title, is_video, metadata_status
+    ) VALUES (
+      'video-recording-mbid',
+      'artist-mbid',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'),
+      'Canonical Video',
+      1,
+      'musicbrainz'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  const videoItemId = insertProviderItem({
     entity_type: "video",
     provider_id: "provider-video",
     release_group_mbid: null,
@@ -181,6 +213,12 @@ test("video refresh policy reads canonical ProviderItems for the artist", () => 
     library_slot: "video",
     updated_at: daysAgo(1),
   });
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(videoItemId, recording.id);
 
   assert.equal(refreshPolicyModule.shouldRefreshVideos({ artistId: "artist-local" }), false);
 

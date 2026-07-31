@@ -51,6 +51,53 @@ function refreshArtistProgress(artistId: string) {
     updateArtistDownloadStatus(artistId);
 }
 
+function materializeLibraryArtistMonitoring(artistId: string, monitored: boolean): void {
+    const identity = db.prepare(`
+        SELECT
+          canonical.id AS canonical_artist_id,
+          canonical.mbid,
+          local.path
+        FROM Artists local
+        JOIN ArtistMetadata canonical ON canonical.mbid = local.mbid
+        WHERE CAST(local.id AS TEXT) = ?
+        LIMIT 1
+    `).get(artistId) as {
+        canonical_artist_id: number;
+        mbid: string;
+        path?: string | null;
+    } | undefined;
+    if (!identity) {
+        return;
+    }
+
+    const managedArtistId = (db.prepare(`
+        INSERT INTO ManagedArtists (artist_id, path, metadata_status, updated_at)
+        VALUES (?, ?, 'verified', CURRENT_TIMESTAMP)
+        ON CONFLICT(artist_id) DO UPDATE SET
+          path = COALESCE(excluded.path, ManagedArtists.path),
+          metadata_status = excluded.metadata_status,
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING id
+    `).get(identity.canonical_artist_id, identity.path ?? null) as { id: number }).id;
+
+    db.prepare(`
+        INSERT INTO LibraryArtists (
+          library_id, managed_artist_id, monitored, credited_scope, updated_at
+        )
+        SELECT
+          library.id,
+          ?,
+          ?,
+          'release_and_track_credit',
+          CURRENT_TIMESTAMP
+        FROM Libraries library
+        WHERE library.enabled = 1
+        ON CONFLICT(library_id, managed_artist_id) DO UPDATE SET
+          monitored = excluded.monitored,
+          updated_at = CURRENT_TIMESTAMP
+    `).run(managedArtistId, monitored ? 1 : 0);
+}
+
 export function applyArtistMonitoringState(artistId: string, monitored: boolean) {
     const nextStatus = monitored ? 1 : 0;
     const applyChanges = db.transaction(() => {
@@ -62,6 +109,7 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
         `).run(nextStatus, nextStatus, artistId);
 
         if (monitored) {
+            materializeLibraryArtistMonitoring(artistId, true);
             return artistResult.changes;
         }
 

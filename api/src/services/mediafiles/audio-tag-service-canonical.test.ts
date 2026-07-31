@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { after, before, test } from "node:test";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-audio-tag-canonical-"));
@@ -9,11 +10,13 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
+let configModule: typeof import("../config/config.js");
 let audioTagServiceModule: typeof import("./audio-tag-service.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  configModule = await import("../config/config.js");
   audioTagServiceModule = await import("./audio-tag-service.js");
 });
 
@@ -91,27 +94,61 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Canonical Song", 181000);
 
-  dbModule.db.prepare(`
+  const providerRelease = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, upc, release_date
     ) VALUES (?, ?, ?, ?, ?, ?)
-  `).run( "tidal", "album", "provider-album-1", "Soundtrack Album From Wrong Provider", "987654321000", "2024-03-01" );
+    RETURNING id
+  `).get(
+    "tidal",
+    "release",
+    "provider-album-1",
+    "Soundtrack Album From Wrong Provider",
+    "987654321000",
+    "2024-03-01",
+  ) as { id: number };
 
-  dbModule.db.prepare(`
+  const providerTrack = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, explicit, isrc, duration_ms, replay_gain, peak
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run( "tidal", "track", "provider-track-1", "Canonical Song", 1, "TESTISRC1234", 181, -7.31, 0.967717 );
+    RETURNING id
+  `).get(
+    "tidal",
+    "track",
+    "provider-track-1",
+    "Canonical Song",
+    1,
+    "TESTISRC1234",
+    181,
+    -7.31,
+    0.967717,
+  ) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+  `).run(providerRelease.id, providerTrack.id);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    )
+    SELECT ?, id, 'exact', 'accepted', 'automatic', 1, 'test', 1
+    FROM AlbumEditions
+    WHERE mbid = 'release-mbid-1'
+  `).run(providerRelease.id);
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid,
+      provider_item_id,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension,
       file_type, quality
-    ) VALUES (?, ?, ?, ?, ?, ?, 'tidal', 'track', 'provider-track-1', 'stereo', ?, ?, ?, ?, ?, 'track', ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'tidal', 'track', 'provider-track-1', 'stereo', ?, ?, ?, ?, ?, 'track', ?)
   `).run(
     "1",
     "artist-mbid-1",
@@ -119,6 +156,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     "release-mbid-1",
     "track-mbid-1",
     "recording-mbid-1",
+    providerTrack.id,
     audioPath,
     path.relative(tempDir, audioPath),
     tempDir,
@@ -162,4 +200,56 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
 
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
+});
+
+test("retag apply writes a real file, verifies it, and produces an idempotent second preview", {
+  skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+}, async () => {
+  const row = dbModule.db.prepare(`
+    SELECT id, file_path
+    FROM TrackFiles
+    WHERE canonical_recording_mbid = ?
+  `).get("recording-mbid-1") as { id: number; file_path: string };
+
+  const generated = spawnSync("ffmpeg", [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+    "-t", "1", "-c:a", "flac",
+    "-metadata", "TITLE=Wrong title",
+    "-metadata", "ARTIST=Wrong artist",
+    row.file_path,
+  ], { windowsHide: true, encoding: "utf-8" });
+  assert.equal(generated.status, 0, generated.stderr);
+
+  configModule.updateConfig("metadata", {
+    ...configModule.getConfigSection("metadata"),
+    write_audio_tags_policy: "all_files",
+    scrub_audio_tags: false,
+  });
+  configModule.updateConfig("quality", {
+    ...configModule.getConfigSection("quality"),
+    embed_cover: false,
+    embed_lyrics: false,
+  });
+
+  const before = await audioTagServiceModule.AudioTagService.preview({ limit: 20 });
+  const preview = before.find((item) => item.id === row.id);
+  assert.ok(preview);
+  assert.equal(preview.missing, false);
+  assert.ok(preview.changes.some((change) => change.field === "Title"));
+  assert.ok(preview.changes.some((change) => change.field === "Artist"));
+
+  const applied = await audioTagServiceModule.AudioTagService.apply(
+    [row.id],
+    { includeExternalLyrics: false },
+  );
+  assert.deepEqual(applied, {
+    retagged: 1,
+    skipped: 0,
+    missing: 0,
+    errors: [],
+  });
+
+  const after = await audioTagServiceModule.AudioTagService.preview({ limit: 20 });
+  assert.equal(after.some((item) => item.id === row.id), false);
 });

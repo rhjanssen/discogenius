@@ -144,7 +144,7 @@ test("download recovery resolves existing album files through canonical provider
     "audio",
   );
 
-  const recovered = getExistingLibraryMediaIds("album", "provider-album");
+  const recovered = getExistingLibraryMediaIds("album", "provider-album", "tidal");
 
   assert.deepEqual(recovered, [String(track.id)]);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);

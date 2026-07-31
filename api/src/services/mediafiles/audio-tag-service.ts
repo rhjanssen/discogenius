@@ -1119,8 +1119,8 @@ export class AudioTagService {
           WHERE candidate.entity_type = 'track'
             AND CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NOT NULL
             AND CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-            AND (lf.provider IS NULL OR candidate.provider = lf.provider)
-          ORDER BY candidate.updated_at DESC, candidate.provider_id ASC
+            AND lf.provider IS NOT NULL
+            AND candidate.provider = lf.provider
           LIMIT 1
         )
       -- Preference tiers as COALESCE'd subqueries rather than one subquery with a
@@ -1132,7 +1132,10 @@ export class AudioTagService {
         ON provider_member.id = COALESCE(
           -- 1. the membership whose accepted match is this file's canonical track
           (
-            SELECT candidate_member.id
+            SELECT CASE
+              WHEN COUNT(DISTINCT candidate_member.provider_edition_item_id) = 1
+              THEN MAX(candidate_member.id)
+            END
             FROM ProviderEditionMembers candidate_member
             JOIN ProviderTrackMatches candidate_match
               ON candidate_match.provider_edition_member_id = candidate_member.id
@@ -1143,11 +1146,13 @@ export class AudioTagService {
                     (SELECT resolved_track.id FROM Tracks resolved_track
                       WHERE resolved_track.mbid = lf.canonical_track_mbid)
                   )
-            LIMIT 1
           ),
           -- 2. ...else one matching its canonical recording
           (
-            SELECT candidate_member.id
+            SELECT CASE
+              WHEN COUNT(DISTINCT candidate_member.provider_edition_item_id) = 1
+              THEN MAX(candidate_member.id)
+            END
             FROM ProviderEditionMembers candidate_member
             JOIN ProviderTrackMatches candidate_match
               ON candidate_match.provider_edition_member_id = candidate_member.id
@@ -1158,15 +1163,15 @@ export class AudioTagService {
                     (SELECT resolved_recording.id FROM Recordings resolved_recording
                       WHERE resolved_recording.mbid = lf.canonical_recording_mbid)
                   )
-            LIMIT 1
           ),
           -- 3. ...else any membership of this provider track
           (
-            SELECT candidate_member.id
+            SELECT CASE
+              WHEN COUNT(DISTINCT candidate_member.provider_edition_item_id) = 1
+              THEN MAX(candidate_member.id)
+            END
             FROM ProviderEditionMembers candidate_member
             WHERE candidate_member.member_item_id = provider_track.id
-            ORDER BY candidate_member.id
-            LIMIT 1
           )
         )
       LEFT JOIN ProviderTrackMatches provider_track_match
@@ -1190,11 +1195,8 @@ export class AudioTagService {
             WHERE album_candidate.entity_type = 'release'
               AND lf.provider_entity_type IN ('album', 'release')
               AND CAST(album_candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-              AND (
-                COALESCE(lf.provider, provider_track.provider) IS NULL
-                OR album_candidate.provider = COALESCE(lf.provider, provider_track.provider)
-              )
-            ORDER BY album_candidate.updated_at DESC
+              AND COALESCE(lf.provider, provider_track.provider) IS NOT NULL
+              AND album_candidate.provider = COALESCE(lf.provider, provider_track.provider)
             LIMIT 1
           )
         )
@@ -1214,16 +1216,7 @@ export class AudioTagService {
               candidate_release_match.confidence DESC
             LIMIT 1
           ),
-          (
-            SELECT candidate_release_match.id
-            FROM ProviderEditionMatches candidate_release_match
-            WHERE candidate_release_match.provider_edition_item_id = provider_album.id
-              AND candidate_release_match.match_state = 'accepted'
-            ORDER BY
-              CASE candidate_release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-              candidate_release_match.confidence DESC
-            LIMIT 1
-          )
+          provider_track_match.provider_edition_match_id
         )
       LEFT JOIN AlbumEditions ar
         ON ar.id = COALESCE(canonical_release.id, canonical_track.album_edition_id, provider_release_match.edition_id)
@@ -2623,6 +2616,14 @@ export class AudioTagService {
         try {
           const outcome = await this.syncEmbeddedCoverForRow(row, config, mediaPath, context);
           if (outcome === "embedded") {
+            const coverPath = await resolvePreferredEmbeddedCover(row, config, mediaPath, context);
+            const verified = coverPath
+              ? shouldSkipCoverEmbed(await compareEmbeddedAudioCover(mediaPath, coverPath))
+              : false;
+            if (!verified) {
+              result.errors.push({ id, error: "Embedded cover verification failed" });
+              continue;
+            }
             const stat = fs.statSync(mediaPath);
             updated.push([stat.size, stat.mtime.toISOString(), id]);
             result.retagged++;
@@ -2689,7 +2690,11 @@ export class AudioTagService {
       temporaryDirectories: [],
     };
 
-    const applyPreferredCover = async (row: RetagTrackRow, mediaPath: string, id: number): Promise<boolean> => {
+    const applyPreferredCover = async (
+      row: RetagTrackRow,
+      mediaPath: string,
+      id: number,
+    ): Promise<EmbeddedCoverSyncOutcome> => {
       const outcome = await this.syncEmbeddedCoverForRow(
         row,
         config,
@@ -2699,7 +2704,7 @@ export class AudioTagService {
       if (outcome === "failed") {
         result.errors.push({ id, error: "Embedded cover write failed" });
       }
-      return outcome === "embedded";
+      return outcome;
     };
 
     let processedCount = 0;
@@ -2731,14 +2736,7 @@ export class AudioTagService {
         lyricsByProviderMedia,
       });
       if (!preview.missing && preview.changes.length === 0) {
-        const coverUpdated = await applyPreferredCover(enrichedRow, resolvedPath, id);
-        if (coverUpdated) {
-          const stat = fs.statSync(resolvedPath);
-          pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
-          result.retagged++;
-        } else {
-          result.skipped++;
-        }
+        result.skipped++;
         continue;
       }
 
@@ -2774,7 +2772,29 @@ export class AudioTagService {
         continue;
       }
 
-      await applyPreferredCover(enrichedRow, resolvedPath, id);
+      const coverOutcome = await applyPreferredCover(enrichedRow, resolvedPath, id);
+      if (coverOutcome === "failed") {
+        continue;
+      }
+
+      const verification = await this.evaluateRow(enrichedRow, config, {
+        includeExternalMetadata: options.includeExternalLyrics !== false,
+        lyricsByProviderMedia,
+      });
+      if (verification.missing || verification.error || verification.changes.length > 0) {
+        const remainingFields = verification.changes
+          .map((change) => change.field)
+          .filter(Boolean)
+          .join(", ");
+        result.errors.push({
+          id,
+          error: verification.error
+            ? `Metadata verification failed: ${verification.error}`
+            : `Metadata verification failed${remainingFields ? ` for: ${remainingFields}` : ""}`,
+        });
+        continue;
+      }
+
       const stat = fs.statSync(resolvedPath);
       pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
       result.retagged++;

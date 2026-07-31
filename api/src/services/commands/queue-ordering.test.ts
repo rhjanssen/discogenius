@@ -3,6 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import {
+    seedAcceptedProviderReleaseMatch,
+    seedAcceptedProviderTrackMatch,
+    seedProviderAudioVariant,
+} from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-queue-order-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.queue-order.test.db");
@@ -262,6 +267,7 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
         queueModule.CommandNames.ImportDownload,
         {
             type: "track",
+            provider: "tidal",
             providerId: "21",
             path: "E:/tmp/downloads/job_21",
             originalJobId: first,
@@ -385,10 +391,14 @@ test("download queue query resolves canonical release-group provider offers with
         .run("artist-bastille", "Bastille");
     const canonicalCoverUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/gmtf/canonical-cover.jpg";
     db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, images)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO Albums (
+          mbid, artist_mbid, artist_metadata_id, title, primary_type,
+          first_release_date, images
+        )
+        VALUES (?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?, ?, ?, ?)
     `).run(
         "rg-gmtf",
+        "artist-bastille",
         "artist-bastille",
         "Give Me the Future",
         "album",
@@ -396,14 +406,37 @@ test("download queue query resolves canonical release-group provider offers with
         JSON.stringify([{ coverType: "Cover", url: canonicalCoverUrl, source: "servarr-metadata" }]),
     );
     db.prepare(`
-        INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
-        VALUES (?, ?, ?, ?, ?, ?)
-    `).run("release-gmtf", "rg-gmtf", "artist-bastille", "Give Me the Future", 13, 1);
+        INSERT INTO AlbumEditions (
+          mbid, release_group_mbid, release_group_id, artist_mbid,
+          artist_metadata_id, title, track_count, media_count
+        )
+        VALUES (
+          ?, ?, (SELECT id FROM Albums WHERE mbid = ?), ?,
+          (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?, ?, ?
+        )
+    `).run(
+        "release-gmtf", "rg-gmtf", "rg-gmtf", "artist-bastille",
+        "artist-bastille", "Give Me the Future", 13, 1,
+    );
+    const releaseOffer = seedAcceptedProviderReleaseMatch(db, {
+        provider: "tidal",
+        providerEditionId: "tidal-gmtf-expanded",
+        releaseMbid: "release-gmtf",
+    });
     db.prepare(`
-        INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, cover_id
-    ) VALUES (?, ?, ?, ?, ?)
-    `).run( "tidal", "album", "tidal-gmtf-expanded", "Give Me The Future + Dreams Of The Past", "provider-cover" );
+        UPDATE ProviderItems
+        SET title = ?, cover_id = ?
+        WHERE id = ?
+    `).run(
+        "Give Me The Future + Dreams Of The Past",
+        "provider-cover",
+        releaseOffer.providerEditionItemId,
+    );
+    seedProviderAudioVariant(db, {
+        providerItemId: releaseOffer.providerEditionItemId,
+        qualityClass: "hires-lossless",
+        providerQualityLabel: "HIRES_LOSSLESS",
+    });
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
@@ -503,10 +536,14 @@ test("download queue query resolves canonical track provider offers without Prov
     db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
         .run("artist-track", "Track Artist");
     db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, images)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO Albums (
+          mbid, artist_mbid, artist_metadata_id, title, primary_type,
+          first_release_date, images
+        )
+        VALUES (?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?, ?, ?, ?)
     `).run(
         "rg-track",
+        "artist-track",
         "artist-track",
         "Canonical Album",
         "album",
@@ -514,20 +551,96 @@ test("download queue query resolves canonical track provider offers without Prov
         JSON.stringify([{ coverType: "Cover", url: "https://images.example/canonical-track-cover.jpg" }]),
     );
     db.prepare(`
-        INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
-        VALUES (?, ?, ?, ?, ?, ?)
-    `).run("release-track", "rg-track", "artist-track", "Canonical Album", 1, 1);
-    db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)")
-        .run("recording-track", "Canonical Recording");
+        INSERT INTO AlbumEditions (
+          mbid, release_group_mbid, release_group_id, artist_mbid,
+          artist_metadata_id, title, track_count, media_count
+        )
+        VALUES (
+          ?, ?, (SELECT id FROM Albums WHERE mbid = ?), ?,
+          (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?, ?, ?
+        )
+    `).run(
+        "release-track", "rg-track", "rg-track", "artist-track",
+        "artist-track", "Canonical Album", 1, 1,
+    );
     db.prepare(`
-        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
-        VALUES (?, ?, ?, ?, ?, ?)
-    `).run("track-mbid-1", "release-track", "recording-track", "Canonical Track", 1, 1);
+        INSERT INTO Recordings (mbid, artist_mbid, artist_metadata_id, title)
+        VALUES (?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?)
+    `).run("recording-track", "artist-track", "artist-track", "Canonical Recording");
     db.prepare(`
-        INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, version, cover_id
-    ) VALUES (?, ?, ?, ?, ?, ?)
-    `).run( "tidal", "track", "tidal-track-1", "Canonical Track", "Dolby Atmos", "track-cover" );
+        INSERT INTO Tracks (
+          mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
+          title, position, medium_position
+        )
+        VALUES (
+          ?, ?, (SELECT id FROM AlbumEditions WHERE mbid = ?), ?,
+          (SELECT id FROM Recordings WHERE mbid = ?), ?, ?, ?
+        )
+    `).run(
+        "track-mbid-1", "release-track", "release-track", "recording-track",
+        "recording-track", "Canonical Track", 1, 1,
+    );
+    const trackOffer = seedAcceptedProviderTrackMatch(db, {
+        provider: "tidal",
+        providerEditionId: "tidal-track-parent",
+        providerTrackId: "tidal-track-1",
+        releaseMbid: "release-track",
+        trackMbid: "track-mbid-1",
+    });
+    db.prepare(`
+        UPDATE ProviderItems
+        SET title = ?, version = ?, cover_id = ?
+        WHERE id = ?
+    `).run("Canonical Track", "Dolby Atmos", "track-cover", trackOffer.providerTrackItemId);
+    seedProviderAudioVariant(db, {
+        providerItemId: trackOffer.providerTrackItemId,
+        qualityClass: "spatial",
+        providerQualityLabel: "DOLBY_ATMOS",
+        spatialFormat: "DOLBY_ATMOS",
+    });
+    db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+        .run("artist-collision", "Collision Artist");
+    db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+        VALUES (?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?, ?)
+    `).run("rg-collision", "artist-collision", "artist-collision", "Collision Album", "album");
+    db.prepare(`
+        INSERT INTO AlbumEditions (
+          mbid, release_group_mbid, release_group_id, artist_mbid,
+          artist_metadata_id, title
+        )
+        VALUES (
+          ?, ?, (SELECT id FROM Albums WHERE mbid = ?), ?,
+          (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?
+        )
+    `).run(
+        "release-collision", "rg-collision", "rg-collision", "artist-collision",
+        "artist-collision", "Collision Album",
+    );
+    db.prepare(`
+        INSERT INTO Recordings (mbid, artist_mbid, artist_metadata_id, title)
+        VALUES (?, ?, (SELECT id FROM ArtistMetadata WHERE mbid = ?), ?)
+    `).run("recording-collision", "artist-collision", "artist-collision", "Collision Track");
+    db.prepare(`
+        INSERT INTO Tracks (
+          mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
+          title, position, medium_position
+        )
+        VALUES (
+          ?, ?, (SELECT id FROM AlbumEditions WHERE mbid = ?), ?,
+          (SELECT id FROM Recordings WHERE mbid = ?), ?, ?, ?
+        )
+    `).run(
+        "track-collision", "release-collision", "release-collision", "recording-collision",
+        "recording-collision", "Collision Track", 1, 1,
+    );
+    seedAcceptedProviderTrackMatch(db, {
+        provider: "spotify",
+        providerEditionId: "spotify-track-parent",
+        providerTrackId: "tidal-track-1",
+        releaseMbid: "release-collision",
+        trackMbid: "track-collision",
+    });
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,
@@ -555,6 +668,14 @@ test("download queue query resolves canonical track provider offers without Prov
         providerIds: ["tidal-track-1"],
     });
     assert.deepEqual(details.map((item) => item.id), [commandId]);
+    assert.deepEqual(
+        downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
+            artistId: "artist-collision",
+            albumIds: ["rg-collision"],
+            providerIds: ["tidal-track-1"],
+        }),
+        [],
+    );
 });
 
 test("download queue history collapses completed download and import jobs into one logical item", () => {
@@ -725,6 +846,7 @@ test("active import blocks duplicate download for the same content id", () => {
         queueModule.CommandNames.ImportDownload,
         {
             type: "track",
+            provider: "tidal",
             providerId: "102",
             path: path.join(tempDir, "download-102"),
             originalJobId: 1,

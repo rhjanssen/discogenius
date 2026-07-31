@@ -8,6 +8,7 @@ export const EXTRA_FILE_TYPES = new Set([...METADATA_EXTRA_FILE_TYPES, ...LYRIC_
 
 export type ExtraFileUpsertInput = {
   artistId: string;
+  libraryId?: number | null;
   albumId?: string | null;
   mediaId?: string | null;
   trackFileId?: number | null;
@@ -25,6 +26,26 @@ export type ExtraFileUpsertInput = {
   canonicalReleaseMbid?: string | null;
   canonicalTrackMbid?: string | null;
   canonicalRecordingMbid?: string | null;
+};
+
+export type ExtraFileTableName = "MetadataFiles" | "LyricFiles" | "ExtraFiles";
+
+const EXTRA_LIBRARY_ASSOCIATIONS: Record<ExtraFileTableName, {
+  table: "MetadataFileLibraries" | "LyricFileLibraries" | "ExtraFileLibraries";
+  fileIdColumn: "metadata_file_id" | "lyric_file_id" | "extra_file_id";
+}> = {
+  MetadataFiles: {
+    table: "MetadataFileLibraries",
+    fileIdColumn: "metadata_file_id",
+  },
+  LyricFiles: {
+    table: "LyricFileLibraries",
+    fileIdColumn: "lyric_file_id",
+  },
+  ExtraFiles: {
+    table: "ExtraFileLibraries",
+    fileIdColumn: "extra_file_id",
+  },
 };
 
 export type ExtraFileBaseRecord = {
@@ -67,40 +88,163 @@ export function isLyricExtraFileType(fileType: string | null | undefined): boole
 export class ExtraFileService {
   static resolveTrackFileId(input: ExtraFileUpsertInput): number | null {
     if (input.trackFileId != null) {
-      return Number(input.trackFileId);
+      const row = db.prepare(`
+        SELECT id
+        FROM TrackFiles
+        WHERE id = ?
+          AND (? IS NULL OR library_id = ?)
+      `).get(
+        Number(input.trackFileId),
+        input.libraryId ?? null,
+        input.libraryId ?? null,
+      ) as { id?: number } | undefined;
+      return row?.id ?? null;
     }
 
+    const provider = nullableText(input.provider);
+    const providerEntityType = nullableText(input.providerEntityType);
     const providerId = nullableText(input.providerId) ?? nullableText(input.mediaId);
     const canonicalTrackMbid = nullableText(input.canonicalTrackMbid);
     const canonicalRecordingMbid = nullableText(input.canonicalRecordingMbid);
 
-    if (!providerId && !canonicalTrackMbid && !canonicalRecordingMbid) {
+    const predicates: string[] = ["file_type IN ('track', 'video')"];
+    const values: unknown[] = [];
+    if (provider && providerId) {
+      predicates.push("provider = ?", "CAST(provider_id AS TEXT) = CAST(? AS TEXT)");
+      values.push(provider, providerId);
+      if (providerEntityType) {
+        predicates.push("provider_entity_type = ?");
+        values.push(providerEntityType);
+      }
+    }
+    if (canonicalTrackMbid) {
+      predicates.push("canonical_track_mbid = ?");
+      values.push(canonicalTrackMbid);
+    }
+    if (canonicalRecordingMbid) {
+      predicates.push("canonical_recording_mbid = ?");
+      values.push(canonicalRecordingMbid);
+    }
+    if (input.libraryId != null) {
+      predicates.push("library_id = ?");
+      values.push(Number(input.libraryId));
+    }
+
+    if (predicates.length === 1) {
       return null;
     }
 
-    const row = db.prepare(`
+    const rows = db.prepare(`
       SELECT id
       FROM TrackFiles
-      WHERE (
-          (? IS NOT NULL AND CAST(provider_id AS TEXT) = CAST(? AS TEXT))
-          OR (? IS NOT NULL AND canonical_track_mbid = ?)
-          OR (? IS NOT NULL AND canonical_recording_mbid = ?)
-        )
-        AND file_type IN ('track', 'video')
-      ORDER BY CASE file_type WHEN 'track' THEN 0 ELSE 1 END,
-               verified_at DESC,
-               id DESC
-      LIMIT 1
-    `).get(
-      providerId,
-      providerId,
-      canonicalTrackMbid,
-      canonicalTrackMbid,
-      canonicalRecordingMbid,
-      canonicalRecordingMbid,
-    ) as { id?: number } | undefined;
+      WHERE ${predicates.join(" AND ")}
+      ORDER BY id
+      LIMIT 2
+    `).all(...values) as Array<{ id: number }>;
 
-    return row?.id ?? null;
+    return rows.length === 1 ? rows[0].id : null;
+  }
+
+  static associateLibraries(
+    tableName: ExtraFileTableName,
+    fileId: number,
+    input: ExtraFileUpsertInput,
+  ): number[] {
+    const association = EXTRA_LIBRARY_ASSOCIATIONS[tableName];
+    const libraryIds = new Set<number>();
+
+    if (input.libraryId != null) {
+      const library = db.prepare(`
+        SELECT id
+        FROM Libraries
+        WHERE id = ?
+      `).get(Number(input.libraryId)) as { id?: number } | undefined;
+      if (!library?.id) {
+        throw new Error(`Library ${input.libraryId} is unavailable for ${input.filePath}`);
+      }
+      libraryIds.add(library.id);
+    } else {
+      const trackFileId = this.resolveTrackFileId(input);
+      if (trackFileId != null) {
+        const trackFile = db.prepare(`
+          SELECT library_id
+          FROM TrackFiles
+          WHERE id = ?
+        `).get(trackFileId) as { library_id?: number | null } | undefined;
+        if (trackFile?.library_id != null) {
+          libraryIds.add(Number(trackFile.library_id));
+        }
+      }
+
+      const normalizedRoot = path.resolve(input.libraryRoot);
+      const rootLibraries = db.prepare(`
+        SELECT id, root_path
+        FROM Libraries
+        WHERE enabled = 1
+        ORDER BY id
+      `).all() as Array<{ id: number; root_path: string }>;
+      for (const library of rootLibraries) {
+        if (path.resolve(library.root_path) === normalizedRoot) {
+          libraryIds.add(library.id);
+        }
+      }
+    }
+
+    if (libraryIds.size === 0) {
+      throw new Error(`No library owns sidecar ${input.filePath}`);
+    }
+
+    const insert = db.prepare(`
+      INSERT OR IGNORE INTO ${association.table} (${association.fileIdColumn}, library_id)
+      VALUES (?, ?)
+    `);
+    for (const libraryId of libraryIds) {
+      insert.run(fileId, libraryId);
+    }
+    return [...libraryIds];
+  }
+
+  static libraryIds(tableName: ExtraFileTableName, fileId: number): number[] {
+    const association = EXTRA_LIBRARY_ASSOCIATIONS[tableName];
+    return (db.prepare(`
+      SELECT library_id
+      FROM ${association.table}
+      WHERE ${association.fileIdColumn} = ?
+      ORDER BY library_id
+    `).all(fileId) as Array<{ library_id: number }>).map((row) => row.library_id);
+  }
+
+  static releaseLibrary(
+    tableName: ExtraFileTableName,
+    fileId: number,
+    libraryId: number,
+  ): { remainingLibraryIds: number[]; mayDeletePhysicalFile: boolean } {
+    const association = EXTRA_LIBRARY_ASSOCIATIONS[tableName];
+    db.prepare(`
+      DELETE FROM ${association.table}
+      WHERE ${association.fileIdColumn} = ?
+        AND library_id = ?
+    `).run(fileId, libraryId);
+    const remainingLibraryIds = this.libraryIds(tableName, fileId);
+    return {
+      remainingLibraryIds,
+      mayDeletePhysicalFile: remainingLibraryIds.length === 0,
+    };
+  }
+
+  static mergeLibraryAssociations(
+    tableName: ExtraFileTableName,
+    fromFileId: number,
+    intoFileId: number,
+  ): void {
+    if (fromFileId === intoFileId) return;
+    const association = EXTRA_LIBRARY_ASSOCIATIONS[tableName];
+    db.prepare(`
+      INSERT OR IGNORE INTO ${association.table} (${association.fileIdColumn}, library_id)
+      SELECT ?, library_id
+      FROM ${association.table}
+      WHERE ${association.fileIdColumn} = ?
+    `).run(intoFileId, fromFileId);
   }
 
   static buildBaseRecord(input: ExtraFileUpsertInput): ExtraFileBaseRecord {
@@ -131,7 +275,7 @@ export class ExtraFileService {
 
   static upsert(input: ExtraFileUpsertInput): number {
     const base = this.buildBaseRecord(input);
-    const info = db.prepare(`
+    const row = db.prepare(`
       INSERT INTO ExtraFiles (
         artist_id, track_file_id,
         relative_path, file_path, library_root, extension,
@@ -160,7 +304,8 @@ export class ExtraFileService {
         expected_path = excluded.expected_path,
         needs_rename = excluded.needs_rename,
         last_updated = CURRENT_TIMESTAMP
-    `).run(
+      RETURNING id
+    `).get(
       base.artist_id,
       base.track_file_id,
       base.relative_path,
@@ -179,17 +324,21 @@ export class ExtraFileService {
       base.canonical_recording_mbid,
       base.expected_path,
       base.needs_rename,
-    );
+    ) as { id: number };
 
-    return Number(info.lastInsertRowid || this.findIdByPath("ExtraFiles", input.filePath) || 0);
+    this.associateLibraries("ExtraFiles", row.id, {
+      ...input,
+      trackFileId: base.track_file_id,
+    });
+    return row.id;
   }
 
-  static findIdByPath(tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles", filePath: string): number | null {
+  static findIdByPath(tableName: ExtraFileTableName, filePath: string): number | null {
     const row = db.prepare(`SELECT id FROM ${tableName} WHERE file_path = ? LIMIT 1`).get(filePath) as { id?: number } | undefined;
     return row?.id ?? null;
   }
 
-  static deleteMissingRows(tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles", artistId?: string): number {
+  static deleteMissingRows(tableName: ExtraFileTableName, artistId?: string): number {
     const rows = db.prepare(`
       SELECT id, file_path
       FROM ${tableName}

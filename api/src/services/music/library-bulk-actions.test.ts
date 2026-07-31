@@ -173,11 +173,12 @@ dbModule.db.prepare(`
     `).get(releaseItemId) as { id: number }).id;
     const trackMatchId = (dbModule.db.prepare(`
         INSERT INTO ProviderTrackMatches (
-            provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
+            provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+            track_id, recording_id,
             match_state, decision_source, confidence, method, matcher_version
-        ) VALUES (?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
+        ) VALUES (?, ?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
         RETURNING id
-    `).get(memberId, releaseMatchId) as { id: number }).id;
+    `).get(trackItemId, memberId, releaseMatchId) as { id: number }).id;
     dbModule.db.prepare(`
         INSERT INTO ProviderVideoMatches (
             provider_video_item_id, recording_id, match_state, decision_source,

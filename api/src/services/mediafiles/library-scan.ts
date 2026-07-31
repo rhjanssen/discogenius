@@ -1044,7 +1044,7 @@ export class DiskScanService {
                                     monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
                                     updated_at = CURRENT_TIMESTAMP
                                 WHERE id = (
-                                    SELECT video_match.recording_id
+                                    SELECT MIN(video_match.recording_id)
                                     FROM ProviderItems item
                                     JOIN ProviderVideoMatches video_match
                                       ON video_match.provider_video_item_id = item.id
@@ -1052,11 +1052,7 @@ export class DiskScanService {
                                     WHERE item.entity_type = 'video'
                                       AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                                       AND (? IS NULL OR item.provider = ?)
-                                    ORDER BY
-                                      CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-                                      video_match.confidence DESC,
-                                      video_match.id
-                                    LIMIT 1
+                                    HAVING COUNT(DISTINCT video_match.recording_id) = 1
                                 )
                                   AND (monitored_lock = 0 OR monitored_lock IS NULL)
                             `).run(match.mediaId, matchProvider, matchProvider);
@@ -1064,7 +1060,7 @@ export class DiskScanService {
 
                         if (match.albumId && match.fileType === "track") {
                             const providerItem = db.prepare(`
-                                SELECT release.release_group_id
+                                SELECT MIN(release.release_group_id) AS release_group_id
                                 FROM ProviderItems item
                                 JOIN ProviderEditionMatches release_match
                                   ON release_match.provider_edition_item_id = item.id
@@ -1073,11 +1069,7 @@ export class DiskScanService {
                                 WHERE item.entity_type = 'release'
                                   AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                                   AND (? IS NULL OR item.provider = ?)
-                                ORDER BY
-                                  CASE release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-                                  release_match.confidence DESC,
-                                  release_match.id
-                                LIMIT 1
+                                HAVING COUNT(DISTINCT release.release_group_id) = 1
                             `).get(match.albumId, matchProvider, matchProvider) as {
                                 release_group_id?: number;
                             } | undefined;
@@ -1088,7 +1080,7 @@ export class DiskScanService {
                                     SET monitored = 1,
                                         updated_at = CURRENT_TIMESTAMP
                                     WHERE release_group_id = ?
-                                      AND library_id = (
+                                      AND library_id IN (
                                         SELECT id FROM Libraries WHERE root_path = ? AND enabled = 1
                                       )
                                       AND locked = 0
@@ -1757,7 +1749,7 @@ export class DiskScanService {
             path.dirname(row.file_path) === path.dirname(filePath)
             && path.parse(row.file_path).name === stem
         );
-        if (!sibling?.provider_id) return null;
+        if (!sibling?.provider_id || !sibling.provider) return null;
 
         // Re-resolve the sibling's stored triple to a real ProviderItems row so
         // callers get an internal id, never a bare provider_id.
@@ -1765,12 +1757,11 @@ export class DiskScanService {
             SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
             FROM ProviderItems pi
             WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-              AND (? IS NULL OR pi.provider = ?)
+              AND pi.provider = ?
               AND pi.entity_type = COALESCE(?, 'track')
             LIMIT 1
         `).get(
             sibling.provider_id,
-            sibling.provider,
             sibling.provider,
             sibling.provider_entity_type,
         ) as any;

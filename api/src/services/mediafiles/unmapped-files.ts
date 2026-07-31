@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import * as mm from "music-metadata";
 import { db } from "../../database.js";
 import { UnmappedFileRepository, type UnmappedFile } from "../../repositories/mediafiles/UnmappedFileRepository.js";
 import { IdentificationService, type AlbumCandidateMatch } from "./identification-service.js";
@@ -8,6 +9,11 @@ import type { ImportDecisionMode } from "../import-decision/types.js";
 import type { LocalFile, LocalGroup, ProviderMatch } from "./import-types.js";
 import { ImportService } from "./import-service.js";
 import { CatalogCandidateService } from "./candidate-service.js";
+import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
+import {
+    identifyAudioFileByAcoustId,
+    type AcoustIdIdentificationResult,
+} from "./acoustid-identification-service.js";
 
 import { albumCoverLocalUrl, videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 
@@ -39,10 +45,40 @@ function mostCommonNonEmpty(values: Array<string | null | undefined>): string | 
     return bestValue;
 }
 
+async function readEmbeddedMusicBrainzRecordingMbid(filePath: string): Promise<string | null> {
+    try {
+        const metadata = await mm.parseFile(filePath, { duration: false, skipCovers: true });
+        const common = metadata.common as unknown as Record<string, unknown>;
+        const commonValue = common.musicbrainz_recordingid ?? common.musicbrainz_trackid;
+        if (typeof commonValue === "string" && commonValue.trim()) {
+            return commonValue.trim();
+        }
+        for (const tags of Object.values(metadata.native || {})) {
+            for (const tag of tags || []) {
+                const normalizedId = String(tag.id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                if (
+                    normalizedId !== "musicbrainztrackid"
+                    && normalizedId !== "musicbrainzrecordingid"
+                ) {
+                    continue;
+                }
+                const value = Array.isArray(tag.value) ? tag.value[0] : tag.value;
+                const normalizedValue = String(value || "").trim();
+                if (normalizedValue) return normalizedValue;
+            }
+        }
+    } catch {
+        // An unreadable tag block is exactly when fingerprinting is useful.
+    }
+    return null;
+}
+
 export class UnmappedFilesService {
     constructor(
         private readonly repository: UnmappedFileRepository = unmappedFileRepository,
-        private readonly importService: ImportService = new ImportService()
+        private readonly importService: ImportService = new ImportService(),
+        private readonly identifyByAcoustId = identifyAudioFileByAcoustId,
+        private readonly readEmbeddedRecordingMbid = readEmbeddedMusicBrainzRecordingMbid,
     ) { }
 
     listFiles(limit?: number, offset?: number): { items: UnmappedFile[]; total: number } {
@@ -81,7 +117,6 @@ export class UnmappedFilesService {
 
                     const candidateInfo = {
                         id: String(mbid || ''),
-                        providerId: String(albumOrRecording.providerId || mbid || ''),
                         title: String(albumOrRecording.title || albumOrRecording.name || groupFiles[0].detected_album || groupFiles[0].filename),
                         artistName: String(albumOrRecording.artistName || albumOrRecording.artist_name || albumOrRecording.artist?.name || albumOrRecording.artists?.[0]?.name || groupFiles[0].detected_artist || 'Unknown Artist'),
                         cover: coverUrl || albumOrRecording.cover || albumOrRecording.imageId || albumOrRecording.picture || null,
@@ -93,7 +128,6 @@ export class UnmappedFilesService {
                 } else if (groupFiles[0].detected_artist || groupFiles[0].detected_album) {
                     const fallbackInfo = {
                         id: '',
-                        providerId: '',
                         title: String(groupFiles[0].detected_album || groupFiles[0].detected_track || groupFiles[0].filename),
                         artistName: String(groupFiles[0].detected_artist || 'Unknown Artist'),
                         cover: null,
@@ -112,6 +146,86 @@ export class UnmappedFilesService {
 
     getFile(id: number): UnmappedFile | undefined {
         return this.repository.findById(id);
+    }
+
+    async identifyFileByAcoustId(unmappedFileId: number): Promise<{
+        file: { id: number; path: string };
+        identification: AcoustIdIdentificationResult;
+        canonicalOccurrences: Array<{
+            recordingId: number;
+            recordingMbid: string;
+            recordingTitle: string;
+            trackId: number;
+            trackMbid: string;
+            trackTitle: string;
+            editionId: number;
+            releaseMbid: string;
+            editionTitle: string;
+            albumId: number;
+            releaseGroupMbid: string;
+            albumTitle: string;
+        }>;
+    }> {
+        const file = this.repository.findById(unmappedFileId);
+        if (!file) throw new Error("Unmapped file not found");
+        if (!fs.existsSync(file.file_path)) throw new Error("Unmapped file is missing from disk");
+        if (file.library_root === "videos") {
+            throw new Error("AcoustID identifies audio recordings, not video files");
+        }
+
+        const embeddedRecordingMbid = await this.readEmbeddedRecordingMbid(file.file_path);
+        const identification = await this.identifyByAcoustId(file.file_path, {
+            embeddedRecordingMbid,
+        });
+        const recordingIds = identification.recordingIds;
+        const canonicalOccurrences = recordingIds.length === 0
+            ? []
+            : db.prepare(`
+                SELECT
+                  recording.id AS recordingId,
+                  recording.mbid AS recordingMbid,
+                  recording.title AS recordingTitle,
+                  track.id AS trackId,
+                  track.mbid AS trackMbid,
+                  track.title AS trackTitle,
+                  edition.id AS editionId,
+                  edition.mbid AS releaseMbid,
+                  edition.title AS editionTitle,
+                  album.id AS albumId,
+                  album.mbid AS releaseGroupMbid,
+                  album.title AS albumTitle
+                FROM Recordings recording
+                JOIN Tracks track ON track.recording_id = recording.id
+                JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+                JOIN Albums album ON album.id = edition.release_group_id
+                WHERE recording.mbid IN (${recordingIds.map(() => "?").join(",")})
+                ORDER BY
+                  recording.mbid,
+                  edition.date,
+                  edition.id,
+                  track.medium_position,
+                  track.position,
+                  track.id
+              `).all(...recordingIds) as Array<{
+                recordingId: number;
+                recordingMbid: string;
+                recordingTitle: string;
+                trackId: number;
+                trackMbid: string;
+                trackTitle: string;
+                editionId: number;
+                releaseMbid: string;
+                editionTitle: string;
+                albumId: number;
+                releaseGroupMbid: string;
+                albumTitle: string;
+              }>;
+
+        return {
+            file: { id: file.id, path: file.file_path },
+            identification,
+            canonicalOccurrences,
+        };
     }
 
     setIgnored(id: number, ignored: boolean): void {
@@ -146,10 +260,6 @@ export class UnmappedFilesService {
         }
         this.repository.deleteByIds(files.map((file) => file.id));
         return files.length;
-    }
-
-    async bulkMap(items: Array<{ id: number; providerId: string }>) {
-        return this.importService.bulkImportUnmapped(items);
     }
 
     listManualImportLibraries(): Array<{
@@ -362,13 +472,65 @@ export class UnmappedFilesService {
 
     private async findBestVideoCandidate(
         files: UnmappedFile[],
-        mode: ImportDecisionMode = "ExistingFiles",
+        _mode: ImportDecisionMode = "ExistingFiles",
     ): Promise<ProviderMatch | null> {
-        const group = this.buildLocalGroup(files);
-        const matches = await this.importService.findMatchesForGroup(group, "video", mode);
-        const top = matches[0];
+        const artist = mostCommonNonEmpty(files.map((file) => file.detected_artist));
+        const title = mostCommonNonEmpty(files.map((file) => file.detected_track))
+            || path.parse(files[0]?.filename || "").name;
+        const duration = files[0]?.duration ?? null;
+        const candidates = CatalogCandidateService.getVideoRecordingCandidates({
+            artist,
+            title,
+            limit: 20,
+        });
+        const ranked = candidates
+            .map((candidate) => {
+                const titleScore = stringSimilarity(
+                    normalizeComparableText(title),
+                    normalizeComparableText(candidate.title),
+                );
+                const artistScore = artist
+                    ? stringSimilarity(
+                        normalizeComparableText(artist),
+                        normalizeComparableText(candidate.artist_name),
+                    )
+                    : null;
+                const durationScore = duration != null && candidate.duration != null
+                    ? Math.max(0, 1 - Math.abs(duration - candidate.duration) / 30)
+                    : null;
+                const weights = [
+                    { score: titleScore, weight: 0.65 },
+                    ...(artistScore == null ? [] : [{ score: artistScore, weight: 0.25 }]),
+                    ...(durationScore == null ? [] : [{ score: durationScore, weight: 0.10 }]),
+                ];
+                const totalWeight = weights.reduce((sum, item) => sum + item.weight, 0);
+                return {
+                    candidate,
+                    score: weights.reduce((sum, item) => sum + item.score * item.weight, 0) / totalWeight,
+                };
+            })
+            .sort((left, right) => right.score - left.score || left.candidate.mbid.localeCompare(right.candidate.mbid));
+        const top = ranked[0];
         if (!top || top.score < 0.55) return null;
-        return top;
+        const ambiguous = Boolean(ranked[1] && top.score - ranked[1].score < 0.15);
+        const exact = normalizeComparableText(top.candidate.title) === normalizeComparableText(title)
+            && (!artist || normalizeComparableText(top.candidate.artist_name) === normalizeComparableText(artist));
+        return {
+            item: top.candidate,
+            itemType: "video",
+            score: top.score,
+            matchType: exact ? "exact" : "fuzzy",
+            autoImportReady: false,
+            rejections: ambiguous
+                ? ["Ambiguous canonical video Recording candidates"]
+                : ["Choose the destination Library and canonical MusicBrainz video Recording before import"],
+            typedRejections: [{
+                reason: ambiguous
+                    ? "Ambiguous canonical video Recording candidates"
+                    : "Choose the destination Library and canonical MusicBrainz video Recording before import",
+                type: "permanent",
+            }],
+        };
     }
 
     private buildLocalGroup(files: UnmappedFile[]): LocalGroup {
@@ -459,28 +621,9 @@ export class UnmappedFilesService {
     }
 
     async autoImportFolderGroup(anchorFile: UnmappedFile): Promise<number> {
-        const relativeDirectory = getRelativeDirectory(anchorFile);
-        const folderFiles = this.repository.findByDirectory(relativeDirectory, anchorFile.library_root)
-            .filter((file) => !file.ignored);
-
-        if (folderFiles.length === 0) return 0;
-
-        const bestMatch = await this.findBestAlbumCandidate(folderFiles);
-        if (!bestMatch) return 0;
-        if (!bestMatch.autoImportReady) {
-            return 0;
-        }
-
-        const items = Object.entries(bestMatch.trackIdsByFilePath || {}).map(([filePath, providerId]) => ({
-            id: folderFiles.find((file) => file.file_path === filePath)?.id || 0,
-            providerId,
-        })).filter((item) => item.id > 0);
-
-        if (items.length === 0) {
-            return 0;
-        }
-
-        await this.bulkMap(items);
-        return items.length;
+        void anchorFile;
+        // Candidate discovery can assist review, but acquisition authority
+        // requires an explicit Library + Edition/Recording selection.
+        return 0;
     }
 }

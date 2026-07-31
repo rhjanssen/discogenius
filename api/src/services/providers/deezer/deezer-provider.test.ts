@@ -267,6 +267,12 @@ test("Streamrip backend rejects empty success and completes only after a media f
   );
 });
 
+test("Streamrip classifies its unsupported track-id template as configuration", () => {
+  const errors = classifyStreamripOutput("ERROR Error processing media item: 'id'");
+  assert.equal(errors[0]?.kind, "configuration");
+  assert.equal(errors[0]?.permanent, true);
+});
+
 test("Streamrip exit zero still surfaces authentication and quality failures", async () => {
   saveDeezerCredentials({ arl: "c".repeat(192) });
   const request = {

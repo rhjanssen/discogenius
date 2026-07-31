@@ -21,6 +21,7 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM AlbumLibraryProjectionState").run();
   db.prepare("DELETE FROM AlbumLibraryIndex").run();
+  db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   db.prepare("DELETE FROM AcquisitionPlanSources").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
@@ -28,6 +29,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderEditionMatches").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
+  db.prepare("DELETE FROM Tracks").run();
+  db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
@@ -82,23 +85,41 @@ function seedAlbum(options: {
     artistMbid,
     options.title,
   ) as { id: number };
+  const recording = db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_mbid, title, is_video, metadata_status, monitored
+    ) VALUES (?, ?, ?, 0, 'canonical', 1)
+    RETURNING id
+  `).get(`${options.mbid}-recording`, artistMbid, `${options.title} Track`) as { id: number };
+  const track = db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title
+    ) VALUES (?, ?, ?, ?, ?, 1, 1, ?)
+    RETURNING id
+  `).get(
+    `${options.mbid}-track`,
+    release.id,
+    `${options.mbid}-release`,
+    recording.id,
+    `${options.mbid}-recording`,
+    `${options.title} Track`,
+  ) as { id: number };
 
   const insertOffer = db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, quality, provider_url
-    ) VALUES (?, 'release', ?, ?, ?)
+      provider, entity_type, provider_id, provider_url
+    ) VALUES (?, 'release', ?, ?)
     RETURNING id
   `);
   const stereoOffer = insertOffer.get(
     options.stereoProvider,
     `${options.mbid}-stereo`,
-    options.stereoQuality,
     `https://example.test/${options.stereoProvider}/albums/${options.mbid}-stereo`,
   ) as { id: number };
   const spatialOffer = insertOffer.get(
     options.spatialProvider,
     `${options.mbid}-spatial`,
-    options.spatialQuality,
     `https://example.test/${options.spatialProvider}/albums/${options.mbid}-spatial`,
   ) as { id: number };
 
@@ -111,6 +132,82 @@ function seedAlbum(options: {
   `);
   const stereoMatch = insertMatch.get(stereoOffer.id, release.id) as { id: number };
   const spatialMatch = insertMatch.get(spatialOffer.id, release.id) as { id: number };
+  const insertTrackOffer = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'track', ?, ?)
+    RETURNING id
+  `);
+  const insertMember = db.prepare(`
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+    RETURNING id
+  `);
+  const insertTrackMatch = db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_track_item_id, provider_edition_member_id,
+      provider_edition_match_id, track_id, recording_id, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `);
+  const insertVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class,
+      provider_quality_label, availability
+    ) VALUES (?, ?, ?, ?, 'available')
+    RETURNING id
+  `);
+  const createTrackSource = (
+    provider: string,
+    providerReleaseItemId: number,
+    providerEditionMatchId: number,
+    quality: string,
+    suffix: string,
+  ) => {
+    const providerTrack = insertTrackOffer.get(
+      provider,
+      `${options.mbid}-${suffix}-track`,
+      `${options.title} Track`,
+    ) as { id: number };
+    const member = insertMember.get(providerReleaseItemId, providerTrack.id) as { id: number };
+    const trackMatch = insertTrackMatch.get(
+      providerTrack.id,
+      member.id,
+      providerEditionMatchId,
+      track.id,
+      recording.id,
+    ) as { id: number };
+    const qualityClass = /ATMOS|SPATIAL|360/i.test(quality)
+      ? "spatial"
+      : /HIRES|HI_RES|MQA|MASTER/i.test(quality)
+        ? "hires-lossless"
+        : /LOSSLESS|FLAC|ALAC/i.test(quality)
+          ? "lossless"
+          : "lossy";
+    const variant = insertVariant.get(
+      providerTrack.id,
+      suffix,
+      qualityClass,
+      quality,
+    ) as { id: number };
+    return { trackMatchId: trackMatch.id, variantId: variant.id };
+  };
+  const stereoTrackSource = createTrackSource(
+    options.stereoProvider,
+    stereoOffer.id,
+    stereoMatch.id,
+    options.stereoQuality,
+    "stereo",
+  );
+  const spatialTrackSource = createTrackSource(
+    options.spatialProvider,
+    spatialOffer.id,
+    spatialMatch.id,
+    options.spatialQuality,
+    "spatial",
+  );
 
   db.prepare(`
     INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
@@ -191,11 +288,27 @@ function seedAlbum(options: {
       libraryRelease.id,
       spatial ? options.spatialProvider : options.stereoProvider,
     ) as { id: number };
-    db.prepare(`
+    const source = db.prepare(`
       INSERT INTO AcquisitionPlanSources (
         plan_id, provider_edition_match_id, role, sort_order
       ) VALUES (?, ?, 'primary', 0)
-    `).run(plan.id, spatial ? spatialMatch.id : stereoMatch.id);
+      RETURNING id
+    `).get(plan.id, spatial ? spatialMatch.id : stereoMatch.id) as { id: number };
+    const trackSource = spatial ? spatialTrackSource : stereoTrackSource;
+    const quality = spatial ? options.spatialQuality : options.stereoQuality;
+    db.prepare(`
+      INSERT INTO AcquisitionPlanTracks (
+        plan_id, track_id, source_id, provider_track_match_id,
+        provider_audio_variant_id, source_quality_snapshot
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      plan.id,
+      track.id,
+      source.id,
+      trackSource.trackMatchId,
+      trackSource.variantId,
+      JSON.stringify({ quality }),
+    );
   }
 }
 

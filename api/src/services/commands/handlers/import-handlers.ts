@@ -1,6 +1,6 @@
 import { FollowedArtistsImportService } from "../../providers/followed-artists-import.js";
-import { UnmappedFilesService } from "../../mediafiles/unmapped-files.js";
 import { CanonicalManualImportService } from "../../mediafiles/canonical-manual-import-service.js";
+import { CanonicalManualVideoImportService } from "../../mediafiles/canonical-manual-video-import-service.js";
 import { ManualImportService } from "../../mediafiles/manual-import-service.js";
 import { db } from "../../../database.js";
 import { appEvents, AppEvent } from "../app-events.js";
@@ -57,8 +57,14 @@ export const handleImportProviderArtists: CommandHandler<"ImportProviderArtists"
 export const handleImportUnmappedFiles: CommandHandler<"ImportUnmappedFiles"> = async (job, ctx) => {
     const items = Array.isArray(job.payload.items) ? job.payload.items : [];
     const canonical = job.payload.canonical;
+    const canonicalVideo = job.payload.canonicalVideo;
 
-    if (items.length === 0 && !canonical) {
+    if (items.length > 0) {
+        throw new Error(
+            "Legacy provider-keyed manual import is no longer supported; select a canonical MusicBrainz Track or Video Recording",
+        );
+    }
+    if (!canonical && !canonicalVideo) {
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: "No unmapped files to import",
@@ -66,18 +72,23 @@ export const handleImportUnmappedFiles: CommandHandler<"ImportUnmappedFiles"> = 
         return;
     }
 
-    const importCount = canonical?.mappings.length ?? items.length;
+    const importCount = canonical?.mappings.length ?? canonicalVideo?.mappings.length ?? 0;
     ctx.updateCommandDescription(job, {
         progress: 5,
         description: `Importing ${importCount} mapped file${importCount === 1 ? "" : "s"}`,
     });
 
+    const legacyImporter = (legacyItems: Array<{ id: number; providerId: string }>, options?: { libraryRootPath?: string }) =>
+        new ManualImportService().bulkImportUnmapped(legacyItems, options);
     const summary = canonical
         ? await new CanonicalManualImportService(
             db,
-            (legacyItems, options) => new ManualImportService().bulkImportUnmapped(legacyItems, options),
+            legacyImporter,
         ).import(canonical)
-        : await new UnmappedFilesService().bulkMap(items);
+        : await new CanonicalManualVideoImportService(
+            db,
+            legacyImporter,
+        ).import(canonicalVideo!);
 
     // Report what actually happened, not a blanket success — a silent no-op
     // (nothing resolved, all duplicates) must be visible in the activity log.

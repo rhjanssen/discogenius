@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
+import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-move-artist-service-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -106,6 +107,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
+  db.prepare("DELETE FROM Libraries").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
@@ -113,6 +115,9 @@ beforeEach(() => {
   fs.mkdirSync(path.join(tempDir, "library", "videos"), { recursive: true });
 
   writeTestConfig();
+  seedTestLibrary(db, { name: "Move Stereo", rootPath: configModule.Config.getMusicPath() });
+  seedTestLibrary(db, { name: "Move Spatial", rootPath: configModule.Config.getSpatialPath() });
+  seedTestLibrary(db, { name: "Move Video", rootPath: configModule.Config.getVideoPath() });
 });
 
 after(() => {

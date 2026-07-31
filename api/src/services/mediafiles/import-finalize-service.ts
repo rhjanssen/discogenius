@@ -135,12 +135,14 @@ export async function finalizeImportedDirectories(params: {
                 const stem = path.parse(targetPath).name;
 
                 const siblingMediaFiles = db.prepare(`
-                    SELECT provider_id AS media_id, quality, file_path
+                    SELECT id AS track_file_id, library_id, provider_id AS media_id, quality, file_path
                     FROM TrackFiles
                     WHERE artist_id = ?
                       AND file_type IN ('track', 'video')
                       AND file_path LIKE ?
                 `).all(mapping.artistId, `${mapping.destDir}${path.sep}%`) as Array<{
+                    track_file_id: number;
+                    library_id: number | null;
                     media_id: string | null;
                     quality: string | null;
                     file_path: string;
@@ -169,8 +171,12 @@ export async function finalizeImportedDirectories(params: {
 
                 LibraryFilesService.upsertLibraryFile({
                     artistId: mapping.artistId,
+                    libraryId: linkedMedia?.library_id ?? null,
                     albumId: mapping.albumId,
                     mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
+                    trackFileId: fileType === "lyrics" || fileType === "video_thumbnail"
+                      ? linkedMedia?.track_file_id ?? null
+                      : null,
                     filePath: targetPath,
                     libraryRoot: mapping.libraryRootPath,
                     fileType,
@@ -194,6 +200,7 @@ export async function finalizeImportedDirectories(params: {
                         albumId: mapping.albumId,
                         mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
                         fileType,
+                        libraryRoot: mapping.libraryRootPath,
                         librarySlot: sidecarIdentity.librarySlot,
                     });
                 }

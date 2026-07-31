@@ -188,6 +188,7 @@ type OrganizeType = "album" | "track" | "video";
 
 type OrganizeRequest = {
   type: OrganizeType | string;
+  libraryId?: number | null;
   providerId?: string;
   provider?: string | null;
   releaseGroupMbid?: string | null;
@@ -1267,6 +1268,7 @@ export class OrganizerService {
       canonicalIdentity.providerId || params.mediaId,
       ...(sidecarTable === "LyricFiles" ? [] : [params.fileType]),
       librarySlot,
+      params.libraryRoot,
     ];
 
     const sidecars = db.prepare(`
@@ -1277,6 +1279,7 @@ export class OrganizerService {
         AND provider_id = ?
         ${sidecarFileTypeClause}
         AND library_slot IS ?
+        AND COALESCE(library_root, '') = COALESCE(?, '')
       ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
     `).all(
       ...sidecarMatchValues,
@@ -1369,6 +1372,7 @@ export class OrganizerService {
           AND provider_id = ?
           ${sidecarFileTypeClause}
           AND library_slot IS ?
+          AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_path != ?
       `).run(
         ...sidecarMatchValues,
@@ -1738,6 +1742,7 @@ export class OrganizerService {
   }
   private static upsertLibraryFile(params: {
     artistId: string;
+    libraryId?: number | null;
     albumId?: string | null;
     mediaId?: string | null;
     trackFileId?: number | null;
@@ -2048,7 +2053,12 @@ export class OrganizerService {
           if (!processedEmbeddedVideoIds.has(idFromName)) {
             processedEmbeddedVideoIds.add(idFromName);
             try {
-              await this.organizeDownload({ type: "video", providerId: idFromName, downloadPath: sourceAlbumDir });
+              await this.organizeDownload({
+                type: "video",
+                libraryId: raw.libraryId,
+                providerId: idFromName,
+                downloadPath: sourceAlbumDir,
+              });
             } catch (error) {
               console.warn(`[Organizer] Skipping embedded video ${idFromName} while organizing album ${providerId}:`, error);
             }
@@ -2292,6 +2302,7 @@ export class OrganizerService {
         db.transaction(() => {
           const libraryFileId = this.upsertLibraryFile({
             artistId,
+            libraryId: raw.libraryId,
             albumId: libraryAlbumId,
             mediaId: mediaIdStr,
             filePath: destFile,
@@ -2368,6 +2379,7 @@ export class OrganizerService {
             if (fs.existsSync(lyricPath)) {
               this.upsertLibraryFile({
                 artistId,
+                libraryId: raw.libraryId,
                 albumId: libraryAlbumId,
                 mediaId: trackId,
                 trackFileId: importedTrackFileId,
@@ -2451,6 +2463,7 @@ export class OrganizerService {
           if (fs.existsSync(artistPicPath)) {
             this.upsertLibraryFile({
               artistId,
+              libraryId: raw.libraryId,
               albumId: null,
               mediaId: null,
               filePath: artistPicPath,
@@ -2489,6 +2502,7 @@ export class OrganizerService {
           if (fs.existsSync(albumCoverPath)) {
             this.upsertLibraryFile({
               artistId,
+              libraryId: raw.libraryId,
               albumId: albumIds[0],
               mediaId: null,
               filePath: albumCoverPath,
@@ -2538,6 +2552,7 @@ export class OrganizerService {
           if (fs.existsSync(albumVideoCoverPath)) {
             this.upsertLibraryFile({
               artistId,
+              libraryId: raw.libraryId,
               albumId: albumIds[0],
               mediaId: null,
               filePath: albumVideoCoverPath,
@@ -2560,6 +2575,7 @@ export class OrganizerService {
           await saveArtistNfoFile(artistId, artistNfoPath);
           this.upsertLibraryFile({
             artistId,
+            libraryId: raw.libraryId,
             albumId: null,
             mediaId: null,
             filePath: artistNfoPath,
@@ -2583,6 +2599,7 @@ export class OrganizerService {
           });
           this.upsertLibraryFile({
             artistId,
+            libraryId: raw.libraryId,
             albumId: albumIds[0],
             mediaId: null,
             filePath: albumNfoPath,
@@ -2913,6 +2930,7 @@ export class OrganizerService {
       db.transaction(() => {
         const libraryFileId = this.upsertLibraryFile({
           artistId,
+          libraryId: raw.libraryId,
           albumId: libraryAlbumId,
           mediaId: providerId,
           filePath: dest,
@@ -2981,6 +2999,7 @@ export class OrganizerService {
           if (fs.existsSync(lyricPath)) {
             this.upsertLibraryFile({
               artistId,
+              libraryId: raw.libraryId,
               albumId: libraryAlbumId,
               mediaId: providerId,
               trackFileId: importedTrackFileId,
@@ -3032,6 +3051,7 @@ export class OrganizerService {
           if (fs.existsSync(artistPicPath)) {
             this.upsertLibraryFile({
               artistId,
+              libraryId: raw.libraryId,
               albumId: null,
               mediaId: null,
               filePath: artistPicPath,
@@ -3073,6 +3093,7 @@ export class OrganizerService {
         if (fs.existsSync(albumCoverPath)) {
           this.upsertLibraryFile({
             artistId,
+            libraryId: raw.libraryId,
             albumId: libraryAlbumId,
             mediaId: null,
             filePath: albumCoverPath,
@@ -3117,6 +3138,7 @@ export class OrganizerService {
           if (fs.existsSync(albumVideoCoverPath)) {
             this.upsertLibraryFile({
               artistId,
+              libraryId: raw.libraryId,
               albumId: libraryAlbumId,
               mediaId: null,
               filePath: albumVideoCoverPath,
@@ -3139,6 +3161,7 @@ export class OrganizerService {
           await saveArtistNfoFile(artistId, artistNfoPath);
           this.upsertLibraryFile({
             artistId,
+            libraryId: raw.libraryId,
             albumId: null,
             mediaId: null,
             filePath: artistNfoPath,
@@ -3162,6 +3185,7 @@ export class OrganizerService {
           });
           this.upsertLibraryFile({
             artistId,
+            libraryId: raw.libraryId,
             albumId: libraryAlbumId,
             mediaId: null,
             filePath: albumNfoPath,
@@ -3237,53 +3261,34 @@ export class OrganizerService {
 
       // Try to find the canonical local artist id via the DB
       let canonicalArtistId = resolveCanonicalVideoArtistId(videoProvider, providerId);
-      
-      if (!canonicalArtistId) {
-        // Fallback: look up ProviderItems artist_mbid directly
-        const piRow = db.prepare(`
-          SELECT managed_artist.id AS artist_id
-          FROM ProviderItems pi
-          JOIN ProviderVideoMatches video_match
-            ON video_match.provider_video_item_id = pi.id
-           AND video_match.match_state = 'accepted'
-          JOIN Recordings recording ON recording.id = video_match.recording_id
-          JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
-          WHERE pi.provider = ? AND pi.entity_type = 'video' AND pi.provider_id = ?
-          LIMIT 1
-        `).get(videoProvider, providerId) as any;
-        if (piRow?.artist_id) {
-          canonicalArtistId = String(piRow.artist_id);
-        }
-      }
 
-      // If still missing, we need the provider artist ID to potentially create a local row
+      // A new provider video may not have a VideoMatch until it is upserted
+      // below. In that case its exact provider-artist identity may establish
+      // the canonical managed artist, but only when every accepted typed match
+      // agrees. A provider id alone is never canonical identity.
       const providerArtistId = String(videoData?.artist?.providerId || videoData?.artist?.id || videoData?.artist_id || "");
 
       if (!canonicalArtistId && providerArtistId) {
-          // See if we have an artist provider item
-          const artistPiRow = db.prepare(`SELECT artist_id FROM ProviderItems WHERE provider = ? AND provider_id = ? AND entity_type = 'artist' LIMIT 1`).get(videoProvider, providerArtistId) as any;
-          if (artistPiRow?.artist_id) {
-             canonicalArtistId = String(artistPiRow.artist_id);
-          }
-      }
-
-      if (!canonicalArtistId && providerArtistId) {
-          // Last resort: create a new canonical local artist
-          const a = await this.fetchProviderArtist(providerArtistId, streamingProviderId);
-          if (a) {
-              const insertResult = db.prepare("INSERT INTO Artists (name, picture, popularity, monitored, path) VALUES (?, ?, ?, 0, 'temp') RETURNING id").get(a.name, a.picture || null, a.popularity || 0) as any;
-              if (insertResult?.id) {
-                  canonicalArtistId = String(insertResult.id);
-                  const newPath = resolveArtistFolderForPersistence({
-                      artistId: canonicalArtistId,
-                      artistName: a.name,
-                  });
-                  db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(newPath, canonicalArtistId);
-                  
-                  // Also record the provider item so we don't recreate
-                  db.prepare("INSERT OR IGNORE INTO ProviderItems (provider, entity_type, provider_id, artist_id, title) VALUES (?, 'artist', ?, ?, ?)").run(videoProvider, providerArtistId, canonicalArtistId, a.name);
-              }
-          }
+        const artistMatch = db.prepare(`
+          SELECT CASE
+            WHEN COUNT(DISTINCT managed_artist.id) = 1
+            THEN CAST(MAX(managed_artist.id) AS TEXT)
+          END AS artist_id
+          FROM ProviderItems provider_artist
+          JOIN ProviderArtistMatches artist_match
+            ON artist_match.provider_artist_item_id = provider_artist.id
+           AND artist_match.match_state = 'accepted'
+          JOIN ArtistMetadata canonical_artist
+            ON canonical_artist.id = artist_match.artist_id
+          JOIN Artists managed_artist
+            ON managed_artist.mbid = canonical_artist.mbid
+          WHERE provider_artist.provider = ?
+            AND provider_artist.entity_type = 'artist'
+            AND CAST(provider_artist.provider_id AS TEXT) = CAST(? AS TEXT)
+        `).get(videoProvider, providerArtistId) as { artist_id?: string | null } | undefined;
+        if (artistMatch?.artist_id) {
+          canonicalArtistId = artistMatch.artist_id;
+        }
       }
 
       if (!canonicalArtistId) {
@@ -3444,6 +3449,7 @@ export class OrganizerService {
       db.transaction(() => {
         libraryFileId = this.upsertLibraryFile({
           artistId,
+          libraryId: raw.libraryId,
           albumId: video.album_id ? String(video.album_id) : null,
           mediaId: providerId,
           filePath: dest,
@@ -3509,9 +3515,10 @@ export class OrganizerService {
       if (metadataConfig.save_nfo) {
         const videoNfoPath = path.join(path.dirname(dest), `${path.parse(dest).name}.nfo`);
         try {
-          await saveVideoNfoFile(providerId, videoNfoPath);
+          await saveVideoNfoFile(providerId, videoNfoPath, videoProvider);
           this.upsertLibraryFile({
             artistId,
+            libraryId: raw.libraryId,
             albumId: video.album_id ? String(video.album_id) : null,
             mediaId: providerId,
             filePath: videoNfoPath,

@@ -1,42 +1,17 @@
-import fs from "fs";
-import path from "path";
-import { streamingProviderManager } from "../providers/index.js";
-import { RefreshAlbumService } from "../music/refresh-album-service.js";
+import fs from "node:fs";
+import path from "node:path";
 import { Config } from "../config/config.js";
-import {
-    updateAlbumDownloadStatus,
-    updateArtistDownloadStatusFromMedia,
-} from "../download/download-state.js";
-import { getExistingImportedMediaConflictPath } from "../import-decision/conflicts.js";
-import { importMatcherService } from "./import-matcher-service.js";
-import { manualImportService } from "./manual-import-service.js";
-import type { library_root } from "../config/naming.js";
-import {
-    collectSiblingSidecarTargets,
-    finalizeImportedDirectories,
-    resolveImportedLibraryFileId,
-    type ImportedDirectoryMapping,
-} from "./import-finalize-service.js";
-import {
-    getTopLevelImportFolder,
-    scanImportDirectory,
-    summarizeAutoImportedCandidate,
-} from "./import-discovery.js";
-import {
-    matchTrackForFile,
-} from "./import-matching-utils.js";
-import { resolveLibraryFileIdentity } from "./library-file-identity.js";
-import { resolveVideoTypeSuffix } from "./library-files.js";
-import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
-import { resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import type { ImportDecisionMode } from "../import-decision/types.js";
+import {
+    scanImportDirectory,
+} from "./import-discovery.js";
+import { importMatcherService } from "./import-matcher-service.js";
 import type {
     AutoImportedGroupSummary,
     ImportCandidate,
-    LocalFile,
     LocalGroup,
-    RootFolderImportProgressEvent,
     ProviderMatch,
+    RootFolderImportProgressEvent,
 } from "./import-types.js";
 
 export type {
@@ -47,32 +22,26 @@ export type {
     RootFolderImportProgressEvent,
     ProviderMatch,
 } from "./import-types.js";
-import { extractReleaseGroup } from "./import-matching-utils.js";
-import { LYRIC_SIDECAR_EXTENSIONS } from "../extras/lyrics/lyric-sidecar.js";
 
+/**
+ * Discovers existing files and proposes canonical catalogue identities for
+ * review. Moving/registering files is intentionally delegated to the canonical
+ * manual import services, where Library + Edition/Recording are explicit.
+ */
 export class ImportService {
     private candidates: ImportCandidate[] = [];
-    private autoImportedGroups: AutoImportedGroupSummary[] = [];
 
-    /**
-     * Scans all configured root folders. When `targetFolders` is provided,
-     * only the matching subdirectories are walked (scoped scan) instead of
-     * traversing the entire root tree and post-filtering.
-     */
     async scanRootFolders(options: {
         monitorImported?: boolean;
         targetFolders?: Set<string>;
         onProgress?: (event: RootFolderImportProgressEvent) => void;
     } = {}): Promise<ImportCandidate[]> {
-        this.candidates = []; // Reset for now. In real app we might merge/update.
-        this.autoImportedGroups = [];
-        const monitorImported = options.monitorImported ?? true;
-        const targetFolders = options.targetFolders;
-
+        void options.monitorImported;
+        this.candidates = [];
         const roots = [
-            { path: Config.getMusicPath(), name: 'Music', context: 'music', libraryRoot: 'music' as const },
-            { path: Config.getSpatialPath(), name: 'Spatial', context: 'spatial', libraryRoot: 'spatial' as const },
-            { path: Config.getVideoPath(), name: 'Videos', context: 'video', libraryRoot: 'videos' as const }
+            { path: Config.getMusicPath(), context: "music" as const, libraryRoot: "music" as const },
+            { path: Config.getSpatialPath(), context: "spatial" as const, libraryRoot: "spatial" as const },
+            { path: Config.getVideoPath(), context: "video" as const, libraryRoot: "videos" as const },
         ];
 
         const scannedRoots: Array<{
@@ -81,194 +50,92 @@ export class ImportService {
         }> = [];
 
         for (const root of roots) {
-            console.log(`Scanning root: ${root.path} (${root.context})`);
             try {
-                let scopedGroups: LocalGroup[];
-
-                if (targetFolders && targetFolders.size > 0) {
-                    // Scoped scan: walk only the target subdirectories (not the full root)
-                    scopedGroups = [];
-                    for (const folderName of targetFolders) {
-                        // Find the actual cased folder name on disk
+                const groups: LocalGroup[] = [];
+                if (options.targetFolders && options.targetFolders.size > 0) {
+                    for (const folderName of options.targetFolders) {
                         const actualName = await this.resolveActualFolderName(root.path, folderName);
                         if (!actualName) continue;
-
                         const subPath = path.join(root.path, actualName);
                         try {
                             await fs.promises.access(subPath);
                         } catch {
                             continue;
                         }
-
-                        const groups = await scanImportDirectory(subPath, root.path, root.libraryRoot);
-                        scopedGroups.push(...groups);
+                        groups.push(...await scanImportDirectory(subPath, root.path, root.libraryRoot));
                     }
                 } else {
-                    // Full scan: walk entire root (for manual import and unscoped discovery)
-                    scopedGroups = await scanImportDirectory(root.path, root.path, root.libraryRoot);
+                    groups.push(...await scanImportDirectory(root.path, root.path, root.libraryRoot));
                 }
-
-                scannedRoots.push({
-                    root,
-                    groups: scopedGroups,
-                });
-            } catch (err) {
-                console.error(`Failed to scan root ${root.path}:`, err);
+                scannedRoots.push({ root, groups });
+            } catch (error) {
+                console.error(`Failed to scan root ${root.path}:`, error);
             }
         }
 
-        const totalFiles = scannedRoots.reduce((sum, entry) => {
-            return sum + entry.groups.reduce((groupSum, group) => groupSum + group.files.length, 0);
-        }, 0);
+        const totalFiles = scannedRoots.reduce(
+            (sum, entry) => sum + entry.groups.reduce((groupSum, group) => groupSum + group.files.length, 0),
+            0,
+        );
         const totalGroups = scannedRoots.reduce((sum, entry) => sum + entry.groups.length, 0);
-
-        if (totalFiles > 0) {
-            options.onProgress?.({
-                message: `Reading file 0/${totalFiles}`,
-                currentFileNum: 0,
-                totalFiles,
-                currentGroupNum: 0,
-                totalGroups,
-            });
-        }
-
         let processedFiles = 0;
         let processedGroups = 0;
 
-        for (const { root, groups } of scannedRoots) {
-            try {
-                const rootFileOffset = processedFiles;
-                const rootGroupOffset = processedGroups;
-                const rootFileTotal = groups.reduce((sum, group) => sum + group.files.length, 0);
+        options.onProgress?.({
+            message: `Reading file 0/${totalFiles}`,
+            currentFileNum: 0,
+            totalFiles,
+            currentGroupNum: 0,
+            totalGroups,
+        });
 
-                const rootCandidates = await this.findMatches(groups, root.context as any, {
+        for (const { root, groups } of scannedRoots) {
+            const fileOffset = processedFiles;
+            const groupOffset = processedGroups;
+            const candidates = await this.findMatches(
+                groups,
+                root.context,
+                {
                     onProgress: (event) => {
-                        const currentFileNum = rootFileOffset + event.currentFileNum;
-                        const currentGroupNum = rootGroupOffset + event.currentGroupNum;
                         options.onProgress?.({
-                            message: `Reading file ${currentFileNum}/${totalFiles}`,
-                            currentFileNum,
+                            message: `Reading file ${fileOffset + event.currentFileNum}/${totalFiles}`,
+                            currentFileNum: fileOffset + event.currentFileNum,
                             totalFiles,
-                            currentGroupNum,
+                            currentGroupNum: groupOffset + event.currentGroupNum,
                             totalGroups,
                         });
                     },
-                }, "ExistingFiles");
-
-                processedFiles = rootFileOffset + rootFileTotal;
-                processedGroups = rootGroupOffset + groups.length;
-                // Auto-import only when every local file mapped cleanly to the chosen release.
-                const toImport = rootCandidates.filter((candidate) => {
-                    const bestMatch = candidate.matches[0];
-                    return Boolean(bestMatch?.autoImportReady);
-                });
-                const toReview = rootCandidates.filter(c => !toImport.includes(c));
-
-                if (toImport.length > 0) {
-                    console.log(`Auto-importing ${toImport.length} albums from ${root.name}`);
-                    await this.importFiles(toImport, true, monitorImported);
-
-                    for (const imported of toImport) {
-                        if (imported.group.status !== "imported") {
-                            this.candidates.push(imported);
-                            continue;
-                        }
-
-                        const summary = summarizeAutoImportedCandidate(imported);
-                        if (summary) {
-                            this.autoImportedGroups.push(summary);
-                        }
-                    }
-                }
-
-                this.candidates.push(...toReview);
-            } catch (err) {
-                console.error(`Failed to scan root ${root.path}:`, err);
-            }
+                },
+                "ExistingFiles",
+            );
+            this.candidates.push(...candidates);
+            processedFiles += groups.reduce((sum, group) => sum + group.files.length, 0);
+            processedGroups += groups.length;
         }
 
-        return this.candidates;
+        return [...this.candidates];
     }
 
-    /**
-     * Returns current candidates that need manual attention.
-     */
     getUnmapped(): ImportCandidate[] {
-        return this.candidates.filter(c => c.group.status !== 'imported');
+        return this.candidates.filter((candidate) => candidate.group.status !== "imported");
     }
 
     getAutoImported(): AutoImportedGroupSummary[] {
-        return [...this.autoImportedGroups];
+        return [];
     }
 
-    /**
-     * Manually maps a local group to a specific provider album/video and imports it.
-     */
-    async mapGroup(groupId: string, providerId: string): Promise<boolean> {
-        const candidate = this.candidates.find(c => c.group.id === groupId);
-        if (!candidate) {
-            throw new Error(`Group not found: ${groupId}`);
-        }
-
-        const isVideo = candidate.group.libraryRoot === "videos";
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
-
-        if (isVideo) {
-            let providerVideo;
-            try {
-                providerVideo = await provider.getVideo?.(providerId);
-            } catch (e) {
-                throw new Error(`Failed to fetch ${provider.name} video ${providerId}`);
-            }
-
-            if (!providerVideo) {
-                throw new Error(`${provider.name} video ${providerId} not found`);
-            }
-
-            candidate.matches = [{
-                item: providerVideo.raw && typeof providerVideo.raw === "object" ? providerVideo.raw : providerVideo,
-                itemType: "video",
-                score: 1.0,
-                matchType: "exact"
-            }];
-        } else {
-            let providerAlbum;
-            try {
-                providerAlbum = await provider.getAlbum(providerId);
-            } catch (e) {
-                throw new Error(`Failed to fetch ${provider.name} album ${providerId}`);
-            }
-
-            if (!providerAlbum) {
-                throw new Error(`${provider.name} album ${providerId} not found`);
-            }
-
-            candidate.matches = [{
-                item: providerAlbum.raw && typeof providerAlbum.raw === "object" ? providerAlbum.raw : providerAlbum,
-                itemType: "album",
-                score: 1.0,
-                matchType: "exact"
-            }];
-        }
-
-        // Import
-        await this.importFiles([candidate]);
-        return true;
+    async mapGroup(_groupId: string, _providerId: string): Promise<boolean> {
+        throw new Error(
+            "Provider-keyed group mapping was removed; use canonical Library + Edition/Recording import",
+        );
     }
 
-    /**
-     * Maps an array of explicitly specified file->providerId pairs.
-     * This bypasses the fuzzy matching and strictly maps the given files to the given provider tracks,
-     * registering them in the system and cleaning them from the unmapped_files table.
-     */
-    async bulkImportUnmapped(items: { id: number, providerId: string }[]) {
-        return manualImportService.bulkImportUnmapped(items);
+    async bulkImportUnmapped(_items: Array<{ id: number; providerId: string }>): Promise<never> {
+        throw new Error(
+            "Provider-keyed manual import was removed; use canonical MusicBrainz import",
+        );
     }
 
-
-    /**
-   * Main entry point to find matches for a set of groups.
-   */
     async findMatches(
         groups: LocalGroup[],
         context: "music" | "spatial" | "video" = "music",
@@ -286,724 +153,10 @@ export class ImportService {
         return importMatcherService.findMatchesForGroup(group, context, mode);
     }
 
-    /**
-     * Imports selected candidates into the database.
-     */
-    async importFiles(candidates: ImportCandidate[], isAuto = false, monitorImported = true) {
-        const { db } = await import("../../database.js");
-        const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("../config/naming.js");
-        const { resolveArtistFolderForPersistence } = await import("../music/artist-paths.js");
-        const { deriveQuality, calculateFingerprint, parseAudioFile } = await import("./audioUtils.js");
-
-        const namingConfig = getNamingConfig();
-
-        const upsertArtist = db.prepare(`
-            INSERT INTO Artists (id, name, picture, popularity, monitored, path)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                name = COALESCE(excluded.name, name),
-                picture = COALESCE(excluded.picture, picture),
-                popularity = COALESCE(excluded.popularity, popularity),
-                path = COALESCE(artists.path, excluded.path),
-                monitored = CASE
-                    WHEN monitored = 0 AND excluded.monitored = 1 THEN 1
-                    ELSE monitored
-                END
-        `);
-
-        const monitorValue = monitorImported ? 1 : 0;
-
-        const insertLibraryFile = db.prepare(`
-            INSERT INTO TrackFiles (
-                artist_id,
-                provider, provider_entity_type, provider_id, library_slot,
-                file_path, relative_path, library_root,
-                filename, extension, file_size, duration,
-                file_type, quality, needs_rename,
-                bit_depth, sample_rate, bitrate, codec, video_codec, channels, width, height,
-                naming_template, expected_path,
-                original_filename, release_group, fingerprint,
-                modified_at, verified_at
-            ) VALUES (
-                @artistId,
-                @provider, @providerEntityType, @providerId, @librarySlot,
-                @filePath, @relativePath, @libraryRoot,
-                @filename, @extension, @fileSize, @duration,
-                @fileType, @quality, @needsRename,
-                @bitDepth, @sampleRate, @bitrate, @codec, @videoCodec, @channels, @width, @height,
-                @namingTemplate, @expectedPath,
-                @originalFilename, @releaseGroup, @fingerprint,
-                @modifiedAt, CURRENT_TIMESTAMP
-            )
-            ON CONFLICT(file_path) DO UPDATE SET
-                artist_id = excluded.artist_id,
-                provider = COALESCE(excluded.provider, provider),
-                provider_entity_type = COALESCE(excluded.provider_entity_type, provider_entity_type),
-                provider_id = COALESCE(excluded.provider_id, provider_id),
-                library_slot = COALESCE(excluded.library_slot, library_slot),
-                relative_path = excluded.relative_path,
-                library_root = excluded.library_root,
-                filename = excluded.filename,
-                extension = excluded.extension,
-                file_size = excluded.file_size,
-                duration = excluded.duration,
-                file_type = excluded.file_type,
-                quality = excluded.quality,
-                needs_rename = excluded.needs_rename,
-                bit_depth = excluded.bit_depth,
-                sample_rate = excluded.sample_rate,
-                bitrate = excluded.bitrate,
-                codec = excluded.codec,
-                video_codec = COALESCE(excluded.video_codec, video_codec),
-                channels = excluded.channels,
-                width = COALESCE(excluded.width, width),
-                height = COALESCE(excluded.height, height),
-                naming_template = excluded.naming_template,
-                expected_path = excluded.expected_path,
-                original_filename = excluded.original_filename,
-                release_group = excluded.release_group,
-                fingerprint = excluded.fingerprint,
-                modified_at = excluded.modified_at,
-                verified_at = CURRENT_TIMESTAMP
-        `);
-        const findExistingMediaLibraryFile = db.prepare(`
-            SELECT id
-            FROM TrackFiles
-            WHERE provider = ? AND provider_entity_type = ? AND provider_id = ? AND file_type = ? AND library_slot = ?
-            ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
-            LIMIT 1
-        `);
-        const updateExistingLibraryFile = db.prepare(`
-            UPDATE TrackFiles
-            SET artist_id = @artistId,
-                provider = COALESCE(@provider, provider),
-                provider_entity_type = COALESCE(@providerEntityType, provider_entity_type),
-                provider_id = COALESCE(@providerId, provider_id),
-                library_slot = COALESCE(@librarySlot, library_slot),
-                file_path = @filePath,
-                relative_path = @relativePath,
-                library_root = @libraryRoot,
-                filename = @filename,
-                extension = @extension,
-                file_size = @fileSize,
-                duration = @duration,
-                file_type = @fileType,
-                quality = @quality,
-                needs_rename = @needsRename,
-                bit_depth = @bitDepth,
-                sample_rate = @sampleRate,
-                bitrate = @bitrate,
-                codec = @codec,
-                video_codec = COALESCE(@videoCodec, video_codec),
-                channels = @channels,
-                width = COALESCE(@width, width),
-                height = COALESCE(@height, height),
-                naming_template = @namingTemplate,
-                expected_path = @expectedPath,
-                original_filename = @originalFilename,
-                release_group = @releaseGroup,
-                fingerprint = COALESCE(@fingerprint, fingerprint),
-                modified_at = @modifiedAt,
-                verified_at = CURRENT_TIMESTAMP
-            WHERE id = @id
-        `);
-        const deleteDuplicateMediaLibraryFiles = db.prepare(`
-            DELETE FROM TrackFiles
-            WHERE provider = ? AND provider_entity_type = ? AND provider_id = ? AND file_type = ? AND library_slot = ? AND id != ?
-        `);
-        const updateImportedLibraryFileIdentity = db.prepare(`
-            UPDATE TrackFiles
-            SET canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
-                canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
-                canonical_release_mbid = COALESCE(?, canonical_release_mbid),
-                canonical_track_mbid = COALESCE(?, canonical_track_mbid),
-                canonical_recording_mbid = COALESCE(?, canonical_recording_mbid),
-                provider = COALESCE(?, provider),
-                provider_entity_type = COALESCE(?, provider_entity_type),
-                provider_id = COALESCE(?, provider_id),
-                library_slot = COALESCE(?, library_slot)
-            WHERE id = ?
-        `);
-        const enrichImportedLibraryFileIdentity = (libraryFileId: number, params: Record<string, unknown>) => {
-            const identity = resolveLibraryFileIdentity({
-                artistId: String(params.artistId || ""),
-                albumId: String(params.albumId || ""),
-                mediaId: String(params.mediaId || ""),
-                fileType: String(params.fileType || ""),
-                quality: params.quality == null ? null : String(params.quality),
-                libraryRoot: params.libraryRoot == null ? null : String(params.libraryRoot),
-            });
-            updateImportedLibraryFileIdentity.run(
-                identity.canonicalArtistMbid,
-                identity.canonicalReleaseGroupMbid,
-                identity.canonicalReleaseMbid,
-                identity.canonicalTrackMbid,
-                identity.canonicalRecordingMbid,
-                identity.provider,
-                identity.providerEntityType,
-                identity.providerId,
-                identity.librarySlot,
-                libraryFileId,
-            );
-        };
-        const upsertImportedLibraryFile = (params: Record<string, unknown>) => {
-            const mediaId = String(params.mediaId || "");
-            const fileType = String(params.fileType || "");
-            const filePath = String(params.filePath || "");
-            const identity = resolveLibraryFileIdentity({
-                artistId: String(params.artistId || ""),
-                albumId: String(params.albumId || ""),
-                mediaId,
-                fileType,
-                quality: params.quality == null ? null : String(params.quality),
-                libraryRoot: params.libraryRoot == null ? null : String(params.libraryRoot),
-            });
-            const hydratedParams = {
-                ...params,
-                provider: identity.provider,
-                providerEntityType: identity.providerEntityType,
-                providerId: identity.providerId,
-                librarySlot: identity.librarySlot,
-            };
-            if (identity.provider && identity.providerEntityType && identity.providerId && (fileType === "track" || fileType === "video")) {
-                const existingRow = findExistingMediaLibraryFile.get(
-                    identity.provider,
-                    identity.providerEntityType,
-                    identity.providerId,
-                    fileType,
-                    identity.librarySlot,
-                    filePath,
-                ) as { id: number } | undefined;
-                if (existingRow) {
-                    updateExistingLibraryFile.run({ ...hydratedParams, id: existingRow.id });
-                    deleteDuplicateMediaLibraryFiles.run(
-                        identity.provider,
-                        identity.providerEntityType,
-                        identity.providerId,
-                        fileType,
-                        identity.librarySlot,
-                        existingRow.id,
-                    );
-                    enrichImportedLibraryFileIdentity(existingRow.id, hydratedParams);
-                    return;
-                }
-            }
-
-            insertLibraryFile.run(hydratedParams);
-            const insertedRow = db.prepare("SELECT id FROM TrackFiles WHERE file_path = ?")
-                .get(filePath) as { id?: number } | undefined;
-            if (insertedRow?.id != null) {
-                enrichImportedLibraryFileIdentity(insertedRow.id, hydratedParams);
-            }
-        };
-
-        for (const candidate of candidates) {
-            if (!candidate.matches || candidate.matches.length === 0) continue;
-
-            const match = candidate.matches[0];
-            if (isAuto && !match.autoImportReady) continue;
-            const conflictPath = getExistingImportedMediaConflictPath(candidate.group, match);
-            if (conflictPath) {
-                match.rejections = [`Album already imported at ${conflictPath}`];
-                match.conflictPath = conflictPath;
-                console.warn(
-                    `[Import] Skipping auto-import for ${candidate.group.path} because the matched media is already imported from another folder.`
-                );
-                continue;
-            }
-
-            const libraryRootKey = candidate.group.libraryRoot || "music";
-            const rootPath = candidate.group.rootPath;
-            const importedFileIds: number[] = [];
-            const dirMappings = new Map<string, ImportedDirectoryMapping>();
-            const explicitSidecarTargets = new Map<string, string>();
-
-            if (match.itemType === "video") {
-                const providerVideo = match.item;
-                const videoId = providerVideo?.id?.toString?.() ?? providerVideo?.provider_id?.toString?.();
-                if (!videoId) continue;
-                // provider_id is only unique WITHIN a provider, so every lookup
-                // below binds the active provider too. An Apple album id can equal
-                // a TIDAL video id.
-                const activeProvider = String(
-                    providerVideo?.provider
-                    || streamingProviderManager.getDefaultStreamingProvider().id,
-                );
-
-                let videoData = providerVideo;
-                try {
-                    const providerVideo = await streamingProviderManager.getDefaultStreamingProvider().getVideo?.(videoId);
-                    if (providerVideo) {
-                        videoData = providerVideo;
-                    }
-                } catch (e) {
-                    console.warn(`[Import] Failed to fetch video ${videoId}, falling back to search data.`);
-                }
-
-                const artistId = videoData.artist_id
-                    || providerVideo.artist?.id?.toString?.()
-                    || providerVideo.artists?.[0]?.id?.toString?.();
-                if (!artistId) continue;
-
-                const artistName = videoData.artist_name
-                    || providerVideo.artist?.name
-                    || providerVideo.artists?.[0]?.name
-                    || "Unknown Artist";
-                const artistPicture = providerVideo.artist?.picture || providerVideo.artists?.[0]?.picture || null;
-                const artistPopularity = videoData.popularity || 0;
-                const resolvedArtistFolder = resolveArtistFolderForPersistence({
-                    artistId,
-                    artistName,
-                });
-
-                try {
-                    upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue, resolvedArtistFolder);
-                } catch (e) {
-                    console.error(`Failed to upsert artist ${artistId}`, e);
-                }
-
-                const artistRow = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
-                const artistFolder = resolveArtistFolderFromRecord({
-                    name: artistRow?.name || artistName,
-                    mbid: artistRow?.mbid || null,
-                    path: artistRow?.path || resolvedArtistFolder,
-                });
-
-                // Ensure the canonical video graph (Recordings(is_video=1) + a
-                // ProviderItems video offer) instead of a legacy ProviderMedia row.
-                const { RefreshVideoService } = await import("../music/refresh-video-service.js");
-                RefreshVideoService.upsertArtistVideos(artistId, [{
-                    ...videoData,
-                    provider_id: videoId,
-                    title: videoData.title || providerVideo.title || "Unknown Video",
-                    quality: videoData.quality || providerVideo.quality || null,
-                    provider: streamingProviderManager.getDefaultStreamingProvider().id,
-                }]);
-                const catalogVideo = db.prepare(`
-                    SELECT recording.title, recording.video_variant
-                    FROM ProviderItems pi
-                    JOIN ProviderVideoMatches video_match
-                      ON video_match.provider_video_item_id = pi.id
-                     AND video_match.match_state = 'accepted'
-                    JOIN Recordings recording ON recording.id = video_match.recording_id
-                    WHERE pi.entity_type = 'video'
-                      AND pi.provider = ?
-                      AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-                    LIMIT 1
-                `).get(activeProvider, videoId) as { title?: string | null; video_variant?: string | null } | undefined;
-                const catalogVideoTitle = catalogVideo?.title || "Unknown Video";
-                if (monitorValue) {
-                    db.prepare(`
-                        UPDATE Recordings
-                        SET monitored = 1,
-                            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = (
-                            SELECT video_match.recording_id
-                            FROM ProviderItems item
-                            JOIN ProviderVideoMatches video_match
-                              ON video_match.provider_video_item_id = item.id
-                             AND video_match.match_state = 'accepted'
-                            WHERE item.entity_type = 'video'
-                              AND item.provider = ?
-                              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-                            ORDER BY
-                              CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-                              video_match.confidence DESC,
-                              video_match.id
-                            LIMIT 1
-                        )
-                    `).run(activeProvider, videoId);
-                }
-
-                const videoTemplate = path.join(artistFolder, namingConfig.video_file);
-                const expectedVideoRel = renderRelativePath(videoTemplate, {
-                    artistName,
-                    artistMbId: artistRow?.mbid || null,
-                    artistId,
-                    videoTitle: catalogVideoTitle,
-                    videoType: resolveVideoTypeSuffix(catalogVideoTitle, catalogVideo?.video_variant),
-                    trackId: videoId,
-                    videoId,
-                    quality: videoData.quality || providerVideo.quality || null,
-                });
-
-                for (const file of candidate.group.files) {
-                    const ext = file.extension;
-                    const expectedRelPath = `${expectedVideoRel}${ext}`;
-                    const relativePath = path.relative(rootPath, file.path);
-                    const normalizedActual = relativePath.split(path.sep).join('/');
-                    const normalizedExpected = expectedRelPath.split(path.sep).join('/');
-                    const needsRename = normalizedActual !== normalizedExpected ? 1 : 0;
-                    const expectedPath = path.join(rootPath, expectedRelPath);
-
-                    const format = (file.metadata?.format || {}) as any;
-                    const probed = await parseAudioFile(file.path);
-                    const metrics = {
-                        bitrate: probed.bitrate ?? format.bitrate,
-                        sampleRate: probed.sampleRate ?? format.sampleRate,
-                        bitDepth: probed.bitDepth ?? format.bitsPerSample,
-                        codec: probed.codec ?? format.codec,
-                        videoCodec: probed.videoCodec || null,
-                        channels: probed.channels ?? format.numberOfChannels,
-                        width: probed.width || null,
-                        height: probed.height || null,
-                        duration: probed.duration ?? format.duration,
-                    };
-
-                    const releaseGroup = extractReleaseGroup(file.name);
-                    const fingerprint = await calculateFingerprint(file.path);
-                    collectSiblingSidecarTargets(file.path, expectedPath, [".jpg", ".jpeg", ".png", ".webp"], explicitSidecarTargets);
-
-                    const stats = await fs.promises.stat(file.path);
-
-                    upsertImportedLibraryFile({
-                        artistId,
-                        albumId: videoData.album_id || null,
-                        mediaId: videoId,
-                        filePath: file.path,
-                        relativePath,
-                        libraryRoot: libraryRootKey,
-                        filename: file.name,
-                        extension: ext.replace('.', ''),
-                        fileSize: file.size,
-                        duration: metrics.duration || 0,
-                        fileType: "video",
-                        quality: videoData.quality || null,
-                        needsRename,
-                        bitDepth: metrics.bitDepth || null,
-                        sampleRate: metrics.sampleRate || null,
-                        bitrate: metrics.bitrate || null,
-                        codec: metrics.codec || null,
-                        videoCodec: metrics.videoCodec || null,
-                        channels: metrics.channels || null,
-                        width: metrics.width || null,
-                        height: metrics.height || null,
-                        namingTemplate: videoTemplate,
-                        expectedPath,
-                        originalFilename: file.name,
-                        releaseGroup: releaseGroup,
-                        fingerprint: fingerprint || null,
-                        modifiedAt: stats.mtime.toISOString()
-                    });
-
-                    const libraryFileId = resolveImportedLibraryFileId(file.path);
-                    if (libraryFileId !== null) {
-                        importedFileIds.push(libraryFileId);
-                    }
-
-                    db.prepare(`
-                        UPDATE Recordings
-                        SET monitored = 1,
-                            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = (
-                            SELECT video_match.recording_id
-                            FROM ProviderItems item
-                            JOIN ProviderVideoMatches video_match
-                              ON video_match.provider_video_item_id = item.id
-                             AND video_match.match_state = 'accepted'
-                            WHERE item.entity_type = 'video'
-                              AND item.provider = ?
-                              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-                            ORDER BY
-                              CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-                              video_match.confidence DESC,
-                              video_match.id
-                            LIMIT 1
-                        )
-                    `).run(activeProvider, videoId);
-                    // The active provider is known here, so scope the status
-                    // recompute to it: `provider_id` alone is unique only within
-                    // (provider, entity_type), and an unscoped id can collide with
-                    // another provider's resource and invalidate the wrong artist.
-                    updateArtistDownloadStatusFromMedia(videoId, activeProvider);
-
-                    dirMappings.set(path.dirname(file.path), {
-                        destDir: path.dirname(expectedPath),
-                        artistId,
-                        albumId: videoData.album_id ? String(videoData.album_id) : null,
-                        libraryRootPath: rootPath,
-                    });
-                }
-
-                await finalizeImportedDirectories({
-                    importedFileIds,
-                    dirMappings,
-                    imageFileType: "video_thumbnail",
-                    explicitSidecarTargets,
-                });
-
-                candidate.group.status = 'imported';
-                continue;
-            }
-
-            const providerAlbum = match.item;
-            const albumId = providerAlbum?.id?.toString?.() ?? providerAlbum?.provider_id?.toString?.();
-            if (!albumId) continue;
-            // Same collision risk as the video branch: scope by provider as well.
-            const activeAlbumProvider = String(
-                providerAlbum?.provider
-                || streamingProviderManager.getDefaultStreamingProvider().id,
-            );
-
-            try {
-                await RefreshAlbumService.refreshMetadata(albumId);
-            } catch (e) {
-                console.error(`[Import] Failed to refresh album metadata ${albumId}:`, e);
-                continue;
-            }
-
-            const albumRow = db.prepare(`
-                SELECT
-                  artist.mbid AS artist_id,
-                  release_group.id AS release_group_id,
-                  release_group.mbid AS release_group_mbid,
-                  release.id AS edition_id,
-                  release.mbid AS release_mbid,
-                  item.provider
-                FROM ProviderItems item
-                JOIN ProviderEditionMatches release_match
-                  ON release_match.provider_edition_item_id = item.id
-                 AND release_match.match_state = 'accepted'
-                JOIN AlbumEditions release ON release.id = release_match.edition_id
-                JOIN Albums release_group ON release_group.id = release.release_group_id
-                LEFT JOIN ReleaseGroupArtistCredits credit
-                  ON credit.release_group_id = release_group.id AND credit.ordinal = 0
-                JOIN ArtistMetadata artist
-                  ON artist.id = COALESCE(credit.artist_id, release_group.artist_metadata_id)
-                WHERE item.entity_type = 'release'
-                  AND item.provider = ?
-                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-                ORDER BY
-                  CASE release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-                  release_match.confidence DESC,
-                  release_match.id
-                LIMIT 1
-            `).get(activeAlbumProvider, albumId) as any;
-
-            if (!albumRow) continue;
-
-            const artistId = String(albumRow.artist_id
-                || providerAlbum.artist?.id?.toString?.()
-                || providerAlbum.artists?.[0]?.id?.toString?.()
-                || "");
-            if (!artistId) continue;
-
-            const artistName = providerAlbum.artist?.name || providerAlbum.artists?.[0]?.name || "Unknown Artist";
-            const artistPicture = providerAlbum.artist?.picture || providerAlbum.artists?.[0]?.picture || null;
-            const artistPopularity = providerAlbum.popularity || 0;
-                const resolvedArtistFolder = resolveArtistFolderForPersistence({
-                    artistId,
-                    artistName,
-                });
-
-            try {
-                upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue, resolvedArtistFolder);
-            } catch (e) {
-                console.error(`Failed to upsert artist ${artistId}`, e);
-            }
-
-            const artistRow = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
-            const artistFolder = resolveArtistFolderFromRecord({
-                name: artistRow?.name || artistName,
-                mbid: artistRow?.mbid || null,
-                path: artistRow?.path || resolvedArtistFolder,
-            });
-
-            db.prepare(`
-                UPDATE Artists
-                SET monitored = ?,
-                    monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                WHERE id = ?
-            `).run(monitorValue, monitorValue, artistId);
-            if (albumRow.release_group_id != null) {
-                db.prepare(`
-                    UPDATE LibraryAlbums
-                    SET monitored = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE release_group_id = ?
-                      AND library_id = (
-                        SELECT id FROM Libraries WHERE root_path = ? AND enabled = 1
-                      )
-                      AND locked = 0
-                `).run(monitorValue, albumRow.release_group_id, rootPath);
-            }
-
-            // Catalog-first: position comes from Tracks on the canonical release,
-            // never from match_evidence disc/track numbers (native provider-album
-            // layout, which can mis-number hybrid/partial releases).
-            const trackRows = db.prepare(`
-                SELECT
-                    item.provider_id AS id,
-                    COALESCE(NULLIF(TRIM(t.title), ''), item.title) AS title,
-                    t.position AS track_number,
-                    t.medium_position AS volume_number
-                FROM ProviderItems release_item
-                JOIN ProviderEditionMembers member
-                  ON member.provider_edition_item_id = release_item.id
-                JOIN ProviderItems item ON item.id = member.member_item_id
-                JOIN ProviderEditionMatches release_match
-                  ON release_match.provider_edition_item_id = release_item.id
-                 AND release_match.edition_id = ?
-                 AND release_match.match_state = 'accepted'
-                LEFT JOIN ProviderTrackMatches track_match
-                  ON track_match.provider_edition_match_id = release_match.id
-                 AND track_match.provider_edition_member_id = member.id
-                 AND track_match.match_state = 'accepted'
-                LEFT JOIN Tracks t ON t.id = track_match.track_id
-                WHERE release_item.entity_type = 'release'
-                  AND release_item.provider = ?
-                  AND release_item.provider_id = ?
-                  AND item.entity_type = 'track'
-            `).all(albumRow.edition_id, albumRow.provider, albumId) as any[];
-
-            const trackRowsById = new Map(trackRows.map((row) => [String(row.id), row]));
-
-            for (const file of candidate.group.files) {
-                try {
-                    const mappedTrackId = match.trackIdsByFilePath?.[file.path];
-                    const matchedTrack = (mappedTrackId ? trackRowsById.get(String(mappedTrackId)) : null)
-                        || matchTrackForFile(file, trackRows);
-                    const canonicalIdentity = matchedTrack?.id
-                        ? resolveLibraryFileIdentity({
-                            artistId,
-                            albumId,
-                            mediaId: String(matchedTrack.id),
-                            fileType: "track",
-                        })
-                        : null;
-                    const canonicalAlbum = getCanonicalAlbumMetadata({
-                        canonicalReleaseGroupMbid: canonicalIdentity?.canonicalReleaseGroupMbid || albumRow.mb_release_group_id,
-                        canonicalReleaseMbid: canonicalIdentity?.canonicalReleaseMbid || albumRow.mbid,
-                    });
-                    const canonicalPosition = matchedTrack?.id
-                        ? resolveCanonicalTrackPosition({
-                            artistId,
-                            albumId,
-                            mediaId: String(matchedTrack.id),
-                            fileType: "track",
-                        })
-                        : null;
-                    const releaseYear = String(canonicalAlbum?.releaseDate || albumRow.release_date || "").slice(0, 4) || null;
-                    const isMultiDisc = Number(canonicalAlbum?.volumeCount || albumRow.num_volumes || 1) > 1;
-                    const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
-                    const fullPathTemplate = path.join(artistFolder, trackTemplate);
-                    const trackTitle = canonicalPosition?.title
-                        || matchedTrack?.title
-                        || file.metadata?.common?.title
-                        || path.parse(file.name).name;
-                    const trackNumber = canonicalPosition?.trackNumber ?? matchedTrack?.track_number ?? file.metadata?.common?.track?.no ?? 0;
-                    const volumeNumber = canonicalPosition?.volumeNumber ?? matchedTrack?.volume_number ?? file.metadata?.common?.disk?.no ?? 1;
-
-                    const context = {
-                        artistName,
-                        artistMbId: artistRow?.mbid || null,
-                        albumTitle: canonicalAlbum?.title || albumRow.title,
-                        releaseYear,
-                        trackTitle,
-                        trackNumber,
-                        volumeNumber,
-                        explicit: Boolean(albumRow.explicit)
-                    };
-
-                    const expectedRelPath = renderRelativePath(fullPathTemplate, context) + file.extension;
-                    const relativePath = path.relative(rootPath, file.path);
-                    const normalizedActual = relativePath.split(path.sep).join('/');
-                    const normalizedExpected = expectedRelPath.split(path.sep).join('/');
-                    const needsRename = normalizedActual !== normalizedExpected ? 1 : 0;
-                    const expectedPath = path.join(rootPath, expectedRelPath);
-
-                    const format = (file.metadata?.format || {}) as any;
-                    const metrics = {
-                        bitrate: format.bitrate,
-                        sampleRate: format.sampleRate,
-                        bitDepth: format.bitsPerSample,
-                        codec: format.codec,
-                        channels: format.numberOfChannels,
-                        duration: format.duration
-                    };
-
-                    const ext = file.extension;
-                    const quality = deriveQuality(ext, metrics);
-
-                    const releaseGroup = extractReleaseGroup(file.name);
-                    const fingerprint = await calculateFingerprint(file.path);
-                    collectSiblingSidecarTargets(
-                        file.path,
-                        expectedPath,
-                        [...LYRIC_SIDECAR_EXTENSIONS],
-                        explicitSidecarTargets,
-                    );
-
-                    const stats = await fs.promises.stat(file.path);
-
-                    upsertImportedLibraryFile({
-                        artistId,
-                        albumId,
-                        mediaId: matchedTrack?.id || null,
-                        filePath: file.path,
-                        relativePath,
-                        libraryRoot: libraryRootKey,
-                        filename: file.name,
-                        extension: ext.replace('.', ''),
-                        fileSize: file.size,
-                        duration: metrics.duration || 0,
-                        fileType: "track",
-                        quality,
-                        needsRename,
-                        bitDepth: metrics.bitDepth || null,
-                        sampleRate: metrics.sampleRate || null,
-                        bitrate: metrics.bitrate || null,
-                        codec: metrics.codec || null,
-                        videoCodec: null,
-                        channels: metrics.channels || null,
-                        width: null,
-                        height: null,
-                        namingTemplate: fullPathTemplate,
-                        expectedPath,
-                        originalFilename: file.name,
-                        releaseGroup: releaseGroup,
-                        fingerprint: fingerprint || null,
-                        modifiedAt: stats.mtime.toISOString()
-                    });
-
-                    const libraryFileId = resolveImportedLibraryFileId(file.path);
-                    if (libraryFileId !== null) {
-                        importedFileIds.push(libraryFileId);
-                    }
-
-                    // Per-track monitoring is carried by the release-group slot now;
-                    // no legacy ProviderMedia monitored write.
-
-                    dirMappings.set(path.dirname(file.path), {
-                        destDir: path.dirname(expectedPath),
-                        artistId,
-                        albumId: String(albumId),
-                        libraryRootPath: rootPath,
-                    });
-                } catch (err) {
-                    console.error(`Failed to insert file ${file.path}:`, err);
-                }
-            }
-
-            await finalizeImportedDirectories({
-                importedFileIds,
-                dirMappings,
-                imageFileType: "cover",
-                explicitSidecarTargets,
-            });
-
-            updateAlbumDownloadStatus(String(albumId));
-
-            candidate.group.status = 'imported';
-        }
-    }
-
-    /**
-     * Resolve the actual cased folder name on disk from a lowercased name.
-     * Returns null if no matching directory is found.
-     */
-    private async resolveActualFolderName(rootPath: string, lowercaseName: string): Promise<string | null> {
+    private async resolveActualFolderName(
+        rootPath: string,
+        lowercaseName: string,
+    ): Promise<string | null> {
         try {
             const entries = await fs.promises.readdir(rootPath, { withFileTypes: true });
             for (const entry of entries) {
@@ -1012,11 +165,10 @@ export class ImportService {
                 }
             }
         } catch {
-            // Permission errors
+            // Unreadable roots are reported by the caller as an empty scan.
         }
         return null;
     }
-
 }
 
 export const importService = new ImportService();

@@ -90,7 +90,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE TABLE Libraries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
-      root_path TEXT NOT NULL UNIQUE,
+      root_path TEXT NOT NULL,
       metadata_profile_id INTEGER NOT NULL,
       quality_profile_id INTEGER NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT 1,
@@ -209,6 +209,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     );
 
     CREATE INDEX idx_managed_artists_artist ON ManagedArtists(artist_id);
+    CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
     CREATE INDEX idx_library_artists_library
       ON LibraryArtists(library_id, monitored, managed_artist_id);
     CREATE INDEX idx_library_release_groups_library

@@ -129,8 +129,8 @@ test("video list and detail use canonical video recordings with provider offers"
       title, length_ms, is_video, metadata_status, release_date, cover_image_id, monitored
     )
     VALUES (
-      'provider-video-1', NULL, ?, 'artist-mbid',
-      'Canonical Video', 215000, 1, 'provider_only', '2024-01-02', 'canonical-cover', 1
+      'mb-video-1', 'mb-video-1', ?, 'artist-mbid',
+      'Canonical Video', 215000, 1, 'musicbrainz', '2024-01-02', 'canonical-cover', 1
     )
     RETURNING id
   `).get(artist.id) as { id: number };
@@ -293,8 +293,8 @@ test("video detail backfills null offer quality from TrackFiles", () => {
       title, length_ms, is_video, metadata_status, monitored
     )
     VALUES (
-      'file-quality-video', NULL, ?, 'file-quality-artist',
-      'Pompeii', 233000, 1, 'provider_only', 1
+      'mb-file-quality-video', 'mb-file-quality-video', ?, 'file-quality-artist',
+      'Pompeii', 233000, 1, 'musicbrainz', 1
     )
     RETURNING id
   `).get(artist.id) as { id: number };
@@ -347,8 +347,8 @@ test("video downloaded state treats provider ids as provider-scoped", () => {
   `).run();
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, artist_metadata_id, artist_mbid, title, is_video, metadata_status
-    ) VALUES ('shared-42', ?, 'collision-artist', 'Apple Video', 1, 'provider_only')
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('mb-apple-video-42', 'mb-apple-video-42', ?, 'collision-artist', 'Apple Video', 1, 'musicbrainz')
     RETURNING id
   `).get(artist.id) as { id: number };
   seedVideoOffer({
@@ -698,8 +698,8 @@ test("video detail prefers provider title when recording title is Unknown Video"
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status
-    ) VALUES (?, 'artist-mbid', 'Unknown Video', 307000, 1, 'provider_only')
+      mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status
+    ) VALUES ('mb-video-provider-title', ?, 'artist-mbid', 'Unknown Video', 307000, 1, 'musicbrainz')
     RETURNING id
   `).get(artist.id) as { id: number };
 
@@ -753,8 +753,8 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
 
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored
-    ) VALUES (?, 'artist-mbid', 'Oblivion', 1, 'official', 'provider_only', 1)
+      mbid, artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored
+    ) VALUES ('mb-video-assoc', ?, 'artist-mbid', 'Oblivion', 1, 'official', 'musicbrainz', 1)
     RETURNING id
   `).get(artist.id) as { id: number };
   seedVideoOffer({

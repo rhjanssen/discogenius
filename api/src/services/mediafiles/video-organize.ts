@@ -43,7 +43,10 @@ export function loadBundledVideoTrackCandidates(
 
 export function resolveCanonicalVideoArtistId(provider: string, providerId: string): string | null {
   const row = db.prepare(`
-    SELECT managed_artist.id
+    SELECT CASE
+      WHEN COUNT(DISTINCT managed_artist.id) = 1
+      THEN MAX(managed_artist.id)
+    END AS id
     FROM ProviderItems provider_item
     JOIN ProviderVideoMatches video_match
       ON video_match.provider_video_item_id = provider_item.id
@@ -53,8 +56,6 @@ export function resolveCanonicalVideoArtistId(provider: string, providerId: stri
     WHERE provider_item.provider = ?
       AND provider_item.entity_type = 'video'
       AND provider_item.provider_id = ?
-    ORDER BY CASE WHEN managed_artist.id = managed_artist.mbid THEN 0 ELSE 1 END
-    LIMIT 1
   `).get(provider, providerId) as { id: string | number } | undefined;
 
   return row?.id != null ? String(row.id) : null;
@@ -71,7 +72,10 @@ export function resolveOrganizeVideoTitle(
 ): string {
   const candidates = [
     (db.prepare(`
-      SELECT recording.title AS title
+      SELECT CASE
+        WHEN COUNT(DISTINCT recording.id) = 1
+        THEN MAX(recording.title)
+      END AS title
       FROM ProviderItems provider_item
       JOIN ProviderVideoMatches video_match
         ON video_match.provider_video_item_id = provider_item.id
@@ -105,7 +109,9 @@ export function lookupCatalogVideoAfterUpsert(
   providerId: string,
 ): { title?: string | null; video_variant?: string | null } | undefined {
   return db.prepare(`
-    SELECT recording.title, recording.video_variant
+    SELECT
+      CASE WHEN COUNT(DISTINCT recording.id) = 1 THEN MAX(recording.title) END AS title,
+      CASE WHEN COUNT(DISTINCT recording.id) = 1 THEN MAX(recording.video_variant) END AS video_variant
     FROM ProviderItems pi
     JOIN ProviderVideoMatches video_match
       ON video_match.provider_video_item_id = pi.id
@@ -113,6 +119,6 @@ export function lookupCatalogVideoAfterUpsert(
     JOIN Recordings recording ON recording.id = video_match.recording_id
     WHERE pi.provider = ? AND pi.entity_type = 'video'
       AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-    LIMIT 1
+    HAVING COUNT(DISTINCT recording.id) = 1
   `).get(provider, providerId) as { title?: string | null; video_variant?: string | null } | undefined;
 }

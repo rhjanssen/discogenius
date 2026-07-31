@@ -39,18 +39,16 @@ if (testFiles.length === 0) {
   process.exit(1);
 }
 
-const tsxBin = join(root, "..", "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-
 const CLONE_FLAKE_SIGNATURE = "Unable to deserialize cloned data";
 
 function runOnce(files, { capture = false } = {}) {
   return spawnSync(
-    tsxBin,
-    ["--test", "--test-concurrency=1", ...runnerArgs, ...files],
+    process.execPath,
+    ["--import", "tsx", "--test", "--test-concurrency=1", ...runnerArgs, ...files],
     {
       cwd: root,
       stdio: capture ? ["inherit", "pipe", "pipe"] : "inherit",
-      shell: process.platform === "win32",
+      shell: false,
       encoding: capture ? "utf8" : undefined,
       maxBuffer: 256 * 1024 * 1024,
     },

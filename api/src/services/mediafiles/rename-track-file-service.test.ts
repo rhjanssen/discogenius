@@ -7,6 +7,7 @@ import {
   seedAcceptedProviderTrackMatch,
   seedAcceptedProviderVideoMatch,
 } from "../../test-support/normalized-provider-fixtures.js";
+import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-rename-track-file-service-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -194,6 +195,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
+  db.prepare("DELETE FROM Libraries").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
@@ -201,6 +203,9 @@ beforeEach(() => {
   fs.mkdirSync(path.join(tempDir, "library", "videos"), { recursive: true });
 
   writeTestConfig();
+  seedTestLibrary(db, { name: "Rename Stereo", rootPath: configModule.Config.getMusicPath() });
+  seedTestLibrary(db, { name: "Rename Spatial", rootPath: configModule.Config.getSpatialPath() });
+  seedTestLibrary(db, { name: "Rename Video", rootPath: configModule.Config.getVideoPath() });
 });
 
 after(() => {
@@ -805,7 +810,7 @@ test("batched collision preload still disambiguates spatial audio in a shared ro
   assert.equal(spatial.conflict, false);
 });
 
-test("RenameTrackFileService derives video paths from canonical provider-only recordings without provider media rows", () => {
+test("RenameTrackFileService derives video paths from canonical MusicBrainz recordings without provider media rows", () => {
   const videoRoot = configModule.Config.getVideoPath();
   const sourceDir = path.join(videoRoot, "Artist One", "Imports");
   const sourcePath = path.join(sourceDir, "provider-video.mp4");
@@ -824,9 +829,9 @@ test("RenameTrackFileService derives video paths from canonical provider-only re
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, is_video, metadata_status)
-    VALUES (?, NULL, ?, ?, 1, 'provider_only')
+    VALUES (?, ?, ?, ?, 1, 'musicbrainz')
     RETURNING Id
-  `).get("tidal:video:123", "artist-mbid-1", "Canonical Video") as { id: number };
+  `).get("mb-video-123", "mb-video-123", "artist-mbid-1", "Canonical Video") as { id: number };
 
   seedAcceptedProviderVideoMatch(dbModule.db, {
     provider: "tidal", providerVideoId: "tidal-video-123",

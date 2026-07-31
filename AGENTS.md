@@ -48,9 +48,10 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   lives in `api/src/services/providers/tidal/`; its auth/config live under
   `config/providers/tidal/.tiddl`. tiddl steering = config (global) + args
   (per-job).
-- **Atmos vs stereo**: TIDAL Atmos has a SEPARATE stereo stream. An Atmos-only
-  release filling the stereo slot is downloaded AS Atmos m4a and organized into
-  `stereo-music`.
+- **Atmos vs stereo**: TIDAL Atmos has a SEPARATE stereo stream. Spatial-only
+  media never fills stereo. A spatial source may satisfy stereo only through an
+  explicit conversion policy that produces and verifies a stereo output; no
+  such implicit conversion is currently allowed.
 - **Hi-Res needs ffmpeg**: TIDAL ships hi-res as FLAC-in-MP4; tiddl extracts via
   ffmpeg.
 - **Matching**: one shared matcher scores slot-candidate tracks. Beware

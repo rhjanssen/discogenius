@@ -337,8 +337,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
 
     CREATE TABLE ProviderTrackMatches (
       id INTEGER PRIMARY KEY,
-      provider_edition_member_id INTEGER NOT NULL,
-      provider_edition_match_id INTEGER NOT NULL,
+      provider_track_item_id INTEGER NOT NULL,
+      provider_edition_member_id INTEGER,
+      provider_edition_match_id INTEGER,
       track_id INTEGER,
       recording_id INTEGER NOT NULL,
       match_state TEXT NOT NULL CHECK (match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
@@ -350,7 +351,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       duration_delta_ms INTEGER,
       ambiguity_margin REAL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (provider_edition_member_id, provider_edition_match_id, track_id, recording_id),
+      FOREIGN KEY (provider_track_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
       FOREIGN KEY (provider_edition_member_id) REFERENCES ProviderEditionMembers(id) ON DELETE CASCADE,
       FOREIGN KEY (provider_edition_match_id) REFERENCES ProviderEditionMatches(id) ON DELETE CASCADE,
       FOREIGN KEY (track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
@@ -401,7 +402,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE TABLE Libraries (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
-      root_path TEXT NOT NULL UNIQUE,
+      root_path TEXT NOT NULL,
       metadata_profile_id INTEGER NOT NULL,
       quality_profile_id INTEGER NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
@@ -589,18 +590,21 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_provider_release_matches_provider ON ProviderEditionMatches(provider_edition_item_id, match_state, relation);
     CREATE INDEX idx_provider_release_matches_release ON ProviderEditionMatches(edition_id, match_state, relation);
     CREATE INDEX idx_provider_track_matches_member ON ProviderTrackMatches(provider_edition_member_id, match_state);
+    CREATE INDEX idx_provider_track_matches_item ON ProviderTrackMatches(provider_track_item_id, match_state);
     CREATE INDEX idx_provider_track_matches_release_match ON ProviderTrackMatches(provider_edition_match_id, match_state);
     CREATE INDEX idx_provider_track_matches_track ON ProviderTrackMatches(track_id, match_state);
     CREATE INDEX idx_provider_track_matches_recording ON ProviderTrackMatches(recording_id, match_state);
     CREATE UNIQUE INDEX idx_provider_track_matches_unique_edge
       ON ProviderTrackMatches(
-        provider_edition_member_id,
-        provider_edition_match_id,
+        provider_track_item_id,
+        COALESCE(provider_edition_member_id, -1),
+        COALESCE(provider_edition_match_id, -1),
         COALESCE(track_id, -1),
         recording_id
       );
     CREATE INDEX idx_provider_video_matches_recording ON ProviderVideoMatches(recording_id, match_state);
 
+    CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
     CREATE INDEX idx_library_artists_library ON LibraryArtists(library_id, monitored, managed_artist_id);
     CREATE INDEX idx_library_release_groups_library ON LibraryAlbums(library_id, monitored, release_group_id);
     CREATE INDEX idx_library_releases_library ON LibraryEditions(library_id, edition_id);
@@ -637,10 +641,30 @@ export function createDomainSchemaV41(db: Database.Database): void {
 
     CREATE TRIGGER provider_track_matches_validate_insert
     BEFORE INSERT ON ProviderTrackMatches
-    WHEN NEW.track_id IS NOT NULL
     BEGIN
       SELECT CASE
-        WHEN (SELECT recording_id FROM Tracks WHERE id = NEW.track_id) != NEW.recording_id
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_track_item_id) != 'track'
+          THEN RAISE(ABORT, 'provider track match item must be a track')
+        WHEN NEW.provider_edition_member_id IS NOT NULL
+          AND (SELECT member_item_id FROM ProviderEditionMembers WHERE id = NEW.provider_edition_member_id)
+              != NEW.provider_track_item_id
+          THEN RAISE(ABORT, 'provider track match member disagrees with provider track item')
+        WHEN NEW.provider_edition_match_id IS NOT NULL
+          AND NEW.provider_edition_member_id IS NULL
+          THEN RAISE(ABORT, 'provider edition match context requires an edition member')
+        WHEN NEW.provider_edition_match_id IS NOT NULL
+          AND (
+            SELECT edition_match.provider_edition_item_id
+            FROM ProviderEditionMatches edition_match
+            WHERE edition_match.id = NEW.provider_edition_match_id
+          ) != (
+            SELECT member.provider_edition_item_id
+            FROM ProviderEditionMembers member
+            WHERE member.id = NEW.provider_edition_member_id
+          )
+          THEN RAISE(ABORT, 'provider track match edition context is inconsistent')
+        WHEN NEW.track_id IS NOT NULL
+          AND (SELECT recording_id FROM Tracks WHERE id = NEW.track_id) != NEW.recording_id
           THEN RAISE(ABORT, 'provider track match recording disagrees with canonical track')
       END;
     END;
@@ -669,6 +693,25 @@ export function createDomainSchemaV41(db: Database.Database): void {
       SELECT CASE
         WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_video_item_id) != 'video'
           THEN RAISE(ABORT, 'provider video match source must be a video item')
+        WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
+          SELECT 1 FROM Recordings
+          WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
+        )
+          THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
+      END;
+    END;
+
+    CREATE TRIGGER provider_video_matches_validate_update
+    BEFORE UPDATE OF provider_video_item_id, recording_id, match_state ON ProviderVideoMatches
+    BEGIN
+      SELECT CASE
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_video_item_id) != 'video'
+          THEN RAISE(ABORT, 'provider video match source must be a video item')
+        WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
+          SELECT 1 FROM Recordings
+          WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
+        )
+          THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
       END;
     END;
   `);

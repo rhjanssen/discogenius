@@ -14,6 +14,7 @@ const { tempDir } = prepareActiveSchemaEnv("import-operation-identity");
 const { db, dbModule } = await openActiveSchemaDb();
 const {
   persistPreparedImportQuality,
+  persistDownloadedProviderProvenance,
   reconcileImportedDownload,
   releaseGroupMbidFromJobContext,
 } = await import("./downloaded-tracks-import-service.js");
@@ -239,6 +240,87 @@ test("a reported row that is not a track file fails closed", () => {
       "tidal",
     ),
     /is a cover file, not a track/,
+  );
+});
+
+test("downloaded provenance lands on the exact organizer row", () => {
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile();
+  const providerItem = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'track', 'prov-track-1', 'Track', 'available')
+    RETURNING id
+  `).get() as { id: number };
+  const variant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, availability
+    ) VALUES (?, 'lossless', 'lossless', 'available')
+    RETURNING id
+  `).get(providerItem.id) as { id: number };
+
+  persistDownloadedProviderProvenance(
+    libraryId,
+    organizeResult(["prov-track-1"], { "prov-track-1": fileId }),
+    [{
+      provider: "tidal",
+      providerTrackId: "prov-track-1",
+      providerTrackItemId: providerItem.id,
+      providerAudioVariantId: variant.id,
+    }],
+    77,
+  );
+
+  assert.deepEqual(db.prepare(`
+    SELECT library_id, provider_item_id, source_audio_variant_id
+    FROM TrackFiles WHERE id = ?
+  `).get(fileId), {
+    library_id: libraryId,
+    provider_item_id: providerItem.id,
+    source_audio_variant_id: variant.id,
+  });
+});
+
+test("a provider-id collision cannot redirect downloaded provenance", () => {
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({ provider: "tidal", provider_id: "same-id" });
+  const tidalItem = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'track', 'same-id', 'TIDAL Track', 'available')
+    RETURNING id
+  `).get() as { id: number };
+  const appleItem = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('apple-music', 'track', 'same-id', 'Apple Track', 'available')
+    RETURNING id
+  `).get() as { id: number };
+
+  persistDownloadedProviderProvenance(
+    libraryId,
+    organizeResult(["same-id"], { "same-id": fileId }),
+    [
+      { provider: "tidal", providerTrackId: "same-id", providerTrackItemId: tidalItem.id },
+      { provider: "apple-music", providerTrackId: "same-id", providerTrackItemId: appleItem.id },
+    ],
+    88,
+  );
+
+  assert.equal(
+    (db.prepare("SELECT provider_item_id FROM TrackFiles WHERE id = ?").get(fileId) as { provider_item_id: number }).provider_item_id,
+    tidalItem.id,
+  );
+});
+
+test("an acquisition-plan import without exact provider identity fails closed", () => {
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile();
+  assert.throws(
+    () => persistDownloadedProviderProvenance(
+      libraryId,
+      organizeResult(["prov-track-1"], { "prov-track-1": fileId }),
+      [{ provider: "tidal", providerTrackId: "prov-track-1" }],
+      99,
+    ),
+    /has no exact provider_item_id/,
   );
 });
 

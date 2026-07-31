@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { gzipSync } from 'zlib';
+import { createHash } from 'crypto';
 import { spawn } from 'child_process';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
 import { Config } from '../config/config.js';
@@ -43,14 +44,47 @@ export interface AcoustIdLookupResult {
     recordingIds: string[];
 }
 
-interface AcoustIdBatchInput {
+export interface AcoustIdBatchInput {
     fingerprint: string;
     duration: number;
+}
+
+export type AcoustIdLookupStatus =
+    | "matched"
+    | "no_match"
+    | "missing_client"
+    | "invalid_input"
+    | "service_error";
+
+export interface AcoustIdLookupOutcome {
+    status: AcoustIdLookupStatus;
+    matches: AcoustIdLookupResult[];
+    cached: boolean;
+    error?: string;
+}
+
+type AcoustIdPost = (
+    url: string,
+    data: Buffer,
+    config: Record<string, unknown>,
+) => Promise<{ status?: number; data?: any }>;
+
+export interface AcoustIdLookupOptions {
+    /** Explicit null/blank exercises the missing-client boundary. */
+    clientId?: string | null;
+    post?: AcoustIdPost;
+    bypassCache?: boolean;
 }
 
 const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
 let musicBrainzRequestChain: Promise<void> = Promise.resolve();
 let lastMusicBrainzRequestAt = 0;
+const ACOUSTID_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const ACOUSTID_CACHE_MAX_ENTRIES = 256;
+const acoustIdLookupCache = new Map<string, {
+    expiresAt: number;
+    outcome: Omit<AcoustIdLookupOutcome, "cached">;
+}>();
 
 export function getMusicBrainzHeaders() {
     return {
@@ -279,61 +313,148 @@ function mapAcoustIdResults(results: any[]): AcoustIdLookupResult[] {
         .filter((result: AcoustIdLookupResult) => result.id || result.recordingIds.length > 0);
 }
 
+function acoustIdCacheKey(fingerprint: string, duration: number, clientId: string): string {
+    return createHash("sha256")
+        .update(`${clientId}\0${Math.round(duration)}\0${fingerprint}`)
+        .digest("hex");
+}
+
+function cacheAcoustIdOutcome(
+    key: string,
+    outcome: Omit<AcoustIdLookupOutcome, "cached">,
+): void {
+    if (acoustIdLookupCache.size >= ACOUSTID_CACHE_MAX_ENTRIES) {
+        const oldest = acoustIdLookupCache.keys().next().value;
+        if (oldest) acoustIdLookupCache.delete(oldest);
+    }
+    acoustIdLookupCache.set(key, {
+        expiresAt: Date.now() + ACOUSTID_CACHE_TTL_MS,
+        outcome,
+    });
+}
+
+export function clearAcoustIdLookupCacheForTest(): void {
+    acoustIdLookupCache.clear();
+}
+
+export async function lookupAcoustIdDetailed(
+    input: AcoustIdBatchInput,
+    options: AcoustIdLookupOptions = {},
+): Promise<AcoustIdLookupOutcome> {
+    const fingerprint = String(input.fingerprint || "").trim();
+    const duration = Number(input.duration);
+    if (!fingerprint || !Number.isFinite(duration) || duration <= 0) {
+        return {
+            status: "invalid_input",
+            matches: [],
+            cached: false,
+            error: "A non-empty fingerprint and positive duration are required",
+        };
+    }
+
+    const explicitlyConfigured = Object.prototype.hasOwnProperty.call(options, "clientId");
+    const clientId = String(
+        explicitlyConfigured
+            ? options.clientId ?? ""
+            : resolveAcoustIdClientId({
+                env: process.env,
+                appConfig: Config.getAppConfig(),
+            }),
+    ).trim();
+    if (!clientId) {
+        return {
+            status: "missing_client",
+            matches: [],
+            cached: false,
+            error: "AcoustID client key is not configured",
+        };
+    }
+
+    const cacheKey = acoustIdCacheKey(fingerprint, duration, clientId);
+    if (!options.bypassCache) {
+        const cached = acoustIdLookupCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+            return { ...cached.outcome, cached: true };
+        }
+        if (cached) acoustIdLookupCache.delete(cacheKey);
+    }
+
+    const params = new URLSearchParams({
+        client: clientId,
+        format: "json",
+        meta: "recordingids",
+        duration: String(Math.round(duration)),
+        fingerprint,
+    });
+
+    try {
+        const post = options.post ?? (axios.post.bind(axios) as AcoustIdPost);
+        const response = await post(
+            "https://api.acoustid.org/v2/lookup",
+            gzipSync(Buffer.from(params.toString(), "utf8")),
+            {
+                timeout: 10000,
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Content-Encoding": "gzip",
+                },
+                validateStatus: (status: number) => status < 500,
+            },
+        );
+        if (
+            (typeof response.status === "number" && response.status >= 400)
+            || response.data?.status !== "ok"
+        ) {
+            return {
+                status: "service_error",
+                matches: [],
+                cached: false,
+                error: String(
+                    response.data?.error?.message
+                    || response.data?.error?.code
+                    || response.data?.error
+                    || `AcoustID returned HTTP ${response.status ?? "error"}`,
+                ),
+            };
+        }
+
+        const matches = mapAcoustIdResults(
+            Array.isArray(response.data?.results) ? response.data.results : [],
+        );
+        const outcome: Omit<AcoustIdLookupOutcome, "cached"> = {
+            status: matches.length > 0 ? "matched" : "no_match",
+            matches,
+        };
+        cacheAcoustIdOutcome(cacheKey, outcome);
+        return { ...outcome, cached: false };
+    } catch (error: any) {
+        return {
+            status: "service_error",
+            matches: [],
+            cached: false,
+            error: error?.message || String(error),
+        };
+    }
+}
+
 export async function lookupAcoustIdBatch(inputs: AcoustIdBatchInput[]): Promise<AcoustIdLookupResult[][]> {
     if (inputs.length === 0) {
         return [];
     }
 
-    const clientId = resolveAcoustIdClientId({
-        env: process.env,
-        appConfig: Config.getAppConfig(),
-    });
-    const params = new URLSearchParams({
-        client: clientId,
-        format: "json",
-        meta: "recordingids",
-        batch: inputs.length > 1 ? "1" : "0",
-    });
-
-    inputs.forEach((input, index) => {
-        const suffix = inputs.length > 1 ? `.${index}` : "";
-        params.append(`duration${suffix}`, String(Math.round(input.duration)));
-        params.append(`fingerprint${suffix}`, input.fingerprint);
-    });
-
-    try {
-        const response = await axios.post("https://api.acoustid.org/v2/lookup", gzipSync(Buffer.from(params.toString(), "utf8")), {
-            timeout: 10000,
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Content-Encoding": "gzip",
-            },
-            validateStatus: (status) => status < 500,
-        });
-        if (response.data.status !== 'ok') {
-            console.warn('[Fingerprint] AcoustID API error:', response.data.error);
-            return inputs.map(() => []);
+    // The lookup-by-fingerprint endpoint accepts one fingerprint per request.
+    // A `batch` parameter exists on other AcoustID endpoints, but not this one.
+    // Run serially and stay below the documented three-requests/second limit.
+    const output: AcoustIdLookupResult[][] = [];
+    for (let index = 0; index < inputs.length; index += 1) {
+        if (index > 0) await delay(350);
+        const outcome = await lookupAcoustIdDetailed(inputs[index]);
+        if (outcome.status === "service_error") {
+            console.warn("[Fingerprint] AcoustID lookup failed:", outcome.error);
         }
-
-        if (inputs.length === 1) {
-            const results = Array.isArray(response.data.results) ? response.data.results : [];
-            return [mapAcoustIdResults(results)];
-        }
-
-        const fingerprints = Array.isArray(response.data.fingerprints) ? response.data.fingerprints : [];
-        const output = inputs.map(() => [] as AcoustIdLookupResult[]);
-        for (const fingerprintResult of fingerprints) {
-            const index = Number(fingerprintResult?.index);
-            if (Number.isInteger(index) && index >= 0 && index < output.length) {
-                output[index] = mapAcoustIdResults(Array.isArray(fingerprintResult?.results) ? fingerprintResult.results : []);
-            }
-        }
-
-        return output;
-    } catch (error: any) {
-        console.error('[Fingerprint] AcoustID lookup error:', error.message);
-        return inputs.map(() => []);
+        output.push(outcome.matches);
     }
+    return output;
 }
 
 export async function lookupAcoustIdMatches(fingerprint: string, duration: number): Promise<AcoustIdLookupResult[]> {

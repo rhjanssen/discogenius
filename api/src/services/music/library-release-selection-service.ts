@@ -5,6 +5,7 @@ import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 export interface LibraryAcquisitionPlanView {
   id: number;
   provider: string;
+  primaryProviderEditionMatchId: number | null;
   composition: "single_source" | "composite";
   downloadMode: "album" | "tracks";
   state: "current" | "stale" | "unavailable" | "failed";
@@ -23,6 +24,7 @@ export interface LibrarySelectionView {
   id: number;
   name: string;
   qualityProfile: string;
+  allowedSourceFormats: string[];
   selections: LibraryReleaseSelectionView[];
 }
 
@@ -193,6 +195,7 @@ export class LibraryReleaseSelectionService {
         library.id AS library_id,
         library.name AS library_name,
         quality.name AS quality_profile,
+        quality.allowed_source_formats,
         library_release.id AS library_edition_id,
         library_release.edition_id,
         release.mbid AS release_mbid,
@@ -203,6 +206,7 @@ export class LibraryReleaseSelectionService {
         plan.composition,
         plan.download_mode,
         plan.state AS plan_state
+        ,primary_source.provider_edition_match_id AS primary_provider_edition_match_id
       FROM Libraries library
       JOIN quality_profiles quality ON quality.id = library.quality_profile_id
       LEFT JOIN LibraryEditions library_release
@@ -214,12 +218,16 @@ export class LibraryReleaseSelectionService {
       LEFT JOIN AcquisitionPlans plan
         ON plan.library_edition_id = library_release.id
        AND plan.state = 'current'
+      LEFT JOIN AcquisitionPlanSources primary_source
+        ON primary_source.plan_id = plan.id
+       AND primary_source.role = 'primary'
       WHERE library.enabled = 1
       ORDER BY library.id, library_release.id
     `).all(releaseGroup.id) as Array<{
       library_id: number;
       library_name: string;
       quality_profile: string;
+      allowed_source_formats: string;
       library_edition_id: number | null;
       edition_id: number | null;
       release_mbid: string | null;
@@ -230,6 +238,7 @@ export class LibraryReleaseSelectionService {
       composition: LibraryAcquisitionPlanView["composition"] | null;
       download_mode: LibraryAcquisitionPlanView["downloadMode"] | null;
       plan_state: LibraryAcquisitionPlanView["state"] | null;
+      primary_provider_edition_match_id: number | null;
     }>;
     const libraryById = new Map<number, LibrarySelectionView>();
     for (const row of libraryRows) {
@@ -239,6 +248,14 @@ export class LibraryReleaseSelectionService {
           id: row.library_id,
           name: row.library_name,
           qualityProfile: row.quality_profile,
+          allowedSourceFormats: (() => {
+            try {
+              const parsed = JSON.parse(row.allowed_source_formats);
+              return Array.isArray(parsed) ? parsed.map(String) : [];
+            } catch {
+              return [];
+            }
+          })(),
           selections: [],
         };
         libraryById.set(row.library_id, library);
@@ -263,6 +280,7 @@ export class LibraryReleaseSelectionService {
             ? {
               id: row.plan_id,
               provider: row.plan_provider,
+              primaryProviderEditionMatchId: row.primary_provider_edition_match_id,
               composition: row.composition,
               downloadMode: row.download_mode,
               state: row.plan_state,
@@ -283,6 +301,7 @@ export class LibraryReleaseSelectionService {
     releaseGroupMbid: string;
     libraryId: number;
     editionId: number;
+    providerEditionMatchId?: number;
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.db.prepare(`
       SELECT release.id AS edition_id, release.release_group_id
@@ -295,6 +314,25 @@ export class LibraryReleaseSelectionService {
       release_group_id: number;
     } | undefined;
     if (!target) throw new Error("The selected release does not belong to this enabled library and release group");
+    if (input.providerEditionMatchId != null) {
+      const offer = this.db.prepare(`
+        SELECT match.id
+        FROM ProviderEditionMatches match
+        JOIN ProviderItems item
+          ON item.id = match.provider_edition_item_id
+         AND item.entity_type = 'release'
+        WHERE match.id = ?
+          AND match.edition_id = ?
+          AND match.match_state = 'accepted'
+          AND item.availability NOT IN (
+            'unavailable', 'no_longer_available', 'geography_restricted',
+            'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
+          )
+      `).get(input.providerEditionMatchId, input.editionId);
+      if (!offer) {
+        throw new Error("The selected provider offer is not an accepted, available match for this edition");
+      }
+    }
 
     const libraryEditionId = this.db.transaction(() => {
       this.db.prepare(`
@@ -332,6 +370,7 @@ export class LibraryReleaseSelectionService {
         ? configuredPriority.map(String)
         : [],
       plannerVersion: 1,
+      preferredProviderEditionMatchId: input.providerEditionMatchId,
     });
     return this.getAvailability(input.releaseGroupMbid);
   }

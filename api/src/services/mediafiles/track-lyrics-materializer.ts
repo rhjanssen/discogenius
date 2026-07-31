@@ -17,6 +17,7 @@ import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-path
 
 type TrackLyricsRow = {
   id: number;
+  library_id: number;
   artist_id: number;
   album_id: number | null;
   file_path: string;
@@ -87,6 +88,7 @@ function trackRowsForMediaIds(
   return db.prepare(`
     SELECT
       id,
+      library_id,
       artist_id,
       NULL AS album_id,
       file_path,
@@ -212,6 +214,7 @@ export class TrackLyricsMaterializer {
           albumId: row.album_id == null ? null : String(row.album_id),
           mediaId: providerId,
           trackFileId: row.id,
+          libraryId: row.library_id,
           filePath: lyricPath,
           libraryRoot,
           fileType: "lyrics",

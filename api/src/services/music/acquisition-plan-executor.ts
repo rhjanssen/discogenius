@@ -39,7 +39,11 @@ interface PlanTrack {
   medium_position: number;
   position: number;
   provider_track_id: string;
+  provider_track_item_id: number;
   provider_release_id: string;
+  provider_edition_item_id: number;
+  provider_audio_variant_id: number;
+  acquisition_plan_source_id: number;
   source_quality_snapshot: string | null;
   complete: number;
 }
@@ -122,7 +126,11 @@ export function buildAcquisitionDownloadCommand(
       track.medium_position,
       track.position,
       member_item.provider_id AS provider_track_id,
+      member_item.id AS provider_track_item_id,
       release_item.provider_id AS provider_release_id,
+      release_item.id AS provider_edition_item_id,
+      plan_track.provider_audio_variant_id,
+      plan_track.source_id AS acquisition_plan_source_id,
       plan_track.source_quality_snapshot,
       CASE WHEN EXISTS (
         SELECT 1
@@ -163,7 +171,11 @@ export function buildAcquisitionDownloadCommand(
   const trackOffers: DownloadTrackOffer[] = missingTracks.map((track) => ({
     provider: header.provider,
     providerTrackId: track.provider_track_id,
+    providerTrackItemId: track.provider_track_item_id,
     providerAlbumId: track.provider_release_id,
+    providerEditionItemId: track.provider_edition_item_id,
+    providerAudioVariantId: track.provider_audio_variant_id,
+    acquisitionPlanSourceId: track.acquisition_plan_source_id,
     canonicalTrackMbid: track.track_mbid,
     canonicalRecordingMbid: track.recording_mbid,
     title: track.title,
@@ -209,7 +221,10 @@ export function buildAcquisitionDownloadCommand(
       artists: [header.artist_name],
       description: `${header.album_title} by ${header.artist_name} (${header.library_name})`,
       acquisitionMode,
-      trackOffers: acquisitionMode === "trackOffers" ? trackOffers : undefined,
+      // Carry exact per-track authority even for an album-mode backend call.
+      // The downloader ignores these unless acquisitionMode=trackOffers, while
+      // the importer uses them to persist provenance on the exact file rows.
+      trackOffers,
       downloadState: {
         state: "queued",
         currentFileNum: done,

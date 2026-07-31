@@ -9,16 +9,18 @@ export function createTrackFileForeignKeyTriggers(db: Database.Database): void {
       recording_id = COALESCE(
         recording_id,
         (SELECT id FROM Recordings WHERE mbid = NEW.canonical_recording_mbid),
-        (SELECT video_match.recording_id
-           FROM ProviderItems pi
-           JOIN ProviderVideoMatches video_match
-             ON video_match.provider_video_item_id = pi.id
-            AND video_match.match_state = 'accepted'
-           WHERE pi.entity_type = 'video'
-             AND NEW.file_type = 'video'
-             AND pi.provider = NEW.provider
-             AND CAST(pi.provider_id AS TEXT) = CAST(NEW.provider_id AS TEXT)
-           LIMIT 1)
+        (SELECT CASE
+           WHEN COUNT(DISTINCT video_match.recording_id) = 1
+           THEN MAX(video_match.recording_id)
+         END
+         FROM ProviderItems pi
+         JOIN ProviderVideoMatches video_match
+           ON video_match.provider_video_item_id = pi.id
+          AND video_match.match_state = 'accepted'
+         WHERE pi.entity_type = 'video'
+           AND NEW.file_type = 'video'
+           AND pi.provider = NEW.provider
+           AND CAST(pi.provider_id AS TEXT) = CAST(NEW.provider_id AS TEXT))
       )
     WHERE id = NEW.id;
   `;
@@ -131,6 +133,30 @@ export function createExtraFileSchema(db: Database.Database): void {
       FOREIGN KEY(track_file_id) REFERENCES TrackFiles(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE MetadataFileLibraries (
+      metadata_file_id INTEGER NOT NULL,
+      library_id INTEGER NOT NULL,
+      PRIMARY KEY(metadata_file_id, library_id),
+      FOREIGN KEY(metadata_file_id) REFERENCES MetadataFiles(id) ON DELETE CASCADE,
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE LyricFileLibraries (
+      lyric_file_id INTEGER NOT NULL,
+      library_id INTEGER NOT NULL,
+      PRIMARY KEY(lyric_file_id, library_id),
+      FOREIGN KEY(lyric_file_id) REFERENCES LyricFiles(id) ON DELETE CASCADE,
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ExtraFileLibraries (
+      extra_file_id INTEGER NOT NULL,
+      library_id INTEGER NOT NULL,
+      PRIMARY KEY(extra_file_id, library_id),
+      FOREIGN KEY(extra_file_id) REFERENCES ExtraFiles(id) ON DELETE CASCADE,
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX idx_metadata_files_artist ON MetadataFiles(artist_id, type);
     CREATE INDEX idx_metadata_files_file_type ON MetadataFiles(file_type);
     CREATE INDEX idx_metadata_files_track_file ON MetadataFiles(track_file_id);
@@ -150,6 +176,9 @@ export function createExtraFileSchema(db: Database.Database): void {
     CREATE INDEX idx_extra_files_canonical_recording ON ExtraFiles(canonical_recording_mbid, file_type);
     CREATE INDEX idx_extra_files_expected_path ON ExtraFiles(expected_path);
     CREATE INDEX idx_metadata_files_expected_path ON MetadataFiles(expected_path);
+    CREATE INDEX idx_metadata_file_libraries_library ON MetadataFileLibraries(library_id, metadata_file_id);
+    CREATE INDEX idx_lyric_file_libraries_library ON LyricFileLibraries(library_id, lyric_file_id);
+    CREATE INDEX idx_extra_file_libraries_library ON ExtraFileLibraries(library_id, extra_file_id);
   `);
 }
 

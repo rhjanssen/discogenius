@@ -46,6 +46,7 @@ export {
 
 export type ExistingLibraryFileIdentity = {
   id: number;
+  library_id?: number | null;
   artist_id: number;
   album_id: number | null;
   media_id: number | null;
@@ -278,36 +279,35 @@ function getCanonicalVideoMetadataForRow(row: LibraryFileRow, recordingMbid: str
 
   const provider = String(row.provider || "").trim();
   const providerId = String(row.provider_id || row.media_id || "").trim();
-  if (!providerId) {
+  if (!provider || !providerId) {
     return null;
   }
 
-  const providerClause = provider ? "pi.provider = ? AND" : "";
-  const params = provider ? [provider, providerId] : [providerId];
   return (db.prepare(`
-    SELECT recording.mbid,
+    SELECT
+           CASE WHEN COUNT(DISTINCT recording.id) = 1 THEN MAX(recording.mbid) END AS mbid,
            CASE
-             WHEN recording.title IS NULL
-               OR TRIM(recording.title) = ''
-               OR LOWER(TRIM(recording.title)) = 'unknown video'
-             THEN COALESCE(NULLIF(TRIM(pi.title), ''), recording.title)
-             ELSE recording.title
+             WHEN COUNT(DISTINCT recording.id) != 1 THEN NULL
+             WHEN MAX(recording.title) IS NULL
+               OR TRIM(MAX(recording.title)) = ''
+               OR LOWER(TRIM(MAX(recording.title))) = 'unknown video'
+             THEN COALESCE(NULLIF(TRIM(MAX(pi.title)), ''), MAX(recording.title))
+             ELSE MAX(recording.title)
            END AS title,
-           recording.video_variant AS video_variant,
-           recording.is_video AS is_video,
-           recording.metadata_status AS metadata_status
+           CASE WHEN COUNT(DISTINCT recording.id) = 1 THEN MAX(recording.video_variant) END AS video_variant,
+           CASE WHEN COUNT(DISTINCT recording.id) = 1 THEN MAX(recording.is_video) END AS is_video,
+           CASE WHEN COUNT(DISTINCT recording.id) = 1 THEN MAX(recording.metadata_status) END AS metadata_status
     FROM ProviderItems pi
     JOIN ProviderVideoMatches video_match
       ON video_match.provider_video_item_id = pi.id
      AND video_match.match_state = 'accepted'
     JOIN Recordings recording ON recording.id = video_match.recording_id
-    WHERE ${providerClause}
-      pi.entity_type = 'video'
+    WHERE pi.provider = ?
+      AND pi.entity_type = 'video'
       AND pi.provider_id = ?
       AND recording.is_video = 1
-    ORDER BY pi.updated_at DESC
-    LIMIT 1
-  `).get(...params) as CanonicalVideoLookupRow | undefined) ?? null;
+    HAVING COUNT(DISTINCT recording.id) = 1
+  `).get(provider, providerId) as CanonicalVideoLookupRow | undefined) ?? null;
 }
 
 function getCanonicalTrackMetadata(trackMbid: string | null | undefined): CanonicalTrackLookupRow | null {
@@ -890,7 +890,7 @@ export class LibraryFilesService {
     destinationPath: string;
   }): { updated: number } {
     const rows = db.prepare(`
-      SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
+      SELECT id, library_id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
       FROM TrackFiles
       WHERE artist_id = ?
     `).all(options.artistId) as RebaseLibraryFileRow[];
@@ -1060,30 +1060,19 @@ export class LibraryFilesService {
           }
           const provider = String(row.provider || canonicalIdentity.provider || "").trim();
           const providerId = String(row.provider_id || row.media_id || "").trim();
-          if (!providerId) return null;
-          // Sidecars (thumbnail/nfo) often omit provider on the row; resolve the
-          // video offer by provider_id alone so inline gating still applies.
-          const byOffer = provider
-            ? db.prepare(`
-                SELECT video_match.recording_id
-                FROM ProviderItems item
-                JOIN ProviderVideoMatches video_match
-                  ON video_match.provider_video_item_id = item.id
-                 AND video_match.match_state = 'accepted'
-                WHERE item.provider = ? AND item.entity_type = 'video'
-                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-                LIMIT 1
-              `).get(provider, providerId) as { recording_id?: number | null } | undefined
-            : db.prepare(`
-                SELECT video_match.recording_id
-                FROM ProviderItems item
-                JOIN ProviderVideoMatches video_match
-                  ON video_match.provider_video_item_id = item.id
-                 AND video_match.match_state = 'accepted'
-                WHERE item.entity_type = 'video'
-                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-                LIMIT 1
-              `).get(providerId) as { recording_id?: number | null } | undefined;
+          if (!provider || !providerId) return null;
+          const byOffer = db.prepare(`
+            SELECT CASE
+              WHEN COUNT(DISTINCT video_match.recording_id) = 1
+              THEN MAX(video_match.recording_id)
+            END AS recording_id
+            FROM ProviderItems item
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = item.id
+             AND video_match.match_state = 'accepted'
+            WHERE item.provider = ? AND item.entity_type = 'video'
+              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+          `).get(provider, providerId) as { recording_id?: number | null } | undefined;
           return byOffer?.recording_id == null ? null : Number(byOffer.recording_id);
         })();
         // Inline placement (not download) requires an associated audio recording via
@@ -1214,11 +1203,29 @@ export class LibraryFilesService {
               ? db.prepare(`
                   SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                          canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
-                         file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+                         file_path, relative_path, library_root, file_type, extension,
+                         provider, provider_entity_type, provider_id,
+                         quality, codec, bitrate, sample_rate, bit_depth, channels
                   FROM TrackFiles
-                  WHERE provider_id = ? AND file_type = 'video'
+                  WHERE file_type = 'video'
+                    AND (
+                      (
+                        ? IS NOT NULL
+                        AND canonical_recording_mbid = ?
+                      )
+                      OR (
+                        provider = ?
+                        AND provider_entity_type = 'video'
+                        AND provider_id = ?
+                      )
+                    )
                   LIMIT 1
-                `).get(row.media_id) as LibraryFileRow | undefined
+                `).get(
+                  canonicalIdentity.canonicalRecordingMbid,
+                  canonicalIdentity.canonicalRecordingMbid,
+                  row.provider,
+                  row.media_id,
+                ) as LibraryFileRow | undefined
               : undefined;
             const trackedVideoExpected = trackedVideo
               ? LibraryFilesService.computeExpectedPath(trackedVideo, cache).expectedPath
@@ -1277,20 +1284,9 @@ export class LibraryFilesService {
       return resolveArtistFolderFromRecord({ name: artistName, mbid: artistMbId, path: artist?.path || null });
     })();
 
-    const resolvedProvider = String(row.provider || "").trim()
-      || (row.provider_id || row.media_id
-        ? String((db.prepare(`
-            SELECT provider FROM ProviderItems
-            WHERE CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-              AND (? IS NULL OR entity_type = ?)
-            ORDER BY updated_at DESC
-            LIMIT 1
-          `).get(
-            String(row.provider_id || row.media_id),
-            row.file_type === "video" ? "video" : null,
-            row.file_type === "video" ? "video" : "track",
-          ) as { provider?: string } | undefined)?.provider || "").trim()
-        : "");
+    // Provider ids collide across services and entity types. A file row that
+    // lacks its provider cannot recover that authority from provider_id alone.
+    const resolvedProvider = String(row.provider || "").trim();
     const contextBase: NamingContext = {
       provider: resolvedProvider || null,
       artistName,
@@ -1299,8 +1295,8 @@ export class LibraryFilesService {
     };
 
     // Videos (do not use album folder). Resolved from the canonical Recordings
-    // entity (via getCanonicalVideoMetadataForRow, which falls back to
-    // ProviderItems.recording_id for mbid-less provider videos), not ProviderMedia.
+    // entity (via getCanonicalVideoMetadataForRow and ProviderVideoMatches),
+    // not a provider shadow column.
     if (row.file_type === "video") {
       if (!canonicalVideo) {
         return { expectedPath: null, reason: "video_not_found" };
@@ -1408,16 +1404,18 @@ export class LibraryFilesService {
     // off a shared media_id. A track row already has canonical_release_group_mbid,
     // so the query would just re-fetch its own RG (the fallback below uses the
     // same value). Skipping it removes one query per track row from the preview.
-    const trackedIdentity = (row.media_id && !row.canonical_release_group_mbid)
+    const trackedIdentity = (row.provider && row.media_id && !row.canonical_release_group_mbid)
       ? db.prepare(`
           SELECT canonical_release_group_mbid, canonical_release_mbid
           FROM TrackFiles
-          WHERE provider_id = ?
+          WHERE provider = ?
+            AND provider_entity_type = 'track'
+            AND provider_id = ?
             AND file_type = 'track'
             AND canonical_release_group_mbid IS NOT NULL
           ORDER BY CASE WHEN library_slot = ? THEN 0 ELSE 1 END, id ASC
           LIMIT 1
-        `).get(row.media_id, row.library_slot || "stereo") as {
+        `).get(row.provider, row.media_id, row.library_slot || "stereo") as {
           canonical_release_group_mbid: string | null;
           canonical_release_mbid: string | null;
         } | undefined
@@ -1590,7 +1588,7 @@ export class LibraryFilesService {
       // Prefer an exact provider_id match so a radio-edit lyric does not bind to
       // an extended cut that shares a remapped canonical_track_mbid (OR + ORDER
       // BY id ASC previously preferred the wrong TrackFile).
-      const trackFileByProvider = row.media_id
+      const trackFileByProvider = row.provider && row.media_id
         ? db.prepare(`
             SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                    canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
@@ -1599,13 +1597,15 @@ export class LibraryFilesService {
                    library_slot, provider, provider_entity_type, provider_id,
                    quality, codec, bitrate, sample_rate, bit_depth, channels
             FROM TrackFiles
-            WHERE provider_id IS NOT NULL
+            WHERE provider = ?
+              AND provider_entity_type = 'track'
+              AND provider_id IS NOT NULL
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
               AND file_type = 'track'
               AND library_slot = ?
             ORDER BY id ASC
             LIMIT 1
-          `).get(String(row.media_id), slot) as LibraryFileRow | undefined
+          `).get(row.provider, String(row.media_id), slot) as LibraryFileRow | undefined
         : undefined;
       const trackFileByCanonical = !trackFileByProvider && canonicalIdentity.canonicalTrackMbid
         ? db.prepare(`
@@ -1625,7 +1625,7 @@ export class LibraryFilesService {
           `).get(canonicalIdentity.canonicalTrackMbid, slot) as LibraryFileRow | undefined
         : undefined;
       const trackFile = trackFileByProvider || trackFileByCanonical
-        || (row.media_id
+        || (row.provider && row.media_id
           ? db.prepare(`
               SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
@@ -1634,12 +1634,14 @@ export class LibraryFilesService {
                      library_slot, provider, provider_entity_type, provider_id,
                      quality, codec, bitrate, sample_rate, bit_depth, channels
               FROM TrackFiles
-              WHERE provider_id IS NOT NULL
+              WHERE provider = ?
+                AND provider_entity_type = 'track'
+                AND provider_id IS NOT NULL
                 AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                 AND file_type = 'track'
               ORDER BY id ASC
               LIMIT 1
-            `).get(String(row.media_id)) as LibraryFileRow | undefined
+            `).get(row.provider, String(row.media_id)) as LibraryFileRow | undefined
           : undefined);
 
       // Lidarr-style: lyrics follow their linked audio file's stem.
@@ -1712,22 +1714,44 @@ export class LibraryFilesService {
       albumId?: string | null;
       mediaId?: string | null;
       fileType: string;
+      libraryRoot?: string | null;
       librarySlot?: string | null;
+      provider?: string | null;
+      providerEntityType?: string | null;
+      providerId?: string | null;
     }
   ): { sql: string; values: Array<string | null> } | null {
-    const { artistId, albumId, mediaId, fileType, librarySlot } = params;
+    const {
+      artistId,
+      albumId,
+      mediaId,
+      fileType,
+      librarySlot,
+      provider,
+      providerEntityType,
+      providerId,
+      libraryRoot,
+    } = params;
     const slotValue = librarySlot || "stereo";
+    const exactProviderClause = provider && providerEntityType && providerId
+      ? " OR (provider = ? AND provider_entity_type = ? AND provider_id = ?)"
+      : "";
+    const exactProviderValues = provider && providerEntityType && providerId
+      ? [provider, providerEntityType, providerId]
+      : [];
+    const rootClause = libraryRoot ? " AND library_root = ?" : "";
+    const rootValues = libraryRoot ? [libraryRoot] : [];
 
     if (mediaId) {
       if (tableName === "LyricFiles") {
         return {
-          sql: "(provider_id = ? OR canonical_track_mbid = ? OR canonical_recording_mbid = ?) AND library_slot = ?",
-          values: [mediaId, mediaId, mediaId, slotValue],
+          sql: `(canonical_track_mbid = ? OR canonical_recording_mbid = ?${exactProviderClause}) AND library_slot = ?${rootClause}`,
+          values: [mediaId, mediaId, ...exactProviderValues, slotValue, ...rootValues],
         };
       } else {
         return {
-          sql: "(provider_id = ? OR canonical_track_mbid = ? OR canonical_recording_mbid = ?) AND file_type = ? AND library_slot = ?",
-          values: [mediaId, mediaId, mediaId, fileType, slotValue],
+          sql: `(canonical_track_mbid = ? OR canonical_recording_mbid = ?${exactProviderClause}) AND file_type = ? AND library_slot = ?${rootClause}`,
+          values: [mediaId, mediaId, ...exactProviderValues, fileType, slotValue, ...rootValues],
         };
       }
     }
@@ -1735,27 +1759,40 @@ export class LibraryFilesService {
     if (albumId && !mediaId) {
       if (tableName === "LyricFiles") {
         return {
-          sql: "(canonical_release_group_mbid = ? OR canonical_release_mbid = ? OR provider_id = ?) AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND library_slot = ?",
-          values: [albumId, albumId, albumId, slotValue],
+          sql: `(canonical_release_group_mbid = ? OR canonical_release_mbid = ?${exactProviderClause}) AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND library_slot = ?${rootClause}`,
+          values: [albumId, albumId, ...exactProviderValues, slotValue, ...rootValues],
         };
       } else {
         return {
-          sql: "(canonical_release_group_mbid = ? OR canonical_release_mbid = ? OR provider_id = ?) AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND file_type = ? AND library_slot = ?",
-          values: [albumId, albumId, albumId, fileType, slotValue],
+          sql: `(canonical_release_group_mbid = ? OR canonical_release_mbid = ?${exactProviderClause}) AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND file_type = ? AND library_slot = ?${rootClause}`,
+          values: [albumId, albumId, ...exactProviderValues, fileType, slotValue, ...rootValues],
         };
       }
+    }
+
+    if (!albumId && !mediaId && provider && providerEntityType && providerId) {
+      if (tableName === "LyricFiles") {
+        return {
+          sql: `provider = ? AND provider_entity_type = ? AND provider_id = ? AND library_slot = ?${rootClause}`,
+          values: [provider, providerEntityType, providerId, slotValue, ...rootValues],
+        };
+      }
+      return {
+        sql: `provider = ? AND provider_entity_type = ? AND provider_id = ? AND file_type = ? AND library_slot = ?${rootClause}`,
+        values: [provider, providerEntityType, providerId, fileType, slotValue, ...rootValues],
+      };
     }
 
     if (!albumId && !mediaId) {
       if (tableName === "LyricFiles") {
         return {
-          sql: "artist_id = ? AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL AND library_slot = ?",
-          values: [artistId, slotValue],
+          sql: `artist_id = ? AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL AND library_slot = ?${rootClause}`,
+          values: [artistId, slotValue, ...rootValues],
         };
       } else {
         return {
-          sql: "artist_id = ? AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL AND file_type = ? AND library_slot = ?",
-          values: [artistId, fileType, slotValue],
+          sql: `artist_id = ? AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL AND file_type = ? AND library_slot = ?${rootClause}`,
+          values: [artistId, fileType, slotValue, ...rootValues],
         };
       }
     }
@@ -1768,8 +1805,12 @@ export class LibraryFilesService {
     albumId?: string | null;
     mediaId?: string | null;
     fileType: string;
+    libraryRoot?: string | null;
     preferredPath?: string | null;
     librarySlot?: string | null;
+    provider?: string | null;
+    providerEntityType?: string | null;
+    providerId?: string | null;
   }): number | null {
     const tableName = isLyricExtraFileType(params.fileType) ? "LyricFiles" :
                       isMetadataExtraFileType(params.fileType) ? "MetadataFiles" : "ExtraFiles";
@@ -1793,6 +1834,7 @@ export class LibraryFilesService {
   private static upsertExtraFileRecord(
     params: LibraryFileUpsertParams,
     identity: ReturnType<typeof resolveLibraryFileIdentity>,
+    libraryId: number | null,
   ): void {
     if (!isExtraFileType(params.fileType)) {
       return;
@@ -1800,6 +1842,7 @@ export class LibraryFilesService {
 
     const input = {
       artistId: params.artistId,
+      libraryId,
       albumId: params.albumId || null,
       mediaId: params.mediaId || null,
       trackFileId: params.trackFileId || null,
@@ -1873,18 +1916,26 @@ export class LibraryFilesService {
       track_id: number | null;
       recording_id: number | null;
     };
-    const libraryId = params.libraryId ?? (() => {
-      const targetRoot = normalizeComparablePath(params.libraryRoot);
-      const libraries = db.prepare(`
-        SELECT id, root_path
-        FROM Libraries
-        WHERE enabled = 1
-        ORDER BY id
-      `).all() as Array<{ id: number; root_path: string }>;
-      return libraries.find((library) =>
-        normalizeComparablePath(library.root_path) === targetRoot
-      )?.id ?? null;
-    })();
+    const targetRoot = normalizeComparablePath(params.libraryRoot);
+    const matchingLibraries = (db.prepare(`
+      SELECT id, root_path
+      FROM Libraries
+      WHERE enabled = 1
+      ORDER BY id
+    `).all() as Array<{ id: number; root_path: string }>).filter((library) =>
+      normalizeComparablePath(library.root_path) === targetRoot
+    );
+    const explicitLibraryId = params.libraryId == null ? null : Number(params.libraryId);
+    if (
+      explicitLibraryId != null
+      && !matchingLibraries.some((library) => library.id === explicitLibraryId)
+    ) {
+      throw new Error(
+        `Library ${explicitLibraryId} does not own root ${params.libraryRoot}`,
+      );
+    }
+    const libraryId = explicitLibraryId
+      ?? (matchingLibraries.length === 1 ? matchingLibraries[0].id : null);
     const fileClass = params.fileClass
       ?? (params.fileType === "track" ? "audio" : params.fileType === "video" ? "video" : null);
 
@@ -1900,7 +1951,7 @@ export class LibraryFilesService {
         LIMIT 1
       `).get(params.filePath) as { id: number; file_path: string; library_root: string; relative_path: string; Quality?: string | null } | undefined;
 
-      this.upsertExtraFileRecord(params, canonicalIdentity);
+      this.upsertExtraFileRecord(params, canonicalIdentity, libraryId);
       const insertedId = ExtraFileService.findIdByPath(tableName, params.filePath) || 0;
 
       if (params.removeFromUnmapped !== false) {
@@ -1912,7 +1963,11 @@ export class LibraryFilesService {
         albumId: params.albumId || null,
         mediaId: params.mediaId || null,
         fileType: params.fileType,
+        libraryRoot: params.libraryRoot,
         librarySlot: canonicalIdentity.librarySlot,
+        provider: canonicalIdentity.provider,
+        providerEntityType: canonicalIdentity.providerEntityType,
+        providerId: canonicalIdentity.providerId,
       });
 
       if (!existingSidecarRow) {
@@ -1947,24 +2002,46 @@ export class LibraryFilesService {
       return insertedId;
     }
 
-    if (canonicalIdentity.providerId && canonicalIdentity.providerEntityType && (params.fileType === "track" || params.fileType === "video")) {
+    if (libraryId == null) {
+      const reason = matchingLibraries.length === 0
+        ? "no enabled library matches the requested root"
+        : "multiple enabled libraries share the requested root";
+      throw new Error(
+        `Cannot assign playable file ${params.filePath}: ${reason}; provide libraryId`,
+      );
+    }
+
+    if (
+      existingPathRow?.library_id != null
+      && existingPathRow.library_id !== libraryId
+    ) {
+      throw new Error(
+        `Playable file ${params.filePath} already belongs to library ${existingPathRow.library_id}`,
+      );
+    }
+
+    if (
+      canonicalIdentity.provider
+      && canonicalIdentity.providerId
+      && canonicalIdentity.providerEntityType
+      && (params.fileType === "track" || params.fileType === "video")
+    ) {
       const existingRow = db.prepare(`
-        SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
+        SELECT id, library_id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
         FROM TrackFiles
-        WHERE (? = '' OR provider = ?)
+        WHERE provider = ?
           AND provider_entity_type = ?
           AND provider_id = ?
           AND file_type = ?
-          AND library_slot = ?
+          AND library_id = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
         LIMIT 1
       `).get(
-        canonicalIdentity.provider || "",
-        canonicalIdentity.provider || "",
+        canonicalIdentity.provider,
         canonicalIdentity.providerEntityType,
         canonicalIdentity.providerId,
         params.fileType,
-        canonicalIdentity.librarySlot,
+        libraryId,
         params.filePath,
       ) as ExistingLibraryFileIdentity | undefined;
 
@@ -1979,7 +2056,8 @@ export class LibraryFilesService {
 
         db.prepare(`
           UPDATE TrackFiles
-          SET artist_id = ?,
+          SET library_id = ?,
+              artist_id = ?,
               canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
               canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
               canonical_release_mbid = COALESCE(?, canonical_release_mbid),
@@ -2014,6 +2092,7 @@ export class LibraryFilesService {
               fingerprint = COALESCE(?, fingerprint)
           WHERE id = ?
         `).run(
+          libraryId,
           params.artistId,
           canonicalIdentity.canonicalArtistMbid,
           canonicalIdentity.canonicalReleaseGroupMbid,
@@ -2053,19 +2132,18 @@ export class LibraryFilesService {
 
         db.prepare(`
           DELETE FROM TrackFiles
-          WHERE (? = '' OR provider = ?)
+          WHERE provider = ?
             AND provider_entity_type = ?
             AND provider_id = ?
             AND file_type = ?
-            AND library_slot = ?
+            AND library_id = ?
             AND id != ?
         `).run(
-          canonicalIdentity.provider || "",
-          canonicalIdentity.provider || "",
+          canonicalIdentity.provider,
           canonicalIdentity.providerEntityType,
           canonicalIdentity.providerId,
           params.fileType,
-          canonicalIdentity.librarySlot,
+          libraryId,
           rowToUpdate.id,
         );
 
@@ -2107,8 +2185,12 @@ export class LibraryFilesService {
         albumId: params.albumId || null,
         mediaId: params.mediaId || null,
         fileType: params.fileType,
+        libraryRoot: params.libraryRoot,
         preferredPath: params.filePath,
         librarySlot: canonicalIdentity.librarySlot,
+        provider: canonicalIdentity.provider,
+        providerEntityType: canonicalIdentity.providerEntityType,
+        providerId: canonicalIdentity.providerId,
       });
 
       if (existingTrackedAssetId !== null) {
@@ -2213,7 +2295,11 @@ export class LibraryFilesService {
           albumId: params.albumId || null,
           mediaId: params.mediaId || null,
           fileType: params.fileType,
+          libraryRoot: params.libraryRoot,
           librarySlot: canonicalIdentity.librarySlot,
+          provider: canonicalIdentity.provider,
+          providerEntityType: canonicalIdentity.providerEntityType,
+          providerId: canonicalIdentity.providerId,
         });
 
         if (
@@ -2373,7 +2459,11 @@ export class LibraryFilesService {
         albumId: params.albumId || null,
         mediaId: params.mediaId || null,
         fileType: params.fileType,
+        libraryRoot: params.libraryRoot,
         librarySlot: canonicalIdentity.librarySlot,
+        provider: canonicalIdentity.provider,
+        providerEntityType: canonicalIdentity.providerEntityType,
+        providerId: canonicalIdentity.providerId,
       });
     }
 
@@ -2460,7 +2550,11 @@ export class LibraryFilesService {
     albumId?: string | null;
     mediaId?: string | null;
     fileType: string;
+    libraryRoot?: string | null;
     librarySlot?: string | null;
+    provider?: string | null;
+    providerEntityType?: string | null;
+    providerId?: string | null;
   }): { removed: number } {
     const tableName = isLyricExtraFileType(params.fileType) ? "LyricFiles" :
                       isMetadataExtraFileType(params.fileType) ? "MetadataFiles" : "ExtraFiles";
@@ -2505,6 +2599,7 @@ export class LibraryFilesService {
     let removed = 0;
     const idsToDelete: number[] = [];
     for (const row of remove) {
+      ExtraFileService.mergeLibraryAssociations(tableName, row.id, keep.id);
       const resolvedPath = resolveStoredLibraryPath({
         filePath: row.file_path,
         libraryRoot: row.library_root,
@@ -2557,18 +2652,26 @@ export class LibraryFilesService {
     const metadataGroups = db.prepare(`
       SELECT artist_id AS artist_id,
              COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
-             COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+             COALESCE(canonical_track_mbid, canonical_recording_mbid) AS media_id,
+             provider AS provider,
+             provider_entity_type AS provider_entity_type,
+             provider_id AS provider_id,
              file_type AS file_type,
+             library_root AS library_root,
              library_slot AS library_slot
       FROM MetadataFiles
       ${artistId ? "WHERE artist_id = ?" : ""}
-      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider_id, file_type, library_slot
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id, file_type, library_root, library_slot
       HAVING COUNT(*) > 1
     `).all(...params) as Array<{
       artist_id: string;
       album_id: string | null;
       media_id: string | null;
+      provider: string | null;
+      provider_entity_type: string | null;
+      provider_id: string | null;
       file_type: string;
+      library_root: string;
       library_slot: string;
     }>;
 
@@ -2578,7 +2681,11 @@ export class LibraryFilesService {
         albumId: group.album_id,
         mediaId: group.media_id,
         fileType: group.file_type,
+        libraryRoot: group.library_root,
         librarySlot: group.library_slot,
+        provider: group.provider,
+        providerEntityType: group.provider_entity_type,
+        providerId: group.provider_id,
       }).removed;
     }
 
@@ -2586,18 +2693,26 @@ export class LibraryFilesService {
     const extraGroups = db.prepare(`
       SELECT artist_id AS artist_id,
              COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
-             COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+             COALESCE(canonical_track_mbid, canonical_recording_mbid) AS media_id,
+             provider AS provider,
+             provider_entity_type AS provider_entity_type,
+             provider_id AS provider_id,
              file_type AS file_type,
+             library_root AS library_root,
              library_slot AS library_slot
       FROM ExtraFiles
       ${artistId ? "WHERE artist_id = ?" : ""}
-      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider_id, file_type, library_slot
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id, file_type, library_root, library_slot
       HAVING COUNT(*) > 1
     `).all(...params) as Array<{
       artist_id: string;
       album_id: string | null;
       media_id: string | null;
+      provider: string | null;
+      provider_entity_type: string | null;
+      provider_id: string | null;
       file_type: string;
+      library_root: string;
       library_slot: string;
     }>;
 
@@ -2607,7 +2722,11 @@ export class LibraryFilesService {
         albumId: group.album_id,
         mediaId: group.media_id,
         fileType: group.file_type,
+        libraryRoot: group.library_root,
         librarySlot: group.library_slot,
+        provider: group.provider,
+        providerEntityType: group.provider_entity_type,
+        providerId: group.provider_id,
       }).removed;
     }
 
@@ -2615,16 +2734,24 @@ export class LibraryFilesService {
     const lyricGroups = db.prepare(`
       SELECT artist_id AS artist_id,
              COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
-             COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+             COALESCE(canonical_track_mbid, canonical_recording_mbid) AS media_id,
+             provider AS provider,
+             provider_entity_type AS provider_entity_type,
+             provider_id AS provider_id,
+             library_root AS library_root,
              library_slot AS library_slot
       FROM LyricFiles
       ${artistId ? "WHERE artist_id = ?" : ""}
-      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider_id, library_slot
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id, library_root, library_slot
       HAVING COUNT(*) > 1
     `).all(...params) as Array<{
       artist_id: string;
       album_id: string | null;
       media_id: string | null;
+      provider: string | null;
+      provider_entity_type: string | null;
+      provider_id: string | null;
+      library_root: string;
       library_slot: string;
     }>;
 
@@ -2634,7 +2761,11 @@ export class LibraryFilesService {
         albumId: group.album_id,
         mediaId: group.media_id,
         fileType: "lyrics",
+        libraryRoot: group.library_root,
         librarySlot: group.library_slot,
+        provider: group.provider,
+        providerEntityType: group.provider_entity_type,
+        providerId: group.provider_id,
       }).removed;
     }
 
@@ -2723,11 +2854,10 @@ export class LibraryFilesService {
    *  - audio: its exact `LibraryAlbums` row, keyed by the file's
    *    `library_id` + `release_group_id`;
    *  - video / recording-scoped files: their exact `Recordings` row, matched by
-   *    `recording_id` or — for transitional provider videos without that FK — via
-   *    `ProviderItems.recording_id` keyed on `provider_id`+`provider_entity_type`.
+   *    the exact `recording_id` persisted on the file row.
    *
    * A file is a prune candidate only when it has at least one canonical anchor
-   * (release group, recording, or a resolvable provider video) AND none of those
+   * (release group or recording) AND none of those
    * anchors are monitored/locked. Files with no canonical anchor at all are left
    * untouched (unclassifiable — never auto-deleted). Replaces the old
    * `ProviderMedia.monitored`/`ProviderAlbums.monitored` linkage.
@@ -2751,29 +2881,16 @@ export class LibraryFilesService {
        AND library_group.release_group_id = lf.release_group_id
       LEFT JOIN Recordings rec
         ON rec.id = lf.recording_id
-      LEFT JOIN ProviderItems pi
-        ON lf.recording_id IS NULL
-       AND lf.provider IS NOT NULL
-       AND lf.provider_entity_type IS NOT NULL
-       AND pi.provider = lf.provider
-       AND pi.entity_type = lf.provider_entity_type
-       AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-      LEFT JOIN ProviderVideoMatches video_match
-        ON video_match.provider_video_item_id = pi.id
-       AND video_match.match_state = 'accepted'
-      LEFT JOIN Recordings vrec ON vrec.id = video_match.recording_id
       WHERE lf.artist_id = ?
         -- must have at least one canonical anchor to be classifiable
         AND (
           (lf.library_id IS NOT NULL AND lf.release_group_id IS NOT NULL)
           OR lf.recording_id IS NOT NULL
-          OR vrec.id IS NOT NULL
         )
         -- and none of the anchors may be monitored or user-locked
         AND (library_group.monitored IS NULL OR library_group.monitored = 0)
         AND (library_group.locked IS NULL OR library_group.locked = 0)
         AND (rec.monitored IS NULL OR rec.monitored = 0) AND (rec.monitored_lock IS NULL OR rec.monitored_lock = 0)
-        AND (vrec.monitored IS NULL OR vrec.monitored = 0) AND (vrec.monitored_lock IS NULL OR vrec.monitored_lock = 0)
     `).all(artistId) as Array<{
       id: number;
       artist_id: number;

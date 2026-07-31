@@ -29,6 +29,7 @@ const {
   seedProviderAudioVariant,
 } = await import("../../test-support/normalized-provider-fixtures.js");
 const { resetActiveSchemaRows } = await import("../../test-support/active-schema-fixture.js");
+const { ProviderMatchRepository } = await import("../music/provider-match-repository.js");
 
 function resetRows() {
   resetActiveSchemaRows(db);
@@ -168,10 +169,7 @@ test("a track whose parent release is unavailable is excluded, its available sib
     releaseGroupMbid: "rg-parent-gate", releaseMbid: "rel-parent-gate",
     tracks: [{ trackMbid: "track-parent-gate", recordingMbid: "recording-parent-gate" }],
   });
-  // Schema 41 has no parentless provider track: membership on a provider release
-  // is what a ProviderTrackMatches edge hangs off, so the old "keeps parentless
-  // offers" case is no longer expressible. The surviving rule is the parent
-  // availability gate.
+  // Contextual offers still inherit the availability gate from their parent.
   seedAlbumOffer({
     provider: "soundcloud", providerEditionId: "rejected-playlist",
     providerTrackId: "legacy-live-child",
@@ -199,6 +197,60 @@ test("a track whose parent release is unavailable is excluded, its available sib
   assert.equal(ids.includes("legacy-live-child"), false, "unavailable parent excludes its child");
   assert.equal(ids.includes("live-child"), true);
   assert.equal(ids.includes("sibling-track"), true);
+});
+
+test("listRankedTrackOffers accepts an exact parentless provider track match", () => {
+  seedCanonicalAlbum(db, {
+    releaseGroupMbid: "rg-standalone",
+    releaseMbid: "rel-standalone",
+    tracks: [{ trackMbid: "track-standalone", recordingMbid: "recording-standalone" }],
+  });
+  const canonical = db.prepare(`
+    SELECT track.id AS track_id, track.recording_id
+    FROM Tracks track
+    WHERE track.mbid = 'track-standalone'
+  `).get() as { track_id: number; recording_id: number };
+  const providerTrack = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('spotify', 'track', 'standalone-offer', 'Standalone Offer', 'available')
+    RETURNING id
+  `).get() as { id: number };
+  const variant = seedProviderAudioVariant(db, {
+    providerItemId: providerTrack.id,
+    qualityClass: "lossy",
+    providerQualityLabel: "OGG_320",
+  });
+
+  new ProviderMatchRepository(db).upsertStandaloneTrackMatch({
+    providerTrackItemId: providerTrack.id,
+    trackId: canonical.track_id,
+    recordingId: canonical.recording_id,
+    decision: {
+      matchState: "accepted",
+      decisionSource: "automatic",
+      confidence: 0.99,
+      method: "isrc",
+      matcherVersion: 1,
+    },
+  });
+
+  assert.deepEqual(
+    listRankedTrackOffers({
+      trackMbid: "track-standalone",
+      recordingMbid: "recording-standalone",
+      librarySlot: "stereo",
+    }),
+    [{
+      provider: "spotify",
+      providerId: "standalone-offer",
+      quality: "OGG_320",
+      providerAlbumId: null,
+      providerItemId: providerTrack.id,
+      providerAlbumItemId: null,
+      providerAudioVariantId: variant,
+    }],
+  );
 });
 
 test("listRankedTrackOffers keeps stereo and spatial fallbacks in their requested slot", () => {
@@ -232,7 +284,6 @@ test("listRankedTrackOffers keeps stereo and spatial fallbacks in their requeste
     [
       "tidal:stereo-track:LOSSLESS",
       "youtube-music:yt-track:YOUTUBE_LOSSY",
-      "tidal:spatial-track:DOLBY_ATMOS",
     ],
   );
 
@@ -303,7 +354,6 @@ test("listRankedTrackOffers derives spatial capability from the parent album and
       [
         "apple-music:apple-dual-track",
         "deezer:deezer-stereo-track",
-        "tidal:tidal-atmos-track",
       ],
     );
   } finally {
@@ -356,7 +406,6 @@ test("listRankedAlbumOffers derives spatial variants and ranks Atmos ahead of 36
       [
         "apple-music:apple-dual",
         "deezer:deezer-stereo",
-        "tidal:tidal-360",
       ],
     );
   } finally {

@@ -1928,6 +1928,10 @@ export class DownloadProcessor {
                             provider: next.provider,
                             providerTrackId: next.providerId,
                             providerAlbumId: next.providerAlbumId ?? offer.providerAlbumId,
+                            providerTrackItemId: next.providerItemId,
+                            providerEditionItemId: next.providerAlbumItemId ?? null,
+                            providerAudioVariantId: next.providerAudioVariantId ?? null,
+                            acquisitionPlanSourceId: null,
                             quality: next.quality ?? offer.quality,
                         };
                         continue;

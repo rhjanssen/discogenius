@@ -233,11 +233,30 @@ test("followed artist import reports added when metadata sync creates the artist
     }),
   });
 
-  dbModule.db.prepare(`
+  const canonicalArtist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+    RETURNING id
+  `).get(
+    "11111111-2222-4333-8444-555555555555",
+    "Artist Added After Sync",
+  ) as { id: number };
+  const providerArtist = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, 'artist', ?, ?)
-  `).run( "followed-status-test-provider", "artist-added-after-sync", "Artist Added After Sync" );
+    RETURNING id
+  `).get(
+    "followed-status-test-provider",
+    "artist-added-after-sync",
+    "Artist Added After Sync",
+  ) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'manual', 1, 'test', 1)
+  `).run(providerArtist.id, canonicalArtist.id);
 
   servarrMetadata.syncArtist = (async (mbid: string) => {
     dbModule.db.prepare(`

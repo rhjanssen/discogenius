@@ -1,13 +1,48 @@
 import {
+  Accordion,
+  AccordionHeader,
+  AccordionItem,
+  AccordionPanel,
   Badge,
-  Button,
   Card,
   Text,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
 import { AppTooltip } from "@/components/ui/AppTooltip";
+import {
+  ProviderQualityRow,
+  type ProviderQualityOffer,
+} from "@/components/ui/ProviderQualityPill";
 import type { ReleaseGroupAvailability } from "@/hooks/useAlbumPage";
+
+type Release = ReleaseGroupAvailability["releases"][number];
+type Library = ReleaseGroupAvailability["libraries"][number];
+type Offer = Release["offers"][number];
+type AudioQuality = Offer["variants"][number]["qualityClass"];
+
+const AUDIO_QUALITIES = new Set<AudioQuality>([
+  "lossy",
+  "lossless",
+  "hires-lossless",
+  "spatial",
+]);
+
+const UNAVAILABLE_STATES = new Set([
+  "unavailable",
+  "no_longer_available",
+  "geography_restricted",
+  "entitlement_restricted",
+  "explicit_policy_ineligible",
+  "quality_unavailable",
+]);
+
+const QUALITY_RANK: Record<AudioQuality, number> = {
+  lossy: 1,
+  lossless: 2,
+  "hires-lossless": 3,
+  spatial: 4,
+};
 
 function releaseYear(date?: string | null): string | null {
   if (!date) return null;
@@ -15,46 +50,123 @@ function releaseYear(date?: string | null): string | null {
   return Number.isFinite(year) ? String(year) : date.slice(0, 4) || null;
 }
 
+function releaseCountryLabel(country?: string | null): string | null {
+  const text = String(country || "").trim();
+  if (!text || text === "[]") return null;
+  let countries: string[];
+  try {
+    const parsed = JSON.parse(text);
+    countries = Array.isArray(parsed) ? parsed.map(String) : [text];
+  } catch {
+    countries = text.split(",");
+  }
+  const normalized = countries.map((value) => value.trim()).filter(Boolean);
+  if (normalized.length === 0) return null;
+  if (normalized.length > 4) return `${normalized.length} territories`;
+  return normalized.join(", ");
+}
+
 function countLabel(count: number | null, singular: string, plural: string): string | null {
   if (count == null || count <= 0) return null;
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
-function releaseMeta(release: ReleaseGroupAvailability["releases"][number]): string {
+function releaseMeta(release: Release): string {
   return [
     releaseYear(release.date),
-    release.country,
+    releaseCountryLabel(release.country),
     countLabel(release.mediumCount, "medium", "media"),
     countLabel(release.trackCount, "track", "tracks"),
     release.status?.toLowerCase() === "official" ? null : release.status,
   ].filter(Boolean).join(" · ");
 }
 
-function qualityLabels(
-  release: ReleaseGroupAvailability["releases"][number],
-): string[] {
-  return [...new Set(release.offers.flatMap((offer) =>
-    offer.variants.map((variant) => variant.qualityClass)))];
+function isAvailable(value: string): boolean {
+  return !UNAVAILABLE_STATES.has(value.trim().toLowerCase());
+}
+
+function selectableOffers(release: Release): Offer[] {
+  return release.offers.filter((offer) =>
+    offer.matchState === "accepted"
+    && isAvailable(offer.availability)
+    && offer.variants.some((variant) => isAvailable(variant.availability)));
+}
+
+function libraryQualities(library: Library): Set<AudioQuality> {
+  return new Set(library.allowedSourceFormats.filter(
+    (quality): quality is AudioQuality => AUDIO_QUALITIES.has(quality as AudioQuality),
+  ));
+}
+
+function offersForLibrary(release: Release, library: Library): Array<{
+  source: Offer;
+  quality: AudioQuality;
+  view: ProviderQualityOffer;
+}> {
+  const allowed = libraryQualities(library);
+  const slot = allowed.has("spatial") && allowed.size === 1 ? "spatial" : "stereo";
+  return selectableOffers(release).flatMap((offer) =>
+    offer.variants
+      .filter((variant) => allowed.has(variant.qualityClass) && isAvailable(variant.availability))
+      .map((variant) => ({
+        source: offer,
+        quality: variant.qualityClass,
+        view: {
+          slot,
+          quality: variant.qualityClass === "hires-lossless"
+            ? "HIRES_LOSSLESS"
+            : variant.qualityClass === "spatial"
+              ? (variant.spatialFormat === "atmos" ? "DOLBY_ATMOS" : "SPATIAL")
+              : variant.qualityClass === "lossless"
+                ? "LOSSLESS"
+                : "HIGH",
+          provider: offer.provider,
+          matchStatus: offer.matchState === "accepted" ? "verified" : offer.matchState,
+          matchKind: "direct",
+          coverageSummary: offer.relation === "exact"
+            ? "Exact edition match"
+            : `${offer.relation.replace(/_/g, " ")} · track download`,
+          providerAlbumId: offer.providerId,
+          providerUrl: offer.providerUrl,
+          selectedReleaseMbid: release.mbid,
+          available: true,
+        },
+      })));
+}
+
+function bestQualityRank(release: Release): number {
+  return Math.max(
+    0,
+    ...selectableOffers(release).flatMap((offer) =>
+      offer.variants.map((variant) => QUALITY_RANK[variant.qualityClass] || 0)),
+  );
 }
 
 const useStyles = makeStyles({
   root: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    gap: tokens.spacingVerticalM,
     width: "100%",
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
   },
   release: {
     display: "grid",
     gridTemplateColumns: "minmax(0, 1fr)",
     gap: tokens.spacingVerticalM,
     padding: tokens.spacingVerticalM,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-    "@media (min-width: 820px)": {
-      gridTemplateColumns: "minmax(0, 1fr) minmax(280px, auto)",
-      alignItems: "center",
-      columnGap: tokens.spacingHorizontalL,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
+    boxShadow: tokens.shadow2,
+    "@media (min-width: 900px)": {
+      gridTemplateColumns: "minmax(260px, 0.8fr) minmax(420px, 1.2fr)",
+      alignItems: "start",
+      columnGap: tokens.spacingHorizontalXL,
     },
   },
   details: {
@@ -72,30 +184,34 @@ const useStyles = makeStyles({
   metadata: {
     color: tokens.colorNeutralForeground2,
   },
-  providerRow: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalXS,
+  sourceSummary: {
+    color: tokens.colorNeutralForeground2,
   },
   libraries: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
+    gap: tokens.spacingVerticalM,
   },
   libraryRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(90px, 1fr) auto",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
+    gridTemplateColumns: "minmax(120px, 0.3fr) minmax(0, 1fr)",
+    alignItems: "start",
+    gap: tokens.spacingHorizontalM,
   },
-  libraryState: {
+  libraryLabel: {
     display: "flex",
     flexDirection: "column",
-    minWidth: 0,
+    gap: tokens.spacingVerticalXXS,
   },
   unavailable: {
     color: tokens.colorNeutralForeground3,
+  },
+  catalogAccordion: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  catalogPanel: {
+    paddingBottom: tokens.spacingVerticalM,
   },
 });
 
@@ -103,7 +219,7 @@ export interface ReleaseSwitcherProps {
   availability: ReleaseGroupAvailability;
   currentReleaseMbid?: string | null;
   pendingSelectionKey?: string | null;
-  onSelect: (libraryId: number, editionId: number) => void;
+  onSelect: (libraryId: number, editionId: number, providerEditionMatchId: number) => void;
 }
 
 export function ReleaseSwitcher({
@@ -115,85 +231,132 @@ export function ReleaseSwitcher({
   const styles = useStyles();
   if (availability.releases.length === 0) return null;
 
+  const audioLibraries = availability.libraries.filter(
+    (library) => libraryQualities(library).size > 0,
+  );
   const selectedReleaseIds = new Set(
-    availability.libraries.flatMap((library) =>
+    audioLibraries.flatMap((library) =>
       library.selections.map((selection) => selection.editionId)),
   );
-  const releases = [...availability.releases].sort((left, right) =>
+  const sorted = [...availability.releases].sort((left, right) =>
     Number(selectedReleaseIds.has(right.id)) - Number(selectedReleaseIds.has(left.id))
+    || Number(selectableOffers(right).length > 0) - Number(selectableOffers(left).length > 0)
+    || bestQualityRank(right) - bestQualityRank(left)
+    || Math.max(0, ...right.offers.map((offer) => offer.confidence))
+      - Math.max(0, ...left.offers.map((offer) => offer.confidence))
     || String(left.date || "9999").localeCompare(String(right.date || "9999"))
     || left.id - right.id);
+  const matched = sorted.filter((release) =>
+    selectableOffers(release).length > 0 || selectedReleaseIds.has(release.id));
+  const catalogOnly = sorted.filter((release) =>
+    selectableOffers(release).length === 0 && !selectedReleaseIds.has(release.id));
+
+  const renderRelease = (release: Release) => {
+    const offers = selectableOffers(release);
+    const providerCount = new Set(offers.map((offer) => offer.provider)).size;
+    const meta = releaseMeta(release);
+    return (
+      <Card key={release.id} className={styles.release}>
+        <div className={styles.details}>
+          <div className={styles.titleRow}>
+            <Text weight="semibold">{release.title}</Text>
+            {release.disambiguation ? (
+              <Badge appearance="filled" color="informative">{release.disambiguation}</Badge>
+            ) : null}
+            {release.mbid === currentReleaseMbid ? (
+              <Badge appearance="filled" color="brand">Current page</Badge>
+            ) : null}
+          </div>
+          {meta ? <Text size={200} className={styles.metadata}>{meta}</Text> : null}
+          {offers.length > 0 ? (
+            <Text size={200} className={styles.sourceSummary}>
+              {offers.length} provider {offers.length === 1 ? "offer" : "offers"} across{" "}
+              {providerCount} {providerCount === 1 ? "provider" : "providers"}
+            </Text>
+          ) : (
+            <Text size={200} className={styles.unavailable}>No accepted provider match</Text>
+          )}
+          <AppTooltip content={release.mbid} relationship="label">
+            <Text size={100} className={styles.metadata}>{release.mbid}</Text>
+          </AppTooltip>
+        </div>
+
+        {offers.length > 0 ? (
+          <div className={styles.libraries}>
+            {audioLibraries.map((library) => {
+              const compatible = offersForLibrary(release, library);
+              if (compatible.length === 0) return null;
+              const selection = library.selections.find(
+                (candidate) => candidate.editionId === release.id,
+              );
+              const selectedMatchId = selection?.plan?.primaryProviderEditionMatchId ?? null;
+              const selectedOffer = compatible.find(
+                ({ source }) => source.providerEditionMatchId === selectedMatchId,
+              )?.source;
+              const rowPending = compatible.some(({ source }) =>
+                pendingSelectionKey === `${library.id}:${release.id}:${source.providerEditionMatchId}`);
+              return (
+                <div key={library.id} className={styles.libraryRow}>
+                  <div className={styles.libraryLabel}>
+                    <Text size={200} weight="semibold">{library.name}</Text>
+                    <Text size={100} className={styles.metadata}>
+                      {rowPending ? "Saving choice…" : `${library.qualityProfile} target`}
+                    </Text>
+                  </div>
+                  <ProviderQualityRow
+                    offers={compatible.map(({ view }) => view)}
+                    size="small"
+                    selectedOfferAlbumId={selectedOffer?.providerId ?? null}
+                    selectedOfferProvider={selectedOffer?.provider ?? null}
+                    onSelectOffer={pendingSelectionKey ? undefined : (picked) => {
+                      const selected = compatible.find(({ source, quality }) =>
+                        source.provider === picked.provider
+                        && source.providerId === picked.providerAlbumId
+                        && picked.quality === (
+                          quality === "hires-lossless"
+                            ? "HIRES_LOSSLESS"
+                            : quality === "spatial"
+                              ? (source.variants.find((variant) =>
+                                variant.qualityClass === quality)?.spatialFormat === "atmos"
+                                ? "DOLBY_ATMOS"
+                                : "SPATIAL")
+                              : quality === "lossless" ? "LOSSLESS" : "HIGH"
+                        ));
+                      if (selected) {
+                        onSelect(library.id, release.id, selected.source.providerEditionMatchId);
+                      }
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </Card>
+    );
+  };
 
   return (
     <div className={styles.root}>
-      {releases.map((release) => {
-        const qualities = qualityLabels(release);
-        return (
-          <Card key={release.id} className={styles.release}>
-            <div className={styles.details}>
-              <div className={styles.titleRow}>
-                <Text weight="semibold">{release.title}</Text>
-                {release.disambiguation ? (
-                  <Badge appearance="outline">{release.disambiguation}</Badge>
-                ) : null}
-                {release.mbid === currentReleaseMbid ? (
-                  <Badge appearance="outline">Current page</Badge>
-                ) : null}
-              </div>
-              {releaseMeta(release) ? (
-                <Text size={200} className={styles.metadata}>{releaseMeta(release)}</Text>
-              ) : null}
-              <div className={styles.providerRow}>
-                {release.offers.length === 0 ? (
-                  <Text size={200} className={styles.unavailable}>No matched provider release</Text>
-                ) : (
-                  <>
-                    {[...new Set(release.offers.map((offer) => offer.provider))].map((provider) => (
-                      <Badge key={provider} appearance="tint">{provider}</Badge>
-                    ))}
-                    {qualities.map((quality) => (
-                      <Badge key={quality} appearance="outline">{quality}</Badge>
-                    ))}
-                    {release.offers.some((offer) => offer.relation !== "exact") ? (
-                      <Badge appearance="outline">Track download required</Badge>
-                    ) : null}
-                  </>
-                )}
-              </div>
-              <AppTooltip content={release.mbid} relationship="label">
-                <Text size={100}>{release.mbid}</Text>
-              </AppTooltip>
-            </div>
-
-            <div className={styles.libraries}>
-              {availability.libraries.map((library) => {
-                const selected = library.selections.find((selection) => selection.editionId === release.id);
-                const pending = pendingSelectionKey === `${library.id}:${release.id}`;
-                return (
-                  <div key={library.id} className={styles.libraryRow}>
-                    <div className={styles.libraryState}>
-                      <Text size={200} weight="semibold">{library.name}</Text>
-                      <Text size={100} className={styles.metadata}>
-                        {selected?.plan
-                          ? `${selected.plan.provider} · ${selected.plan.composition.replace("_", " ")} · ${selected.plan.downloadMode}`
-                          : library.qualityProfile}
-                      </Text>
-                    </div>
-                    <Button
-                      size="small"
-                      appearance={selected ? "primary" : "secondary"}
-                      disabled={Boolean(pendingSelectionKey) || release.offers.length === 0}
-                      onClick={() => onSelect(library.id, release.id)}
-                    >
-                      {pending ? "Saving…" : selected ? "Selected" : `Use for ${library.name}`}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        );
-      })}
+      {matched.length > 0 ? (
+        <div className={styles.list}>{matched.map(renderRelease)}</div>
+      ) : (
+        <Text className={styles.unavailable}>
+          No provider matches are available yet. Use Refresh &amp; Scan on the artist when you want to discover offers.
+        </Text>
+      )}
+      {catalogOnly.length > 0 ? (
+        <Accordion collapsible className={styles.catalogAccordion}>
+          <AccordionItem value="catalog-only">
+            <AccordionHeader>
+              Other MusicBrainz editions ({catalogOnly.length})
+            </AccordionHeader>
+            <AccordionPanel className={styles.catalogPanel}>
+              <div className={styles.list}>{catalogOnly.map(renderRelease)}</div>
+            </AccordionPanel>
+          </AccordionItem>
+        </Accordion>
+      ) : null}
     </div>
   );
 }

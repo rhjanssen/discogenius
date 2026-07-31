@@ -111,18 +111,18 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   for (let trackId = 1; trackId <= 4; trackId += 1) {
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_edition_member_id, provider_edition_match_id, track_id,
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, 10, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
-    `).run(5000 + trackId, 1000 + trackId, trackId, trackId);
+      ) VALUES (?, ?, ?, 10, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+    `).run(5000 + trackId, 100 + trackId, 1000 + trackId, trackId, trackId);
   }
   for (let trackId = 1; trackId <= 3; trackId += 1) {
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_edition_member_id, provider_edition_match_id, track_id,
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, 20, ?, ?, 'accepted', 'automatic', 0.95, 'fixture', 1)
-    `).run(6000 + trackId, 3000 + trackId, trackId, trackId);
+      ) VALUES (?, ?, ?, 20, ?, ?, 'accepted', 'automatic', 0.95, 'fixture', 1)
+    `).run(6000 + trackId, 200 + trackId, 3000 + trackId, trackId, trackId);
   }
   return 1;
 }
@@ -157,7 +157,21 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
     assert.equal(highCommand?.body.providerId, "standard");
     assert.equal(highCommand?.body.libraryId, 1);
     assert.equal(highCommand?.body.acquisitionPlanId, highPlanId);
-    assert.equal(highCommand?.body.trackOffers, undefined);
+    assert.deepEqual(
+      highCommand?.body.trackOffers?.map((offer) => [
+        offer.providerTrackItemId,
+        offer.providerEditionItemId,
+        offer.providerAudioVariantId,
+        offer.acquisitionPlanSourceId,
+      ]),
+      [
+        [101, 10, 2001, 1],
+        [102, 10, 2002, 1],
+        [103, 10, 2003, 1],
+        [104, 10, 2004, 1],
+      ],
+      "Album-mode commands still carry exact per-track provenance for import",
+    );
 
     db.prepare(`
       UPDATE quality_profiles

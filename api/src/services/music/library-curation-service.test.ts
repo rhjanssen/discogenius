@@ -57,10 +57,10 @@ function seedProviderExactMatch(
     `).run(60_000 + editionId * 10 + index, providerTrackItemId);
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_edition_member_id, provider_edition_match_id, track_id,
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
-    `).run(trackMatchId, memberId, releaseMatchId, trackId, recordingId);
+      ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+    `).run(trackMatchId, providerTrackItemId, memberId, releaseMatchId, trackId, recordingId);
   });
 }
 

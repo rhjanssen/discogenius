@@ -17,13 +17,13 @@ No schema-39/40 compatibility tables or migrations belong in the final runtime.
 | --- | --- | --- |
 | Canonical integer and MBID foreign keys written together | Integer foreign keys; MBIDs only on canonical entity rows | Resolve MBIDs once at boundaries and remove synchronization triggers |
 | `ProviderItems` canonical IDs and match fields | Typed `Provider*Matches` tables | Provider ingestion writes facts only; matcher writes edges only |
-| `ProviderItems.provider_album_id` | `ProviderReleaseMembers` | One provider track may have many distinct release occurrences |
+| `ProviderItems.provider_album_id` | `ProviderEditionMembers` | One provider track may have many distinct edition occurrences |
 | Scalar provider artist fields | `ProviderItemCredits` | Preserve ordered credits without inventing roles or join phrases |
 | `ProviderItems.quality` / `library_slot` | `ProviderItemAudioVariants` | One provider identity may expose several stereo/spatial renditions |
-| `ProviderItemMatches` | `ProviderArtistMatches`, `ProviderReleaseMatches`, `ProviderTrackMatches`, `ProviderVideoMatches` | Match state and manual decision source remain separate |
-| `ReleaseGroupSlots` monitoring/selection | `LibraryReleaseGroups` and `LibraryReleases` | Stereo and Spatial are default library rows, not enum authorities |
-| Credited content changing canonical ownership | `LibraryReleaseScopes` | Scope explains why content is wanted; canonical credits still own naming and placement |
-| `ReleaseGroupSlotTargets` | Canonical `Tracks` selected through `LibraryReleases` | Wanted/availability/completion state is derived, not duplicated |
+| `ProviderItemMatches` | `ProviderArtistMatches`, `ProviderEditionMatches`, `ProviderTrackMatches`, `ProviderVideoMatches` | Match state and manual decision source remain separate |
+| `ReleaseGroupSlots` monitoring/selection | `LibraryAlbums` and `LibraryEditions` | Stereo and Spatial are default library rows, not enum authorities |
+| Credited content changing canonical ownership | `LibraryEditionScopes` | Scope explains why content is wanted; canonical credits still own naming and placement |
+| `ReleaseGroupSlotTargets` | Canonical `Tracks` selected through `LibraryEditions` | Wanted/availability/completion state is derived, not duplicated |
 | `ReleaseGroupSlotSources` | `AcquisitionPlanSources` | Sources reference accepted typed release matches |
 | `ReleaseGroupSlotTrackAssignments` | `AcquisitionPlanTracks` | Assignments reference canonical tracks, typed matches, and normalized variants |
 | Semicolon `selected_provider_id` composites | Rows in `AcquisitionPlanSources` | No delimited operational identifiers |
@@ -60,3 +60,6 @@ authority is removed only after its last reader and writer have migrated.
 - One acquisition plan belongs to one selected library release and one provider.
 - Completion is proved only by an imported `TrackFiles` row in that library.
 - Canonical credits control display, tags, naming, and file placement.
+- Each playable `TrackFiles` row has exactly one `library_id`, even when several
+  libraries use one root. Metadata, lyric, and other-extra files use normalized
+  many-to-many library associations and outlive any single owner.

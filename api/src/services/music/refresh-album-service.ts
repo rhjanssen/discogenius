@@ -218,7 +218,15 @@ export class RefreshAlbumService {
         releaseMbid: string | null;
     } {
         const providerItem = db.prepare(`
-            SELECT release_group.mbid AS release_group_mbid, release.mbid AS release_mbid
+            SELECT
+              CASE
+                WHEN COUNT(DISTINCT release_group.id) = 1
+                THEN MAX(release_group.mbid)
+              END AS release_group_mbid,
+              CASE
+                WHEN COUNT(DISTINCT release.id) = 1
+                THEN MAX(release.mbid)
+              END AS release_mbid
             FROM ProviderItems item
             JOIN ProviderEditionMatches match
               ON match.provider_edition_item_id = item.id
@@ -228,11 +236,6 @@ export class RefreshAlbumService {
             WHERE item.provider = ?
               AND item.entity_type = 'release'
               AND item.provider_id = ?
-            ORDER BY
-              CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-              match.confidence DESC,
-              match.id
-            LIMIT 1
         `).get(providerId, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
         return {
@@ -350,18 +353,9 @@ export class RefreshAlbumService {
         if (normalizedProviderId) {
             return streamingProviderManager.getStreamingProvider(normalizedProviderId);
         }
-
-        const itemRow = db.prepare(`
-            SELECT provider
-            FROM ProviderItems
-            WHERE entity_type = 'release' AND provider_id = ?
-            ORDER BY updated_at DESC
-            LIMIT 1
-        `).get(albumId) as { provider?: string } | undefined;
-        if (itemRow?.provider) {
-            return streamingProviderManager.getStreamingProvider(itemRow.provider);
-        }
-
+        // A bare provider resource id cannot identify its provider. Callers
+        // without an explicit provider intentionally address the configured
+        // default provider; never infer one from a colliding ProviderItems row.
         return streamingProviderManager.getDefaultStreamingProvider();
     }
     private static getArtistMbidForReleaseGroup(releaseGroupMbid?: string | null): string | null {
@@ -411,7 +405,10 @@ export class RefreshAlbumService {
         }
 
         const cachedProviderArtist = db.prepare(`
-            SELECT artist.mbid
+            SELECT CASE
+              WHEN COUNT(DISTINCT artist.id) = 1
+              THEN MAX(artist.mbid)
+            END AS mbid
             FROM ProviderItems item
             JOIN ProviderArtistMatches match
               ON match.provider_artist_item_id = item.id
@@ -420,11 +417,6 @@ export class RefreshAlbumService {
             WHERE item.provider = ?
               AND item.entity_type = 'artist'
               AND item.provider_id = ?
-            ORDER BY
-              CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-              match.confidence DESC,
-              match.id
-            LIMIT 1
         `).get(providerId, providerArtistId) as { mbid?: string | null } | undefined;
         if (cachedProviderArtist?.mbid) {
             return this.ensureMusicBrainzArtist(cachedProviderArtist.mbid, false);

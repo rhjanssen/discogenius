@@ -11,6 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let monitoringModule: typeof import("./artist-monitoring.js");
 let refreshArtistModule: typeof import("./refresh-artist-service.js");
+let curationModule: typeof import("./curation-service.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
   const rows = dbModule.db.prepare(`
@@ -27,6 +28,7 @@ before(async () => {
   dbModule.initDatabase();
   monitoringModule = await import("./artist-monitoring.js");
   refreshArtistModule = await import("./refresh-artist-service.js");
+  curationModule = await import("./curation-service.js");
 });
 
 beforeEach(() => {
@@ -116,6 +118,52 @@ test("monitoring a named MusicBrainz search result hydrates display metadata bef
   assert.equal(job.name, "RefreshArtist");
   assert.equal(job.ref_id, artistMbid);
   assert.equal(job.status, "queued");
+  const libraryArtists = dbModule.db.prepare(`
+    SELECT library.name, library_artist.monitored
+    FROM LibraryArtists library_artist
+    JOIN Libraries library ON library.id = library_artist.library_id
+    JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
+    JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
+    WHERE canonical.mbid = ?
+    ORDER BY library.id
+  `).all(artistMbid) as Array<{ name: string; monitored: number }>;
+  assert.ok(libraryArtists.length > 0);
+  assert.ok(libraryArtists.every((row) => row.monitored === 1));
+});
+
+test("provider-match curation does not manufacture monitoring for an unmonitored artist", async () => {
+  const artistMbid = "11111111-2222-4333-8444-555555555555";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, 'Catalog Artist')
+  `).run(artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name, monitored)
+    VALUES (?, ?, 'Catalog Artist', 0)
+  `).run(artistMbid, artistMbid);
+
+  await curationModule.CurationService.processAll(artistMbid, {
+    skipDownloadQueue: true,
+  });
+
+  const libraryArtists = dbModule.db.prepare(`
+    SELECT library_artist.monitored
+    FROM LibraryArtists library_artist
+    JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
+    JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
+    WHERE canonical.mbid = ?
+  `).all(artistMbid) as Array<{ monitored: number }>;
+  const monitoredAlbums = dbModule.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM LibraryAlbums library_album
+    JOIN Albums album ON album.id = library_album.release_group_id
+    WHERE album.artist_mbid = ?
+      AND library_album.monitored = 1
+  `).get(artistMbid) as { count: number };
+
+  assert.ok(libraryArtists.length > 0);
+  assert.ok(libraryArtists.every((row) => row.monitored === 0));
+  assert.equal(monitoredAlbums.count, 0);
 });
 
 test("unmonitoring an artist clears unlocked library curation and videos", () => {

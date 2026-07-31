@@ -243,13 +243,15 @@ export const handleSeedVideo: CommandHandler<"SeedVideo"> = async (job, ctx) => 
 
     if (job.payload.monitorVideo !== false) {
         const providerItem = db.prepare(`
-            SELECT recording_id AS recordingId
-            FROM ProviderItems
-            WHERE entity_type = 'video'
-              AND provider_id = ?
-              AND (? IS NULL OR provider = ?)
-            ORDER BY updated_at DESC
-            LIMIT 1
+            SELECT MIN(video_match.recording_id) AS recordingId
+            FROM ProviderItems item
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = item.id
+             AND video_match.match_state = 'accepted'
+            WHERE item.entity_type = 'video'
+              AND item.provider_id = ?
+              AND (? IS NULL OR item.provider = ?)
+            HAVING COUNT(DISTINCT video_match.recording_id) = 1
         `).get(
             providerId,
             job.payload.provider || null,

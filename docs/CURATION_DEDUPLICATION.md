@@ -14,13 +14,15 @@ fallback.
 - MusicBrainz/Lidarr metadata defines artists, release groups, releases, media,
   tracks, and recordings.
 - Streaming providers define availability and actionable resources.
-- `ReleaseGroupSlots` stores the wanted state and the selected provider resource
-  for each library slot.
+- `LibraryAlbums` and `LibraryEditions` store wanted and selected canonical
+  releases independently for each configured library.
 - `ProviderItems` is the single provider-offer cache. Discogenius intentionally
   does not maintain a second provider-shaped catalog beside the MusicBrainz
   graph.
-- `ProviderItemMatches` stores direct and composite edges from provider offers
-  to MusicBrainz releases.
+- `ProviderEditionMatches`, `ProviderTrackMatches`, `ProviderVideoMatches`, and
+  `ProviderArtistMatches` are the only provider-to-canonical identity edges.
+- `AcquisitionPlanSources` and `AcquisitionPlanTracks` persist multi-provider
+  coverage for a selected library edition without inventing a generic match.
 - Provider rows store normalized availability/action evidence, not full raw
   catalog responses.
 
@@ -32,9 +34,9 @@ Each wanted release group can have independent slots:
 - `spatial`: surround/spatial audio library target. The core uses
   format-agnostic wording; providers expose native labels such as
   `DOLBY_ATMOS`.
-- `video`: MusicBrainz video recordings where available, plus provider-only
-  provisional video recordings when a connected provider exposes more videos
-  than MusicBrainz currently knows.
+- `video`: MusicBrainz video recordings with accepted provider availability.
+  Unmatched provider videos remain cached offers and cannot become wanted or
+  actionable canonical recordings by themselves.
 
 ## Runtime Flow
 
@@ -42,20 +44,20 @@ Each wanted release group can have independent slots:
    catalog source.
 2. Artist refresh syncs MusicBrainz release groups, release details,
    music-video recordings, and recording relationships into `ArtistMetadata`,
-   `Albums`, `AlbumReleases`, `Tracks`, `Recordings`, and
+   `Albums`, `AlbumEditions`, `Tracks`, `Recordings`, and
    `RecordingRelations`.
 3. The active streaming provider supplies release offers for the artist.
 4. Provider offers are matched against the artist's MusicBrainz releases, with
    release groups currently used as the implementation container in the legacy
    matcher.
-5. Direct and composite provider-to-release matches are persisted in
-   `ProviderItemMatches` when there is enough evidence.
+5. Accepted release and track decisions are persisted in their typed match
+   tables when there is enough evidence.
 6. Curation applies MusicBrainz category and redundancy settings to
-   `ReleaseGroupSlots.wanted`.
-7. Slot selection chooses an available MusicBrainz release and provider resource
-   for each wanted slot.
-8. Download Missing queues selected provider resources for wanted, missing
-   slots.
+   per-library `LibraryAlbums` and `LibraryEditions`.
+7. Acquisition planning selects one or more accepted provider-edition sources
+   and exact typed track matches for each selected library edition.
+8. Download Missing queues incomplete acquisition-plan assignments for the
+   applicable library.
 9. Download/import writes library files, metadata sidecars, and tags from
    canonical MusicBrainz identity plus provider evidence.
 
@@ -80,9 +82,9 @@ Current implementation notes:
   so this part is not fully at the target model yet.
 - The matcher can record release-level evidence such as `releaseMbid` and
   `availableReleaseMbids`.
-- Composite release coverage is persisted in `ProviderItemMatches`, so the
-  availability graph can reason about provider-album sets that cover a
-  MusicBrainz release.
+- Composite release coverage is persisted as acquisition-plan sources and track
+  assignments, so the planner can combine provider editions without weakening
+  the typed identity graph.
 - Servarr Metadata Server mode often lacks UPC/ISRC/external-link richness, so
   title and tracklist shape remain important fallbacks.
 
@@ -105,9 +107,9 @@ spatial/video policy, or explicit/clean preference are not candidates for the
 coverage solver. They should not be selected first and removed afterward,
 because that can produce a worse or impossible coverage set.
 
-Provider matching fills or clears availability fields such as
-`selected_provider`, `selected_provider_id`, `selected_release_mbid`, quality,
-compact offer snapshot, and match evidence.
+Provider matching writes typed decisions and provider-native capabilities.
+Curation and acquisition planning separately select canonical editions,
+provider sources, audio variants, and exact track assignments per library.
 
 ## Release Selection
 
@@ -121,9 +123,8 @@ the requested library slot. Current criteria include:
 - explicit/clean preference where evidence is available;
 - stronger matching evidence before weaker title/shape-only evidence.
 
-The current code can promote a slot to the largest covered release in the
-release group's availability graph after direct and composite matches are
-persisted.
+The current code can select a better-covered canonical edition and compose its
+acquisition plan from several accepted provider editions where required.
 
 ## Discography Deduplication
 
@@ -155,14 +156,13 @@ tracked in `docs/TASKS.md`.
 
 ## Queue Coupling
 
-`queueMonitoredItems` queues selected provider resources from `ReleaseGroupSlots`.
+`DownloadMissing` queues provider resources from current acquisition plans.
 
 - Stereo slots download into the music root.
 - Spatial slots download into the spatial root.
 - Videos download from provider video IDs, but provider IDs stay in provider
-  offer/provenance rows. Canonical video identity lives in `Recordings` when
-  MusicBrainz has the video, and in provisional provider-only recording rows
-  otherwise.
+  offer/provenance rows. A provider video becomes actionable only through an
+  accepted `ProviderVideoMatches` edge to a canonical `Recordings` row.
 
 Download work stays in `download-processor.ts`; scheduled/non-download work
 stays in scheduler commands.

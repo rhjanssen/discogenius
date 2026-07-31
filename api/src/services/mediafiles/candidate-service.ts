@@ -19,6 +19,15 @@ export interface CatalogAlbumCandidate {
     num_tracks: number;
 }
 
+export interface CatalogVideoCandidate {
+    id: string;
+    mbid: string;
+    title: string;
+    artist_name: string;
+    artist: { id: string | null; name: string };
+    duration: number | null;
+}
+
 // Same tokeniser search.ts uses for the CatalogSearch FTS table so album-title
 // discovery here behaves identically to the global search box.
 function toFtsPrefixQuery(value: string): string | null {
@@ -126,6 +135,60 @@ export class CatalogCandidateService {
             artist_name: row.artist_name || "",
             artist: { id: row.artist_mbid, name: row.artist_name || "" },
             num_tracks: Number(row.num_tracks || 0),
+        }));
+    }
+
+    static getVideoRecordingCandidates(opts: {
+        artist?: string | null;
+        title?: string | null;
+        limit?: number;
+    }): CatalogVideoCandidate[] {
+        const artist = String(opts.artist || "").trim();
+        const title = String(opts.title || "").trim();
+        const limit = Math.max(1, Math.min(50, opts.limit ?? 12));
+        if (!artist && !title) return [];
+
+        const clauses = ["recording.is_video = 1"];
+        const params: Array<string | number> = [];
+        if (title) {
+            clauses.push("recording.title LIKE ?");
+            params.push(`%${title}%`);
+        }
+        if (artist) {
+            clauses.push(`(
+                artist.name LIKE ?
+                OR recording.artist_credit LIKE ?
+            )`);
+            params.push(`%${artist}%`, `%${artist}%`);
+        }
+        params.push(limit);
+
+        return (db.prepare(`
+            SELECT
+              recording.mbid AS id,
+              recording.title,
+              artist.name AS artist_name,
+              COALESCE(artist.mbid, recording.artist_mbid) AS artist_mbid,
+              recording.length_ms
+            FROM Recordings recording
+            LEFT JOIN ArtistMetadata artist
+              ON artist.id = recording.artist_metadata_id
+            WHERE ${clauses.join(" AND ")}
+            ORDER BY recording.title, recording.mbid
+            LIMIT ?
+        `).all(...params) as Array<{
+            id: string;
+            title: string;
+            artist_name: string | null;
+            artist_mbid: string | null;
+            length_ms: number | null;
+        }>).map((row) => ({
+            id: row.id,
+            mbid: row.id,
+            title: row.title,
+            artist_name: row.artist_name || "",
+            artist: { id: row.artist_mbid, name: row.artist_name || "" },
+            duration: row.length_ms == null ? null : row.length_ms / 1000,
         }));
     }
 }

@@ -4,7 +4,6 @@ import type { ManualImportSummary } from "./manual-import-service.js";
 export interface CanonicalManualImportMapping {
   unmappedFileId: number;
   trackId: number;
-  providerItemId?: number | null;
 }
 
 export interface CanonicalManualImportRequest {
@@ -23,13 +22,6 @@ interface CanonicalTrackRow {
 interface LibraryRow {
   id: number;
   root_path: string;
-}
-
-interface ProviderProvenanceRow {
-  id: number;
-  provider: string;
-  entity_type: string;
-  provider_id: string;
 }
 
 /**
@@ -57,8 +49,9 @@ export type LegacyManualImporter = (
  *
  * The selected Library, Release and Track rows are validated before any
  * filesystem work begins. The legacy file mover/tagger receives exact canonical
- * track MBIDs, then this service attaches schema-41 integer authority and
- * optional provider provenance to the imported TrackFiles.
+ * track MBIDs, then this service attaches schema-41 integer authority to the
+ * imported TrackFiles. Unknown-file import is canonical-only: provider
+ * provenance belongs exclusively to the provider-download path.
  */
 function normalizeForCompare(value: string): string {
   return value.split("\\").join("/").replace(/\/+$/, "").toLowerCase();
@@ -102,6 +95,11 @@ export class CanonicalManualImportService {
     const unmappedIds = new Set<number>();
     const trackIds = new Set<number>();
     for (const mapping of request.mappings) {
+      if (Object.prototype.hasOwnProperty.call(mapping, "providerItemId")) {
+        throw new Error(
+          "Canonical manual import does not accept providerItemId; provider provenance is reserved for provider downloads",
+        );
+      }
       if (!Number.isInteger(mapping.unmappedFileId) || mapping.unmappedFileId <= 0) {
         throw new Error("Every mapping requires a valid unmappedFileId");
       }
@@ -131,14 +129,7 @@ export class CanonicalManualImportService {
         AND track.album_edition_id = ?
         AND recording.is_video = 0
     `);
-    const getProvenance = this.db.prepare(`
-      SELECT id, provider, entity_type, provider_id
-      FROM ProviderItems
-      WHERE id = ?
-    `);
-
     const trackById = new Map<number, CanonicalTrackRow>();
-    const provenanceByTrackId = new Map<number, ProviderProvenanceRow | null>();
     for (const mapping of request.mappings) {
       if (!getUnmapped.get(mapping.unmappedFileId)) {
         throw new Error(`Unmapped file ${mapping.unmappedFileId} no longer exists`);
@@ -150,16 +141,6 @@ export class CanonicalManualImportService {
         );
       }
       trackById.set(mapping.trackId, track);
-
-      if (mapping.providerItemId == null) {
-        provenanceByTrackId.set(mapping.trackId, null);
-        continue;
-      }
-      const provenance = getProvenance.get(mapping.providerItemId) as ProviderProvenanceRow | undefined;
-      if (!provenance || provenance.entity_type !== "track") {
-        throw new Error(`Provider provenance ${mapping.providerItemId} is not a track item`);
-      }
-      provenanceByTrackId.set(mapping.trackId, provenance);
     }
 
     const summary = await this.importFiles(
@@ -220,18 +201,11 @@ export class CanonicalManualImportService {
         track_id = @trackId,
         recording_id = @recordingId,
         file_class = 'audio',
-        provider_item_id = @providerItemId,
-        provider = @provider,
-        provider_entity_type = CASE WHEN @providerItemId IS NULL THEN NULL ELSE 'track' END,
-        provider_id = @providerExternalId,
-        source_audio_variant_id = (
-          SELECT id
-          FROM ProviderItemAudioVariants
-          WHERE provider_item_id = @providerItemId
-            AND availability NOT IN ('unavailable', 'restricted')
-          ORDER BY verified_at DESC, id DESC
-          LIMIT 1
-        ),
+        provider_item_id = NULL,
+        provider = NULL,
+        provider_entity_type = NULL,
+        provider_id = NULL,
+        source_audio_variant_id = NULL,
         source_quality = COALESCE(source_quality, quality),
         imported_quality = COALESCE(imported_quality, quality),
         verified_at = CURRENT_TIMESTAMP
@@ -292,17 +266,12 @@ export class CanonicalManualImportService {
             `Imported file ${reported.file_path} is outside library root ${library.root_path}`,
           );
         }
-        const imported = { id: reported.id };
-        const provenance = provenanceByTrackId.get(mapping.trackId) ?? null;
         updateImportedFile.run({
-          fileId: imported.id,
+          fileId: reported.id,
           libraryId: request.libraryId,
           editionId: request.editionId,
           trackId: track.id,
           recordingId: track.recording_id,
-          provider: provenance?.provider ?? null,
-          providerItemId: provenance?.id ?? null,
-          providerExternalId: provenance?.provider_id ?? null,
         });
       }
     })();
