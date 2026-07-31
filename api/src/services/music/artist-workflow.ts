@@ -149,8 +149,23 @@ export function isArtistWorkflow(value: unknown): value is ArtistWorkflow {
   return typeof value === "string" && value in WORKFLOW_PHASES;
 }
 
+/**
+ * Phases for a workflow, validated.
+ *
+ * Command payloads are persisted JSON, so a stale, hand-queued or
+ * partially-migrated row can carry a workflow this build does not know. Returning
+ * `undefined` for that case surfaced three frames later as
+ * "Cannot read properties of undefined (reading 'scanLibrary')", which names
+ * neither the command nor the bad value. Fail here, where both are in hand.
+ */
 export function getArtistWorkflowPhases(workflow: ArtistWorkflow): WorkflowPhases {
-  return WORKFLOW_PHASES[workflow];
+  const phases = WORKFLOW_PHASES[workflow];
+  if (!phases) {
+    throw new Error(
+      `Unknown artist workflow ${JSON.stringify(workflow)}; expected one of ${Object.keys(WORKFLOW_PHASES).join(", ")}`,
+    );
+  }
+  return phases;
 }
 
 export function buildRefreshArtistCommand(params: {
