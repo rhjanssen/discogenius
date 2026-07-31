@@ -15,7 +15,7 @@
  * MB-local mode fills these in; until then matching falls back to
  * title/track-count/date/duration (see §3 "Rate limits").
  */
-import { ServarrMetadataService } from "../metadata/servarr-metadata.js";
+import { servarrMetadata, ServarrMetadataService } from "../metadata/servarr-metadata.js";
 import type {
   CatalogProvider,
   CatalogSearchOptions,
@@ -32,15 +32,18 @@ export class ServarrMetadataCatalogProvider implements CatalogProvider {
   readonly name = "Servarr Metadata Server";
 
   /**
-   * Inject the service for testability. Defaults to a fresh `ServarrMetadataService`
-   * (read-only methods used here don't touch the DB, so a fresh instance is
-   * safe — the DB-writing `syncArtist` / `syncReleaseGroup` live on the service
-   * and remain the live ingestion path, separate from this read adapter).
+   * Inject the service for testability. Defaults to the shared
+   * `servarrMetadata` singleton that every other caller in the process uses.
+   *
+   * It previously defaulted to a fresh `ServarrMetadataService`, which made the
+   * registered catalog provider read through a second, parallel instance of the
+   * canonical metadata client — a different object from the one the rest of the
+   * ingestion path talks to.
    */
   constructor(private readonly service: Pick<
     ServarrMetadataService,
     "getArtistInfo" | "getAlbumInfo" | "searchForNewArtist" | "searchAll"
-  > = new ServarrMetadataService()) {}
+  > = servarrMetadata) {}
 
   async getArtist(artistMbid: string): Promise<LidarrArtist> {
     return this.service.getArtistInfo(artistMbid);
