@@ -66,6 +66,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
         composition: "single_source",
         downloadMode: "album",
         sourceIds: [1],
+        preferredSourceId: null,
         tracks: [
           {
             trackId: 1,

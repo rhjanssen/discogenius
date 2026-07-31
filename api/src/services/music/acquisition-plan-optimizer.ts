@@ -50,6 +50,12 @@ export interface OptimizedAcquisitionPlan {
   composition: "single_source" | "composite";
   downloadMode: "album" | "tracks";
   sourceIds: number[];
+  /**
+   * The Provider Edition the user asked for, when it survived into the plan.
+   * It becomes the plan's `primary` source regardless of how many tracks it
+   * contributes, so the preference is still recoverable on the next replan.
+   */
+  preferredSourceId: number | null;
   tracks: OptimizedAcquisitionTrack[];
 }
 
@@ -163,6 +169,7 @@ function buildProviderPlan(
   orderedTrackIds: readonly number[],
   profile: AcquisitionQualityProfile,
   sources: readonly AcquisitionSourceCandidate[],
+  preferredSource: AcquisitionSourceCandidate | null = null,
 ): CandidatePlan | null {
   if (sources.length === 0) return null;
   const sourceById = new Map(sources.map((source) => [source.providerEditionMatchId, source]));
@@ -210,12 +217,22 @@ function buildProviderPlan(
     const allowedSources = new Set(subset);
     const usedMembers = new Set<number>();
     const tracks: TrackOption[] = [];
+    // Within a subset the user's chosen offer supplies every track it carries;
+    // other accepted sources only fill what it does not have. Without this the
+    // ordinary ranking would quietly drop the preferred offer whenever a
+    // secondary edition scored better on relation or quality.
+    const preferredFirst = (option: TrackOption): number =>
+      preferredSource && option.providerEditionMatchId === preferredSource.providerEditionMatchId
+        ? 0
+        : 1;
     for (const trackId of orderedTrackIds) {
       const option = [...(optionsByTrack.get(trackId) || [])]
         .filter((candidate) =>
           allowedSources.has(candidate.providerEditionMatchId)
           && !usedMembers.has(candidate.providerEditionMemberId))
-        .sort((left, right) => compareOptions(profile, left, right))[0];
+        .sort((left, right) =>
+          preferredFirst(left) - preferredFirst(right)
+          || compareOptions(profile, left, right))[0];
       if (!option) continue;
       usedMembers.add(option.providerEditionMemberId);
       tracks.push(option);
@@ -236,6 +253,10 @@ function buildProviderPlan(
     );
     const candidate: CandidatePlan = {
       provider: sources[0].provider,
+      preferredSourceId: preferredSource
+        && usedSourceIds.includes(preferredSource.providerEditionMatchId)
+        ? preferredSource.providerEditionMatchId
+        : null,
       composition: usedSourceIds.length === 1 ? "single_source" : "composite",
       downloadMode: albumSafe ? "album" : "tracks",
       sourceIds: usedSourceIds,
@@ -252,7 +273,16 @@ function buildProviderPlan(
         0,
       ),
     };
-    if (!best || compareCandidatePlans(candidate, best, neutralPriority) < 0) {
+    // A subset that keeps the user's chosen offer wins before any other
+    // ranking key: the preference is intent, not a scoring hint.
+    const keepsPreferred = (plan: CandidatePlan): number =>
+      preferredSource && plan.preferredSourceId != null ? 0 : 1;
+    if (
+      !best
+      || keepsPreferred(candidate) - keepsPreferred(best) < 0
+      || (keepsPreferred(candidate) === keepsPreferred(best)
+        && compareCandidatePlans(candidate, best, neutralPriority) < 0)
+    ) {
       best = candidate;
     }
   }
@@ -262,15 +292,35 @@ function buildProviderPlan(
 /**
  * Optimize within each provider first, then compare the best provider-local
  * plans. Cross-provider composite plans are intentionally unsupported.
+ *
+ * A `preferredProviderEditionMatchId` is a primary preference, not a source
+ * lock: planning stays inside that offer's provider, and plans containing the
+ * offer outrank plans that drop it, but an accepted secondary Provider Edition
+ * from the same provider may still cover canonical tracks the preferred offer
+ * does not carry. Pass `exclusive` for the explicit single-source lock.
  */
 export function optimizeAcquisitionPlan(input: {
   orderedTrackIds: readonly number[];
   profile: AcquisitionQualityProfile;
   sources: readonly AcquisitionSourceCandidate[];
   providerPriority: readonly string[];
+  preferredProviderEditionMatchId?: number | null;
+  exclusive?: boolean;
 }): OptimizedAcquisitionPlan | null {
+  const preferredId = input.preferredProviderEditionMatchId ?? null;
+  const preferredSource = preferredId == null
+    ? null
+    : input.sources.find((source) => source.providerEditionMatchId === preferredId) ?? null;
+
+  let candidateSources = input.sources;
+  if (preferredSource) {
+    candidateSources = input.exclusive === true
+      ? [preferredSource]
+      : input.sources.filter((source) => source.provider === preferredSource.provider);
+  }
+
   const byProvider = new Map<string, AcquisitionSourceCandidate[]>();
-  for (const source of input.sources) {
+  for (const source of candidateSources) {
     const group = byProvider.get(source.provider) || [];
     group.push(source);
     byProvider.set(source.provider, group);
@@ -278,10 +328,15 @@ export function optimizeAcquisitionPlan(input: {
   const providerPriority = new Map(
     input.providerPriority.map((provider, index) => [provider, index]),
   );
+  const preferredKept = (plan: CandidatePlan): number =>
+    preferredSource && plan.sourceIds.includes(preferredSource.providerEditionMatchId) ? 0 : 1;
   const plans = [...byProvider.values()]
-    .map((sources) => buildProviderPlan(input.orderedTrackIds, input.profile, sources))
+    .map((sources) =>
+      buildProviderPlan(input.orderedTrackIds, input.profile, sources, preferredSource))
     .filter((plan): plan is CandidatePlan => plan != null)
-    .sort((left, right) => compareCandidatePlans(left, right, providerPriority));
+    .sort((left, right) =>
+      preferredKept(left) - preferredKept(right)
+      || compareCandidatePlans(left, right, providerPriority));
   const best = plans[0];
   if (!best) return null;
   const {

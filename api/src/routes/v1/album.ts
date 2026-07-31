@@ -151,12 +151,17 @@ router.get("/:albumId/library-availability", (req, res) => {
 router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["editionId", "providerEditionMatchId"], "Library release selection");
+    rejectUnknownKeys(
+      body,
+      ["editionId", "providerEditionMatchId", "exclusive"],
+      "Library release selection",
+    );
     res.json(new LibraryReleaseSelectionService(db).selectRelease({
       releaseGroupMbid: req.params.albumId,
       libraryId: Number.parseInt(req.params.libraryId, 10),
       editionId: getRequiredInteger(body, "editionId"),
       providerEditionMatchId: getOptionalInteger(body, "providerEditionMatchId"),
+      exclusive: getOptionalBoolean(body, "exclusive"),
     }));
   } catch (error: any) {
     if (isRequestValidationError(error)) {

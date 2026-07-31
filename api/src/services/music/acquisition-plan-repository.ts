@@ -45,8 +45,16 @@ export class AcquisitionPlanRepository {
           (counts.get(track.providerEditionMatchId) || 0) + 1,
         );
       }
+      // The user's preferred Provider Edition stays `primary` even when a
+      // secondary source contributes more tracks, so the next replan can still
+      // recover the preference from the plan.
+      const preferredSourceId = input.plan.preferredSourceId;
+      const preferredRank = (sourceId: number): number =>
+        preferredSourceId != null && sourceId === preferredSourceId ? 0 : 1;
       const orderedSources = [...input.plan.sourceIds].sort((left, right) =>
-        (counts.get(right) || 0) - (counts.get(left) || 0) || left - right);
+        preferredRank(left) - preferredRank(right)
+        || (counts.get(right) || 0) - (counts.get(left) || 0)
+        || left - right);
       const insertSource = this.db.prepare(`
         INSERT INTO AcquisitionPlanSources (
           plan_id, provider_edition_match_id, role, sort_order

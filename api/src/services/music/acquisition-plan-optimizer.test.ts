@@ -139,3 +139,96 @@ test("provider-local plans are compared only after optimization", () => {
   assert.equal(plan?.provider, "apple-music");
   assert.deepEqual(plan?.sourceIds, [50]);
 });
+
+test("a preferred provider edition is a primary preference, not a source lock", () => {
+  // The user picked offer 10, which only covers three of the four canonical
+  // tracks. Offer 20 (same provider) carries the missing one.
+  const plan = optimizeAcquisitionPlan({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["tidal"],
+    preferredProviderEditionMatchId: 10,
+    sources: [
+      source(10, "source_subset", [
+        [1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"],
+      ]),
+      source(20, "exact", [
+        [1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"],
+      ]),
+    ],
+  });
+
+  assert.ok(plan);
+  assert.equal(plan.tracks.length, 4, "the secondary source must cover the missing track");
+  assert.equal(plan.composition, "composite");
+  assert.ok(plan.sourceIds.includes(10), "the preferred offer must still be used");
+  assert.equal(plan.preferredSourceId, 10);
+});
+
+test("an explicit exclusive source lock keeps planning inside the chosen offer", () => {
+  const plan = optimizeAcquisitionPlan({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["tidal"],
+    preferredProviderEditionMatchId: 10,
+    exclusive: true,
+    sources: [
+      source(10, "source_subset", [
+        [1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"],
+      ]),
+      source(20, "exact", [
+        [1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"],
+      ]),
+    ],
+  });
+
+  assert.ok(plan);
+  assert.deepEqual(plan.sourceIds, [10]);
+  assert.equal(plan.tracks.length, 3, "an exclusive lock accepts the incomplete coverage");
+  assert.equal(plan.preferredSourceId, 10);
+});
+
+test("a preferred offer stays primary even when a secondary source carries more tracks", () => {
+  const plan = optimizeAcquisitionPlan({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["tidal"],
+    preferredProviderEditionMatchId: 10,
+    sources: [
+      source(10, "source_subset", [[1, "hires-lossless"]]),
+      source(20, "exact", [
+        [1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"],
+      ]),
+    ],
+  });
+
+  assert.ok(plan);
+  assert.equal(plan.preferredSourceId, 10);
+  assert.ok(plan.sourceIds.includes(10));
+  assert.ok(plan.sourceIds.includes(20));
+});
+
+test("a preference keeps planning inside the chosen provider", () => {
+  const deezerExact = source(
+    30,
+    "exact",
+    [[1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"]],
+    { provider: "deezer" },
+  );
+  const plan = optimizeAcquisitionPlan({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["deezer", "tidal"],
+    preferredProviderEditionMatchId: 10,
+    sources: [
+      source(10, "source_subset", [
+        [1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"],
+      ]),
+      deezerExact,
+    ],
+  });
+
+  assert.ok(plan);
+  assert.equal(plan.provider, "tidal");
+  assert.equal(plan.preferredSourceId, 10);
+});

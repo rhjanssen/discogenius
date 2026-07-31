@@ -297,11 +297,24 @@ export class LibraryReleaseSelectionService {
     };
   }
 
+  /**
+   * Select a canonical Edition for a Library.
+   *
+   * An Album may legitimately have several selected Editions in one Library —
+   * deluxe versus standard, regional variants, a stereo choice beside a spatial
+   * one, or a canonical Edition covered by a Provider superset. Selecting one
+   * therefore clears only the Editions curation chose automatically; another
+   * Edition the user deliberately locked survives.
+   *
+   * `exclusive: true` is the explicit product action that reduces the Album to
+   * this single Edition. It is never implied by an ordinary selection.
+   */
   selectRelease(input: {
     releaseGroupMbid: string;
     libraryId: number;
     editionId: number;
     providerEditionMatchId?: number;
+    exclusive?: boolean;
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.db.prepare(`
       SELECT release.id AS edition_id, release.release_group_id
@@ -350,15 +363,27 @@ export class LibraryReleaseSelectionService {
       this.db.prepare(`
         DELETE FROM LibraryEditions
         WHERE library_id = ?
+          AND edition_id != ?
           AND edition_id IN (
             SELECT id FROM AlbumEditions WHERE release_group_id = ?
           )
-      `).run(input.libraryId, target.release_group_id);
+          AND (? = 1 OR selection_mode = 'auto')
+      `).run(
+        input.libraryId,
+        input.editionId,
+        target.release_group_id,
+        input.exclusive === true ? 1 : 0,
+      );
       return (this.db.prepare(`
         INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'manual', 1, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(library_id, edition_id) DO UPDATE SET
+          selection_mode = 'manual',
+          locked = 1,
+          reason = 'user',
+          updated_at = CURRENT_TIMESTAMP
         RETURNING id
       `).get(input.libraryId, input.editionId) as { id: number }).id;
     })();

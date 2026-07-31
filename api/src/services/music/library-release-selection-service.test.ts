@@ -213,3 +213,131 @@ test("manual library selection pins the exact provider edition on the active sch
     resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
+
+test("selecting an edition keeps another deliberately selected edition for the album", () => {
+  const artistMbid = "aaaaaaaa-1111-4111-8111-111111111111";
+  const albumMbid = "aaaaaaaa-2222-4222-8222-222222222222";
+  const deluxeMbid = "aaaaaaaa-3333-4333-8333-333333333333";
+  const standardMbid = "aaaaaaaa-4444-4444-8444-444444444444";
+  resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  try {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name)
+      VALUES (1, '${artistMbid}', 'Bastille');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title)
+      VALUES (1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days');
+      INSERT INTO AlbumEditions (
+        id, mbid, release_group_id, release_group_mbid, artist_metadata_id,
+        artist_mbid, title, status, country, date, media_count, track_count
+      ) VALUES
+        (1, '${standardMbid}', 1, '${albumMbid}', 1, '${artistMbid}',
+         'Doom Days', 'Official', 'GB', '2019-06-14', 1, 2),
+        (2, '${deluxeMbid}', 1, '${albumMbid}', 1, '${artistMbid}',
+         'Doom Days (Deluxe)', 'Official', 'GB', '2019-11-01', 1, 4);
+      INSERT INTO MetadataProfiles (
+        id, name, release_type_policy, explicit_policy, require_provider_availability, redundancy_enabled
+      ) VALUES (1, 'Default', '{}', 'allow', 1, 0);
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        continue_upgrades, fallback_policy, output_format, transcode_policy
+      ) VALUES (
+        1, 'High Quality', '["lossless","hires-lossless"]',
+        '["hires-lossless","lossless"]', 'lossless',
+        0, 'best_allowed', '{"codec":"flac"}', 'preserve'
+      );
+      INSERT INTO Libraries (
+        id, name, root_path, metadata_profile_id, quality_profile_id, enabled
+      ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
+      -- Curation auto-selected the standard edition; the user then locked the
+      -- deluxe edition by hand.
+      INSERT INTO LibraryEditions (
+        id, library_id, edition_id, selection_mode, locked, reason, curation_version
+      ) VALUES (99, 1, 2, 'manual', 1, 'user', 1);
+    `);
+
+    const service = new LibraryReleaseSelectionService(db);
+    service.selectRelease({
+      releaseGroupMbid: albumMbid,
+      libraryId: 1,
+      editionId: 1,
+    });
+
+    const selected = db.prepare(`
+      SELECT edition_id, selection_mode FROM LibraryEditions
+      WHERE library_id = 1 ORDER BY edition_id
+    `).all() as Array<{ edition_id: number; selection_mode: string }>;
+    assert.deepEqual(selected, [
+      { edition_id: 1, selection_mode: "manual" },
+      { edition_id: 2, selection_mode: "manual" },
+    ]);
+
+    // The explicit exclusive action is the only thing that reduces the album
+    // back to a single selected edition.
+    service.selectRelease({
+      releaseGroupMbid: albumMbid,
+      libraryId: 1,
+      editionId: 1,
+      exclusive: true,
+    });
+    assert.deepEqual(
+      (db.prepare(`
+        SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id
+      `).all() as Array<{ edition_id: number }>).map((row) => row.edition_id),
+      [1],
+    );
+  } finally {
+    resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});
+
+test("an auto-curated edition is replaced by a manual selection", () => {
+  const artistMbid = "bbbbbbbb-1111-4111-8111-111111111111";
+  const albumMbid = "bbbbbbbb-2222-4222-8222-222222222222";
+  resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  try {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name)
+      VALUES (1, '${artistMbid}', 'Bastille');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title)
+      VALUES (1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days');
+      INSERT INTO AlbumEditions (
+        id, mbid, release_group_id, release_group_mbid, artist_metadata_id,
+        artist_mbid, title
+      ) VALUES
+        (1, 'bbbbbbbb-3333-4333-8333-333333333333', 1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days'),
+        (2, 'bbbbbbbb-4444-4444-8444-444444444444', 1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days (Deluxe)');
+      INSERT INTO MetadataProfiles (
+        id, name, release_type_policy, explicit_policy, require_provider_availability, redundancy_enabled
+      ) VALUES (1, 'Default', '{}', 'allow', 1, 0);
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        continue_upgrades, fallback_policy, output_format, transcode_policy
+      ) VALUES (
+        1, 'High Quality', '["lossless","hires-lossless"]',
+        '["hires-lossless","lossless"]', 'lossless',
+        0, 'best_allowed', '{"codec":"flac"}', 'preserve'
+      );
+      INSERT INTO Libraries (
+        id, name, root_path, metadata_profile_id, quality_profile_id, enabled
+      ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
+      INSERT INTO LibraryEditions (
+        id, library_id, edition_id, selection_mode, locked, reason, curation_version
+      ) VALUES (99, 1, 2, 'auto', 0, 'curation', 1);
+    `);
+
+    new LibraryReleaseSelectionService(db).selectRelease({
+      releaseGroupMbid: albumMbid,
+      libraryId: 1,
+      editionId: 1,
+    });
+
+    assert.deepEqual(
+      (db.prepare(`
+        SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id
+      `).all() as Array<{ edition_id: number }>).map((row) => row.edition_id),
+      [1],
+    );
+  } finally {
+    resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});

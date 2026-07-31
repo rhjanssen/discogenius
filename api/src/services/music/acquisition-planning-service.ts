@@ -83,6 +83,8 @@ export class AcquisitionPlanningService {
     providerPriority: readonly string[];
     plannerVersion: number;
     preferredProviderEditionMatchId?: number;
+    /** Explicit single-source lock. Never implied by a preference. */
+    exclusiveSource?: boolean;
   }): number | null {
     const context = this.db.prepare(`
       SELECT
@@ -238,20 +240,24 @@ export class AcquisitionPlanningService {
       ? context.current_primary_provider_edition_match_id
       : null;
     const preferredProviderEditionMatchId = explicitPreference ?? preservedManualPreference;
-    let sources = [...sourceById.values()];
-    if (preferredProviderEditionMatchId != null) {
-      const preferredSource = sourceById.get(preferredProviderEditionMatchId);
-      if (preferredSource) {
-        sources = [preferredSource];
-      } else if (explicitPreference != null) {
-        throw new Error("The selected provider offer has no accepted track matches for this edition");
-      }
+    const sources = [...sourceById.values()];
+    if (
+      preferredProviderEditionMatchId != null
+      && !sourceById.has(preferredProviderEditionMatchId)
+      && explicitPreference != null
+    ) {
+      throw new Error("The selected provider offer has no accepted track matches for this edition");
     }
+    // The preferred offer is the primary source, not an exclusive lock: the
+    // optimizer may still cover missing canonical tracks from another accepted
+    // Provider Edition of the same provider unless exclusivity was requested.
     const plan = optimizeAcquisitionPlan({
       orderedTrackIds,
       profile,
       sources,
       providerPriority: input.providerPriority,
+      preferredProviderEditionMatchId,
+      exclusive: input.exclusiveSource === true,
     });
     if (!plan) {
       this.repository.clear(input.libraryEditionId);
