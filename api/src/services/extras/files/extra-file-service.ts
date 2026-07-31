@@ -145,50 +145,125 @@ export class ExtraFileService {
     return rows.length === 1 ? rows[0].id : null;
   }
 
+  /**
+   * Which Libraries own an extra, resolved by evidence rather than by root.
+   *
+   * Several Libraries may share one filesystem root, so root equality proves
+   * only that a Library *could* own the file — it is not proof that it does.
+   * Associating every root-matching Library made a track-specific lyric or a
+   * spatial-only NFO appear to belong to Libraries that have nothing in that
+   * folder, and shared-extra deletion then had no way to tell those apart.
+   *
+   * Order of authority:
+   *   explicit library_id
+   *     → the exact TrackFile's Library
+   *     → Libraries that curated this canonical Album or Edition
+   *     → Libraries with playable files in the same folder
+   *     → every root-sharing Library, but only for album/folder-level extras
+   *     → fail closed
+   *
+   * A single root-matching Library is unambiguous and needs no further
+   * evidence; it is the ordinary single-Library installation.
+   *
+   * The last-resort broad association is deliberately unavailable to
+   * track-scoped extras. A cover or NFO written before any audio lands in the
+   * folder genuinely belongs to every Library sharing that album folder, and
+   * per-Library release on deletion keeps that honest. A lyric or thumbnail
+   * that names one canonical Track or Recording does not: guessing there is
+   * what let one Library's deletion reach another Library's sidecar.
+   */
+  static resolveOwningLibraryIds(input: ExtraFileUpsertInput): number[] {
+    if (input.libraryId != null) {
+      const library = db.prepare(`
+        SELECT id FROM Libraries WHERE id = ?
+      `).get(Number(input.libraryId)) as { id?: number } | undefined;
+      if (!library?.id) {
+        throw new Error(`Library ${input.libraryId} is unavailable for ${input.filePath}`);
+      }
+      return [library.id];
+    }
+
+    const trackFileId = this.resolveTrackFileId(input);
+    if (trackFileId != null) {
+      const trackFile = db.prepare(`
+        SELECT library_id FROM TrackFiles WHERE id = ?
+      `).get(trackFileId) as { library_id?: number | null } | undefined;
+      if (trackFile?.library_id != null) {
+        return [Number(trackFile.library_id)];
+      }
+    }
+
+    const normalizedRoot = path.resolve(input.libraryRoot);
+    const rootLibraryIds = (db.prepare(`
+      SELECT id, root_path FROM Libraries WHERE enabled = 1 ORDER BY id
+    `).all() as Array<{ id: number; root_path: string }>)
+      .filter((library) => path.resolve(library.root_path) === normalizedRoot)
+      .map((library) => library.id);
+
+    if (rootLibraryIds.length <= 1) {
+      return rootLibraryIds;
+    }
+
+    const placeholders = rootLibraryIds.map(() => "?").join(",");
+    const releaseGroupMbid = nullableText(input.canonicalReleaseGroupMbid);
+    const editionMbid = nullableText(input.canonicalReleaseMbid);
+
+    if (releaseGroupMbid || editionMbid) {
+      const curated = (db.prepare(`
+        SELECT DISTINCT library_id FROM (
+          SELECT library_album.library_id AS library_id
+          FROM LibraryAlbums library_album
+          JOIN Albums album ON album.id = library_album.release_group_id
+          WHERE ? IS NOT NULL AND album.mbid = ?
+          UNION
+          SELECT library_edition.library_id AS library_id
+          FROM LibraryEditions library_edition
+          JOIN AlbumEditions edition ON edition.id = library_edition.edition_id
+          WHERE ? IS NOT NULL AND edition.mbid = ?
+        )
+        WHERE library_id IN (${placeholders})
+        ORDER BY library_id
+      `).all(
+        releaseGroupMbid,
+        releaseGroupMbid,
+        editionMbid,
+        editionMbid,
+        ...rootLibraryIds,
+      ) as Array<{ library_id: number }>).map((row) => row.library_id);
+      if (curated.length > 0) {
+        return curated;
+      }
+    }
+
+    const folder = path.dirname(path.resolve(input.filePath));
+    const owners = (db.prepare(`
+      SELECT DISTINCT library_id, file_path
+      FROM TrackFiles
+      WHERE library_id IN (${placeholders})
+        AND file_type IN ('track', 'video')
+    `).all(...rootLibraryIds) as Array<{ library_id: number; file_path: string }>)
+      .filter((row) => path.dirname(path.resolve(row.file_path)) === folder)
+      .map((row) => row.library_id);
+
+    const folderOwners = [...new Set(owners)].sort((left, right) => left - right);
+    if (folderOwners.length > 0) {
+      return folderOwners;
+    }
+
+    const isTrackScoped = input.trackFileId != null
+      || nullableText(input.canonicalTrackMbid) != null
+      || nullableText(input.canonicalRecordingMbid) != null
+      || isLyricExtraFileType(input.fileType);
+    return isTrackScoped ? [] : rootLibraryIds;
+  }
+
   static associateLibraries(
     tableName: ExtraFileTableName,
     fileId: number,
     input: ExtraFileUpsertInput,
   ): number[] {
     const association = EXTRA_LIBRARY_ASSOCIATIONS[tableName];
-    const libraryIds = new Set<number>();
-
-    if (input.libraryId != null) {
-      const library = db.prepare(`
-        SELECT id
-        FROM Libraries
-        WHERE id = ?
-      `).get(Number(input.libraryId)) as { id?: number } | undefined;
-      if (!library?.id) {
-        throw new Error(`Library ${input.libraryId} is unavailable for ${input.filePath}`);
-      }
-      libraryIds.add(library.id);
-    } else {
-      const trackFileId = this.resolveTrackFileId(input);
-      if (trackFileId != null) {
-        const trackFile = db.prepare(`
-          SELECT library_id
-          FROM TrackFiles
-          WHERE id = ?
-        `).get(trackFileId) as { library_id?: number | null } | undefined;
-        if (trackFile?.library_id != null) {
-          libraryIds.add(Number(trackFile.library_id));
-        }
-      }
-
-      const normalizedRoot = path.resolve(input.libraryRoot);
-      const rootLibraries = db.prepare(`
-        SELECT id, root_path
-        FROM Libraries
-        WHERE enabled = 1
-        ORDER BY id
-      `).all() as Array<{ id: number; root_path: string }>;
-      for (const library of rootLibraries) {
-        if (path.resolve(library.root_path) === normalizedRoot) {
-          libraryIds.add(library.id);
-        }
-      }
-    }
+    const libraryIds = new Set<number>(this.resolveOwningLibraryIds(input));
 
     if (libraryIds.size === 0) {
       throw new Error(`No library owns sidecar ${input.filePath}`);

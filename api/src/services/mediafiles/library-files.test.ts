@@ -1260,10 +1260,36 @@ test("tracked sidecars do not collide when providers reuse the same external ID"
   fs.writeFileSync(tidalPath, "tidal lyrics");
   fs.writeFileSync(spotifyPath, "spotify lyrics");
 
+  // Each lyric sidecar belongs to a real playable file, the way every
+  // production writer supplies one. Ownership of a track-scoped extra is
+  // resolved from that file, not from root equality.
+  const insertOwner = dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, file_type, library_slot, library_root, library_id,
+      file_path, relative_path, filename, extension,
+      provider, provider_entity_type, provider_id
+    ) VALUES (?, 'track', 'stereo', ?, ?, ?, ?, ?, 'flac', ?, 'track', 'shared-track-id')
+    RETURNING id
+  `);
+  const ownerLibraryId = (dbModule.db.prepare(
+    "SELECT id FROM Libraries WHERE root_path = ? ORDER BY id LIMIT 1",
+  ).get(root) as { id?: number } | undefined)?.id ?? null;
+
   for (const [provider, filePath] of [["tidal", tidalPath], ["spotify", spotifyPath]] as const) {
+    const audioPath = filePath.replace(/\.lrc$/, ".flac");
+    const owner = insertOwner.get(
+      "sidecar-artist",
+      root,
+      ownerLibraryId,
+      audioPath,
+      path.relative(root, audioPath),
+      path.basename(audioPath),
+      provider,
+    ) as { id: number };
     libraryFilesModule.LibraryFilesService.upsertLibraryFile({
       artistId: "sidecar-artist",
       mediaId: "shared-track-id",
+      trackFileId: owner.id,
       provider,
       providerEntityType: "track",
       providerId: "shared-track-id",
