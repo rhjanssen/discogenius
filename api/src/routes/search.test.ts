@@ -115,7 +115,11 @@ test("local artist search honors canonical artwork preference", async () => {
   );
 });
 
-test("local search returns canonical tracks", async () => {
+// Seeds a complete canonical->provider graph: album, edition, recording, track,
+// accepted release/track matches, a current selected plan and the typed audio
+// variant the plan track points at. Both the track and album search branches
+// derive their displayed quality from that variant, so they share this fixture.
+function seedCanonicalAlbumGraph() {
   insertCanonicalArtist();
 
   dbModule.db.prepare(`
@@ -208,6 +212,12 @@ test("local search returns canonical tracks", async () => {
     ) VALUES (?, ?, ?, ?, ?, '{"quality":"HIRES_LOSSLESS"}')
   `).run(plan.id, track.id, source.id, trackMatch.id, variant.id);
 
+  return { release, track, plan, variant };
+}
+
+test("local search returns canonical tracks", async () => {
+  seedCanonicalAlbumGraph();
+
   const res = createMockResponse();
   await getSearchHandler()({ query: { query: "Canonical Search", type: "tracks", limit: "10" } }, res);
 
@@ -216,6 +226,50 @@ test("local search returns canonical tracks", async () => {
   assert.equal(res.body.results.tracks[0].id, "track-mbid");
   assert.equal(res.body.results.tracks[0].quality, "HIRES_LOSSLESS");
   assert.equal(res.body.results.tracks[0].monitored, true);
+});
+
+// Regression: the album branch used to COALESCE a retired ProviderItems.quality
+// scalar. ProviderItems carries no such column on the active schema, so SQLite
+// failed at prepare time and global search answered 500 as soon as any album
+// matched. Quality must come from the typed audio variants instead.
+test("local album search derives quality from typed audio variants", async () => {
+  seedCanonicalAlbumGraph();
+
+  const res = createMockResponse();
+  await getSearchHandler()({ query: { query: "Search Album", type: "albums", limit: "10" } }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.results.albums.length, 1);
+  assert.equal(res.body.results.albums[0].id, "rg-mbid");
+  assert.equal(res.body.results.albums[0].quality, "HIRES_LOSSLESS");
+  assert.equal(res.body.results.albums[0].monitored, true);
+});
+
+// Guards the whole fan-out on the active schema: every branch has to prepare and
+// run, not just the ones a type filter happens to select.
+test("local search answers every entity type on the active schema", async () => {
+  seedCanonicalAlbumGraph();
+
+  for (const type of ["artists", "albums", "tracks", "videos"]) {
+    const res = createMockResponse();
+    await getSearchHandler()({ query: { query: "Search", type, limit: "10" } }, res);
+    assert.equal(res.statusCode, 200, `type=${type} should not fail`);
+  }
+
+  const combined = createMockResponse();
+  await getSearchHandler()({ query: { query: "Search", limit: "10" } }, combined);
+  assert.equal(combined.statusCode, 200);
+  assert.equal(combined.body.results.albums.length, 1);
+  assert.equal(combined.body.results.tracks.length, 1);
+});
+
+// An empty catalog must answer cleanly rather than throwing on an unmatched branch.
+test("local search answers on an empty catalog", async () => {
+  for (const type of ["artists", "albums", "tracks", "videos"]) {
+    const res = createMockResponse();
+    await getSearchHandler()({ query: { query: "Nothing Here At All", type, limit: "10" } }, res);
+    assert.equal(res.statusCode, 200, `type=${type} should not fail on an empty catalog`);
+  }
 });
 
 test("local search returns canonical videos", async () => {

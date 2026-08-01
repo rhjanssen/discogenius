@@ -252,25 +252,25 @@ router.get("/", async (req, res) => {
               a.name AS artist_name,
               rg.images,
               (
-                SELECT COALESCE(
-                  provider_release.quality,
-                  (
-                    SELECT COALESCE(
-                      NULLIF(TRIM(CASE
-                        WHEN json_valid(plan_track.source_quality_snapshot)
-                        THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
-                        ELSE plan_track.source_quality_snapshot
-                      END), ''),
-                      NULLIF(TRIM(variant.provider_quality_label), ''),
-                      variant.quality_class
-                    )
-                    FROM AcquisitionPlanTracks plan_track
-                    JOIN ProviderItemAudioVariants variant
-                      ON variant.id = plan_track.provider_audio_variant_id
-                    WHERE plan_track.plan_id = plan.id
-                    ORDER BY plan_track.id
-                    LIMIT 1
+                -- Release quality comes from the typed audio variants behind the
+                -- selected plan. ProviderItems carries no scalar quality column;
+                -- audio capability lives in ProviderItemAudioVariants.
+                SELECT (
+                  SELECT COALESCE(
+                    NULLIF(TRIM(CASE
+                      WHEN json_valid(plan_track.source_quality_snapshot)
+                      THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
+                      ELSE plan_track.source_quality_snapshot
+                    END), ''),
+                    NULLIF(TRIM(variant.provider_quality_label), ''),
+                    variant.quality_class
                   )
+                  FROM AcquisitionPlanTracks plan_track
+                  JOIN ProviderItemAudioVariants variant
+                    ON variant.id = plan_track.provider_audio_variant_id
+                  WHERE plan_track.plan_id = plan.id
+                  ORDER BY plan_track.id
+                  LIMIT 1
                 )
                 FROM LibraryEditions library_release
                 JOIN Libraries library
