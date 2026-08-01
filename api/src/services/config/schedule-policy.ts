@@ -90,5 +90,14 @@ export function isScheduledTaskDue(intervalMinutes: number, lastQueuedAt?: strin
         return true;
     }
 
-    return Date.now() - lastQueuedTime >= intervalMinutes * 60_000;
+    const now = Date.now();
+    // If the wall clock moved backwards (or a database was restored from a
+    // machine with a future clock), do not suppress the task until that future
+    // timestamp catches up. Treat it as due; a successful enqueue rewrites
+    // last_queued_at with the current authoritative SQLite clock.
+    if (lastQueuedTime > now) {
+        return true;
+    }
+
+    return now - lastQueuedTime >= intervalMinutes * 60_000;
 }

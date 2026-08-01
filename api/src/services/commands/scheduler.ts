@@ -39,6 +39,8 @@ let scheduledTaskUpsertStmt: any | null = null;
 let scheduledTaskGetStmt: any | null = null;
 let scheduledTaskQueueStampStmt: any | null = null;
 let activeMonitoringDownloadPassStmt: any | null = null;
+let latestMonitoringCycleStarterStmt: any | null = null;
+let latestMonitoringTerminalPassStmt: any | null = null;
 
 const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
@@ -136,6 +138,75 @@ function getActiveMonitoringDownloadPassStmt() {
         }
 
         return activeMonitoringDownloadPassStmt;
+}
+
+interface PendingMonitoringTerminalPass {
+    id: number;
+    monitoring_cycle: MonitoringPassWorkflow;
+    trigger: number;
+}
+
+function getLatestMonitoringCycleStarterStmt() {
+    if (!latestMonitoringCycleStarterStmt) {
+        latestMonitoringCycleStarterStmt = db.prepare(`
+            SELECT
+                id,
+                json_extract(payload, '$.monitoringCycle') AS monitoring_cycle,
+                trigger
+            FROM commands
+            WHERE name = ?
+                AND status IN ('completed', 'failed')
+                AND ref_id IN (?, ?, ?)
+            ORDER BY id DESC
+            LIMIT 1
+        `);
+    }
+
+    return latestMonitoringCycleStarterStmt;
+}
+
+function getLatestMonitoringTerminalPassStmt() {
+    if (!latestMonitoringTerminalPassStmt) {
+        latestMonitoringTerminalPassStmt = db.prepare(`
+            SELECT id
+            FROM commands
+            WHERE name = ?
+                AND ref_id IN (?, ?, ?)
+            ORDER BY id DESC
+            LIMIT 1
+        `);
+    }
+
+    return latestMonitoringTerminalPassStmt;
+}
+
+function getPendingMonitoringTerminalPass(): PendingMonitoringTerminalPass | null {
+    const monitoringRefs = [
+        "full-cycle",
+        "curation-cycle",
+        "root-scan-cycle",
+    ] as const;
+    const row = getLatestMonitoringCycleStarterStmt().get(
+        CommandNames.RefreshMetadata,
+        ...monitoringRefs.map((workflow) => `metadata-refresh:${workflow}`),
+    ) as PendingMonitoringTerminalPass | undefined;
+    if (!row || !resolveMonitoringPassWorkflow(row.monitoring_cycle)) {
+        return null;
+    }
+
+    const latestTerminal = getLatestMonitoringTerminalPassStmt().get(
+        CommandNames.DownloadMissing,
+        ...monitoringRefs.map((workflow) => `download-missing:${workflow}`),
+    ) as { id: number } | undefined;
+    if (latestTerminal && latestTerminal.id > row.id) {
+        return null;
+    }
+
+    return row;
+}
+
+function hasPendingMonitoringTerminalPass(): boolean {
+    return getPendingMonitoringTerminalPass() !== null;
 }
 
 function getScheduledTaskInsertStmt() {
@@ -340,9 +411,38 @@ function markMonitoringCycleCompleted() {
     stampMonitoringCompleted();
 }
 
+/**
+ * Reconcile a monitoring cycle whose tagged work drained while an untagged
+ * first-degree credited-artist hydration was still active.
+ *
+ * The completed RefreshMetadata orchestrator is the durable intent. A later
+ * monitoring DownloadMissing row is the durable completion marker, so process
+ * restart and repeated completion hooks are idempotent without an in-memory
+ * flag, a wall-clock timeout, or a scan over the large command-history table.
+ */
+function reconcileMonitoringTerminalPass(): number {
+    if (hasActiveMonitoringCycleWorkflow() || hasActiveArtistWorkflowJobs()) {
+        return -1;
+    }
+
+    const pending = getPendingMonitoringTerminalPass();
+    if (!pending || hasActiveMonitoringCycleDownloadPass()) {
+        return -1;
+    }
+
+    return queueDownloadMissingPass({
+        trigger: pending.trigger ?? CommandTrigger.Unspecified,
+        monitoringCycle: pending.monitoring_cycle,
+    });
+}
+
 export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payload" | "trigger">) {
     const monitoringCycle = resolveMonitoringPassWorkflow(job.payload?.monitoringCycle);
     if (!monitoringCycle) {
+        // Credited hydration deliberately has no monitoringCycle tag. Its final
+        // completion is nevertheless the point at which a deferred global
+        // DownloadMissing becomes eligible.
+        reconcileMonitoringTerminalPass();
         return;
     }
     const expectedArtists = typeof job.payload?.expectedArtists === "number"
@@ -366,7 +466,9 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
                 markMonitoringCycleCompleted();
                 return;
             }
-            // Monitoring-cycle curation explicitly chains to the terminal download pass.
+            // Preserve the legacy curation-cycle handoff. The durable
+            // RefreshMetadata reconciliation below owns the scheduled
+            // monitored-Artist cycle.
             queueDownloadMissingPass({
                 trigger: job.trigger ?? CommandTrigger.Unspecified,
                 monitoringCycle,
@@ -390,12 +492,7 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
         return;
     }
 
-    if (!hasActiveMonitoringCycleDownloadPass()) {
-        queueDownloadMissingPass({
-            trigger: job.trigger ?? CommandTrigger.Unspecified,
-            monitoringCycle,
-        });
-    }
+    reconcileMonitoringTerminalPass();
 }
 
 export function queueCheckUpgradesPass(options: { trigger?: number } = {}) {
@@ -527,7 +624,7 @@ function getEffectiveScheduledTaskDefinition(definition: ScheduledTaskDefinition
 function getScheduledTaskActiveState(definition: ScheduledTaskDefinition): boolean {
     switch (definition.key) {
         case "monitoring-cycle":
-            return hasActiveMonitoringCycleWorkflow();
+            return hasActiveMonitoringCycleWorkflow() || hasPendingMonitoringTerminalPass();
         case "root-scan":
             return hasActiveTask(CommandNames.RescanFolders);
         case "housekeeping":
@@ -613,6 +710,11 @@ export function pollScheduledTasks() {
         return;
     }
 
+    // This also repairs the restart window where all artist work had already
+    // drained before the process came back and therefore no completion hook
+    // remained to reconsider the terminal pass.
+    reconcileMonitoringTerminalPass();
+
     for (const definition of getScheduledTaskDefinitions()) {
         const effective = getEffectiveScheduledTaskDefinition(definition);
 
@@ -625,7 +727,7 @@ export function pollScheduledTasks() {
         }
 
         if (definition.key === "monitoring-cycle") {
-            if (isChecking || hasActiveMonitoringCycleWorkflow()) {
+            if (isChecking || hasActiveMonitoringCycleWorkflow() || hasPendingMonitoringTerminalPass()) {
                 continue;
             }
 

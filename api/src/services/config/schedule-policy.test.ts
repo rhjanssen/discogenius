@@ -28,3 +28,13 @@ test("a freshly stamped SQLite UTC time is not immediately due", () => {
     Date.now = originalNow;
   }
 });
+
+test("a scheduler timestamp ahead of the current clock is due for repair", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-01-02T03:10:00Z");
+  try {
+    assert.equal(isScheduledTaskDue(30, "2026-01-02 04:10:00"), true);
+  } finally {
+    Date.now = originalNow;
+  }
+});

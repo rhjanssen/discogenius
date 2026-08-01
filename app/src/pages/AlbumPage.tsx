@@ -97,6 +97,7 @@ import {
   standardDetailActionButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
+import { getAlbumMonitorActionPresentation } from "@/pages/album/albumMonitorAction";
 import {
   RenamePreviewDialog,
   RetagPreviewDialog,
@@ -986,7 +987,7 @@ const AlbumPage = () => {
   }, [albumId, queryClient]);
 
   const handleToggleMonitor = () => {
-    if (!album || isLocked) return;
+    if (!album) return;
     toggleMonitor({ id: album.id, type: 'album', currentStatus: isMonitored });
     updateAlbumPageCache((current) => ({
       ...current,
@@ -1004,6 +1005,12 @@ const AlbumPage = () => {
     }));
     dispatchLibraryUpdated();
   };
+
+  const monitorAction = getAlbumMonitorActionPresentation({
+    isLocked,
+    isMonitored,
+    isPending: isTogglingMonitor,
+  });
 
   const librarySelectionMutation = useMutation({
     mutationFn: async ({
@@ -1351,7 +1358,7 @@ const AlbumPage = () => {
   };
 
   const albumActions: OverflowAction[] = [
-    { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', disabled: isTogglingMonitor || isLocked, onClick: handleToggleMonitor },
+    { key: 'monitor', label: monitorAction.label, disabled: monitorAction.disabled, onClick: handleToggleMonitor },
     { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
     { key: 'download', label: downloadingAlbum ? 'Adding...' : 'Download selected', disabled: downloadingAlbum || !hasAnyProviderOffer, onClick: handleDownloadPrimary },
     ...(album?.stereo_provider_id ? [{ key: 'download-stereo', label: 'Download stereo', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('stereo') }] : []),
@@ -1706,20 +1713,20 @@ const AlbumPage = () => {
                   {/* Monitor Button — icon shows action (what clicking will do) */}
                   <OverflowItem id="monitor" priority={3}>
                     <AppTooltip
-                      content={isLocked ? "Unlock to change monitoring" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
-                      relationship="label"
+                      content={monitorAction.tooltip}
+                      relationship="description"
                     >
                       <Button
                         appearance={isMonitored ? "subtle" : "primary"}
                         icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
                         onClick={handleToggleMonitor}
-                        disabled={isTogglingMonitor || isLocked}
+                        disabled={monitorAction.disabled}
                         className={mergeClasses(
                           styles.actionButton,
                           isMonitored ? styles.transparentButton : styles.primaryButton
                         )}
                       >
-                        {isMonitored ? "Unmonitor" : "Monitor"}
+                        {monitorAction.label}
                       </Button>
                     </AppTooltip>
                   </OverflowItem>

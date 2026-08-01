@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
 import {
     Badge,
     Button,
@@ -58,7 +58,11 @@ import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 import { QueueHistoryPanel } from "./QueueHistoryPanel";
-import { isInteractiveElementTarget, stopQueueControlEvent } from "./queueTabShared";
+import {
+    isInteractiveElementTarget,
+    isQueueRowActivationKey,
+    stopQueueControlEvent,
+} from "./queueTabShared";
 import {
     defaultQueueHistoryFilters,
     type QueueHistoryFilters,
@@ -1433,14 +1437,40 @@ const QueueTab = () => {
                                         ? !canMoveSelectedBottom
                                         : (isLastPendingGroup && !hasMoreQueueItems)
                                 );
+                                const isGroupRowInteractive = Boolean(groupNavPath)
+                                    || (isSelectionMode && isPendingReorderable);
+                                const groupRowRole = isSelectionMode && isPendingReorderable
+                                    ? "button"
+                                    : groupNavPath
+                                        ? "link"
+                                        : undefined;
+                                const groupRowLabel = isSelectionMode && isPendingReorderable
+                                    ? `${isGroupSelected ? "Deselect" : "Select"} ${group.title}`
+                                    : groupNavPath
+                                        ? `Open ${group.title}`
+                                        : undefined;
 
-                                const handleGroupClick = (e: ReactMouseEvent) => {
-                                    if (isInteractiveElementTarget(e.target)) return;
+                                const activateGroupRow = (shiftKey = false) => {
                                     if (isSelectionMode && isPendingReorderable) {
-                                        pendingGroupSelection.toggleItem(group.id, !isGroupSelected, { range: e.shiftKey });
+                                        pendingGroupSelection.toggleItem(group.id, !isGroupSelected, { range: shiftKey });
                                         return;
                                     }
                                     if (groupNavPath) navigate(groupNavPath);
+                                };
+                                const handleGroupClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+                                    if (isInteractiveElementTarget(event.target)) return;
+                                    activateGroupRow(event.shiftKey);
+                                };
+                                const handleGroupKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+                                    if (
+                                        !isQueueRowActivationKey(event.key)
+                                        || isInteractiveElementTarget(event.target)
+                                    ) {
+                                        return;
+                                    }
+
+                                    event.preventDefault();
+                                    activateGroupRow(event.shiftKey);
                                 };
 
                                 return (
@@ -1456,7 +1486,14 @@ const QueueTab = () => {
                                                 isDropAfter ? styles.downloadItemDropAfter : '',
                                             )}
                                             style={{ opacity: isFailed ? 0.9 : 1, cursor: groupNavPath ? 'pointer' : 'default' }}
-                                            onClick={handleGroupClick}
+                                            onClick={isGroupRowInteractive ? handleGroupClick : undefined}
+                                            onKeyDown={isGroupRowInteractive ? handleGroupKeyDown : undefined}
+                                            role={groupRowRole}
+                                            tabIndex={isGroupRowInteractive ? 0 : undefined}
+                                            aria-label={groupRowLabel}
+                                            aria-pressed={isSelectionMode && isPendingReorderable
+                                                ? isGroupSelected
+                                                : undefined}
                                             onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
                                             onTouchStart={(e) => handleGroupTouchStart(e, group.id)}
                                             onTouchEnd={handleGroupTouchEnd}
@@ -1655,9 +1692,21 @@ const QueueTab = () => {
                                                     </div>
                                                 ) : null}
                                                 {isFailed && group.items.length === 1 && (
-                                                    <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => retryItem(group.items[0].id)} />
+                                                    <Button
+                                                        size="small"
+                                                        appearance="subtle"
+                                                        icon={<ArrowClockwise24 />}
+                                                        aria-label={`Retry ${group.title}`}
+                                                        onClick={() => retryItem(group.items[0].id)}
+                                                    />
                                                 )}
-                                                <Button size="small" appearance="subtle" icon={<Delete24 />} onClick={() => { void handleDeleteAction(group); }} />
+                                                <Button
+                                                    size="small"
+                                                    appearance="subtle"
+                                                    icon={<Delete24 />}
+                                                    aria-label={`Remove ${group.title} from queue`}
+                                                    onClick={() => { void handleDeleteAction(group); }}
+                                                />
                                             </div>
                                             {isFailed && groupError ? (
                                                 <Text className={styles.downloadErrorText}>{groupError}</Text>

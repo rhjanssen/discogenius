@@ -8,3 +8,7 @@ export function isInteractiveElementTarget(target: EventTarget | null): target i
 export function stopQueueControlEvent(event: SyntheticEvent<HTMLElement>) {
     event.stopPropagation();
 }
+
+export function isQueueRowActivationKey(key: string): boolean {
+    return key === "Enter" || key === " ";
+}

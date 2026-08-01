@@ -108,47 +108,43 @@ export class RefreshArtistService {
         // idempotent. Skipping because Albums/videos already exist stranded new
         // release groups and left ISRCs / curated columns on the first hydrate.
         void force;
+        await servarrMetadata.syncArtist(artistMbid);
+        if (includeCreditedReleaseGroups) {
+            const credited = await MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(artistMbid);
+            console.log(
+                `[RefreshArtistService] Synced ${credited.releaseGroups} credited MusicBrainz release group(s) ` +
+                `and ${credited.artists} credited artist(s) for ${artistMbid}`,
+            );
+            // Scan in each first-degree credited artist one level deep so they
+            // get a picture, their MusicBrainz discography, and provider
+            // matching. Recursion is naturally bounded: credited artists are
+            // created monitored=0, so their own refresh runs with
+            // includeCreditedReleaseGroups=false and does not pull a second
+            // degree of credits. Enqueue is deduped by artistId (queue refId).
+            await this.queueCreditedArtistRefreshes(credited.artistMbids);
+        }
+        const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
+        if (syncedVideos > 0) {
+            console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
+        }
+        // An Edition carrying both audio and video Tracks says which
+        // performance each video is of — the festival/deluxe shape, where
+        // MusicBrainz represents the video tracks but states no relation.
+        const editionVideoRelations = syncVideoRelationsFromEditionMembership(artistMbid);
+        if (editionVideoRelations > 0) {
+            console.log(`[RefreshArtistService] Derived ${editionVideoRelations} video→audio relation(s) from canonical edition membership for ${artistMbid}`);
+        }
+        // MusicBrainz free-streaming URL offers are written inside a sync
+        // transaction and cannot probe resolution inline, so they land with
+        // quality=NULL. Fill those (and any other missing tags) via the
+        // provider getVideo probe now that we're outside that transaction.
         try {
-            await servarrMetadata.syncArtist(artistMbid);
-            if (includeCreditedReleaseGroups) {
-                const credited = await MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(artistMbid);
-                console.log(
-                    `[RefreshArtistService] Synced ${credited.releaseGroups} credited MusicBrainz release group(s) ` +
-                    `and ${credited.artists} credited artist(s) for ${artistMbid}`,
-                );
-                // Scan in each first-degree credited artist one level deep so they
-                // get a picture, their MusicBrainz discography, and provider
-                // matching. Recursion is naturally bounded: credited artists are
-                // created monitored=0, so their own refresh runs with
-                // includeCreditedReleaseGroups=false and does not pull a second
-                // degree of credits. Enqueue is deduped by artistId (queue refId).
-                await this.queueCreditedArtistRefreshes(credited.artistMbids);
-            }
-            const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
-            if (syncedVideos > 0) {
-                console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
-            }
-            // An Edition carrying both audio and video Tracks says which
-            // performance each video is of — the festival/deluxe shape, where
-            // MusicBrainz represents the video tracks but states no relation.
-            const editionVideoRelations = syncVideoRelationsFromEditionMembership(artistMbid);
-            if (editionVideoRelations > 0) {
-                console.log(`[RefreshArtistService] Derived ${editionVideoRelations} video→audio relation(s) from canonical edition membership for ${artistMbid}`);
-            }
-            // MusicBrainz free-streaming URL offers are written inside a sync
-            // transaction and cannot probe resolution inline, so they land with
-            // quality=NULL. Fill those (and any other missing tags) via the
-            // provider getVideo probe now that we're outside that transaction.
-            try {
-                const backfilled = await RefreshVideoService.backfillMissingVideoOfferQuality(artistMbid);
-                if (backfilled > 0) {
-                    console.log(`[RefreshArtistService] Backfilled quality on ${backfilled} video offer(s) for artist ${artistMbid}`);
-                }
-            } catch (error) {
-                console.warn(`[RefreshArtistService] Video offer quality backfill failed for ${artistMbid}:`, error);
+            const backfilled = await RefreshVideoService.backfillMissingVideoOfferQuality(artistMbid);
+            if (backfilled > 0) {
+                console.log(`[RefreshArtistService] Backfilled quality on ${backfilled} video offer(s) for artist ${artistMbid}`);
             }
         } catch (error) {
-            console.warn(`[RefreshArtistService] Failed to sync canonical metadata for artist ${artistId} (${artistMbid}):`, error);
+            console.warn(`[RefreshArtistService] Video offer quality backfill failed for ${artistMbid}:`, error);
         }
 
         return artistMbid;
@@ -208,11 +204,7 @@ export class RefreshArtistService {
         // even though local MusicBrainz already had the data. content_hash still
         // skips unchanged payloads inside syncArtistReleaseGroups.
         const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
-        try {
-            await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids);
-        } catch (error) {
-            console.warn(`[RefreshArtistService] Failed to bulk-hydrate release groups for ${artistMbid}:`, error);
-        }
+        await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids);
 
         // Always reconcile scoped covers after catalog hydration. The resolver
         // is source-marker-aware and returns without network I/O when current;

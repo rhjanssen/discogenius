@@ -138,6 +138,42 @@ test("health checks and database backups have recurring schedules and poll only 
     ).length, 1);
 });
 
+test("poll repairs a future last_queued_at by queueing once against the current clock", () => {
+    taskSchedulerModule.getScheduledTaskSnapshots();
+    dbModule.db.prepare("UPDATE scheduled_tasks SET last_queued_at = CURRENT_TIMESTAMP").run();
+    dbModule.db.prepare(`
+        UPDATE scheduled_tasks
+        SET last_queued_at = '2099-01-01 00:00:00'
+        WHERE task_key = 'health-check'
+    `).run();
+
+    taskSchedulerModule.pollScheduledTasks();
+
+    const healthJobs = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.CheckHealth],
+        10,
+    );
+    assert.equal(healthJobs.length, 1);
+
+    const repaired = dbModule.db.prepare(`
+        SELECT last_queued_at
+        FROM scheduled_tasks
+        WHERE task_key = 'health-check'
+    `).get() as { last_queued_at: string };
+    assert.notEqual(repaired.last_queued_at, "2099-01-01 00:00:00");
+    assert.ok(
+        taskSchedulerModule.getScheduledTaskSnapshots()
+            .find((task) => task.key === "health-check")
+            ?.lastQueuedAt !== "2099-01-01 00:00:00",
+    );
+
+    taskSchedulerModule.pollScheduledTasks();
+    assert.equal(queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.CheckHealth],
+        10,
+    ).length, 1);
+});
+
 test("config-prune callers can defer a distinct artwork reconciliation behind refresh workflows", () => {
     const commandId = taskSchedulerModule.queueConfigPrune({
         trigger: 1,
@@ -301,6 +337,87 @@ test("scheduled cycle defers its terminal DownloadMissing while artist intake is
 
     // DownloadMissing must NOT be queued yet — intake is still running.
     assert.equal(pendingDownloadMissing().length, 0);
+});
+
+test("credited hydration completion re-evaluates and queues one deferred terminal DownloadMissing", () => {
+    const creditedOneId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshArtist,
+        workflowModule.buildRefreshArtistCommand({
+            artistId: "credited-1",
+            artistName: "Credited One",
+            workflow: "metadata-refresh",
+        }),
+        "credited-1",
+        -10,
+    );
+    const creditedTwoId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshArtist,
+        workflowModule.buildRefreshArtistCommand({
+            artistId: "credited-2",
+            artistName: "Credited Two",
+            workflow: "metadata-refresh",
+        }),
+        "credited-2",
+        -10,
+    );
+    assert.ok(creditedOneId > 0);
+    assert.ok(creditedTwoId > 0);
+
+    const cycleId = taskSchedulerModule.queueMonitoringCyclePass({
+        trigger: 2,
+        includeRootScan: true,
+    });
+    assert.ok(cycleId > 0);
+    completeAndAdvance(cycleId);
+    assert.equal(pendingDownloadMissing().length, 0);
+
+    completeAndAdvance(creditedOneId);
+    assert.equal(pendingDownloadMissing().length, 0);
+
+    const lastCredited = completeAndAdvance(creditedTwoId);
+    const terminal = pendingDownloadMissing();
+    assert.equal(terminal.length, 1);
+    assert.equal(
+        (terminal[0].payload as Record<string, unknown>).monitoringCycle,
+        "full-cycle",
+    );
+    assert.equal(terminal[0].trigger, 2);
+
+    // Replayed completion hooks and scheduler ticks must reconcile from the
+    // same durable command history without duplicating the terminal pass.
+    taskSchedulerModule.queueNextMonitoringPass(lastCredited);
+    taskSchedulerModule.pollScheduledTasks();
+    assert.equal(pendingDownloadMissing().length, 1);
+});
+
+test("scheduler tick recovers a deferred terminal pass after the draining completion hook was missed", () => {
+    const creditedId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshArtist,
+        workflowModule.buildRefreshArtistCommand({
+            artistId: "credited-restart",
+            artistName: "Credited Restart",
+            workflow: "metadata-refresh",
+        }),
+        "credited-restart",
+        -10,
+    );
+    const cycleId = taskSchedulerModule.queueMonitoringCyclePass({
+        trigger: 2,
+        includeRootScan: true,
+    });
+    assert.ok(creditedId > 0);
+    assert.ok(cycleId > 0);
+
+    completeAndAdvance(cycleId);
+    assert.equal(pendingDownloadMissing().length, 0);
+
+    // Model a process stop after persisting completion but before invoking the
+    // in-process completion hook.
+    assert.equal(queueModule.CommandQueueManager.complete(creditedId), true);
+    assert.equal(pendingDownloadMissing().length, 0);
+
+    taskSchedulerModule.pollScheduledTasks();
+    assert.equal(pendingDownloadMissing().length, 1);
 });
 
 test("only monitoring-tagged child jobs keep the monitoring cycle active", () => {

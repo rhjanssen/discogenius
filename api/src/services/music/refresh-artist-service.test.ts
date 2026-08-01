@@ -37,6 +37,21 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+function seedCanonicalArtistForRefresh(options: {
+  artistId: string;
+  artistMbid: string;
+  lastScanned: string;
+}): void {
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, 'Refresh Failure Artist')
+  `).run(options.artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored, last_scanned)
+    VALUES (?, 'Refresh Failure Artist', ?, 1, ?)
+  `).run(options.artistId, options.artistMbid, options.lastScanned);
+}
+
 function seedSoundCloudMixtapeCatalog() {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "375227dd-11c1-4fec-afc0-f4c37a6de604";
@@ -211,6 +226,98 @@ test("artist metadata seeding queries the explicitly requested provider", async 
   }
 
   assert.equal(fetchedArtistId, "42");
+});
+
+test("required canonical sync failure rejects without stamping success or matching providers", async () => {
+  const artistId = "artist-canonical-sync-failure";
+  const artistMbid = "11111111-1111-4111-8111-111111111111";
+  const initialLastScanned = "2001-02-03 04:05:06";
+  seedCanonicalArtistForRefresh({ artistId, artistMbid, lastScanned: initialLastScanned });
+
+  const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+  const service = refreshServiceModule.RefreshArtistService as any;
+  const providerManager = providersModule.streamingProviderManager as any;
+  const originalRefreshArtistMetadata = service.refreshArtistMetadata;
+  const originalMatchArtistProviders = service.matchArtistProviders;
+  const originalSyncArtist = servarrMetadata.syncArtist;
+  const originalGetProviderPriority = providerManager.getProviderPriority;
+  let providerMatchCalls = 0;
+
+  service.refreshArtistMetadata = async () => undefined;
+  service.matchArtistProviders = async () => {
+    providerMatchCalls += 1;
+  };
+  servarrMetadata.syncArtist = async () => {
+    throw new Error("required canonical artist sync failed");
+  };
+  providerManager.getProviderPriority = () => [];
+
+  try {
+    await assert.rejects(
+      () => refreshServiceModule.RefreshArtistService.refreshArtist(artistId, { forceUpdate: true }),
+      /required canonical artist sync failed/,
+    );
+  } finally {
+    service.refreshArtistMetadata = originalRefreshArtistMetadata;
+    service.matchArtistProviders = originalMatchArtistProviders;
+    servarrMetadata.syncArtist = originalSyncArtist;
+    providerManager.getProviderPriority = originalGetProviderPriority;
+  }
+
+  const artist = dbModule.db.prepare("SELECT last_scanned FROM Artists WHERE id = ?")
+    .get(artistId) as { last_scanned: string | null };
+  assert.equal(artist.last_scanned, initialLastScanned);
+  assert.equal(providerMatchCalls, 0);
+});
+
+test("required scoped release hydration failure rejects before provider matching and preserves watermark", async () => {
+  const artistId = "artist-release-hydration-failure";
+  const artistMbid = "22222222-2222-4222-8222-222222222222";
+  const releaseGroupMbid = "33333333-3333-4333-8333-333333333333";
+  const initialLastScanned = "2002-03-04 05:06:07";
+  seedCanonicalArtistForRefresh({ artistId, artistMbid, lastScanned: initialLastScanned });
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title)
+    VALUES (?, ?, 'Release Hydration Failure Album')
+  `).run(releaseGroupMbid, artistMbid);
+
+  const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+  const service = refreshServiceModule.RefreshArtistService as any;
+  const providerManager = providersModule.streamingProviderManager as any;
+  const originalRefreshArtistMetadata = service.refreshArtistMetadata;
+  const originalSyncArtistMusicBrainzCatalog = service.syncArtistMusicBrainzCatalog;
+  const originalMatchArtistProviders = service.matchArtistProviders;
+  const originalSyncArtistReleaseGroups = servarrMetadata.syncArtistReleaseGroups;
+  const originalGetProviderPriority = providerManager.getProviderPriority;
+  let providerMatchCalls = 0;
+
+  service.refreshArtistMetadata = async () => undefined;
+  service.syncArtistMusicBrainzCatalog = async () => artistMbid;
+  service.matchArtistProviders = async () => {
+    providerMatchCalls += 1;
+  };
+  servarrMetadata.syncArtistReleaseGroups = async () => {
+    throw new Error("required scoped release hydration failed");
+  };
+  providerManager.getProviderPriority = () => [];
+
+  try {
+    await assert.rejects(
+      () => refreshServiceModule.RefreshArtistService.refreshArtist(artistId, { forceUpdate: true }),
+      /required scoped release hydration failed/,
+    );
+  } finally {
+    service.refreshArtistMetadata = originalRefreshArtistMetadata;
+    service.syncArtistMusicBrainzCatalog = originalSyncArtistMusicBrainzCatalog;
+    service.matchArtistProviders = originalMatchArtistProviders;
+    servarrMetadata.syncArtistReleaseGroups = originalSyncArtistReleaseGroups;
+    providerManager.getProviderPriority = originalGetProviderPriority;
+  }
+
+  const artist = dbModule.db.prepare("SELECT last_scanned FROM Artists WHERE id = ?")
+    .get(artistId) as { last_scanned: string | null };
+  assert.equal(artist.last_scanned, initialLastScanned);
+  assert.equal(providerMatchCalls, 0);
 });
 
 test("unmatched provider offers persist native facts without claiming canonical ownership", () => {
