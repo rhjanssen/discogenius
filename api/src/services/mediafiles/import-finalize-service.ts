@@ -6,6 +6,7 @@ import { embedVideoThumbnail } from "./audioUtils.js";
 import { SUPPORTED_IMPORT_EXTENSIONS } from "./import-discovery.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
+import { resolvedPathIsInsideRoot } from "./path-utils.js";
 
 export type ImportedDirectoryMapping = {
     destDir: string;
@@ -100,6 +101,12 @@ export async function finalizeImportedDirectories(params: {
                 }
 
                 const destFile = explicitSidecarTargets?.get(fullPath) || path.join(mapping.destDir, entry);
+                if (!resolvedPathIsInsideRoot(destFile, mapping.libraryRootPath)) {
+                    throw new Error(
+                        `Refusing to move sidecar ${fullPath} outside library root `
+                        + `${mapping.libraryRootPath}: ${destFile}`,
+                    );
+                }
                 const samePath = normalizePath(fullPath) === normalizePath(destFile);
                 const targetPath = samePath ? fullPath : destFile;
 

@@ -46,6 +46,78 @@ function moveFileCrossDevice(sourcePath: string, destPath: string) {
   }
 }
 
+type RenamePhysicalMove = {
+  sourcePath: string;
+  destinationPath: string;
+  sourceRoot: string | null;
+};
+
+type StagedRenameDeletion = {
+  originalPath: string;
+  stagedPath: string;
+  sourceRoot: string | null;
+  id: number;
+};
+
+function rollbackPhysicalMoves(moves: RenamePhysicalMove[]): string[] {
+  const errors: string[] = [];
+  for (const move of [...moves].reverse()) {
+    try {
+      if (!fs.existsSync(move.destinationPath)) {
+        continue;
+      }
+      if (fs.existsSync(move.sourcePath)) {
+        throw new Error(`source already exists: ${move.sourcePath}`);
+      }
+      moveFileCrossDevice(move.destinationPath, move.sourcePath);
+    } catch (error) {
+      errors.push(
+        `${move.destinationPath} -> ${move.sourcePath}: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return errors;
+}
+
+function rollbackStagedDeletions(deletions: StagedRenameDeletion[]): string[] {
+  const errors: string[] = [];
+  for (const deletion of [...deletions].reverse()) {
+    try {
+      if (!fs.existsSync(deletion.stagedPath)) {
+        continue;
+      }
+      if (fs.existsSync(deletion.originalPath)) {
+        throw new Error(`original path already exists: ${deletion.originalPath}`);
+      }
+      moveFileCrossDevice(deletion.stagedPath, deletion.originalPath);
+    } catch (error) {
+      errors.push(
+        `${deletion.stagedPath} -> ${deletion.originalPath}: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return errors;
+}
+
+function stageRenameDeletion(filePath: string, id: number): string {
+  const directory = path.dirname(filePath);
+  const basename = path.basename(filePath);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const stagedPath = path.join(
+      directory,
+      `.${basename}.discogenius-delete-${process.pid}-${Date.now()}-${id}-${attempt}`,
+    );
+    if (fs.existsSync(stagedPath)) {
+      continue;
+    }
+    fs.renameSync(filePath, stagedPath);
+    return stagedPath;
+  }
+  throw new Error(`Could not allocate a rollback path for ${filePath}`);
+}
+
 // Files the rename *preview* lists. Extras (cover/nfo/lyrics/thumbnails) are not
 // shown as their own rename decisions — Lidarr's preview lists only track files and
 // moves extras as a side effect (ExtraService.MoveFilesAfterRename). The apply path
@@ -474,8 +546,11 @@ export class RenameTrackFileService {
     const dbUpdates: Array<{ sql: string; args: unknown[] }> = [];
     const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
     const fileEvents: RenameFileEvent[] = [];
+    const physicalMoves: RenamePhysicalMove[] = [];
+    const stagedDeletions: StagedRenameDeletion[] = [];
 
     for (const id of effectiveIds) {
+      let pendingMove: RenamePhysicalMove | null = null;
       try {
         const row = rowMap.get(id);
         if (!row) {
@@ -558,9 +633,14 @@ export class RenameTrackFileService {
           }
 
           if (duplicateOfSameScope) {
-            const sourceDir = path.dirname(resolvedFilePath);
             try {
-              fs.rmSync(resolvedFilePath, { force: true });
+              const stagedPath = stageRenameDeletion(resolvedFilePath, id);
+              stagedDeletions.push({
+                originalPath: resolvedFilePath,
+                stagedPath,
+                sourceRoot: resolveLibraryRootPath(row.library_root, resolvedFilePath),
+                id,
+              });
             } catch (removeError) {
               result.errors.push({ id, error: removeError instanceof Error ? removeError.message : String(removeError) });
               continue;
@@ -584,10 +664,6 @@ export class RenameTrackFileService {
                   : "merged-root-sidecar-duplicate",
               },
             });
-            const sourceRoot = resolveLibraryRootPath(row.library_root, resolvedFilePath);
-            if (sourceRoot) {
-              removeEmptyParents(sourceDir, sourceRoot);
-            }
             result.renamed++;
             continue;
           }
@@ -600,8 +676,12 @@ export class RenameTrackFileService {
           continue;
         }
 
-        const oldDir = path.dirname(resolvedFilePath);
         moveFileCrossDevice(resolvedFilePath, expectedPath);
+        pendingMove = {
+          sourcePath: resolvedFilePath,
+          destinationPath: expectedPath,
+          sourceRoot: resolveLibraryRootPath(row.library_root, resolvedFilePath),
+        };
 
         const root = resolveLibraryRootPath(null, expectedPath)
           || resolveLibraryRootPath(row.library_root, resolvedFilePath)
@@ -664,26 +744,69 @@ export class RenameTrackFileService {
           previousPath: resolvedFilePath,
         });
 
-        removeEmptyParents(oldDir, root);
+        physicalMoves.push(pendingMove);
+        pendingMove = null;
         result.renamed++;
       } catch (error) {
-        result.errors.push({ id, error: error instanceof Error ? error.message : String(error) });
+        const rollbackErrors = pendingMove ? rollbackPhysicalMoves([pendingMove]) : [];
+        const message = error instanceof Error ? error.message : String(error);
+        result.errors.push({
+          id,
+          error: rollbackErrors.length === 0
+            ? message
+            : `${message}; filesystem rollback failed: ${rollbackErrors.join("; ")}`,
+        });
       }
     }
 
     if (dbUpdates.length > 0 || historyEvents.length > 0) {
-      db.transaction(() => {
-        for (const update of dbUpdates) {
-          db.prepare(update.sql).run(...update.args);
-        }
-        for (const event of historyEvents) {
-          try {
-            recordHistoryEvent(event);
-          } catch (historyError) {
-            console.warn("[RenameTrackFileService] Failed to record rename history:", historyError);
+      try {
+        db.transaction(() => {
+          for (const update of dbUpdates) {
+            db.prepare(update.sql).run(...update.args);
           }
+          for (const event of historyEvents) {
+            try {
+              recordHistoryEvent(event);
+            } catch (historyError) {
+              console.warn("[RenameTrackFileService] Failed to record rename history:", historyError);
+            }
+          }
+        })();
+      } catch (error) {
+        const rollbackErrors = [
+          ...rollbackPhysicalMoves(physicalMoves),
+          ...rollbackStagedDeletions(stagedDeletions),
+        ];
+        if (rollbackErrors.length > 0) {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}; `
+            + `filesystem rollback failed: ${rollbackErrors.join("; ")}`,
+            { cause: error },
+          );
         }
-      })();
+        throw error;
+      }
+    }
+
+    for (const deletion of stagedDeletions) {
+      try {
+        fs.rmSync(deletion.stagedPath, { force: true });
+        if (deletion.sourceRoot) {
+          removeEmptyParents(path.dirname(deletion.originalPath), deletion.sourceRoot);
+        }
+      } catch (error) {
+        result.errors.push({
+          id: deletion.id,
+          error: `Database committed but duplicate cleanup failed for ${deletion.stagedPath}: `
+            + `${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    }
+    for (const move of physicalMoves) {
+      if (move.sourceRoot) {
+        removeEmptyParents(path.dirname(move.sourcePath), move.sourceRoot);
+      }
     }
 
     for (const event of fileEvents) {

@@ -13,6 +13,32 @@ export function normalizeResolvedPath(inputPath: string | null | undefined): str
 }
 
 /**
+ * True when a candidate path is the root itself or one of its descendants.
+ *
+ * `startsWith(root)` is not sufficient (`/music-other` is not inside `/music`),
+ * and comparing unresolved paths permits `..` to escape. Keep this helper at
+ * the persistence boundary so every TrackFiles/sidecar writer applies the same
+ * platform-aware containment rule.
+ */
+export function resolvedPathIsInsideRoot(
+    candidatePath: string | null | undefined,
+    rootPath: string | null | undefined,
+): boolean {
+    if (!String(candidatePath || "").trim() || !String(rootPath || "").trim()) {
+        return false;
+    }
+
+    const candidate = normalizeResolvedPath(candidatePath);
+    const root = normalizeResolvedPath(rootPath);
+    const relative = path.relative(root, candidate);
+    return relative === "" || (
+        relative !== ".."
+        && !relative.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relative)
+    );
+}
+
+/**
  * SQL that puts a stored path column into the same shape as
  * `normalizeComparablePath`.
  *

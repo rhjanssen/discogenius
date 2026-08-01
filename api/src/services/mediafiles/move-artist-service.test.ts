@@ -255,6 +255,70 @@ test("executeMoveArtistJob rolls back the stored artist path when the destinatio
   assert.equal(fs.existsSync(seeded.trackPath), true);
 });
 
+test("executeMoveArtistJob atomically rolls back every file row when sidecar rebasing fails", () => {
+  const seeded = seedArtistTrack();
+  const sourceCoverPath = path.join(seeded.musicRoot, "Old Artist", "Album One", "cover.jpg");
+  fs.writeFileSync(sourceCoverPath, "cover");
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    filePath: sourceCoverPath,
+    libraryRoot: seeded.musicRoot,
+    fileType: "cover",
+  });
+
+  moveArtistServiceModule.MoveArtistService.moveArtist({
+    artistId: "1",
+    path: "Artist Prime",
+    moveFiles: true,
+  });
+
+  dbModule.db.exec(`
+    CREATE TRIGGER fail_move_sidecar_rebase
+    BEFORE UPDATE OF file_path ON MetadataFiles
+    BEGIN
+      SELECT RAISE(ABORT, 'simulated sidecar rebase failure');
+    END;
+  `);
+
+  try {
+    assert.throws(
+      () => moveArtistServiceModule.MoveArtistService.executeMoveArtistJob({
+        artistId: "1",
+        sourcePath: "Old Artist",
+        destinationPath: "Artist Prime",
+      }),
+      /simulated sidecar rebase failure/,
+    );
+  } finally {
+    dbModule.db.exec("DROP TRIGGER IF EXISTS fail_move_sidecar_rebase");
+  }
+
+  const trackRow = dbModule.db.prepare(`
+    SELECT file_path AS filePath, relative_path AS relativePath
+    FROM TrackFiles
+    WHERE provider_id = '100'
+  `).get() as { filePath: string; relativePath: string };
+  const coverRow = dbModule.db.prepare(`
+    SELECT file_path AS filePath, relative_path AS relativePath
+    FROM MetadataFiles
+    WHERE file_path = ?
+  `).get(sourceCoverPath) as { filePath: string; relativePath: string } | undefined;
+  const artist = dbModule.db.prepare("SELECT path FROM Artists WHERE id = '1'")
+    .get() as { path: string };
+
+  assert.equal(trackRow.filePath, seeded.trackPath);
+  assert.equal(trackRow.relativePath, path.join("Old Artist", "Album One", "01 - Track One.flac"));
+  assert.equal(coverRow?.filePath, sourceCoverPath);
+  assert.equal(coverRow?.relativePath, path.join("Old Artist", "Album One", "cover.jpg"));
+  assert.equal(artist.path, "Old Artist");
+  assert.equal(fs.existsSync(seeded.trackPath), true);
+  assert.equal(fs.existsSync(sourceCoverPath), true);
+  assert.equal(
+    fs.existsSync(path.join(seeded.musicRoot, "Artist Prime")),
+    false,
+  );
+});
+
 test("moveArtist rejects overlapping artist folders", () => {
   seedArtistTrack({ artistPath: "Artists/Artist One" });
   dbModule.db.prepare(`

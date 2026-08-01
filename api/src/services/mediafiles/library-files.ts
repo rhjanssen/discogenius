@@ -20,7 +20,11 @@ import {
   resolveStoredLibraryPath,
   type CurrentLibraryRoots,
 } from "./library-paths.js";
-import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js";
+import {
+  normalizeComparablePath,
+  normalizeResolvedPath,
+  resolvedPathIsInsideRoot,
+} from "./path-utils.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "../commands/app-events.js";
 import {
@@ -125,7 +129,7 @@ export function removeEmptyParents(startDir: string, stopDir: string) {
   const stop = path.resolve(stopDir);
   let current = path.resolve(startDir);
 
-  while (current.startsWith(stop) && current !== stop) {
+  while (resolvedPathIsInsideRoot(current, stop) && current !== stop) {
     try {
       const entries = fs.readdirSync(current);
       if (entries.length > 0) break;
@@ -888,109 +892,35 @@ export class LibraryFilesService {
     sourcePath: string;
     destinationPath: string;
   }): { updated: number } {
-    const rows = db.prepare(`
-      SELECT id, library_id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
-      FROM TrackFiles
-      WHERE artist_id = ?
-    `).all(options.artistId) as RebaseLibraryFileRow[];
-
-    let updated = 0;
-
-    const update = db.prepare(`
-      UPDATE TrackFiles
-      SET file_path = ?,
-          relative_path = ?,
-          expected_path = ?,
-          needs_rename = 0,
-          verified_at = CURRENT_TIMESTAMP,
-          modified_at = CASE
-            WHEN ? IS NOT NULL THEN ?
-            ELSE modified_at
-          END
-      WHERE id = ?
-    `);
-
-    for (const row of rows) {
-      const currentRoot = resolveLibraryRootPath(row.library_root, row.file_path);
-      if (!currentRoot) {
-        continue;
-      }
-
-      const currentRelativePath = row.relative_path || path.relative(currentRoot, row.file_path);
-      const rebasedRelativePath = rebaseRelativePathPrefix(
-        currentRelativePath,
-        options.sourcePath,
-        options.destinationPath,
-      );
-
-      if (!rebasedRelativePath) {
-        continue;
-      }
-
-      const nextFilePath = path.join(currentRoot, rebasedRelativePath);
-      let modifiedAt: string | null = null;
-      try {
-        modifiedAt = fs.statSync(nextFilePath).mtime.toISOString();
-      } catch {
-        modifiedAt = null;
-      }
-
-      update.run(
-        nextFilePath,
-        rebasedRelativePath,
-        nextFilePath,
-        modifiedAt,
-        modifiedAt,
-        row.id,
-      );
-
-      this.emitFileUpgraded({
-        libraryFileId: row.id,
-        artistId: row.artist_id,
-        albumId: row.album_id,
-        mediaId: row.media_id,
-        fileType: row.file_type,
-        filePath: nextFilePath,
-        libraryRoot: row.library_root,
-        quality: row.quality,
-        previousPath: row.file_path,
-        reason: "artist-folder-move",
-      });
-
-      updated += 1;
-    }
-
-    // Rebase sidecar tables
-    const sidecarTables = ["MetadataFiles", "LyricFiles", "ExtraFiles"] as const;
-    for (const table of sidecarTables) {
-      const fileTypeSql = table === "LyricFiles" ? "'lyrics' AS file_type" : "file_type AS file_type";
-      const qualitySql = table === "LyricFiles" ? "quality AS quality" : "NULL AS quality";
-
-      const sidecarRows = db.prepare(`
-        SELECT id AS id,
-          artist_id AS artist_id,
-          COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
-          COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
-          file_path AS file_path,
-          relative_path AS relative_path,
-          library_root AS library_root,
-          ${fileTypeSql},
-          ${qualitySql}
-        FROM ${table}
+    // A move spans all playable and sidecar tables. If any later row fails,
+    // the caller rolls the directories back to their source locations; keeping
+    // earlier row updates would then point the database at paths that no longer
+    // exist. Commit the entire rebase as one write set, and only emit events
+    // after that commit succeeds.
+    const fileEvents: LibraryFileEventInput[] = [];
+    const updated = db.transaction(() => {
+      const rows = db.prepare(`
+        SELECT id, library_id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
+        FROM TrackFiles
         WHERE artist_id = ?
       `).all(options.artistId) as RebaseLibraryFileRow[];
 
-      const sidecarUpdate = db.prepare(`
-        UPDATE ${table}
+      let updatedCount = 0;
+      const update = db.prepare(`
+        UPDATE TrackFiles
         SET file_path = ?,
             relative_path = ?,
             expected_path = ?,
             needs_rename = 0,
-            last_updated = CURRENT_TIMESTAMP
+            verified_at = CURRENT_TIMESTAMP,
+            modified_at = CASE
+              WHEN ? IS NOT NULL THEN ?
+              ELSE modified_at
+            END
         WHERE id = ?
       `);
 
-      for (const row of sidecarRows) {
+      for (const row of rows) {
         const currentRoot = resolveLibraryRootPath(row.library_root, row.file_path);
         if (!currentRoot) {
           continue;
@@ -1008,15 +938,23 @@ export class LibraryFilesService {
         }
 
         const nextFilePath = path.join(currentRoot, rebasedRelativePath);
+        let modifiedAt: string | null = null;
+        try {
+          modifiedAt = fs.statSync(nextFilePath).mtime.toISOString();
+        } catch {
+          modifiedAt = null;
+        }
 
-        sidecarUpdate.run(
+        update.run(
           nextFilePath,
           rebasedRelativePath,
           nextFilePath,
+          modifiedAt,
+          modifiedAt,
           row.id,
         );
 
-        this.emitFileUpgraded({
+        fileEvents.push({
           libraryFileId: row.id,
           artistId: row.artist_id,
           albumId: row.album_id,
@@ -1028,11 +966,86 @@ export class LibraryFilesService {
           previousPath: row.file_path,
           reason: "artist-folder-move",
         });
-
-        updated += 1;
+        updatedCount += 1;
       }
-    }
 
+      // Rebase sidecar tables in the same transaction as TrackFiles.
+      const sidecarTables = ["MetadataFiles", "LyricFiles", "ExtraFiles"] as const;
+      for (const table of sidecarTables) {
+        const fileTypeSql = table === "LyricFiles" ? "'lyrics' AS file_type" : "file_type AS file_type";
+        const qualitySql = table === "LyricFiles" ? "quality AS quality" : "NULL AS quality";
+
+        const sidecarRows = db.prepare(`
+          SELECT id AS id,
+            artist_id AS artist_id,
+            COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+            COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+            file_path AS file_path,
+            relative_path AS relative_path,
+            library_root AS library_root,
+            ${fileTypeSql},
+            ${qualitySql}
+          FROM ${table}
+          WHERE artist_id = ?
+        `).all(options.artistId) as RebaseLibraryFileRow[];
+
+        const sidecarUpdate = db.prepare(`
+          UPDATE ${table}
+          SET file_path = ?,
+              relative_path = ?,
+              expected_path = ?,
+              needs_rename = 0,
+              last_updated = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `);
+
+        for (const row of sidecarRows) {
+          const currentRoot = resolveLibraryRootPath(row.library_root, row.file_path);
+          if (!currentRoot) {
+            continue;
+          }
+
+          const currentRelativePath = row.relative_path || path.relative(currentRoot, row.file_path);
+          const rebasedRelativePath = rebaseRelativePathPrefix(
+            currentRelativePath,
+            options.sourcePath,
+            options.destinationPath,
+          );
+
+          if (!rebasedRelativePath) {
+            continue;
+          }
+
+          const nextFilePath = path.join(currentRoot, rebasedRelativePath);
+          sidecarUpdate.run(
+            nextFilePath,
+            rebasedRelativePath,
+            nextFilePath,
+            row.id,
+          );
+
+          fileEvents.push({
+            libraryFileId: row.id,
+            artistId: row.artist_id,
+            albumId: row.album_id,
+            mediaId: row.media_id,
+            fileType: row.file_type,
+            filePath: nextFilePath,
+            libraryRoot: row.library_root,
+            quality: row.quality,
+            previousPath: row.file_path,
+            reason: "artist-folder-move",
+          });
+          updatedCount += 1;
+        }
+      }
+
+      return updatedCount;
+    })();
+
+    for (const event of fileEvents) {
+      this.emitFileUpgraded(event);
+    }
     return { updated };
   }
 
@@ -1832,6 +1845,22 @@ export class LibraryFilesService {
   }
 
   static upsertLibraryFile(params: LibraryFileUpsertParams) {
+    const ownershipRoot = resolveLibraryRootPath(params.libraryRoot, params.filePath)
+      ?? params.libraryRoot;
+    if (!resolvedPathIsInsideRoot(params.filePath, ownershipRoot)) {
+      throw new Error(
+        `Cannot persist ${params.filePath}: path is outside the library root ${ownershipRoot}`,
+      );
+    }
+    if (
+      params.expectedPath
+      && !resolvedPathIsInsideRoot(params.expectedPath, ownershipRoot)
+    ) {
+      throw new Error(
+        `Cannot persist expected path ${params.expectedPath}: path is outside the library root ${ownershipRoot}`,
+      );
+    }
+
     const relativePath = path.relative(params.libraryRoot, params.filePath);
     const filename = path.basename(params.filePath);
     const extension = path.extname(params.filePath).replace(".", "");
@@ -2362,7 +2391,7 @@ export class LibraryFilesService {
         fingerprint = COALESCE(excluded.fingerprint, TrackFiles.fingerprint)
     `);
 
-    const info = insert.run(
+    insert.run(
       params.artistId,
       libraryId,
       catalogIds.release_group_id,
@@ -2423,7 +2452,20 @@ export class LibraryFilesService {
       });
     }
 
-    const insertedId = Number(info.lastInsertRowid || existingPathRow?.id || 0);
+    // SQLite leaves `last_insert_rowid()` unchanged when ON CONFLICT takes the
+    // UPDATE branch. A previous, unrelated insert can therefore make
+    // the statement result's `lastInsertRowid` identify the wrong TrackFiles
+    // row. Resolve the
+    // operation result from the unique path this statement just persisted.
+    const persistedRow = db.prepare(`
+      SELECT id FROM TrackFiles WHERE file_path = ? LIMIT 1
+    `).get(params.filePath) as { id: number } | undefined;
+    if (!persistedRow) {
+      throw new Error(
+        `TrackFiles upsert for ${params.filePath} completed without a resolvable row`,
+      );
+    }
+    const insertedId = persistedRow.id;
 
     if (!existingPathRow) {
       this.emitFileAdded({

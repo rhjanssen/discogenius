@@ -1358,3 +1358,108 @@ test("a failed rename leaves the DB pointing at the surviving original file", ()
   `).get(trackedFile.id) as { filePath: string };
   assert.equal(path.resolve(after.filePath), path.resolve(originalPath));
 });
+
+test("a failed rename database commit restores the original file path", () => {
+  const seeded = seedTrackedFile();
+  const trackedFile = dbModule.db.prepare(`
+    SELECT id, file_path AS filePath FROM TrackFiles WHERE provider_id = ?
+  `).get("100") as { id: number; filePath: string };
+  const originalPath = trackedFile.filePath;
+
+  dbModule.db.exec(`
+    CREATE TRIGGER fail_rename_file_commit
+    BEFORE UPDATE OF file_path ON TrackFiles
+    WHEN OLD.id = ${trackedFile.id}
+    BEGIN
+      SELECT RAISE(ABORT, 'simulated rename database failure');
+    END;
+  `);
+
+  try {
+    assert.throws(
+      () => renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]),
+      /simulated rename database failure/,
+    );
+  } finally {
+    dbModule.db.exec("DROP TRIGGER IF EXISTS fail_rename_file_commit");
+  }
+
+  assert.equal(fs.existsSync(originalPath), true);
+  assert.equal(fs.existsSync(seeded.expectedPath), false);
+  const after = dbModule.db.prepare(`
+    SELECT file_path AS filePath FROM TrackFiles WHERE id = ?
+  `).get(trackedFile.id) as { filePath: string };
+  assert.equal(path.resolve(after.filePath), path.resolve(originalPath));
+});
+
+test("a failed duplicate-sidecar commit restores the staged source sidecar", () => {
+  seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
+  const musicRoot = configModule.Config.getMusicPath();
+  const albumDir = path.join(musicRoot, "Artist One", "Album One");
+  const importDir = path.join(musicRoot, "Artist One", "Imports");
+  fs.mkdirSync(albumDir, { recursive: true });
+  fs.mkdirSync(importDir, { recursive: true });
+
+  const audioPath = path.join(albumDir, "01 - Track One.flac");
+  const sourceLyricPath = path.join(importDir, "track-one.lrc");
+  const destinationLyricPath = path.join(albumDir, "01 - Track One.lrc");
+  fs.writeFileSync(audioPath, "audio");
+  fs.writeFileSync(sourceLyricPath, "[00:01.00] source");
+  fs.writeFileSync(destinationLyricPath, "[00:01.00] destination");
+  const audioId = upsertCanonicalAudioFile({
+    filePath: audioPath,
+    libraryRoot: musicRoot,
+    librarySlot: "stereo",
+  });
+
+  const lyricId = Number((dbModule.db.prepare(`
+    INSERT INTO LyricFiles (
+      artist_id, track_file_id, relative_path, file_path, library_root,
+      extension, library_slot,
+      canonical_artist_mbid, canonical_release_group_mbid,
+      canonical_release_mbid, canonical_track_mbid,
+      canonical_recording_mbid, needs_rename
+    ) VALUES (
+      '1', ?, ?, ?, ?, 'lrc', 'stereo',
+      'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-1', 'track-mbid-1',
+      'recording-mbid-1', 1
+    )
+    RETURNING id
+  `).get(
+    audioId,
+    path.relative(musicRoot, sourceLyricPath),
+    sourceLyricPath,
+    musicRoot,
+  ) as { id: number }).id);
+
+  dbModule.db.exec(`
+    CREATE TRIGGER fail_duplicate_sidecar_commit
+    BEFORE DELETE ON LyricFiles
+    WHEN OLD.id = ${lyricId}
+    BEGIN
+      SELECT RAISE(ABORT, 'simulated duplicate sidecar database failure');
+    END;
+  `);
+
+  try {
+    assert.throws(
+      () => renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([audioId]),
+      /simulated duplicate sidecar database failure/,
+    );
+  } finally {
+    dbModule.db.exec("DROP TRIGGER IF EXISTS fail_duplicate_sidecar_commit");
+  }
+
+  assert.equal(fs.existsSync(sourceLyricPath), true);
+  assert.equal(fs.existsSync(destinationLyricPath), true);
+  assert.equal(
+    (dbModule.db.prepare("SELECT file_path FROM LyricFiles WHERE id = ?")
+      .get(lyricId) as { file_path: string }).file_path,
+    sourceLyricPath,
+  );
+  assert.deepEqual(
+    fs.readdirSync(importDir).filter((name) => name.includes(".discogenius-delete-")),
+    [],
+  );
+});

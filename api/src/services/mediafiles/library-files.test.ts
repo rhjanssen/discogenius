@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-files-"));
@@ -253,6 +254,51 @@ test("one physical sidecar can be owned by two libraries sharing a root", () => 
   );
   assert.equal(finalRelease.mayDeletePhysicalFile, true);
   assert.deepEqual(finalRelease.remainingLibraryIds, []);
+});
+
+test("active-schema upsert refuses media and sidecar rows outside the owning Library root", () => {
+  const { db } = dbModule;
+  const ownedRoot = path.join(tempDir, "containment-owned-root");
+  const outsideRoot = path.join(tempDir, "containment-outside-root");
+  const outsideTrack = path.join(outsideRoot, "escaped.flac");
+  const outsideCover = path.join(outsideRoot, "cover.jpg");
+  fs.mkdirSync(outsideRoot, { recursive: true });
+  fs.writeFileSync(outsideTrack, "audio");
+  fs.writeFileSync(outsideCover, "image");
+
+  const libraryId = seedTestLibrary(db, {
+    name: "Containment gate",
+    rootPath: ownedRoot,
+  });
+  db.prepare(`
+    INSERT INTO Artists (id, name, monitored)
+    VALUES ('containment-artist', 'Containment Artist', 1)
+  `).run();
+
+  for (const [filePath, fileType] of [
+    [outsideTrack, "track"],
+    [outsideCover, "cover"],
+  ] as const) {
+    assert.throws(
+      () => libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+        artistId: "containment-artist",
+        libraryId,
+        filePath,
+        libraryRoot: ownedRoot,
+        fileType,
+      }),
+      /outside (?:the )?library root/i,
+    );
+  }
+
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM TrackFiles").get() as { count: number }).count,
+    0,
+  );
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM MetadataFiles").get() as { count: number }).count,
+    0,
+  );
 });
 
 test("playable files fail closed when a shared root has no explicit library", () => {
@@ -552,6 +598,19 @@ test("removeEmptyParents prunes empty video job trees under downloads/videos", (
   assert.equal(fs.existsSync(path.join(downloadRoot, "videos", "tidal")), false);
   assert.equal(fs.existsSync(path.join(downloadRoot, "videos")), false);
   assert.ok(fs.existsSync(downloadRoot));
+});
+
+test("removeEmptyParents never prunes a prefix-sibling outside the stop root", () => {
+  const stopRoot = path.join(tempDir, "prune-root");
+  const outsideRoot = `${stopRoot}-outside`;
+  const outsideNested = path.join(outsideRoot, "nested");
+  fs.mkdirSync(stopRoot, { recursive: true });
+  fs.mkdirSync(outsideNested, { recursive: true });
+
+  libraryFilesModule.removeEmptyParents(outsideNested, stopRoot);
+
+  assert.equal(fs.existsSync(outsideNested), true);
+  assert.equal(fs.existsSync(outsideRoot), true);
 });
 
 test("resolveArtistFolderForPersistence reuses the canonical folder for provider rows with the same MusicBrainz artist", () => {
@@ -1068,6 +1127,56 @@ const root = configModule.Config.getMusicPath();
   assert.equal(rows[0]?.id, id);
   assert.equal(rows[0]?.provider_id, "100");
   assert.equal(rows[0]?.file_path, targetPath);
+});
+
+test("a provider-free path upsert returns the exact existing TrackFiles row", () => {
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO Artists (id, name, path, monitored)
+    VALUES ('exact-row-artist', 'Exact Row Artist', 'Exact Row Artist', 1)
+  `).run();
+  const root = configModule.Config.getMusicPath();
+  const libraryId = seedTestLibrary(db, {
+    name: "Exact row identity",
+    rootPath: root,
+  });
+  const firstPath = path.join(root, "Exact Row Artist", "first.flac");
+  const unrelatedPath = path.join(root, "Exact Row Artist", "unrelated.flac");
+  fs.mkdirSync(path.dirname(firstPath), { recursive: true });
+  fs.writeFileSync(firstPath, "first");
+  fs.writeFileSync(unrelatedPath, "unrelated");
+
+  const firstId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "exact-row-artist",
+    libraryId,
+    filePath: firstPath,
+    libraryRoot: root,
+    fileType: "track",
+  });
+  const unrelatedId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "exact-row-artist",
+    libraryId,
+    filePath: unrelatedPath,
+    libraryRoot: root,
+    fileType: "track",
+  });
+  assert.notEqual(firstId, unrelatedId);
+
+  const repeatedId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "exact-row-artist",
+    libraryId,
+    filePath: firstPath,
+    libraryRoot: root,
+    fileType: "track",
+    quality: "LOSSLESS",
+  });
+
+  assert.equal(repeatedId, firstId);
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM TrackFiles WHERE file_path = ?")
+      .get(firstPath) as { count: number }).count,
+    1,
+  );
 });
 
 test("upsertLibraryFile keeps stereo and spatial track rows separate for the same canonical track", () => {

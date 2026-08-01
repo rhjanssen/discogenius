@@ -154,6 +154,41 @@ test("finalizeImportedDirectories applies queued renames through RenameTrackFile
   assert.equal(row.needsRename, 0);
 });
 
+test("finalizeImportedDirectories refuses an explicit sidecar target outside its Library root", async () => {
+  const musicRoot = configModule.Config.getMusicPath();
+  const incomingDir = path.join(musicRoot, "Artist One", "Incoming");
+  const destinationDir = path.join(musicRoot, "Artist One", "Album One");
+  const outsideDir = path.join(tempDir, "outside-sidecar-target");
+  const sourceCover = path.join(incomingDir, "cover.jpg");
+  const outsideCover = path.join(outsideDir, "cover.jpg");
+  fs.mkdirSync(incomingDir, { recursive: true });
+  fs.mkdirSync(outsideDir, { recursive: true });
+  fs.writeFileSync(sourceCover, "cover");
+
+  await importFinalizeModule.finalizeImportedDirectories({
+    importedFileIds: [],
+    dirMappings: new Map([[
+      incomingDir,
+      {
+        destDir: destinationDir,
+        artistId: "missing-artist",
+        albumId: null,
+        libraryRootPath: musicRoot,
+      },
+    ]]),
+    imageFileType: "cover",
+    explicitSidecarTargets: new Map([[sourceCover, outsideCover]]),
+  });
+
+  assert.equal(fs.existsSync(sourceCover), true);
+  assert.equal(fs.existsSync(outsideCover), false);
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS count FROM MetadataFiles")
+      .get() as { count: number }).count,
+    0,
+  );
+});
+
 test("finalizeImportedDirectories relocates linked separated videos inline after stereo audio import", async () => {
   const config = configModule.readConfig();
   config.path.video_folder_layout = "inline";
