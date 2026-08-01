@@ -11,14 +11,15 @@
     "build": "concurrently \"yarn --cwd api build\" \"yarn --cwd app build\"",
     "typecheck": "concurrently \"yarn --cwd api build\" \"yarn --cwd app typecheck\" --names \"api,app\" --prefix-colors \"magenta,cyan\"",
     "lint": "eslint .",
-    "test": "yarn test:api",
+    "test": "yarn test:api && yarn test:app",
     "test:api": "yarn --cwd api test",
+    "test:app": "yarn --cwd app test",
     "app:dev": "yarn --cwd app dev",
     "api:dev": "yarn --cwd api dev",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "test:e2e:smoke": "playwright test -c e2e/playwright.config.ts e2e/tests/navigation.spec.ts e2e/tests/auth.spec.ts",
     "test:e2e:headed": "playwright test -c e2e/playwright.config.ts --headed",
-    "ci": "yarn lint && yarn typecheck && yarn test:api && yarn build",
+    "ci": "yarn lint && yarn typecheck && yarn test:api && yarn test:app && yarn build",
     "release:prepare": "node .github/workflows/release/prepare-release.mjs"
   },
   "devDependencies": {
