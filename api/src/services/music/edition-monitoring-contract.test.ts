@@ -544,7 +544,29 @@ test("removing the last edition unmonitors the album but keeps its plans and fil
 // Lock
 // ---------------------------------------------------------------------------
 
-test("a locked album refuses every monitoring change until it is unlocked", () => {
+function albumLocked(): boolean {
+  return Boolean((db.prepare(`
+    SELECT locked FROM LibraryAlbums WHERE library_id = ? AND release_group_id = 1
+  `).get(LIBRARY_ID) as { locked: number } | undefined)?.locked);
+}
+
+function lockAlbum(locked: boolean): void {
+  AlbumCommandService.updateAlbum(
+    ALBUM_MBID, undefined, locked, { kind: "library", libraryId: LIBRARY_ID },
+  );
+}
+
+function deluxeSelection(service: LibraryReleaseSelectionService) {
+  return service.getAvailability(ALBUM_MBID).libraries[0].selections
+    .find((selection) => selection.editionId === DELUXE_EDITION_ID)!;
+}
+
+/**
+ * A lock is aimed at automation, not at the person who pressed it. Every method
+ * on LibraryReleaseSelectionService is a user action, so all of them work while
+ * locked — and none of them clears the lock.
+ */
+test("a locked album still answers to its owner, and stays locked", () => {
   seedCatalog();
   ingestProviders();
   planEverything();
@@ -552,33 +574,140 @@ test("a locked album refuses every monitoring change until it is unlocked", () =
   service.selectRelease({
     releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
   });
-  AlbumCommandService.updateAlbum(ALBUM_MBID, true, true, { kind: "library", libraryId: LIBRARY_ID });
+  lockAlbum(true);
 
   const standardPlanKey = service.getAvailability(ALBUM_MBID).libraries[0].selections
     .find((selection) => selection.editionId === STANDARD_EDITION_ID)!.plans[0].planKey;
 
-  assert.throws(() => service.selectRelease({
-    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
-  }), /locked/i, "edition replacement is blocked");
-  assert.throws(() => service.choosePlan({
+  // Add an Edition alongside the locked one.
+  service.choosePlan({
     releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
     planKey: standardPlanKey, mode: "additive",
-  }), /locked/i, "additive selection is blocked");
-  assert.throws(() => service.removeEdition({
-    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
-  }), /locked/i, "removal is blocked");
-  assert.throws(() => service.makeRepresentative({
-    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
-  }), /locked/i, "representative change is blocked");
+  });
+  assert.deepEqual(monitoredEditionIds(), [STANDARD_EDITION_ID, DELUXE_EDITION_ID]);
+  assert.equal(albumLocked(), true, "an additive selection preserves the lock");
 
-  assert.deepEqual(monitoredEditionIds(), [DELUXE_EDITION_ID], "nothing moved");
-
-  AlbumCommandService.updateAlbum(ALBUM_MBID, true, false, { kind: "library", libraryId: LIBRARY_ID });
-  service.selectRelease({
+  // Promote the added Edition.
+  service.makeRepresentative({
     releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
   });
-  assert.deepEqual(monitoredEditionIds(), [STANDARD_EDITION_ID],
-    "an explicit unlock is what releases it — never a silent one");
+  assert.equal(albumLocked(), true, "promoting preserves the lock");
+
+  // Remove one of them.
+  service.removeEdition({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  assert.deepEqual(monitoredEditionIds(), [STANDARD_EDITION_ID]);
+  assert.equal(albumLocked(), true, "removing an Edition preserves the lock");
+
+  // Replace the Edition outright.
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  assert.deepEqual(monitoredEditionIds(), [DELUXE_EDITION_ID],
+    "an exclusive selection replaces the set even while locked");
+  assert.equal(albumLocked(), true, "replacing the Edition preserves the lock");
+});
+
+test("unmonitoring a locked album takes the lock with the row", () => {
+  seedCatalog();
+  ingestProviders();
+  planEverything();
+  const service = new LibraryReleaseSelectionService(db);
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  lockAlbum(true);
+
+  service.removeEdition({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+
+  // The lock lives on the LibraryAlbums row. Losing the last monitored Edition
+  // removes that row, so there is no orphaned lock protecting nothing.
+  assert.deepEqual(monitoredEditionIds(), []);
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS n FROM LibraryAlbums WHERE library_id = ?")
+      .get(LIBRARY_ID) as { n: number }).n,
+    0,
+  );
+  assert.equal(albumLocked(), false);
+});
+
+test("a user may choose another plan while locked, and the lock survives", () => {
+  seedCatalog();
+  ingestProviders();
+  planEverything();
+  const service = new LibraryReleaseSelectionService(db);
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  lockAlbum(true);
+
+  const alternatives = deluxeSelection(service).plans.filter((plan) => !plan.chosen);
+  assert.ok(alternatives.length > 0, "the scenario needs a second plan to switch to");
+
+  service.choosePlan({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+    planKey: alternatives[0].planKey,
+  });
+
+  assert.equal(deluxeSelection(service).plan?.planKey, alternatives[0].planKey);
+  assert.equal(albumLocked(), true);
+});
+
+test("automated planning may not replace a locked album's selected plan", () => {
+  seedCatalog();
+  ingestProviders();
+  planEverything();
+  const service = new LibraryReleaseSelectionService(db);
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  const alternatives = deluxeSelection(service).plans.filter((plan) => !plan.chosen);
+  assert.ok(alternatives.length > 0, "the scenario needs a second plan to pin");
+  service.choosePlan({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+    planKey: alternatives[0].planKey,
+  });
+  lockAlbum(true);
+  const pinned = deluxeSelection(service).plan!.planKey;
+
+  planEverything();
+
+  assert.equal(deluxeSelection(service).plan?.planKey, pinned,
+    "replanning re-ranks the alternatives but does not reclaim the choice");
+});
+
+test("a locked plan the provider withdrew stays selected, marked unavailable", () => {
+  seedCatalog();
+  ingestProviders();
+  planEverything();
+  const service = new LibraryReleaseSelectionService(db);
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  const tidalPlan = deluxeSelection(service).plans.find((plan) => plan.provider === "tidal")!;
+  service.choosePlan({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+    planKey: tidalPlan.planKey,
+  });
+  lockAlbum(true);
+
+  // TIDAL stops offering the deluxe edition entirely.
+  db.prepare(`
+    UPDATE ProviderEditionMatches SET match_state = 'rejected'
+    WHERE provider_edition_item_id IN (
+      SELECT id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'release'
+    )
+  `).run();
+  planEverything();
+
+  const selected = deluxeSelection(service).plan;
+  assert.equal(selected?.planKey, tidalPlan.planKey,
+    "the locked choice is not silently swapped for whatever is left");
+  assert.equal(selected?.state, "unavailable",
+    "it says it cannot be delivered rather than pretending it can");
 });
 
 test("curation may not drop a locked album's editions", () => {

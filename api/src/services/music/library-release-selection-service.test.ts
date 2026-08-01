@@ -427,7 +427,7 @@ test("the album lock reaches the edition rows planning actually consults", () =>
   }
 });
 
-test("a locked album rejects an exclusive selection instead of absorbing it", () => {
+test("a locked album takes an exclusive selection from its owner and stays locked", () => {
   const artistMbid = "dddddddd-1111-4111-8111-111111111111";
   const albumMbid = "dddddddd-2222-4222-8222-222222222222";
   resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
@@ -463,22 +463,25 @@ test("a locked album rejects an exclusive selection instead of absorbing it", ()
       ) VALUES (99, 1, 2, 'manual', 'user', 1);
     `);
 
-    // A lock is not a tie-breaker the next action wins against; it stops the
-    // action outright and asks for an explicit unlock first.
-    assert.throws(
-      () => new LibraryReleaseSelectionService(db).selectRelease({
-        releaseGroupMbid: albumMbid,
-        libraryId: 1,
-        editionId: 1,
-      }),
-      /locked/i,
-    );
+    // The lock holds this album against automatic curation and replanning. It
+    // was never a barrier against the user, so an exclusive selection means the
+    // same thing it always does: use only this edition.
+    new LibraryReleaseSelectionService(db).selectRelease({
+      releaseGroupMbid: albumMbid,
+      libraryId: 1,
+      editionId: 1,
+    });
 
     assert.deepEqual(
       (db.prepare("SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id")
         .all() as Array<{ edition_id: number }>).map((row) => row.edition_id),
-      [2],
-      "the locked album keeps exactly the editions it had",
+      [1],
+    );
+    assert.equal(
+      (db.prepare("SELECT locked FROM LibraryAlbums WHERE library_id = 1 AND release_group_id = 1")
+        .get() as { locked: number }).locked,
+      1,
+      "a manual change never clears the lock",
     );
   } finally {
     resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);

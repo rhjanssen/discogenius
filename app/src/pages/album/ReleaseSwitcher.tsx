@@ -462,15 +462,22 @@ export function ReleaseSwitcher({
                             </Badge>
                           );
                         })()}
+                        {/* A lock holds this album against automatic curation
+                            and replanning. It never blocks the user, so every
+                            control below stays live while it is on. */}
                         {selection.locked ? (
-                          <Badge appearance="tint" color="warning">Locked</Badge>
+                          <AppTooltip
+                            content="Automatic curation and replanning will not change this album. Your own choices still apply."
+                            relationship="description"
+                          >
+                            <Badge appearance="tint" color="warning">Locked</Badge>
+                          </AppTooltip>
                         ) : null}
                         {selection.monitored && selection.planSelectionMode === "manual" ? (
                           <Badge appearance="tint" color="brand">Chosen by you</Badge>
                         ) : null}
                         {selection.monitored
                           && selection.planSelectionMode === "manual"
-                          && !selection.locked
                           && onRevertPlan ? (
                             <Button
                               size="small"
@@ -483,7 +490,7 @@ export function ReleaseSwitcher({
                         {/* Explicit equivalents of Ctrl/Cmd-click, so the
                             keyboard modifier is never the only way in. */}
                         {selection.monitored && !selection.representative
-                          && !selection.locked && onMakePrimary ? (
+                          && onMakePrimary ? (
                             <Button
                               size="small"
                               appearance="subtle"
@@ -492,7 +499,7 @@ export function ReleaseSwitcher({
                               Make primary
                             </Button>
                           ) : null}
-                        {selection.monitored && !selection.locked && onRemoveEdition ? (
+                        {selection.monitored && onRemoveEdition ? (
                           <Button
                             size="small"
                             appearance="subtle"
@@ -518,7 +525,7 @@ export function ReleaseSwitcher({
                               <AppTooltip
                                 content={
                                   selection.locked
-                                    ? "This album is locked. Unlock it to change the offer."
+                                    ? "This album is locked against automatic changes. Your own choice still applies: click to use only this edition and offer, Ctrl/Cmd-click to monitor it alongside the current ones."
                                     : "Click to use only this edition and offer. Ctrl/Cmd-click to monitor it alongside the current ones."
                                 }
                                 relationship="description"
@@ -526,7 +533,7 @@ export function ReleaseSwitcher({
                                 <Button
                                   size="small"
                                   appearance={executing ? "primary" : "outline"}
-                                  disabled={executing || selection.locked}
+                                  disabled={executing}
                                   onClick={(event) => onSelectPlan(
                                     library.id,
                                     release.id,
@@ -540,7 +547,7 @@ export function ReleaseSwitcher({
                               {executing ? (
                                 <Badge appearance="tint" color="brand">Executing</Badge>
                               ) : null}
-                              {!selection.monitored && !selection.locked && onSelectPlan ? (
+                              {!selection.monitored && onSelectPlan ? (
                                 <Button
                                   size="small"
                                   appearance="subtle"

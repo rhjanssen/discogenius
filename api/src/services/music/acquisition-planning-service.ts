@@ -315,7 +315,13 @@ export class AcquisitionPlanningService {
       this.repository.clear(input.libraryId, input.editionId);
       return null;
     }
-    if (context.plan_selection_mode === "manual" && !result.preferenceHonored) {
+    if (result.preferenceUnavailable) {
+      console.warn(
+        `[AcquisitionPlanning] Locked plan ${context.preferred_plan_key} for edition `
+        + `${input.editionId} in library ${input.libraryId} is no longer offered; `
+        + "keeping it selected and marked unavailable rather than substituting another",
+      );
+    } else if (context.plan_selection_mode === "manual" && !result.preferenceHonored) {
       // Either the chosen alternative no longer exists, or it still exists but
       // now covers fewer canonical tracks than the best plan. Both are grounds
       // to overrule the user; neither is grounds to do it silently. The row now

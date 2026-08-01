@@ -108,6 +108,27 @@ interface ReleaseRow {
   track_count: number | null;
 }
 
+/**
+ * Edition and plan selection for one Album in one Library.
+ *
+ * **Every mutating method here is a user action.** That is what makes the Album
+ * lock legible: `LibraryAlbums.locked` protects the Album's state from
+ * *automation* — curation may not drop its Editions, planning may not replace
+ * its selected offer, coverage optimisation may not reclaim its manual
+ * preference. It was never a write barrier against the person who pressed it.
+ * A locked Album that returned 409 to its own owner made Lock unusable: the
+ * only way to change one's mind was to unlock, change, and relock, and every
+ * one of those steps could be forgotten halfway.
+ *
+ * So the user may replace the Edition, add or remove Editions, change the
+ * representative, choose another plan and unlock — all while locked, and the
+ * lock survives every one of them. It disappears exactly once: when the last
+ * monitored Edition goes and the `LibraryAlbums` row it lives on goes with it.
+ *
+ * Automation reads the lock elsewhere — `LibraryCurationService` skips locked
+ * Albums, `AcquisitionPlanRepository` honours a locked plan preference — and
+ * that is the only side the lock has ever needed to face.
+ */
 export class LibraryReleaseSelectionService {
   constructor(private readonly db: Database.Database) {}
 
@@ -456,7 +477,6 @@ export class LibraryReleaseSelectionService {
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
     const exclusive = input.mode !== "additive";
-    this.assertAlbumUnlocked(target);
 
     this.db.transaction(() => {
       this.ensureLibraryAlbum(input.libraryId, target.releaseGroupId);
@@ -492,7 +512,6 @@ export class LibraryReleaseSelectionService {
     editionId: number;
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
-    this.assertAlbumUnlocked(target);
 
     this.db.transaction(() => {
       const removed = this.db.prepare(`
@@ -538,7 +557,6 @@ export class LibraryReleaseSelectionService {
     editionId: number;
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
-    this.assertAlbumUnlocked(target);
     this.db.transaction(() => {
       const promoted = this.db.prepare(`
         UPDATE LibraryEditions
@@ -609,23 +627,6 @@ export class LibraryReleaseSelectionService {
       releaseGroupId: row.release_group_id,
       locked: Boolean(row.locked),
     };
-  }
-
-  /**
-   * A locked Album holds its monitored state, its edition set, its
-   * representative and its selected plan alike. Changing any of them requires an
-   * explicit unlock first — never a silent one, and never a tie-break the next
-   * action can win. Additive selection is no exception: adding an Edition to a
-   * locked Album still changes what the lock was pressed to protect.
-   */
-  private assertAlbumUnlocked(target: { locked: boolean }): void {
-    if (target.locked) {
-      const error = new Error(
-        "This album is locked in this library. Unlock it to change the monitored editions or the selected offer.",
-      ) as Error & { status?: number };
-      error.status = 409;
-      throw error;
-    }
   }
 
   private ensureLibraryAlbum(libraryId: number, releaseGroupId: number): void {
@@ -740,7 +741,6 @@ export class LibraryReleaseSelectionService {
     mode?: "exclusive" | "additive";
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
-    this.assertAlbumUnlocked(target);
     if (input.providerEditionMatchId != null) {
       const offer = this.db.prepare(`
         SELECT match.id

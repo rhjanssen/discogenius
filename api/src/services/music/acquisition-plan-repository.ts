@@ -15,6 +15,11 @@ export interface PlanSelectionOutcome {
   preferenceHonored: boolean;
   /** The preferred plan still exists but no longer covers what the best one does. */
   preferenceLostCoverage: boolean;
+  /**
+   * A locked preference the provider can no longer deliver. It stays selected,
+   * marked `unavailable`, rather than being swapped for a different offer.
+   */
+  preferenceUnavailable: boolean;
 }
 
 /**
@@ -88,6 +93,17 @@ export class AcquisitionPlanRepository {
       && (input.lockPreference === true || preferredCovers(candidateIndex));
     const resolvedIndex = preferenceHonored ? candidateIndex : 0;
     const preferenceLostCoverage = candidateIndex >= 0 && !preferenceHonored;
+    // A locked plan that vanishes from the freshly computed set is not a reason
+    // to run a different one. The user locked this offer; the honest outcome is
+    // that it stays selected and says it is unavailable, so the Album page shows
+    // a stale selection to act on rather than quietly downloading something else.
+    // The row survives the rebuild intact — sources, per-track assignment and
+    // exact provider variants included — so re-selecting it means the same files.
+    const retainedPlanKey = input.lockPreference === true
+      && preferredPlanKey != null
+      && candidateIndex < 0
+      ? preferredPlanKey
+      : null;
 
     return this.db.transaction(() => {
       // Release the deferred reference before deleting the rows it points at.
@@ -97,8 +113,10 @@ export class AcquisitionPlanRepository {
         WHERE library_id = ? AND edition_id = ?
       `).run(input.libraryId, input.editionId);
       this.db.prepare(`
-        DELETE FROM AcquisitionPlans WHERE library_id = ? AND edition_id = ?
-      `).run(input.libraryId, input.editionId);
+        DELETE FROM AcquisitionPlans
+        WHERE library_id = ? AND edition_id = ?
+          AND (? IS NULL OR plan_key != ?)
+      `).run(input.libraryId, input.editionId, retainedPlanKey, retainedPlanKey);
 
       let selectedPlanId = 0;
       input.plans.forEach((plan, index) => {
@@ -115,7 +133,23 @@ export class AcquisitionPlanRepository {
         if (index === resolvedIndex) selectedPlanId = id;
       });
 
-      const selectedPlanKey = input.plans[resolvedIndex].planKey;
+      let selectedPlanKey = input.plans[resolvedIndex].planKey;
+      const retained = retainedPlanKey == null ? undefined : this.db.prepare(`
+        UPDATE AcquisitionPlans
+        SET state = 'unavailable', rank = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE library_id = ? AND edition_id = ? AND plan_key = ?
+        RETURNING id
+      `).get(
+        input.plans.length,
+        input.libraryId,
+        input.editionId,
+        retainedPlanKey,
+      ) as { id: number } | undefined;
+      if (retained) {
+        selectedPlanId = retained.id;
+        selectedPlanKey = retainedPlanKey!;
+      }
+
       // Only a monitored edition carries a selection; an evaluated-but-unmonitored
       // one simply has candidates and no row to record a choice on.
       const applied = this.db.prepare(`
@@ -126,7 +160,7 @@ export class AcquisitionPlanRepository {
         WHERE library_id = ? AND edition_id = ?
       `).run(
         selectedPlanKey,
-        preferenceHonored ? "manual" : "auto",
+        preferenceHonored || retained ? "manual" : "auto",
         input.libraryId,
         input.editionId,
       ).changes;
@@ -134,8 +168,9 @@ export class AcquisitionPlanRepository {
       return {
         selectedPlanId: applied > 0 ? selectedPlanId : null,
         selectedPlanKey: applied > 0 ? selectedPlanKey : null,
-        preferenceHonored,
+        preferenceHonored: preferenceHonored || Boolean(retained),
         preferenceLostCoverage,
+        preferenceUnavailable: Boolean(retained),
       };
     })();
   }
