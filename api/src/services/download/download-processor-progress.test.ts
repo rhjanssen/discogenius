@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { deriveCatalogFileProgress } from "./download-processor.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-progress-"));
+process.env.DB_PATH = path.join(tempDir, "discogenius.download-progress.test.db");
+process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
+
+const { deriveCatalogFileProgress } = await import("./download-processor.js");
+const databaseModule = await import("../../database.js");
+
+after(() => {
+  databaseModule.closeDatabase();
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
 
 test("deriveCatalogFileProgress uses catalog length, not provider queue size", () => {
   const tracks = [
