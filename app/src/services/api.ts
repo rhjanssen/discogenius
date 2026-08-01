@@ -1156,7 +1156,10 @@ class ApiClient {
     if (options?.provider) queryParams.set('provider', options.provider);
     const query = queryParams.toString();
     const data = await this.request(`/playback/video/sign/${videoId}${query ? `?${query}` : ''}`);
-    const url = (data as any).url;
+    const url = typeof (data as any)?.url === "string" ? (data as any).url.trim() : "";
+    if (!url) {
+      throw new Error("The provider returned an empty video preview URL.");
+    }
     return url.startsWith("http") ? url : `${this.baseUrl}${url}`;
   }
 
@@ -1649,12 +1652,19 @@ class ApiClient {
     return eventSource;
   }
 
-  createGlobalEventStream(onEvent: (event: string, data: any) => void, onError?: (error: Error) => void): EventSource {
+  createGlobalEventStream(
+    onEvent: (event: string, data: any) => void,
+    onError?: (error: Error) => void,
+    onOpen?: () => void,
+  ): EventSource {
     let url = `${this.baseUrl}${API_V1_PREFIX}/events`;
     if (this.authToken) {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }
     const eventSource = createManagedEventSource(url);
+    eventSource.onopen = () => {
+      onOpen?.();
+    };
 
     // The backend emits events with names like "command.updated", "file.deleted", etc.
     // EventSource doesn't have a wildcard listener, so we rely on the specific message events.
@@ -1681,16 +1691,15 @@ class ApiClient {
 
     eventSource.onerror = (error) => {
       // Ignore expected abort/error notifications after the client closes the stream.
-      if (isExpectedEventSourceClose(eventSource)) {
-        return;
-      }
-      if (eventSource.readyState === EventSource.CONNECTING) {
+      if (
+        eventSource.__discogeniusClosed === true
+        || (typeof document !== "undefined" && document.visibilityState === "hidden")
+      ) {
         return;
       }
 
       console.error('[API] Global SSE stream error:', error);
       if (onError) onError(new Error('Global Stream connection failed'));
-      // Browser usually auto-reconnects SSE, but we might want to manually close if auth fails etc.
     };
 
     return eventSource;

@@ -2,7 +2,7 @@
  * Video detail page — shows video metadata, monitor/download controls,
  * and a native video player when the file is downloaded locally.
  */
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,6 +18,7 @@ import {
     DialogTitle,
     DialogContent,
     DialogActions,
+    Spinner,
 } from "@fluentui/react-components";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { VideoDetailSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -195,6 +196,19 @@ const useStyles = makeStyles({
         height: "100%",
         backgroundColor: tokens.colorNeutralBackground1,
     },
+    playerState: {
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: tokens.spacingVerticalM,
+        padding: tokens.spacingHorizontalL,
+        boxSizing: "border-box",
+        textAlign: "center",
+        color: tokens.colorNeutralForeground2,
+    },
     infoSection: {
         display: "flex",
         flexDirection: "column",
@@ -311,12 +325,14 @@ const VideoPage = () => {
     const { addToQueue } = useQueueStatus();
 
     const [isPlaying, setIsPlaying] = useState(false);
+    const [isStartingPlayback, setIsStartingPlayback] = useState(false);
     const [remoteStreamUrl, setRemoteStreamUrl] = useState<string | null>(null);
     const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
     const [deleteFilesOpen, setDeleteFilesOpen] = useState(false);
     const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
     const hlsRef = useRef<{ destroy: () => void } | null>(null);
+    const playbackFailureReportedRef = useRef(false);
 
     useDebouncedQueryInvalidation({
         queryKeys: [["video", videoId], ["video-files", videoId]],
@@ -336,6 +352,7 @@ const VideoPage = () => {
         enabled: !!videoId,
         refetchOnWindowFocus: false,
     });
+    const isDownloaded = Boolean(video?.is_downloaded ?? video?.downloaded);
 
     // Canonicalize the address bar to Recordings.id (API contract id). Queue /
     // history still deep-link by provider id; GET resolves both.
@@ -354,10 +371,16 @@ const VideoPage = () => {
     });
 
     // Fetch library files for this video
-    const { data: filesData } = useQuery<LibraryFilesListResponseContract>({
+    const {
+        data: filesData,
+        isLoading: isVideoFilesLoading,
+        error: videoFilesError,
+        refetch: refetchVideoFiles,
+    } = useQuery<LibraryFilesListResponseContract>({
         queryKey: ["video-files", videoId],
         queryFn: () => api.getLibraryFiles({ mediaId: videoId! }),
-        enabled: !!videoId && !!video?.is_downloaded,
+        enabled: Boolean(videoId) && isDownloaded,
+        refetchOnWindowFocus: false,
     });
 
     const videoFile = useMemo(() => {
@@ -404,7 +427,6 @@ const VideoPage = () => {
 
     // Provider offers for this canonical video, preference-ordered by the
     // server. The user can switch which provider serves preview + download.
-    const isDownloaded = Boolean(video?.is_downloaded ?? video?.downloaded);
     const offers = video?.offers ?? [];
     const selectedOffer = selectVideoOffer(offers, selectedOfferKey);
     const previewOffer = selectVideoPreviewOffer(offers, selectedOfferKey);
@@ -418,6 +440,7 @@ const VideoPage = () => {
             setRemoteStreamUrl(null);
             setIsPlaying(false);
         }
+        playbackFailureReportedRef.current = false;
     };
 
     const handleDownload = async () => {
@@ -475,9 +498,41 @@ const VideoPage = () => {
         }
     };
 
+    const handlePlaybackFailure = useCallback((description: string) => {
+        if (playbackFailureReportedRef.current) {
+            return;
+        }
+        playbackFailureReportedRef.current = true;
+        if (hlsRef.current) {
+            hlsRef.current.destroy();
+            hlsRef.current = null;
+        }
+        setIsPlaying(false);
+        setRemoteStreamUrl(null);
+        toast({
+            title: "Playback unavailable",
+            description,
+            variant: "destructive",
+        });
+    }, [toast]);
+
     const handlePlayClick = async () => {
+        playbackFailureReportedRef.current = false;
+        setIsStartingPlayback(true);
         try {
-            if (!isDownloaded) {
+            if (isDownloaded) {
+                if (isVideoFilesLoading) {
+                    throw new Error("The local video file is still being resolved.");
+                }
+                if (videoFilesError) {
+                    throw videoFilesError instanceof Error
+                        ? videoFilesError
+                        : new Error("The local video file could not be loaded.");
+                }
+                if (!videoFile) {
+                    throw new Error("Discogenius could not find the downloaded video file.");
+                }
+            } else {
                 if (!previewOffer) {
                     throw new Error("No available provider offer supports remote video previews.");
                 }
@@ -485,16 +540,22 @@ const VideoPage = () => {
                     previewOffer.provider_id ?? videoId!,
                     { provider: previewOffer.provider },
                 );
-                setRemoteStreamUrl(signedUrl);
+                const normalizedUrl = signedUrl.trim();
+                if (!normalizedUrl) {
+                    throw new Error("The provider returned an empty preview stream URL.");
+                }
+                setRemoteStreamUrl(normalizedUrl);
             }
 
             setIsPlaying(true);
-        } catch (error: any) {
-            toast({
-                title: "Playback unavailable",
-                description: error.message || "Could not start remote video playback.",
-                variant: "destructive",
-            });
+        } catch (playbackError) {
+            handlePlaybackFailure(
+                playbackError instanceof Error
+                    ? playbackError.message
+                    : "Could not start video playback.",
+            );
+        } finally {
+            setIsStartingPlayback(false);
         }
     };
 
@@ -509,7 +570,10 @@ const VideoPage = () => {
 
     const streamUrl = isDownloaded && videoFile
         ? api.getStreamUrl(videoFile.id)
-        : (remoteStreamUrl || '');
+        : remoteStreamUrl;
+    const videoFilesErrorDescription = videoFilesError instanceof Error
+        ? videoFilesError.message
+        : "Discogenius could not resolve the downloaded video file.";
 
     const artistPicUrl = mediaCoverSrc(artistData);
 
@@ -552,7 +616,11 @@ const VideoPage = () => {
 
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
                     if (videoRef.current) {
-                        videoRef.current.play().catch(e => console.error("Play after manifest parsed failed:", e));
+                        videoRef.current.play().catch(() => {
+                            if (!cancelled) {
+                                handlePlaybackFailure("The remote video stream could not start playing.");
+                            }
+                        });
                     }
                 });
 
@@ -561,25 +629,26 @@ const VideoPage = () => {
                         return;
                     }
 
-                    console.error("Remote video playback failed:", data);
-                    toast({
-                        title: "Playback unavailable",
-                        description: "The remote video stream could not be loaded.",
-                        variant: "destructive",
-                    });
-                    hls.destroy();
-                    if (hlsRef.current === hls) {
-                        hlsRef.current = null;
+                    if (!cancelled) {
+                        handlePlaybackFailure("The remote video stream could not be loaded.");
                     }
                 });
                 return;
             }
 
             videoRef.current.src = remoteStreamUrl;
-            videoRef.current.play().catch((e) => console.error("Play progressive preview failed:", e));
+            videoRef.current.play().catch(() => {
+                if (!cancelled) {
+                    handlePlaybackFailure("The remote video preview could not start playing.");
+                }
+            });
         };
 
-        void attachRemoteVideo();
+        void attachRemoteVideo().catch(() => {
+            if (!cancelled) {
+                handlePlaybackFailure("The remote video player could not be initialized.");
+            }
+        });
 
         return () => {
             cancelled = true;
@@ -588,7 +657,7 @@ const VideoPage = () => {
                 hlsRef.current = null;
             }
         };
-    }, [isDownloaded, isPlaying, remoteStreamUrl, toast]);
+    }, [handlePlaybackFailure, isDownloaded, isPlaying, remoteStreamUrl]);
 
     // Shared delayed-loading policy: blank for sub-second cached hits; layout-
     // matched skeleton for slower fetches (Fluent: skeleton when structure is known).
@@ -622,13 +691,29 @@ const VideoPage = () => {
             <div className={styles.container}>
                 {/* Player Wrapper directly at top */}
                 <div className={styles.playerWrapper}>
-                    {!isPlaying ? (
+                    {isDownloaded && isVideoFilesLoading ? (
+                        <div className={styles.playerState} role="status" aria-live="polite">
+                            <Spinner label="Loading downloaded video file…" />
+                        </div>
+                    ) : isDownloaded && (videoFilesError || !videoFile || !streamUrl) ? (
+                        <div className={styles.playerState} role="alert">
+                            <Text weight="semibold">Downloaded video file unavailable</Text>
+                            <Text>{videoFilesError ? videoFilesErrorDescription : "No local video file is linked to this item."}</Text>
+                            <Button appearance="primary" onClick={() => void refetchVideoFiles()}>
+                                Try again
+                            </Button>
+                        </div>
+                    ) : !isPlaying ? (
                         <Button
                             appearance="transparent"
                             className={styles.playSurface}
                             onClick={handlePlayClick}
-                            disabled={!isDownloaded && !previewOffer}
-                            aria-label={isDownloaded || previewOffer ? `Play ${video.title}` : `Preview unavailable for ${video.title}`}
+                            disabled={isStartingPlayback || (!isDownloaded && !previewOffer)}
+                            aria-label={isStartingPlayback
+                                ? `Starting ${video.title}`
+                                : isDownloaded || previewOffer
+                                    ? `Play ${video.title}`
+                                    : `Preview unavailable for ${video.title}`}
                         >
                             {coverUrl ? (
                                 <img
@@ -644,7 +729,11 @@ const VideoPage = () => {
                                 </div>
                             )}
                             <div className={styles.playOverlay} aria-hidden="true">
-                                <Play24Filled style={{ width: 64, height: 64, color: "#fff" }} />
+                                {isStartingPlayback ? (
+                                    <Spinner size="large" />
+                                ) : (
+                                    <Play24Filled style={{ width: 64, height: 64, color: "#fff" }} />
+                                )}
                             </div>
                         </Button>
                     ) : (
@@ -652,10 +741,16 @@ const VideoPage = () => {
                             ref={videoRef}
                             controls
                             className={styles.videoPlayer}
-                            src={isDownloaded ? streamUrl : undefined}
+                            src={isDownloaded && streamUrl ? streamUrl : undefined}
                             poster={coverUrl || undefined}
                             preload="metadata"
                             autoPlay
+                            playsInline
+                            onError={() => handlePlaybackFailure(
+                                isDownloaded
+                                    ? "The downloaded video file could not be played."
+                                    : "The remote video stream could not be played.",
+                            )}
                         >
                             Your browser does not support the video element.
                         </video>

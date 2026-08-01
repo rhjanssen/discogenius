@@ -26,6 +26,7 @@ import {
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
+import { ErrorState } from "@/components/ui/ContentState";
 import { api } from "@/services/api";
 import type {
     HealthCheckResultContract,
@@ -190,12 +191,16 @@ function ProviderRow({
     provider,
     diagnostics,
     diagnosticsLoading,
+    diagnosticsError,
+    onRetryDiagnostics,
     styles,
     last,
 }: {
     provider: StreamingProviderStatus;
     diagnostics?: ProviderDiagnosticsResponse;
     diagnosticsLoading?: boolean;
+    diagnosticsError?: Error;
+    onRetryDiagnostics?: () => void;
     styles: ReturnType<typeof useStyles>;
     last?: boolean;
 }) {
@@ -208,7 +213,8 @@ function ProviderRow({
     ].filter((chip) => chip.value);
 
     const diagnosticRows = diagnostics?.diagnostics ?? [];
-    const hasDiagnosticError = diagnosticRows.some((diagnostic) => diagnostic.status === "error");
+    const hasDiagnosticError = Boolean(diagnosticsError)
+        || diagnosticRows.some((diagnostic) => diagnostic.status === "error");
     const hasDiagnosticWarning = diagnosticRows.some((diagnostic) =>
         diagnostic.status === "warning" || diagnostic.status === "disabled" || diagnostic.status === "unknown",
     );
@@ -242,6 +248,16 @@ function ProviderRow({
                 <div className={styles.capabilityRow}>
                     <Spinner size="tiny" label={`Checking ${provider.name}`} />
                 </div>
+            ) : diagnosticsError ? (
+                <div className={styles.capabilityRow} role="alert">
+                    <ErrorCircle16 className={styles.statusIconError} />
+                    <Text size={200}>{`Diagnostics unavailable: ${diagnosticsError.message}`}</Text>
+                    {onRetryDiagnostics ? (
+                        <Button size="small" appearance="secondary" onClick={onRetryDiagnostics}>
+                            Retry
+                        </Button>
+                    ) : null}
+                </div>
             ) : diagnosticRows.length > 0 ? (
                 <div className={styles.diagnosticList}>
                     {diagnosticRows.map((diagnostic) => (
@@ -272,13 +288,23 @@ const StatusPage = () => {
         },
     });
 
-    const { data: status, isLoading: statusLoading } = useQuery({
+    const {
+        data: status,
+        isLoading: statusLoading,
+        error: statusError,
+        refetch: refetchStatus,
+    } = useQuery({
         queryKey: ["system-status"],
         queryFn: () => api.getSystemStatus(),
         refetchInterval: 30000,
     });
 
-    const { data: providersResponse, isLoading: providersLoading } = useQuery({
+    const {
+        data: providersResponse,
+        isLoading: providersLoading,
+        error: providersError,
+        refetch: refetchProviders,
+    } = useQuery({
         queryKey: ["streaming-providers", "status-page"],
         queryFn: () => api.getStreamingProviders(),
         refetchInterval: 30000,
@@ -292,23 +318,41 @@ const StatusPage = () => {
         })),
     });
 
-    const { data: overview } = useQuery({
+    const {
+        data: overview,
+        isLoading: overviewLoading,
+        error: overviewError,
+        refetch: refetchOverview,
+    } = useQuery({
         queryKey: ["status-overview", "status-page"],
         queryFn: () => api.getStatusOverview(),
         refetchInterval: 30000,
     });
 
-    const isLoading = statusLoading || providersLoading;
+    const isLoading = statusLoading || providersLoading || overviewLoading;
+    const pageError = [statusError, providersError, overviewError]
+        .find((queryError): queryError is Error => queryError instanceof Error)
+        ?? ([statusError, providersError, overviewError].some(Boolean)
+            ? new Error("One or more status requests failed.")
+            : null);
     const providers = providersResponse?.providers ?? [];
     const diagnosticsByProvider = new Map<string, {
         data?: ProviderDiagnosticsResponse;
         isLoading: boolean;
+        error?: Error;
+        retry?: () => void;
     }>();
     providers.forEach((provider, index) => {
         const query = providerDiagnosticsQueries[index];
         diagnosticsByProvider.set(provider.id, {
             data: query?.data,
             isLoading: Boolean(query?.isLoading),
+            error: query?.error instanceof Error
+                ? query.error
+                : query?.error
+                    ? new Error("Provider diagnostics request failed.")
+                    : undefined,
+            retry: query ? () => void query.refetch() : undefined,
         });
     });
 
@@ -339,6 +383,26 @@ const StatusPage = () => {
                 <div className={styles.loading}>
                     <Spinner label="Loading status…" />
                 </div>
+            ) : pageError ? (
+                <ErrorState
+                    title="Couldn’t load system status"
+                    error={pageError}
+                    minHeight="320px"
+                    actions={(
+                        <Button
+                            appearance="primary"
+                            onClick={() => {
+                                void Promise.all([
+                                    refetchStatus(),
+                                    refetchProviders(),
+                                    refetchOverview(),
+                                ]);
+                            }}
+                        >
+                            Try again
+                        </Button>
+                    )}
+                />
             ) : (
                 <>
                     <SettingsSection
@@ -415,6 +479,8 @@ const StatusPage = () => {
                                         provider={provider}
                                         diagnostics={diagnosticsByProvider.get(provider.id)?.data}
                                         diagnosticsLoading={diagnosticsByProvider.get(provider.id)?.isLoading}
+                                        diagnosticsError={diagnosticsByProvider.get(provider.id)?.error}
+                                        onRetryDiagnostics={diagnosticsByProvider.get(provider.id)?.retry}
                                         styles={styles}
                                         last={index === providers.length - 1 && !overview?.rateLimitMetrics}
                                     />

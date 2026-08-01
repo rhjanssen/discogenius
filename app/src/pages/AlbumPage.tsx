@@ -535,6 +535,12 @@ const useStyles = makeStyles({
   sectionSpacing: {
     marginTop: tokens.spacingVerticalXXL,
   },
+  trackListLoading: {
+    minHeight: "220px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   trackArtistText: {
     color: tokens.colorNeutralForeground2,
   },
@@ -729,10 +735,20 @@ const AlbumPage = () => {
     retry: 1,
   });
 
-  // While an edition's list is still loading, the page keeps showing the one it
-  // has rather than blanking the section.
-  const visibleTracks = activeTabEditionId != null && editionTracksQuery.data
-    ? editionTracksQuery.data
+  const activeTabLabel = trackListTabs
+    .find((tab) => tab.editionId === activeTabEditionId)?.label ?? "selected edition";
+  const isEditionTrackListLoading = activeTabEditionId != null && editionTracksQuery.isPending;
+  const editionTrackListError = activeTabEditionId != null && editionTracksQuery.error
+    ? editionTracksQuery.error instanceof Error
+      ? editionTracksQuery.error
+      : new Error("The selected edition's tracks could not be loaded.")
+    : null;
+
+  // A selected Edition owns this section completely. Never show the page's
+  // representative track list under another Edition's selected tab while its
+  // request is loading or has failed.
+  const visibleTracks = activeTabEditionId != null
+    ? (editionTracksQuery.data ?? EMPTY_ALBUM_TRACKS)
     : tracks;
 
   const tracksWithAssociatedVideos = useMemo(() => {
@@ -1642,12 +1658,20 @@ const AlbumPage = () => {
                 <div className={styles.metadataFacts}>
                   <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
                   <div className={styles.metadataSeparator} />
-                  {/* Counts describe the edition currently on screen. */}
-                  <Text>{visibleTracks.length} Tracks</Text>
-                  <div className={styles.metadataSeparator} />
-                  <Text>
-                    {formatDurationSeconds(visibleTracks.reduce((acc, t) => acc + t.duration, 0))}
-                  </Text>
+                  {/* Counts describe only the edition currently on screen. */}
+                  {isEditionTrackListLoading ? (
+                    <Text>Loading tracks…</Text>
+                  ) : editionTrackListError ? (
+                    <Text>Tracks unavailable</Text>
+                  ) : (
+                    <>
+                      <Text>{visibleTracks.length} Tracks</Text>
+                      <div className={styles.metadataSeparator} />
+                      <Text>
+                        {formatDurationSeconds(visibleTracks.reduce((acc, t) => acc + t.duration, 0))}
+                      </Text>
+                    </>
+                  )}
                   {hasSpatialOffer && !hasStereoOffer && (
                     <>
                       <div className={styles.metadataSeparator} />
@@ -1817,10 +1841,27 @@ const AlbumPage = () => {
             ))}
           </TabList>
         ) : null}
-        {tracksWithAssociatedVideos.length === 0 ? (
+        {isEditionTrackListLoading ? (
+          <div className={styles.trackListLoading}>
+            <Spinner label={`Loading tracks for ${activeTabLabel}…`} />
+          </div>
+        ) : editionTrackListError ? (
+          <ErrorState
+            title={`Couldn’t load ${activeTabLabel}`}
+            error={editionTrackListError}
+            minHeight="220px"
+            actions={(
+              <Button appearance="primary" onClick={() => void editionTracksQuery.refetch()}>
+                Try again
+              </Button>
+            )}
+          />
+        ) : tracksWithAssociatedVideos.length === 0 ? (
           <EmptyState
             title="No tracks found"
-            description="This album doesn't have any surfaced tracks yet."
+            description={activeTabEditionId != null
+              ? `${activeTabLabel} doesn't have any surfaced tracks yet.`
+              : "This album doesn't have any surfaced tracks yet."}
             icon={<MusicNote224 />}
             minHeight="220px"
           />

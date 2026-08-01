@@ -14,19 +14,15 @@ let globalEventSource: EventSource | null = null;
 const globalSubscribers = new Set<(event: GlobalEventPayload) => void>();
 
 let currentConnectionAttempts = 0;
-const MAX_RECONNECT = 5;
+const MAX_RECONNECT_DELAY_MS = 30_000;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let suppressNextStreamError = false;
 
 const initStream = () => {
     if (globalEventSource) return;
     if (globalSubscribers.size === 0) return;
 
-    suppressNextStreamError = false;
-
     globalEventSource = api.createGlobalEventStream(
         (eventType, data) => {
-            currentConnectionAttempts = 0; // Reset on successful message
             const payload: GlobalEventPayload = {
                 type: eventType,
                 data,
@@ -37,8 +33,7 @@ const initStream = () => {
             globalSubscribers.forEach(sub => sub(payload));
         },
         (error) => {
-            if (suppressNextStreamError || globalSubscribers.size === 0) {
-                suppressNextStreamError = false;
+            if (globalSubscribers.size === 0) {
                 return;
             }
 
@@ -48,19 +43,25 @@ const initStream = () => {
                 globalEventSource = null;
             }
 
-            // Exponential backoff reconnect
-            if (currentConnectionAttempts < MAX_RECONNECT) {
-                currentConnectionAttempts++;
-                const backoffMs = Math.min(1000 * Math.pow(2, currentConnectionAttempts), 30000);
-                if (reconnectTimer) {
-                    clearTimeout(reconnectTimer);
-                }
-                reconnectTimer = setTimeout(() => {
-                    reconnectTimer = null;
-                    initStream();
-                }, backoffMs);
+            // Retry for as long as there are subscribers. The delay grows
+            // exponentially but is capped so a recovered server is eventually
+            // rediscovered without producing a reconnect storm.
+            currentConnectionAttempts++;
+            const exponent = Math.min(currentConnectionAttempts - 1, 5);
+            const backoffMs = Math.min(1000 * Math.pow(2, exponent), MAX_RECONNECT_DELAY_MS);
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
             }
-        }
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                initStream();
+            }, backoffMs);
+        },
+        () => {
+            // A connected but idle event stream is healthy. Reset on open rather
+            // than waiting for the first domain event to arrive.
+            currentConnectionAttempts = 0;
+        },
     );
 };
 
@@ -102,14 +103,16 @@ export function useGlobalEvents(interestEvents?: string[]) {
             globalSubscribers.delete(handleEvent);
 
             // If we are the last subscriber, close the stream to save resources
-            if (globalSubscribers.size === 0 && globalEventSource) {
-                suppressNextStreamError = true;
+            if (globalSubscribers.size === 0) {
                 if (reconnectTimer) {
                     clearTimeout(reconnectTimer);
                     reconnectTimer = null;
                 }
-                globalEventSource.close();
-                globalEventSource = null;
+                if (globalEventSource) {
+                    globalEventSource.close();
+                    globalEventSource = null;
+                }
+                currentConnectionAttempts = 0;
             }
         };
     }, [handleEvent, isDisabled]);
