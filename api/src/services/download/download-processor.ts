@@ -59,6 +59,10 @@ import { removeEmptyParents } from '../mediafiles/library-files.js';
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
+import {
+    getDownloadQueueControlState,
+    setDownloadQueuePaused,
+} from './download-queue-control.js';
 
 import {
     ensureMetadataReady as ensureDownloadMetadataReady,
@@ -330,7 +334,7 @@ const IMMEDIATE_FLUSH_STATES = new Set<string>([
 const PROGRESS_WRITE_INTERVAL_MS = 1_000;
 
 export class DownloadProcessor {
-    private isPaused: boolean = false;
+    private isPaused: boolean = process.env.DISCOGENIUS_START_PAUSED === '1';
     private pollTimer?: NodeJS.Timeout;
     private lastBusyLogAt: number = 0;
     private lastStuckCleanupAt: number = 0;
@@ -1005,9 +1009,13 @@ export class DownloadProcessor {
     async initialize() {
         console.log('[DOWNLOAD-PROCESSOR] Initializing...');
 
-        // Optional: start in paused mode (useful for LAN testing / avoiding background load)
-        if (process.env.DISCOGENIUS_START_PAUSED === '1') {
-            this.isPaused = true;
+        // A persisted operator choice wins over the startup default. Persist an
+        // env-derived first-start pause so replacement workers and later API
+        // restarts observe the same authoritative state.
+        const pauseState = getDownloadQueueControlState();
+        this.isPaused = pauseState.isPaused;
+        if (!pauseState.persisted && this.isPaused) {
+            setDownloadQueuePaused(true);
         }
 
         // Initialize download backends with current settings
@@ -1066,10 +1074,6 @@ export class DownloadProcessor {
             return;
         }
 
-        if (this.isPaused) {
-            return;
-        }
-
         this.maybeCleanupStuckJobs();
 
         // ── Import slot: imports run alongside downloads (Lidarr/Tidarr pattern) ──
@@ -1082,6 +1086,14 @@ export class DownloadProcessor {
             if (!entry) break;
             if (this.activeImports.has(entry.commandId)) continue;
             this.dispatchImportPhase(entry);
+        }
+
+        // Pausing blocks new provider downloads, but a download that already
+        // reached the safe import handoff may still import. Active imports also
+        // finish. This keeps completed bytes from being stranded while the
+        // provider-facing queue is paused.
+        if (this.isPaused) {
+            return;
         }
 
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
@@ -1485,7 +1497,7 @@ export class DownloadProcessor {
                 const current = CommandQueueManager.get(job.id);
                 if (current?.status === 'started') {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; returning to queue`);
-                    CommandQueueManager.retry(job.id);
+                    CommandQueueManager.requeuePausedDownload(job.id);
                 } else {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; keeping status=${current?.status ?? 'unknown'}`);
                 }
@@ -2181,6 +2193,7 @@ export class DownloadProcessor {
 
     async pause(): Promise<void> {
         console.log('[DOWNLOAD-PROCESSOR] Pausing queue...');
+        setDownloadQueuePaused(true);
         this.isPaused = true;
 
         // Flush any buffered progress writes before pausing/shutdown.
@@ -2206,6 +2219,7 @@ export class DownloadProcessor {
         }
 
         console.log('[DOWNLOAD-PROCESSOR] Resuming queue...');
+        setDownloadQueuePaused(false);
         this.isPaused = false;
 
         downloadEvents.emitQueueStatus(false);

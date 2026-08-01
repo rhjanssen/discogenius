@@ -52,7 +52,7 @@ test("fresh database initializes the current development baseline", () => {
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles",
     "MetadataFileLibraries", "LyricFileLibraries", "ExtraFileLibraries",
     "UnmappedFiles",
-    "commands", "scheduled_tasks", "quality_profiles",
+    "commands", "scheduled_tasks", "runtime_controls", "quality_profiles",
     "history_events", "MediaCoverProxyCache",
     "metadata_identity_status",
     "ArtistStatistics",

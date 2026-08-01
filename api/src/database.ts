@@ -26,6 +26,7 @@ import {
   createCommandsSchema,
   createCommandsIndexes,
 } from "./database/schema/commands.js";
+import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
   createCanonicalCreditSchemaV41,
   createLibrarySchemaV41,
@@ -642,6 +643,7 @@ function createBaselineSchemaV41(): void {
   createCatalogSchema(db);
   createCanonicalCreditSchemaV41(db);
   createCommandsSchema(db);
+  createRuntimeControlSchema(db);
   createLibrarySchemaV41(db);
   createArtistTopTrackProjectionSchema(db);
   createAlbumLibraryProjectionSchema(db);

@@ -57,6 +57,13 @@ state and reorder; `api/src/routes/v1/command.ts` is the manual enqueue surface;
 queue states (`completed`, `failed`, `cancelled`) are immutable so a cancelled
 import cannot later overwrite itself as completed once an async worker catches up.
 
+Download pause is durable control-plane state in `runtime_controls`, not an
+in-memory UI preference. A pause is persisted before active provider downloads
+are cooperatively aborted and returned to their exact queue position; it
+survives worker, API, and container restarts without resetting retry evidence.
+No new provider download is claimed while paused. An import already running, or
+already handed a completed download workspace, is allowed to finish safely.
+
 ### Commands
 
 Manual operator commands (via `POST /api/v1/command`, also surfaced through

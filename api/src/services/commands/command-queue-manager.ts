@@ -619,6 +619,47 @@ ${buildExecutionOrderClause()}
     }
 
     /**
+     * Return a pause-interrupted download to its exact durable queue position.
+     *
+     * A queue pause is not a failed attempt and not a user-requested retry:
+     * preserve attempts, queue_order, priority, trigger, and resumable download
+     * state. Only the transient running claim is released.
+     */
+    static requeuePausedDownload(id: number): boolean {
+        const result = db.prepare(`
+            UPDATE commands
+            SET
+                status = 'queued',
+                started_at = NULL,
+                completed_at = NULL,
+                error = NULL,
+                payload = json_set(
+                    COALESCE(payload, '{}'),
+                    '$.downloadState.state', 'paused',
+                    '$.downloadState.statusMessage', 'Paused by user'
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND status = 'started'
+              AND name IN (${buildTypeInClause(DOWNLOAD_COMMAND_NAMES)})
+        `).run(id, ...DOWNLOAD_COMMAND_NAMES);
+        if (result.changes === 0) return false;
+
+        clearCommandUpdateThrottle(id);
+        const job = this.get(id);
+        if (job) {
+            appEvents.emit(AppEvent.COMMAND_UPDATED, {
+                id,
+                type: job.name,
+                status: 'queued',
+                progress: job.progress,
+                payload: job.payload,
+            } as CommandEventPayload);
+        }
+        return true;
+    }
+
+    /**
      * Recover interrupted jobs from previous process crash/restart.
      * Moves processing jobs back to pending so workers can pick them up again.
      */

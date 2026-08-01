@@ -14,6 +14,7 @@ import {
   getTiddlBinary,
   TIDDL_CONFIG_DIR,
 } from "../providers/tidal/tiddl.js";
+import { getDownloadQueueControlState } from "../download/download-queue-control.js";
 
 export interface HealthDiagnosticsSnapshot {
   checkedAt: string;
@@ -38,6 +39,9 @@ export interface HealthDiagnosticsSnapshot {
   };
   backends: {
     tiddl: BackendCapabilitySnapshot;
+  };
+  controls: {
+    downloadQueue: ReturnType<typeof getDownloadQueueControlState>;
   };
   issues: HealthCheckResult[];
 }
@@ -151,6 +155,9 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
     },
     backends: {
       tiddl,
+    },
+    controls: {
+      downloadQueue: getDownloadQueueControlState(),
     },
     issues,
   };
