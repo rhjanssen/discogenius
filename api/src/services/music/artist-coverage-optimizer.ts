@@ -80,3 +80,72 @@ export function selectFewestReleaseGroupsForCoverage(
 
   return retained;
 }
+
+/**
+ * When a manual edition choice costs the discography coverage nothing else
+ * supplies.
+ *
+ * A manual edition choice is a preference, not a lock. The user picks the
+ * standard over the deluxe, and that should stand — the deluxe-only recordings
+ * are usually obtainable anyway, as singles, on another edition, from another
+ * provider, and curation should go and monitor those instead of overruling a
+ * deliberate choice.
+ *
+ * It should not stand when those recordings exist *only* on the edition the user
+ * declined, because then honouring the preference silently loses canonical
+ * recordings from the library. That is the one case automation may overrule, and
+ * only for an unlocked album: a lock says "do not reconsider this", full stop,
+ * and an album that keeps its gap is showing the user exactly what their choice
+ * costs.
+ *
+ * The comparison is canonical **Recording identity across the whole
+ * discography**, never track counts. Two 12-track editions carrying different
+ * recordings are not interchangeable, and a numeric test would call them equal.
+ */
+export type ManualEditionChoiceAlbum = {
+  releaseGroupId: number;
+  /** Canonical recordings the user's chosen editions of this album supply. */
+  chosenRecordingIds: ReadonlySet<number>;
+  /**
+   * Canonical recordings the editions of this album that curation would have
+   * chosen supply. Only editions curation considers eligible belong here — an
+   * edition no provider can deliver is not an alternative that was passed over.
+   */
+  alternativeRecordingIds: ReadonlySet<number>;
+};
+
+export type ManualEditionChoiceOverrule = {
+  releaseGroupId: number;
+  /**
+   * Recordings reachable only through the declined edition, ascending. These
+   * are what the override costs, and what makes the reason arguable rather than
+   * merely announced.
+   */
+  unreachableRecordingIds: number[];
+};
+
+export function findUnreachableManualEditionChoices(input: {
+  albums: readonly ManualEditionChoiceAlbum[];
+  /**
+   * Canonical recordings reachable from everything else the library monitors
+   * across this artist's discography — other albums, singles, other editions.
+   * The album under test contributes only its chosen editions.
+   */
+  reachableRecordingIds: ReadonlySet<number>;
+}): ManualEditionChoiceOverrule[] {
+  const overrules: ManualEditionChoiceOverrule[] = [];
+  for (const album of input.albums) {
+    const unreachable: number[] = [];
+    for (const recordingId of album.alternativeRecordingIds) {
+      if (album.chosenRecordingIds.has(recordingId)) continue;
+      if (input.reachableRecordingIds.has(recordingId)) continue;
+      unreachable.push(recordingId);
+    }
+    if (unreachable.length === 0) continue;
+    overrules.push({
+      releaseGroupId: album.releaseGroupId,
+      unreachableRecordingIds: unreachable.sort((left, right) => left - right),
+    });
+  }
+  return overrules.sort((left, right) => left.releaseGroupId - right.releaseGroupId);
+}

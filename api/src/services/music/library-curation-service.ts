@@ -12,6 +12,10 @@ import {
   type LibraryScopeType,
 } from "./library-curation-repository.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
+import {
+  findUnreachableManualEditionChoices,
+  type ManualEditionChoiceAlbum,
+} from "./artist-coverage-optimizer.js";
 
 interface LibraryPolicyRow {
   id: number;
@@ -144,19 +148,44 @@ export class LibraryCurationService {
     const qualityPlaceholders = allowedQualities.map(() => "?").join(",");
     // Editions automation may not drop: the user picked them, or their Album is
     // locked. The lock is read from LibraryAlbums — the one place it lives.
-    const protectedReleaseIds = new Set(
-      (this.db.prepare(`
-        SELECT monitored_edition.edition_id
-        FROM LibraryEditions monitored_edition
-        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-        LEFT JOIN LibraryAlbums library_album
-          ON library_album.library_id = monitored_edition.library_id
-         AND library_album.release_group_id = edition.release_group_id
-        WHERE monitored_edition.library_id = ?
-          AND (COALESCE(library_album.locked, 0) = 1
-               OR monitored_edition.selection_mode = 'manual')
-      `).all(input.libraryId) as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id),
+    //
+    // The two reasons are kept apart because they are not equally absolute. A
+    // lock is unconditional. A manual edition choice is a preference, and it is
+    // withdrawn in exactly one case: when honouring it would lose canonical
+    // recordings the rest of the discography cannot supply (see
+    // findUnreachableManualEditionChoices below).
+    const protectionRows = this.db.prepare(`
+      SELECT
+        monitored_edition.edition_id,
+        edition.release_group_id,
+        COALESCE(library_album.locked, 0) AS locked,
+        monitored_edition.selection_mode
+      FROM LibraryEditions monitored_edition
+      JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+      LEFT JOIN LibraryAlbums library_album
+        ON library_album.library_id = monitored_edition.library_id
+       AND library_album.release_group_id = edition.release_group_id
+      WHERE monitored_edition.library_id = ?
+        AND (COALESCE(library_album.locked, 0) = 1
+             OR monitored_edition.selection_mode = 'manual')
+    `).all(input.libraryId) as Array<{
+      edition_id: number;
+      release_group_id: number;
+      locked: number;
+      selection_mode: string;
+    }>;
+    const protectedReleaseIds = new Set(protectionRows.map((row) => row.edition_id));
+    // Manual choices that a lock is NOT already protecting — the only ones
+    // coverage may overrule.
+    const overrulableManualEditions = protectionRows.filter(
+      (row) => row.locked === 0 && row.selection_mode === "manual",
     );
+    const manualEditionIdsByAlbum = new Map<number, Set<number>>();
+    for (const row of overrulableManualEditions) {
+      const editionIds = manualEditionIdsByAlbum.get(row.release_group_id) || new Set<number>();
+      editionIds.add(row.edition_id);
+      manualEditionIdsByAlbum.set(row.release_group_id, editionIds);
+    }
 
     const candidateScopes = new Map<number, LibraryReleaseScopeInput[]>();
     if (libraryArtists.length > 0) {
@@ -327,9 +356,45 @@ export class LibraryCurationService {
       });
     }
 
-    const result = curateLibraryReleases(candidates, Boolean(library.redundancy_enabled));
+    // A locked Album's edition set is the user's, so automation may not add to it
+    // either: only its already-monitored editions stay in the running.
+    const lockedAlbumIds = new Set(
+      protectionRows.filter((row) => row.locked === 1).map((row) => row.release_group_id),
+    );
+    const monitoredEditionIds = new Set(protectionRows.map((row) => row.edition_id));
+    const eligibleCandidates = candidates.filter((candidate) =>
+      !lockedAlbumIds.has(candidate.releaseGroupId)
+      || monitoredEditionIds.has(candidate.editionId));
+
+    // A manual edition choice survives unless it costs the discography canonical
+    // recordings nothing else supplies.
+    const overruledReleaseGroupIds = this.overruledManualEditionAlbums({
+      overrulableManualEditions,
+      candidates: eligibleCandidates,
+    });
+    // Where the choice stands, the editions the user declined leave the running
+    // entirely. Otherwise the fewest-releases optimizer would reach for the
+    // deluxe as a cheap cover and monitor it alongside the standard, which is
+    // the outcome the preference exists to avoid — the point is that curation
+    // goes and monitors the singles instead.
+    const curatedCandidates = eligibleCandidates.filter((candidate) => {
+      const manualEditionIds = manualEditionIdsByAlbum.get(candidate.releaseGroupId);
+      if (!manualEditionIds) return true;
+      if (overruledReleaseGroupIds.has(candidate.releaseGroupId)) return true;
+      return manualEditionIds.has(candidate.editionId);
+    });
+    for (const candidate of curatedCandidates) {
+      if (!overruledReleaseGroupIds.has(candidate.releaseGroupId)) continue;
+      candidate.protected = false;
+    }
+
+    const result = curateLibraryReleases(
+      curatedCandidates,
+      Boolean(library.redundancy_enabled),
+    );
+
     const releaseGroupIdByReleaseId = new Map(
-      candidates.map((candidate) => [candidate.editionId, candidate.releaseGroupId]),
+      curatedCandidates.map((candidate) => [candidate.editionId, candidate.releaseGroupId]),
     );
     const selectedScopes = result.selectedReleaseIds.flatMap((editionId) =>
       candidateScopes.get(editionId) || []);
@@ -342,6 +407,11 @@ export class LibraryCurationService {
       releaseGroupIdByReleaseId,
       scopes: selectedScopes,
       curationVersion: input.curationVersion,
+      // Overruling a deliberate choice is never silent; the row says so.
+      reasonByReleaseGroupId: new Map(
+        [...overruledReleaseGroupIds].map((releaseGroupId) =>
+          [releaseGroupId, "curation_override_unreachable_recordings"] as const),
+      ),
     });
 
     // Newly monitored Editions had no row when they were planned, so nothing
@@ -355,6 +425,85 @@ export class LibraryCurationService {
       });
     }
     return result;
+  }
+
+  /**
+   * Albums whose manual edition choice automation may overrule.
+   *
+   * The question is *reachability*, not what a previous pass happened to pick:
+   * could the rest of this artist's discography supply the recordings the
+   * declined edition carries? Every eligible edition of every other album counts,
+   * because curation is free to monitor those instead — and where it can, the
+   * user's choice stands and curation goes and does exactly that.
+   *
+   * Comparison is by canonical Recording identity across the discography. Track
+   * counts are never compared: two twelve-track editions carrying different
+   * recordings are not interchangeable, and a numeric test would call them equal.
+   */
+  private overruledManualEditionAlbums(input: {
+    overrulableManualEditions: ReadonlyArray<{ edition_id: number; release_group_id: number }>;
+    candidates: readonly CurationReleaseCandidate[];
+  }): Set<number> {
+    if (input.overrulableManualEditions.length === 0) return new Set();
+
+    const canonicalByEdition = this.canonicalRecordingIdsByEdition();
+    const manualEditionIdsByAlbum = new Map<number, Set<number>>();
+    for (const row of input.overrulableManualEditions) {
+      const editionIds = manualEditionIdsByAlbum.get(row.release_group_id) || new Set<number>();
+      editionIds.add(row.edition_id);
+      manualEditionIdsByAlbum.set(row.release_group_id, editionIds);
+    }
+
+    const candidatesByAlbum = new Map<number, CurationReleaseCandidate[]>();
+    for (const candidate of input.candidates) {
+      const list = candidatesByAlbum.get(candidate.releaseGroupId) || [];
+      list.push(candidate);
+      candidatesByAlbum.set(candidate.releaseGroupId, list);
+    }
+
+    const overruled = new Set<number>();
+    for (const [releaseGroupId, manualEditionIds] of manualEditionIdsByAlbum) {
+      const chosenRecordingIds = new Set<number>();
+      for (const editionId of manualEditionIds) {
+        for (const recordingId of canonicalByEdition.get(editionId) || []) {
+          chosenRecordingIds.add(recordingId);
+        }
+      }
+      // Only editions curation considers eligible count as alternatives. One no
+      // provider can deliver was never a choice that was passed over.
+      const alternativeRecordingIds = new Set<number>();
+      for (const candidate of candidatesByAlbum.get(releaseGroupId) || []) {
+        if (manualEditionIds.has(candidate.editionId)) continue;
+        for (const recordingId of canonicalByEdition.get(candidate.editionId) || []) {
+          alternativeRecordingIds.add(recordingId);
+        }
+      }
+      // Everything the rest of the discography could supply. An album cannot
+      // supply its own missing recordings, so it is excluded from its own test.
+      const reachableRecordingIds = new Set<number>();
+      for (const [otherAlbumId, otherCandidates] of candidatesByAlbum) {
+        if (otherAlbumId === releaseGroupId) continue;
+        for (const candidate of otherCandidates) {
+          for (const recordingId of canonicalByEdition.get(candidate.editionId) || []) {
+            reachableRecordingIds.add(recordingId);
+          }
+        }
+      }
+
+      const [overrule] = findUnreachableManualEditionChoices({
+        albums: [{ releaseGroupId, chosenRecordingIds, alternativeRecordingIds }],
+        reachableRecordingIds,
+      });
+      if (!overrule) continue;
+      overruled.add(overrule.releaseGroupId);
+      console.warn(
+        `[LibraryCuration] Overruling the manual edition choice for release group `
+        + `${overrule.releaseGroupId}: ${overrule.unreachableRecordingIds.length} canonical `
+        + `recording(s) are reachable through no other release in this discography `
+        + `(${overrule.unreachableRecordingIds.slice(0, 10).join(", ")})`,
+      );
+    }
+    return overruled;
   }
 
   /** The complete canonical Recording set of every Edition. */

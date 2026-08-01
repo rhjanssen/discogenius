@@ -186,8 +186,20 @@ export class LibraryCurationRepository {
     releaseGroupIdByReleaseId: ReadonlyMap<number, number>;
     scopes: readonly LibraryReleaseScopeInput[];
     curationVersion: number;
+    /**
+     * Albums whose manual edition choice curation overruled, and why.
+     *
+     * Overruling is rare and always for one reason — the declined edition
+     * carried canonical recordings the rest of the discography could not
+     * supply — so the reason is written onto the rows curation replaces rather
+     * than only logged. Their manual protection is withdrawn for this pass;
+     * every other album's manual choice is untouched.
+     */
+    reasonByReleaseGroupId?: ReadonlyMap<number, string>;
   }): void {
     this.db.transaction(() => {
+      const overruledReleaseGroupIds = [...(input.reasonByReleaseGroupId?.keys() ?? [])];
+      const overruledPlaceholders = overruledReleaseGroupIds.map(() => "?").join(",");
       const selectedReleaseIds = new Set(input.result.selectedReleaseIds);
       const selectedReleaseGroupIds = new Set<number>();
       for (const editionId of selectedReleaseIds) {
@@ -199,6 +211,9 @@ export class LibraryCurationRepository {
       // Automation may only reconsider rows it created itself. A manual choice
       // is the user's, and a locked Album holds every Edition under it — the
       // lock lives on LibraryAlbums, which is the one authority on the subject.
+      const overruledScope = overruledReleaseGroupIds.length === 0
+        ? ""
+        : `OR edition.release_group_id IN (${overruledPlaceholders})`;
       const automaticEditions = `
         SELECT monitored_edition.id
         FROM LibraryEditions monitored_edition
@@ -207,13 +222,14 @@ export class LibraryCurationRepository {
           ON library_album.library_id = monitored_edition.library_id
          AND library_album.release_group_id = edition.release_group_id
         WHERE monitored_edition.library_id = ?
-          AND monitored_edition.selection_mode = 'auto'
           AND COALESCE(library_album.locked, 0) = 0
+          AND (monitored_edition.selection_mode = 'auto' ${overruledScope})
       `;
+      const automaticEditionParams = [input.libraryId, ...overruledReleaseGroupIds];
       this.db.prepare(`
         DELETE FROM LibraryEditionScopes
         WHERE library_edition_id IN (${automaticEditions})
-      `).run(input.libraryId);
+      `).run(...automaticEditionParams);
       // Release the deferred plan reference before the rows go, and note that
       // the plans themselves survive: an Edition that stops being monitored
       // keeps its candidate offers so it can still be offered as an alternative.
@@ -221,34 +237,45 @@ export class LibraryCurationRepository {
         UPDATE LibraryEditions
         SET preferred_plan_key = NULL
         WHERE id IN (${automaticEditions})
-      `).run(input.libraryId);
+      `).run(...automaticEditionParams);
       this.db.prepare(`
         DELETE FROM LibraryEditions WHERE id IN (${automaticEditions})
-      `).run(input.libraryId);
+      `).run(...automaticEditionParams);
       this.db.prepare(`
         DELETE FROM LibraryAlbums
-        WHERE library_id = ? AND selection_mode = 'auto' AND locked = 0
-      `).run(input.libraryId);
+        WHERE library_id = ? AND locked = 0
+          AND (selection_mode = 'auto'
+               ${overruledReleaseGroupIds.length === 0
+                 ? ""
+                 : `OR release_group_id IN (${overruledPlaceholders})`})
+      `).run(input.libraryId, ...overruledReleaseGroupIds);
 
       const insertGroup = this.db.prepare(`
         INSERT INTO LibraryAlbums (
           library_id, release_group_id, selection_mode, locked,
           reason, curation_version, updated_at
-        ) VALUES (?, ?, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, 'auto', 0, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+          reason = CASE WHEN LibraryAlbums.locked = 1
+            THEN LibraryAlbums.reason ELSE excluded.reason END,
           curation_version = CASE WHEN LibraryAlbums.locked = 1
             THEN LibraryAlbums.curation_version ELSE excluded.curation_version END,
           updated_at = CURRENT_TIMESTAMP
       `);
       for (const releaseGroupId of [...selectedReleaseGroupIds].sort((a, b) => a - b)) {
-        insertGroup.run(input.libraryId, releaseGroupId, input.curationVersion);
+        insertGroup.run(
+          input.libraryId,
+          releaseGroupId,
+          input.reasonByReleaseGroupId?.get(releaseGroupId) ?? "curation",
+          input.curationVersion,
+        );
       }
 
       const insertRelease = this.db.prepare(`
         INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, representative, reason,
           curation_version, selected_at, updated_at
-        ) VALUES (?, ?, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, 'auto', 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, edition_id) DO UPDATE SET
           curation_version = excluded.curation_version,
           updated_at = CURRENT_TIMESTAMP
@@ -259,6 +286,9 @@ export class LibraryCurationRepository {
         const row = insertRelease.get(
           input.libraryId,
           editionId,
+          input.reasonByReleaseGroupId?.get(
+            input.releaseGroupIdByReleaseId.get(editionId) ?? -1,
+          ) ?? "curation",
           input.curationVersion,
         ) as { id: number };
         libraryReleaseIdByReleaseId.set(editionId, row.id);
