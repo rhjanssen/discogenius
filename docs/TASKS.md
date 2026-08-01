@@ -16,7 +16,49 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
-## Next: edition choice may be overruled when coverage becomes impossible
+## Next: LibraryEditions must represent evaluated-but-unmonitored Editions
+
+Not implemented — this is the foundational slice the remaining UX work depends
+on, and it is deliberately not started rather than half-migrated.
+
+Today a `LibraryEditions` row's *existence* is the monitoring decision. An
+Edition that curation evaluated and did not pick has no row, so it can carry no
+Acquisition Plans, so the Album page cannot show meaningful plan alternatives
+beneath an unmonitored Edition — which is the whole point of choosing one.
+
+Target model: add `LibraryEditions.monitored BOOLEAN NOT NULL DEFAULT 1`, so one
+row per (Library, evaluated Edition) can express monitored, selection_mode
+(auto/manual), locked, its persisted plans, and its preferred plan. Plans then
+attach to evaluated Editions rather than to selected-only rows, and no second
+Library/Edition identity is introduced anywhere.
+
+Blast radius, measured: 73 references across 36 non-test files treat a
+LibraryEditions row as a monitoring decision. Every one needs `AND monitored = 1`
+unless it genuinely wants evaluated alternatives — the same mechanical guard the
+`AcquisitionPlans.chosen` split used successfully (31 joins, 20 files). Do it as
+its own commit with the full suite green before any behaviour change rides on it.
+
+Behaviour that follows once the column exists:
+
+- Curation writes `monitored = 0` for redundant unlocked automatic Editions
+  instead of deleting the row, preserving their plans as visible alternatives.
+- Clicking a plan beneath an Edition becomes one atomic action: monitor that
+  target Edition for the Library, select that exact plan, reconcile redundant
+  unlocked automatic Editions, and leave manual or locked Editions alone.
+- `require_provider_availability`: when enabled, automatic curation may monitor
+  only Editions with at least one viable plan, and the UI lists the rest with
+  "No provider offer currently available"; when disabled, an Edition may be
+  monitored with no plan at all and acquisition state stays unavailable — never
+  a fabricated plan.
+- Track-list tabs: compare canonical Recording sets across monitored Editions.
+  Equivalent or strictly nested sets keep one representative list; only genuinely
+  non-nested sets get tabs, styled like the Dashboard Queue/Activity tabs, with
+  the representative stereo Edition as the default tab.
+
+Schema 42 is still branch-only and undeployed, so this lands as a revision to 42
+rather than a new 43.
+
+## Also next: edition choice may be overruled when coverage becomes impossible
 
 Not implemented. Everything else from the acquisition-plan design landed
 (schema 42, candidate plans, plan dedup, manual-choice coverage guard, lock
