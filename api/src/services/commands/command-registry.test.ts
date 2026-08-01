@@ -62,11 +62,12 @@ test("command registry exposes canonical command and task metadata", () => {
   }
 });
 
-test("RefreshArtist concurrency stays at 1 for Servarr and 2 for local-MB", () => {
+test("RefreshArtist concurrency stays conservative for Servarr and exposes a bounded local-MB sweep control", () => {
   const refresh = getCommandDefinition("RefreshArtist");
   assert.equal(refresh.maxConcurrent, 1);
   assert.equal(typeof refresh.resolveMaxConcurrent, "function");
 
+  delete process.env.DISCOGENIUS_LOCAL_MB_REFRESH_CONCURRENCY;
   updateConfig("catalog", { source: "servarr" });
   assert.equal(resolveRefreshArtistMaxConcurrent(), 1);
   assert.equal(refresh.resolveMaxConcurrent?.(), 1);
@@ -75,5 +76,13 @@ test("RefreshArtist concurrency stays at 1 for Servarr and 2 for local-MB", () =
   assert.equal(resolveRefreshArtistMaxConcurrent(), 2);
   assert.equal(refresh.resolveMaxConcurrent?.(), 2);
 
+  for (const concurrency of [1, 2, 3, 4, 5, 6, 8]) {
+    process.env.DISCOGENIUS_LOCAL_MB_REFRESH_CONCURRENCY = String(concurrency);
+    assert.equal(resolveRefreshArtistMaxConcurrent(), concurrency);
+  }
+  process.env.DISCOGENIUS_LOCAL_MB_REFRESH_CONCURRENCY = "99";
+  assert.equal(resolveRefreshArtistMaxConcurrent(), 8);
+
+  delete process.env.DISCOGENIUS_LOCAL_MB_REFRESH_CONCURRENCY;
   updateConfig("catalog", { source: "servarr" });
 });

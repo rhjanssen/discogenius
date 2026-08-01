@@ -24,16 +24,28 @@ import {
   queueCheckUpgradesPass,
 } from "./scheduler.js";
 import { getConfigSection } from "../config/config.js";
+import { readIntEnv } from "../../utils/env.js";
 
 /**
  * Local-MB Postgres is not public-API rate-limited, so two RefreshArtist
  * commands can fetch in parallel. SQLite writes still serialize via
- * `withSqliteWriteGate`. Servarr (and unknown/broken config) stay at 1.
- * Do not raise above 2 without measuring busy-timeout / claim latency.
+ * short transactions. Servarr (and unknown/broken config) stay at 1.
+ *
+ * The local cap is runtime-configurable specifically so the release harness
+ * can sweep 1/2/3/4/5/6/8 against the same build. The shipping default remains
+ * the measured-conservative value of 2 until a real local-MB run justifies a
+ * different choice; values above 8 are clamped to keep a typo from flooding
+ * PostgreSQL or the SQLite writer.
  */
 export function resolveRefreshArtistMaxConcurrent(): number {
   try {
-    return getConfigSection("catalog").source === "musicbrainz" ? 2 : 1;
+    if (getConfigSection("catalog").source !== "musicbrainz") {
+      return 1;
+    }
+    return Math.min(
+      8,
+      readIntEnv("DISCOGENIUS_LOCAL_MB_REFRESH_CONCURRENCY", 2, 1),
+    );
   } catch {
     return 1;
   }

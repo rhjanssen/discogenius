@@ -92,6 +92,9 @@ The overlay sets:
   `config/` / the SQLite DB**, so a reset that keeps `.env` still forces local-MB
   if the var is set. Omit it for online Servarr on fresh installs.
 - `MB_LOCAL_HOST` — MusicBrainz-docker host or service name, default `db`
+- `DISCOGENIUS_LOCAL_MB_REFRESH_CONCURRENCY` — bounded `RefreshArtist`
+  concurrency used by local-MB mode only (default `2`, supported sweep range
+  `1`–`8`). Servarr remains fixed at one concurrent Artist refresh.
 
 The Settings page uses the same host-only value. Enter `localhost`,
 `musicbrainz.mydomain.com`, `db`, or `host:postgresPort` for non-standard
