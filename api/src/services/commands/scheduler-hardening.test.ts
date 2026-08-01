@@ -75,10 +75,6 @@ test("RescanAllRoots delegates to queueRescanFoldersPass and queues a RescanFold
 });
 
 test("CheckHealth collects a real diagnostics snapshot and reports issue counts", async () => {
-    const expectedDescription = schedulerModule.formatHealthCheckDescription(
-        healthModule.collectHealthDiagnosticsSnapshot(),
-    );
-
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.CheckHealth,
         {},
@@ -91,7 +87,14 @@ test("CheckHealth collects a real diagnostics snapshot and reports issue counts"
 
     const completed = queueModule.CommandQueueManager.get(commandId);
     assert.equal(completed?.status, "completed");
-  assert.equal((completed?.payload as Record<string, unknown>)?.description, expectedDescription);
+    const resultingSnapshot = healthModule.collectHealthDiagnosticsSnapshot();
+    assert.equal(
+        (completed?.payload as Record<string, unknown>)?.description,
+        schedulerModule.formatHealthCheckDescription(resultingSnapshot),
+    );
+    assert.equal(resultingSnapshot.subsystems.database.lastDeepResult?.persisted, true);
+    assert.equal(resultingSnapshot.subsystems.database.lastDeepResult?.quickCheck.status, "ok");
+    assert.equal(resultingSnapshot.subsystems.database.lastDeepResult?.foreignKeys.violationCount, 0);
 });
 
 test("BackupDatabase is executed by the non-download command executor", async () => {

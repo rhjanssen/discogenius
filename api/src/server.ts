@@ -38,7 +38,6 @@ import { getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/confi
 import { downloadProcessor } from "./services/download/download-processor.js";
 import { queueUpdateLibraryMetadata, startMonitoring } from "./services/commands/scheduler.js";
 import {
-  getRuntimeDiagnosticsSnapshot,
   startRuntimeDiagnostics,
   trackRuntimeRequest,
 } from "./services/commands/runtime-diagnostics.js";
@@ -230,8 +229,8 @@ app.use("/api/v1/unmapped", authMiddleware, unmappedRouter);
 app.use("/api/playback", playbackRouter);
 
 function sendHealthSnapshot(res: express.Response) {
-  const runtime = getRuntimeDiagnosticsSnapshot();
   const preflight = collectHealthDiagnosticsSnapshot();
+  const runtime = preflight.runtime;
   const status = preflight.status;
 
   res.status(status === "unhealthy" ? 503 : 200).json({

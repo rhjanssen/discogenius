@@ -63,6 +63,26 @@ export interface ManualMatchResultContract {
   intakeQueued: boolean;
 }
 
+export interface DeepDatabaseHealthResultContract {
+  checkedAt: string;
+  durationMs: number;
+  status: HealthOverallStatusContract;
+  quickCheck: {
+    status: "ok" | "error";
+    message: string;
+    results: string[];
+  };
+  foreignKeys: {
+    status: "ok" | "error";
+    violationCount: number;
+    sample: Array<Record<string, unknown>>;
+  };
+  executedOffMainThread: boolean;
+  persisted: boolean;
+  error?: string;
+  persistenceError?: string;
+}
+
 export interface SystemStatusContract {
   checkedAt: string;
   status: HealthOverallStatusContract;
@@ -85,6 +105,27 @@ export interface SystemStatusContract {
   };
   backends: {
     tiddl: BackendCapabilitySnapshotContract;
+  };
+  controls: {
+    downloadQueue: {
+      isPaused: boolean;
+      persisted: boolean;
+      updatedAt: string | null;
+    };
+  };
+  subsystems: {
+    database: {
+      schema: HealthCheckResultContract;
+      wal: HealthCheckResultContract;
+      storage: HealthCheckResultContract;
+      deep: HealthCheckResultContract;
+      lastDeepResult: DeepDatabaseHealthResultContract | null;
+    };
+    commandQueue: HealthCheckResultContract;
+    scheduledTasks: HealthCheckResultContract;
+    imports: HealthCheckResultContract;
+    statistics: HealthCheckResultContract;
+    catalog: HealthCheckResultContract;
   };
   issues: HealthCheckResultContract[];
   /** Added by the /system/status route (not part of the /health probe snapshot). */

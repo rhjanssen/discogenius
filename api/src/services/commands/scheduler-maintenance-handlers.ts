@@ -1,6 +1,10 @@
 import { CommandTrigger } from "./command-trigger.js";
 import { db } from "../../database.js";
-import { collectHealthDiagnosticsSnapshot, type HealthDiagnosticsSnapshot } from "./health.js";
+import {
+    collectHealthDiagnosticsSnapshot,
+    runDeepDatabaseHealthCheck,
+    type HealthDiagnosticsSnapshot,
+} from "./health.js";
 import { DiskScanService } from "../mediafiles/library-scan.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
 import { CommandModel, type CommandModelOf } from "./command-model.js";
@@ -179,7 +183,15 @@ export async function runLowCouplingMaintenanceJob(
             return;
         }
         case CommandNames.CheckHealth: {
-            const snapshot = collectHealthDiagnosticsSnapshot();
+            context.updateCommandDescription({
+                progress: 10,
+                description: "Running deep database integrity checks",
+            });
+            // CheckHealth executes in the command worker pool in production.
+            // Keep quick_check/foreign_key_check off the API event loop and
+            // persist the result for lightweight /health reads.
+            const deepResult = runDeepDatabaseHealthCheck();
+            const snapshot = collectHealthDiagnosticsSnapshot({ deepResult });
             context.updateCommandDescription({
                 progress: 100,
                 description: formatHealthCheckDescription(snapshot),
