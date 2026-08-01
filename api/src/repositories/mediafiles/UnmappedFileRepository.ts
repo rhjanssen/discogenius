@@ -1,5 +1,9 @@
 import Database from "better-sqlite3";
 import { BaseRepository } from "../base/BaseRepository.js";
+import {
+    comparablePathColumnSql,
+    normalizeComparablePath,
+} from "../../services/mediafiles/path-utils.js";
 
 export interface UnmappedFile {
     id: number;
@@ -60,17 +64,20 @@ export class UnmappedFileRepository extends BaseRepository<UnmappedFile, number>
     }
 
     findByDirectory(relativeDirectory: string, libraryRoot?: string): UnmappedFile[] {
-        const normalizedPrefix = relativeDirectory.replace(/\\/g, "/");
+        // The prefix is normalized to forward slashes, so the stored column has
+        // to be too — see comparablePathColumnSql.
+        const normalizedPrefix = normalizeComparablePath(relativeDirectory);
+        const comparableRelativePath = comparablePathColumnSql("relative_path");
         const sql = libraryRoot
             ? `
                 SELECT * FROM UnmappedFiles
-                WHERE relative_path LIKE ? || '%'
+                WHERE ${comparableRelativePath} LIKE ? || '%'
                   AND library_root = ?
                 ORDER BY filename ASC
               `
             : `
                 SELECT * FROM UnmappedFiles
-                WHERE relative_path LIKE ? || '%'
+                WHERE ${comparableRelativePath} LIKE ? || '%'
                 ORDER BY filename ASC
               `;
         const rows = (libraryRoot

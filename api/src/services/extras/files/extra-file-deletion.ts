@@ -6,7 +6,10 @@ import {
   type DeletionScope,
 } from "../../mediafiles/library-deletion-scope.js";
 import { resolveStoredLibraryPath } from "../../mediafiles/library-paths.js";
-import { normalizeComparablePath } from "../../mediafiles/path-utils.js";
+import {
+  comparablePathColumnSql,
+  normalizeComparablePath,
+} from "../../mediafiles/path-utils.js";
 import { ExtraFileService, type ExtraFileTableName } from "./extra-file-service.js";
 
 const EXTRA_TABLES: ExtraFileTableName[] = ["MetadataFiles", "LyricFiles", "ExtraFiles"];
@@ -61,7 +64,7 @@ function remainingSiblingTrackFiles(
   const rows = db.prepare(`
     SELECT id, library_id, file_path
     FROM TrackFiles
-    WHERE file_path LIKE ? ESCAPE '\\'
+    WHERE ${comparablePathColumnSql("file_path")} LIKE ? ESCAPE '\\'
   `).all(likePrefixPattern(`${directory}/`)) as Array<{
     id: number;
     library_id: number | null;
@@ -89,7 +92,7 @@ function selectFolderExtras(table: ExtraFileTableName, directory: string): Extra
     SELECT id, file_path, library_root, track_file_id
     FROM ${table}
     WHERE track_file_id IS NULL
-      AND file_path LIKE ? ESCAPE '\\'
+      AND ${comparablePathColumnSql("file_path")} LIKE ? ESCAPE '\\'
   `).all(likePrefixPattern(`${directory}/`)) as ExtraRow[];
   return rows.filter((row) => storedDirectory(row.file_path) === directory);
 }

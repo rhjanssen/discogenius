@@ -8,6 +8,7 @@ import {
     PROVIDER_RESOLVED_ALBUM_ID_SQL,
     LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL,
 } from "../providers/provider-item-artist-scope.js";
+import { comparablePathColumnSql } from "./path-utils.js";
 import type { LibraryRootKey } from "./library-scan-relink.js";
 
 export type MetadataMatchResult = {
@@ -307,7 +308,7 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
         JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
         WHERE tf.artist_id = ?
           AND tf.provider_id IS NOT NULL
-          AND replace(tf.file_path, '\\', '/') LIKE ? || '/%'
+          AND ${comparablePathColumnSql("tf.file_path")} LIKE ? || '/%'
     `).all(artistId, normalizedFolder) as Array<{ album_id: string }>;
 
     for (const row of rows) {
@@ -510,7 +511,7 @@ function findSameFolderDuplicate(
         WHERE tf.artist_id = ?
           AND tf.file_type = 'track'
           AND tf.provider_id IS NOT NULL
-          AND replace(tf.file_path, '\\', '/') LIKE ? || '/%'
+          AND ${comparablePathColumnSql("tf.file_path")} LIKE ? || '/%'
     `).all(artistId, folder) as Array<{
         file_path: string;
         provider: string | null;

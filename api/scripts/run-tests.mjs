@@ -55,15 +55,23 @@ function runOnce(files, { capture = false } = {}) {
   );
 }
 
-// Parse the top-level TAP results for failed test *files* (node --test reports
-// one numbered subtest per file: "not ok 102 - src/…/foo.test.ts").
-function parseFailedFiles(stdout) {
-  const failed = new Set();
+// Parse the top-level TAP results. A whole file that dies reports as
+// "not ok 102 - src/…/foo.test.ts"; an individual assertion failure reports as
+// "not ok 359 - a shared cover survives …". Only the first kind can be a clone
+// flake, and only the second kind proves a genuine defect — so they are counted
+// separately. Conflating them is what let a flake anywhere in the suite mask
+// every real failure elsewhere.
+function parseFailures(stdout) {
+  const files = new Set();
+  const tests = [];
   for (const rawLine of String(stdout || "").split(/\r?\n/)) {
-    const match = /^not ok \d+ - (\S.*\.test\.ts)(?:\s|$)/.exec(rawLine.trim());
-    if (match) failed.add(match[1].trim());
+    const match = /^not ok \d+ - (\S.*)$/.exec(rawLine.trim());
+    if (!match) continue;
+    const name = match[1].trim();
+    if (/\.test\.ts$/.test(name)) files.add(name);
+    else tests.push(name);
   }
-  return [...failed];
+  return { files: [...files], tests };
 }
 
 let result = runOnce(testFiles, { capture: true });
@@ -77,7 +85,16 @@ if (result.stderr) process.stderr.write(result.stderr);
 // immediately; retrying those would hide a flaky or genuinely broken test.
 const combinedOutput = `${String(result.stdout || "")}\n${String(result.stderr || "")}`;
 if ((result.status ?? 1) !== 0 && combinedOutput.includes(CLONE_FLAKE_SIGNATURE)) {
-  const failedFiles = parseFailedFiles(combinedOutput);
+  const { files: failedFiles, tests: failedTests } = parseFailures(combinedOutput);
+  if (failedTests.length > 0) {
+    // Assertions failed for reasons that have nothing to do with the flake.
+    // Re-running the flaked file cannot absolve them, so the suite stays red.
+    console.error(
+      `[api tests] Test-runner clone flake detected, but ${failedTests.length} test(s) failed on their own merits; not retrying:\n`
+      + failedTests.map((name) => `  - ${name}`).join("\n"),
+    );
+    process.exit(result.status ?? 1);
+  }
   if (failedFiles.length > 0) {
     console.warn(`[api tests] Test-runner clone flake detected; re-running ${failedFiles.length} affected file(s) in isolation: ${failedFiles.join(", ")}`);
     result = runOnce(failedFiles, { capture: false });
