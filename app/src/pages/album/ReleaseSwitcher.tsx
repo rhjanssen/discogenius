@@ -270,14 +270,17 @@ function planHeadline(plan: AcquisitionPlan): string {
  * necessarily an exact match, and exact/superset/subset/overlap already name the
  * match relation separately.
  */
-function planSourceSummary(plan: AcquisitionPlan, targetTrackCount: number | null): string {
+function planSourceSummary(plan: AcquisitionPlan): string {
   const shape = plan.composition === "composite" ? "Combined offer" : "Single offer";
   const count = plan.providerEditionMatchIds.length || 1;
   const releases = count === 1
     ? `Uses 1 ${plan.provider} release`
     : `Combines ${count} ${plan.provider} releases`;
-  const coverage = targetTrackCount != null
-    ? ` · ${plan.coverage}/${targetTrackCount} Tracks`
+  // The denominator is the plan's own target, not the release row's track_count:
+  // the plan knows which canonical Edition it targets, so 11/12 stays honest
+  // even when the catalogue row is stale.
+  const coverage = plan.targetTrackCount > 0
+    ? ` · ${plan.coverage}/${plan.targetTrackCount} Tracks`
     : ` · ${plan.coverage} Tracks`;
   return `${shape} · ${releases}${coverage}`;
 }
@@ -292,15 +295,44 @@ function planRelationSummary(plan: AcquisitionPlan, release: Release): string | 
   return relations.length > 0 ? relations.join(" + ") : null;
 }
 
+/**
+ * Monitored state of one canonical Edition in one Library.
+ *
+ * "Primary" is the Edition whose track list the Album page shows by default;
+ * "Additional" is monitored alongside it. Unmonitored Editions still list their
+ * offers — being able to see what switching would get you is the point.
+ */
+function monitoringLabel(selection: Selection): {
+  text: string;
+  color: "brand" | "informative" | "subtle";
+} {
+  if (!selection.monitored) return { text: "Unmonitored", color: "subtle" };
+  return selection.representative
+    ? { text: "Primary edition", color: "brand" }
+    : { text: "Additional edition", color: "informative" };
+}
+
 export interface ReleaseSwitcherProps {
   availability: ReleaseGroupAvailability;
   currentReleaseMbid?: string | null;
   pendingSelectionKey?: string | null;
   onSelect: (libraryId: number, editionId: number, providerEditionMatchId: number) => void;
-  /** Choose which persisted acquisition plan this library executes. */
-  onSelectPlan?: (libraryId: number, editionId: number, planKey: string) => void;
+  /**
+   * Monitor this edition and execute this plan. `mode` is "exclusive" for a
+   * normal click and "additive" for Ctrl/Cmd-click or the explicit control.
+   */
+  onSelectPlan?: (
+    libraryId: number,
+    editionId: number,
+    planKey: string,
+    mode: "exclusive" | "additive",
+  ) => void;
   /** Hand the plan choice back to the planner. */
   onRevertPlan?: (libraryId: number, editionId: number) => void;
+  /** Stop monitoring this edition. Never deletes files. */
+  onRemoveEdition?: (libraryId: number, editionId: number) => void;
+  /** Make this monitored edition the Primary one. */
+  onMakePrimary?: (libraryId: number, editionId: number) => void;
 }
 
 export function ReleaseSwitcher({
@@ -310,6 +342,8 @@ export function ReleaseSwitcher({
   onSelect,
   onSelectPlan,
   onRevertPlan,
+  onRemoveEdition,
+  onMakePrimary,
 }: ReleaseSwitcherProps) {
   const styles = useStyles();
   if (availability.releases.length === 0) return null;
@@ -317,9 +351,13 @@ export function ReleaseSwitcher({
   const audioLibraries = availability.libraries.filter(
     (library) => libraryQualities(library).size > 0,
   );
+  // Only MONITORED editions sort to the top. Every edition now has a selection
+  // entry, so treating any entry as "selected" would sort the whole discography.
   const selectedReleaseIds = new Set(
     audioLibraries.flatMap((library) =>
-      library.selections.map((selection) => selection.editionId)),
+      library.selections
+        .filter((selection) => selection.monitored)
+        .map((selection) => selection.editionId)),
   );
   const sorted = [...availability.releases].sort((left, right) =>
     Number(selectedReleaseIds.has(right.id)) - Number(selectedReleaseIds.has(left.id))
@@ -410,44 +448,108 @@ export function ReleaseSwitcher({
                       }
                     }}
                   />
-                  {selection && selection.plans.length > 0 && onSelectPlan ? (
+                  {selection && onSelectPlan ? (
                     <div className={styles.plans}>
                       <div className={styles.planRow}>
-                        <Text size={100} className={styles.metadata}>
-                          Acquisition plan
-                        </Text>
-                        {selection.planSelectionMode === "manual" ? (
+                        {(() => {
+                          const label = monitoringLabel(selection);
+                          return (
+                            <Badge
+                              appearance={selection.monitored ? "filled" : "outline"}
+                              color={label.color}
+                            >
+                              {label.text}
+                            </Badge>
+                          );
+                        })()}
+                        {selection.locked ? (
+                          <Badge appearance="tint" color="warning">Locked</Badge>
+                        ) : null}
+                        {selection.monitored && selection.planSelectionMode === "manual" ? (
                           <Badge appearance="tint" color="brand">Chosen by you</Badge>
-                        ) : (
-                          <Badge appearance="tint" color="informative">Automatic</Badge>
-                        )}
-                        {selection.planSelectionMode === "manual" && onRevertPlan ? (
+                        ) : null}
+                        {selection.monitored
+                          && selection.planSelectionMode === "manual"
+                          && !selection.locked
+                          && onRevertPlan ? (
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              onClick={() => onRevertPlan(library.id, release.id)}
+                            >
+                              Use automatic choice
+                            </Button>
+                          ) : null}
+                        {/* Explicit equivalents of Ctrl/Cmd-click, so the
+                            keyboard modifier is never the only way in. */}
+                        {selection.monitored && !selection.representative
+                          && !selection.locked && onMakePrimary ? (
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              onClick={() => onMakePrimary(library.id, release.id)}
+                            >
+                              Make primary
+                            </Button>
+                          ) : null}
+                        {selection.monitored && !selection.locked && onRemoveEdition ? (
                           <Button
                             size="small"
                             appearance="subtle"
-                            onClick={() => onRevertPlan(library.id, release.id)}
+                            onClick={() => onRemoveEdition(library.id, release.id)}
                           >
-                            Use automatic choice
+                            Remove from monitored editions
                           </Button>
                         ) : null}
                       </div>
+                      {selection.monitored && selection.plans.length === 0 ? (
+                        <Text size={100} className={styles.unavailable}>
+                          No provider offer currently available
+                        </Text>
+                      ) : null}
                       {selection.plans.map((plan) => {
                         const relations = planRelationSummary(plan, release);
                         const unavailable = plan.state === "unavailable"
                           || plan.state === "failed";
+                        const executing = selection.monitored && plan.chosen;
                         return (
                           <div key={plan.planKey} className={styles.planCard}>
                             <div className={styles.planRow}>
-                              <Button
-                                size="small"
-                                appearance={plan.chosen ? "primary" : "outline"}
-                                disabled={plan.chosen}
-                                onClick={() => onSelectPlan(library.id, release.id, plan.planKey)}
+                              <AppTooltip
+                                content={
+                                  selection.locked
+                                    ? "This album is locked. Unlock it to change the offer."
+                                    : "Click to use only this edition and offer. Ctrl/Cmd-click to monitor it alongside the current ones."
+                                }
+                                relationship="description"
                               >
-                                {planHeadline(plan)}
-                              </Button>
-                              {plan.chosen ? (
+                                <Button
+                                  size="small"
+                                  appearance={executing ? "primary" : "outline"}
+                                  disabled={executing || selection.locked}
+                                  onClick={(event) => onSelectPlan(
+                                    library.id,
+                                    release.id,
+                                    plan.planKey,
+                                    event.ctrlKey || event.metaKey ? "additive" : "exclusive",
+                                  )}
+                                >
+                                  {planHeadline(plan)}
+                                </Button>
+                              </AppTooltip>
+                              {executing ? (
                                 <Badge appearance="tint" color="brand">Executing</Badge>
+                              ) : null}
+                              {!selection.monitored && !selection.locked && onSelectPlan ? (
+                                <Button
+                                  size="small"
+                                  appearance="subtle"
+                                  onClick={() => onSelectPlan(
+                                    library.id, release.id, plan.planKey, "additive",
+                                  )}
+                                >
+                                  Monitor alongside current editions
+                                </Button>
                               ) : null}
                               {plan.state === "stale" ? (
                                 <Badge appearance="tint" color="warning">Stale</Badge>
@@ -457,7 +559,7 @@ export function ReleaseSwitcher({
                               ) : null}
                             </div>
                             <Text size={100} className={styles.metadata}>
-                              {planSourceSummary(plan, release.trackCount)}
+                              {planSourceSummary(plan)}
                             </Text>
                             {relations ? (
                               <Text size={100} className={styles.metadata}>{relations}</Text>

@@ -137,6 +137,7 @@ export type LibraryAcquisitionPlanContract = {
   selectionMode: "auto" | "manual";
   rank: number;
   coverage: number;
+  targetTrackCount: number;
   qualityTier: string;
   explicitContent: "explicit" | "clean" | "unknown";
 };
@@ -150,9 +151,11 @@ export interface LibraryReleaseGroupAvailabilityContract {
     qualityProfile: string;
     allowedSourceFormats: string[];
     selections: Array<{
-      libraryEditionId: number;
+      libraryEditionId: number | null;
       editionId: number;
       releaseMbid: string;
+      monitored: boolean;
+      representative: boolean;
       selectionMode: "auto" | "manual";
       locked: boolean;
       planSelectionMode: "auto" | "manual";
@@ -520,14 +523,19 @@ export function parseLibraryReleaseGroupAvailabilityContract(
                 selectionMode: expectString(plan.selectionMode, `${planLabel}.selectionMode`) as "auto" | "manual",
                 rank: expectNumber(plan.rank, `${planLabel}.rank`),
                 coverage: expectNumber(plan.coverage, `${planLabel}.coverage`),
+                targetTrackCount: expectNumber(plan.targetTrackCount, `${planLabel}.targetTrackCount`),
                 qualityTier: expectString(plan.qualityTier, `${planLabel}.qualityTier`),
                 explicitContent: expectString(plan.explicitContent, `${planLabel}.explicitContent`) as "explicit" | "clean" | "unknown",
               };
             };
             return {
-              libraryEditionId: expectNumber(selection.libraryEditionId, `${label}.libraryEditionId`),
+              libraryEditionId: selection.libraryEditionId == null
+                ? null
+                : expectNumber(selection.libraryEditionId, `${label}.libraryEditionId`),
               editionId: expectNumber(selection.editionId, `${label}.editionId`),
               releaseMbid: expectString(selection.releaseMbid, `${label}.releaseMbid`),
+              monitored: expectBoolean(selection.monitored, `${label}.monitored`),
+              representative: expectBoolean(selection.representative, `${label}.representative`),
               selectionMode: expectString(selection.selectionMode, `${label}.selectionMode`) as "auto" | "manual",
               locked: expectBoolean(selection.locked, `${label}.locked`),
               planSelectionMode: expectString(

@@ -974,13 +974,15 @@ const AlbumPage = () => {
       libraryId,
       editionId,
       planKey,
+      mode,
     }: {
       libraryId: number;
       editionId: number;
       planKey: string | null;
+      mode?: "exclusive" | "additive";
     }) => (planKey == null
       ? api.revertAlbumLibraryPlan(albumId!, libraryId, editionId)
-      : api.setAlbumLibraryPlan(albumId!, libraryId, editionId, planKey)),
+      : api.setAlbumLibraryPlan(albumId!, libraryId, editionId, planKey, mode ?? "exclusive")),
     onSuccess: async (releaseAvailability, variables) => {
       queryClient.setQueryData(
         albumReleaseAvailabilityQueryKey(albumId),
@@ -994,10 +996,14 @@ const AlbumPage = () => {
       toast({
         title: variables.planKey == null
           ? "Acquisition plan set to automatic"
-          : "Acquisition plan updated",
+          : variables.mode === "additive"
+            ? "Edition monitored alongside the others"
+            : "Edition and offer selected",
         description: variables.planKey == null
           ? "The planner will choose the best plan for this library again."
-          : "This library will acquire the album using the selected plan.",
+          : variables.mode === "additive"
+            ? "This library keeps its other monitored editions and acquires this one too."
+            : "This library now monitors only this edition and acquires it with the selected offer.",
       });
     },
     onError: (mutationError) => {
@@ -1013,10 +1019,61 @@ const AlbumPage = () => {
     libraryId: number,
     editionId: number,
     planKey: string,
+    mode: "exclusive" | "additive",
   ) => {
     if (!albumId) return;
-    libraryPlanMutation.mutate({ libraryId, editionId, planKey });
+    libraryPlanMutation.mutate({ libraryId, editionId, planKey, mode });
   }, [albumId, libraryPlanMutation]);
+
+  const editionMonitoringMutation = useMutation({
+    mutationFn: async ({
+      libraryId,
+      editionId,
+      action,
+    }: {
+      libraryId: number;
+      editionId: number;
+      action: "remove" | "primary";
+    }) => (action === "remove"
+      ? api.removeAlbumLibraryEdition(albumId!, libraryId, editionId)
+      : api.setAlbumLibraryRepresentative(albumId!, libraryId, editionId)),
+    onSuccess: async (releaseAvailability, variables) => {
+      queryClient.setQueryData(
+        albumReleaseAvailabilityQueryKey(albumId),
+        releaseAvailability,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: albumPageQueryKey(albumId) }),
+        queryClient.invalidateQueries({ queryKey: albumReleaseAvailabilityQueryKey(albumId) }),
+      ]);
+      dispatchLibraryUpdated();
+      toast({
+        title: variables.action === "remove"
+          ? "Edition no longer monitored"
+          : "Primary edition changed",
+        description: variables.action === "remove"
+          ? "Files already on disk were left untouched."
+          : "This edition's track list is now the one shown by default.",
+      });
+    },
+    onError: (mutationError) => {
+      toast({
+        title: "Failed to change monitored editions",
+        description: mutationError instanceof Error ? mutationError.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleRemoveEditionForLibrary = useCallback((libraryId: number, editionId: number) => {
+    if (!albumId) return;
+    editionMonitoringMutation.mutate({ libraryId, editionId, action: "remove" });
+  }, [albumId, editionMonitoringMutation]);
+
+  const handleMakePrimaryForLibrary = useCallback((libraryId: number, editionId: number) => {
+    if (!albumId) return;
+    editionMonitoringMutation.mutate({ libraryId, editionId, action: "primary" });
+  }, [albumId, editionMonitoringMutation]);
 
   const handleRevertPlanForLibrary = useCallback((
     libraryId: number,
@@ -1777,6 +1834,8 @@ const AlbumPage = () => {
               onSelect={handleSelectReleaseForLibrary}
               onSelectPlan={handleSelectPlanForLibrary}
               onRevertPlan={handleRevertPlanForLibrary}
+              onRemoveEdition={handleRemoveEditionForLibrary}
+              onMakePrimary={handleMakePrimaryForLibrary}
             />
           </div>
         ) : otherVersions.length > 0 ? (

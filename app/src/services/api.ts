@@ -1172,17 +1172,49 @@ class ApiClient {
     }, parseLibraryReleaseGroupAvailabilityContract);
   }
 
-  /** Pick which persisted acquisition plan this library executes. */
+  /**
+   * Monitor an edition and execute exactly this plan.
+   *
+   * `mode` defaults to "exclusive" — the same "use only this" a normal click
+   * means. "additive" keeps the album's other monitored editions.
+   */
   async setAlbumLibraryPlan(
     albumId: string,
     libraryId: number,
     editionId: number,
     planKey: string,
+    mode: "exclusive" | "additive" = "exclusive",
   ): Promise<LibraryReleaseGroupAvailabilityContract> {
     return this.request(`/v1/album/${albumId}/libraries/${libraryId}/plan`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ editionId, planKey }),
+      body: JSON.stringify({ editionId, planKey, mode }),
+    }, parseLibraryReleaseGroupAvailabilityContract);
+  }
+
+  /** Stop monitoring one edition. Never deletes files. */
+  async removeAlbumLibraryEdition(
+    albumId: string,
+    libraryId: number,
+    editionId: number,
+  ): Promise<LibraryReleaseGroupAvailabilityContract> {
+    return this.request(
+      `/v1/album/${albumId}/libraries/${libraryId}/selection/${editionId}`,
+      { method: "DELETE" },
+      parseLibraryReleaseGroupAvailabilityContract,
+    );
+  }
+
+  /** Make an already-monitored edition the Primary one for its album. */
+  async setAlbumLibraryRepresentative(
+    albumId: string,
+    libraryId: number,
+    editionId: number,
+  ): Promise<LibraryReleaseGroupAvailabilityContract> {
+    return this.request(`/v1/album/${albumId}/libraries/${libraryId}/representative`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ editionId }),
     }, parseLibraryReleaseGroupAvailabilityContract);
   }
 
