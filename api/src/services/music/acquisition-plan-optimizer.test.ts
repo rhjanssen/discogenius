@@ -421,3 +421,223 @@ test("a fully clean plan is classified clean", () => {
 
   assert.equal(plans[0].explicitContent, "clean");
 });
+
+// ---------------------------------------------------------------------------
+// Outcome-first composition: no cliff, no subset enumeration
+// ---------------------------------------------------------------------------
+
+/**
+ * Sources past the old fifteen-source limit, where the best plan needs exactly
+ * two of them.
+ *
+ * The previous optimizer enumerated every non-empty subset up to fifteen sources
+ * and, beyond that, evaluated only "each source alone" and "all of them at
+ * once". The sixteenth source therefore changed the answer for reasons that had
+ * nothing to do with the music: a two-source composite became reachable or
+ * unreachable depending on how many irrelevant offers happened to sit beside it.
+ */
+function noiseSources(count: number, firstId: number): AcquisitionSourceCandidate[] {
+  // Offers that carry a track this edition does not have: real rows, zero
+  // relevance to the target, and exactly what used to exhaust the bit budget.
+  return Array.from({ length: count }, (_, index) =>
+    source(firstId + index, "overlap", [[900 + index, "lossless"]]));
+}
+
+/**
+ * The defect this replaced, stated as a property.
+ *
+ * With fifteen overlapping sources the old optimizer enumerated every subset and
+ * found a coherent four-source composite. With sixteen it fell back to "each
+ * source alone, or all of them together" and returned a fifteen-source composite
+ * delivering the identical twenty tracks. One extra offer — one that contributed
+ * nothing — changed the shape of the answer, because the loop had run out of
+ * bits, not because the music had changed.
+ */
+test("one more source does not change the composition strategy", () => {
+  const canonicalTracks = Array.from({ length: 20 }, (_, index) => index + 1);
+  const overlappingSources = (count: number) =>
+    Array.from({ length: count }, (_, index) => source(
+      10 + index,
+      "source_subset",
+      canonicalTracks.slice(index, index + 6)
+        .map((trackId) => [trackId, "lossless" as NormalizedAudioQuality]),
+    ));
+  const bestFor = (count: number) => enumerateAcquisitionPlans({
+    orderedTrackIds: canonicalTracks,
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: overlappingSources(count),
+  })[0];
+
+  const fifteen = bestFor(15);
+  const sixteen = bestFor(16);
+
+  assert.equal(fifteen.coverage, 20);
+  assert.equal(sixteen.coverage, 20);
+  assert.deepEqual(sixteen.sourceIds, fifteen.sourceIds,
+    "the sixteenth source must not rewrite the answer");
+  assert.ok(fifteen.sourceIds.length <= 5,
+    `a coherent composite, not everything at once (got ${fifteen.sourceIds.length} sources)`);
+});
+
+test("more than fifteen sources still composes the two that matter", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [
+      source(10, "source_subset", [[1, "lossless"], [2, "lossless"]]),
+      source(11, "source_subset", [[3, "lossless"], [4, "lossless"]]),
+      ...noiseSources(20, 100),
+    ],
+  });
+
+  const best = plans[0];
+  assert.equal(best.coverage, 4, "all four canonical tracks are delivered");
+  assert.deepEqual(best.sourceIds, [10, 11],
+    "exactly the two sources that contribute, and no others");
+});
+
+test("more than fifteen sources still composes the three that matter", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4, 5, 6],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [
+      source(10, "source_subset", [[1, "lossless"], [2, "lossless"]]),
+      source(11, "source_subset", [[3, "lossless"], [4, "lossless"]]),
+      source(12, "source_subset", [[5, "lossless"], [6, "lossless"]]),
+      ...noiseSources(20, 100),
+    ],
+  });
+
+  const best = plans[0];
+  assert.equal(best.coverage, 6);
+  assert.deepEqual(best.sourceIds, [10, 11, 12]);
+});
+
+test("all sources together loses to the small coherent composite", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [
+      source(10, "source_subset", [[1, "lossless"], [2, "lossless"]]),
+      source(11, "source_subset", [[3, "lossless"], [4, "lossless"]]),
+      // Twelve singles that could each supply one already-covered track. Taking
+      // them all in would deliver the same audio from twelve more places.
+      ...Array.from({ length: 12 }, (_, index) =>
+        source(200 + index, "overlap", [[(index % 4) + 1, "lossless"]])),
+    ],
+  });
+
+  const best = plans[0];
+  assert.equal(best.coverage, 4);
+  assert.deepEqual(best.sourceIds, [10, 11],
+    "a source that adds no unique track outcome is discarded");
+});
+
+test("a single source beats the composite that reproduces it exactly", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [
+      source(10, "exact", [[1, "lossless"], [2, "lossless"]]),
+      source(11, "overlap", [[1, "lossless"]]),
+      source(12, "overlap", [[2, "lossless"]]),
+    ],
+  });
+
+  assert.equal(plans[0].composition, "single_source");
+  assert.deepEqual(plans[0].sourceIds, [10]);
+  // The two-single composite delivers exactly the same files, so it is not a
+  // second choice worth storing.
+  assert.equal(
+    plans.filter((plan) => plan.sourceIds.join(",") === "11,12").length,
+    0,
+  );
+});
+
+test("a composite is kept only when it delivers something no single offer does", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [
+      source(10, "exact", [[1, "lossless"], [2, "lossless"]]),
+      source(11, "overlap", [[3, "lossless"]]),
+    ],
+  });
+
+  const composite = plans.find((plan) => plan.composition === "composite");
+  assert.ok(composite, "covering the third track needs both sources");
+  assert.equal(composite.coverage, 3);
+  assert.ok(
+    plans.every((plan) => plan.composition !== "composite" || plan.coverage === 3),
+    "no composite survives that merely re-serves what a single already delivers",
+  );
+});
+
+test("shuffled sources produce identical plans and identical keys", () => {
+  const sources = [
+    source(10, "source_subset", [[1, "lossless"], [2, "lossless"]]),
+    source(11, "source_subset", [[3, "hires-lossless"], [4, "lossless"]]),
+    source(12, "overlap", [[2, "hires-lossless"]]),
+    source(13, "exact", [[1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"]]),
+    ...noiseSources(18, 100),
+  ];
+  // A deterministic shuffle: reversing, then rotating, gives a genuinely
+  // different input order without depending on a random seed.
+  const shuffled = [...sources].reverse();
+  const rotated = [...shuffled.slice(7), ...shuffled.slice(0, 7)];
+
+  const describe = (input: AcquisitionSourceCandidate[]) =>
+    enumerateAcquisitionPlans({
+      orderedTrackIds: [1, 2, 3, 4],
+      profile: max,
+      providerPriority: ["tidal"],
+      sources: input,
+    }).map((plan) => plan.planKey);
+
+  assert.deepEqual(describe(shuffled), describe(sources));
+  assert.deepEqual(describe(rotated), describe(sources));
+});
+
+test("outcome-equivalent plans collapse to one", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [
+      source(10, "exact", [[1, "lossless"], [2, "lossless"]]),
+      // A second provider edition delivering the identical outcome.
+      source(11, "exact", [[1, "lossless"], [2, "lossless"]]),
+    ],
+  });
+
+  const signatures = plans.map((plan) =>
+    plan.tracks.map((track) => `${track.trackId}:${track.sourceQuality}`).sort().join(","));
+  assert.equal(new Set(signatures).size, signatures.length,
+    "two ways to obtain the same files are not two choices");
+});
+
+test("the preferred provider edition stays primary without locking out the rest", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3],
+    profile: high,
+    providerPriority: ["tidal"],
+    preferredProviderEditionMatchId: 10,
+    sources: [
+      source(10, "source_subset", [[1, "lossless"], [2, "lossless"]]),
+      source(11, "source_superset" as AcquisitionSourceCandidate["relation"],
+        [[1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"]]),
+    ],
+  });
+
+  const best = plans[0];
+  assert.equal(best.preferredSourceId, 10, "the chosen offer is still the primary source");
+  assert.ok(best.sourceIds.includes(11),
+    "and the other edition may still cover the track it does not carry");
+  assert.equal(best.coverage, 3);
+});

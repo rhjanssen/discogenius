@@ -324,6 +324,170 @@ function availableTiers(
   return profile.preferenceOrder.filter((quality) => present.has(quality));
 }
 
+/**
+ * The delivered result for one canonical track, independent of who supplies it.
+ *
+ * Two provider editions offering the same track at the same quality and the same
+ * explicitness deliver the same file to the listener. Compressing a plan onto
+ * the fewest sources is only sound because of that: swapping a source for
+ * another that matches this key changes nothing the user can hear.
+ */
+function trackOutcomeKey(option: TrackOption): string {
+  return `${option.sourceQuality}|${option.explicit === null ? "?" : option.explicit ? "e" : "c"}`;
+}
+
+/**
+ * The smallest set of provider editions that can still deliver `desiredByTrack`.
+ *
+ * Exhaustively enumerating source subsets — which this replaces — was both
+ * exponential and wrong at the edges: past fifteen sources it silently degraded
+ * to "each source alone, or all of them together", so the sixteenth source
+ * turned a carefully composed two-source plan into a blunt everything-at-once
+ * one. There was no reason for the behaviour to change at that boundary except
+ * that the loop had run out of bits.
+ *
+ * The outcome is decided first and the sources are fitted to it afterwards, so
+ * the search is an ordinary minimum set cover: each source covers the tracks it
+ * can deliver at the already-chosen outcome. Dominated sources are dropped —
+ * one whose covered tracks are a subset of another's adds nothing — and the rest
+ * are searched depth-first, branching on the least-covered track, under a node
+ * budget with a greedy solution as both the seed and the fallback. Every step is
+ * ordered by id, so shuffled inputs give the same answer.
+ */
+function minimumSourceCover(input: {
+  universe: readonly number[];
+  coveredBySource: ReadonlyMap<number, ReadonlySet<number>>;
+  /** Never pruned: the user asked for this offer by name. */
+  preferredSourceId: number | null;
+}): number[] {
+  const sourceIds = [...input.coveredBySource.keys()]
+    .filter((sourceId) => (input.coveredBySource.get(sourceId)?.size ?? 0) > 0)
+    .sort((left, right) => left - right);
+  if (sourceIds.length === 0) return [];
+
+  // Dominance pruning. A source covering a subset of another's tracks can never
+  // be needed: anywhere it would appear, the other serves instead.
+  const kept: number[] = [];
+  for (const sourceId of sourceIds) {
+    if (sourceId === input.preferredSourceId) {
+      kept.push(sourceId);
+      continue;
+    }
+    const covered = input.coveredBySource.get(sourceId)!;
+    const dominated = sourceIds.some((otherId) => {
+      if (otherId === sourceId) return false;
+      const other = input.coveredBySource.get(otherId)!;
+      if (other.size < covered.size) return false;
+      // Equal sets: keep the lower id so the choice is stable.
+      if (other.size === covered.size && otherId > sourceId) return false;
+      for (const trackId of covered) {
+        if (!other.has(trackId)) return false;
+      }
+      return true;
+    });
+    if (!dominated) kept.push(sourceId);
+  }
+
+  const coverable = new Set<number>();
+  for (const sourceId of kept) {
+    for (const trackId of input.coveredBySource.get(sourceId)!) coverable.add(trackId);
+  }
+  const universe = input.universe.filter((trackId) => coverable.has(trackId));
+  if (universe.length === 0) return [];
+
+  const marginal = (sourceId: number, remaining: ReadonlySet<number>): number => {
+    let count = 0;
+    for (const trackId of input.coveredBySource.get(sourceId)!) {
+      if (remaining.has(trackId)) count += 1;
+    }
+    return count;
+  };
+
+  // Greedy seed: an upper bound the exact search can prune against, and the
+  // answer itself if the search runs out of budget.
+  const greedy: number[] = [];
+  const remaining = new Set(universe);
+  if (input.preferredSourceId != null && kept.includes(input.preferredSourceId)) {
+    greedy.push(input.preferredSourceId);
+    for (const trackId of input.coveredBySource.get(input.preferredSourceId)!) {
+      remaining.delete(trackId);
+    }
+  }
+  while (remaining.size > 0) {
+    let best: number | null = null;
+    let bestGain = 0;
+    for (const sourceId of kept) {
+      if (greedy.includes(sourceId)) continue;
+      const gain = marginal(sourceId, remaining);
+      if (gain > bestGain) {
+        best = sourceId;
+        bestGain = gain;
+      }
+    }
+    if (best == null) break;
+    greedy.push(best);
+    for (const trackId of input.coveredBySource.get(best)!) remaining.delete(trackId);
+  }
+
+  let best = [...greedy].sort((left, right) => left - right);
+  let budget = 20_000;
+  const search = (chosen: number[], uncovered: Set<number>): void => {
+    if (budget <= 0) return;
+    budget -= 1;
+    if (uncovered.size === 0) {
+      const candidate = [...chosen].sort((left, right) => left - right);
+      if (
+        candidate.length < best.length
+        || (candidate.length === best.length
+          && candidate.join(",") < best.join(","))
+      ) {
+        best = candidate;
+      }
+      return;
+    }
+    if (chosen.length + 1 > best.length) return;
+
+    // Branch on the track the fewest sources can supply: it forces the decision
+    // rather than deferring it, which is what keeps the tree shallow.
+    let pivot = -1;
+    let pivotOptions: number[] = [];
+    for (const trackId of uncovered) {
+      const options = kept.filter((sourceId) =>
+        !chosen.includes(sourceId) && input.coveredBySource.get(sourceId)!.has(trackId));
+      if (pivot < 0 || options.length < pivotOptions.length) {
+        pivot = trackId;
+        pivotOptions = options;
+      }
+      if (options.length <= 1) break;
+    }
+    if (pivot < 0 || pivotOptions.length === 0) return;
+
+    for (const sourceId of pivotOptions) {
+      const nextUncovered = new Set(uncovered);
+      for (const trackId of input.coveredBySource.get(sourceId)!) nextUncovered.delete(trackId);
+      search([...chosen, sourceId], nextUncovered);
+    }
+  };
+  const seed = input.preferredSourceId != null && kept.includes(input.preferredSourceId)
+    ? [input.preferredSourceId]
+    : [];
+  const seedUncovered = new Set(universe);
+  for (const sourceId of seed) {
+    for (const trackId of input.coveredBySource.get(sourceId)!) seedUncovered.delete(trackId);
+  }
+  search(seed, seedUncovered);
+  return best;
+}
+
+/**
+ * Best plan per composition shape for one provider, decided outcome-first.
+ *
+ * Single offers come from walking the complete canonical track list against one
+ * coherent provider edition. The combined offer comes from deciding the best
+ * delivered outcome per track across every source, then fitting the fewest
+ * sources to that outcome — never from enumerating source subsets and scoring
+ * each one.
+ */
 function buildProviderPlans(
   orderedTrackIds: readonly number[],
   profile: AcquisitionQualityProfile,
@@ -332,9 +496,13 @@ function buildProviderPlans(
   targetTier: NormalizedAudioQuality,
 ): CandidatePlan[] {
   if (sources.length === 0) return [];
-  const sourceById = new Map(sources.map((source) => [source.providerEditionMatchId, source]));
+  const orderedSources = [...sources]
+    .sort((left, right) => left.providerEditionMatchId - right.providerEditionMatchId);
+  const sourceById = new Map(
+    orderedSources.map((source) => [source.providerEditionMatchId, source]),
+  );
   const optionsByTrack = new Map<number, TrackOption[]>();
-  for (const source of sources) {
+  for (const source of orderedSources) {
     for (const match of source.trackMatches) {
       for (const variant of match.variants) {
         if (!variant.available || !profile.allowedQualities.has(variant.quality)) continue;
@@ -357,50 +525,37 @@ function buildProviderPlans(
     }
   }
 
-  const sourceIds = [...sourceById.keys()].sort((a, b) => a - b);
-  const subsets: number[][] = [];
-  if (sourceIds.length <= 15) {
-    for (let mask = 1; mask < (1 << sourceIds.length); mask += 1) {
-      const subset: number[] = [];
-      for (let bit = 0; bit < sourceIds.length; bit += 1) {
-        if (mask & (1 << bit)) subset.push(sourceIds[bit]);
-      }
-      subsets.push(subset);
-    }
-  } else {
-    subsets.push(sourceIds);
-    for (const sourceId of sourceIds) subsets.push([sourceId]);
-  }
+  // The user's chosen offer supplies every track it carries; other accepted
+  // sources only fill what it does not have. Without this the ordinary ranking
+  // would quietly drop the preferred offer whenever a secondary edition scored
+  // better on relation or quality.
+  const preferredFirst = (option: TrackOption): number =>
+    preferredSource && option.providerEditionMatchId === preferredSource.providerEditionMatchId
+      ? 0
+      : 1;
+  const bestOption = (options: readonly TrackOption[]): TrackOption | undefined =>
+    [...options].sort((left, right) =>
+      preferredFirst(left) - preferredFirst(right) || compareOptions(profile, left, right))[0];
 
-  const bestByComposition = new Map<CandidatePlan["composition"], CandidatePlan>();
-  const neutralPriority = new Map<string, number>();
-  for (const subset of subsets) {
-    const allowedSources = new Set(subset);
+  /** Walk the complete canonical track list against one set of sources. */
+  const materialize = (allowedSourceIds: readonly number[]): CandidatePlan | null => {
+    const allowedSources = new Set(allowedSourceIds);
     const usedMembers = new Set<number>();
     const tracks: TrackOption[] = [];
-    // Within a subset the user's chosen offer supplies every track it carries;
-    // other accepted sources only fill what it does not have. Without this the
-    // ordinary ranking would quietly drop the preferred offer whenever a
-    // secondary edition scored better on relation or quality.
-    const preferredFirst = (option: TrackOption): number =>
-      preferredSource && option.providerEditionMatchId === preferredSource.providerEditionMatchId
-        ? 0
-        : 1;
     for (const trackId of orderedTrackIds) {
-      const option = [...(optionsByTrack.get(trackId) || [])]
-        .filter((candidate) =>
+      const option = bestOption(
+        (optionsByTrack.get(trackId) || []).filter((candidate) =>
           allowedSources.has(candidate.providerEditionMatchId)
-          && !usedMembers.has(candidate.providerEditionMemberId))
-        .sort((left, right) =>
-          preferredFirst(left) - preferredFirst(right)
-          || compareOptions(profile, left, right))[0];
+          && !usedMembers.has(candidate.providerEditionMemberId)),
+      );
       if (!option) continue;
       usedMembers.add(option.providerEditionMemberId);
       tracks.push(option);
     }
-    if (tracks.length === 0) continue;
+    if (tracks.length === 0) return null;
+
     const usedSourceIds = [...new Set(tracks.map((track) => track.providerEditionMatchId))]
-      .sort((a, b) => a - b);
+      .sort((left, right) => left - right);
     const singleSource = usedSourceIds.length === 1
       ? sourceById.get(usedSourceIds[0])
       : null;
@@ -412,16 +567,17 @@ function buildProviderPlans(
       && singleSource.sourceTrackCount === orderedTrackIds.length
       && singleSource.trackMatches.length === orderedTrackIds.length,
     );
-    const candidate: CandidatePlan = {
-      provider: sources[0].provider,
+    const counts = explicitnessCounts(tracks);
+    return {
+      provider: orderedSources[0].provider,
       preferredSourceId: preferredSource
         && usedSourceIds.includes(preferredSource.providerEditionMatchId)
         ? preferredSource.providerEditionMatchId
         : null,
       qualityTier: targetTier,
-      explicitContent: planExplicitContent(explicitnessCounts(tracks)),
-      explicitnessCounts: explicitnessCounts(tracks),
-      outcomeSignature: outcomeSignature(sources[0].provider, tracks),
+      explicitContent: planExplicitContent(counts),
+      explicitnessCounts: counts,
+      outcomeSignature: outcomeSignature(orderedSources[0].provider, tracks),
       composition: usedSourceIds.length === 1 ? "single_source" : "composite",
       downloadMode: albumSafe ? "album" : "tracks",
       sourceIds: usedSourceIds,
@@ -438,21 +594,65 @@ function buildProviderPlans(
         0,
       ),
     };
-    // A subset that keeps the user's chosen offer wins before any other
-    // ranking key: the preference is intent, not a scoring hint.
-    const keepsPreferred = (plan: CandidatePlan): number =>
-      preferredSource && plan.preferredSourceId != null ? 0 : 1;
-    const incumbent = bestByComposition.get(candidate.composition);
-    if (
-      !incumbent
-      || keepsPreferred(candidate) - keepsPreferred(incumbent) < 0
-      || (keepsPreferred(candidate) === keepsPreferred(incumbent)
-        && compareCandidatePlans(candidate, incumbent, neutralPriority) < 0)
-    ) {
-      bestByComposition.set(candidate.composition, candidate);
+  };
+
+  // C. One offer per coherent provider edition, over the complete canonical list.
+  const singles = orderedSources
+    .map((source) => materialize([source.providerEditionMatchId]))
+    .filter((plan): plan is CandidatePlan => plan != null);
+
+  // Keep every single offer that something else does not already beat outright.
+  // A user choosing between "the exact match" and "the deluxe superset" is
+  // choosing between real alternatives; collapsing them to one hides a choice.
+  const meaningfulSingles = singles.filter((candidate) => !singles.some((other) => {
+    if (other === candidate) return false;
+    if (other.explicitContent !== candidate.explicitContent) return false;
+    const otherByTrack = new Map(other.tracks.map((track) => [track.trackId, track]));
+    for (const track of candidate.tracks) {
+      const rival = otherByTrack.get(track.trackId);
+      if (!rival) return false;
+      if (qualityRank(profile, rival.sourceQuality) > qualityRank(profile, track.sourceQuality)) {
+        return false;
+      }
     }
+    // Strictly better somewhere, or identical and losing the id tie-break.
+    return other.tracks.length > candidate.tracks.length
+      || other.qualityScore > candidate.qualityScore
+      || (other.outcomeSignature === candidate.outcomeSignature
+        && other.sourceIds.join(",") < candidate.sourceIds.join(","));
+  }));
+
+  // D. The best delivered outcome per canonical track, whoever supplies it.
+  const desiredByTrack = new Map<number, string>();
+  for (const trackId of orderedTrackIds) {
+    const option = bestOption(optionsByTrack.get(trackId) || []);
+    if (option) desiredByTrack.set(trackId, trackOutcomeKey(option));
   }
-  return [...bestByComposition.values()];
+
+  // E. Fit the fewest sources to that outcome.
+  const coveredBySource = new Map<number, Set<number>>();
+  for (const source of orderedSources) {
+    const covered = new Set<number>();
+    for (const trackId of desiredByTrack.keys()) {
+      const desired = desiredByTrack.get(trackId)!;
+      const deliverable = (optionsByTrack.get(trackId) || []).some((option) =>
+        option.providerEditionMatchId === source.providerEditionMatchId
+        && trackOutcomeKey(option) === desired);
+      if (deliverable) covered.add(trackId);
+    }
+    coveredBySource.set(source.providerEditionMatchId, covered);
+  }
+  const combinedSourceIds = minimumSourceCover({
+    universe: [...desiredByTrack.keys()],
+    coveredBySource,
+    preferredSourceId: preferredSource?.providerEditionMatchId ?? null,
+  });
+  const combined = combinedSourceIds.length > 1 ? materialize(combinedSourceIds) : null;
+
+  // F. The combined offer earns its place only by delivering something no single
+  // offer does. Outcome-equivalent duplicates are dropped by the caller's
+  // signature dedup, which prefers the already-higher-ranked plan.
+  return combined ? [...meaningfulSingles, combined] : meaningfulSingles;
 }
 
 /**
