@@ -113,3 +113,116 @@ test("plan replacement is atomic and partial completion counts only imported ass
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+
+test("a manual plan choice is compared by exact track set, not by count", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-trackset-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createDomainSchemaV41(db);
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
+      INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
+      INSERT INTO Recordings (id, mbid, title)
+        VALUES (1, 'rec-1', 'One'), (2, 'rec-2', 'Two'), (3, 'rec-3', 'Three');
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
+        VALUES (1, 'track-1', 1, 1, 1, 1, 'One'),
+               (2, 'track-2', 1, 2, 1, 2, 'Two'),
+               (3, 'track-3', 1, 3, 1, 3, 'Three');
+      INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Default', '{}');
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        fallback_policy, output_format, transcode_policy
+      ) VALUES (1, 'High', '[]', '[]', 'lossless', 'best', '{}', 'preserve');
+      INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
+        VALUES (1, 'Stereo', '/library/stereo', 1, 1);
+      INSERT INTO LibraryEditions (id, library_id, edition_id, selection_mode, curation_version)
+        VALUES (1, 1, 1, 'auto', 1);
+      INSERT INTO ProviderItems (id, provider, entity_type, provider_id)
+        VALUES (1, 'tidal', 'release', 'provider-release'),
+               (2, 'tidal', 'track', 'pt-1'),
+               (3, 'tidal', 'track', 'pt-2'),
+               (4, 'tidal', 'track', 'pt-3');
+      INSERT INTO ProviderEditionMembers (
+        id, provider_edition_item_id, member_item_id, medium_position, position
+      ) VALUES (1, 1, 2, 1, 1), (2, 1, 3, 1, 2), (3, 1, 4, 1, 3);
+      INSERT INTO ProviderEditionMatches (
+        id, provider_edition_item_id, edition_id, relation, match_state,
+        decision_source, confidence, method, matcher_version,
+        matched_track_count, source_track_count, target_track_count,
+        source_coverage, target_coverage
+      ) VALUES (1, 1, 1, 'exact', 'accepted', 'automatic', 1, 'external_id', 1, 3, 3, 3, 1, 1);
+      INSERT INTO ProviderTrackMatches (
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+        track_id, recording_id, match_state, decision_source, confidence, method, matcher_version
+      ) VALUES (1, 2, 1, 1, 1, 1, 'accepted', 'automatic', 1, 'external_id', 1),
+               (2, 3, 2, 1, 2, 2, 'accepted', 'automatic', 1, 'external_id', 1),
+               (3, 4, 3, 1, 3, 3, 'accepted', 'automatic', 1, 'external_id', 1);
+      INSERT INTO ProviderItemAudioVariants (
+        id, provider_item_id, variant_key, quality_class, availability
+      ) VALUES (1, 2, 'lossless', 'lossless', 'available'),
+               (2, 3, 'lossless', 'lossless', 'available'),
+               (3, 4, 'lossless', 'lossless', 'available');
+    `);
+
+    const repository = new AcquisitionPlanRepository(db);
+    const base = {
+      provider: "tidal",
+      composition: "single_source" as const,
+      downloadMode: "tracks" as const,
+      sourceIds: [1],
+      preferredSourceId: null,
+      coverage: 2,
+      qualityTier: "lossless" as const,
+      explicitContent: "clean" as const,
+      explicitnessCounts: {
+        explicitTrackCount: 0,
+        cleanTrackCount: 2,
+        unknownExplicitnessCount: 0,
+      },
+    };
+    const track = (trackId: number) => ({
+      trackId,
+      providerEditionMatchId: 1,
+      providerTrackMatchId: trackId,
+      providerEditionMemberId: trackId,
+      providerAudioVariantId: trackId,
+      sourceQuality: "lossless" as const,
+    });
+
+    // Both plans carry two tracks. The best covers {1,2}; the user's covers
+    // {1,3} and therefore misses a track the best plan delivers.
+    const best = { ...base, planKey: "best", tracks: [track(1), track(2)] };
+    const preferred = { ...base, planKey: "preferred", tracks: [track(1), track(3)] };
+
+    const result = repository.replacePlans({
+      libraryEditionId: 1,
+      plans: [best, preferred],
+      preferredPlanKey: "preferred",
+      plannerVersion: 1,
+      policyHash: "policy",
+    });
+    assert.ok(result);
+    assert.equal(result.preferenceHonored, false, "an equal count is not equivalent coverage");
+    assert.equal(result.chosenPlanKey, "best");
+
+    // A lock preserves the user's intent regardless of the coverage gap.
+    const locked = repository.replacePlans({
+      libraryEditionId: 1,
+      plans: [best, preferred],
+      preferredPlanKey: "preferred",
+      lockPreference: true,
+      plannerVersion: 1,
+      policyHash: "policy",
+    });
+    assert.ok(locked);
+    assert.equal(locked.preferenceHonored, true);
+    assert.equal(locked.chosenPlanKey, "preferred");
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

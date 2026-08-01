@@ -49,14 +49,23 @@ export class AcquisitionPlanRepository {
     const candidateIndex = preferredPlanKey
       ? input.plans.findIndex((plan) => plan.planKey === preferredPlanKey)
       : -1;
-    // A manual choice survives replanning only while it still covers as many
-    // canonical tracks as the best alternative does. Switching provider is the
-    // user's call; silently keeping a plan that has decayed from 20 tracks to 15
-    // is not — that is a regression the planner should correct.
-    const bestCoverage = Math.max(...input.plans.map((plan) => plan.coverage));
+    // A manual choice survives replanning only while it still covers every
+    // canonical track the best alternative would. Comparing counts is not
+    // enough: two 15-track plans covering different tracks are not equivalent,
+    // and a plan that swapped five tracks for five others would have passed a
+    // numeric test while quietly changing what the user gets.
+    const bestPlan = input.plans.reduce((best, plan) =>
+      plan.coverage > best.coverage ? plan : best);
+    const bestTrackIds = new Set(bestPlan.tracks.map((track) => track.trackId));
+    const preferredCovers = (index: number): boolean => {
+      const covered = new Set(input.plans[index].tracks.map((track) => track.trackId));
+      for (const trackId of bestTrackIds) {
+        if (!covered.has(trackId)) return false;
+      }
+      return true;
+    };
     const preferenceHonored = candidateIndex >= 0
-      && (input.lockPreference === true
-        || input.plans[candidateIndex].coverage >= bestCoverage);
+      && (input.lockPreference === true || preferredCovers(candidateIndex));
     const resolvedChosenIndex = preferenceHonored ? candidateIndex : 0;
     const preferenceLostCoverage = candidateIndex >= 0 && !preferenceHonored;
 

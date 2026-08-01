@@ -225,13 +225,31 @@ function rescoreAgainstProfile(
 }
 
 function outcomeSignature(provider: string, tracks: readonly TrackOption[]): string {
-  const pairs = tracks
-    .map((track) => `${track.trackId}:${track.sourceQuality}`)
+  // What the listener ends up with: which canonical tracks, at what quality,
+  // with what explicitness. Plans equivalent here are the same product however
+  // they are assembled, so only the best-ranked one is kept — and since ranking
+  // prefers fewer sources, that is the coherent subset match rather than the ten
+  // singles reproducing it.
+  //
+  // The exact provider plumbing (which Provider Track match, which audio
+  // variant) is deliberately *not* part of this key: it belongs to plan
+  // identity, so a user's chosen plan stays exactly reproducible. See
+  // acquisitionPlanKey.
+  const perTrack = tracks
+    .map((track) => [
+      track.trackId,
+      track.sourceQuality,
+      track.explicit === null ? "?" : track.explicit ? "e" : "c",
+    ].join(":"))
     .sort();
-  const explicit = tracks
-    .map((track) => `${track.trackId}:${track.explicit === null ? "?" : track.explicit ? "e" : "c"}`)
-    .sort();
-  return `${provider}|${pairs.join(",")}|${explicit.join(",")}`;
+  return `${provider}|${perTrack.join(",")}`;
+}
+
+/** The exact canonical tracks a plan covers, order-independent. */
+export function planTrackSetKey(plan: { tracks: readonly { trackId: number }[] }): string {
+  return [...new Set(plan.tracks.map((track) => track.trackId))]
+    .sort((left, right) => left - right)
+    .join(",");
 }
 
 export type PlanExplicitnessCounts = {
@@ -563,10 +581,24 @@ export function acquisitionPlanKey(plan: {
   qualityTier: NormalizedAudioQuality;
   explicitContent: PlanExplicitContent;
   sourceIds: readonly number[];
-  tracks: readonly { sourceQuality: NormalizedAudioQuality }[];
+  tracks: readonly {
+    trackId: number;
+    providerTrackMatchId: number;
+    providerAudioVariantId: number;
+    sourceQuality: NormalizedAudioQuality;
+  }[];
 }): string {
   const sources = [...plan.sourceIds].sort((left, right) => left - right).join(",");
-  const qualities = [...new Set(plan.tracks.map((track) => track.sourceQuality))].sort().join("+");
+  // Pin the exact acquisition: which Provider Track match and which audio
+  // variant fulfils each canonical track. A key built from quality alone would
+  // match a differently-sourced plan after replanning and silently hand the
+  // user something they did not choose.
+  const assignments = plan.tracks
+    .map((track) =>
+      `${track.trackId}>${track.providerTrackMatchId}@${track.providerAudioVariantId}`
+      + `:${track.sourceQuality}`)
+    .sort()
+    .join(",");
   return `${plan.provider}|${plan.qualityTier}|${plan.explicitContent}`
-    + `|${plan.composition}|${sources}|${qualities}`;
+    + `|${plan.composition}|${sources}|${assignments}`;
 }
