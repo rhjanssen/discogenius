@@ -128,10 +128,18 @@ test.describe('App shell & navigation', () => {
     await expect(page.locator('body')).toContainText(/not found|404|page/i);
   });
 
-  test('/health endpoint returns healthy status', async ({ request }) => {
+  test('/health endpoint reports actionable runtime health', async ({ request }) => {
     const resp = await request.get(`${baseURL}/health`);
     expect(resp.status()).toBe(200);
     const data = await resp.json();
-    expect(data.status).toBe('healthy');
+    expect(data.status).toBe('degraded');
+    expect(data.subsystems.database.schema.status).toBe('ok');
+    expect(data.subsystems.database.deep).toMatchObject({
+      status: 'warning',
+      message: 'No completed deep database integrity check has been recorded',
+    });
+    expect(data.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ scope: 'database.deep', status: 'warning' }),
+    ]));
   });
 });
