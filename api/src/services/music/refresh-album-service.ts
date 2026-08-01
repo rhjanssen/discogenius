@@ -92,7 +92,11 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         volume_number: providerTrack.volumeNumber || 1,
         version: null,
         isrc: providerTrack.isrc || null,
-        explicit: false,
+        // Was hardcoded false, which also overrode the raw payload spread above.
+        // Every provider track therefore stored explicit=0, so acquisition plans
+        // computed explicitContent="clean" even for an explicit release and the
+        // prefer-explicit preference had nothing to act on.
+        explicit: providerTrack.explicit ?? rawRow.explicit ?? null,
         quality: providerTrack.quality || "LOSSLESS",
         copyright: providerTrack.copyright || null,
         replay_gain: providerTrack.replayGain ?? rawRow.replay_gain ?? rawRow.replayGain ?? null,

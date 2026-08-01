@@ -368,6 +368,12 @@ export interface ProviderTrack {
   quality?: string | null;
   qualityTags?: string[];
   /**
+   * Track-level explicitness. Acquisition planning derives a plan's
+   * explicitContent from these, so leaving it unset makes every plan look clean
+   * and defeats the prefer-explicit preference. `null` means genuinely unknown.
+   */
+  explicit?: boolean | null;
+  /**
    * Artwork for album-tracklist entries that are music videos (Apple bundles
    * videos into deluxe editions). Optional for normal audio tracks — album
    * cover usually comes from `album.cover`.

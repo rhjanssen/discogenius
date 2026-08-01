@@ -93,6 +93,12 @@ interface CandidatePlan extends Omit<OptimizedAcquisitionPlan, "planKey"> {
   outcomeSignature: string;
   cutoffSatisfied: number;
   qualityScore: number;
+  /**
+   * Sum of raw preference ranks, lower being better. Unlike qualityScore this
+   * is not zeroed at the cutoff, so it still separates a hi-res plan from a
+   * lossless one when both clear it.
+   */
+  qualityRankTotal: number;
   fragmentation: number;
   relationScore: number;
 }
@@ -136,10 +142,33 @@ function compareOptions(
 ): number {
   return Number(right.cutoffSatisfied) - Number(left.cutoffSatisfied)
     || effectiveQualityScore(profile, right) - effectiveQualityScore(profile, left)
+    // Past the cutoff every allowed quality scores 0, so without this a
+    // hi-res and a lossless option are indistinguishable and the winner falls
+    // out of row-id order. The cutoff governs whether we keep upgrading files;
+    // it must not make a fresh choice between offers arbitrary.
+    || left.qualityRank - right.qualityRank
     || right.relationRank - left.relationRank
     || left.providerEditionMatchId - right.providerEditionMatchId
     || left.providerTrackMatchId - right.providerTrackMatchId
     || left.providerAudioVariantId - right.providerAudioVariantId;
+}
+
+/**
+ * The best quality this plan actually reaches, which is the tier it represents
+ * in the one-plan-per-achievable-tier enumeration. A source that only offers
+ * lossless yields a lossless plan even when the library targets hi-res; before
+ * this the target was copied onto every plan, so a lossless offer displayed as
+ * Hi-Res and shared a plan key with a genuinely hi-res one.
+ */
+function achievedTier(
+  tracks: readonly TrackOption[],
+  fallback: NormalizedAudioQuality,
+): NormalizedAudioQuality {
+  let best: TrackOption | undefined;
+  for (const track of tracks) {
+    if (!best || track.qualityRank < best.qualityRank) best = track;
+  }
+  return best?.sourceQuality ?? fallback;
 }
 
 function planFragmentation(
@@ -186,6 +215,11 @@ function compareCandidatePlans(
     || right.relationScore - left.relationScore
     || (providerPriority.get(left.provider) ?? Number.MAX_SAFE_INTEGER)
       - (providerPriority.get(right.provider) ?? Number.MAX_SAFE_INTEGER)
+    // Provider order first, then genuine quality. Without this, two offers from
+    // the same provider that both clear the cutoff were separated only by the
+    // lexicographic source-id fallback below, so a lossless offer beat a hi-res
+    // one whenever its match row happened to sort first.
+    || left.qualityRankTotal - right.qualityRankTotal
     || left.sourceIds.join(",").localeCompare(right.sourceIds.join(","));
 }
 
@@ -212,16 +246,20 @@ function rescoreAgainstProfile(
 ): CandidatePlan {
   let satisfied = 0;
   let qualityScore = 0;
+  let qualityRankTotal = 0;
   for (const track of candidate.tracks) {
     const rank = qualityRank(profile, track.sourceQuality);
     const meetsCutoff = cutoffSatisfied(profile, track.sourceQuality);
     if (meetsCutoff) satisfied += 1;
+    // Each candidate was built under a profile aimed at its own tier, so its
+    // ranks are only comparable once restated against the library's profile.
+    qualityRankTotal += rank;
     qualityScore += effectiveQualityScore(profile, {
       qualityRank: rank,
       cutoffSatisfied: meetsCutoff,
     });
   }
-  return { ...candidate, cutoffSatisfied: satisfied, qualityScore };
+  return { ...candidate, cutoffSatisfied: satisfied, qualityScore, qualityRankTotal };
 }
 
 function outcomeSignature(provider: string, tracks: readonly TrackOption[]): string {
@@ -574,7 +612,10 @@ function buildProviderPlans(
         && usedSourceIds.includes(preferredSource.providerEditionMatchId)
         ? preferredSource.providerEditionMatchId
         : null,
-      qualityTier: targetTier,
+      // The tier the plan actually delivers, not the tier it aimed at. Labelling
+      // every plan with the library target made a lossless plan display as
+      // Hi-Res and collapsed genuinely different offers onto one plan key.
+      qualityTier: achievedTier(tracks, targetTier),
       explicitContent: planExplicitContent(counts),
       explicitnessCounts: counts,
       outcomeSignature: outcomeSignature(orderedSources[0].provider, tracks),
@@ -588,6 +629,7 @@ function buildProviderPlans(
         (sum, track) => sum + effectiveQualityScore(profile, track),
         0,
       ),
+      qualityRankTotal: tracks.reduce((sum, track) => sum + track.qualityRank, 0),
       fragmentation: planFragmentation(orderedTrackIds, tracks),
       relationScore: usedSourceIds.reduce(
         (sum, sourceId) => sum + relationRank[sourceById.get(sourceId)!.relation],

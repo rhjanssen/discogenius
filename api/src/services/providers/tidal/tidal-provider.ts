@@ -755,6 +755,7 @@ export class TidalProvider implements StreamingProvider {
       popularity: track.popularity ?? null,
       quality: track.quality || track.audioQuality || qualityTags[0] || null,
       qualityTags,
+      explicit: track.explicit == null ? null : Boolean(track.explicit),
       raw: track,
     };
   }

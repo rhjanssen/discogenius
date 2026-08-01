@@ -595,3 +595,29 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
 });
 
 
+
+// Regression: explicit was hardcoded false here, and the hardcode also overrode
+// the raw payload spread above it. Every provider track therefore stored
+// explicit=0, so acquisition plans computed explicitContent="clean" even for an
+// explicit release and prefer-explicit had nothing to act on.
+test("provider track rows carry through explicitness", () => {
+  const { providerTrackToTrackMetadataRow } = refreshServiceModule;
+  const base = {
+    providerId: "1",
+    title: "Track",
+    artist: { providerId: "a", name: "Artist" },
+    album: { providerId: "b", title: "Album", artist: { providerId: "a", name: "Artist" } },
+    duration: 100,
+    trackNumber: 1,
+  };
+
+  assert.equal(providerTrackToTrackMetadataRow({ ...base, explicit: true } as never).explicit, true);
+  assert.equal(providerTrackToTrackMetadataRow({ ...base, explicit: false } as never).explicit, false);
+  // Unknown stays unknown rather than silently becoming clean.
+  assert.equal(providerTrackToTrackMetadataRow(base as never).explicit, null);
+  // A provider that only exposes it on the raw payload still works.
+  assert.equal(
+    providerTrackToTrackMetadataRow({ ...base, raw: { explicit: true } } as never).explicit,
+    true,
+  );
+});

@@ -282,6 +282,49 @@ test("a composite that reproduces the direct match is not stored", () => {
   assert.deepEqual(fullCoverage[0].sourceIds, [60]);
 });
 
+// Regression: with a cutoff of lossless and no continue-upgrades, every allowed
+// quality scores 0, so a hi-res and a lossless offer tied and the winner fell
+// out of the lexicographic source-id fallback. Observed live: the same album
+// picked hi-res on one edition and lossless on another purely by row order.
+test("a hi-res offer beats a lossless one even when both clear the cutoff", () => {
+  const losslessOffer = source(10, "exact", [[1, "lossless"], [2, "lossless"]]);
+  const hiresOffer = source(20, "exact", [[1, "hires-lossless"], [2, "hires-lossless"]]);
+
+  const plan = optimizeAcquisitionPlan({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal"],
+    // Lower id first, so the old lexicographic fallback would have chosen it.
+    sources: [losslessOffer, hiresOffer],
+  });
+
+  assert.ok(plan);
+  assert.deepEqual(plan.sourceIds, [20]);
+  assert.equal(plan.qualityTier, "hires-lossless");
+});
+
+// Regression: qualityTier was copied from the library target, so a source that
+// only offers lossless was persisted and displayed as Hi-Res, and shared a plan
+// key with a genuinely hi-res plan.
+test("a plan is labelled with the tier it reaches, not the tier it targeted", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [
+      source(10, "exact", [[1, "lossless"], [2, "lossless"]]),
+      source(20, "exact", [[1, "hires-lossless"], [2, "hires-lossless"]]),
+    ],
+  });
+
+  const tierBySource = new Map(
+    plans.filter((plan) => plan.sourceIds.length === 1)
+      .map((plan) => [plan.sourceIds[0], plan.qualityTier]),
+  );
+  assert.equal(tierBySource.get(10), "lossless");
+  assert.equal(tierBySource.get(20), "hires-lossless");
+});
+
 test("each achievable quality tier yields one plan, not every partial upgrade", () => {
   // Tracks 1-2 exist in hi-res, tracks 3-4 only in lossless.
   const mixed: AcquisitionSourceCandidate = {
