@@ -377,9 +377,11 @@ async function shutdown(signal: string) {
   console.log(`[APP] ${signal} received, shutting down...`);
 
   try {
-    await downloadProcessor.pause();
+    // Suspend, not pause: pausing would persist download_queue_paused and the
+    // next start would come back paused with nothing to un-pause it.
+    await downloadProcessor.suspend();
   } catch (error) {
-    console.warn("[APP] Failed to pause download processor during shutdown:", error);
+    console.warn("[APP] Failed to suspend download processor during shutdown:", error);
   }
 
   try {

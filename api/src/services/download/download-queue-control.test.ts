@@ -57,6 +57,52 @@ test("persisted queue pause wins over later startup defaults", () => {
   assert.equal(row.value, "true");
 });
 
+// Regression: shutdown used to call downloadProcessor.pause(), which persists
+// download_queue_paused. Every graceful restart therefore came back paused with
+// nothing to un-pause it, so downloads silently stopped for good. Shutdown must
+// halt processing without recording an operator pause.
+test("shutdown suspend does not persist an operator pause", async () => {
+  const processorSource = await fs.promises.readFile(
+    new URL("./download-processor.ts", import.meta.url),
+    "utf8",
+  );
+  const serverSource = await fs.promises.readFile(
+    new URL("../../server.ts", import.meta.url),
+    "utf8",
+  );
+
+  // Shutdown takes the non-persisting path.
+  assert.match(serverSource, /await downloadProcessor\.suspend\(\)/);
+  assert.doesNotMatch(serverSource, /await downloadProcessor\.pause\(\)/);
+
+  // suspend() must not write the durable control row; pause() must.
+  const bodyOf = (name: string): string => {
+    const bodies = [...processorSource.matchAll(
+      new RegExp(`async ${name}\\(\\): Promise<void> \\{([\\s\\S]*?)\\n    \\}`, "g"),
+    )].map((match) => match[1]);
+    assert.ok(bodies.length > 0, `expected an async ${name}() in download-processor.ts`);
+    return bodies.join("\n");
+  };
+
+  assert.doesNotMatch(bodyOf("suspend"), /setDownloadQueuePaused/);
+  assert.match(bodyOf("pause"), /setDownloadQueuePaused\(true\)/);
+});
+
+test("resume survives a restart that only suspends", () => {
+  // Operator resumes, then the process restarts. The persisted state must still
+  // read as resumed, so the queue comes back working.
+  controlModule.setDownloadQueuePaused(true);
+  controlModule.setDownloadQueuePaused(false);
+
+  assert.deepEqual(
+    {
+      isPaused: controlModule.getDownloadQueueControlState().isPaused,
+      persisted: controlModule.getDownloadQueueControlState().persisted,
+    },
+    { isPaused: false, persisted: true },
+  );
+});
+
 test("pause interruption preserves retry evidence and authoritative order", () => {
   const firstId = queueModule.CommandQueueManager.push(
     queueModule.CommandNames.DownloadTrack,

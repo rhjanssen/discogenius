@@ -5,8 +5,10 @@ import { MediaCard } from "./MediaCard";
 
 afterEach(cleanup);
 
-function renderCard(props: Parameters<typeof MediaCard>[0]) {
-    return render(<MemoryRouter><MediaCard {...props} /></MemoryRouter>);
+type CardProps = Parameters<typeof MediaCard>[0];
+
+function renderCard(props: Omit<CardProps, "alt">) {
+    return render(<MemoryRouter><MediaCard alt="" {...props} /></MemoryRouter>);
 }
 
 describe("MediaCard accessibility", () => {

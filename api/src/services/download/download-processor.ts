@@ -2549,9 +2549,14 @@ export class DownloadProcessor {
         }
     }
 
-    async pause(): Promise<void> {
-        console.log('[DOWNLOAD-PROCESSOR] Pausing queue...');
-        setDownloadQueuePaused(true);
+    /**
+     * Halt processing without recording an operator pause.
+     *
+     * Shutdown has to stop in-flight downloads, but it must not persist that
+     * stop: a restart would then come back paused and never resume on its own.
+     * Only an explicit operator pause is durable.
+     */
+    private haltProcessing(): void {
         this.isPaused = true;
 
         // Flush any buffered progress writes before pausing/shutdown.
@@ -2565,7 +2570,20 @@ export class DownloadProcessor {
         }
 
         downloadEvents.emitQueueStatus(true);
+    }
+
+    async pause(): Promise<void> {
+        console.log('[DOWNLOAD-PROCESSOR] Pausing queue...');
+        setDownloadQueuePaused(true);
+        this.haltProcessing();
         console.log('[DOWNLOAD-PROCESSOR] Queue paused');
+    }
+
+    /** Shutdown-only halt. Leaves the persisted pause state untouched. */
+    async suspend(): Promise<void> {
+        console.log('[DOWNLOAD-PROCESSOR] Suspending queue for shutdown...');
+        this.haltProcessing();
+        console.log('[DOWNLOAD-PROCESSOR] Queue suspended');
     }
 
     async resume(): Promise<void> {
@@ -2624,7 +2642,7 @@ export class DownloadProcessor {
 
 type DownloadProcessorStatus = ReturnType<DownloadProcessor['getStatus']>;
 
-type DownloadWorkerRequestKind = 'initialize' | 'processQueue' | 'pause' | 'resume' | 'cancelJob';
+type DownloadWorkerRequestKind = 'initialize' | 'processQueue' | 'pause' | 'suspend' | 'resume' | 'cancelJob';
 
 type DownloadWorkerToMainMessage =
     | { kind: 'ready' }
@@ -2756,6 +2774,10 @@ export class DownloadProcessorWorkerProxy {
 
     async pause(): Promise<void> {
         await this.request('pause');
+    }
+
+    async suspend(): Promise<void> {
+        await this.request('suspend');
     }
 
     async resume(): Promise<void> {
@@ -2957,6 +2979,10 @@ class DownloadProcessorCommandWorkerStub {
     async processQueue(): Promise<void> {}
 
     async pause(): Promise<void> {
+        throw new Error('Download processor controls are unavailable inside command workers');
+    }
+
+    async suspend(): Promise<void> {
         throw new Error('Download processor controls are unavailable inside command workers');
     }
 
