@@ -919,26 +919,37 @@ function buildLogicalHistoryQuery(
 ): { whereSql: string; params: unknown[] } {
   const typeSql = placeholders(DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
   const statusSql = placeholders(QUEUE_HISTORY_STATUSES);
-  const downloadTypeSql = placeholders(DOWNLOAD_COMMAND_NAMES);
   const clauses: string[] = [
     `jq.name IN (${typeSql})`,
     `jq.status IN (${statusSql})`,
-    `NOT (
-        jq.name IN (${downloadTypeSql})
-        AND EXISTS (
-          SELECT 1
-          FROM commands import_job
-          WHERE import_job.name = ?
-            AND CAST(json_extract(import_job.payload, '$.originalJobId') AS INTEGER) = jq.id
-        )
-      )`,
   ];
   const params: unknown[] = [
     ...DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
     ...QUEUE_HISTORY_STATUSES,
-    ...DOWNLOAD_COMMAND_NAMES,
-    CommandNames.ImportDownload,
   ];
+  // The current single-command download→import lifecycle creates no separate
+  // ImportDownload rows. Avoid 100k redundant anti-join probes in that common
+  // case; when legacy/test rows do exist, the generated original_job_id index
+  // makes the exact collapse link cheap.
+  const hasSeparateImportRows = db.prepare(`
+    SELECT 1
+    FROM commands
+    WHERE name = ?
+    LIMIT 1
+  `).get(CommandNames.ImportDownload) != null;
+  if (hasSeparateImportRows) {
+    const downloadTypeSql = placeholders(DOWNLOAD_COMMAND_NAMES);
+    clauses.push(`NOT (
+      jq.name IN (${downloadTypeSql})
+      AND EXISTS (
+        SELECT 1
+        FROM commands import_job
+        WHERE import_job.name = ?
+          AND import_job.original_job_id = jq.id
+      )
+    )`);
+    params.push(...DOWNLOAD_COMMAND_NAMES, CommandNames.ImportDownload);
+  }
 
   const outcomes = filters.outcomes ?? [];
   if (outcomes.length > 0) {
@@ -1101,7 +1112,7 @@ export class DownloadQueueQueryService {
       ACTIVE_QUEUE_STATUSES,
       params.limit,
       params.offset,
-      { orderBy: "live_activity" },
+      { orderBy: "download_activity" },
     ) as unknown as QueueJobRow[];
 
     const queuePositionById = getPendingDownloadQueuePositionsForIds(

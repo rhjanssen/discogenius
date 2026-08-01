@@ -12,8 +12,12 @@ import {
     type HistoryEventType,
 } from "./history-events.js";
 import {CommandModel} from "./command-model.js";
-import {CommandName, CommandNames} from "./command-names.js";
+import {CommandName, CommandNames, DOWNLOAD_OR_IMPORT_COMMAND_NAMES} from "./command-names.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
+import {
+    buildDurableQueueOrderClause,
+    buildExecutionOrderClause,
+} from "./command-ordering.js";
 
 const ALL_ACTIVITY_STATUSES = ["queued", "started", "completed", "failed", "cancelled"] as const;
 type ActivityStatus = typeof ALL_ACTIVITY_STATUSES[number];
@@ -736,43 +740,24 @@ function getPendingQueuePositionsForIds(types: readonly CommandName[], pendingId
 
     const typePlaceholders = types.map(() => "?").join(",");
     const idPlaceholders = pendingIds.map(() => "?").join(",");
+    const usesDurableOrder = types.every((type) => DOWNLOAD_OR_IMPORT_COMMAND_NAMES.includes(
+        type as (typeof DOWNLOAD_OR_IMPORT_COMMAND_NAMES)[number],
+    ));
+    const orderBy = usesDurableOrder
+        ? buildDurableQueueOrderClause()
+        : buildExecutionOrderClause();
     const rows = db.prepare(`
-        SELECT
-            target.id,
-            1 + (
-                SELECT COUNT(*)
-                FROM commands candidate
-                WHERE candidate.status = 'queued'
-                  AND candidate.name IN (${typePlaceholders})
-                  AND (
-                    candidate.priority > target.priority
-                    OR (
-                        candidate.priority = target.priority
-                        AND COALESCE(candidate.trigger, 0) > COALESCE(target.trigger, 0)
-                    )
-                    OR (
-                        candidate.priority = target.priority
-                        AND COALESCE(candidate.trigger, 0) = COALESCE(target.trigger, 0)
-                        AND COALESCE(candidate.queue_order, 2147483647) < COALESCE(target.queue_order, 2147483647)
-                    )
-                    OR (
-                        candidate.priority = target.priority
-                        AND COALESCE(candidate.trigger, 0) = COALESCE(target.trigger, 0)
-                        AND COALESCE(candidate.queue_order, 2147483647) = COALESCE(target.queue_order, 2147483647)
-                        AND candidate.created_at < target.created_at
-                    )
-                    OR (
-                        candidate.priority = target.priority
-                        AND COALESCE(candidate.trigger, 0) = COALESCE(target.trigger, 0)
-                        AND COALESCE(candidate.queue_order, 2147483647) = COALESCE(target.queue_order, 2147483647)
-                        AND candidate.created_at = target.created_at
-                        AND candidate.id < target.id
-                    )
-                  )
-            ) AS queuePosition
-        FROM commands target
-        WHERE target.status = 'queued'
-          AND target.id IN (${idPlaceholders})
+        WITH ranked AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (ORDER BY ${orderBy}) AS queuePosition
+            FROM commands
+            WHERE status = 'queued'
+              AND name IN (${typePlaceholders})
+        )
+        SELECT id, queuePosition
+        FROM ranked
+        WHERE id IN (${idPlaceholders})
     `).all(...types, ...pendingIds) as Array<{ id: number; queuePosition: number }>;
 
     for (const row of rows) {

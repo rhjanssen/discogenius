@@ -1477,8 +1477,13 @@ class ApiClient {
     return this.request(`/v1/queue/${id}`, { method: 'DELETE' });
   }
 
-  async reorderQueueItems(params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number }) {
-    return this.request('/v1/queue/reorder', {
+  async reorderQueueItems(params: {
+    jobIds: number[];
+    beforeJobId?: number;
+    afterJobId?: number;
+    position?: 'top' | 'bottom';
+  }) {
+    return this.request<{ message: string; changed: number }>('/v1/queue/reorder', {
       method: 'POST',
       body: JSON.stringify(params),
     });

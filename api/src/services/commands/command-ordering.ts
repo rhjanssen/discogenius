@@ -53,16 +53,36 @@ function buildColumnName(column: string, alias?: string): string {
     return alias ? `${alias}.${column}` : column;
 }
 
+/**
+ * Persisted trigger values are a storage contract, not a numeric priority.
+ * Manual work is intentionally ahead of scheduled work at equal command
+ * priority; scheduled work is ahead of unspecified/background work.
+ */
+export function commandTriggerRank(trigger: number | null | undefined): number {
+    if (trigger === CommandTrigger.Manual) return 2;
+    if (trigger === CommandTrigger.Scheduled) return 1;
+    return 0;
+}
+
+export function buildTriggerRankExpression(alias?: string): string {
+    const trigger = buildColumnName("trigger", alias);
+    return `CASE
+                    WHEN ${trigger} = ${CommandTrigger.Manual} THEN 2
+                    WHEN ${trigger} = ${CommandTrigger.Scheduled} THEN 1
+                    ELSE 0
+                END`;
+}
+
 export function buildExecutionOrderClause(alias?: string): string {
     const priority = buildColumnName("priority", alias);
-    const trigger = buildColumnName("trigger", alias);
+    const triggerRank = buildTriggerRankExpression(alias);
     const queueOrder = buildColumnName("queue_order", alias);
     const createdAt = buildColumnName("created_at", alias);
     const id = buildColumnName("id", alias);
 
     return `
                 ${priority} DESC,
-                ${trigger} DESC,
+                ${triggerRank} DESC,
                 COALESCE(${queueOrder}, 2147483647) ASC,
                 ${createdAt} ASC,
                 ${id} ASC
@@ -81,13 +101,25 @@ export function buildDurableQueueOrderClause(alias?: string): string {
             `;
 }
 
-export function buildLiveActivityOrderClause(alias?: string): string {
+export function buildLiveActivityOrderClause(
+    alias?: string,
+    queuedOrder: "execution" | "durable" = "execution",
+): string {
     const status = buildColumnName("status", alias);
     const priority = buildColumnName("priority", alias);
-    const trigger = buildColumnName("trigger", alias);
+    const triggerRank = buildTriggerRankExpression(alias);
     const queueOrder = buildColumnName("queue_order", alias);
     const createdAt = buildColumnName("created_at", alias);
     const id = buildColumnName("id", alias);
+    const queuedPriorityOrder = queuedOrder === "execution"
+        ? `
+                CASE
+                    WHEN ${status} = 'queued' THEN ${priority}
+                END DESC,
+                CASE
+                    WHEN ${status} = 'queued' THEN ${triggerRank}
+                END DESC,`
+        : "";
 
     // Active ('started') items are floated above queued ones, but WITHIN the
     // active bucket they must keep a STABLE position — sorting them by
@@ -111,12 +143,7 @@ export function buildLiveActivityOrderClause(alias?: string): string {
                 CASE
                     WHEN ${status} = 'started' THEN ${id}
                 END ASC,
-                CASE
-                    WHEN ${status} = 'queued' THEN ${priority}
-                END DESC,
-                CASE
-                    WHEN ${status} = 'queued' THEN ${trigger}
-                END DESC,
+                ${queuedPriorityOrder}
                 CASE
                     WHEN ${status} = 'queued' THEN COALESCE(${queueOrder}, 2147483647)
                 END ASC,
@@ -164,10 +191,10 @@ export function compareJobsByExecutionOrder(left: CommandModel, right: CommandMo
         return right.priority - left.priority;
     }
 
-    const leftTrigger = left.trigger ?? CommandTrigger.Unspecified;
-    const rightTrigger = right.trigger ?? CommandTrigger.Unspecified;
-    if (leftTrigger !== rightTrigger) {
-        return rightTrigger - leftTrigger;
+    const leftTriggerRank = commandTriggerRank(left.trigger);
+    const rightTriggerRank = commandTriggerRank(right.trigger);
+    if (leftTriggerRank !== rightTriggerRank) {
+        return rightTriggerRank - leftTriggerRank;
     }
 
     const leftQueueOrder = left.queue_order ?? Number.MAX_SAFE_INTEGER;

@@ -21,9 +21,14 @@ export type QueueStatusContextType = {
   retryItem: (id: number) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
   reorderItems: (
-    params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number },
+    params: {
+      jobIds: number[];
+      beforeJobId?: number;
+      afterJobId?: number;
+      position?: "top" | "bottom";
+    },
     options?: { refresh?: boolean; dispatchActivity?: boolean },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   clearCompleted: () => Promise<void>;
   pauseQueue: () => Promise<void>;
   resumeQueue: () => Promise<void>;

@@ -533,7 +533,12 @@ function useQueueStatusContextValue(): QueueStatusContextType {
   }, [invalidateQueueQueries, scheduleStatusRefresh, updateProgressState]);
 
   const reorderItems = useCallback(async (
-    params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number },
+    params: {
+      jobIds: number[];
+      beforeJobId?: number;
+      afterJobId?: number;
+      position?: "top" | "bottom";
+    },
     options?: { refresh?: boolean; dispatchActivity?: boolean },
   ) => {
     try {
@@ -545,6 +550,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       if (options?.dispatchActivity !== false) {
         dispatchActivityRefresh();
       }
+      return true;
     } catch (error: any) {
       console.error("Error reordering queue:", error);
       toastRef.current({
@@ -552,6 +558,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
         description: error.message,
         variant: "destructive",
       });
+      return false;
     }
   }, [invalidateQueueQueries, scheduleStatusRefresh]);
 

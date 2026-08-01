@@ -518,6 +518,9 @@ router.post('/reorder', async (req: Request, res: Response) => {
     const commandIds = distinctJobIds;
     const beforeJobId = req.body?.beforeJobId == null ? undefined : parseInt(String(req.body.beforeJobId), 10);
     const afterJobId = req.body?.afterJobId == null ? undefined : parseInt(String(req.body.afterJobId), 10);
+    const position = req.body?.position === 'top' || req.body?.position === 'bottom'
+      ? req.body.position as 'top' | 'bottom'
+      : undefined;
 
     if (commandIds.length === 0) {
       return res.status(400).json({ error: 'Missing queue items', message: 'jobIds must contain one or more pending queue item ids' });
@@ -537,17 +540,29 @@ router.post('/reorder', async (req: Request, res: Response) => {
       });
     }
 
-    if ((beforeJobId == null && afterJobId == null) || (beforeJobId != null && afterJobId != null)) {
-      return res.status(400).json({ error: 'Invalid reorder request', message: 'Provide exactly one of beforeJobId or afterJobId' });
+    if (req.body?.position != null && position == null) {
+      return res.status(400).json({
+        error: 'Invalid reorder request',
+        message: 'position must be top or bottom when provided',
+      });
     }
 
-    CommandQueueManager.reorderPendingJobs(commandIds, {
+    const targetCount = Number(beforeJobId != null) + Number(afterJobId != null) + Number(position != null);
+    if (targetCount !== 1) {
+      return res.status(400).json({
+        error: 'Invalid reorder request',
+        message: 'Provide exactly one of beforeJobId, afterJobId, or position',
+      });
+    }
+
+    const changed = CommandQueueManager.reorderPendingJobs(commandIds, {
       beforeJobId,
       afterJobId,
+      position,
       types: DOWNLOAD_COMMAND_NAMES,
     });
 
-    res.json({ message: 'Queue reordered' });
+    res.json({ message: 'Queue reordered', changed });
   } catch (error: any) {
     console.error('[QUEUE-API] Error reordering queue:', error);
     res.status(409).json({ error: 'Failed to reorder queue', message: error.message });

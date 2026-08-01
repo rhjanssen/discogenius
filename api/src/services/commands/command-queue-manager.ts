@@ -19,6 +19,7 @@ import {
     buildExecutionOrderClause,
     buildHistoryOrderClause,
     buildLiveActivityOrderClause,
+    buildTriggerRankExpression,
     buildTypeInClause,
     hydrateJobRow,
     parseSqliteDate,
@@ -53,6 +54,106 @@ export {
 } from "./command-ordering.js";
 
 import { appEvents, AppEvent, CommandEventPayload } from "./app-events.js";
+
+const QUEUE_RANK_STEP = 1024;
+const QUEUE_REBALANCE_WINDOW = 64;
+
+type QueueRankRow = {
+    id: number;
+    queue_order: number | null;
+};
+
+function usesDurableDownloadOrder(types: readonly CommandName[]): boolean {
+    return types.length > 0
+        && types.every((type) => DOWNLOAD_OR_IMPORT_COMMAND_NAMES.includes(
+            type as (typeof DOWNLOAD_OR_IMPORT_COMMAND_NAMES)[number],
+        ));
+}
+
+function allocateFractionalQueueRanks(
+    previousRank: number | null,
+    nextRank: number | null,
+    count: number,
+): number[] | null {
+    if (count <= 0) return [];
+
+    if (previousRank == null && nextRank == null) {
+        return Array.from({ length: count }, (_, index) => QUEUE_RANK_STEP * (index + 1));
+    }
+
+    if (previousRank == null && nextRank != null) {
+        const first = nextRank - (QUEUE_RANK_STEP * count);
+        const ranks = Array.from({ length: count }, (_, index) => first + (QUEUE_RANK_STEP * index));
+        return ranks.every((rank) => Number.isFinite(rank) && rank < nextRank) ? ranks : null;
+    }
+
+    if (previousRank != null && nextRank == null) {
+        const ranks = Array.from({ length: count }, (_, index) => previousRank + (QUEUE_RANK_STEP * (index + 1)));
+        return ranks.every((rank) => Number.isFinite(rank) && rank > previousRank) ? ranks : null;
+    }
+
+    const previous = previousRank as number;
+    const next = nextRank as number;
+    const step = (next - previous) / (count + 1);
+    if (!Number.isFinite(step) || step <= 0) return null;
+
+    const ranks = Array.from({ length: count }, (_, index) => previous + (step * (index + 1)));
+    let last = previous;
+    for (const rank of ranks) {
+        if (!Number.isFinite(rank) || rank <= last || rank >= next) return null;
+        last = rank;
+    }
+    return ranks;
+}
+
+function allocateLiveSafeDownloadQueueRanks(
+    previousQueuedRank: number | null,
+    nextQueuedRank: number | null,
+    count: number,
+): number[] | null {
+    const startedRows = db.prepare(`
+        SELECT queue_order
+        FROM commands
+        WHERE status = 'started'
+          AND name IN (${buildTypeInClause(DOWNLOAD_COMMAND_NAMES)})
+          AND queue_order IS NOT NULL
+          AND (? IS NULL OR queue_order > ?)
+          AND (? IS NULL OR queue_order < ?)
+        ORDER BY queue_order ASC, id ASC
+    `).all(
+        ...DOWNLOAD_COMMAND_NAMES,
+        previousQueuedRank,
+        previousQueuedRank,
+        nextQueuedRank,
+        nextQueuedRank,
+    ) as Array<{ queue_order: number }>;
+
+    if (previousQueuedRank == null && nextQueuedRank == null) {
+        const lastStartedRank = startedRows.at(-1)?.queue_order ?? null;
+        return allocateFractionalQueueRanks(lastStartedRank, null, count);
+    }
+
+    if (previousQueuedRank == null) {
+        const firstOccupiedRank = startedRows[0]?.queue_order ?? nextQueuedRank;
+        return allocateFractionalQueueRanks(null, firstOccupiedRank, count);
+    }
+
+    if (nextQueuedRank == null) {
+        const lastOccupiedRank = startedRows.at(-1)?.queue_order ?? previousQueuedRank;
+        return allocateFractionalQueueRanks(lastOccupiedRank, null, count);
+    }
+
+    let leftRank = previousQueuedRank;
+    for (const rightRank of [
+        ...startedRows.map((row) => row.queue_order),
+        nextQueuedRank,
+    ]) {
+        const ranks = allocateFractionalQueueRanks(leftRank, rightRank, count);
+        if (ranks) return ranks;
+        leftRank = rightRank;
+    }
+    return null;
+}
 
 // ---------------------------------------------------------------------------
 // Throttled COMMAND_UPDATED emission (debounced broadcast)
@@ -310,22 +411,121 @@ export class CommandQueueManager {
             }
         }
 
-        const insert = db.prepare(`
-               INSERT INTO commands(name, ref_id, payload, priority, trigger, queue_order, status, created_at, updated_at)
-VALUES(?, ?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `);
-
-        const normalizedQueueOrder = Number.isInteger(queueOrder) && (queueOrder as number) > 0
-            ? (queueOrder as number)
+        const normalizedQueueOrder = typeof queueOrder === "number" && Number.isFinite(queueOrder)
+            ? queueOrder
             : null;
-        const info = insert.run(type, refId || null, JSON.stringify(payload), priority, trigger, normalizedQueueOrder);
-        const newId = info.lastInsertRowid as number;
-        db.prepare(`
-            UPDATE commands
-            SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-              AND queue_order IS NULL
-        `).run(newId, newId);
+        const insertQueuedCommand = db.transaction(() => {
+            // Insert first to acquire SQLite's write lock before inspecting the
+            // queue. A concurrent enqueue, claim, or reorder therefore lands
+            // wholly before or wholly after this rank allocation.
+            const info = db.prepare(`
+                INSERT INTO commands(
+                    name, ref_id, payload, priority, trigger, queue_order,
+                    status, created_at, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, NULL, 'queued', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `).run(type, refId || null, JSON.stringify(payload), priority, trigger);
+            const newId = Number(info.lastInsertRowid);
+
+            let allocatedQueueOrder = normalizedQueueOrder;
+            if (allocatedQueueOrder == null && isDownloadJobType(type)) {
+                const downloadTypeClause = buildTypeInClause(DOWNLOAD_COMMAND_NAMES);
+                const triggerRank = buildTriggerRankExpression();
+                const higherOrEqualTail = db.prepare(`
+                    SELECT id, queue_order
+                    FROM commands
+                    WHERE id <> ?
+                      AND status = 'queued'
+                      AND name IN (${downloadTypeClause})
+                      AND queue_order IS NOT NULL
+                      AND (
+                        priority > ?
+                        OR (
+                          priority = ?
+                          AND ${triggerRank} >=
+                            CASE
+                              WHEN ? = ${CommandTrigger.Manual} THEN 2
+                              WHEN ? = ${CommandTrigger.Scheduled} THEN 1
+                              ELSE 0
+                            END
+                        )
+                      )
+                    ORDER BY queue_order DESC, id DESC
+                    LIMIT 1
+                `).get(
+                    newId,
+                    ...DOWNLOAD_COMMAND_NAMES,
+                    priority,
+                    priority,
+                    trigger,
+                    trigger,
+                ) as { id: number; queue_order?: number | null } | undefined;
+
+                const previousRank = higherOrEqualTail?.queue_order ?? null;
+                const nextRow = previousRank == null
+                    ? db.prepare(`
+                        SELECT id, queue_order
+                        FROM commands
+                        WHERE id <> ?
+                          AND status = 'queued'
+                          AND name IN (${downloadTypeClause})
+                          AND queue_order IS NOT NULL
+                        ORDER BY queue_order ASC, id ASC
+                        LIMIT 1
+                    `).get(newId, ...DOWNLOAD_COMMAND_NAMES) as { id: number; queue_order?: number | null } | undefined
+                    : db.prepare(`
+                        SELECT id, queue_order
+                        FROM commands
+                        WHERE id <> ?
+                          AND status = 'queued'
+                          AND name IN (${downloadTypeClause})
+                          AND queue_order > ?
+                        ORDER BY queue_order ASC, id ASC
+                        LIMIT 1
+                    `).get(newId, ...DOWNLOAD_COMMAND_NAMES, previousRank) as { id: number; queue_order?: number | null } | undefined;
+                allocatedQueueOrder = allocateLiveSafeDownloadQueueRanks(
+                    previousRank,
+                    nextRow?.queue_order ?? null,
+                    1,
+                )?.[0] ?? null;
+                if (allocatedQueueOrder == null && nextRow) {
+                    const tail = db.prepare(`
+                        SELECT MAX(queue_order) AS queue_order
+                        FROM commands
+                        WHERE id <> ?
+                          AND status = 'queued'
+                          AND name IN (${downloadTypeClause})
+                    `).get(newId, ...DOWNLOAD_COMMAND_NAMES) as { queue_order?: number | null } | undefined;
+                    allocatedQueueOrder = (tail?.queue_order ?? 0) + QUEUE_RANK_STEP;
+                    db.prepare(`
+                        UPDATE commands
+                        SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    `).run(allocatedQueueOrder, newId);
+                    return { newId, reorderBeforeJobId: nextRow.id };
+                }
+            }
+
+            if (allocatedQueueOrder == null) {
+                allocatedQueueOrder = newId * QUEUE_RANK_STEP;
+            }
+
+            db.prepare(`
+                UPDATE commands
+                SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(allocatedQueueOrder, newId);
+            return { newId, reorderBeforeJobId: null as number | null };
+        });
+
+        const insertion = insertQueuedCommand();
+        const newId = insertion.newId;
+        if (insertion.reorderBeforeJobId != null) {
+            this.reorderPendingJobs([newId], {
+                beforeJobId: insertion.reorderBeforeJobId,
+                types: DOWNLOAD_COMMAND_NAMES,
+            });
+        }
         appEvents.emit(AppEvent.COMMAND_ADDED, { id: newId, type, status: 'queued', progress: 0, payload } as CommandEventPayload);
         return newId;
     }
@@ -335,13 +535,15 @@ VALUES(?, ?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         statusPattern: string = '%',
         limit: number = 50,
         offset: number = 0,
-        options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'queue_order' } = {},
+        options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'download_activity' | 'queue_order' } = {},
     ): CommandModel[] {
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
             : options.orderBy === 'history'
                 ? buildHistoryOrderClause()
-                : options.orderBy === 'live_activity'
+                : options.orderBy === 'download_activity'
+                    ? buildLiveActivityOrderClause(undefined, "durable")
+                    : options.orderBy === 'live_activity'
                     ? buildLiveActivityOrderClause()
                     : options.orderBy === 'queue_order'
                         ? buildDurableQueueOrderClause()
@@ -363,7 +565,7 @@ LIMIT ? OFFSET ?
         statuses: readonly CommandStatus[],
         limit: number = 200,
         offset: number = 0,
-        options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'queue_order' } = {},
+        options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'download_activity' | 'queue_order' } = {},
     ): CommandModel[] {
         if (types.length === 0 || statuses.length === 0) {
             return [];
@@ -372,10 +574,12 @@ LIMIT ? OFFSET ?
         const typePlaceholders = buildTypeInClause(types);
         const statusPlaceholders = statuses.map(() => '?').join(',');
         const orderBy = options.orderBy === 'execution'
-            ? buildExecutionOrderClause()
+            ? (usesDurableDownloadOrder(types) ? buildDurableQueueOrderClause() : buildExecutionOrderClause())
             : options.orderBy === 'history'
                 ? buildHistoryOrderClause()
-                : options.orderBy === 'live_activity'
+                : options.orderBy === 'download_activity'
+                    ? buildLiveActivityOrderClause(undefined, "durable")
+                    : options.orderBy === 'live_activity'
                     ? buildLiveActivityOrderClause()
                     : options.orderBy === 'queue_order'
                         ? buildDurableQueueOrderClause()
@@ -471,13 +675,16 @@ ${buildExecutionOrderClause()}
         }
 
         const placeholders = buildTypeInClause(types);
+        const orderBy = usesDurableDownloadOrder(types)
+            ? buildDurableQueueOrderClause()
+            : buildExecutionOrderClause();
         const job = db.prepare(`
             SELECT * FROM commands
             WHERE status = 'queued'
               AND name IN (${placeholders})
               AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
             ORDER BY
-${buildExecutionOrderClause()}
+${orderBy}
             LIMIT 1
         `).get(...types) as any;
 
@@ -502,13 +709,16 @@ ${buildExecutionOrderClause()}
         if (types.length === 0) return [];
 
         const placeholders = buildTypeInClause(types);
+        const orderBy = usesDurableDownloadOrder(types)
+            ? buildDurableQueueOrderClause()
+            : buildExecutionOrderClause();
         const rows = (perTypeLimit && perTypeLimit > 0
             ? db.prepare(`
                 SELECT * FROM (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY name
                         ORDER BY
-${buildExecutionOrderClause()}
+${orderBy}
                     ) AS __type_rank
                     FROM commands
                     WHERE status = 'queued'
@@ -517,7 +727,7 @@ ${buildExecutionOrderClause()}
                 )
                 WHERE __type_rank <= ?
                 ORDER BY
-${buildExecutionOrderClause()}
+${orderBy}
                 LIMIT ?
             `).all(...types, perTypeLimit, limit)
             : db.prepare(`
@@ -526,7 +736,7 @@ ${buildExecutionOrderClause()}
                   AND name IN (${placeholders})
                   AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
                 ORDER BY
-${buildExecutionOrderClause()}
+${orderBy}
                 LIMIT ?
             `).all(...types, limit)) as any[];
 
@@ -833,16 +1043,49 @@ ${buildExecutionOrderClause()}
     }
 
     static retry(id: number) {
-        db.prepare(`
-            UPDATE commands 
-            SET status = 'queued', error = NULL, progress = 0, started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
-                attempts = 0, attempt = 0, worker_id = NULL, heartbeat_at = NULL,
-                last_progress_at = NULL, progress_phase = NULL, progress_current = NULL,
-                progress_total = NULL, lease_expires_at = NULL, blocked_reason = NULL,
-                retry_after = NULL, last_retry_reason = NULL,
-                payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
-            WHERE id = ?
-	    `).run(id);
+        const retryCommand = db.transaction(() => {
+            const command = db.prepare(`
+                SELECT name, queue_order
+                FROM commands
+                WHERE id = ?
+            `).get(id) as { name: CommandName; queue_order: number | null } | undefined;
+            if (!command) return;
+
+            let queueOrder = command.queue_order;
+            if (isDownloadJobType(command.name)) {
+                const conflict = db.prepare(`
+                    SELECT id
+                    FROM commands
+                    WHERE id <> ?
+                      AND status IN ('queued', 'started')
+                      AND name IN (${buildTypeInClause(DOWNLOAD_COMMAND_NAMES)})
+                      AND queue_order = ?
+                    LIMIT 1
+                `).get(id, ...DOWNLOAD_COMMAND_NAMES, queueOrder) as { id: number } | undefined;
+                if (conflict || queueOrder == null) {
+                    const liveTail = db.prepare(`
+                        SELECT MAX(queue_order) AS queue_order
+                        FROM commands
+                        WHERE status IN ('queued', 'started')
+                          AND name IN (${buildTypeInClause(DOWNLOAD_COMMAND_NAMES)})
+                    `).get(...DOWNLOAD_COMMAND_NAMES) as { queue_order?: number | null } | undefined;
+                    queueOrder = (liveTail?.queue_order ?? 0) + QUEUE_RANK_STEP;
+                }
+            }
+
+            db.prepare(`
+                UPDATE commands
+                SET status = 'queued', error = NULL, progress = 0, queue_order = ?,
+                    started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
+                    attempts = 0, attempt = 0, worker_id = NULL, heartbeat_at = NULL,
+                    last_progress_at = NULL, progress_phase = NULL, progress_current = NULL,
+                    progress_total = NULL, lease_expires_at = NULL, blocked_reason = NULL,
+                    retry_after = NULL, last_retry_reason = NULL,
+                    payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
+                WHERE id = ?
+            `).run(queueOrder, id);
+        });
+        retryCommand();
         const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'queued', progress: 0 } as CommandEventPayload);
     }
@@ -854,7 +1097,10 @@ ${buildExecutionOrderClause()}
      * preserve attempts, queue_order, priority, trigger, and resumable download
      * state. Only the transient running claim is released.
      */
-    static requeuePausedDownload(id: number): boolean {
+    static requeuePausedDownload(id: number, workerId?: string): boolean {
+        const ownershipClause = workerId ? "AND worker_id = ?" : "";
+        const params: Array<string | number> = [id, ...DOWNLOAD_COMMAND_NAMES];
+        if (workerId) params.push(workerId);
         const result = db.prepare(`
             UPDATE commands
             SET
@@ -862,6 +1108,10 @@ ${buildExecutionOrderClause()}
                 started_at = NULL,
                 completed_at = NULL,
                 error = NULL,
+                worker_id = NULL,
+                heartbeat_at = NULL,
+                lease_expires_at = NULL,
+                blocked_reason = NULL,
                 payload = json_set(
                     COALESCE(payload, '{}'),
                     '$.downloadState.state', 'paused',
@@ -871,7 +1121,8 @@ ${buildExecutionOrderClause()}
             WHERE id = ?
               AND status = 'started'
               AND name IN (${buildTypeInClause(DOWNLOAD_COMMAND_NAMES)})
-        `).run(id, ...DOWNLOAD_COMMAND_NAMES);
+              ${ownershipClause}
+        `).run(...params);
         if (result.changes === 0) return false;
 
         clearCommandUpdateThrottle(id);
@@ -1358,6 +1609,7 @@ ${buildExecutionOrderClause()}
         options: {
             beforeJobId?: number;
             afterJobId?: number;
+            position?: "top" | "bottom";
             types?: readonly CommandName[];
         } = {},
     ): number {
@@ -1371,95 +1623,227 @@ ${buildExecutionOrderClause()}
             throw new Error("Queue reorder set contains duplicate queue item ids.");
         }
 
-        const { beforeJobId, afterJobId } = options;
-        if ((beforeJobId == null && afterJobId == null) || (beforeJobId != null && afterJobId != null)) {
-            throw new Error("Queue reorder requires exactly one anchor: beforeJobId or afterJobId.");
+        const { beforeJobId, afterJobId, position } = options;
+        const targetCount = Number(beforeJobId != null) + Number(afterJobId != null) + Number(position != null);
+        if (targetCount !== 1 || (position != null && position !== "top" && position !== "bottom")) {
+            throw new Error("Queue reorder requires exactly one target: beforeJobId, afterJobId, or position.");
         }
 
         const types = options.types ?? DOWNLOAD_COMMAND_NAMES;
-        const pendingJobs = this.listJobsByTypesAndStatuses(
-            types,
-            ['queued'],
-            this.countJobsByTypesAndStatuses(types, ['queued']),
-            0,
-            { orderBy: 'execution' },
-        );
-
-        const pendingById = new Map(pendingJobs.map((job) => [job.id, job]));
         const movingSet = new Set(distinctJobIds);
-        const movingJobs = distinctJobIds.map((commandId) => pendingById.get(commandId)).filter((job): job is CommandModel => job != null);
-
-        if (movingJobs.length !== distinctJobIds.length) {
-            throw new Error("Only pending download queue items can be reordered.");
-        }
-
         const anchorJobId = beforeJobId ?? afterJobId;
         if (anchorJobId == null || movingSet.has(anchorJobId)) {
-            throw new Error("Queue reorder anchor must be a different pending queue item.");
+            if (position == null) {
+                throw new Error("Queue reorder anchor must be a different pending queue item.");
+            }
         }
 
-        if (!pendingById.has(anchorJobId)) {
-            throw new Error("Queue reorder anchor is not in the pending download queue.");
-        }
-
-        const anchorJob = pendingById.get(anchorJobId);
-        if (!anchorJob) {
-            throw new Error("Queue reorder anchor could not be resolved.");
-        }
-
-        const remainingJobs = pendingJobs.filter((job) => !movingSet.has(job.id));
-        const anchorIndex = remainingJobs.findIndex((job) => job.id === anchorJobId);
-        if (anchorIndex === -1) {
-            throw new Error("Queue reorder anchor could not be resolved.");
-        }
-
-        const insertIndex = beforeJobId != null ? anchorIndex : anchorIndex + 1;
-        const reorderedJobs = [
-            ...remainingJobs.slice(0, insertIndex),
-            ...movingJobs,
-            ...remainingJobs.slice(insertIndex),
-        ];
-
-        const updateQueueOrder = db.prepare(`
-            UPDATE commands
-            SET
-              queue_order = ?,
-              priority = ?,
-              trigger = ?,
-              updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-              AND status = 'queued'
+        const typeClause = buildTypeInClause(types);
+        const movingClause = distinctJobIds.map(() => "?").join(",");
+        const baseRemainingWhere = `
+            status = 'queued'
+            AND name IN (${typeClause})
+            AND queue_order IS NOT NULL
+            AND id NOT IN (${movingClause})
+        `;
+        const baseRemainingParams: Array<string | number> = [...types, ...distinctJobIds];
+        const selectPrevious = db.prepare(`
+            SELECT id, queue_order
+            FROM commands
+            WHERE ${baseRemainingWhere}
+              AND queue_order < ?
+            ORDER BY queue_order DESC, created_at DESC, id DESC
+            LIMIT 1
+        `);
+        const selectNext = db.prepare(`
+            SELECT id, queue_order
+            FROM commands
+            WHERE ${baseRemainingWhere}
+              AND queue_order > ?
+            ORDER BY queue_order ASC, created_at ASC, id ASC
+            LIMIT 1
+        `);
+        const selectFirst = db.prepare(`
+            SELECT id, queue_order
+            FROM commands
+            WHERE ${baseRemainingWhere}
+            ORDER BY queue_order ASC, created_at ASC, id ASC
+            LIMIT 1
+        `);
+        const selectLast = db.prepare(`
+            SELECT id, queue_order
+            FROM commands
+            WHERE ${baseRemainingWhere}
+            ORDER BY queue_order DESC, created_at DESC, id DESC
+            LIMIT 1
         `);
 
         const tx = db.transaction(() => {
-            reorderedJobs.forEach((job, index) => {
-                const queueOrder = index + 1;
-                // Execution order intentionally sorts priority/trigger before
-                // queue_order so newly queued interactive work can start ahead
-                // of background acquisitions. Once a user explicitly moves a
-                // row, however, that move must become the effective execution
-                // order as well as the visible order. Align the moved block to
-                // the anchor's execution class; otherwise a drag across a
-                // trigger/priority boundary is immediately undone by the next
-                // query and the downloader still selects the old first item.
-                const isMoving = movingSet.has(job.id);
-                updateQueueOrder.run(
-                    queueOrder,
-                    isMoving ? anchorJob.priority : job.priority,
-                    isMoving ? (anchorJob.trigger ?? CommandTrigger.Unspecified) : (job.trigger ?? CommandTrigger.Unspecified),
-                    job.id,
+            // This no-op write deliberately happens before any validation read.
+            // It serializes a reorder against enqueue/claim on other SQLite
+            // connections, so the target is resolved from one authoritative
+            // queue snapshot and the final ranks commit atomically.
+            db.prepare(`
+                UPDATE commands
+                SET queue_order = queue_order
+                WHERE id IN (${movingClause})
+                  AND status = 'queued'
+                  AND name IN (${typeClause})
+            `).run(...distinctJobIds, ...types);
+
+            const movingRows = db.prepare(`
+                SELECT id, queue_order
+                FROM commands
+                WHERE id IN (${movingClause})
+                  AND status = 'queued'
+                  AND name IN (${typeClause})
+            `).all(...distinctJobIds, ...types) as QueueRankRow[];
+            const movingById = new Map(movingRows.map((row) => [row.id, row]));
+            const movingInRequestedOrder = distinctJobIds
+                .map((id) => movingById.get(id))
+                .filter((row): row is QueueRankRow => row != null);
+            if (movingInRequestedOrder.length !== distinctJobIds.length) {
+                throw new Error("Only pending download queue items can be reordered.");
+            }
+
+            let previousRow: QueueRankRow | undefined;
+            let nextRow: QueueRankRow | undefined;
+            if (position === "top") {
+                nextRow = selectFirst.get(...baseRemainingParams) as QueueRankRow | undefined;
+            } else if (position === "bottom") {
+                previousRow = selectLast.get(...baseRemainingParams) as QueueRankRow | undefined;
+            } else {
+                const anchor = db.prepare(`
+                    SELECT id, queue_order
+                    FROM commands
+                    WHERE id = ?
+                      AND status = 'queued'
+                      AND name IN (${typeClause})
+                      AND queue_order IS NOT NULL
+                `).get(anchorJobId, ...types) as QueueRankRow | undefined;
+                if (!anchor) {
+                    throw new Error("Queue reorder anchor is not in the pending download queue.");
+                }
+
+                if (beforeJobId != null) {
+                    nextRow = anchor;
+                    previousRow = selectPrevious.get(
+                        ...baseRemainingParams,
+                        anchor.queue_order,
+                    ) as QueueRankRow | undefined;
+                } else {
+                    previousRow = anchor;
+                    nextRow = selectNext.get(
+                        ...baseRemainingParams,
+                        anchor.queue_order,
+                    ) as QueueRankRow | undefined;
+                }
+            }
+
+            let ranks = allocateLiveSafeDownloadQueueRanks(
+                previousRow?.queue_order ?? null,
+                nextRow?.queue_order ?? null,
+                movingInRequestedOrder.length,
+            );
+            let rowsToRank: QueueRankRow[] = movingInRequestedOrder;
+
+            if (!ranks) {
+                // Floating-point rank space can only be exhausted after many
+                // repeated inserts at exactly one boundary. Re-space a bounded
+                // local window rather than rewriting the whole pending queue.
+                const previousWindow = previousRow
+                    ? db.prepare(`
+                        SELECT id, queue_order
+                        FROM commands
+                        WHERE ${baseRemainingWhere}
+                          AND queue_order <= ?
+                        ORDER BY queue_order DESC, created_at DESC, id DESC
+                        LIMIT ?
+                    `).all(
+                        ...baseRemainingParams,
+                        previousRow.queue_order,
+                        QUEUE_REBALANCE_WINDOW,
+                    ) as QueueRankRow[]
+                    : [];
+                const nextWindow = nextRow
+                    ? db.prepare(`
+                        SELECT id, queue_order
+                        FROM commands
+                        WHERE ${baseRemainingWhere}
+                          AND queue_order >= ?
+                        ORDER BY queue_order ASC, created_at ASC, id ASC
+                        LIMIT ?
+                    `).all(
+                        ...baseRemainingParams,
+                        nextRow.queue_order,
+                        QUEUE_REBALANCE_WINDOW,
+                    ) as QueueRankRow[]
+                    : [];
+                previousWindow.reverse();
+
+                const localRows = [...previousWindow, ...nextWindow]
+                    .filter((row, index, rows) => rows.findIndex((candidate) => candidate.id === row.id) === index);
+                const insertionIndex = previousRow
+                    ? localRows.findIndex((row) => row.id === previousRow?.id) + 1
+                    : 0;
+                rowsToRank = [
+                    ...localRows.slice(0, insertionIndex),
+                    ...movingInRequestedOrder,
+                    ...localRows.slice(insertionIndex),
+                ];
+
+                const firstLocalRank = localRows[0]?.queue_order ?? null;
+                const lastLocalRank = localRows.at(-1)?.queue_order ?? null;
+                const outsidePrevious = firstLocalRank == null
+                    ? undefined
+                    : selectPrevious.get(...baseRemainingParams, firstLocalRank) as QueueRankRow | undefined;
+                const outsideNext = lastLocalRank == null
+                    ? undefined
+                    : selectNext.get(...baseRemainingParams, lastLocalRank) as QueueRankRow | undefined;
+                ranks = allocateLiveSafeDownloadQueueRanks(
+                    outsidePrevious?.queue_order ?? null,
+                    outsideNext?.queue_order ?? null,
+                    rowsToRank.length,
+                );
+                if (!ranks) {
+                    throw new Error("Queue rank space is exhausted around the requested position; retry after queue activity changes.");
+                }
+            }
+
+            const minimumRankRow = db.prepare(`
+                SELECT MIN(queue_order) AS minimumRank
+                FROM commands
+                WHERE status IN ('queued', 'started')
+                  AND name IN (${typeClause})
+                  AND queue_order IS NOT NULL
+            `).get(...types) as { minimumRank?: number | null } | undefined;
+            const minimumRank = minimumRankRow?.minimumRank ?? 0;
+            const parkRank = db.prepare(`
+                UPDATE commands
+                SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'queued'
+            `);
+            rowsToRank.forEach((row, index) => {
+                parkRank.run(
+                    minimumRank - (QUEUE_RANK_STEP * (index + 1)),
+                    row.id,
                 );
             });
+            rowsToRank.forEach((row, index) => {
+                parkRank.run(ranks?.[index], row.id);
+            });
+
+            return movingInRequestedOrder.length;
         });
 
-        tx();
+        const changed = tx();
         // A reorder changes queue membership order but no single command's status,
         // so nothing else fires. Without this, the query service keeps serving its
         // cached snapshot and the client never refetches — the drag appears to do
         // nothing. QUEUE_CLEARED invalidates the server snapshot and reaches the
         // client as `queue.cleared`, prompting an immediate refetch in the new order.
         appEvents.emit(AppEvent.QUEUE_CLEARED);
-        return reorderedJobs.length;
+        return changed;
     }
 
     /**

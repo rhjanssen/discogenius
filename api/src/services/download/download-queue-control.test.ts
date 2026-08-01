@@ -93,3 +93,36 @@ test("pause interruption preserves retry evidence and authoritative order", () =
   );
   assert.deepEqual(pending.map((job) => job.id), [firstId, secondId]);
 });
+
+test("pause requeue rejects a stale owner without disturbing the live attempt", () => {
+  const commandId = queueModule.CommandQueueManager.push(
+    queueModule.CommandNames.DownloadTrack,
+    { providerId: "pause-owned-track", type: "track" },
+    "pause-owned-track",
+  );
+  const claimed = queueModule.CommandQueueManager.claimForExecution(
+    commandId,
+    "download-attempt-current",
+    30_000,
+  );
+  assert.ok(claimed);
+  assert.equal(claimed.attempt, 1);
+
+  assert.equal(
+    queueModule.CommandQueueManager.requeuePausedDownload(commandId, "download-attempt-stale"),
+    false,
+  );
+  const afterStaleOwner = queueModule.CommandQueueManager.get(commandId);
+  assert.equal(afterStaleOwner?.status, "started");
+  assert.equal(afterStaleOwner?.worker_id, "download-attempt-current");
+  assert.equal(afterStaleOwner?.attempt, 1);
+
+  assert.equal(
+    queueModule.CommandQueueManager.requeuePausedDownload(commandId, "download-attempt-current"),
+    true,
+  );
+  const requeued = queueModule.CommandQueueManager.get(commandId);
+  assert.equal(requeued?.status, "queued");
+  assert.equal(requeued?.worker_id ?? null, null);
+  assert.equal(requeued?.attempt, 1);
+});

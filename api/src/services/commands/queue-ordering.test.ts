@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { after, before, beforeEach, test } from "node:test";
+import { Worker } from "node:worker_threads";
 import {
     seedAcceptedProviderReleaseMatch,
     seedAcceptedProviderTrackMatch,
@@ -16,6 +18,8 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let queueModule: typeof import("./command-queue-manager.js");
 let downloadQueueQueryModule: typeof import("../download/download-queue-query-service.js");
+const require = createRequire(import.meta.url);
+const betterSqlite3ModulePath = require.resolve("better-sqlite3");
 
 before(async () => {
     dbModule = await import("../../database.js");
@@ -53,6 +57,57 @@ function queuePendingDownload(type: "track" | "video" | "album", providerId: str
     );
 }
 
+async function runWhilePeerWriteIsLocked<T>(
+    sql: string,
+    params: unknown[],
+    operation: () => T,
+): Promise<T> {
+    const worker = new Worker(`
+        const { parentPort, workerData } = require("node:worker_threads");
+        const Database = require(workerData.modulePath);
+        const database = new Database(workerData.dbPath);
+        database.pragma("busy_timeout = 5000");
+        database.exec("BEGIN IMMEDIATE");
+        database.prepare(workerData.sql).run(...workerData.params);
+        parentPort.postMessage("locked");
+        setTimeout(() => {
+            database.exec("COMMIT");
+            database.close();
+            parentPort.postMessage("committed");
+        }, 100);
+    `, {
+        eval: true,
+        workerData: {
+            modulePath: betterSqlite3ModulePath,
+            dbPath: process.env.DB_PATH,
+            sql,
+            params,
+        },
+    });
+
+    const workerExit = new Promise<void>((resolve, reject) => {
+        worker.once("error", reject);
+        worker.once("exit", (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`Concurrent SQLite worker exited with code ${code}`));
+        });
+    });
+    await new Promise<void>((resolve, reject) => {
+        worker.once("error", reject);
+        worker.on("message", (message) => {
+            if (message === "locked") resolve();
+        });
+    });
+
+    let result: T;
+    try {
+        result = operation();
+    } finally {
+        await workerExit;
+    }
+    return result;
+}
+
 test("reorderPendingJobs preserves explicit move order deterministically", () => {
     const first = queuePendingDownload("track", "1");
     const second = queuePendingDownload("track", "2");
@@ -62,7 +117,7 @@ test("reorderPendingJobs preserves explicit move order deterministically", () =>
         beforeJobId: second,
         types: queueModule.DOWNLOAD_COMMAND_NAMES,
     });
-    assert.equal(changed, 3);
+    assert.equal(changed, 2);
 
     const pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
         queueModule.DOWNLOAD_COMMAND_NAMES,
@@ -110,8 +165,217 @@ test("reorderPendingJobs makes a cross-priority move the effective execution ord
     );
     assert.deepEqual(pending.map((job) => job.id), [background, highPriority]);
     assert.equal(queueModule.CommandQueueManager.getNextJobByTypes(queueModule.DOWNLOAD_COMMAND_NAMES)?.id, background);
-    assert.equal(queueModule.CommandQueueManager.get(highPriority)?.priority, 0);
-    assert.equal(queueModule.CommandQueueManager.get(highPriority)?.trigger, 0);
+    assert.equal(queueModule.CommandQueueManager.get(highPriority)?.priority, 100);
+    assert.equal(queueModule.CommandQueueManager.get(highPriority)?.trigger, 1);
+});
+
+test("download enqueue precedence is priority, then Manual, Scheduled, and Unspecified", () => {
+    const scheduled = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "scheduled", type: "track" },
+        "scheduled",
+        0,
+        2,
+    );
+    const manual = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "manual", type: "track" },
+        "manual",
+        0,
+        1,
+    );
+    const unspecified = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "unspecified", type: "track" },
+        "unspecified",
+        0,
+        0,
+    );
+    const workflowHandoff = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "workflow", type: "track" },
+        "workflow",
+        25,
+        0,
+    );
+
+    const pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_COMMAND_NAMES,
+        ["queued"],
+        10,
+        0,
+        { orderBy: "execution" },
+    );
+    assert.deepEqual(
+        pending.map((job) => job.id),
+        [workflowHandoff, manual, scheduled, unspecified],
+    );
+    assert.deepEqual(
+        new Set(pending.map((job) => job.queue_order)).size,
+        pending.length,
+    );
+    assert.ok(pending.every((job) => Number.isFinite(job.queue_order)));
+});
+
+test("large same-priority handoff bursts retain precedence without duplicate ranks", () => {
+    const background = queuePendingDownload("track", "handoff-background");
+    const handoffs = Array.from({ length: 200 }, (_, index) => (
+        queueModule.CommandQueueManager.push(
+            queueModule.CommandNames.DownloadTrack,
+            { providerId: `handoff-${index}`, type: "track" },
+            `handoff-${index}`,
+            25,
+            0,
+        )
+    ));
+
+    const pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_COMMAND_NAMES,
+        ["queued"],
+        250,
+        0,
+        { orderBy: "execution" },
+    );
+    assert.deepEqual(pending.slice(0, 200).map((job) => job.id), handoffs);
+    assert.equal(pending.at(-1)?.id, background);
+    assert.equal(new Set(pending.map((job) => job.queue_order)).size, pending.length);
+});
+
+test("authoritative top and bottom moves do not need a client-loaded anchor", () => {
+    const ids = Array.from({ length: 100 }, (_, index) => (
+        queuePendingDownload("track", `edge-${index}`)
+    ));
+
+    assert.equal(
+        queueModule.CommandQueueManager.reorderPendingJobs([ids[0]], {
+            position: "bottom",
+            types: queueModule.DOWNLOAD_COMMAND_NAMES,
+        }),
+        1,
+    );
+    let pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_COMMAND_NAMES,
+        ["queued"],
+        200,
+        0,
+        { orderBy: "execution" },
+    );
+    assert.equal(pending.at(-1)?.id, ids[0]);
+
+    assert.equal(
+        queueModule.CommandQueueManager.reorderPendingJobs([ids[0]], {
+            position: "top",
+            types: queueModule.DOWNLOAD_COMMAND_NAMES,
+        }),
+        1,
+    );
+    pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_COMMAND_NAMES,
+        ["queued"],
+        200,
+        0,
+        { orderBy: "execution" },
+    );
+    assert.equal(pending[0]?.id, ids[0]);
+    assert.equal(
+        new Set(pending.map((job) => job.queue_order)).size,
+        pending.length,
+    );
+});
+
+test("active ranks stay reserved and a failed download retry receives a live-safe rank", () => {
+    const failed = queuePendingDownload("track", "rank-failed");
+    assert.equal(queueModule.CommandQueueManager.markProcessing(failed), true);
+    assert.equal(queueModule.CommandQueueManager.fail(failed, "synthetic failure"), true);
+
+    const queued = queuePendingDownload("track", "rank-queued");
+    assert.equal(
+        queueModule.CommandQueueManager.get(failed)?.queue_order,
+        queueModule.CommandQueueManager.get(queued)?.queue_order,
+        "a terminal row may retain a historical rank that a live row reuses",
+    );
+
+    assert.doesNotThrow(() => queueModule.CommandQueueManager.retry(failed));
+    const pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_COMMAND_NAMES,
+        ["queued"],
+        10,
+        0,
+        { orderBy: "execution" },
+    );
+    assert.deepEqual(pending.map((job) => job.id), [queued, failed]);
+    assert.equal(new Set(pending.map((job) => job.queue_order)).size, 2);
+
+    assert.equal(queueModule.CommandQueueManager.markProcessing(queued), true);
+    const next = queuePendingDownload("track", "rank-after-active");
+    assert.notEqual(
+        queueModule.CommandQueueManager.get(queued)?.queue_order,
+        queueModule.CommandQueueManager.get(next)?.queue_order,
+    );
+});
+
+test("reorder serializes behind a concurrent enqueue and resolves the authoritative bottom", async () => {
+    const first = queuePendingDownload("track", "race-first");
+    const second = queuePendingDownload("track", "race-second");
+    const third = queuePendingDownload("track", "race-third");
+
+    await runWhilePeerWriteIsLocked(
+        `
+            INSERT INTO commands(
+                name, ref_id, payload, priority, trigger, queue_order,
+                status, created_at, updated_at
+            )
+            VALUES(
+                'DownloadTrack', 'race-concurrent',
+                '{"providerId":"race-concurrent","type":"track"}',
+                0, 0, 999999, 'queued', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+        `,
+        [],
+        () => queueModule.CommandQueueManager.reorderPendingJobs([first], {
+            position: "bottom",
+            types: queueModule.DOWNLOAD_COMMAND_NAMES,
+        }),
+    );
+
+    const pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_COMMAND_NAMES,
+        ["queued"],
+        10,
+        0,
+        { orderBy: "execution" },
+    );
+    assert.deepEqual(
+        pending.map((job) => job.ref_id),
+        ["race-second", "race-third", "race-concurrent", "race-first"],
+    );
+    assert.equal(
+        new Set(pending.map((job) => job.queue_order)).size,
+        pending.length,
+    );
+    assert.equal(queueModule.CommandQueueManager.getNextJobByTypes(queueModule.DOWNLOAD_COMMAND_NAMES)?.id, second);
+    assert.notEqual(third, first);
+});
+
+test("reorder fails closed when a concurrent claim takes its anchor", async () => {
+    const moving = queuePendingDownload("track", "race-moving");
+    const anchor = queuePendingDownload("track", "race-anchor");
+    const originalMovingRank = queueModule.CommandQueueManager.get(moving)?.queue_order;
+
+    await assert.rejects(
+        () => runWhilePeerWriteIsLocked(
+            "UPDATE commands SET status = 'started', started_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [anchor],
+            () => queueModule.CommandQueueManager.reorderPendingJobs([moving], {
+                beforeJobId: anchor,
+                types: queueModule.DOWNLOAD_COMMAND_NAMES,
+            }),
+        ),
+        /anchor is not in the pending download queue/i,
+    );
+
+    assert.equal(queueModule.CommandQueueManager.get(anchor)?.status, "started");
+    assert.equal(queueModule.CommandQueueManager.get(moving)?.queue_order, originalMovingRank);
 });
 
 test("provider artist imports reuse an active equivalent source selection", () => {
@@ -244,7 +508,7 @@ test("reorderPendingJobs rejects invalid reorder sets", () => {
 
     assert.throws(
         () => queueModule.CommandQueueManager.reorderPendingJobs([first], {}),
-        /requires exactly one anchor/i,
+        /requires exactly one target/i,
     );
 });
 

@@ -63,6 +63,16 @@ import {
     defaultQueueHistoryFilters,
     type QueueHistoryFilters,
 } from "./queueHistoryFilters";
+import {
+    buildBulkEdgeMoveRequest,
+    buildSingleGroupMoveRequest,
+    flattenPendingGroupJobIds,
+    getGroupFirstJobId,
+    getGroupLastJobId,
+    getMovablePendingJobIds,
+    type GroupMoveAction,
+    type ReorderableQueueItem,
+} from "./queueReorder";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
 const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
@@ -317,14 +327,6 @@ function renderTrackStatusIndicator(
     return null;
 }
 
-function getMovablePendingJobIds(
-    items: Array<{ id: number; status: string; stage?: string }>,
-): number[] {
-    return items
-        .filter((item) => item.status === 'queued' && item.stage !== 'import')
-        .map((item) => item.id);
-}
-
 function getOptionalIdentifier(value: unknown): string | null {
     if (typeof value === "number" && Number.isFinite(value)) {
         return String(value);
@@ -376,12 +378,6 @@ function getQueueItemSlotKey(item: QueueItem): string | null {
 
     return 'stereo';
 }
-
-type ReorderableQueueItem = {
-    id: number;
-    status: string;
-    stage?: string;
-};
 
 type QueueGroup = {
     id: string;
@@ -696,7 +692,6 @@ function mergeProgressSnapshots(
     };
 }
 
-type GroupMoveAction = 'top' | 'up' | 'down' | 'bottom';
 type DropPosition = 'before' | 'after';
 type DropTarget = {
     groupId: string;
@@ -716,97 +711,6 @@ function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
 
 function isPendingReorderableGroup(group: { status: string; items: ReorderableQueueItem[] }): boolean {
     return group.status === 'queued' && getMovablePendingJobIds(group.items).length === group.items.length;
-}
-
-function getGroupFirstJobId(group: { items: ReorderableQueueItem[] }): number | undefined {
-    return getMovablePendingJobIds(group.items)[0];
-}
-
-function getGroupLastJobId(group: { items: ReorderableQueueItem[] }): number | undefined {
-    const jobIds = getMovablePendingJobIds(group.items);
-    return jobIds.at(-1);
-}
-
-function flattenPendingGroupJobIds(groups: Array<{ items: ReorderableQueueItem[] }>): number[] {
-    return groups.flatMap((group) => getMovablePendingJobIds(group.items));
-}
-
-function buildSingleGroupMoveRequest(
-    groups: QueueGroup[],
-    movingGroupId: string,
-    action: GroupMoveAction,
-): { jobIds: number[]; beforeJobId?: number; afterJobId?: number } | null {
-    const currentIndex = groups.findIndex((group) => group.id === movingGroupId);
-    if (currentIndex < 0) {
-        return null;
-    }
-
-    const movingGroup = groups[currentIndex];
-    const jobIds = getMovablePendingJobIds(movingGroup.items);
-    if (jobIds.length === 0) {
-        return null;
-    }
-
-    if (action === 'top') {
-        if (currentIndex === 0) {
-            return null;
-        }
-
-        const targetJobId = getGroupFirstJobId(groups[0]);
-        return targetJobId ? { jobIds, beforeJobId: targetJobId } : null;
-    }
-
-    if (action === 'up') {
-        if (currentIndex <= 0) {
-            return null;
-        }
-
-        const targetJobId = getGroupFirstJobId(groups[currentIndex - 1]);
-        return targetJobId ? { jobIds, beforeJobId: targetJobId } : null;
-    }
-
-    if (action === 'down') {
-        if (currentIndex >= groups.length - 1) {
-            return null;
-        }
-
-        const targetJobId = getGroupLastJobId(groups[currentIndex + 1]);
-        return targetJobId ? { jobIds, afterJobId: targetJobId } : null;
-    }
-
-    if (currentIndex >= groups.length - 1) {
-        return null;
-    }
-
-    const targetJobId = getGroupLastJobId(groups[groups.length - 1]);
-    return targetJobId ? { jobIds, afterJobId: targetJobId } : null;
-}
-
-function buildBulkEdgeMoveRequest(
-    groups: QueueGroup[],
-    movingGroupIds: string[],
-    action: 'top' | 'bottom',
-): { jobIds: number[]; beforeJobId?: number; afterJobId?: number } | null {
-    const movingGroupIdSet = new Set(movingGroupIds);
-    const selectedGroups = groups.filter((group) => movingGroupIdSet.has(group.id));
-    const remainingGroups = groups.filter((group) => !movingGroupIdSet.has(group.id));
-
-    if (selectedGroups.length === 0 || remainingGroups.length === 0) {
-        return null;
-    }
-
-    const jobIds = flattenPendingGroupJobIds(selectedGroups);
-    if (jobIds.length === 0) {
-        return null;
-    }
-
-    if (action === 'top') {
-        const targetJobId = getGroupFirstJobId(remainingGroups[0]);
-        return targetJobId ? { jobIds, beforeJobId: targetJobId } : null;
-    }
-
-    const targetJobId = getGroupLastJobId(remainingGroups[remainingGroups.length - 1]);
-    return targetJobId ? { jobIds, afterJobId: targetJobId } : null;
 }
 
 const QueueTab = () => {
@@ -1049,7 +953,8 @@ const QueueTab = () => {
     const isSelectedBlockAtBottom = selectedPendingCount > 0
         && pendingReorderGroups.slice(-selectedPendingCount).every((group) => selectedPendingGroupIdSet.has(group.id));
     const canMoveSelectedTop = selectedPendingCount > 0 && !isSelectedBlockAtTop;
-    const canMoveSelectedBottom = selectedPendingCount > 0 && !isSelectedBlockAtBottom;
+    const canMoveSelectedBottom = selectedPendingCount > 0
+        && (!isSelectedBlockAtBottom || hasMoreQueueItems);
     const canMoveSelectedUp = pendingReorderGroups.some((group, index) => (
         selectedPendingGroupIdSet.has(group.id)
         && index > 0
@@ -1168,7 +1073,11 @@ const QueueTab = () => {
         }
 
         await withBusyGroups([groupId], null, async () => {
-            await reorderItems(reorderRequest);
+            const succeeded = await reorderItems(reorderRequest);
+            if (!succeeded) {
+                setPendingOrderOverride(null);
+                await refreshQueue();
+            }
         });
     };
 
@@ -1197,7 +1106,11 @@ const QueueTab = () => {
         setPendingOrderOverride(action === 'top' ? [...moving, ...rest] : [...rest, ...moving]);
 
         await withBusyGroups(selectedPendingGroupIds, action === 'top' ? 'move-top' : 'move-bottom', async () => {
-            await reorderItems(reorderRequest);
+            const succeeded = await reorderItems(reorderRequest);
+            if (!succeeded) {
+                setPendingOrderOverride(null);
+                await refreshQueue();
+            }
         });
     };
 
@@ -1251,12 +1164,17 @@ const QueueTab = () => {
                     continue;
                 }
 
-                await reorderItems(
+                const succeeded = await reorderItems(
                     direction === 'up'
                         ? { jobIds, beforeJobId: anchorJobId }
                         : { jobIds, afterJobId: anchorJobId },
                     { refresh: false, dispatchActivity: false },
                 );
+                if (!succeeded) {
+                    setPendingOrderOverride(null);
+                    await refreshQueue();
+                    return;
+                }
                 didReorder = true;
                 workingGroups = moveArrayItem(workingGroups, currentIndex, neighborIndex);
             }
@@ -1381,9 +1299,13 @@ const QueueTab = () => {
         }
 
         await withBusyGroups(movingGroupIds, null, async () => {
-            await reorderItems(position === 'before'
+            const succeeded = await reorderItems(position === 'before'
                 ? { jobIds, beforeJobId: anchorJobId }
                 : { jobIds, afterJobId: anchorJobId });
+            if (!succeeded) {
+                setPendingOrderOverride(null);
+                await refreshQueue();
+            }
         });
     };
 
@@ -1506,7 +1428,11 @@ const QueueTab = () => {
                                 const disableMoveTop = isQueueMutationPending || (useSelectionActionState ? !canMoveSelectedTop : isFirstPendingGroup);
                                 const disableMoveUp = isQueueMutationPending || (useSelectionActionState ? !canMoveSelectedUp : isFirstPendingGroup);
                                 const disableMoveDown = isQueueMutationPending || (useSelectionActionState ? !canMoveSelectedDown : isLastPendingGroup);
-                                const disableMoveBottom = isQueueMutationPending || (useSelectionActionState ? !canMoveSelectedBottom : isLastPendingGroup);
+                                const disableMoveBottom = isQueueMutationPending || (
+                                    useSelectionActionState
+                                        ? !canMoveSelectedBottom
+                                        : (isLastPendingGroup && !hasMoreQueueItems)
+                                );
 
                                 const handleGroupClick = (e: ReactMouseEvent) => {
                                     if (isInteractiveElementTarget(e.target)) return;

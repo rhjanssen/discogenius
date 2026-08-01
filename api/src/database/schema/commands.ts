@@ -7,11 +7,24 @@ export function createCommandsSchema(db: Database.Database): void {
       name TEXT NOT NULL,               -- Command name (RefreshArtist, DownloadAlbum, etc.)
       ref_id TEXT,                      -- Optional reference id (Tidal ID, file id, etc)
       payload TEXT NOT NULL,            -- JSON data necessary for execution
+      -- Indexed exact link for legacy/separate ImportDownload rows. Keeping the
+      -- projection generated avoids a shadow writer while removing JSON scans
+      -- from 100k-row history queries.
+      original_job_id INTEGER GENERATED ALWAYS AS (
+        CASE
+          WHEN name = 'ImportDownload'
+            THEN CAST(json_extract(payload, '$.originalJobId') AS INTEGER)
+          ELSE NULL
+        END
+      ) STORED,
       status TEXT DEFAULT 'queued',     -- queued, started, completed, failed, cancelled
       progress INT DEFAULT 0,           -- 0-100
       priority INT DEFAULT 0,           -- higher = processed first
       trigger INT DEFAULT 0,            -- 0=Unspecified, 1=Manual, 2=Scheduled
-      queue_order INT,
+      -- Authoritative sparse/fractional rank for queued downloads. Priority and
+      -- trigger choose the initial insertion point; explicit user moves update
+      -- only this rank and therefore remain durable.
+      queue_order REAL,
       attempts INT DEFAULT 0,
       attempt INT NOT NULL DEFAULT 0,   -- durable execution-attempt number
       error TEXT,
@@ -105,8 +118,16 @@ export function createCommandsIndexes(db: Database.Database): void {
   db.exec(`CREATE INDEX idx_commands_status ON commands(status)`);
   db.exec(`CREATE INDEX idx_commands_name ON commands(name)`);
   db.exec(`CREATE INDEX idx_commands_ref_id ON commands(ref_id)`);
+  db.exec(`CREATE INDEX idx_commands_original_job_id ON commands(name, original_job_id)`);
   db.exec(`CREATE INDEX idx_commands_priority ON commands(priority)`);
   db.exec(`CREATE INDEX idx_commands_queue_order ON commands(queue_order)`);
+  db.exec(`
+    CREATE UNIQUE INDEX idx_commands_live_download_queue_order
+    ON commands(queue_order)
+    WHERE status IN ('queued', 'started')
+      AND name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+      AND queue_order IS NOT NULL
+  `);
   db.exec(`CREATE INDEX idx_commands_status_priority ON commands(status, priority)`);
   db.exec(`CREATE INDEX idx_commands_name_status_ref_id ON commands(name, status, ref_id)`);
   db.exec(`CREATE INDEX idx_commands_status_name_created ON commands(status, name, created_at)`);
@@ -115,7 +136,12 @@ export function createCommandsIndexes(db: Database.Database): void {
   db.exec(`CREATE INDEX idx_commands_status_lease ON commands(status, lease_expires_at)`);
   db.exec(`CREATE INDEX idx_commands_status_retry_after ON commands(status, retry_after)`);
   db.exec(`CREATE INDEX idx_commands_worker_id ON commands(worker_id)`);
-  db.exec(`CREATE INDEX idx_commands_poll ON commands(status, priority DESC, trigger DESC, queue_order ASC, created_at ASC)`);
+  db.exec(`CREATE INDEX idx_commands_poll ON commands(status, priority DESC, trigger, queue_order ASC, created_at ASC)`);
+  db.exec(`
+    CREATE INDEX idx_commands_download_queue
+    ON commands(status, queue_order ASC, created_at ASC, id ASC)
+    WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+  `);
   db.exec(`CREATE INDEX idx_commands_queue_view ON commands(name, status, priority, trigger, queue_order, created_at, started_at, updated_at, id)`);
   db.exec(`CREATE INDEX idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)`);
   db.exec("CREATE INDEX idx_history_events_date ON history_events(date DESC)");
