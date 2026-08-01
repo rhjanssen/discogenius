@@ -1319,6 +1319,43 @@ test("tracked sidecars do not collide when providers reuse the same external ID"
   ]);
 });
 
+/**
+ * The inline placement curation would have written for this video.
+ *
+ * Expected-path no longer derives a destination from relations; it reads the
+ * one curation stored. A fixture that wants an inline path has to say so.
+ */
+function placeVideoInline(input: {
+  videoRecordingId: number;
+  audioRecordingId: number;
+  placementLibraryId: number;
+  slot?: "video" | "lyrics";
+}): void {
+  const trackId = (dbModule.db.prepare(`
+    SELECT track.id
+    FROM Tracks track
+    JOIN Recordings audio ON audio.id = track.recording_id
+      OR (audio.mbid IS NOT NULL AND track.recording_mbid = audio.mbid)
+    WHERE audio.id = ?
+    ORDER BY track.id LIMIT 1
+  `).get(input.audioRecordingId) as { id: number } | undefined)?.id;
+  if (trackId == null) throw new Error("fixture: no canonical track for the audio recording");
+  const videoLibraryId = (dbModule.db.prepare(
+    "SELECT id FROM Libraries ORDER BY id LIMIT 1",
+  ).get() as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO LibraryVideos (
+      library_id, video_recording_id, selection_mode, placement_mode,
+      placement_library_id, inline_track_id, inline_slot, reason
+    ) VALUES (?, ?, 'auto', 'inline', ?, ?, ?, 'test')
+    ON CONFLICT(library_id, video_recording_id) DO UPDATE SET
+      placement_mode = 'inline',
+      placement_library_id = excluded.placement_library_id,
+      inline_track_id = excluded.inline_track_id,
+      inline_slot = excluded.inline_slot
+  `).run(videoLibraryId, input.videoRecordingId, input.placementLibraryId, trackId, input.slot ?? "video");
+}
+
 test("computeExpectedPath inline vs separated layouts for video files", () => {
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitored)
@@ -1438,6 +1475,11 @@ dbModule.db.prepare(`
 
   config.path.video_folder_layout = "inline";
   configModule.writeConfig(config);
+  placeVideoInline({
+    videoRecordingId: videoRecId,
+    audioRecordingId: audioRecId,
+    placementLibraryId: nonspatialLibraryId,
+  });
 
   const expectedInlineMonitored = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
   const expectedInlineMonitoredPath = path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.mp4");
@@ -1541,10 +1583,16 @@ dbModule.db.prepare(`
     media_id: "video-inline-duplicate",
     provider_id: "video-inline-duplicate",
   });
-  // Same audio stem + same Plex type (-video) always shares one primary path.
-  // Multi-provider / alternate cuts do not create descriptive or provider-tagged
-  // siblings beside the track.
-  assert.equal(expectedDuplicate.expectedPath, expectedInlineMonitoredPath);
+  // A second video of the same recording contends for the same `-video` slot
+  // beside the same track, and only one occupant can have that filename. It
+  // loses the slot, so it has no inline placement and belongs in the separated
+  // video library — resolving it to the winner's path would be two files
+  // claiming one name.
+  assert.notEqual(expectedDuplicate.expectedPath, expectedInlineMonitoredPath);
+  assert.ok(
+    String(expectedDuplicate.expectedPath).includes(path.join("library", "videos")),
+    `the losing candidate stays separated, got ${expectedDuplicate.expectedPath}`,
+  );
 
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
     .run("video-rec-unlinked", "Pompeii (Official Video)", "artist-mbid-bastille");
@@ -1717,6 +1765,14 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
   `).run(videoRecId, audioRecId);
+
+  // Curation places the video inline against the STEREO library; the resolver
+  // then reads that, so the spatial copy can never become its home.
+  placeVideoInline({
+    videoRecordingId: videoRecId,
+    audioRecordingId: audioRecId,
+    placementLibraryId: nonspatialLibraryId,
+  });
 
   const stereoPath = path.join(tempDir, "library", "music", "Bastille", "Bad Blood (2013)", "01 - Pompeii.flac");
   const spatialPath = path.join(tempDir, "library", "spatial", "Bastille", "Bad Blood (2015)", "01 - Pompeii.m4a");

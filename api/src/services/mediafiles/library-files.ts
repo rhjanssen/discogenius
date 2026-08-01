@@ -37,6 +37,7 @@ import { ExtraFileService, isExtraFileType, isLyricExtraFileType, isMetadataExtr
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
 import { MetadataFileService } from "../extras/metadata/files/metadata-file-service.js";
 import { resolveVideoTypeSuffix } from "./video-naming.js";
+import { resolvePersistedVideoPlacement } from "../music/video-placement-resolver.js";
 
 export {
   VIDEO_TYPE_SUFFIXES,
@@ -1073,78 +1074,32 @@ export class LibraryFilesService {
           `).get(provider, providerId) as { recording_id?: number | null } | undefined;
           return byOffer?.recording_id == null ? null : Number(byOffer.recording_id);
         })();
-        // Inline placement (not download) requires an associated audio recording via
-        // provider_video_for → that audio's album/RG → monitored nonspatial
-        // library release group.
-        // Download still follows video/artist monitor flags; without association or
-        // with an unmonitored stereo RG, keep the separated video-library path even
-        // when global layout is "inline" / "inline_only". Spatial folders stay Atmos audio only —
-        // inline always targets the stereo music root (no stereo/spatial toggle).
-        const mayFollowAudio = mainVideoMayFollowAudioRelationSql({
-          videoVariantExpr: "video.video_variant",
-          trackTitleExpr: "audio.title",
-          albumTitleExpr: "album.title",
-          albumSecondaryExpr: "album.secondary_types",
-        });
-        const albumKindRankSql = VIDEO_ALBUM_ASSOCIATION_KIND_SQL.replace(/\ba\./g, "album.");
-        const relatedAudio = videoRecordingId
+        // Where this video goes was decided by curation and stored on
+        // LibraryVideos. Re-deriving it here is what let rename and scan
+        // disagree about the same file's home and duplicate it; this now reads
+        // the one stored answer. Spatial folders stay Atmos audio only — inline
+        // always targets a stereo music root.
+        const persistedPlacement = videoRecordingId
+          ? resolvePersistedVideoPlacement(videoRecordingId)
+          : null;
+        const relatedAudio = persistedPlacement?.mode === "inline"
+          && persistedPlacement.inlineAudioRecordingId != null
           ? db.prepare(`
               SELECT
-                rr.target_recording_id AS audio_recording_id,
+                audio.id AS audio_recording_id,
                 audio.mbid AS audio_recording_mbid,
-                audio.title AS audio_title,
-                COALESCE(tf.release_group_id, track_rg.release_group_id) AS release_group_id,
-                album.mbid AS release_group_mbid,
-                COALESCE(track_rg.track_count, 0) AS track_count,
-                CASE WHEN EXISTS (
-                  SELECT 1
-                  FROM LibraryAlbums library_group
-                  JOIN Libraries library ON library.id = library_group.library_id
-                  JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-                  WHERE library_group.release_group_id = COALESCE(tf.release_group_id, track_rg.release_group_id)
-                    AND library.enabled = 1
-                    AND NOT EXISTS (
-                      SELECT 1
-                      FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-                      WHERE allowed.value = 'spatial'
-                    )
-                ) THEN 1 ELSE 0 END AS nonspatial_monitored,
-                ${albumKindRankSql} AS album_kind_rank
-              FROM RecordingRelations rr
-              JOIN Recordings audio ON audio.id = rr.target_recording_id
-              JOIN Recordings video ON video.id = rr.source_recording_id
-              LEFT JOIN TrackFiles tf
-                ON tf.recording_id = rr.target_recording_id
-               AND tf.file_type = 'track'
-               AND EXISTS (
-                 SELECT 1
-                 FROM Libraries file_library
-                 JOIN quality_profiles file_quality_profile
-                   ON file_quality_profile.id = file_library.quality_profile_id
-                 WHERE file_library.id = tf.library_id
-                   AND file_library.enabled = 1
-                   AND NOT EXISTS (
-                     SELECT 1
-                     FROM json_each(COALESCE(file_quality_profile.allowed_source_formats, '[]')) allowed
-                     WHERE allowed.value = 'spatial'
-                   )
-               )
-              LEFT JOIN Tracks t
-                ON (t.recording_mbid = audio.mbid OR t.recording_id = audio.id)
-              LEFT JOIN AlbumEditions track_rg ON track_rg.mbid = t.release_mbid
-              LEFT JOIN Albums album
-                ON album.id = COALESCE(tf.release_group_id, track_rg.release_group_id)
-              WHERE rr.source_recording_id = ?
-                AND rr.relation_type IN ('provider_video_for', 'music_video_for')
-                AND ${mayFollowAudio}
-              ORDER BY album_kind_rank ASC, nonspatial_monitored DESC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
-              LIMIT 1
-            `).get(videoRecordingId) as {
+                COALESCE(track.title, audio.title) AS audio_title,
+                1 AS nonspatial_monitored
+              FROM Recordings audio
+              LEFT JOIN Tracks track ON track.id = ?
+              WHERE audio.id = ?
+            `).get(
+              persistedPlacement.inlineTrackId,
+              persistedPlacement.inlineAudioRecordingId,
+            ) as {
               audio_recording_id?: number;
               audio_recording_mbid?: string | null;
               audio_title?: string | null;
-              release_group_id?: number | null;
-              release_group_mbid?: string | null;
               nonspatial_monitored?: number;
             } | undefined
           : undefined;
@@ -1231,7 +1186,11 @@ export class LibraryFilesService {
               return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
             }
 
-            const videoTypeSuffix = resolveVideoTypeSuffix(canonicalVideo.title, canonicalVideo.video_variant);
+            // Inline: the file fills this track's regular-video or lyrics slot,
+            // so a live cut is named `-video` like any other occupant of it.
+            const videoTypeSuffix = resolveVideoTypeSuffix(
+              canonicalVideo.title, canonicalVideo.video_variant, "inline",
+            );
             // One primary inline file per audio stem + Plex type (e.g. Track-video.mp4).
             // Plex allows a descriptive middle segment for multiples, but the UX is weak
             // and multi-provider offers for the same cut must not litter the album folder.

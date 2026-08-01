@@ -25,12 +25,14 @@ export const VIDEO_TYPE_SUFFIXES = [
 export function resolveVideoTypeSuffix(
   title: string | null | undefined,
   videoVariant?: string | null,
+  placement: "inline" | "separated" = "separated",
 ): string {
   return resolveVideoTypeSuffixFromVariant(
     videoVariant != null && String(videoVariant).trim()
       ? normalizeVideoVariant(videoVariant)
       : parseVideoVariant(title),
     title,
+    placement,
   );
 }
 

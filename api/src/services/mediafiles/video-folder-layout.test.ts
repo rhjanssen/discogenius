@@ -52,7 +52,7 @@ test("video folder layout helpers map three-way modes", () => {
   assert.equal(layoutModule.requiresAlbumLinkedVideosOnly("inline_only"), true);
 });
 
-test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", () => {
+test("canVideoPlaceInline reports the placement curation stored, not its own guess", () => {
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES ('artist-mbid', 'Layout Artist')
@@ -135,6 +135,29 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
     JOIN Albums release_group ON release_group.mbid = 'rg-inline'
     WHERE library.name = 'Video Layout Stereo'
   `).run();
+
+  // Relations and a monitored album are what make the video *eligible*; they
+  // are not the placement. Until curation writes one, there is nothing to read.
+  assert.equal(layoutModule.canVideoPlaceInline(video.id), false,
+    "eligibility is not placement");
+
+  const stereoLibraryId = (dbModule.db.prepare(`
+    SELECT id FROM Libraries WHERE name = 'Video Layout Stereo'
+  `).get() as { id: number }).id;
+  // This fixture builds its own libraries; any enabled one can hold the
+  // selection row, since the resolver reads the placement, not the owner.
+  const videoLibraryId = (dbModule.db.prepare(`
+    SELECT id FROM Libraries ORDER BY id LIMIT 1
+  `).get() as { id: number }).id;
+  const inlineTrackId = (dbModule.db.prepare(`
+    SELECT id FROM Tracks WHERE recording_id = ?
+  `).get(audio.id) as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO LibraryVideos (
+      library_id, video_recording_id, selection_mode, placement_mode,
+      placement_library_id, inline_track_id, inline_slot, reason
+    ) VALUES (?, ?, 'auto', 'inline', ?, ?, 'video', 'test')
+  `).run(videoLibraryId, video.id, stereoLibraryId, inlineTrackId);
 
   assert.equal(layoutModule.canVideoPlaceInline(video.id), true);
   assert.equal(layoutModule.canVideoPlaceInline(audio.id), false);

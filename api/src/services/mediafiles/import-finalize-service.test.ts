@@ -185,6 +185,25 @@ test("finalizeImportedDirectories relocates linked separated videos inline after
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
   `).run(videoRecId, audioRecId);
+  // Curation's decision: import finalisation reads the stored placement rather
+  // than deriving its own destination for the same file.
+  dbModule.db.prepare(`
+    INSERT INTO LibraryVideos (
+      library_id, video_recording_id, selection_mode, placement_mode,
+      placement_library_id, inline_track_id, inline_slot, reason
+    )
+    SELECT
+      (SELECT id FROM Libraries ORDER BY id LIMIT 1), ?, 'auto', 'inline',
+      (SELECT library.id FROM Libraries library
+       JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+       WHERE library.enabled = 1
+         AND COALESCE(profile.allowed_source_formats, '[]') NOT LIKE '%spatial%'
+         AND COALESCE(profile.allowed_source_formats, '[]') NOT LIKE '%video%'
+       ORDER BY library.id LIMIT 1),
+      (SELECT id FROM Tracks WHERE recording_id = ? ORDER BY id LIMIT 1),
+      'video', 'test'
+    ON CONFLICT(library_id, video_recording_id) DO NOTHING
+  `).run(videoRecId, audioRecId);
   // The audio track offer already reaches its recording through the typed match
   // seeded above; ProviderItems carries no canonical recording id.
 

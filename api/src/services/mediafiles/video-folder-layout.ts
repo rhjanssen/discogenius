@@ -1,16 +1,18 @@
 /**
  * Video library placement modes (Settings → Naming → Video Folder Layout).
  *
- * - separated: always the dedicated video library
- * - inline: beside stereo tracks when provider_video_for + monitored stereo RG;
- *   otherwise separated
- * - inline_only: same placement as inline, but download-missing skips videos that
- *   would only land in the separated library (no album link / unmonitored stereo)
+ * - separated: every selected video lives in the dedicated video library
+ * - inline: the winner of each Plex slot moves beside its exact audio track;
+ *   every other selected video stays separated, never both
+ * - inline_only: only slot winners are selected at all, so losing candidates
+ *   stay visible as alternatives without being downloaded
+ *
+ * The mode says what curation is allowed to do. WHERE a given video actually
+ * ends up is curation's decision, stored on `LibraryVideos` and read back
+ * through `video-placement-resolver.ts` — never re-derived per consumer.
  */
 
-import { db } from "../../database.js";
-import { mainVideoMayFollowAudioRelationSql } from "../music/live-performance-markers.js";
-import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "../music/video-album-association.js";
+import { videoIsPlacedInline } from "../music/video-placement-resolver.js";
 
 export type VideoFolderLayout = "separated" | "inline" | "inline_only";
 
@@ -37,59 +39,13 @@ export function requiresAlbumLinkedVideosOnly(
 }
 
 /**
- * Whether a video recording can place inline today: provider_video_for → audio
- * on a release group monitored by an enabled nonspatial library.
+ * Whether this video's file belongs beside an audio track right now.
+ *
+ * This used to re-derive the answer from relations and library state with its
+ * own ranking, independently of the organizer's. It now reads the decision
+ * curation stored on `LibraryVideos`, which is the only way every consumer can
+ * agree about one file's location.
  */
 export function canVideoPlaceInline(videoRecordingId: string | number | null | undefined): boolean {
-  const recordingId = String(videoRecordingId ?? "").trim();
-  if (!recordingId) return false;
-
-  const mayFollowAudio = mainVideoMayFollowAudioRelationSql({
-    videoVariantExpr: "video.video_variant",
-    trackTitleExpr: "audio.title",
-    albumTitleExpr: "album.title",
-    albumSecondaryExpr: "album.secondary_types",
-  });
-  const row = db.prepare(`
-    SELECT 1 AS ok
-    FROM RecordingRelations rr
-    JOIN Recordings audio ON audio.id = rr.target_recording_id
-    JOIN Recordings video ON video.id = rr.source_recording_id
-    LEFT JOIN TrackFiles tf
-      ON tf.recording_id = rr.target_recording_id
-     AND tf.file_type = 'track'
-     AND tf.library_slot = 'stereo'
-    LEFT JOIN Tracks t
-      ON (t.recording_id = audio.id OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid))
-    LEFT JOIN AlbumEditions track_rg
-      ON track_rg.id = t.album_edition_id
-      OR (t.release_mbid IS NOT NULL AND track_rg.mbid = t.release_mbid)
-    LEFT JOIN Albums album
-      ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
-    WHERE CAST(rr.source_recording_id AS TEXT) = CAST(? AS TEXT)
-      AND rr.relation_type = 'provider_video_for'
-      AND ${mayFollowAudio}
-      AND EXISTS (
-        SELECT 1
-        FROM LibraryAlbums library_group
-        JOIN Libraries library
-          ON library.id = library_group.library_id
-         AND library.enabled = 1
-        JOIN quality_profiles quality_profile
-          ON quality_profile.id = library.quality_profile_id
-        WHERE library_group.release_group_id = album.id
-          AND NOT EXISTS (
-            SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-            WHERE allowed.value = 'spatial'
-          )
-      )
-    ORDER BY
-      ${VIDEO_ALBUM_ASSOCIATION_KIND_SQL.replace(/\ba\./g, "album.")} ASC,
-      COALESCE(track_rg.track_count, 0) DESC,
-      rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
-    LIMIT 1
-  `).get(recordingId) as { ok?: number } | undefined;
-
-  return Boolean(row?.ok);
+  return videoIsPlacedInline(videoRecordingId);
 }

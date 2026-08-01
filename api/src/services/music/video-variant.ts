@@ -145,10 +145,15 @@ export function normalizeVideoVariant(value: unknown): VideoVariant {
 export function resolveVideoTypeSuffix(
   variant: VideoVariant | null | undefined,
   title?: string | null,
+  placement: "inline" | "separated" = "separated",
 ): string {
   const normalized = normalizeVideoVariant(variant);
   if (normalized === "lyric") return "-lyrics";
-  if (normalized === "live") return "-live";
+  // A live video stored INLINE is occupying the track's regular-video slot, and
+  // Plex reads that slot as `-video`. Stored on its own there is no track for it
+  // to be beside, so the suffix names the video itself and `-live` is right. The
+  // canonical type never changes; only the role does.
+  if (normalized === "live") return placement === "inline" ? "-video" : "-live";
   // official/audio/visualizer share the main Plex extras token.
   if (normalized === "official" || normalized === "audio" || normalized === "visualizer") {
     return "-video";

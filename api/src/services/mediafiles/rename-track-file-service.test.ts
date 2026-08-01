@@ -1084,6 +1084,36 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
     VALUES (?, ?, 'provider_video_for', 0.98)
   `).run(videoRecId, audioRecId);
 
+  // Curation's decision: this video's one file belongs beside that exact track.
+  // Rename reads the stored placement rather than re-deriving a destination.
+  if (stereoMonitored) {
+    const inlineTrackId = (dbModule.db.prepare(`
+      SELECT track.id FROM Tracks track
+      WHERE track.recording_id = ? OR track.recording_mbid = (
+        SELECT mbid FROM Recordings WHERE id = ?
+      )
+      ORDER BY track.id LIMIT 1
+    `).get(audioRecId, audioRecId) as { id: number } | undefined)?.id;
+    if (inlineTrackId != null) {
+      dbModule.db.prepare(`
+        INSERT INTO LibraryVideos (
+          library_id, video_recording_id, selection_mode, placement_mode,
+          placement_library_id, inline_track_id, inline_slot, reason
+        )
+        SELECT
+          (SELECT id FROM Libraries ORDER BY id LIMIT 1), ?, 'auto', 'inline',
+          (SELECT library.id FROM Libraries library
+           JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+           WHERE library.enabled = 1
+             AND COALESCE(profile.allowed_source_formats, '[]') NOT LIKE '%spatial%'
+             AND COALESCE(profile.allowed_source_formats, '[]') NOT LIKE '%video%'
+           ORDER BY library.id LIMIT 1),
+          ?, 'video', 'test'
+        ON CONFLICT(library_id, video_recording_id) DO NOTHING
+      `).run(videoRecId, inlineTrackId);
+    }
+  }
+
   const separatedVideoPath = path.join(videoRoot, "Artist One", "Pompeii.mp4");
   fs.mkdirSync(path.dirname(separatedVideoPath), { recursive: true });
   fs.writeFileSync(separatedVideoPath, "test-video");
