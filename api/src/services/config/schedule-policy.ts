@@ -72,7 +72,15 @@ export function parseScheduledTaskTime(raw?: string | null): number | null {
         return null;
     }
 
-    const parsed = Date.parse(raw);
+    // SQLite CURRENT_TIMESTAMP is UTC but serializes as
+    // `YYYY-MM-DD HH:MM:SS` without an explicit zone. Date.parse treats that
+    // shape as local time, which makes a freshly queued task appear hours old
+    // in non-UTC deployments and can immediately requeue short schedules.
+    const sqliteUtcTimestamp = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+    const normalized = sqliteUtcTimestamp.test(raw)
+        ? `${raw.replace(" ", "T")}Z`
+        : raw;
+    const parsed = Date.parse(normalized);
     return Number.isFinite(parsed) ? parsed : null;
 }
 

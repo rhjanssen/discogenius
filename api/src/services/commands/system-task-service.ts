@@ -26,16 +26,42 @@ function normalizeTaskId(value: string): string {
 
 function getRunTimes(taskName: string) {
   const row = db.prepare(`
-    SELECT started_at, completed_at, created_at
+    SELECT
+      MAX(created_at) AS last_queued_time,
+      MAX(started_at) AS last_start_time,
+      MAX(CASE
+        WHEN status IN ('completed', 'failed', 'cancelled') THEN completed_at
+        ELSE NULL
+      END) AS last_execution,
+      MAX(CASE WHEN status = 'completed' THEN completed_at ELSE NULL END) AS last_success_time,
+      MAX(CASE WHEN status = 'failed' THEN completed_at ELSE NULL END) AS last_failure_time,
+      (
+        SELECT terminal.status
+        FROM commands terminal
+        WHERE terminal.name = ?
+          AND terminal.status IN ('completed', 'failed', 'cancelled')
+          AND terminal.completed_at IS NOT NULL
+        ORDER BY terminal.completed_at DESC, terminal.id DESC
+        LIMIT 1
+      ) AS last_execution_status
     FROM commands
     WHERE name = ?
-    ORDER BY COALESCE(started_at, created_at) DESC, id DESC
-    LIMIT 1
-  `).get(taskName) as { started_at?: string | null; completed_at?: string | null; created_at?: string | null } | undefined;
+  `).get(taskName, taskName) as {
+    last_queued_time?: string | null;
+    last_start_time?: string | null;
+    last_execution?: string | null;
+    last_execution_status?: "completed" | "failed" | "cancelled" | null;
+    last_success_time?: string | null;
+    last_failure_time?: string | null;
+  } | undefined;
 
   return {
-    lastStartTime: row?.started_at ?? row?.created_at ?? null,
-    lastExecution: row?.completed_at ?? row?.created_at ?? null,
+    lastQueuedTime: row?.last_queued_time ?? null,
+    lastStartTime: row?.last_start_time ?? null,
+    lastExecution: row?.last_execution ?? null,
+    lastExecutionStatus: row?.last_execution_status ?? null,
+    lastSuccessTime: row?.last_success_time ?? null,
+    lastFailureTime: row?.last_failure_time ?? null,
   };
 }
 
@@ -71,8 +97,12 @@ function mapScheduledTask(snapshot: ReturnType<typeof getScheduledTaskSnapshots>
     intervalMinutes: snapshot.intervalMinutes,
     enabled: snapshot.enabled,
     active: snapshot.active,
-    lastExecution: runTimes.lastExecution ?? snapshot.lastQueuedAt,
-    lastStartTime: runTimes.lastStartTime ?? snapshot.lastQueuedAt,
+    lastQueuedTime: runTimes.lastQueuedTime,
+    lastExecution: runTimes.lastExecution,
+    lastExecutionStatus: runTimes.lastExecutionStatus,
+    lastSuccessTime: runTimes.lastSuccessTime,
+    lastFailureTime: runTimes.lastFailureTime,
+    lastStartTime: runTimes.lastStartTime,
     nextExecution: snapshot.nextRunAt,
   };
 }
@@ -98,7 +128,11 @@ function mapManualTask(definition: SystemTaskDefinition): SystemTaskContract {
     intervalMinutes: null,
     enabled: null,
     active: isTaskActive(definition.taskName),
+    lastQueuedTime: runTimes.lastQueuedTime,
     lastExecution: runTimes.lastExecution,
+    lastExecutionStatus: runTimes.lastExecutionStatus,
+    lastSuccessTime: runTimes.lastSuccessTime,
+    lastFailureTime: runTimes.lastFailureTime,
     lastStartTime: runTimes.lastStartTime,
     nextExecution: null,
   };
@@ -148,11 +182,19 @@ export function updateSystemTaskSchedule(id: string, updates: { enabled?: boolea
   }
 
   if (normalizedId === "monitoring-cycle") {
-    const monitoringUpdates: Record<string, unknown> = {};
-    if (updates.enabled !== undefined) {
-      monitoringUpdates.enable_active_monitoring = updates.enabled;
+    // Persist the interval first. Enabling monitoring starts the scheduler
+    // immediately, so the first tick must already observe the complete PATCH
+    // instead of briefly running with the previous interval.
+    if (updates.intervalMinutes !== undefined) {
+      updateScheduledTask("monitoring-cycle", {
+        intervalMinutes: updates.intervalMinutes,
+      });
     }
-    updateMonitoringConfig(monitoringUpdates);
+    if (updates.enabled !== undefined) {
+      updateMonitoringConfig({
+        enable_active_monitoring: updates.enabled,
+      });
+    }
   } else {
     updateScheduledTask(normalizedId as ScheduledTaskKey, {
       enabled: updates.enabled,

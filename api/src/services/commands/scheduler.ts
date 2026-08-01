@@ -177,9 +177,12 @@ export function updateMonitoringConfig(updates: Partial<ConfigMonitoringConfig>)
     updateConfig("monitoring", updates);
     const config = getMonitoringStatus().config;
 
+    // The schedule row is the authority for its user-editable interval. Config
+    // changes only own whether active monitoring is enabled; carrying the
+    // environment default through this bridge used to silently erase a custom
+    // interval whenever any monitoring setting changed.
     updateScheduledTask("monitoring-cycle", {
         enabled: config.enable_active_monitoring,
-        intervalMinutes: MONITORING_DUE_CHECK_INTERVAL_MINUTES,
     });
 
     if (!isMonitoring) {

@@ -18,6 +18,9 @@ export type SystemTaskCategoryContract = (typeof SYSTEM_TASK_CATEGORY_VALUES)[nu
 export const SYSTEM_TASK_RISK_VALUES = ["low", "medium", "high"] as const;
 export type SystemTaskRiskContract = (typeof SYSTEM_TASK_RISK_VALUES)[number];
 
+export const SYSTEM_TASK_EXECUTION_STATUS_VALUES = ["completed", "failed", "cancelled"] as const;
+export type SystemTaskExecutionStatusContract = (typeof SYSTEM_TASK_EXECUTION_STATUS_VALUES)[number];
+
 export interface SystemTaskContract {
   id: string;
   kind: SystemTaskKindContract;
@@ -35,7 +38,11 @@ export interface SystemTaskContract {
   intervalMinutes: number | null;
   enabled: boolean | null;
   active: boolean;
+  lastQueuedTime: string | null;
   lastExecution: string | null;
+  lastExecutionStatus: SystemTaskExecutionStatusContract | null;
+  lastSuccessTime: string | null;
+  lastFailureTime: string | null;
   lastStartTime: string | null;
   nextExecution: string | null;
 }
@@ -71,7 +78,13 @@ export function parseSystemTaskContract(value: unknown, label = "systemTask"): S
       ? null
       : expectBoolean(record.enabled, `${label}.enabled`),
     active: expectBoolean(record.active, `${label}.active`),
+    lastQueuedTime: expectNullableString(record.lastQueuedTime, `${label}.lastQueuedTime`) ?? null,
     lastExecution: expectNullableString(record.lastExecution, `${label}.lastExecution`) ?? null,
+    lastExecutionStatus: record.lastExecutionStatus === null || record.lastExecutionStatus === undefined
+      ? null
+      : expectOneOf(record.lastExecutionStatus, SYSTEM_TASK_EXECUTION_STATUS_VALUES, `${label}.lastExecutionStatus`),
+    lastSuccessTime: expectNullableString(record.lastSuccessTime, `${label}.lastSuccessTime`) ?? null,
+    lastFailureTime: expectNullableString(record.lastFailureTime, `${label}.lastFailureTime`) ?? null,
     lastStartTime: expectNullableString(record.lastStartTime, `${label}.lastStartTime`) ?? null,
     nextExecution: expectNullableString(record.nextExecution, `${label}.nextExecution`) ?? null,
   };
