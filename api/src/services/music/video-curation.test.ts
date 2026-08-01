@@ -135,6 +135,22 @@ test("a natural studio album beats a larger compilation", () => {
     "size is a tie-break, not a lead criterion");
 });
 
+test("with no live release a live video does not prefer a compilation", () => {
+  // Falling back the other way had a live cut claim a slot beside a compilation
+  // track rather than losing the contest to the official video, which is where
+  // a live video with nowhere natural to go should end up.
+  const liveVideo = candidate({ videoRecordingId: 1, canonicalType: "live" });
+  const studio = placement({ trackId: 1, editionId: 10, releaseKind: "studio", editionTrackCount: 12 });
+  const compilation = placement({
+    trackId: 2, editionId: 20, releaseKind: "compilation", editionTrackCount: 40,
+  });
+  assert.ok(comparePlacementCandidates(liveVideo, studio, compilation) < 0);
+
+  // ...and beside that studio track it still loses the regular slot.
+  const official = candidate({ videoRecordingId: 2, canonicalType: "video" });
+  assert.ok(compareInlineCandidates(official, liveVideo, studio) < 0);
+});
+
 test("an exact live video prefers the live release over the studio one", () => {
   const liveVideo = candidate({ videoRecordingId: 1, canonicalType: "live" });
   const live = placement({ trackId: 1, editionId: 10, releaseKind: "live", editionTrackCount: 9 });

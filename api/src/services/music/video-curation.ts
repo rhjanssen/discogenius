@@ -90,13 +90,17 @@ export interface VideoCurationDecision {
  * winning on size alone — it is ranked before track counts, never after.
  */
 function releaseContextRank(type: CanonicalVideoType, kind: ReleaseKind): number {
-  if (type === "live") {
-    return kind === "live" ? 0 : kind === "studio" ? 2 : 1;
-  }
+  // A live video's natural home is the live record, and it outranks everything
+  // when one exists. When none does, a live cut is not better served by a
+  // compilation than by the album the song is from — so it falls back to the
+  // ordinary ordering rather than inverting it. Inverting it had a live video
+  // quietly claim a slot beside a compilation track instead of losing the
+  // contest to the official video, which is what it should do.
+  if (type === "live" && kind === "live") return 0;
   switch (kind) {
-    case "studio": return 0;
-    case "other": return 1;
-    case "compilation": return 2;
+    case "studio": return type === "live" ? 1 : 0;
+    case "other": return type === "live" ? 2 : 1;
+    case "compilation": return type === "live" ? 3 : 2;
     case "live": return 3;
   }
 }
