@@ -23,8 +23,11 @@ router.get("/", (req, res) => {
 
     // Generic event forwarder
     const forwardEvent = <K extends AppEvent>(eventType: K, payload?: AppEventPayloadMap[K]) => {
+        const envelope = payload && typeof payload === "object"
+            ? { ...payload, sseEmittedAt: new Date().toISOString() }
+            : { sseEmittedAt: new Date().toISOString() };
         res.write(`event: ${eventType}\n`);
-        res.write(`data: ${JSON.stringify(payload || {})}\n\n`);
+        res.write(`data: ${JSON.stringify(envelope)}\n\n`);
     };
 
     const removeListeners: Array<() => void> = [];
