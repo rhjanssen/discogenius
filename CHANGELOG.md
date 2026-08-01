@@ -37,6 +37,25 @@ any other `user_version` and creates a fresh database.
   appear on several album pages without being downloaded more than once. A
   partial unique index makes two occupants of the same Plex slot beside one
   track unrepresentable.
+- **A video appears on every album it belongs on.** The album strip used to ask
+  which single album would host the *file* and drop the video from every other
+  page, so an official video for a song on the album, the deluxe, the single and
+  a compilation showed up on one of the four. Association (derived, many-to-many)
+  and placement (one persisted destination) are now separate questions with
+  separate answers, and placement is reported alongside each association rather
+  than filtering it.
+- **Inline slots have winners.** Plex gives a track one regular-video extra and
+  one lyrics extra; official, live and visualizer cuts of one song compete for
+  the first. Curation ranks them — exact recording relation, then direct
+  canonical membership, then release context, then evidence — and the winner is
+  placed inline while the rest stay separated. `inline_only` selects only the
+  winners and leaves the losers as visible candidates.
+- **One resolver answers where a video's file goes.** Download, import
+  finalisation, the organizer, expected-path, rename and the layout gate each
+  derived it independently with their own ranking, which is how one file ended
+  up in two places. They now read the decision curation stored.
+- **Plex suffixes follow the role, not the type.** Inline, a live cut occupying
+  a track's regular-video slot is `-video`; separated, the same file is `-live`.
 
 ### Fixed
 - **Manual edition choices are overruled only when coverage is genuinely lost.**

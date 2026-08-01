@@ -60,40 +60,66 @@ writes `curation_override_unreachable_recordings`.
 drawn by the album page; `GET /v1/album/:albumId/editions/:editionId/tracks`
 serves the complete canonical list for one edition.
 
-**Videos** are canonical Recordings with `is_video = 1`, linked to audio by a
-Recording-level relation derived from provider-edition membership (read from
-both the album's side and the video's). `LibraryVideos` records which videos a
-Video Library selected and the one physical placement of each, with a partial
-unique index over `(library, placement library, track, slot)` so two files
-cannot claim the same Plex role. Canonical video types are `video` / `live` /
-`lyrics`; visualizer and official audio normalise to `video`.
+**Videos** are canonical Recordings with `is_video = 1`. Two questions about
+them are kept strictly apart, because conflating them is what broke the model:
+
+- **Association** — on which Album and Edition pages does this video appear?
+  Derived, many-to-many, and free. A video belongs on every Edition that carries
+  it as a canonical Track outright, or carries a Track for the exact audio
+  Recording it is a video of. One official video therefore shows on the original
+  album, the deluxe, the single and the compilation. There is deliberately no
+  video-to-Edition table: the canonical Tracks already are one.
+- **Placement** — where does its one physical file go? One persisted destination
+  per selected video, on `LibraryVideos`. `video-placement-resolver.ts` is the
+  only thing that answers it, and download, import finalisation, the organizer,
+  expected-path, rename and the layout gate all read it rather than deriving
+  their own. Re-deriving independently is how the same video ended up copied
+  into several album folders.
+
+Display never consults placement. The album strip used to ask which single
+album would host the file and hide the video everywhere else; that rule is gone.
+
+The video→audio link is **exact Recording identity**, performance-specific. An
+Alchemy live video links to the live recording and never to the Making Movies
+studio cut, whatever the titles and durations say. Evidence comes from
+MusicBrainz's own `music video` relation, from provider-edition membership read
+from either side, and from canonical Edition co-membership — a release carrying
+members 1–5 as audio and 6–7 as video says which performance each video is of,
+and scoping the comparison to one release is what makes it safe.
+
+**Several videos may relate to one audio Recording** — an official, a lyric cut,
+a live cut, a visualizer — and every valid relation is kept. Curation decides
+which of them a Library takes; losing candidates stay visible.
+
+**Canonical video types are `video` / `live` / `lyrics`**; visualizer and
+official audio normalise to `video`, and the raw provider variant stays on the
+recording as matching evidence.
+
+**Inline slots.** Plex gives a track one regular-video extra and one lyrics
+extra. `video` and `live` compete for the first, `lyrics` owns the second, and a
+partial unique index over
+`(library, placement library, track, slot) WHERE placement_mode = 'inline'`
+makes a second occupant unrepresentable. Winners are ranked by exact recording
+relation, then direct canonical membership, then release context, then accepted
+over inferred, confidence, availability, quality, id.
+
+**Layout modes.** `separated` stores every eligible video in the video library.
+`inline` monitors them all and moves the slot winners beside their exact track,
+the rest staying separated — never both. `inline_only` monitors only the
+winners, leaving losers as visible candidates with no row and no download.
+
+**Plex suffixes** follow the *role*, not the type. Inline: `video` → `-video`,
+`live` → `-video` (it occupies the regular slot), `lyrics` → `-lyrics`.
+Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
 ## Remaining for 2.8.0
 
-- **Video curation and inline-slot winners.** `LibraryVideos` and its placement
-  columns exist and are enforced, but nothing yet *chooses* the inline winners:
-  the `separated` / `inline` / `inline_only` layout modes still run through the
-  2.7-era `video-folder-layout.ts` derivation rather than reading persisted
-  placement. Needs: one regular-video and one lyrics winner per eligible audio
-  track, ranked by (1) exact performance relation, (2) direct canonical
-  co-membership in the target monitored Edition, (3) natural release context,
-  (4) accepted over inferred, (5) evidence strength, (6) strongest then largest
-  monitored Edition, (7) representative, (8) id. Candidates for inline placement
-  are only Track occurrences whose Edition has a `LibraryEditions` row in the
-  applicable audio library.
-- **Organizer reads persisted placement.** Download, organize, rename and scan
-  still derive a video's destination independently. They should read
-  `LibraryVideos`, and moving a video when its placement Edition stops being
-  monitored must move the file rather than write a second copy.
-- **Plex suffix wiring.** `canonicalVideoType` / `videoTypeSuffix` exist and are
-  tested; `video-naming.ts` still maps from the raw provider variant, so a live
-  video placed inline is not yet named `-video`.
-- **Album pages list one preferred album per video.** The rule is that a video
-  appears on every album whose tracks carry its linked recording, with one
-  physical file. The second half is enforced; the first is not. Pinned as a
-  skipped test in `video-recording-relations.test.ts`.
-- **Live provider validation.** No controlled real-provider download was run in
-  the session that landed the above — see "Manual validation" at the top.
+- **Live provider validation.** No controlled real-provider download has been
+  run against the video placement path — see "Manual validation" at the top.
+- **Manual video placement override.** A user cannot yet move a specific video
+  to a specific track; curation's ranking is the only chooser. Deferred to
+  2.8.1 along with medley/multi-recording video UX and manually selecting
+  additional losing candidates under `inline_only`.
 
 ## Engineering principles (apply to every planned task below)
 
