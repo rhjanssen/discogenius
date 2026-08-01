@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "2.8.0",
-  "updatedAt": "2026-08-01T21:10:00Z",
+  "updatedAt": "2026-08-01T23:40:00Z",
   "verdict": "not ready",
   "runs": [
     {
@@ -59,6 +59,34 @@
       "layer": "Compose deployment decision",
       "status": "superseded",
       "evidence": "The dedicated docker-compose.release-hardening.yml was removed by decision. Release validation now uses the repository default docker-compose.yml (service and container discogenius, image discogenius:latest, port ${PORT:-3737}). The isolation the RC file provided via a required DISCOGENIUS_RC_ROOT is replaced by a per-test precondition: resolve and print the Stereo/Spatial/Video/download/staging/unmapped host paths and prove each is an empty disposable directory before any destructive filesystem test. Not yet exercised."
+    },
+    {
+      "id": "post-merge-windows-ci-20260801",
+      "gitSha": "60a3cb8",
+      "layer": "Windows CI (post-merge, single root invocation)",
+      "status": "passed",
+      "evidence": "yarn ci exit 0 in 155.5s. Log proves both suites ran in one invocation: 'yarn --cwd api test' -> 1214 passed / 0 failed / 0 skipped, and 'yarn --cwd app test' -> vitest run, 19 files / 78 tests passed. Lint 7 warnings, 0 errors. Two Vite chunks over 500 kB."
+    },
+    {
+      "id": "docker-normal-compose-20260801",
+      "gitSha": "60a3cb8",
+      "layer": "Normal Compose build and deploy",
+      "status": "passed",
+      "evidence": "docker compose build exit 0; discogenius:latest sha256:4a58c3613a767acd6d7a63d2ee36736130fffe556d1001eb1163afa8d8ad9e0e. docker compose up -d created container 'discogenius' on port 3737; docker inspect confirms it runs that exact image id. /api/health returned 200 within ~10s. Compiled /app/api/dist/src/routes/search.js contains 0 occurrences of the retired provider_release.quality and 1 occurrence of the fix comment, so the running image carries the fix."
+    },
+    {
+      "id": "schema-integrity-runtime-20260801",
+      "gitSha": "60a3cb8",
+      "layer": "Fresh schema-42 runtime integrity",
+      "status": "passed",
+      "evidence": "Freshly created database: user_version=42, quick_check=ok, foreign_key_check=0 rows, 74 tables. Re-run after populating 25 Artists / 1,411 Albums / 23,335 Tracks: user_version=42, quick_check=ok, foreign_key_check=0 rows, 38.6 MB main / 37.8 MB WAL."
+    },
+    {
+      "id": "global-search-runtime-20260801",
+      "gitSha": "d722cee",
+      "layer": "Global search on the compiled runtime + browser",
+      "status": "passed",
+      "evidence": "Against the running container: all four types return 200 on an empty catalog and on a populated one. Local-only queries exercised the previously failing album branch and returned rows (Bad Blood 3 albums/14 tracks/2 videos; Pompeii 7/20/3; Bastille 1 artist/2/1/1), and an unmatched term returned all zeros. Browser: the Albums tab of global search rendered a full album grid, console had zero errors, and both search XHRs (including the combined artists,albums,tracks,videos fan-out) returned 200. Album result cards expose role=button, tabindex=0, an aria-label and zero nested interactive controls; MediaCard.accessibility.test.tsx pins Enter/Space activation."
     }
   ],
   "capabilities": [
@@ -138,7 +166,7 @@
       "capability": "stuck recovery",
       "status": "untested",
       "testRun": null,
-      "evidence": "Superseded: a durable lease/heartbeat model landed in 5973692 (command-leases.test.ts, command-liveness-policy.ts, worker liveness fixture) and 13/13 lease tests pass in CI. No-progress windows are command-specific (30 min refresh/provider-matching, 4 h filesystem, 60 min default) rather than a fixed short timeout, and filesystem-mutating commands are excluded from automatic infrastructure retry.",
+      "evidence": "Superseded: a durable lease/heartbeat model landed in 5973692 (command-leases.test.ts, command-liveness-policy.ts, worker liveness fixture) and 13/13 lease tests pass in CI. No-progress windows are command-specific (30 min refresh/provider-matching, 4 h filesystem, 60 min default) rather than a fixed short timeout, and filesystem-mutating commands are excluded from automatic infrastructure retry. Live runtime observation at 60a3cb8: the commands table carries the full liveness column set (worker_id, attempt, attempts, heartbeat_at, last_progress_at, progress_phase/current/total, lease_expires_at, blocked_reason, retry_after, last_retry_reason) and a mid-refresh snapshot showed 0 started commands with a missing or expired lease. Failure-injection matrix still unrun.",
       "knownLimitations": "Unit-level only. Worker crash/hang, stale-attempt completion, poisoned-command and container-restart recovery matrices are still unrun.",
       "blockingSeverity": "critical"
     },
@@ -162,7 +190,7 @@
       "capability": "queue reorder",
       "status": "untested",
       "testRun": null,
-      "evidence": "Superseded: authoritative ordering landed in 073739a with queue-ordering.test.ts (24 tests), queue-scale.test.ts and app-side QueueTab.reorder.test.ts; all pass in CI.",
+      "evidence": "Superseded: authoritative ordering landed in 073739a with queue-ordering.test.ts (24 tests), queue-scale.test.ts and app-side QueueTab.reorder.test.ts; all pass in CI. Live runtime observation at 60a3cb8: 0 duplicate queue_order values among active (queued/started) commands and no NULL orders. Whole-table duplicates exist only where a completed row and a new queued row share a slot in the sparse 1024-step sequence, which is the gap allocation that makes midpoint reorder O(1). Restart and scale proofs still unrun.",
       "knownLimitations": "Unit-level only. No API-restart, container-restart, concurrent-enqueue or 100k-row scale proof.",
       "blockingSeverity": "critical"
     },
@@ -288,10 +316,10 @@
     },
     {
       "capability": "database integrity",
-      "status": "untested",
-      "testRun": null,
-      "evidence": "Fresh test databases pass existing schema tests",
-      "knownLimitations": "Final Docker PRAGMA and invariant checks not run",
+      "status": "passed",
+      "testRun": "schema-integrity-runtime-20260801",
+      "evidence": "Fresh schema-42 runtime created by the normal Compose deployment passes user_version=42, quick_check=ok and foreign_key_check=0 rows, both immediately after boot and after populating 25 Artists / 1,411 Albums / 23,335 Tracks.",
+      "knownLimitations": "Not yet re-checked after a load run, a restart matrix, or destructive filesystem tests. WAL reached 37.8 MB against a 38.6 MB main database during refresh; bounded-WAL behaviour is unverified.",
       "blockingSeverity": "critical"
     },
     {
@@ -312,10 +340,10 @@
     },
     {
       "capability": "global search",
-      "status": "untested",
-      "testRun": "search-active-schema-20260801",
-      "evidence": "A retired ProviderItems.quality read made global search answer 500 for any matching album on the active schema. Fixed in 13532a7; album quality now derives from ProviderItemAudioVariants. All four entity types answer 200 on populated and empty catalogs.",
-      "knownLimitations": "Route-level only. No rendered browser pass for keyboard/pointer operation or console cleanliness.",
+      "status": "passed",
+      "testRun": "global-search-runtime-20260801",
+      "evidence": "Fixed in 13532a7 and verified on the compiled container across API and browser: all four entity types answer 200 on empty and populated catalogs, the local album branch returns rows, the rendered Albums grid works, and the console is clean. Album cards are keyboard operable and carry no nested interactive control.",
+      "knownLimitations": "Verified for Bastille's catalog only, on a Servarr-sourced library with no downloaded files, so displayed album quality is null throughout. Quality-bearing results are unverified.",
       "blockingSeverity": "critical"
     }
   ]

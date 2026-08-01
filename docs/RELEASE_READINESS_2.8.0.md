@@ -7,12 +7,17 @@ integration, or browser result.
 
 ## Current verdict
 
-**Not ready.** The completed schema-42 architecture is merged to `main` and the
-hardening branch is green on the Windows gate, but the release-defining gates
-are still unrun. Of 32 tracked capabilities, 1 is `passed` and 31 are
-`untested`. Substantial hardening has landed as code and unit tests; almost
-none of it has been exercised under load, restart, live integration, or in a
-browser.
+**Not ready — development only.** All hardening work is merged into `main`,
+which is now the authoritative development branch. Windows CI is green in a
+single root invocation covering both suites, a fresh schema-42 runtime builds
+and deploys on the ordinary Compose deployment, and global search is verified
+end to end. Of 32 tracked capabilities, 3 are `passed` and 29 are `untested`.
+
+The release-defining gates — load, restart and failure recovery, live
+metadata/provider integration, file lifecycle, responsive browser sweep, Linux
+CI and soak — remain unrun. Substantial hardening has landed as code and unit
+tests; most of it has not been exercised under load, restart, or live
+integration.
 
 Nothing is currently recorded as `failed`. That is not a statement of health —
 the five previously-failed capabilities were reclassified to `untested` because
@@ -31,6 +36,10 @@ the replacement gates have not been run.
 | `baseline-windows-ci-20260801b` | `13532a7` | Windows CI | Passed with warnings | `yarn ci` exit 0 in 268.9s; 1,214/1,214 API tests; 0 skips; 7 lint warnings; two chunks over 500 kB |
 | `app-suite-20260801` | `54a8193` | App vitest suite | Passed | 19 files / 78 tests passed; suite was previously absent from CI |
 | `compose-isolation-audit-20260801` | `54a8193` | Compose deployment decision | Superseded | Dedicated RC Compose file removed by decision; validation now uses the default `docker-compose.yml` |
+| `post-merge-windows-ci-20260801` | `60a3cb8` | Windows CI, single root invocation | Passed with warnings | `yarn ci` exit 0 in 155.5s; 1,214 API + 78 frontend tests in one run; 0 skips; 7 lint warnings |
+| `docker-normal-compose-20260801` | `60a3cb8` | Normal Compose build and deploy | Passed | Image `sha256:4a58c361…`; container healthy in ~10s; compiled `search.js` in the image carries the fix |
+| `schema-integrity-runtime-20260801` | `60a3cb8` | Fresh schema-42 runtime integrity | Passed | `user_version=42`, `quick_check=ok`, `foreign_key_check=0 rows`, 74 tables — empty and populated |
+| `global-search-runtime-20260801` | `d722cee` | Global search on compiled runtime + browser | Passed | All four types 200 on empty and populated catalogs; album grid renders; console clean |
 
 ## Corrections applied on this pass
 
@@ -74,7 +83,24 @@ These remain the largest blockers, none of which has been run:
 - No import, rename, retag, move, delete, or sidecar lifecycle run in isolated
   roots, and no hard-kill recovery decision.
 - No desktop/tablet/mobile or rendered-browser pass.
-- No Linux CI, Docker integrity audit, or soak of any duration.
+- No Linux CI or soak of any duration.
+
+## Live-runtime observations (not gates)
+
+Recorded from a real Servarr-sourced refresh of Bastille on the deployed
+runtime. These are encouraging but do not substitute for the gates above:
+
+- The `commands` table carries the full liveness column set, and a mid-refresh
+  snapshot showed **0 started commands with a missing or expired lease**.
+- **0 duplicate `queue_order` values among active commands** and no NULL orders.
+  Whole-table duplicates occur only where a completed row and a new queued row
+  share a slot in the sparse 1024-step sequence — that gap allocation is what
+  makes a single-edge reorder O(1), so the meaningful invariant is uniqueness
+  scoped to active commands.
+- Credited-Artist expansion stayed bounded: one added Artist produced 25
+  Artists total, with active commands rising to ~99 and then draining.
+- WAL reached 37.8 MB against a 38.6 MB main database during refresh. Bounded
+  WAL growth is an open question for the load and soak gates.
 
 ## Evidence policy
 
