@@ -205,11 +205,31 @@ const useStyles = makeStyles({
         alignItems: "center",
         textAlign: "center",
         padding: tokens.spacingVerticalS,
-        cursor: "pointer",
         position: "relative",
         width: "100%",
         justifyContent: "space-between",
         "&:hover": { backgroundColor: tokens.colorNeutralBackground1Hover },
+    },
+    artistPrimaryAction: {
+        appearance: "none",
+        border: "none",
+        backgroundColor: "transparent",
+        color: "inherit",
+        font: "inherit",
+        cursor: "pointer",
+        width: "100%",
+        padding: 0,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: tokens.spacingVerticalS,
+        borderRadius: tokens.borderRadiusMedium,
+        ":focus-visible": {
+            outlineStyle: "solid",
+            outlineWidth: tokens.strokeWidthThick,
+            outlineColor: tokens.colorBrandStroke1,
+            outlineOffset: tokens.strokeWidthThin,
+        },
     },
     artistCardActions: {
         display: "flex",
@@ -231,23 +251,47 @@ const useStyles = makeStyles({
     },
     detailedRow: {
         display: "grid",
-        gridTemplateColumns: "40px 1fr auto", // Compact on mobile: Img | Info | Actions
+        gridTemplateColumns: "minmax(0, 1fr) auto",
         gap: tokens.spacingHorizontalS,
         alignItems: "center",
         padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
         borderRadius: tokens.borderRadiusMedium,
-        cursor: "pointer",
         "&:hover": { backgroundColor: tokens.colorNeutralBackground1Hover },
         "@media (min-width: 640px)": {
-            gridTemplateColumns: "48px 2fr 1.5fr 1fr auto",
             gap: tokens.spacingHorizontalM,
             padding: tokens.spacingVerticalS,
         },
     },
-    detailedRowVideo: {
-        gridTemplateColumns: "60px 1fr auto",
+    detailedPrimaryAction: {
+        appearance: "none",
+        border: "none",
+        backgroundColor: "transparent",
+        color: "inherit",
+        font: "inherit",
+        cursor: "pointer",
+        minWidth: 0,
+        padding: 0,
+        display: "grid",
+        gridTemplateColumns: "40px minmax(0, 1fr)",
+        gap: tokens.spacingHorizontalS,
+        alignItems: "center",
+        textAlign: "left",
+        borderRadius: tokens.borderRadiusMedium,
+        ":focus-visible": {
+            outlineStyle: "solid",
+            outlineWidth: tokens.strokeWidthThick,
+            outlineColor: tokens.colorBrandStroke1,
+            outlineOffset: tokens.strokeWidthThin,
+        },
         "@media (min-width: 640px)": {
-            gridTemplateColumns: "120px 2fr 1.5fr auto",
+            gridTemplateColumns: "48px 2fr 1.5fr 1fr",
+            gap: tokens.spacingHorizontalM,
+        },
+    },
+    detailedPrimaryActionVideo: {
+        gridTemplateColumns: "60px minmax(0, 1fr)",
+        "@media (min-width: 640px)": {
+            gridTemplateColumns: "120px 2fr 1.5fr",
         },
     },
     rowImageSquare: {
@@ -623,16 +667,20 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
             <Card
                 key={item.providerId}
                 className={styles.artistCard}
-                onClick={() => handleItemClick(item)}
             >
-                <Avatar
-                    image={{ src: mediaCoverSrc(item) ?? undefined }}
-                    name={item.name}
-                    size={96}
-                    shape="circular"
-                />
+                <button
+                    type="button"
+                    className={styles.artistPrimaryAction}
+                    onClick={() => handleItemClick(item)}
+                    aria-label={`Select artist ${item.name}`}
+                >
+                    <Avatar
+                        image={{ src: mediaCoverSrc(item) ?? undefined }}
+                        name={item.name}
+                        size={96}
+                        shape="circular"
+                    />
 
-                <div className={styles.artistCardActions}>
                     <div className={styles.itemInfo}>
                         <Text weight="semibold" wrap={false} align="center" size={200}>
                             {item.name}
@@ -643,6 +691,9 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                             </Caption1>
                         )}
                     </div>
+                </button>
+
+                <div className={styles.artistCardActions}>
                     {renderMonitorButton(item, { size: "small", showLabel: true })}
                 </div>
             </Card>
@@ -664,50 +715,55 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         return (
             <div
                 key={item.providerId}
-                className={mergeClasses(styles.detailedRow, isVideo ? styles.detailedRowVideo : undefined)}
-                onClick={() => handleItemClick(item)}
+                className={styles.detailedRow}
             >
-                {/* Image */}
-                {imageUrl ? (
-                    <img
-                        src={imageUrl}
-                        alt={item.name}
-                        className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
-                    />
-                ) : (
-                    <Avatar
-                        name={item.name}
-                        shape="square"
-                        size={isVideo ? 48 : 40}
-                        className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
-                    />
-                )}
+                <button
+                    type="button"
+                    className={mergeClasses(
+                        styles.detailedPrimaryAction,
+                        isVideo ? styles.detailedPrimaryActionVideo : undefined,
+                    )}
+                    onClick={() => handleItemClick(item)}
+                    aria-label={`Select ${item.type} ${item.name}`}
+                >
+                    {imageUrl ? (
+                        <img
+                            src={imageUrl}
+                            alt=""
+                            className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
+                        />
+                    ) : (
+                        <Avatar
+                            name={item.name}
+                            shape="square"
+                            size={isVideo ? 48 : 40}
+                            className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
+                        />
+                    )}
 
-                {/* Title + Artist (mobile shows both stacked) */}
-                <div className={styles.itemInfo}>
-                    <Body1 className={styles.rowTitleText}>
-                        {item.name}
-                    </Body1>
-                    <Caption1 className={mergeClasses(styles.desktopHidden, styles.rowSubText)}>
-                        {artistName}
-                    </Caption1>
-                </div>
-
-                {/* Artist - hidden on mobile, shown on desktop */}
-                <div className={mergeClasses(styles.itemInfo, styles.mobileHidden)}>
-                    <Caption1 className={styles.rowSubText}>
-                        {artistName}
-                    </Caption1>
-                </div>
-
-                {/* Album (Tracks only) - hidden on mobile */}
-                {!isVideo && (
-                    <div className={mergeClasses(styles.itemInfo, styles.mobileHidden)}>
-                        <Caption1 className={styles.rowSubText}>
-                            {/* Album placeholder if data available later */}
+                    <div className={styles.itemInfo}>
+                        <Body1 className={styles.rowTitleText}>
+                            {item.name}
+                        </Body1>
+                        <Caption1 className={mergeClasses(styles.desktopHidden, styles.rowSubText)}>
+                            {artistName}
                         </Caption1>
                     </div>
-                )}
+
+                    <div className={mergeClasses(styles.itemInfo, styles.mobileHidden)}>
+                        <Caption1 className={styles.rowSubText}>
+                            {artistName}
+                        </Caption1>
+                    </div>
+
+                    {!isVideo && (
+                        <div className={mergeClasses(styles.itemInfo, styles.mobileHidden)}>
+                            <Caption1 className={styles.rowSubText}>
+                                {/* Album placeholder if data available later */}
+                            </Caption1>
+                        </div>
+                    )}
+                </button>
 
                 {/* Duration/Year & Actions */}
                 <div className={styles.rowActionsContainer}>

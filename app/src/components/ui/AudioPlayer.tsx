@@ -78,6 +78,13 @@ const useStyles = makeStyles({
         cursor: "pointer",
         position: "relative",
         touchAction: "none",
+        borderRadius: tokens.borderRadiusMedium,
+        ":focus-visible": {
+            outlineStyle: "solid",
+            outlineWidth: tokens.strokeWidthThick,
+            outlineColor: tokens.colorBrandStroke1,
+            outlineOffset: tokens.strokeWidthThin,
+        },
     },
     scrubberTrack: {
         width: "100%",
@@ -105,11 +112,6 @@ const useStyles = makeStyles({
         transition: "transform 0.1s ease",
         ":hover": {
             transform: "translate(-50%, -50%) scale(1.2)",
-        },
-        ":focus-visible": {
-            outlineStyle: "solid",
-            outlineWidth: tokens.strokeWidthThick,
-            outlineColor: tokens.colorBrandStroke1,
         },
     },
     audioElement: {
@@ -172,7 +174,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         return drift <= acceptableDrift ? audioDuration : (knownDuration ?? 0);
     })();
 
-    const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+    const progress = duration > 0
+        ? Math.max(0, Math.min(100, (currentTime / duration) * 100))
+        : 0;
 
     const useHlsSource = Boolean(hlsSrc) && !hlsFailed && Hls.isSupported();
 
@@ -307,6 +311,43 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         [duration]
     );
 
+    const seekToTime = useCallback((requestedTime: number) => {
+        if (!audioRef.current || duration <= 0) {
+            return;
+        }
+
+        const nextTime = Math.max(0, Math.min(duration, requestedTime));
+        audioRef.current.currentTime = nextTime;
+        setCurrentTime(nextTime);
+    }, [duration]);
+
+    const handleSeekKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+        const seekStepSeconds = Math.min(5, Math.max(1, Math.round(duration / 100)));
+        let nextTime: number | undefined;
+
+        switch (event.key) {
+            case "ArrowLeft":
+            case "ArrowDown":
+                nextTime = currentTime - seekStepSeconds;
+                break;
+            case "ArrowRight":
+            case "ArrowUp":
+                nextTime = currentTime + seekStepSeconds;
+                break;
+            case "Home":
+                nextTime = 0;
+                break;
+            case "End":
+                nextTime = duration;
+                break;
+            default:
+                return;
+        }
+
+        event.preventDefault();
+        seekToTime(nextTime);
+    }, [currentTime, duration, seekToTime]);
+
     const handleMouseDown = (e: React.MouseEvent) => {
         isDraggingRef.current = true;
         setIsDragging(true);
@@ -365,8 +406,18 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 ref={scrubberRef}
                 className={styles.scrubberContainer}
                 data-testid="audio-player-scrubber"
+                role="slider"
+                tabIndex={duration > 0 ? 0 : -1}
+                aria-label="Seek audio"
+                aria-orientation="horizontal"
+                aria-disabled={duration <= 0}
+                aria-valuemin={0}
+                aria-valuemax={duration}
+                aria-valuenow={Math.max(0, Math.min(duration, currentTime))}
+                aria-valuetext={`${formatDurationSeconds(currentTime)} of ${formatDurationSeconds(duration)}`}
                 onMouseDown={handleMouseDown}
                 onTouchStart={handleTouchStart}
+                onKeyDown={handleSeekKeyDown}
             >
                 <div className={styles.scrubberTrack}>
                     <div className={styles.scrubberFill} style={{ width: `${progress}%` }} />
@@ -374,6 +425,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 <div
                     className={styles.scrubberHandle}
                     style={{ left: `${progress}%` }}
+                    aria-hidden="true"
                 />
             </div>
             <Text className={styles.timeText}>{formatDurationSeconds(duration)}</Text>

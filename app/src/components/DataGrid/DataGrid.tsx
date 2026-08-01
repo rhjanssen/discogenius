@@ -156,6 +156,13 @@ const useStyles = makeStyles({
     },
     rowClickable: {
         cursor: "pointer",
+        ":focus-visible": {
+            outlineStyle: "solid",
+            outlineWidth: tokens.strokeWidthThick,
+            outlineColor: tokens.colorBrandStroke1,
+            outlineOffset: "-2px",
+            zIndex: 1,
+        },
     },
     rowCompact: {
         paddingTop: tokens.spacingVerticalXS,
@@ -404,7 +411,34 @@ function DataGridInner<T>(
         gridTemplateColumns: gridTemplate,
     };
 
-    const handleRowClick = useCallback((item: T) => {
+    const handleRowClick = useCallback((item: T, event: React.MouseEvent<HTMLDivElement>) => {
+        const interactiveTarget = (event.target as Element | null)?.closest(
+            "a[href], button, input, select, textarea, [contenteditable='true'], "
+            + "[role='button'], [role='link'], [role='checkbox'], [role='radio'], "
+            + "[role='switch'], [role='slider'], [role='menuitem'], [role='option']"
+        );
+        if (interactiveTarget && interactiveTarget !== event.currentTarget) {
+            return;
+        }
+
+        onRowClick?.(item);
+    }, [onRowClick]);
+
+    const handleRowKeyDown = useCallback((
+        item: T,
+        event: React.KeyboardEvent<HTMLDivElement>,
+        rowProps?: DataGridRowProps
+    ) => {
+        rowProps?.onKeyDown?.(event);
+        if (
+            event.defaultPrevented
+            || event.target !== event.currentTarget
+            || (event.key !== "Enter" && event.key !== " ")
+        ) {
+            return;
+        }
+
+        event.preventDefault();
         onRowClick?.(item);
     }, [onRowClick]);
 
@@ -584,7 +618,11 @@ function DataGridInner<T>(
                                 getRowClassName?.(item, index)
                             )}
                             style={sharedColumns ? undefined : gridStyle}
-                            onClick={onRowClick ? () => handleRowClick(item) : undefined}
+                            tabIndex={onRowClick ? 0 : rowProps?.tabIndex}
+                            onClick={onRowClick ? (event) => handleRowClick(item, event) : undefined}
+                            onKeyDown={onRowClick
+                                ? (event) => handleRowKeyDown(item, event, rowProps)
+                                : rowProps?.onKeyDown}
                         >
                             {selection ? (
                                 <div className={styles.selectionCell} role="gridcell">
