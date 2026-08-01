@@ -71,9 +71,9 @@ function seedCanonicalArtistGraph() {
   `).run();
   db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, reason, curation_version
     )
-    SELECT library_group.library_id, release.id, 'manual', 0, 'orphan_cleanup_test', 1
+    SELECT library_group.library_id, release.id, 'manual', 'orphan_cleanup_test', 1
     FROM LibraryAlbums library_group
     JOIN AlbumEditions release ON release.mbid = 'release-1'
     WHERE library_group.release_group_id = release.release_group_id

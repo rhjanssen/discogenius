@@ -76,7 +76,7 @@ const releaseGroupLibraryStateCte = `
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END
         ORDER BY
-          CASE WHEN plan.state = 'current' AND plan.chosen = 1 AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
+          CASE WHEN plan.state = 'current' AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
           library_release.updated_at DESC,
           library_release.id DESC,
           library.id ASC
@@ -97,10 +97,9 @@ const releaseGroupLibraryStateCte = `
      )
     LEFT JOIN AlbumEditions release
       ON release.id = library_release.edition_id
-    LEFT JOIN AcquisitionPlans plan
+    LEFT JOIN SelectedAcquisitionPlans plan
       ON plan.library_edition_id = library_release.id
      AND plan.state = 'current'
-     AND plan.chosen = 1
     LEFT JOIN AcquisitionPlanSources plan_source
       ON plan_source.plan_id = plan.id
      AND plan_source.id = (

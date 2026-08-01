@@ -56,20 +56,12 @@ export class AlbumCommandService {
               updated_at = CURRENT_TIMESTAMP
         `).run(releaseGroup.id, Number(locked));
 
-        // One Album-level lock, one meaning. The lock previously only reached
-        // LibraryAlbums, while both curation and acquisition planning consult
-        // LibraryEditions.locked — so pressing Lock protected the monitored
-        // state and nothing else. It now also covers the curated edition set,
-        // the representative edition and the chosen acquisition plan.
-        db.prepare(`
-            UPDATE LibraryEditions
-            SET locked = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE edition_id IN (
-              SELECT id FROM AlbumEditions WHERE release_group_id = ?
-            )
-              AND library_id IN (SELECT id FROM Libraries WHERE enabled = 1)
-        `).run(Number(locked), releaseGroup.id);
-
+        // One Album-level lock, one meaning, one row. Curation, acquisition
+        // planning and the edition-selection UX all read LibraryAlbums.locked;
+        // there is no second per-edition lock to propagate to and therefore
+        // none to drift out of step with this one. The lock covers the
+        // monitored state, the curated edition set, the representative edition
+        // and the selected acquisition plan alike.
         invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
         return true;
     }
@@ -196,7 +188,7 @@ export class AlbumCommandService {
         this.setReleaseGroupMonitored(albumId, true);
         const normalizedPlanIds = (db.prepare(`
             SELECT plan.id
-            FROM AcquisitionPlans plan
+            FROM SelectedAcquisitionPlans plan
             JOIN LibraryEditions library_release
               ON library_release.id = plan.library_edition_id
             JOIN Libraries library ON library.id = library_release.library_id
@@ -204,7 +196,6 @@ export class AlbumCommandService {
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE release_group.mbid = ?
               AND plan.state = 'current'
-              AND plan.chosen = 1
               AND library.enabled = 1
               AND (
                 ? IS NULL

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-track-cross-provider-quality-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -20,6 +21,8 @@ before(async () => {
 });
 
 beforeEach(() => {
+  // Release the deferred plan reference before the plan rows go.
+  dbModule.db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   for (const table of [
     "TrackFiles",
     "AcquisitionPlanTracks",
@@ -196,17 +199,11 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     `).run(options.libraryId, releaseGroup.id);
     const libraryRelease = db.prepare(`
       INSERT INTO LibraryEditions (
-        library_id, edition_id, selection_mode, locked, curation_version
-      ) VALUES (?, ?, 'auto', 0, 1)
+        library_id, edition_id, selection_mode, curation_version
+      ) VALUES (?, ?, 'auto', 1)
       RETURNING id
     `).get(options.libraryId, release.id) as { id: number };
-    const plan = db.prepare(`
-      INSERT INTO AcquisitionPlans (
-        library_edition_id, provider, composition, download_mode, state,
-        planner_version, policy_hash, computed_at
-      ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
-      RETURNING id
-    `).get(libraryRelease.id, options.provider) as { id: number };
+    const plan = seedSelectedAcquisitionPlan(db, { libraryEditionId: libraryRelease.id, provider: options.provider }) as { id: number };
     const source = db.prepare(`
       INSERT INTO AcquisitionPlanSources (
         plan_id, provider_edition_match_id, role, sort_order

@@ -113,6 +113,14 @@ export function resetActiveSchemaRows(
   db: { prepare: (sql: string) => { run: (...args: any[]) => unknown } },
   extraTablesFirst: readonly string[] = [],
 ): void {
+  // `LibraryEditions.preferred_plan_key` is a deferred foreign key into
+  // AcquisitionPlans, which is emptied first. Release the reference before the
+  // rows it points at disappear, or the reset fails the constraint at commit.
+  try {
+    db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
+  } catch {
+    // A suite's schema may predate the column; nothing to release.
+  }
   const tables = [
     ...extraTablesFirst,
     ...PROVIDER_STATE_TABLES_IN_DELETE_ORDER,

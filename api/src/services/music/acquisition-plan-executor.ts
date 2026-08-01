@@ -87,7 +87,7 @@ export function buildAcquisitionDownloadCommand(
       release_group.mbid AS release_group_mbid,
       release_group.title AS album_title,
       COALESCE(primary_credit.credited_name, primary_artist.name, 'Unknown Artist') AS artist_name
-    FROM AcquisitionPlans plan
+    FROM SelectedAcquisitionPlans plan
     JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
     JOIN Libraries library ON library.id = library_release.library_id
     JOIN AlbumEditions release ON release.id = library_release.edition_id
@@ -96,7 +96,7 @@ export function buildAcquisitionDownloadCommand(
       ON primary_credit.release_group_id = release_group.id AND primary_credit.ordinal = 0
     LEFT JOIN ArtistMetadata primary_artist
       ON primary_artist.id = release_group.artist_metadata_id
-    WHERE plan.id = ? AND plan.state = 'current' AND plan.chosen = 1
+    WHERE plan.id = ? AND plan.state = 'current'
   `).get(planId) as PlanHeader | undefined;
   if (!header) return null;
 

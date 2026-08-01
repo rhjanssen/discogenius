@@ -250,10 +250,9 @@ class LibraryMetadataBackfillService {
                     FROM LibraryEditions library_release
                     JOIN AlbumEditions selected_release
                       ON selected_release.id = library_release.edition_id
-                    JOIN AcquisitionPlans plan
+                    JOIN SelectedAcquisitionPlans plan
                       ON plan.library_edition_id = library_release.id
                      AND plan.state = 'current'
-                     AND plan.chosen = 1
                     JOIN AcquisitionPlanSources plan_source
                       ON plan_source.plan_id = plan.id
                      AND plan_source.role = 'primary'

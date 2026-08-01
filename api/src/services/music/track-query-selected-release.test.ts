@@ -25,6 +25,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  // Release the deferred plan reference before its rows go.
+  db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
@@ -92,8 +94,8 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
   `).run(library.id, release.id);
 
   return { trackIds };

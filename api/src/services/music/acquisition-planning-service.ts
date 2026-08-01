@@ -43,9 +43,10 @@ function isAvailable(value: unknown): boolean {
 }
 
 interface PlanningContextRow {
-  library_edition_id: number;
-  edition_id: number;
-  selection_mode: "auto" | "manual";
+  /** Null when this Edition is evaluated but not monitored — plans exist anyway. */
+  library_edition_id: number | null;
+  selection_mode: "auto" | "manual" | null;
+  /** The Album lock, the single authority over both monitoring and planning. */
   locked: number;
   quality_profile_id: number;
   allowed_source_formats: string;
@@ -53,7 +54,7 @@ interface PlanningContextRow {
   cutoff: string;
   continue_upgrades: number;
   preferred_plan_key: string | null;
-  plan_selection_mode: "auto" | "manual";
+  plan_selection_mode: "auto" | "manual" | null;
   current_primary_provider_edition_match_id: number | null;
 }
 
@@ -81,8 +82,21 @@ export class AcquisitionPlanningService {
     this.repository = new AcquisitionPlanRepository(db);
   }
 
+  /**
+   * Build every viable acquisition plan for one canonical Edition in one Library.
+   *
+   * Deliberately does not require a `LibraryEditions` row. Plans are generated
+   * during the provider-matching phase, before curation decides what to monitor,
+   * so that curation can weigh real provider availability and the Album page can
+   * offer the alternatives sitting under Editions nobody monitors yet.
+   *
+   * Returns the id of the plan the monitored Edition ended up executing, or
+   * null when there is no viable plan (or nothing monitored to record a choice
+   * on).
+   */
   compute(input: {
-    libraryEditionId: number;
+    libraryId: number;
+    editionId: number;
     providerPriority: readonly string[];
     plannerVersion: number;
     preferredProviderEditionMatchId?: number;
@@ -91,40 +105,48 @@ export class AcquisitionPlanningService {
   }): number | null {
     const context = this.db.prepare(`
       SELECT
-        library_release.id AS library_edition_id,
-        library_release.edition_id,
-        library_release.selection_mode,
-        library_release.locked,
+        monitored_edition.id AS library_edition_id,
+        monitored_edition.selection_mode,
+        COALESCE(library_album.locked, 0) AS locked,
         library.quality_profile_id,
         profile.allowed_source_formats,
         profile.preference_order,
         profile.cutoff,
         profile.continue_upgrades,
-        library_release.preferred_plan_key,
-        library_release.plan_selection_mode,
+        monitored_edition.preferred_plan_key,
+        monitored_edition.plan_selection_mode,
         primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id
-      FROM LibraryEditions library_release
-      JOIN Libraries library ON library.id = library_release.library_id
+      FROM Libraries library
+      JOIN AlbumEditions edition ON edition.id = ?
       JOIN quality_profiles profile ON profile.id = library.quality_profile_id
-      LEFT JOIN AcquisitionPlans current_plan
-        ON current_plan.library_edition_id = library_release.id
+      LEFT JOIN LibraryAlbums library_album
+        ON library_album.library_id = library.id
+       AND library_album.release_group_id = edition.release_group_id
+      LEFT JOIN LibraryEditions monitored_edition
+        ON monitored_edition.library_id = library.id
+       AND monitored_edition.edition_id = edition.id
+      LEFT JOIN SelectedAcquisitionPlans current_plan
+        ON current_plan.library_edition_id = monitored_edition.id
        AND current_plan.state = 'current'
-       AND current_plan.chosen = 1
       LEFT JOIN AcquisitionPlanSources primary_source
         ON primary_source.plan_id = current_plan.id
        AND primary_source.role = 'primary'
-      WHERE library_release.id = ?
-    `).get(input.libraryEditionId) as PlanningContextRow | undefined;
-    if (!context) throw new Error(`Library release ${input.libraryEditionId} was not found`);
+      WHERE library.id = ?
+    `).get(input.editionId, input.libraryId) as PlanningContextRow | undefined;
+    if (!context) {
+      throw new Error(
+        `Library ${input.libraryId} or edition ${input.editionId} was not found`,
+      );
+    }
 
     const orderedTrackIds = (this.db.prepare(`
       SELECT id
       FROM Tracks
       WHERE album_edition_id = ?
       ORDER BY medium_position, position, id
-    `).all(context.edition_id) as Array<{ id: number }>).map(({ id }) => id);
+    `).all(input.editionId) as Array<{ id: number }>).map(({ id }) => id);
     if (orderedTrackIds.length === 0) {
-      this.repository.clear(input.libraryEditionId);
+      this.repository.clear(input.libraryId, input.editionId);
       return null;
     }
 
@@ -179,7 +201,7 @@ export class AcquisitionPlanningService {
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
       ORDER BY release_match.id, track_match.id, track_variant.id, release_variant.id
-    `).all(context.edition_id) as CandidateRow[];
+    `).all(input.editionId) as CandidateRow[];
 
     const sourceById = new Map<number, AcquisitionSourceCandidate>();
     const matchById = new Map<number, AcquisitionSourceCandidate["trackMatches"][number]>();
@@ -270,14 +292,16 @@ export class AcquisitionPlanningService {
       exclusive: input.exclusiveSource === true,
     });
     if (plans.length === 0) {
-      this.repository.clear(input.libraryEditionId);
+      this.repository.clear(input.libraryId, input.editionId);
       return null;
     }
     // The library's standing plan choice outranks the planner's own ordering,
     // and survives replanning because it is keyed by plan shape, not row id.
     const result = this.repository.replacePlans({
-      libraryEditionId: input.libraryEditionId,
+      libraryId: input.libraryId,
+      editionId: input.editionId,
       plans,
+      targetTrackCount: orderedTrackIds.length,
       preferredPlanKey: context.plan_selection_mode === "manual"
         ? context.preferred_plan_key
         : null,
@@ -288,28 +312,23 @@ export class AcquisitionPlanningService {
       policyHash,
     });
     if (!result) {
-      this.repository.clear(input.libraryEditionId);
+      this.repository.clear(input.libraryId, input.editionId);
       return null;
     }
     if (context.plan_selection_mode === "manual" && !result.preferenceHonored) {
       // Either the chosen alternative no longer exists, or it still exists but
       // now covers fewer canonical tracks than the best plan. Both are grounds
-      // to overrule the user; neither is grounds to do it silently.
-      this.db.prepare(`
-        UPDATE LibraryEditions
-        SET plan_selection_mode = 'auto', preferred_plan_key = NULL,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(input.libraryEditionId);
+      // to overrule the user; neither is grounds to do it silently. The row now
+      // carries the best-ranked plan; only its provenance needs correcting.
       console.warn(
-        `[AcquisitionPlanning] Preferred plan ${context.preferred_plan_key} for library `
-        + `edition ${input.libraryEditionId} `
+        `[AcquisitionPlanning] Preferred plan ${context.preferred_plan_key} for edition `
+        + `${input.editionId} in library ${input.libraryId} `
         + (result.preferenceLostCoverage
           ? "no longer covers as many tracks as the best plan"
           : "is no longer available")
         + "; using the best-ranked plan",
       );
     }
-    return result.chosenPlanId;
+    return result.selectedPlanId;
   }
 }

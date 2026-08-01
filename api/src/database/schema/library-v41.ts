@@ -129,16 +129,26 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE
     );
 
+    -- A row here means exactly one thing: this Edition is monitored in this
+    -- Library. Removing the row unmonitors it. There is deliberately no
+    -- monitored column — two ways to say the same thing drift apart — and no
+    -- locked column either: the Album lock on LibraryAlbums is the single
+    -- authority that curation, planning and the UI all consult.
     CREATE TABLE LibraryEditions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
       edition_id INTEGER NOT NULL,
       selection_mode TEXT NOT NULL CHECK(selection_mode IN ('auto', 'manual')),
-      locked BOOLEAN NOT NULL DEFAULT 0,
+      -- The representative ("Primary") Edition of its Album in this Library.
+      -- Exactly one monitored Edition per (library, album) carries it; the rest
+      -- are supplemental.
+      representative BOOLEAN NOT NULL DEFAULT 1,
       reason TEXT,
       curation_version INTEGER NOT NULL,
-      -- The acquisition plan the user picked, remembered by stable plan_key so
-      -- it survives replanning. Null means "whatever the planner ranks best".
+      -- The acquisition plan this monitored Edition executes, remembered by
+      -- stable plan_key so it survives replanning. The planner writes the
+      -- resolved key every time it plans, so NULL means "no viable plan",
+      -- never "look it up somewhere else".
       preferred_plan_key TEXT,
       plan_selection_mode TEXT NOT NULL DEFAULT 'auto'
         CHECK(plan_selection_mode IN ('auto', 'manual')),
@@ -146,7 +156,15 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(library_id, edition_id),
       FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
+      FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
+      -- The selected plan must belong to THIS Library and THIS Edition. A bare
+      -- plan_key could name a plan built for another edition entirely; this
+      -- composite reference makes that unrepresentable. Deferred because
+      -- replanning deletes and reinserts the plan rows the key points at
+      -- within one transaction.
+      FOREIGN KEY(library_id, edition_id, preferred_plan_key)
+        REFERENCES AcquisitionPlans(library_id, edition_id, plan_key)
+        DEFERRABLE INITIALLY DEFERRED
     );
 
     CREATE TABLE LibraryEditionScopes (
@@ -159,28 +177,29 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(library_artist_id) REFERENCES LibraryArtists(id) ON DELETE CASCADE
     );
 
+    -- Scoped to a Library and a CANONICAL Edition, never to a LibraryEditions
+    -- row. Plans have to exist for Editions curation evaluated and did not
+    -- monitor, because offering the user another Edition is precisely what the
+    -- Album page is for. Monitoring is a separate decision made later.
     CREATE TABLE AcquisitionPlans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      library_edition_id INTEGER NOT NULL,
+      library_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       provider TEXT NOT NULL,
       composition TEXT NOT NULL CHECK(composition IN ('single_source', 'composite')),
       download_mode TEXT NOT NULL CHECK(download_mode IN ('album', 'tracks')),
       state TEXT NOT NULL CHECK(state IN ('current', 'stale', 'unavailable', 'failed')),
-      -- Every viable plan the optimizer produced is persisted, so a library can
-      -- be shown its real alternatives (TIDAL direct, TIDAL composite, Deezer
-      -- direct, ...) instead of only the one that happened to win.
-      chosen BOOLEAN NOT NULL DEFAULT 1,
-      -- Who chose it. 'manual' marks the plan the user picked; automation never
-      -- overwrites a manual choice while the edition stays locked.
-      selection_mode TEXT NOT NULL DEFAULT 'auto'
-        CHECK(selection_mode IN ('auto', 'manual')),
       -- Stable identity of the plan's shape (provider + ordered source matches
-      -- + variants). Plan rows are regenerated on every replan, so a user's
-      -- choice is remembered by key rather than by row id.
-      plan_key TEXT NOT NULL DEFAULT '',
+      -- + the exact per-track assignment). Plan rows are regenerated on every
+      -- replan, so a user's choice is remembered by key rather than by row id.
+      plan_key TEXT NOT NULL,
       -- Optimizer ranking within this edition, 0 = best. Presentation order.
       rank INTEGER NOT NULL DEFAULT 0,
+      -- Canonical tracks this plan covers, and how many the canonical Edition
+      -- has in total. coverage < target_track_count is a real, displayable
+      -- gap — the canonical track list is never trimmed to what a provider has.
       coverage INTEGER NOT NULL DEFAULT 0,
+      target_track_count INTEGER NOT NULL DEFAULT 0,
       -- The axes a user actually chooses along, alongside composition.
       quality_tier TEXT NOT NULL DEFAULT 'lossless',
       explicit_content TEXT NOT NULL DEFAULT 'unknown'
@@ -194,15 +213,11 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       policy_hash TEXT NOT NULL,
       computed_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(library_edition_id) REFERENCES LibraryEditions(id) ON DELETE CASCADE
+      -- Also the parent key LibraryEditions.preferred_plan_key references.
+      UNIQUE(library_id, edition_id, plan_key),
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
     );
-
-    -- Exactly one chosen plan per selected edition. The old table-level UNIQUE
-    -- on library_edition_id enforced this by making alternatives unstorable.
-    CREATE UNIQUE INDEX idx_acquisition_plans_chosen
-      ON AcquisitionPlans(library_edition_id) WHERE chosen = 1;
-    CREATE UNIQUE INDEX idx_acquisition_plans_key
-      ON AcquisitionPlans(library_edition_id, plan_key);
 
     CREATE TABLE AcquisitionPlanSources (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -255,7 +270,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE INDEX idx_library_release_scopes_artist
       ON LibraryEditionScopes(library_artist_id, scope_type, library_edition_id);
     CREATE INDEX idx_acquisition_plans_edition
-      ON AcquisitionPlans(library_edition_id, chosen, rank);
+      ON AcquisitionPlans(library_id, edition_id, rank);
     CREATE INDEX idx_acquisition_sources_plan
       ON AcquisitionPlanSources(plan_id, sort_order);
     CREATE INDEX idx_acquisition_tracks_plan
@@ -270,5 +285,24 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       ON TrackFiles(library_id, recording_id);
     CREATE INDEX idx_track_files_library_release
       ON TrackFiles(library_id, album_edition_id);
+
+    -- The plan that actually executes.
+    --
+    -- AcquisitionPlans holds every candidate, including candidates for Editions
+    -- nobody monitors. Two independent conditions narrow that to the one plan a
+    -- reader means when it says "the plan": the Edition is monitored in this
+    -- Library (a LibraryEditions row exists) and this is the plan that row
+    -- selected. Both live in the join, so a reader cannot satisfy one and forget
+    -- the other — which is what the old global chosen flag allowed.
+    CREATE VIEW SelectedAcquisitionPlans AS
+      SELECT
+        plan.*,
+        monitored_edition.id AS library_edition_id,
+        monitored_edition.plan_selection_mode AS selection_mode
+      FROM AcquisitionPlans plan
+      JOIN LibraryEditions monitored_edition
+        ON monitored_edition.library_id = plan.library_id
+       AND monitored_edition.edition_id = plan.edition_id
+       AND monitored_edition.preferred_plan_key = plan.plan_key;
   `);
 }

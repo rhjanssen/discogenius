@@ -217,10 +217,9 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
          AND plan_match.match_state = 'accepted'
         JOIN AcquisitionPlanTracks plan_track
           ON plan_track.provider_track_match_id = plan_match.id
-        JOIN AcquisitionPlans acquisition_plan
+        JOIN SelectedAcquisitionPlans acquisition_plan
           ON acquisition_plan.id = plan_track.plan_id
          AND acquisition_plan.state = 'current'
-         AND acquisition_plan.chosen = 1
         JOIN LibraryEditions plan_library_release
           ON plan_library_release.id = acquisition_plan.library_edition_id
         JOIN AcquisitionPlanSources plan_source

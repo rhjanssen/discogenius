@@ -47,6 +47,11 @@ beforeEach(() => {
   db.prepare("DELETE FROM LyricFiles").run();
   db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM TrackFiles").run();
+  // Candidate plans outlive the monitored rows now, so the reset has to
+  // drop them explicitly instead of relying on a cascade.
+  db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM Libraries").run();

@@ -90,10 +90,9 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
          AND library.enabled = 1
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
-        LEFT JOIN AcquisitionPlans plan
+        LEFT JOIN SelectedAcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
-         AND plan.chosen = 1
         LEFT JOIN AcquisitionPlanSources plan_source
           ON plan_source.plan_id = plan.id
          AND plan_source.role = 'primary'
@@ -278,10 +277,9 @@ function listMusicBrainzReleaseVersions(
         CASE WHEN EXISTS (
           SELECT 1
           FROM AcquisitionPlanSources source
-          JOIN AcquisitionPlans plan
+          JOIN SelectedAcquisitionPlans plan
             ON plan.id = source.plan_id
            AND plan.state = 'current'
-           AND plan.chosen = 1
           JOIN LibraryEditions library_release
             ON library_release.id = plan.library_edition_id
           JOIN Libraries library
@@ -298,10 +296,9 @@ function listMusicBrainzReleaseVersions(
             variant.quality_class
           )
           FROM AcquisitionPlanSources source
-          JOIN AcquisitionPlans plan
+          JOIN SelectedAcquisitionPlans plan
             ON plan.id = source.plan_id
            AND plan.state = 'current'
-           AND plan.chosen = 1
           JOIN AcquisitionPlanTracks plan_track
             ON plan_track.plan_id = plan.id
           JOIN ProviderItemAudioVariants variant
@@ -858,10 +855,9 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
             ORDER BY library_release.updated_at DESC, plan_track.id DESC
           ) AS offer_rank
         FROM AcquisitionPlanTracks plan_track
-        JOIN AcquisitionPlans plan
+        JOIN SelectedAcquisitionPlans plan
           ON plan.id = plan_track.plan_id
          AND plan.state = 'current'
-         AND plan.chosen = 1
         JOIN LibraryEditions library_release
           ON library_release.id = plan.library_edition_id
         JOIN AlbumEditions release

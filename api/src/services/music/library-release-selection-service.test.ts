@@ -151,7 +151,11 @@ test("manual library selection pins the exact provider edition on the active sch
     const before = service.getAvailability(albumMbid);
     assert.equal(before.libraries.length, 1);
     assert.deepEqual(before.libraries[0].allowedSourceFormats, ["lossless", "hires-lossless"]);
-    assert.deepEqual(before.libraries[0].selections, []);
+    // Every canonical Edition is listed; none is monitored yet.
+    assert.deepEqual(
+      before.libraries[0].selections.map((selection) => selection.monitored),
+      before.libraries[0].selections.map(() => false),
+    );
     assert.equal(before.releases[0].offers[0].relation, "exact");
     assert.deepEqual(
       before.releases[0].offers.flatMap((offer) =>
@@ -168,11 +172,13 @@ test("manual library selection pins the exact provider edition on the active sch
       editionId: 1,
       providerEditionMatchId: hiresOffer.providerEditionMatchId,
     });
-    assert.deepEqual(after.libraries[0].selections.map((selection) => ({
+    const monitored = after.libraries[0].selections.filter((selection) => selection.monitored);
+    assert.deepEqual(monitored.map((selection) => ({
       editionId: selection.editionId,
       selectionMode: selection.selectionMode,
       // Manual selection is a preference, not a lock: Lock is its own action.
       locked: selection.locked,
+      representative: selection.representative,
       composition: selection.plan?.composition,
       downloadMode: selection.plan?.downloadMode,
       primaryProviderEditionMatchId: selection.plan?.primaryProviderEditionMatchId,
@@ -180,6 +186,7 @@ test("manual library selection pins the exact provider edition on the active sch
       editionId: 1,
       selectionMode: "manual",
       locked: false,
+      representative: true,
       composition: "single_source",
       downloadMode: "album",
       primaryProviderEditionMatchId: hiresOffer.providerEditionMatchId,
@@ -188,27 +195,28 @@ test("manual library selection pins the exact provider edition on the active sch
       SELECT selection_mode, locked, monitored
       FROM LibraryAlbums
       WHERE library_id = 1 AND release_group_id = 1
-    `).get(), { selection_mode: "manual", locked: 1, monitored: 1 });
+    `).get(), { selection_mode: "manual", locked: 0, monitored: 1 });
     assert.deepEqual(db.prepare(`
       SELECT source.provider_edition_match_id, source.role
       FROM AcquisitionPlanSources source
-      JOIN AcquisitionPlans plan ON plan.id = source.plan_id
+      JOIN SelectedAcquisitionPlans plan ON plan.id = source.plan_id
       WHERE plan.library_edition_id = ?
-    `).get(after.libraries[0].selections[0].libraryEditionId), {
+    `).get(monitored[0].libraryEditionId), {
       provider_edition_match_id: hiresOffer.providerEditionMatchId,
       role: "primary",
     });
     new AcquisitionPlanningService(db).compute({
-      libraryEditionId: after.libraries[0].selections[0].libraryEditionId,
+      libraryId: after.libraries[0].id,
+      editionId: monitored[0].editionId,
       providerPriority: ["tidal"],
       plannerVersion: 2,
     });
     assert.equal((db.prepare(`
       SELECT source.provider_edition_match_id
       FROM AcquisitionPlanSources source
-      JOIN AcquisitionPlans plan ON plan.id = source.plan_id
+      JOIN SelectedAcquisitionPlans plan ON plan.id = source.plan_id
       WHERE plan.library_edition_id = ? AND source.role = 'primary'
-    `).get(after.libraries[0].selections[0].libraryEditionId) as {
+    `).get(monitored[0].libraryEditionId) as {
       provider_edition_match_id: number;
     }).provider_edition_match_id, hiresOffer.providerEditionMatchId);
   } finally {
@@ -216,7 +224,7 @@ test("manual library selection pins the exact provider edition on the active sch
   }
 });
 
-test("selecting an edition keeps another deliberately selected edition for the album", () => {
+test("an additive selection keeps the editions the album already monitors", () => {
   const artistMbid = "aaaaaaaa-1111-4111-8111-111111111111";
   const albumMbid = "aaaaaaaa-2222-4222-8222-222222222222";
   const deluxeMbid = "aaaaaaaa-3333-4333-8333-333333333333";
@@ -253,8 +261,8 @@ test("selecting an edition keeps another deliberately selected edition for the a
       -- The user deliberately selected the deluxe edition by hand (manual, but
       -- not locked — Lock is a separate action).
       INSERT INTO LibraryEditions (
-        id, library_id, edition_id, selection_mode, locked, reason, curation_version
-      ) VALUES (99, 1, 2, 'manual', 0, 'user', 1);
+        id, library_id, edition_id, selection_mode, reason, curation_version
+      ) VALUES (99, 1, 2, 'manual', 'user', 1);
     `);
 
     const service = new LibraryReleaseSelectionService(db);
@@ -262,6 +270,7 @@ test("selecting an edition keeps another deliberately selected edition for the a
       releaseGroupMbid: albumMbid,
       libraryId: 1,
       editionId: 1,
+      mode: "additive",
     });
 
     const selected = db.prepare(`
@@ -273,13 +282,12 @@ test("selecting an edition keeps another deliberately selected edition for the a
       { edition_id: 2, selection_mode: "manual" },
     ]);
 
-    // The explicit exclusive action is the only thing that reduces the album
-    // back to a single selected edition.
+    // The default — a normal click — reduces the album back to a single
+    // monitored edition. "Use only this" is what an ordinary selection means.
     service.selectRelease({
       releaseGroupMbid: albumMbid,
       libraryId: 1,
       editionId: 1,
-      exclusive: true,
     });
     assert.deepEqual(
       (db.prepare(`
@@ -323,8 +331,8 @@ test("an auto-curated edition is replaced by a manual selection", () => {
         id, name, root_path, metadata_profile_id, quality_profile_id, enabled
       ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
       INSERT INTO LibraryEditions (
-        id, library_id, edition_id, selection_mode, locked, reason, curation_version
-      ) VALUES (99, 1, 2, 'auto', 0, 'curation', 1);
+        id, library_id, edition_id, selection_mode, reason, curation_version
+      ) VALUES (99, 1, 2, 'auto', 'curation', 1);
     `);
 
     new LibraryReleaseSelectionService(db).selectRelease({
@@ -379,28 +387,37 @@ test("the album lock reaches the edition rows planning actually consults", () =>
 
     // Manual selection records a preference without silently locking.
     assert.deepEqual(
-      db.prepare("SELECT selection_mode, locked FROM LibraryEditions WHERE edition_id = 1").get(),
-      { selection_mode: "manual", locked: 0 },
+      db.prepare("SELECT selection_mode FROM LibraryEditions WHERE edition_id = 1").get(),
+      { selection_mode: "manual" },
+    );
+    assert.equal(
+      (db.prepare("SELECT locked FROM LibraryAlbums WHERE release_group_id = 1")
+        .get() as { locked: number }).locked,
+      0,
+      "an ordinary selection must not press Lock",
     );
 
     AlbumCommandService.updateAlbum(albumMbid, true, true);
 
-    // The lock must land on LibraryEditions, which is what acquisition planning
-    // and curation consult — not only on LibraryAlbums.
-    assert.equal(
-      (db.prepare("SELECT locked FROM LibraryEditions WHERE edition_id = 1")
-        .get() as { locked: number }).locked,
-      1,
-    );
+    // There is exactly one lock, on the Album, and every consumer reads it from
+    // there. A second per-edition lock could disagree with this one; that is the
+    // drift the column's removal makes unrepresentable.
     assert.equal(
       (db.prepare("SELECT locked FROM LibraryAlbums WHERE release_group_id = 1")
         .get() as { locked: number }).locked,
       1,
     );
+    assert.deepEqual(
+      db.prepare("SELECT name FROM pragma_table_info('LibraryEditions') WHERE name = 'locked'").all(),
+      [],
+    );
+    // Planning reads the Album lock for this Edition, monitored or not.
+    assert.equal(service.getAvailability(albumMbid).libraries[0].selections
+      .every((selection) => selection.locked), true);
 
     AlbumCommandService.updateAlbum(albumMbid, true, false);
     assert.equal(
-      (db.prepare("SELECT locked FROM LibraryEditions WHERE edition_id = 1")
+      (db.prepare("SELECT locked FROM LibraryAlbums WHERE release_group_id = 1")
         .get() as { locked: number }).locked,
       0,
       "unlocking lets curation reconsider the preference again",
@@ -410,7 +427,7 @@ test("the album lock reaches the edition rows planning actually consults", () =>
   }
 });
 
-test("an explicitly locked edition survives an exclusive selection", () => {
+test("a locked album rejects an exclusive selection instead of absorbing it", () => {
   const artistMbid = "dddddddd-1111-4111-8111-111111111111";
   const albumMbid = "dddddddd-2222-4222-8222-222222222222";
   resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
@@ -438,23 +455,31 @@ test("an explicitly locked edition survives an exclusive selection", () => {
       INSERT INTO Libraries (
         id, name, root_path, metadata_profile_id, quality_profile_id, enabled
       ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
+      INSERT INTO LibraryAlbums (
+        library_id, release_group_id, monitored, selection_mode, locked,
+        reason, curation_version
+      ) VALUES (1, 1, 1, 'manual', 1, 'user', 1);
       INSERT INTO LibraryEditions (
-        id, library_id, edition_id, selection_mode, locked, reason, curation_version
-      ) VALUES (99, 1, 2, 'manual', 1, 'user', 1);
+        id, library_id, edition_id, selection_mode, reason, curation_version
+      ) VALUES (99, 1, 2, 'manual', 'user', 1);
     `);
 
-    new LibraryReleaseSelectionService(db).selectRelease({
-      releaseGroupMbid: albumMbid,
-      libraryId: 1,
-      editionId: 1,
-      exclusive: true,
-    });
+    // A lock is not a tie-breaker the next action wins against; it stops the
+    // action outright and asks for an explicit unlock first.
+    assert.throws(
+      () => new LibraryReleaseSelectionService(db).selectRelease({
+        releaseGroupMbid: albumMbid,
+        libraryId: 1,
+        editionId: 1,
+      }),
+      /locked/i,
+    );
 
     assert.deepEqual(
       (db.prepare("SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id")
         .all() as Array<{ edition_id: number }>).map((row) => row.edition_id),
-      [1, 2],
-      "an explicit lock outranks an exclusive selection",
+      [2],
+      "the locked album keeps exactly the editions it had",
     );
   } finally {
     resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);

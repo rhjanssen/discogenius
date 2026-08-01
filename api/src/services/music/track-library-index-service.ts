@@ -43,7 +43,7 @@ export class TrackLibraryIndexService {
             WHERE file.track_id = track.id AND file.file_class = 'audio'
           ),
           MAX(CASE
-            WHEN plan.state = 'current' AND plan.chosen = 1
+            WHEN plan.state = 'current'
              AND plan_track.id IS NOT NULL
              AND NOT EXISTS (
                SELECT 1
@@ -53,7 +53,7 @@ export class TrackLibraryIndexService {
             THEN 1 ELSE 0
           END),
           MAX(CASE
-            WHEN plan.state = 'current' AND plan.chosen = 1
+            WHEN plan.state = 'current'
              AND plan_track.id IS NOT NULL
              AND EXISTS (
                SELECT 1
@@ -78,7 +78,7 @@ export class TrackLibraryIndexService {
           ON library_group.library_id = library_release.library_id
          AND library_group.release_group_id = release.release_group_id
          AND library_group.monitored = 1
-        LEFT JOIN AcquisitionPlans plan
+        LEFT JOIN SelectedAcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
         LEFT JOIN AcquisitionPlanTracks plan_track
           ON plan_track.plan_id = plan.id

@@ -20,6 +20,11 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+  // Candidate plans outlive the monitored rows now, so the reset has to
+  // drop them explicitly instead of relying on a cascade.
+  dbModule.db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlans").run();
   dbModule.db.prepare("DELETE FROM LibraryEditions").run();
   dbModule.db.prepare("DELETE FROM LibraryAlbums").run();
   dbModule.db.prepare("DELETE FROM Libraries").run();

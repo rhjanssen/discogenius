@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-processor-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -19,6 +20,8 @@ const downloadRoutingModule = await import("./download-routing.js");
 function resetRows() {
   db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM TrackFiles").run();
+  // Release the deferred plan reference before its rows go.
+  db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
@@ -163,17 +166,11 @@ function seedTypedRelease(input: {
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number };
-  const plan = db.prepare(`
-    INSERT INTO AcquisitionPlans (
-      library_edition_id, provider, composition, download_mode, state,
-      planner_version, policy_hash, computed_at
-    ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
-    RETURNING id
-  `).get(libraryRelease.id, input.provider) as { id: number };
+  const plan = seedSelectedAcquisitionPlan(db, { libraryEditionId: libraryRelease.id, provider: input.provider }) as { id: number };
   const source = db.prepare(`
     INSERT INTO AcquisitionPlanSources (
       plan_id, provider_edition_match_id, role, sort_order

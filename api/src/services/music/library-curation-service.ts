@@ -17,6 +17,7 @@ interface LibraryPolicyRow {
   id: number;
   release_type_policy: string;
   redundancy_enabled: number;
+  require_provider_availability: number;
   allowed_source_formats: string;
 }
 
@@ -102,6 +103,7 @@ export class LibraryCurationService {
         library.id,
         metadata.release_type_policy,
         metadata.redundancy_enabled,
+        metadata.require_provider_availability,
         quality.allowed_source_formats
       FROM Libraries library
       JOIN MetadataProfiles metadata ON metadata.id = library.metadata_profile_id
@@ -109,6 +111,7 @@ export class LibraryCurationService {
       WHERE library.id = ? AND library.enabled = 1
     `).get(input.libraryId) as LibraryPolicyRow | undefined;
     if (!library) throw new Error(`Enabled library ${input.libraryId} was not found`);
+    const requireProviderAvailability = Boolean(library.require_provider_availability);
 
     const libraryArtists = this.db.prepare(`
       SELECT
@@ -139,11 +142,19 @@ export class LibraryCurationService {
     const policy = parsePolicy(library.release_type_policy);
     const allowedQualities = parseStringArray(library.allowed_source_formats);
     const qualityPlaceholders = allowedQualities.map(() => "?").join(",");
+    // Editions automation may not drop: the user picked them, or their Album is
+    // locked. The lock is read from LibraryAlbums — the one place it lives.
     const protectedReleaseIds = new Set(
       (this.db.prepare(`
-        SELECT edition_id
-        FROM LibraryEditions
-        WHERE library_id = ? AND (locked = 1 OR selection_mode = 'manual')
+        SELECT monitored_edition.edition_id
+        FROM LibraryEditions monitored_edition
+        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+        LEFT JOIN LibraryAlbums library_album
+          ON library_album.library_id = monitored_edition.library_id
+         AND library_album.release_group_id = edition.release_group_id
+        WHERE monitored_edition.library_id = ?
+          AND (COALESCE(library_album.locked, 0) = 1
+               OR monitored_edition.selection_mode = 'manual')
       `).all(input.libraryId) as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id),
     );
 
@@ -264,13 +275,37 @@ export class LibraryCurationService {
       }
     }
 
+    // Every canonical Edition this library could conceivably monitor: in an
+    // artist scope and allowed by the release-type policy. Provider coverage is
+    // deliberately NOT a filter here — an Edition with no offer still has to be
+    // evaluated, planned and offered, it just will not be picked automatically.
+    const evaluatedEditions = releases.filter((release) =>
+      releaseIncluded(release, policy)
+      && (candidateScopes.get(release.edition_id) || []).length > 0);
+
+    // Plan BEFORE curating. Curation needs to weigh what a provider can actually
+    // deliver, and the Album page needs offers under Editions curation passes
+    // over, so plans cannot wait for the monitoring decision that follows them.
+    for (const release of evaluatedEditions) {
+      this.acquisitionPlanning.compute({
+        libraryId: input.libraryId,
+        editionId: release.edition_id,
+        providerPriority: input.providerPriority,
+        plannerVersion: input.acquisitionPlannerVersion,
+      });
+    }
+
+    const viableEditionIds = this.viablePlanEditionIds(input.libraryId);
     const candidates: CurationReleaseCandidate[] = [];
-    for (const release of releases) {
-      if (!releaseIncluded(release, policy)) continue;
-      const scopes = candidateScopes.get(release.edition_id) || [];
-      if (scopes.length === 0) continue;
+    for (const release of evaluatedEditions) {
       const attainableRecordingIds = attainableByRelease.get(release.edition_id) || new Set<number>();
-      if (attainableRecordingIds.size === 0 && !protectedReleaseIds.has(release.edition_id)) continue;
+      // With provider availability required, only an Edition a provider can
+      // actually deliver is eligible for automatic monitoring. Without it, any
+      // canonical Edition may be monitored and simply has no plan to execute.
+      const eligible = requireProviderAvailability
+        ? viableEditionIds.has(release.edition_id)
+        : true;
+      if (!eligible && !protectedReleaseIds.has(release.edition_id)) continue;
       candidates.push({
         releaseGroupId: release.release_group_id,
         editionId: release.edition_id,
@@ -290,6 +325,9 @@ export class LibraryCurationService {
     );
     const selectedScopes = result.selectedReleaseIds.flatMap((editionId) =>
       candidateScopes.get(editionId) || []);
+    // Curation is the only step that writes monitoring. Everything above it —
+    // metadata refresh, provider matching, plan generation — left the Library
+    // tables alone.
     this.repository.replaceAutomaticCuration({
       libraryId: input.libraryId,
       result,
@@ -298,21 +336,37 @@ export class LibraryCurationService {
       curationVersion: input.curationVersion,
     });
 
-    const selectedLibraryReleases = this.db.prepare(`
-      SELECT id
-      FROM LibraryEditions
-      WHERE library_id = ? AND edition_id IN (
-        ${result.selectedReleaseIds.length > 0 ? result.selectedReleaseIds.map(() => "?").join(",") : "NULL"}
-      )
-      ORDER BY id
-    `).all(input.libraryId, ...result.selectedReleaseIds) as Array<{ id: number }>;
-    for (const libraryRelease of selectedLibraryReleases) {
+    // Newly monitored Editions had no row when they were planned, so nothing
+    // recorded which plan they execute. Re-resolve the selection for those.
+    for (const editionId of result.selectedReleaseIds) {
       this.acquisitionPlanning.compute({
-        libraryEditionId: libraryRelease.id,
+        libraryId: input.libraryId,
+        editionId,
         providerPriority: input.providerPriority,
         plannerVersion: input.acquisitionPlannerVersion,
       });
     }
     return result;
+  }
+
+  /**
+   * Editions with at least one plan that delivers something.
+   *
+   * A single matched track is not a useful offer; requiring full coverage would
+   * reject an otherwise perfect 19-of-20 deluxe. The line is drawn at a plan
+   * that covers the whole canonical Edition, or is the best any provider can do
+   * while still covering a majority of it.
+   */
+  private viablePlanEditionIds(libraryId: number): Set<number> {
+    return new Set(
+      (this.db.prepare(`
+        SELECT DISTINCT edition_id
+        FROM AcquisitionPlans
+        WHERE library_id = ?
+          AND state = 'current'
+          AND target_track_count > 0
+          AND coverage * 2 > target_track_count
+      `).all(libraryId) as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id),
+    );
   }
 }

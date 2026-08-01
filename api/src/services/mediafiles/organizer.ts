@@ -538,10 +538,9 @@ export class OrganizerService {
       LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
       LEFT JOIN AcquisitionPlanSources plan_source
         ON plan_source.provider_edition_match_id = release_match.id
-      LEFT JOIN AcquisitionPlans plan
+      LEFT JOIN SelectedAcquisitionPlans plan
         ON plan.id = plan_source.plan_id
        AND plan.state = 'current'
-       AND plan.chosen = 1
       LEFT JOIN LibraryEditions library_release
         ON library_release.id = plan.library_edition_id
        AND library_release.edition_id = selected_release.id

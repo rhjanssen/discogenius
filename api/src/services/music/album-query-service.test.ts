@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-album-query-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -23,6 +24,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM AlbumLibraryIndex").run();
   db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  // Release the deferred plan reference before its rows go.
+  db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
@@ -273,21 +276,12 @@ function seedAlbum(options: {
     `).run(library.id, album.id);
     const libraryRelease = db.prepare(`
       INSERT INTO LibraryEditions (
-        library_id, edition_id, selection_mode, locked, curation_version
-      ) VALUES (?, ?, 'auto', 0, 1)
+        library_id, edition_id, selection_mode, curation_version
+      ) VALUES (?, ?, 'auto', 1)
       RETURNING id
     `).get(library.id, release.id) as { id: number };
     const spatial = library.name === "Album Query Spatial";
-    const plan = db.prepare(`
-      INSERT INTO AcquisitionPlans (
-        library_edition_id, provider, composition, download_mode, state,
-        planner_version, policy_hash, computed_at
-      ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
-      RETURNING id
-    `).get(
-      libraryRelease.id,
-      spatial ? options.spatialProvider : options.stereoProvider,
-    ) as { id: number };
+    const plan = seedSelectedAcquisitionPlan(db, { libraryEditionId: libraryRelease.id, provider: spatial ? options.spatialProvider : options.stereoProvider }) as { id: number };
     const source = db.prepare(`
       INSERT INTO AcquisitionPlanSources (
         plan_id, provider_edition_match_id, role, sort_order

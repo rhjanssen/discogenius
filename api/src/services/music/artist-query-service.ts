@@ -562,7 +562,7 @@ const artistReleaseGroupLibraryStateCte = `
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END
         ORDER BY
-          CASE WHEN plan.state = 'current' AND plan.chosen = 1 AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
+          CASE WHEN plan.state = 'current' AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
           library_release.updated_at DESC,
           library_release.id DESC,
           library.id ASC
@@ -583,10 +583,9 @@ const artistReleaseGroupLibraryStateCte = `
      )
     LEFT JOIN AlbumEditions release
       ON release.id = library_release.edition_id
-    LEFT JOIN AcquisitionPlans plan
+    LEFT JOIN SelectedAcquisitionPlans plan
       ON plan.library_edition_id = library_release.id
      AND plan.state = 'current'
-     AND plan.chosen = 1
     LEFT JOIN AcquisitionPlanSources source
       ON source.plan_id = plan.id
      AND source.id = (
@@ -1240,10 +1239,9 @@ export class ArtistQueryService {
         FROM top_tracks
         JOIN AcquisitionPlanTracks plan_track
           ON plan_track.track_id = top_tracks.track_row_id
-        JOIN AcquisitionPlans plan
+        JOIN SelectedAcquisitionPlans plan
           ON plan.id = plan_track.plan_id
          AND plan.state = 'current'
-         AND plan.chosen = 1
         JOIN LibraryEditions library_release
           ON library_release.id = plan.library_edition_id
          AND library_release.edition_id = top_tracks.album_release_row_id
@@ -1287,10 +1285,9 @@ export class ArtistQueryService {
          AND library.enabled = 1
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
-        JOIN AcquisitionPlans plan
+        JOIN SelectedAcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
-         AND plan.chosen = 1
         JOIN AcquisitionPlanSources source
           ON source.plan_id = plan.id
         JOIN ProviderEditionMatches release_match

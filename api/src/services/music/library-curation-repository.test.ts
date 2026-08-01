@@ -45,8 +45,11 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
       curationVersion: 1,
     });
     db.prepare(`
-      UPDATE LibraryEditions SET locked = 1, selection_mode = 'manual', reason = 'user'
+      UPDATE LibraryEditions SET selection_mode = 'manual', reason = 'user'
       WHERE library_id = ? AND edition_id = 1
+    `).run(libraries.stereoId);
+    db.prepare(`
+      UPDATE LibraryAlbums SET locked = 1 WHERE library_id = ? AND release_group_id = 1
     `).run(libraries.stereoId);
     repository.replaceAutomaticCuration({
       libraryId: libraries.stereoId,
@@ -60,12 +63,11 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
       curationVersion: 2,
     });
     assert.deepEqual(db.prepare(`
-      SELECT edition_id, selection_mode, locked, reason
+      SELECT edition_id, selection_mode, reason
       FROM LibraryEditions WHERE library_id = ?
     `).all(libraries.stereoId), [{
       edition_id: 1,
       selection_mode: "manual",
-      locked: 1,
       reason: "user",
     }]);
   } finally {

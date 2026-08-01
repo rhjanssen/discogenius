@@ -131,8 +131,8 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
     ["Tracks", ["id", "album_edition_id", "recording_id", "release_mbid", "recording_mbid"]],
     ["LibraryAlbums", ["id", "library_id", "release_group_id", "monitored", "selection_mode", "locked", "reason", "curation_version", "updated_at"]],
-    ["LibraryEditions", ["id", "library_id", "edition_id", "selection_mode", "locked", "reason", "curation_version", "selected_at", "updated_at"]],
-    ["AcquisitionPlans", ["id", "library_edition_id", "provider", "composition", "download_mode", "state", "planner_version", "policy_hash", "computed_at", "updated_at"]],
+    ["LibraryEditions", ["id", "library_id", "edition_id", "selection_mode", "representative", "reason", "curation_version", "preferred_plan_key", "plan_selection_mode", "selected_at", "updated_at"]],
+    ["AcquisitionPlans", ["id", "library_id", "edition_id", "provider", "composition", "download_mode", "state", "plan_key", "rank", "coverage", "target_track_count", "planner_version", "policy_hash", "computed_at", "updated_at"]],
     ["AcquisitionPlanTracks", ["id", "plan_id", "track_id", "source_id", "provider_track_match_id", "provider_audio_variant_id", "source_quality_snapshot", "created_at", "updated_at"]],
     ["TrackFiles", ["release_group_id", "album_edition_id", "track_id", "recording_id", "library_id", "source_audio_variant_id", "file_class", "source_quality", "imported_quality", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id", "codec", "video_codec", "width", "height"]],
     ["quality_profiles", ["allowed_source_formats", "preference_order", "continue_upgrades", "fallback_policy", "output_format", "transcode_policy"]],
@@ -147,6 +147,31 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
       assert.ok(columns.includes(columnName), `Expected ${tableName}.${columnName}`);
     }
   }
+});
+
+test("monitoring and plan ownership have exactly one representation each", () => {
+  const libraryEditions = tableColumns("LibraryEditions");
+  // Row existence is the monitoring decision; a column would be a second,
+  // driftable answer to the same question.
+  assert.equal(libraryEditions.includes("monitored"), false,
+    "LibraryEditions.monitored would compete with row existence");
+  // One Album lock, on LibraryAlbums. Two independently mutable locks drift.
+  assert.equal(libraryEditions.includes("locked"), false,
+    "LibraryEditions.locked would compete with the Album lock");
+
+  const plans = tableColumns("AcquisitionPlans");
+  // Plans belong to a Library and a canonical Edition, so they can exist for
+  // Editions nobody monitors.
+  assert.equal(plans.includes("library_edition_id"), false,
+    "AcquisitionPlans must not be owned by a monitored-edition row");
+  // Which plan runs is the monitored edition's business, not a global flag.
+  assert.equal(plans.includes("chosen"), false,
+    "AcquisitionPlans.chosen would compete with LibraryEditions.preferred_plan_key");
+
+  const view = dbModule.db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'view' AND name = 'SelectedAcquisitionPlans'",
+  ).get() as { name: string } | undefined;
+  assert.equal(view?.name, "SelectedAcquisitionPlans");
 });
 
 test("catalog tables do not retain raw metadata data blobs", () => {

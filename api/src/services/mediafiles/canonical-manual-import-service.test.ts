@@ -123,8 +123,7 @@ test("canonical manual import pins Library, Release, Track and Recording", async
         release_group.monitored,
         release_group.selection_mode AS group_mode,
         release_group.locked AS group_locked,
-        release.selection_mode AS release_mode,
-        release.locked AS release_locked
+        release.selection_mode AS release_mode
       FROM LibraryAlbums release_group
       JOIN LibraryEditions release
         ON release.library_id = release_group.library_id
@@ -138,7 +137,6 @@ test("canonical manual import pins Library, Release, Track and Recording", async
       // user intent. See the dedicated lock-preservation test below.
       group_locked: 0,
       release_mode: "manual",
-      release_locked: 0,
     });
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
@@ -268,8 +266,8 @@ test("a recording shared by two selected releases keeps the release-track the us
     for (const editionId of [10, 20]) {
       db.prepare(`
         INSERT INTO LibraryEditions (
-          library_id, edition_id, selection_mode, locked, reason, curation_version
-        ) VALUES (1, ?, 'auto', 0, 'test', 1)
+          library_id, edition_id, selection_mode, reason, curation_version
+        ) VALUES (1, ?, 'auto', 'test', 1)
       `).run(editionId);
     }
 
@@ -418,7 +416,6 @@ test("manual import monitors and custom-selects without silently locking", async
 
     // An existing lock is preserved across a later import.
     db.prepare("UPDATE LibraryAlbums SET locked = 1 WHERE library_id = 1").run();
-    db.prepare("UPDATE LibraryEditions SET locked = 1 WHERE library_id = 1").run();
     db.prepare("DELETE FROM TrackFiles WHERE id = 1").run();
     db.prepare(`
       INSERT INTO UnmappedFiles (id, file_path, relative_path, library_root, filename, extension)

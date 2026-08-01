@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mb-release-group-read-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -21,6 +22,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   dbModule.db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  // Release the deferred plan reference before its rows go.
+  dbModule.db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   dbModule.db.prepare("DELETE FROM AcquisitionPlans").run();
   dbModule.db.prepare("DELETE FROM LibraryEditions").run();
   dbModule.db.prepare("DELETE FROM LibraryAlbums").run();
@@ -128,8 +131,8 @@ function selectLibraryRelease(
   `).run(library.id, releaseGroup.id);
   return (db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number }).id;
 }
@@ -541,13 +544,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     ) VALUES (?, 'hires', 'hires-lossless', 'HIRES_LOSSLESS', 'available')
     RETURNING id
   `).get(providerTrack.id) as { id: number };
-  const plan = dbModule.db.prepare(`
-    INSERT INTO AcquisitionPlans (
-      library_edition_id, provider, composition, download_mode, state,
-      planner_version, policy_hash, computed_at
-    ) VALUES (?, 'apple-music', 'single_source', 'tracks', 'current', 1, 'test', CURRENT_TIMESTAMP)
-    RETURNING id
-  `).get(libraryEditionId) as { id: number };
+  const plan = seedSelectedAcquisitionPlan(dbModule.db, { libraryEditionId: libraryEditionId, provider: 'apple-music', downloadMode: 'tracks' }) as { id: number };
   const source = dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
       plan_id, provider_edition_match_id, role, sort_order

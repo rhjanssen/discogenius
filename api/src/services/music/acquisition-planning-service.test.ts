@@ -53,8 +53,8 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   `).run();
   db.prepare(`
     INSERT INTO LibraryEditions (
-      id, library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (1, 1, 1, 'auto', 0, 'fixture', 1)
+      id, library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (1, 1, 1, 'auto', 'fixture', 1)
   `).run();
 
   db.prepare(`
@@ -133,11 +133,12 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
   try {
     db.pragma("foreign_keys = ON");
     createDomainSchemaV41(db);
-    const libraryEditionId = seedStandardDeluxeFixture(db);
+    seedStandardDeluxeFixture(db);
     const service = new AcquisitionPlanningService(db);
 
     const highPlanId = service.compute({
-      libraryEditionId,
+      libraryId: 1,
+      editionId: 1,
       providerPriority: ["tidal"],
       plannerVersion: 1,
     });
@@ -179,7 +180,8 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
       WHERE id = 1
     `).run();
     const maxPlanId = service.compute({
-      libraryEditionId,
+      libraryId: 1,
+      editionId: 1,
       providerPriority: ["tidal"],
       plannerVersion: 2,
     });

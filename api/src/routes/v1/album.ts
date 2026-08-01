@@ -21,6 +21,22 @@ import {
 
 const router = Router();
 
+/**
+ * Exclusive ("use only this") is the default, matching a normal click. Additive
+ * is the deliberate Ctrl/Cmd-click or the explicit "Monitor alongside current
+ * editions" control.
+ */
+function parseSelectionMode(
+  body: Record<string, unknown>,
+): "exclusive" | "additive" | undefined {
+  const mode = body.mode;
+  if (mode === undefined || mode === null) return undefined;
+  if (mode !== "exclusive" && mode !== "additive") {
+    throw new Error('mode must be "exclusive" or "additive"');
+  }
+  return mode;
+}
+
 const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
 
@@ -153,7 +169,7 @@ router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
     const body = getObjectBody(req.body);
     rejectUnknownKeys(
       body,
-      ["editionId", "providerEditionMatchId", "exclusive"],
+      ["editionId", "providerEditionMatchId", "mode"],
       "Library release selection",
     );
     res.json(new LibraryReleaseSelectionService(db).selectRelease({
@@ -161,13 +177,47 @@ router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
       libraryId: Number.parseInt(req.params.libraryId, 10),
       editionId: getRequiredInteger(body, "editionId"),
       providerEditionMatchId: getOptionalInteger(body, "providerEditionMatchId"),
-      exclusive: getOptionalBoolean(body, "exclusive"),
+      mode: parseSelectionMode(body),
     }));
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });
     }
-    res.status(400).json({ detail: error.message });
+    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
+  }
+});
+
+/**
+ * Stop monitoring one Edition in one Library. Never deletes files — that is a
+ * separate, explicit deletion command.
+ */
+router.delete("/:albumId/libraries/:libraryId/selection/:editionId", (req, res) => {
+  try {
+    res.json(new LibraryReleaseSelectionService(db).removeEdition({
+      releaseGroupMbid: req.params.albumId,
+      libraryId: Number.parseInt(req.params.libraryId, 10),
+      editionId: Number.parseInt(req.params.editionId, 10),
+    }));
+  } catch (error: any) {
+    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
+  }
+});
+
+/** Make an already-monitored Edition the Primary one for its Album. */
+router.patch("/:albumId/libraries/:libraryId/representative", (req, res) => {
+  try {
+    const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["editionId"], "Representative edition");
+    res.json(new LibraryReleaseSelectionService(db).makeRepresentative({
+      releaseGroupMbid: req.params.albumId,
+      libraryId: Number.parseInt(req.params.libraryId, 10),
+      editionId: getRequiredInteger(body, "editionId"),
+    }));
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
   }
 });
 
@@ -284,7 +334,7 @@ router.delete("/:albumId/files", (req, res) => {
 router.patch("/:albumId/libraries/:libraryId/plan", (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["editionId", "planKey", "automatic"], "Library plan selection");
+    rejectUnknownKeys(body, ["editionId", "planKey", "automatic", "mode"], "Library plan selection");
     const service = new LibraryReleaseSelectionService(db);
     const editionId = getRequiredInteger(body, "editionId");
     const libraryId = Number.parseInt(req.params.libraryId, 10);
@@ -311,12 +361,13 @@ router.patch("/:albumId/libraries/:libraryId/plan", (req, res) => {
       libraryId,
       editionId,
       planKey,
+      mode: parseSelectionMode(body),
     }));
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });
     }
-    res.status(400).json({ detail: error.message });
+    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
   }
 });
 

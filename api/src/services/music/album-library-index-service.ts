@@ -48,7 +48,7 @@ export class AlbumLibraryIndexService {
             MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored,
             MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) AS monitored_lock,
             MAX(CASE
-              WHEN plan.state = 'current' AND plan.chosen = 1
+              WHEN plan.state = 'current'
                AND release_match.match_state = 'accepted'
                AND NOT EXISTS (
                  SELECT 1
@@ -58,7 +58,7 @@ export class AlbumLibraryIndexService {
               THEN 1 ELSE 0
             END) AS has_stereo_provider,
             MAX(CASE
-              WHEN plan.state = 'current' AND plan.chosen = 1
+              WHEN plan.state = 'current'
                AND release_match.match_state = 'accepted'
                AND EXISTS (
                  SELECT 1
@@ -78,7 +78,7 @@ export class AlbumLibraryIndexService {
           LEFT JOIN AlbumEditions release
             ON release.id = library_release.edition_id
            AND release.release_group_id = library_group.release_group_id
-          LEFT JOIN AcquisitionPlans plan
+          LEFT JOIN SelectedAcquisitionPlans plan
             ON plan.library_edition_id = library_release.id
           LEFT JOIN AcquisitionPlanSources plan_source
             ON plan_source.plan_id = plan.id

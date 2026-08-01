@@ -119,8 +119,8 @@ function seedLibraryReleaseSelection(options: {
   `).run(library.id, releaseGroup.id, options.monitored ? 1 : 0);
   db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, curation_version
-    ) VALUES (?, ?, 'auto', 0, 1)
+      library_id, edition_id, selection_mode, curation_version
+    ) VALUES (?, ?, 'auto', 1)
   `).run(library.id, release.id);
   return library.id;
 }
@@ -152,6 +152,11 @@ beforeEach(() => {
   db.prepare("DELETE FROM MetadataFiles").run();
   db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM TrackFiles").run();
+  // Candidate plans outlive the monitored rows now, so the reset has to
+  // drop them explicitly instead of relying on a cascade.
+  db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM ProviderItems").run();

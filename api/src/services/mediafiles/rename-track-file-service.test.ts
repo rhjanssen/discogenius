@@ -467,9 +467,9 @@ test("rename preload follows the selected-release track identity for hybrid sour
   `).run();
   dbModule.db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, reason, curation_version
     )
-    SELECT library_group.library_id, release.id, 'manual', 0, 'hybrid_rename_test', 1
+    SELECT library_group.library_id, release.id, 'manual', 'hybrid_rename_test', 1
     FROM LibraryAlbums library_group
     JOIN Albums album ON album.id = library_group.release_group_id
     JOIN AlbumEditions release ON release.mbid = 'release-mbid-1'

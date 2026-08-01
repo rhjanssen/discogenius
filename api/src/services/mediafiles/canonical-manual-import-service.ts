@@ -229,18 +229,35 @@ export class CanonicalManualImportService {
           reason = excluded.reason,
           updated_at = CURRENT_TIMESTAMP
       `).run(request.libraryId, release.release_group_id);
+      // Importing files for an Edition monitors it. Whether it becomes the
+      // Album's representative is left to whatever already holds that role:
+      // an import is evidence about one Edition, not a verdict on the Album.
       this.db.prepare(`
         INSERT INTO LibraryEditions (
-          library_id, edition_id, selection_mode, locked, reason,
+          library_id, edition_id, selection_mode, representative, reason,
           curation_version, selected_at, updated_at
-        ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1,
-                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ) VALUES (
+          ?, ?, 'manual',
+          NOT EXISTS (
+            SELECT 1 FROM LibraryEditions existing
+            JOIN AlbumEditions existing_edition ON existing_edition.id = existing.edition_id
+            WHERE existing.library_id = ?
+              AND existing_edition.release_group_id = ?
+              AND existing.representative = 1
+          ),
+          'canonical_manual_import', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
         ON CONFLICT(library_id, edition_id) DO UPDATE SET
           selection_mode = 'manual',
           reason = excluded.reason,
           selected_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
-      `).run(request.libraryId, request.editionId);
+      `).run(
+        request.libraryId,
+        request.editionId,
+        request.libraryId,
+        release.release_group_id,
+      );
       for (const mapping of request.mappings) {
         const track = trackById.get(mapping.trackId)!;
         const exactFileId = importedFileIdByUnmappedId.get(mapping.unmappedFileId);

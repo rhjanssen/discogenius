@@ -441,12 +441,14 @@ export function createDomainSchemaV41(db: Database.Database): void {
       FOREIGN KEY (release_group_id) REFERENCES Albums(id) ON DELETE CASCADE
     );
 
+    -- Row existence is the monitoring decision. No monitored column, and no
+    -- per-edition locked: LibraryAlbums.locked is the one Album lock.
     CREATE TABLE LibraryEditions (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
       edition_id INTEGER NOT NULL,
       selection_mode TEXT NOT NULL CHECK (selection_mode IN ('auto', 'manual')),
-      locked INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+      representative INTEGER NOT NULL DEFAULT 1 CHECK (representative IN (0, 1)),
       reason TEXT,
       curation_version INTEGER NOT NULL,
       preferred_plan_key TEXT,
@@ -456,7 +458,10 @@ export function createDomainSchemaV41(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (library_id, edition_id),
       FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY (edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
+      FOREIGN KEY (edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
+      FOREIGN KEY (library_id, edition_id, preferred_plan_key)
+        REFERENCES AcquisitionPlans(library_id, edition_id, plan_key)
+        DEFERRABLE INITIALLY DEFERRED
     );
 
     CREATE TABLE LibraryEditionScopes (
@@ -469,19 +474,20 @@ export function createDomainSchemaV41(db: Database.Database): void {
       FOREIGN KEY (library_artist_id) REFERENCES LibraryArtists(id) ON DELETE CASCADE
     );
 
+    -- Scoped to a Library and a canonical Edition, so a plan can exist for an
+    -- Edition that is evaluated but not monitored.
     CREATE TABLE AcquisitionPlans (
       id INTEGER PRIMARY KEY,
-      library_edition_id INTEGER NOT NULL,
+      library_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       provider TEXT NOT NULL,
       composition TEXT NOT NULL CHECK (composition IN ('single_source', 'composite')),
       download_mode TEXT NOT NULL CHECK (download_mode IN ('album', 'tracks')),
       state TEXT NOT NULL CHECK (state IN ('current', 'stale', 'unavailable', 'failed')),
-      chosen BOOLEAN NOT NULL DEFAULT 1,
-      selection_mode TEXT NOT NULL DEFAULT 'auto'
-        CHECK (selection_mode IN ('auto', 'manual')),
-      plan_key TEXT NOT NULL DEFAULT '',
+      plan_key TEXT NOT NULL,
       rank INTEGER NOT NULL DEFAULT 0,
       coverage INTEGER NOT NULL DEFAULT 0,
+      target_track_count INTEGER NOT NULL DEFAULT 0,
       quality_tier TEXT NOT NULL DEFAULT 'lossless',
       explicit_content TEXT NOT NULL DEFAULT 'unknown'
         CHECK (explicit_content IN ('explicit', 'clean', 'unknown')),
@@ -492,11 +498,10 @@ export function createDomainSchemaV41(db: Database.Database): void {
       policy_hash TEXT NOT NULL,
       computed_at TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (library_edition_id) REFERENCES LibraryEditions(id) ON DELETE CASCADE
+      UNIQUE (library_id, edition_id, plan_key),
+      FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY (edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
     );
-
-    CREATE UNIQUE INDEX idx_domain_acquisition_plans_chosen
-      ON AcquisitionPlans(library_edition_id) WHERE chosen = 1;
 
     CREATE TABLE AcquisitionPlanSources (
       id INTEGER PRIMARY KEY,
@@ -634,6 +639,21 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_track_files_library_track ON TrackFiles(library_id, track_id);
     CREATE INDEX idx_track_files_library_recording ON TrackFiles(library_id, recording_id);
     CREATE INDEX idx_track_files_library_release ON TrackFiles(library_id, album_edition_id);
+    CREATE INDEX idx_acquisition_plans_edition ON AcquisitionPlans(library_id, edition_id, rank);
+
+    -- The plan that actually executes: monitored Edition (a LibraryEditions row
+    -- exists) AND the plan that row selected. Keeping both conditions in one
+    -- view stops a reader satisfying one and forgetting the other.
+    CREATE VIEW SelectedAcquisitionPlans AS
+      SELECT
+        plan.*,
+        monitored_edition.id AS library_edition_id,
+        monitored_edition.plan_selection_mode AS selection_mode
+      FROM AcquisitionPlans plan
+      JOIN LibraryEditions monitored_edition
+        ON monitored_edition.library_id = plan.library_id
+       AND monitored_edition.edition_id = plan.edition_id
+       AND monitored_edition.preferred_plan_key = plan.plan_key;
   `);
 
   db.exec(`

@@ -24,6 +24,8 @@ function writeFilteringConfig(includeSpatial: boolean, includeVideos: boolean) {
 
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
+  // Release the deferred plan reference before its rows go.
+  db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
@@ -129,8 +131,8 @@ function seedCanonicalArtistGraph() {
   `).run(stereoLibrary.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
   `).run(stereoLibrary.id, release.id);
 
   db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, artist_metadata_id, is_video, monitored) VALUES (?, ?, ?, ?, ?, ?)")
@@ -361,8 +363,8 @@ test("download completion follows enabled libraries and keeps their track identi
   `).run(spatialLibrary.id, graph.releaseGroupId);
   db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
   `).run(spatialLibrary.id, graph.editionId);
   insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
   insertTrackFile("track-2", "recording-2", "provider-track-2", "track-two.flac");

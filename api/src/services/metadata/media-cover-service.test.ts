@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import * as jpeg from "jpeg-js";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-media-cover-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -115,8 +116,8 @@ function linkProviderArtworkCandidate(options: {
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT OR IGNORE INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
   `).run(library.id, release.id);
   const libraryRelease = db.prepare(`
     SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = ?
@@ -127,18 +128,15 @@ function linkProviderArtworkCandidate(options: {
     WHERE provider_edition_item_id = ? AND edition_id = ?
   `).get(providerItem.id, release.id) as { id: number };
   db.prepare(`
-    INSERT INTO AcquisitionPlans (
-      library_edition_id, provider, composition, download_mode, state,
-      chosen, plan_key, planner_version, policy_hash, computed_at
-    ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'fixture', 1, 'test', CURRENT_TIMESTAMP)
-    ON CONFLICT(library_edition_id) WHERE chosen = 1 DO UPDATE SET
-      provider = excluded.provider,
-      state = 'current'
-  `).run(libraryRelease.id, options.provider);
-  const plan = db.prepare(`
-    SELECT id FROM AcquisitionPlans WHERE library_edition_id = ? AND chosen = 1
-  `).get(libraryRelease.id) as { id: number };
-  db.prepare("DELETE FROM AcquisitionPlanSources WHERE plan_id = ?").run(plan.id);
+    DELETE FROM AcquisitionPlans
+    WHERE (library_id, edition_id) = (
+      SELECT library_id, edition_id FROM LibraryEditions WHERE id = ?
+    )
+  `).run(libraryRelease.id);
+  const plan = seedSelectedAcquisitionPlan(db, {
+    libraryEditionId: libraryRelease.id,
+    provider: options.provider,
+  });
   db.prepare(`
     INSERT INTO AcquisitionPlanSources (
       plan_id, provider_edition_match_id, role, sort_order
@@ -1359,7 +1357,7 @@ test("album provider artwork candidates prefer nonspatial plans, then spatial pl
     SET state = 'stale'
     WHERE id IN (
       SELECT plan.id
-      FROM AcquisitionPlans plan
+      FROM SelectedAcquisitionPlans plan
       JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
       JOIN Libraries library ON library.id = library_release.library_id
       WHERE library.name = ?

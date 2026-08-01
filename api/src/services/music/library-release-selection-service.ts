@@ -15,18 +15,26 @@ export interface LibraryAcquisitionPlanView {
   chosen: boolean;
   selectionMode: "auto" | "manual";
   rank: number;
+  /** Canonical tracks delivered, out of `targetTrackCount`. */
   coverage: number;
+  targetTrackCount: number;
   qualityTier: string;
   explicitContent: "explicit" | "clean" | "unknown";
 }
 
 export interface LibraryReleaseSelectionView {
-  libraryEditionId: number;
+  /** Null when this Edition was evaluated but is not monitored. */
+  libraryEditionId: number | null;
   editionId: number;
   releaseMbid: string;
+  /** A LibraryEditions row exists for this Library and Edition. */
+  monitored: boolean;
+  /** The Primary edition of this Album in this Library. */
+  representative: boolean;
   selectionMode: "auto" | "manual";
+  /** The Album lock — one value for every Edition of the Album in this Library. */
   locked: boolean;
-  /** The plan that will actually be executed. */
+  /** The plan that will actually be executed. Null unless monitored. */
   plan: LibraryAcquisitionPlanView | null;
   /** Every viable plan for this edition, best-ranked first. */
   plans: LibraryAcquisitionPlanView[];
@@ -204,60 +212,51 @@ export class LibraryReleaseSelectionService {
       }
     }
 
+    // One row per enabled Library × canonical Edition, whether or not that
+    // Edition is monitored. Monitoring is derived from the LEFT JOIN: an Edition
+    // with no LibraryEditions row is simply unmonitored, and still carries its
+    // plans so the user can see what switching to it would get them.
     const libraryRows = this.db.prepare(`
       SELECT
         library.id AS library_id,
         library.name AS library_name,
         quality.name AS quality_profile,
         quality.allowed_source_formats,
-        library_release.id AS library_edition_id,
-        library_release.edition_id,
-        release.mbid AS release_mbid,
-        library_release.selection_mode,
-        library_release.locked,
-        library_release.plan_selection_mode,
-        plan.id AS plan_id,
-        plan.provider AS plan_provider,
-        plan.composition,
-        plan.download_mode,
-        plan.state AS plan_state
-        ,primary_source.provider_edition_match_id AS primary_provider_edition_match_id
+        edition.id AS edition_id,
+        edition.mbid AS release_mbid,
+        monitored_edition.id AS library_edition_id,
+        monitored_edition.selection_mode,
+        monitored_edition.representative,
+        monitored_edition.plan_selection_mode,
+        monitored_edition.preferred_plan_key,
+        COALESCE(library_album.locked, 0) AS locked
       FROM Libraries library
       JOIN quality_profiles quality ON quality.id = library.quality_profile_id
-      LEFT JOIN LibraryEditions library_release
-        ON library_release.library_id = library.id
-       AND library_release.edition_id IN (
-         SELECT id FROM AlbumEditions WHERE release_group_id = ?
-       )
-      LEFT JOIN AlbumEditions release ON release.id = library_release.edition_id
-      LEFT JOIN AcquisitionPlans plan
-        ON plan.library_edition_id = library_release.id
-       AND plan.state = 'current'
-       AND plan.chosen = 1
-      LEFT JOIN AcquisitionPlanSources primary_source
-        ON primary_source.plan_id = plan.id
-       AND primary_source.role = 'primary'
+      JOIN AlbumEditions edition ON edition.release_group_id = ?
+      LEFT JOIN LibraryAlbums library_album
+        ON library_album.library_id = library.id
+       AND library_album.release_group_id = edition.release_group_id
+      LEFT JOIN LibraryEditions monitored_edition
+        ON monitored_edition.library_id = library.id
+       AND monitored_edition.edition_id = edition.id
       WHERE library.enabled = 1
-      ORDER BY library.id, library_release.id
+      ORDER BY library.id, edition.id
     `).all(releaseGroup.id) as Array<{
       library_id: number;
       library_name: string;
       quality_profile: string;
       allowed_source_formats: string;
+      edition_id: number;
+      release_mbid: string;
       library_edition_id: number | null;
-      edition_id: number | null;
-      release_mbid: string | null;
       selection_mode: LibraryReleaseSelectionView["selectionMode"] | null;
-      locked: number | null;
+      representative: number | null;
       plan_selection_mode: LibraryReleaseSelectionView["planSelectionMode"] | null;
-      plan_id: number | null;
-      plan_provider: string | null;
-      composition: LibraryAcquisitionPlanView["composition"] | null;
-      download_mode: LibraryAcquisitionPlanView["downloadMode"] | null;
-      plan_state: LibraryAcquisitionPlanView["state"] | null;
-      primary_provider_edition_match_id: number | null;
+      preferred_plan_key: string | null;
+      locked: number;
     }>;
     const libraryById = new Map<number, LibrarySelectionView>();
+    const preferredPlanKeyByEdition = new Map<string, string | null>();
     for (const row of libraryRows) {
       let library = libraryById.get(row.library_id);
       if (!library) {
@@ -277,65 +276,64 @@ export class LibraryReleaseSelectionService {
         };
         libraryById.set(row.library_id, library);
       }
-      if (
-        row.library_edition_id != null
-        && row.edition_id != null
-        && row.release_mbid
-        && row.selection_mode
-      ) {
-        library.selections.push({
-          libraryEditionId: row.library_edition_id,
-          editionId: row.edition_id,
-          releaseMbid: row.release_mbid,
-          selectionMode: row.selection_mode,
-          locked: Boolean(row.locked),
-          planSelectionMode: row.plan_selection_mode ?? "auto",
-          plan: null,
-          plans: [],
-        });
-      }
+      preferredPlanKeyByEdition.set(
+        `${row.library_id}:${row.edition_id}`,
+        row.preferred_plan_key,
+      );
+      library.selections.push({
+        libraryEditionId: row.library_edition_id,
+        editionId: row.edition_id,
+        releaseMbid: row.release_mbid,
+        monitored: row.library_edition_id != null,
+        representative: Boolean(row.representative),
+        selectionMode: row.selection_mode ?? "auto",
+        locked: Boolean(row.locked),
+        planSelectionMode: row.plan_selection_mode ?? "auto",
+        plan: null,
+        plans: [],
+      });
     }
 
-    // Every viable plan per selected edition, so a library can be offered its
-    // real alternatives rather than only the one the planner ranked first.
+    // Every viable plan per (Library, canonical Edition) — including Editions
+    // curation evaluated and did not monitor, which is what makes offering an
+    // alternative Edition possible at all.
     const libraries = [...libraryById.values()];
-    const libraryEditionIds = libraries
-      .flatMap((library) => library.selections.map((selection) => selection.libraryEditionId));
-    if (libraryEditionIds.length > 0) {
-      const placeholders = libraryEditionIds.map(() => "?").join(",");
+    if (libraries.length > 0) {
       const planRows = this.db.prepare(`
         SELECT
           plan.id,
-          plan.library_edition_id,
+          plan.library_id,
+          plan.edition_id,
           plan.plan_key,
           plan.provider,
           plan.composition,
           plan.download_mode,
           plan.state,
-          plan.chosen,
-          plan.selection_mode,
           plan.rank,
           plan.coverage,
+          plan.target_track_count,
           plan.quality_tier,
           plan.explicit_content,
           source.provider_edition_match_id,
           source.role
         FROM AcquisitionPlans plan
+        JOIN Libraries library ON library.id = plan.library_id AND library.enabled = 1
+        JOIN AlbumEditions edition ON edition.id = plan.edition_id
         LEFT JOIN AcquisitionPlanSources source ON source.plan_id = plan.id
-        WHERE plan.library_edition_id IN (${placeholders})
-        ORDER BY plan.library_edition_id, plan.rank, plan.id, source.sort_order
-      `).all(...libraryEditionIds) as Array<{
+        WHERE edition.release_group_id = ?
+        ORDER BY plan.library_id, plan.edition_id, plan.rank, plan.id, source.sort_order
+      `).all(releaseGroup.id) as Array<{
         id: number;
-        library_edition_id: number;
+        library_id: number;
+        edition_id: number;
         plan_key: string;
         provider: string;
         composition: LibraryAcquisitionPlanView["composition"];
         download_mode: LibraryAcquisitionPlanView["downloadMode"];
         state: LibraryAcquisitionPlanView["state"];
-        chosen: number;
-        selection_mode: LibraryAcquisitionPlanView["selectionMode"];
         rank: number;
         coverage: number;
+        target_track_count: number;
         quality_tier: string;
         explicit_content: "explicit" | "clean" | "unknown";
         provider_edition_match_id: number | null;
@@ -343,10 +341,12 @@ export class LibraryReleaseSelectionService {
       }>;
 
       const planViewById = new Map<number, LibraryAcquisitionPlanView>();
-      const plansByEdition = new Map<number, LibraryAcquisitionPlanView[]>();
+      const plansByEdition = new Map<string, LibraryAcquisitionPlanView[]>();
       for (const planRow of planRows) {
+        const scopeKey = `${planRow.library_id}:${planRow.edition_id}`;
         let view = planViewById.get(planRow.id);
         if (!view) {
+          const selectedKey = preferredPlanKeyByEdition.get(scopeKey) ?? null;
           view = {
             id: planRow.id,
             planKey: planRow.plan_key,
@@ -356,17 +356,18 @@ export class LibraryReleaseSelectionService {
             composition: planRow.composition,
             downloadMode: planRow.download_mode,
             state: planRow.state,
-            chosen: Boolean(planRow.chosen),
-            selectionMode: planRow.selection_mode,
+            chosen: selectedKey != null && selectedKey === planRow.plan_key,
+            selectionMode: "auto",
             rank: planRow.rank,
             coverage: planRow.coverage,
+            targetTrackCount: planRow.target_track_count,
             qualityTier: planRow.quality_tier,
             explicitContent: planRow.explicit_content,
           };
           planViewById.set(planRow.id, view);
-          const list = plansByEdition.get(planRow.library_edition_id) || [];
+          const list = plansByEdition.get(scopeKey) || [];
           list.push(view);
-          plansByEdition.set(planRow.library_edition_id, list);
+          plansByEdition.set(scopeKey, list);
         }
         if (planRow.provider_edition_match_id != null) {
           view.providerEditionMatchIds.push(planRow.provider_edition_match_id);
@@ -378,9 +379,14 @@ export class LibraryReleaseSelectionService {
 
       for (const library of libraries) {
         for (const selection of library.selections) {
-          const plans = plansByEdition.get(selection.libraryEditionId) || [];
+          const plans = plansByEdition.get(`${library.id}:${selection.editionId}`) || [];
           selection.plans = plans;
-          selection.plan = plans.find((plan) => plan.chosen) ?? null;
+          for (const plan of plans) plan.selectionMode = selection.planSelectionMode;
+          // Only a monitored Edition executes a plan. An unmonitored one lists
+          // its offers without any of them being the one that runs.
+          selection.plan = selection.monitored
+            ? plans.find((plan) => plan.chosen) ?? null
+            : null;
         }
       }
     }
@@ -394,29 +400,122 @@ export class LibraryReleaseSelectionService {
   }
 
   /**
-   * Pick which persisted acquisition plan a library executes for an edition.
+   * Choose an Edition and the offer that acquires it, in one action.
    *
-   * The choice is stored on LibraryEditions by plan_key so it outlives the plan
-   * rows, which are rebuilt on every replan.
+   * A plan card sits under a canonical Edition that may or may not be monitored,
+   * so clicking one has to mean the whole thing: monitor this Edition for this
+   * Library and execute exactly this offer.
+   *
+   * `mode: "exclusive"` (a normal click) is "use only this" — it replaces every
+   * other monitored Edition of the Album in this Library and takes over as the
+   * representative. `mode: "additive"` (Ctrl/Cmd-click, or the explicit
+   * "Monitor alongside current editions" control) keeps the others and the
+   * current representative, adding this Edition as a supplemental one.
+   *
+   * Neither mode presses Lock. Lock is a separate, explicit action, and it is
+   * what makes a choice permanent rather than merely preferred.
    */
   choosePlan(input: {
     releaseGroupMbid: string;
     libraryId: number;
     editionId: number;
     planKey: string;
+    mode?: "exclusive" | "additive";
   }): LibraryReleaseGroupAvailabilityView {
-    const libraryEdition = this.requireLibraryEdition(input);
-    const planId = new AcquisitionPlanRepository(this.db)
-      .choosePlan(libraryEdition.id, input.planKey);
-    if (planId == null) {
-      throw new Error(`No acquisition plan ${input.planKey} exists for this library edition`);
-    }
-    this.db.prepare(`
-      UPDATE LibraryEditions
-      SET preferred_plan_key = ?, plan_selection_mode = 'manual',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(input.planKey, libraryEdition.id);
+    const target = this.requireTargetEdition(input);
+    const exclusive = input.mode !== "additive";
+    this.assertAlbumUnlocked(target, exclusive);
+
+    this.db.transaction(() => {
+      this.ensureLibraryAlbum(input.libraryId, target.releaseGroupId);
+      this.monitorEdition({
+        libraryId: input.libraryId,
+        editionId: input.editionId,
+        releaseGroupId: target.releaseGroupId,
+        exclusive,
+      });
+      if (!new AcquisitionPlanRepository(this.db).selectPlan({
+        libraryId: input.libraryId,
+        editionId: input.editionId,
+        planKey: input.planKey,
+      })) {
+        throw new Error(
+          `No acquisition plan ${input.planKey} exists for this library and edition`,
+        );
+      }
+    })();
+    return this.getAvailability(input.releaseGroupMbid);
+  }
+
+  /**
+   * Stop monitoring one Edition.
+   *
+   * Removing the representative promotes the best remaining Edition; removing
+   * the last one unmonitors the Album itself. Files are never touched — that is
+   * a separate, explicit deletion command.
+   */
+  removeEdition(input: {
+    releaseGroupMbid: string;
+    libraryId: number;
+    editionId: number;
+  }): LibraryReleaseGroupAvailabilityView {
+    const target = this.requireTargetEdition(input);
+    this.assertAlbumUnlocked(target, true);
+
+    this.db.transaction(() => {
+      const removed = this.db.prepare(`
+        DELETE FROM LibraryEditions WHERE library_id = ? AND edition_id = ?
+      `).run(input.libraryId, input.editionId).changes;
+      if (removed === 0) return;
+
+      const remaining = this.db.prepare(`
+        SELECT monitored_edition.id, monitored_edition.representative
+        FROM LibraryEditions monitored_edition
+        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+        WHERE monitored_edition.library_id = ? AND edition.release_group_id = ?
+        ORDER BY edition.track_count DESC, COALESCE(edition.date, '9999-99-99'),
+                 edition.id
+      `).all(input.libraryId, target.releaseGroupId) as Array<{
+        id: number;
+        representative: number;
+      }>;
+
+      if (remaining.length === 0) {
+        // No monitored Edition left means the Album is no longer monitored here.
+        // Canonical metadata, provider matches and candidate plans all survive.
+        this.db.prepare(`
+          DELETE FROM LibraryAlbums WHERE library_id = ? AND release_group_id = ?
+        `).run(input.libraryId, target.releaseGroupId);
+        return;
+      }
+      if (!remaining.some((edition) => edition.representative)) {
+        this.db.prepare(`
+          UPDATE LibraryEditions
+          SET representative = 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(remaining[0].id);
+      }
+    })();
+    return this.getAvailability(input.releaseGroupMbid);
+  }
+
+  /** Make an already-monitored Edition the Primary one for its Album. */
+  makeRepresentative(input: {
+    releaseGroupMbid: string;
+    libraryId: number;
+    editionId: number;
+  }): LibraryReleaseGroupAvailabilityView {
+    const target = this.requireTargetEdition(input);
+    this.assertAlbumUnlocked(target, true);
+    this.db.transaction(() => {
+      const promoted = this.db.prepare(`
+        UPDATE LibraryEditions
+        SET representative = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE library_id = ? AND edition_id = ?
+      `).run(input.libraryId, input.editionId).changes;
+      if (promoted === 0) throw new Error("This edition is not monitored in this library");
+      this.demoteOtherEditions(input.libraryId, input.editionId, target.releaseGroupId);
+    })();
     return this.getAvailability(input.releaseGroupMbid);
   }
 
@@ -429,16 +528,17 @@ export class LibraryReleaseSelectionService {
     libraryId: number;
     editionId: number;
   }): LibraryReleaseGroupAvailabilityView {
-    const libraryEdition = this.requireLibraryEdition(input);
+    this.requireTargetEdition(input);
     this.db.prepare(`
       UPDATE LibraryEditions
       SET preferred_plan_key = NULL, plan_selection_mode = 'auto',
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(libraryEdition.id);
+      WHERE library_id = ? AND edition_id = ?
+    `).run(input.libraryId, input.editionId);
     const configuredPriority = getConfigSection("streaming")?.provider_priority;
     new AcquisitionPlanningService(this.db).compute({
-      libraryEditionId: libraryEdition.id,
+      libraryId: input.libraryId,
+      editionId: input.editionId,
       providerPriority: Array.isArray(configuredPriority)
         ? configuredPriority.map(String)
         : [],
@@ -447,57 +547,170 @@ export class LibraryReleaseSelectionService {
     return this.getAvailability(input.releaseGroupMbid);
   }
 
-  private requireLibraryEdition(input: {
+  private requireTargetEdition(input: {
     releaseGroupMbid: string;
     libraryId: number;
     editionId: number;
-  }): { id: number } {
+  }): { editionId: number; releaseGroupId: number; locked: boolean } {
     const row = this.db.prepare(`
-      SELECT library_release.id
-      FROM LibraryEditions library_release
-      JOIN AlbumEditions release ON release.id = library_release.edition_id
-      JOIN Albums release_group ON release_group.id = release.release_group_id
-      JOIN Libraries library ON library.id = library_release.library_id AND library.enabled = 1
-      WHERE library_release.library_id = ?
-        AND library_release.edition_id = ?
-        AND release_group.mbid = ?
-    `).get(input.libraryId, input.editionId, input.releaseGroupMbid) as { id?: number } | undefined;
-    if (!row?.id) {
-      throw new Error("This edition is not selected for this enabled library");
+      SELECT
+        edition.id AS edition_id,
+        edition.release_group_id,
+        COALESCE(library_album.locked, 0) AS locked
+      FROM AlbumEditions edition
+      JOIN Albums release_group ON release_group.id = edition.release_group_id
+      JOIN Libraries library ON library.id = ? AND library.enabled = 1
+      LEFT JOIN LibraryAlbums library_album
+        ON library_album.library_id = library.id
+       AND library_album.release_group_id = edition.release_group_id
+      WHERE edition.id = ? AND release_group.mbid = ?
+    `).get(input.libraryId, input.editionId, input.releaseGroupMbid) as {
+      edition_id: number;
+      release_group_id: number;
+      locked: number;
+    } | undefined;
+    if (!row) {
+      throw new Error("This edition does not belong to this enabled library and album");
     }
-    return { id: row.id };
+    return {
+      editionId: row.edition_id,
+      releaseGroupId: row.release_group_id,
+      locked: Boolean(row.locked),
+    };
   }
 
   /**
-   * Select a canonical Edition for a Library.
+   * A locked Album holds its monitored state, its edition set, its
+   * representative and its selected plan alike. Changing any of them requires an
+   * explicit unlock first — never a silent one.
+   */
+  private assertAlbumUnlocked(
+    target: { locked: boolean },
+    changesMonitoring: boolean,
+  ): void {
+    if (target.locked && changesMonitoring) {
+      const error = new Error(
+        "This album is locked in this library. Unlock it to change the monitored editions or the selected offer.",
+      ) as Error & { status?: number };
+      error.status = 409;
+      throw error;
+    }
+  }
+
+  private ensureLibraryAlbum(libraryId: number, releaseGroupId: number): void {
+    this.db.prepare(`
+      INSERT INTO LibraryAlbums (
+        library_id, release_group_id, monitored, selection_mode, locked,
+        reason, curation_version, updated_at
+      ) VALUES (?, ?, 1, 'manual', 0, 'user', 1, CURRENT_TIMESTAMP)
+      ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+        monitored = 1,
+        selection_mode = 'manual',
+        reason = 'user',
+        updated_at = CURRENT_TIMESTAMP
+    `).run(libraryId, releaseGroupId);
+  }
+
+  /**
+   * Monitor one Edition, either as the sole choice or alongside the existing set.
    *
-   * An Album may legitimately have several selected Editions in one Library —
-   * deluxe versus standard, regional variants, a stereo choice beside a spatial
-   * one, or a canonical Edition covered by a Provider superset. Selecting one
-   * therefore clears only the Editions curation chose automatically; another
-   * Edition the user deliberately locked survives.
+   * An Edition that is already monitored keeps its representative flag in both
+   * modes: switching its plan is not a reason to reshuffle the Album.
+   */
+  private monitorEdition(input: {
+    libraryId: number;
+    editionId: number;
+    releaseGroupId: number;
+    exclusive: boolean;
+  }): void {
+    const existing = this.db.prepare(`
+      SELECT id, representative FROM LibraryEditions
+      WHERE library_id = ? AND edition_id = ?
+    `).get(input.libraryId, input.editionId) as {
+      id: number;
+      representative: number;
+    } | undefined;
+
+    if (input.exclusive) {
+      this.db.prepare(`
+        DELETE FROM LibraryEditions
+        WHERE library_id = ?
+          AND edition_id != ?
+          AND edition_id IN (SELECT id FROM AlbumEditions WHERE release_group_id = ?)
+      `).run(input.libraryId, input.editionId, input.releaseGroupId);
+    }
+
+    if (existing) {
+      // Already monitored: an exclusive click promotes it, an additive click
+      // leaves the Album's representative exactly where it was.
+      if (input.exclusive) {
+        this.db.prepare(`
+          UPDATE LibraryEditions
+          SET representative = 1, selection_mode = 'manual', reason = 'user',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(existing.id);
+      }
+      return;
+    }
+
+    // A newly added supplemental Edition must not steal the representative from
+    // the Edition that already has it.
+    const albumHasRepresentative = !input.exclusive && Boolean(this.db.prepare(`
+      SELECT 1 FROM LibraryEditions monitored_edition
+      JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+      WHERE monitored_edition.library_id = ?
+        AND edition.release_group_id = ?
+        AND monitored_edition.representative = 1
+    `).get(input.libraryId, input.releaseGroupId));
+
+    // Manual selection records a preference; it does not silently press Lock.
+    // Only the explicit Album lock protects a choice from being reconsidered by
+    // coverage-driven curation.
+    this.db.prepare(`
+      INSERT INTO LibraryEditions (
+        library_id, edition_id, selection_mode, representative, reason,
+        curation_version, selected_at, updated_at
+      ) VALUES (?, ?, 'manual', ?, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(input.libraryId, input.editionId, albumHasRepresentative ? 0 : 1);
+    if (input.exclusive) {
+      this.demoteOtherEditions(input.libraryId, input.editionId, input.releaseGroupId);
+    }
+  }
+
+  private demoteOtherEditions(
+    libraryId: number,
+    editionId: number,
+    releaseGroupId: number,
+  ): void {
+    this.db.prepare(`
+      UPDATE LibraryEditions
+      SET representative = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE library_id = ?
+        AND edition_id != ?
+        AND representative = 1
+        AND edition_id IN (SELECT id FROM AlbumEditions WHERE release_group_id = ?)
+    `).run(libraryId, editionId, releaseGroupId);
+  }
+
+  /**
+   * Monitor a canonical Edition for a Library.
    *
-   * `exclusive: true` is the explicit product action that reduces the Album to
-   * this single Edition. It is never implied by an ordinary selection.
+   * Same contract as clicking a plan, minus the plan: the default is "use only
+   * this", replacing whatever else the Album had monitored here. An Album may
+   * still legitimately keep several monitored Editions — deluxe beside standard,
+   * a stereo choice beside a spatial one — but that is the deliberate additive
+   * action, `mode: "additive"`, not the default.
    */
   selectRelease(input: {
     releaseGroupMbid: string;
     libraryId: number;
     editionId: number;
     providerEditionMatchId?: number;
-    exclusive?: boolean;
+    mode?: "exclusive" | "additive";
   }): LibraryReleaseGroupAvailabilityView {
-    const target = this.db.prepare(`
-      SELECT release.id AS edition_id, release.release_group_id
-      FROM AlbumEditions release
-      JOIN Albums release_group ON release_group.id = release.release_group_id
-      JOIN Libraries library ON library.id = ? AND library.enabled = 1
-      WHERE release.id = ? AND release_group.mbid = ?
-    `).get(input.libraryId, input.editionId, input.releaseGroupMbid) as {
-      edition_id: number;
-      release_group_id: number;
-    } | undefined;
-    if (!target) throw new Error("The selected release does not belong to this enabled library and release group");
+    const target = this.requireTargetEdition(input);
+    this.assertAlbumUnlocked(target, true);
     if (input.providerEditionMatchId != null) {
       const offer = this.db.prepare(`
         SELECT match.id
@@ -518,59 +731,36 @@ export class LibraryReleaseSelectionService {
       }
     }
 
-    const libraryEditionId = this.db.transaction(() => {
-      this.db.prepare(`
-        INSERT INTO LibraryAlbums (
-          library_id, release_group_id, monitored, selection_mode, locked,
-          reason, curation_version, updated_at
-        ) VALUES (?, ?, 1, 'manual', 1, 'user', 1, CURRENT_TIMESTAMP)
-        ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-          monitored = 1,
-          selection_mode = 'manual',
-          locked = 1,
-          reason = 'user',
-          updated_at = CURRENT_TIMESTAMP
-      `).run(input.libraryId, target.release_group_id);
-      this.db.prepare(`
-        DELETE FROM LibraryEditions
-        WHERE library_id = ?
-          AND edition_id != ?
-          AND edition_id IN (
-            SELECT id FROM AlbumEditions WHERE release_group_id = ?
-          )
-          AND locked = 0
-          AND (? = 1 OR selection_mode = 'auto')
-      `).run(
-        input.libraryId,
-        input.editionId,
-        target.release_group_id,
-        input.exclusive === true ? 1 : 0,
-      );
-      // Manual selection records a preference; it does not silently press Lock.
-      // Locking is a separate, explicit Album-level action, and only it protects
-      // a choice from being reconsidered by coverage-driven curation.
-      return (this.db.prepare(`
-        INSERT INTO LibraryEditions (
-          library_id, edition_id, selection_mode, locked, reason,
-          curation_version, selected_at, updated_at
-        ) VALUES (?, ?, 'manual', 0, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(library_id, edition_id) DO UPDATE SET
-          selection_mode = 'manual',
-          reason = 'user',
-          updated_at = CURRENT_TIMESTAMP
-        RETURNING id
-      `).get(input.libraryId, input.editionId) as { id: number }).id;
+    this.db.transaction(() => {
+      this.ensureLibraryAlbum(input.libraryId, target.releaseGroupId);
+      this.monitorEdition({
+        libraryId: input.libraryId,
+        editionId: input.editionId,
+        releaseGroupId: target.releaseGroupId,
+        exclusive: input.mode !== "additive",
+      });
     })();
 
     const configuredPriority = getConfigSection("streaming")?.provider_priority;
     new AcquisitionPlanningService(this.db).compute({
-      libraryEditionId,
+      libraryId: input.libraryId,
+      editionId: input.editionId,
       providerPriority: Array.isArray(configuredPriority)
         ? configuredPriority.map(String)
         : [],
       plannerVersion: 1,
       preferredProviderEditionMatchId: input.providerEditionMatchId,
     });
+    if (input.providerEditionMatchId != null) {
+      // Naming a Provider Edition is a plan choice, not just an edition choice.
+      // Recording it as manual is what lets the next replan recognise and keep
+      // it instead of quietly re-ranking to a different offer.
+      this.db.prepare(`
+        UPDATE LibraryEditions
+        SET plan_selection_mode = 'manual', updated_at = CURRENT_TIMESTAMP
+        WHERE library_id = ? AND edition_id = ? AND preferred_plan_key IS NOT NULL
+      `).run(input.libraryId, input.editionId);
+    }
     return this.getAvailability(input.releaseGroupMbid);
   }
 }

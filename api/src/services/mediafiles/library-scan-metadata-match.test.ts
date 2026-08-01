@@ -22,6 +22,11 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
+  // Candidate plans outlive the monitored rows now, so the reset has to
+  // drop them explicitly instead of relying on a cascade.
+  db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM Libraries").run();
@@ -248,8 +253,8 @@ function seedCatalogTrack(params: {
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT OR IGNORE INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
   `).run(library.id, release.id);
 }
 

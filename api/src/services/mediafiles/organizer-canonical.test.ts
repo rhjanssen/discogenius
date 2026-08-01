@@ -8,6 +8,7 @@ import {
   seedAcceptedProviderVideoMatch,
 } from "../../test-support/normalized-provider-fixtures.js";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-organizer-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -30,6 +31,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM MetadataFiles").run();
   dbModule.db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   dbModule.db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  // Release the deferred plan reference before its rows go.
+  dbModule.db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   dbModule.db.prepare("DELETE FROM AcquisitionPlans").run();
   dbModule.db.prepare("DELETE FROM LibraryEditions").run();
   dbModule.db.prepare("DELETE FROM LibraryAlbums").run();
@@ -656,17 +659,11 @@ test("typed plan identity maps a provider source track onto the selected canonic
   `).run(library.id, hybridGroup.id);
   const libraryRelease = dbModule.db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
     RETURNING id
   `).get(library.id, hybridRelease.id) as { id: number };
-  const plan = dbModule.db.prepare(`
-    INSERT INTO AcquisitionPlans (
-      library_edition_id, provider, composition, download_mode, state,
-      planner_version, policy_hash, computed_at
-    ) VALUES (?, 'tidal', 'single_source', 'tracks', 'current', 1, 'test', CURRENT_TIMESTAMP)
-    RETURNING id
-  `).get(libraryRelease.id) as { id: number };
+  const plan = seedSelectedAcquisitionPlan(dbModule.db, { libraryEditionId: libraryRelease.id, provider: 'tidal', downloadMode: 'tracks' }) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
       plan_id, provider_edition_match_id, role, sort_order
@@ -945,17 +942,11 @@ test("an exact plan source organizes under the job release, not a same-recording
   `).run(library.id, btbGroup.id);
   const libraryRelease = dbModule.db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
     RETURNING id
   `).get(library.id, btbRelease.id) as { id: number };
-  const plan = dbModule.db.prepare(`
-    INSERT INTO AcquisitionPlans (
-      library_edition_id, provider, composition, download_mode, state,
-      planner_version, policy_hash, computed_at
-    ) VALUES (?, 'tidal', 'single_source', 'tracks', 'current', 1, 'test', CURRENT_TIMESTAMP)
-    RETURNING id
-  `).get(libraryRelease.id) as { id: number };
+  const plan = seedSelectedAcquisitionPlan(dbModule.db, { libraryEditionId: libraryRelease.id, provider: 'tidal', downloadMode: 'tracks' }) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
       plan_id, provider_edition_match_id, role, sort_order

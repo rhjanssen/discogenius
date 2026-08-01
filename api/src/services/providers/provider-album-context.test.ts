@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-provider-album-context-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -19,6 +20,8 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
+  // Release the deferred plan reference before the plan rows go.
+  db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
   for (const table of [
     "AcquisitionPlanTracks", "AcquisitionPlanSources", "AcquisitionPlans",
     "LibraryEditions", "LibraryAlbums", "ProviderTrackMatches",
@@ -96,8 +99,8 @@ function seedTwoPlansDisagreeing(): {
       VALUES (?, ?, 1, 'auto', 0, 'test', 1)
     `).run(library.id, releaseGroup.id);
     const libraryRelease = db.prepare(`
-      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, locked, reason, curation_version)
-      VALUES (?, ?, 'auto', 0, 'test', 1) RETURNING id
+      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, reason, curation_version)
+      VALUES (?, ?, 'auto', 'test', 1) RETURNING id
     `).get(library.id, release.id) as { id: number };
 
     // A DISTINCT provider release per library, both containing the same track.
@@ -127,13 +130,7 @@ function seedTwoPlansDisagreeing(): {
       VALUES (?, ?, ?, 'available') RETURNING id
     `).get(providerTrack.id, `v-${key}`, spatial ? "spatial" : "lossless") as { id: number };
 
-    const plan = db.prepare(`
-      INSERT INTO AcquisitionPlans (
-        library_edition_id, provider, composition, download_mode, state,
-        planner_version, policy_hash, computed_at
-      ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
-      RETURNING id
-    `).get(libraryRelease.id) as { id: number };
+    const plan = seedSelectedAcquisitionPlan(db, { libraryEditionId: libraryRelease.id, provider: 'tidal' }) as { id: number };
     const source = db.prepare(`
       INSERT INTO AcquisitionPlanSources (plan_id, provider_edition_match_id, role, sort_order)
       VALUES (?, ?, 'primary', 0) RETURNING id

@@ -57,7 +57,9 @@ test("plan replacement is atomic and partial completion counts only imported ass
     `);
     const repository = new AcquisitionPlanRepository(db);
     repository.replacePlans({
-      libraryEditionId: 1,
+      libraryId: 1,
+      editionId: 1,
+      targetTrackCount: 2,
       plannerVersion: 1,
       policyHash: "policy",
       computedAt: "2026-07-29T00:00:00.000Z",
@@ -103,7 +105,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
       ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac',
                 'flac', 'audio', 'lossless', 'lossless')
     `).run();
-    assert.deepEqual(repository.getCompletion(1), {
+    assert.deepEqual(repository.getCompletion(1, 1), {
       trackCount: 2,
       assignedCount: 2,
       completeCount: 1,
@@ -199,7 +201,9 @@ test("a manual plan choice is compared by exact track set, not by count", () => 
     const preferred = { ...base, planKey: "preferred", tracks: [track(1), track(3)] };
 
     const result = repository.replacePlans({
-      libraryEditionId: 1,
+      libraryId: 1,
+      editionId: 1,
+      targetTrackCount: 3,
       plans: [best, preferred],
       preferredPlanKey: "preferred",
       plannerVersion: 1,
@@ -207,11 +211,13 @@ test("a manual plan choice is compared by exact track set, not by count", () => 
     });
     assert.ok(result);
     assert.equal(result.preferenceHonored, false, "an equal count is not equivalent coverage");
-    assert.equal(result.chosenPlanKey, "best");
+    assert.equal(result.selectedPlanKey, "best");
 
     // A lock preserves the user's intent regardless of the coverage gap.
     const locked = repository.replacePlans({
-      libraryEditionId: 1,
+      libraryId: 1,
+      editionId: 1,
+      targetTrackCount: 3,
       plans: [best, preferred],
       preferredPlanKey: "preferred",
       lockPreference: true,
@@ -220,7 +226,7 @@ test("a manual plan choice is compared by exact track set, not by count", () => 
     });
     assert.ok(locked);
     assert.equal(locked.preferenceHonored, true);
-    assert.equal(locked.chosenPlanKey, "preferred");
+    assert.equal(locked.selectedPlanKey, "preferred");
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });

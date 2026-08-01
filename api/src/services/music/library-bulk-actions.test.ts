@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-bulk-actions-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -32,9 +33,16 @@ before(async () => {
 
 beforeEach(() => {
     const { db } = dbModule;
+    // Release the deferred plan reference before the plan rows go.
+    db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL").run();
     db.prepare("DELETE FROM commands").run();
     db.prepare("DELETE FROM TrackFiles").run();
     db.prepare("DELETE FROM LibraryEditionScopes").run();
+    // Candidate plans outlive the monitored rows now, so the reset has to
+    // drop them explicitly instead of relying on a cascade.
+    db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+    db.prepare("DELETE FROM AcquisitionPlanSources").run();
+    db.prepare("DELETE FROM AcquisitionPlans").run();
     db.prepare("DELETE FROM LibraryEditions").run();
     db.prepare("DELETE FROM LibraryAlbums").run();
     db.prepare("DELETE FROM LibraryArtists").run();
@@ -124,8 +132,8 @@ dbModule.db.prepare(`
     `).run(libraryId, releaseGroupId);
     const libraryEditionId = (dbModule.db.prepare(`
         INSERT INTO LibraryEditions (
-            library_id, edition_id, selection_mode, locked, reason, curation_version
-        ) VALUES (?, 201, 'auto', 0, 'test', 1)
+            library_id, edition_id, selection_mode, reason, curation_version
+        ) VALUES (?, 201, 'auto', 'test', 1)
         RETURNING id
     `).get(libraryId) as { id: number }).id;
     dbModule.db.prepare(`
@@ -185,13 +193,7 @@ dbModule.db.prepare(`
             confidence, method, matcher_version
         ) VALUES (?, 501, 'accepted', 'automatic', 1, 'test', 1)
     `).run(videoItemId);
-    const planId = (dbModule.db.prepare(`
-        INSERT INTO AcquisitionPlans (
-            library_edition_id, provider, composition, download_mode, state,
-            planner_version, policy_hash, computed_at
-        ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
-        RETURNING id
-    `).get(libraryEditionId) as { id: number }).id;
+    const planId = (seedSelectedAcquisitionPlan(dbModule.db, { libraryEditionId: libraryEditionId, provider: 'tidal' }) as { id: number }).id;
     const sourceId = (dbModule.db.prepare(`
         INSERT INTO AcquisitionPlanSources (
             plan_id, provider_edition_match_id, role, sort_order

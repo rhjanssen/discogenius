@@ -47,7 +47,7 @@ export class DownloadMissingService {
 
         const normalizedPlanIds = (db.prepare(`
             SELECT plan.id
-            FROM AcquisitionPlans plan
+            FROM SelectedAcquisitionPlans plan
             JOIN LibraryEditions library_release
               ON library_release.id = plan.library_edition_id
             JOIN Libraries library ON library.id = library_release.library_id
@@ -59,7 +59,7 @@ export class DownloadMissingService {
              AND library_release_group.monitored = 1
             LEFT JOIN ArtistMetadata primary_artist
               ON primary_artist.id = release_group.artist_metadata_id
-            WHERE plan.state = 'current' AND plan.chosen = 1
+            WHERE plan.state = 'current'
               AND library.enabled = 1
               AND (
                 ? IS NULL

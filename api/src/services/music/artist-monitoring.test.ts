@@ -208,8 +208,8 @@ test("unmonitoring an artist clears unlocked library curation and videos", () =>
   const editionId = (db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid-1'").get() as { id: number }).id;
   const libraryEditionId = (db.prepare(`
     INSERT INTO LibraryEditions (
-      library_id, edition_id, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
     RETURNING id
   `).get(stereoLibraryId, editionId) as { id: number }).id;
   db.prepare(`

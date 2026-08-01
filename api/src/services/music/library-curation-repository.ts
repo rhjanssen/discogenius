@@ -196,17 +196,34 @@ export class LibraryCurationRepository {
         selectedReleaseGroupIds.add(releaseGroupId);
       }
 
-      // User-locked/manual rows are never flipped or removed by automation.
+      // Automation may only reconsider rows it created itself. A manual choice
+      // is the user's, and a locked Album holds every Edition under it — the
+      // lock lives on LibraryAlbums, which is the one authority on the subject.
+      const automaticEditions = `
+        SELECT monitored_edition.id
+        FROM LibraryEditions monitored_edition
+        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+        LEFT JOIN LibraryAlbums library_album
+          ON library_album.library_id = monitored_edition.library_id
+         AND library_album.release_group_id = edition.release_group_id
+        WHERE monitored_edition.library_id = ?
+          AND monitored_edition.selection_mode = 'auto'
+          AND COALESCE(library_album.locked, 0) = 0
+      `;
       this.db.prepare(`
         DELETE FROM LibraryEditionScopes
-        WHERE library_edition_id IN (
-          SELECT id FROM LibraryEditions
-          WHERE library_id = ? AND selection_mode = 'auto' AND locked = 0
-        )
+        WHERE library_edition_id IN (${automaticEditions})
+      `).run(input.libraryId);
+      // Release the deferred plan reference before the rows go, and note that
+      // the plans themselves survive: an Edition that stops being monitored
+      // keeps its candidate offers so it can still be offered as an alternative.
+      this.db.prepare(`
+        UPDATE LibraryEditions
+        SET preferred_plan_key = NULL
+        WHERE id IN (${automaticEditions})
       `).run(input.libraryId);
       this.db.prepare(`
-        DELETE FROM LibraryEditions
-        WHERE library_id = ? AND selection_mode = 'auto' AND locked = 0
+        DELETE FROM LibraryEditions WHERE id IN (${automaticEditions})
       `).run(input.libraryId);
       this.db.prepare(`
         DELETE FROM LibraryAlbums
@@ -231,12 +248,11 @@ export class LibraryCurationRepository {
 
       const insertRelease = this.db.prepare(`
         INSERT INTO LibraryEditions (
-          library_id, edition_id, selection_mode, locked, reason,
+          library_id, edition_id, selection_mode, representative, reason,
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, edition_id) DO UPDATE SET
-          curation_version = CASE WHEN LibraryEditions.locked = 1
-            THEN LibraryEditions.curation_version ELSE excluded.curation_version END,
+          curation_version = excluded.curation_version,
           updated_at = CURRENT_TIMESTAMP
         RETURNING id
       `);
@@ -249,6 +265,37 @@ export class LibraryCurationRepository {
         ) as { id: number };
         libraryReleaseIdByReleaseId.set(editionId, row.id);
       }
+
+      // Exactly one Primary Edition per monitored Album. Curation only fills the
+      // role when it is vacant — deleting a redundant Edition can leave an Album
+      // with none, but a representative the user chose is never demoted here.
+      this.db.prepare(`
+        UPDATE LibraryEditions
+        SET representative = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (
+          SELECT best.id FROM (
+            SELECT
+              monitored_edition.id,
+              ROW_NUMBER() OVER (
+                PARTITION BY edition.release_group_id
+                ORDER BY edition.track_count DESC,
+                         COALESCE(edition.date, '9999-99-99'), edition.id
+              ) AS position
+            FROM LibraryEditions monitored_edition
+            JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+            WHERE monitored_edition.library_id = ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM LibraryEditions peer
+                JOIN AlbumEditions peer_edition ON peer_edition.id = peer.edition_id
+                WHERE peer.library_id = monitored_edition.library_id
+                  AND peer_edition.release_group_id = edition.release_group_id
+                  AND peer.representative = 1
+              )
+          ) best
+          WHERE best.position = 1
+        )
+      `).run(input.libraryId);
 
       const insertScope = this.db.prepare(`
         INSERT OR IGNORE INTO LibraryEditionScopes (
