@@ -3,6 +3,7 @@ import { getCommandHistory, mapJob } from "../../services/commands/command-histo
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
 import { runCommandByName } from "../../services/commands/system-task-service.js";
 import { getObjectBody, getRequiredString, isRequestValidationError } from "../../utils/request-validation.js";
+import { CommandWorkerPool } from "../../services/commands/worker/command-worker-pool.js";
 
 const router = Router();
 
@@ -64,7 +65,11 @@ router.delete("/:id", (req, res) => {
       return res.status(400).json({ detail: "Invalid command id" });
     }
 
+    const job = CommandQueueManager.get(commandId);
     CommandQueueManager.cancel(commandId);
+    if (job?.status === "started" && job.worker_id) {
+      CommandWorkerPool.abortCommand(commandId, job.worker_id, "Command cancelled by user");
+    }
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

@@ -8,6 +8,7 @@ import { VideoTagService } from "../../mediafiles/video-tag-service.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
+import { CommandQueueManager } from "../command-queue-manager.js";
 import type { ScanResult } from "../../mediafiles/library-scan.js";
 import type { CommandHandler } from "./handler-context.js";
 
@@ -69,8 +70,14 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             description: formatReconcileSummary(baseLabel, scanResult),
         });
 
+        if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
+            return;
+        }
+
         // Step 3: Emit completion so artist curation cascades when requested
         appEvents.emit(AppEvent.ARTIST_SCANNED, {
+            commandId: job.id,
+            workerId: job.worker_id ?? undefined,
             artistId,
             artistName: job.payload.artistName ?? "",
             workflow: job.payload.workflow,

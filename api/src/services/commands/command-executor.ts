@@ -1,5 +1,14 @@
+import { randomUUID } from "node:crypto";
+
 import {CommandModel} from "./command-model.js";
-import {NON_DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES} from "./command-names.js";
+import {
+    NON_DOWNLOAD_COMMAND_NAMES,
+    DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+} from "./command-names.js";
+import {
+    resolveCommandNoProgressTimeoutMs,
+    resolveInfrastructureMaxAttempts,
+} from "./command-liveness-policy.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
 import { runWithAsyncBusyRetry } from "../../database.js";
 import { CommandManager } from "./command.js";
@@ -11,9 +20,92 @@ export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.j
 
 const POLL_INTERVAL = readIntEnv('DISCOGENIUS_SCHEDULER_POLL_MS', 2000, 1); // 2 seconds default
 const BLOCKED_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_SCHEDULER_BLOCKED_LOG_THROTTLE_MS', 30_000, 0);
-const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_SCHEDULER_STUCK_JOB_MS', 0, 0); // 0 = disabled
-const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_SCHEDULER_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
+// Five minutes tolerates a long synchronous SQLite/fs call that temporarily
+// prevents the worker's timer from firing, while the 30s heartbeat normally
+// gives the watchdog much fresher evidence.
+const COMMAND_LEASE_MS = readIntEnv('DISCOGENIUS_COMMAND_LEASE_MS', 5 * 60_000, 1_000);
+const COMMAND_HEARTBEAT_MS = Math.min(
+    readIntEnv('DISCOGENIUS_COMMAND_HEARTBEAT_MS', 30_000, 250),
+    Math.max(250, Math.floor(COMMAND_LEASE_MS / 2)),
+);
+// A positive override is useful for deterministic failure injection. Zero uses
+// the conservative command-specific expectations below.
+const COMMAND_NO_PROGRESS_MS = readIntEnv('DISCOGENIUS_COMMAND_NO_PROGRESS_MS', 0, 0);
+const COMMAND_WATCHDOG_INTERVAL_MS = readIntEnv('DISCOGENIUS_COMMAND_WATCHDOG_INTERVAL_MS', 5_000, 100);
+const COMMAND_MAX_ATTEMPTS = readIntEnv('DISCOGENIUS_COMMAND_MAX_ATTEMPTS', 3, 1);
+const COMMAND_RETRY_BASE_MS = readIntEnv('DISCOGENIUS_COMMAND_RETRY_BASE_MS', 1_000, 0);
+const COMMAND_RETRY_MAX_MS = readIntEnv('DISCOGENIUS_COMMAND_RETRY_MAX_MS', 60_000, 0);
 const SCHEDULER_THREAD_LIMIT = readIntEnv('DISCOGENIUS_SCHEDULER_THREAD_LIMIT', 3, 1);
+
+interface ActiveCommandAttempt {
+    workerId: string;
+    promise: Promise<void>;
+}
+
+export interface CommandWatchdogPassResult {
+    requeued: number;
+    failed: number;
+    stale: number;
+}
+
+function retryDelayForAttempt(attempt: number, baseMs: number, maxMs: number): number {
+    if (baseMs <= 0) return 0;
+    return Math.min(maxMs, baseMs * (2 ** Math.max(0, attempt - 1)));
+}
+
+/**
+ * One deterministic lease/no-progress watchdog pass. Exported so recovery can
+ * be verified without starting the executor's perpetual polling loop.
+ */
+export function recoverStaleNonDownloadCommands(options: {
+    now?: Date;
+    noProgressMs: number;
+    maxAttempts: number;
+    retryBaseMs: number;
+    retryMaxMs: number;
+}): CommandWatchdogPassResult {
+    const stale = CommandQueueManager.findStaleExecutionLeases({
+        types: NON_DOWNLOAD_COMMAND_NAMES,
+        now: options.now,
+        noProgressMs: options.noProgressMs > 0 ? options.noProgressMs : undefined,
+        resolveNoProgressMs: resolveCommandNoProgressTimeoutMs,
+    });
+    let requeued = 0;
+    let failed = 0;
+
+    for (const command of stale) {
+        const result = CommandQueueManager.recoverOwnedCommand({
+            id: command.id,
+            workerId: command.workerId,
+            reason: `${command.reason}; last heartbeat ${command.heartbeatAt ?? "never"}, last progress ${command.lastProgressAt ?? "never"}`,
+            maxAttempts: resolveInfrastructureMaxAttempts(
+                command.name,
+                options.maxAttempts,
+            ),
+            retryDelayMs: retryDelayForAttempt(
+                command.attempt,
+                options.retryBaseMs,
+                options.retryMaxMs,
+            ),
+            now: options.now,
+        });
+        if (result.outcome === "not-owner") continue;
+
+        CommandWorkerPool.abortCommand(
+            command.id,
+            command.workerId,
+            `Command watchdog recovered ${command.reason}`,
+        );
+        if (result.outcome === "requeued") requeued += 1;
+        if (result.outcome === "failed") failed += 1;
+        console.warn(
+            result.outcome === "requeued"
+                ? `[CommandExecutor] Re-queued command #${command.id} after ${command.reason} (attempt ${command.attempt})`
+                : `[CommandExecutor] Poison-failed command #${command.id} after ${command.reason} (attempt ${command.attempt})`,
+        );
+    }
+    return { requeued, failed, stale: stale.length };
+}
 
 /**
  * CommandExecutor - executes queued non-download jobs (scans, curation,
@@ -34,17 +126,27 @@ const SCHEDULER_THREAD_LIMIT = readIntEnv('DISCOGENIUS_SCHEDULER_THREAD_LIMIT', 
 export class CommandExecutor {
     private static isRunning = false;
     private static blockedLogAt = new Map<string, number>();
-    private static lastStuckCleanupAt = 0;
-    private static activeJobs = new Map<number, Promise<void>>();
+    private static lastWatchdogAt = 0;
+    private static activeJobs = new Map<number, ActiveCommandAttempt>();
 
     static start() {
         if (this.isRunning) return;
         this.isRunning = true;
 
         // Recover interrupted non-download jobs after process restart.
-        const recovered = CommandQueueManager.resetProcessingJobsByTypes(NON_DOWNLOAD_COMMAND_NAMES);
-        if (recovered > 0) {
-            console.log(`[CommandExecutor] Re-queued ${recovered} interrupted non-download job(s)`);
+        const recovered = CommandQueueManager.recoverInterruptedJobsByTypes({
+            types: NON_DOWNLOAD_COMMAND_NAMES,
+            reason: "Discogenius process restarted while command was running",
+            maxAttempts: COMMAND_MAX_ATTEMPTS,
+            resolveMaxAttempts: (name) => resolveInfrastructureMaxAttempts(
+                name,
+                COMMAND_MAX_ATTEMPTS,
+            ),
+        });
+        if (recovered.requeued > 0 || recovered.failed > 0) {
+            console.log(
+                `[CommandExecutor] Restart recovery re-queued ${recovered.requeued} and poison-failed ${recovered.failed} interrupted non-download job(s)`,
+            );
         }
 
         console.log("🚀 Command executor started");
@@ -54,7 +156,7 @@ export class CommandExecutor {
     static stop() {
         this.isRunning = false;
         this.blockedLogAt.clear();
-        this.lastStuckCleanupAt = 0;
+        this.lastWatchdogAt = 0;
         this.activeJobs.clear();
         console.log("🛑 Command executor stopped");
     }
@@ -74,37 +176,36 @@ export class CommandExecutor {
         }
     }
 
-    private static maybeCleanupStuckJobs() {
-        if (STUCK_JOB_MS <= 0) return;
-
+    private static maybeRecoverStaleJobs() {
         const now = Date.now();
-        if (now - this.lastStuckCleanupAt < STUCK_CLEANUP_INTERVAL_MS) {
+        if (now - this.lastWatchdogAt < COMMAND_WATCHDOG_INTERVAL_MS) {
             return;
         }
-        this.lastStuckCleanupAt = now;
+        this.lastWatchdogAt = now;
 
-        let recovered = 0;
-        const excludeIds = [...this.activeJobs.keys()];
-        for (const type of NON_DOWNLOAD_COMMAND_NAMES) {
-            recovered += CommandQueueManager.requeue({
-                typePattern: type,
-                olderThanMs: STUCK_JOB_MS,
-                excludeIds,
-            });
-        }
-
-        if (recovered > 0) {
-            console.warn(`[CommandExecutor] Re-queued ${recovered} stale processing non-download job(s)`);
-        }
+        recoverStaleNonDownloadCommands({
+            noProgressMs: COMMAND_NO_PROGRESS_MS,
+            maxAttempts: COMMAND_MAX_ATTEMPTS,
+            retryBaseMs: COMMAND_RETRY_BASE_MS,
+            retryMaxMs: COMMAND_RETRY_MAX_MS,
+        });
     }
 
     private static async loop() {
         while (this.isRunning) {
             try {
-                this.maybeCleanupStuckJobs();
+                this.maybeRecoverStaleJobs();
 
                 // Try to fill all available slots
-                const slotsAvailable = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
+                const executorSlots = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
+                // Imports share this pool. Do not claim a durable command until
+                // a physical worker is actually available; a claimed command
+                // sitting in the pool's safety queue has no worker heartbeat
+                // and would look falsely stale during a long import.
+                const poolSlots = CommandWorkerPool.isActive()
+                    ? CommandWorkerPool.getSnapshot().workers.filter((worker) => !worker.busy).length
+                    : executorSlots;
+                const slotsAvailable = Math.min(executorSlots, poolSlots);
                 if (slotsAvailable > 0) {
                     // Per-type cap keeps the candidate window diverse: a deep
                     // single-type backlog (intake queues hundreds of
@@ -152,50 +253,83 @@ export class CommandExecutor {
         // (once per command *start*, bounded by worker throughput). The heavy,
         // high-frequency writes (complete/fail/next-pass/curation) run on the
         // worker connection inside executeCommand.
-        if (!CommandQueueManager.markProcessing(job.id)) {
+        const workerId = `command-attempt:${process.pid}:${job.id}:${randomUUID()}`;
+        const claimedJob = CommandQueueManager.claimForExecution(
+            job.id,
+            workerId,
+            COMMAND_LEASE_MS,
+        );
+        if (!claimedJob) {
             return;
         }
         // Catch every command failure, log it, and move on — a failed command
         // must never take down the executor. Here that means the job promise
         // must never reject unhandled (an escaped rejection aborts the whole
         // Node process).
-        const promise = this.processJob(job)
+        const promise = this.processJob(claimedJob)
             .catch(async (error: unknown) => {
                 if (isPoolShutdownError(error)) {
                     // Deploy/restart interruption, not a failure: leave the row
                     // 'started' so boot recovery re-queues it immediately.
-                    console.log(`[CommandExecutor] Command #${job.id} (${job.name}) interrupted by shutdown; will re-queue on next start`);
+                    console.log(`[CommandExecutor] Command #${claimedJob.id} (${claimedJob.name}) interrupted by shutdown; will re-queue on next start`);
                     return;
                 }
                 const message = error instanceof Error ? error.message : String(error);
-                console.error(`[CommandExecutor] Command #${job.id} (${job.name}) failed:`, message);
+                console.error(`[CommandExecutor] Command #${claimedJob.id} (${claimedJob.name}) worker interrupted:`, message);
                 try {
-                    await runWithAsyncBusyRetry(() => CommandQueueManager.fail(job.id, message));
+                    const recovered = await runWithAsyncBusyRetry(
+                        () => CommandQueueManager.recoverOwnedCommand({
+                            id: claimedJob.id,
+                            workerId,
+                            reason: `worker stopped: ${message}`,
+                            maxAttempts: resolveInfrastructureMaxAttempts(
+                                claimedJob.name,
+                                COMMAND_MAX_ATTEMPTS,
+                            ),
+                            retryDelayMs: retryDelayForAttempt(
+                                claimedJob.attempt,
+                                COMMAND_RETRY_BASE_MS,
+                                COMMAND_RETRY_MAX_MS,
+                            ),
+                        }),
+                    );
+                    if (recovered.outcome === "requeued") {
+                        console.warn(`[CommandExecutor] Re-queued command #${claimedJob.id} after worker interruption`);
+                    } else if (recovered.outcome === "failed") {
+                        console.error(`[CommandExecutor] Command #${claimedJob.id} exhausted ${recovered.attempt} infrastructure attempt(s)`);
+                    }
                 } catch (persistError) {
                     console.error(
-                        `[CommandExecutor] Could not persist failure for command #${job.id}; it stays 'started' and is re-queued as interrupted on restart:`,
+                        `[CommandExecutor] Could not persist recovery for command #${claimedJob.id}; it stays 'started' and is recovered on restart:`,
                         persistError,
                     );
                 }
             })
             .finally(() => {
-                this.activeJobs.delete(job.id);
+                const active = this.activeJobs.get(claimedJob.id);
+                if (active?.workerId === workerId) {
+                    this.activeJobs.delete(claimedJob.id);
+                }
             });
-        this.activeJobs.set(job.id, promise);
+        this.activeJobs.set(claimedJob.id, { workerId, promise });
     }
 
     /**
      * Run a command's full lifecycle. In the live app the worker pool is running,
      * so the command executes on a real OS thread (worker_threads) — the direct
      * off-thread CommandExecutor — and *all* of its
-     * command-table writes (claim/complete/fail/next-pass) happen on the worker's
-     * connection, never blocking the main HTTP+SSE loop. When the pool isn't
+     * command-table writes after the atomic main-thread claim
+     * (heartbeat/complete/fail/next-pass) happen on the worker's connection,
+     * never blocking the main HTTP+SSE loop. When the pool isn't
      * running (unit tests calling processJob directly), the lifecycle runs inline
      * on the main thread via the same executeCommand path.
      */
     private static async processJob(job: CommandModel) {
         if (CommandWorkerPool.isActive()) {
-            await CommandWorkerPool.run(job);
+            await CommandWorkerPool.run(job, {
+                leaseMs: COMMAND_LEASE_MS,
+                heartbeatMs: COMMAND_HEARTBEAT_MS,
+            });
         } else {
             await executeCommand(job);
         }

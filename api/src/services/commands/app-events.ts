@@ -45,6 +45,8 @@ export interface CommandEventPayload {
 
 // Raised when a metadata refresh completes.
 export interface ArtistRefreshCompleteEventPayload {
+    commandId?: number;
+    workerId?: string;
     artistId: string;
     artistName: string;
     workflow?: ArtistWorkflow;
@@ -59,6 +61,8 @@ export interface ArtistRefreshCompleteEventPayload {
 
 // Raised when a disk scan completes.
 export interface ArtistScannedEventPayload {
+    commandId?: number;
+    workerId?: string;
     artistId: string;
     artistName: string;
     workflow?: ArtistWorkflow;

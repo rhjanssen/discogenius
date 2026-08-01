@@ -29,6 +29,10 @@ export function updateCommandDescription(
     CommandQueueManager.updateState(job.id, {
         progress: options.progress,
         payloadPatch: Object.keys(payloadPatch).length > 0 ? payloadPatch : undefined,
+        workerId: job.worker_id ?? undefined,
+        progressPhase: options.description,
+        progressCurrent: options.progress,
+        progressTotal: options.progress == null ? undefined : 100,
     });
 }
 
@@ -140,21 +144,34 @@ export async function executeCommand(job: CommandModel): Promise<void> {
     // unhandled rejection and aborted the whole process. If the write still
     // fails after retries, the row stays 'started' and is recovered as an
     // interrupted job on the next executor start.
+    let outcomePersisted = false;
     try {
         if (handlerError) {
             const message = handlerError instanceof Error ? handlerError.message : 'Unknown command error';
-            await runWithAsyncBusyRetry(() => CommandQueueManager.fail(job.id, message));
+            outcomePersisted = await runWithAsyncBusyRetry(
+                () => CommandQueueManager.fail(job.id, message, job.worker_id ?? undefined),
+            );
         } else {
-            await runWithAsyncBusyRetry(() => CommandQueueManager.complete(job.id));
-            console.log(`[Queue] Command #${job.id} completed`);
+            outcomePersisted = await runWithAsyncBusyRetry(
+                () => CommandQueueManager.complete(job.id, job.worker_id ?? undefined),
+            );
+            if (outcomePersisted) {
+                console.log(`[Queue] Command #${job.id} completed`);
+            }
         }
     } catch (persistError) {
         console.error(`[Queue] Could not persist outcome for command #${job.id} (${job.name}):`, persistError);
     }
 
-    try {
-        queueNextMonitoringPass(job);
-    } catch (chainError) {
-        console.error(`[Queue] Failed to queue next monitoring pass after command #${job.id}:`, chainError);
+    if (outcomePersisted) {
+        try {
+            queueNextMonitoringPass(job);
+        } catch (chainError) {
+            console.error(`[Queue] Failed to queue next monitoring pass after command #${job.id}:`, chainError);
+        }
+    } else if (job.worker_id) {
+        console.warn(
+            `[Queue] Ignoring stale outcome/chaining for command #${job.id}; execution ownership changed`,
+        );
     }
 }

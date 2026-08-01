@@ -21,6 +21,7 @@ import {
     buildLiveActivityOrderClause,
     buildTypeInClause,
     hydrateJobRow,
+    parseSqliteDate,
     safeParsePayload,
 } from "./command-ordering.js";
 
@@ -196,6 +197,42 @@ function findActiveProviderArtistImport(payload: Partial<ImportProviderArtistsCo
     }
 
     return null;
+}
+
+export type CommandLeaseRecoveryOutcome = "requeued" | "failed" | "not-owner";
+
+export interface CommandLeaseRecoveryResult {
+    outcome: CommandLeaseRecoveryOutcome;
+    attempt: number;
+    retryAfter: string | null;
+}
+
+export interface StaleCommandLease {
+    id: number;
+    name: CommandName;
+    workerId: string;
+    attempt: number;
+    reason: "lease expired" | "progress stopped";
+    heartbeatAt: string | null;
+    lastProgressAt: string | null;
+    leaseExpiresAt: string | null;
+}
+
+export interface CommandLeaseMetrics {
+    started: number;
+    expiredLeases: number;
+    retryScheduled: number;
+    noProgress: number;
+    oldestHeartbeatAgeMs: number | null;
+    oldestEligibleQueuedAgeMs: number | null;
+}
+
+function leaseTimestamp(value: Date): string {
+    return value.toISOString();
+}
+
+function leaseExpiry(now: Date, leaseMs: number): string {
+    return leaseTimestamp(new Date(now.getTime() + Math.max(1, leaseMs)));
 }
 
 export class CommandQueueManager {
@@ -436,7 +473,9 @@ ${buildExecutionOrderClause()}
         const placeholders = buildTypeInClause(types);
         const job = db.prepare(`
             SELECT * FROM commands
-            WHERE status = 'queued' AND name IN (${placeholders})
+            WHERE status = 'queued'
+              AND name IN (${placeholders})
+              AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
             ORDER BY
 ${buildExecutionOrderClause()}
             LIMIT 1
@@ -472,7 +511,9 @@ ${buildExecutionOrderClause()}
 ${buildExecutionOrderClause()}
                     ) AS __type_rank
                     FROM commands
-                    WHERE status = 'queued' AND name IN (${placeholders})
+                    WHERE status = 'queued'
+                      AND name IN (${placeholders})
+                      AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
                 )
                 WHERE __type_rank <= ?
                 ORDER BY
@@ -481,7 +522,9 @@ ${buildExecutionOrderClause()}
             `).all(...types, perTypeLimit, limit)
             : db.prepare(`
                 SELECT * FROM commands
-                WHERE status = 'queued' AND name IN (${placeholders})
+                WHERE status = 'queued'
+                  AND name IN (${placeholders})
+                  AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
                 ORDER BY
 ${buildExecutionOrderClause()}
                 LIMIT ?
@@ -493,6 +536,70 @@ ${buildExecutionOrderClause()}
                 return hydrateJobRow(row as { name: string; payload: unknown; id: number } & Record<string, unknown>);
             })
             .filter((job): job is CommandModel => job !== null);
+    }
+
+    /**
+     * Atomically claim a queued non-download command for one execution attempt.
+     *
+     * `workerId` is a fresh, opaque token for this exact attempt. Every
+     * lifecycle write from the worker must carry it, preventing a worker whose
+     * lease was recovered from completing or advancing the replacement attempt.
+     */
+    static claimForExecution(
+        id: number,
+        workerId: string,
+        leaseMs: number,
+        now: Date = new Date(),
+    ): CommandModel | null {
+        const startedAt = leaseTimestamp(now);
+        const expiresAt = leaseExpiry(now, leaseMs);
+        const claim = db.transaction(() => {
+            const result = db.prepare(`
+                UPDATE commands
+                SET
+                    status = 'started',
+                    started_at = ?,
+                    completed_at = NULL,
+                    updated_at = ?,
+                    worker_id = ?,
+                    attempt = attempt + 1,
+                    heartbeat_at = ?,
+                    last_progress_at = ?,
+                    progress_phase = 'starting',
+                    progress_current = progress,
+                    progress_total = 100,
+                    lease_expires_at = ?,
+                    blocked_reason = NULL,
+                    retry_after = NULL,
+                    error = NULL
+                WHERE id = ?
+                  AND status = 'queued'
+                  AND (retry_after IS NULL OR julianday(retry_after) <= julianday(?))
+            `).run(
+                startedAt,
+                startedAt,
+                workerId,
+                startedAt,
+                startedAt,
+                expiresAt,
+                id,
+                startedAt,
+            );
+            if (result.changes === 0) return null;
+            return this.get(id);
+        });
+
+        const job = claim();
+        if (!job) return null;
+        clearCommandUpdateThrottle(id);
+        appEvents.emit(AppEvent.COMMAND_UPDATED, {
+            id,
+            type: job.name,
+            status: "started",
+            progress: job.progress,
+            payload: job.payload,
+        } as CommandEventPayload);
+        return job;
     }
 
     static markProcessing(id: number): boolean {
@@ -508,24 +615,76 @@ ${buildExecutionOrderClause()}
         return true;
     }
 
-    static updateProgress(id: number, progress: number) {
-        const result = db.prepare("UPDATE commands SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(progress, id);
+    static isExecutionOwner(id: number, workerId: string): boolean {
+        const row = db.prepare(`
+            SELECT 1 AS owned
+            FROM commands
+            WHERE id = ? AND status = 'started' AND worker_id = ?
+        `).get(id, workerId) as { owned: number } | undefined;
+        return row?.owned === 1;
+    }
+
+    static renewLease(
+        id: number,
+        workerId: string,
+        leaseMs: number,
+        now: Date = new Date(),
+    ): boolean {
+        const heartbeatAt = leaseTimestamp(now);
+        const result = db.prepare(`
+            UPDATE commands
+            SET heartbeat_at = ?, lease_expires_at = ?
+            WHERE id = ? AND status = 'started' AND worker_id = ?
+        `).run(heartbeatAt, leaseExpiry(now, leaseMs), id, workerId);
+        return result.changes === 1;
+    }
+
+    static updateProgress(id: number, progress: number, workerId?: string) {
+        const ownershipClause = workerId ? " AND status = 'started' AND worker_id = ?" : " AND status NOT IN ('completed', 'failed', 'cancelled')";
+        const params: unknown[] = [progress, progress, id];
+        if (workerId) params.push(workerId);
+        const result = db.prepare(`
+            UPDATE commands
+            SET
+                progress = ?,
+                progress_current = ?,
+                progress_total = COALESCE(progress_total, 100),
+                last_progress_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?${ownershipClause}
+        `).run(...params);
         if (result.changes === 0) return;
         const job = this.get(id);
         if (job) emitThrottledCommandUpdate({ id, type: job.name, status: job.status, progress } as CommandEventPayload);
     }
 
-    static updateState(id: number, options: { progress?: number | null; payloadPatch?: Partial<CommandBodyCommon> }) {
+    static updateState(id: number, options: {
+        progress?: number | null;
+        payloadPatch?: Partial<CommandBodyCommon>;
+        workerId?: string;
+        progressPhase?: string | null;
+        progressCurrent?: number | null;
+        progressTotal?: number | null;
+        blockedReason?: string | null;
+    }) {
         const current = this.get(id);
         if (!current) return null;
         if (TERMINAL_COMMAND_STATUSES.has(current.status)) return current;
+        if (options.workerId && (current.status !== "started" || current.worker_id !== options.workerId)) {
+            return null;
+        }
 
         const updates: string[] = ["updated_at = CURRENT_TIMESTAMP"];
         const params: unknown[] = [];
+        let advancesProgress = false;
 
         if (options.progress !== undefined) {
             updates.push("progress = ?");
             params.push(options.progress);
+            updates.push("progress_current = ?");
+            params.push(options.progress);
+            updates.push("progress_total = COALESCE(progress_total, 100)");
+            advancesProgress = true;
         }
 
         if (options.payloadPatch) {
@@ -538,12 +697,44 @@ ${buildExecutionOrderClause()}
             params.push(JSON.stringify(nextPayload));
         }
 
+        if (options.progressPhase !== undefined) {
+            updates.push("progress_phase = ?");
+            params.push(options.progressPhase);
+            advancesProgress = true;
+        }
+        if (options.progressCurrent !== undefined) {
+            updates.push("progress_current = ?");
+            params.push(options.progressCurrent);
+            advancesProgress = true;
+        }
+        if (options.progressTotal !== undefined) {
+            updates.push("progress_total = ?");
+            params.push(options.progressTotal);
+            advancesProgress = true;
+        }
+        if (options.blockedReason !== undefined) {
+            updates.push("blocked_reason = ?");
+            params.push(options.blockedReason);
+        }
+        if (advancesProgress) {
+            updates.push("last_progress_at = CURRENT_TIMESTAMP");
+            if (options.blockedReason === undefined) {
+                updates.push("blocked_reason = NULL");
+            }
+        }
+
         if (updates.length === 1) {
             return current;
         }
 
         params.push(id);
-        db.prepare(`UPDATE commands SET ${updates.join(", ")} WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`).run(...params);
+        let ownershipClause = " AND status NOT IN ('completed', 'failed', 'cancelled')";
+        if (options.workerId) {
+            ownershipClause = " AND status = 'started' AND worker_id = ?";
+            params.push(options.workerId);
+        }
+        const result = db.prepare(`UPDATE commands SET ${updates.join(", ")} WHERE id = ?${ownershipClause}`).run(...params);
+        if (result.changes === 0) return null;
 
         const updated = this.get(id);
         if (updated) {
@@ -559,24 +750,59 @@ ${buildExecutionOrderClause()}
         return updated;
     }
 
-    static complete(id: number) {
-        const result = db.prepare("UPDATE commands SET status = 'completed', progress = 100, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(id);
-        if (result.changes === 0) return;
+    static complete(id: number, workerId?: string): boolean {
+        const ownershipClause = workerId
+            ? "status = 'started' AND worker_id = ?"
+            : "status NOT IN ('completed', 'failed', 'cancelled')";
+        const params: unknown[] = [id];
+        if (workerId) params.push(workerId);
+        const result = db.prepare(`
+            UPDATE commands
+            SET
+                status = 'completed',
+                progress = 100,
+                progress_current = COALESCE(progress_total, 100),
+                progress_total = COALESCE(progress_total, 100),
+                progress_phase = 'completed',
+                blocked_reason = NULL,
+                lease_expires_at = NULL,
+                retry_after = NULL,
+                completed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND ${ownershipClause}
+        `).run(...params);
+        if (result.changes === 0) return false;
         clearCommandUpdateThrottle(id);
         const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'completed', progress: 100 } as CommandEventPayload);
+        return true;
     }
 
-    static fail(id: number, error: string) {
+    static fail(id: number, error: string, workerId?: string): boolean {
+        const ownershipClause = workerId
+            ? "status = 'started' AND worker_id = ?"
+            : "status NOT IN ('completed', 'failed', 'cancelled')";
+        const params: unknown[] = [error, id];
+        if (workerId) params.push(workerId);
         const result = db.prepare(`
             UPDATE commands 
-            SET status = 'failed', error = ?, attempts = attempts + 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
-            WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')
-    `).run(error, id);
-        if (result.changes === 0) return;
+            SET
+                status = 'failed',
+                error = ?,
+                attempts = attempts + 1,
+                progress_phase = 'failed',
+                blocked_reason = 'failed',
+                lease_expires_at = NULL,
+                retry_after = NULL,
+                completed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND ${ownershipClause}
+        `).run(...params);
+        if (result.changes === 0) return false;
         clearCommandUpdateThrottle(id);
         const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'failed', progress: job.progress, error } as CommandEventPayload);
+        return true;
     }
 
     static cancel(id: number) {
@@ -610,7 +836,10 @@ ${buildExecutionOrderClause()}
         db.prepare(`
             UPDATE commands 
             SET status = 'queued', error = NULL, progress = 0, started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
-                attempts = 0,
+                attempts = 0, attempt = 0, worker_id = NULL, heartbeat_at = NULL,
+                last_progress_at = NULL, progress_phase = NULL, progress_current = NULL,
+                progress_total = NULL, lease_expires_at = NULL, blocked_reason = NULL,
+                retry_after = NULL, last_retry_reason = NULL,
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
             WHERE id = ?
 	    `).run(id);
@@ -657,6 +886,312 @@ ${buildExecutionOrderClause()}
             } as CommandEventPayload);
         }
         return true;
+    }
+
+    /**
+     * Recover one infrastructure-interrupted non-download attempt. Ownership is
+     * part of the UPDATE predicate so two watchdog signals, or a late worker
+     * result racing recovery, can produce only one state transition.
+     */
+    static recoverOwnedCommand(options: {
+        id: number;
+        workerId: string;
+        reason: string;
+        maxAttempts: number;
+        retryDelayMs: number;
+        now?: Date;
+    }): CommandLeaseRecoveryResult {
+        const now = options.now ?? new Date();
+        const nowTimestamp = leaseTimestamp(now);
+        const retryAfter = leaseTimestamp(new Date(now.getTime() + Math.max(0, options.retryDelayMs)));
+        const maxAttempts = Math.max(1, Math.floor(options.maxAttempts));
+
+        const recover = db.transaction((): CommandLeaseRecoveryResult => {
+            const current = db.prepare(`
+                SELECT attempt
+                FROM commands
+                WHERE id = ? AND status = 'started' AND worker_id = ?
+            `).get(options.id, options.workerId) as { attempt: number } | undefined;
+            if (!current) {
+                return { outcome: "not-owner", attempt: 0, retryAfter: null };
+            }
+
+            const attempt = Number(current.attempt) || 0;
+            if (attempt >= maxAttempts) {
+                const poisonError = `Command stopped after ${attempt} execution attempt(s): ${options.reason}`;
+                const result = db.prepare(`
+                    UPDATE commands
+                    SET
+                        status = 'failed',
+                        error = ?,
+                        completed_at = ?,
+                        updated_at = ?,
+                        progress_phase = 'failed',
+                        blocked_reason = 'poisoned command',
+                        lease_expires_at = NULL,
+                        retry_after = NULL,
+                        last_retry_reason = ?
+                    WHERE id = ? AND status = 'started' AND worker_id = ?
+                `).run(
+                    poisonError,
+                    nowTimestamp,
+                    nowTimestamp,
+                    options.reason,
+                    options.id,
+                    options.workerId,
+                );
+                if (result.changes === 0) {
+                    return { outcome: "not-owner", attempt, retryAfter: null };
+                }
+                return { outcome: "failed", attempt, retryAfter: null };
+            }
+
+            const result = db.prepare(`
+                UPDATE commands
+                SET
+                    status = 'queued',
+                    started_at = NULL,
+                    completed_at = NULL,
+                    updated_at = ?,
+                    progress = 0,
+                    progress_phase = 'retry scheduled',
+                    progress_current = 0,
+                    progress_total = 100,
+                    worker_id = NULL,
+                    heartbeat_at = NULL,
+                    lease_expires_at = NULL,
+                    blocked_reason = 'retry scheduled',
+                    retry_after = ?,
+                    last_retry_reason = ?,
+                    error = ?
+                WHERE id = ? AND status = 'started' AND worker_id = ?
+            `).run(
+                nowTimestamp,
+                retryAfter,
+                options.reason,
+                options.reason,
+                options.id,
+                options.workerId,
+            );
+            if (result.changes === 0) {
+                return { outcome: "not-owner", attempt, retryAfter: null };
+            }
+            return { outcome: "requeued", attempt, retryAfter };
+        });
+
+        const outcome = recover();
+        if (outcome.outcome !== "not-owner") {
+            clearCommandUpdateThrottle(options.id);
+            const job = this.get(options.id);
+            if (job) {
+                appEvents.emit(AppEvent.COMMAND_UPDATED, {
+                    id: options.id,
+                    type: job.name,
+                    status: job.status,
+                    progress: job.progress,
+                    payload: job.payload,
+                    error: job.error,
+                } as CommandEventPayload);
+            }
+        }
+        return outcome;
+    }
+
+    /**
+     * Deterministically recover attempts left `started` by a process restart.
+     * There are no live workers at executor startup, so a NULL legacy owner is
+     * also safe to recover. Attempt and reason evidence remain persisted.
+     */
+    static recoverInterruptedJobsByTypes(options: {
+        types: readonly CommandName[];
+        reason: string;
+        maxAttempts: number;
+        resolveMaxAttempts?: (name: CommandName) => number;
+        retryDelayMs?: number;
+        now?: Date;
+    }): { requeued: number; failed: number } {
+        if (options.types.length === 0) return { requeued: 0, failed: 0 };
+        const rows = db.prepare(`
+            SELECT id, name, worker_id, attempt
+            FROM commands
+            WHERE status = 'started'
+              AND name IN (${buildTypeInClause(options.types)})
+            ORDER BY id ASC
+        `).all(...options.types) as Array<{
+            id: number;
+            name: CommandName;
+            worker_id: string | null;
+            attempt: number;
+        }>;
+
+        let requeued = 0;
+        let failed = 0;
+        for (const row of rows) {
+            const restartOwner = row.worker_id || `restart-recovery:${row.id}`;
+            if (!row.worker_id) {
+                db.prepare(`
+                    UPDATE commands
+                    SET worker_id = ?
+                    WHERE id = ? AND status = 'started' AND worker_id IS NULL
+                `).run(restartOwner, row.id);
+            }
+            const result = this.recoverOwnedCommand({
+                id: row.id,
+                workerId: restartOwner,
+                reason: options.reason,
+                maxAttempts: options.resolveMaxAttempts?.(row.name) ?? options.maxAttempts,
+                retryDelayMs: options.retryDelayMs ?? 0,
+                now: options.now,
+            });
+            if (result.outcome === "requeued") requeued += 1;
+            if (result.outcome === "failed") failed += 1;
+        }
+        return { requeued, failed };
+    }
+
+    static findStaleExecutionLeases(options: {
+        types: readonly CommandName[];
+        now?: Date;
+        noProgressMs?: number;
+        resolveNoProgressMs?: (name: CommandName) => number;
+    }): StaleCommandLease[] {
+        if (options.types.length === 0) return [];
+        const now = options.now ?? new Date();
+        const rows = db.prepare(`
+            SELECT
+                id, name, worker_id, attempt, heartbeat_at, last_progress_at,
+                lease_expires_at, blocked_reason
+            FROM commands
+            WHERE status = 'started'
+              AND worker_id IS NOT NULL
+              AND name IN (${buildTypeInClause(options.types)})
+            ORDER BY COALESCE(lease_expires_at, last_progress_at) ASC, id ASC
+        `).all(...options.types) as Array<{
+            id: number;
+            name: CommandName;
+            worker_id: string;
+            attempt: number;
+            heartbeat_at: string | null;
+            last_progress_at: string | null;
+            lease_expires_at: string | null;
+            blocked_reason: string | null;
+        }>;
+
+        return rows.flatMap((row): StaleCommandLease[] => {
+            const leaseExpired = row.lease_expires_at != null
+                && parseSqliteDate(row.lease_expires_at) <= now.getTime();
+            const noProgressMs = Math.max(
+                0,
+                options.noProgressMs
+                    ?? options.resolveNoProgressMs?.(row.name)
+                    ?? 0,
+            );
+            const progressStopped = noProgressMs > 0
+                && row.blocked_reason == null
+                && row.last_progress_at != null
+                && parseSqliteDate(row.last_progress_at) <= now.getTime() - noProgressMs;
+            if (!leaseExpired && !progressStopped) return [];
+            return [{
+                id: row.id,
+                name: row.name,
+                workerId: row.worker_id,
+                attempt: Number(row.attempt) || 0,
+                reason: leaseExpired ? "lease expired" : "progress stopped",
+                heartbeatAt: row.heartbeat_at,
+                lastProgressAt: row.last_progress_at,
+                leaseExpiresAt: row.lease_expires_at,
+            }];
+        });
+    }
+
+    static getLeaseMetrics(options: {
+        types: readonly CommandName[];
+        noProgressMs?: number;
+        resolveNoProgressMs?: (name: CommandName) => number;
+        now?: Date;
+    }): CommandLeaseMetrics {
+        if (options.types.length === 0) {
+            return {
+                started: 0,
+                expiredLeases: 0,
+                retryScheduled: 0,
+                noProgress: 0,
+                oldestHeartbeatAgeMs: null,
+                oldestEligibleQueuedAgeMs: null,
+            };
+        }
+        const now = options.now ?? new Date();
+        const nowTimestamp = leaseTimestamp(now);
+        const noProgressMs = Math.max(0, options.noProgressMs ?? 0);
+        const cutoff = leaseTimestamp(new Date(now.getTime() - noProgressMs));
+        const row = db.prepare(`
+            SELECT
+                SUM(CASE WHEN status = 'started' THEN 1 ELSE 0 END) AS started,
+                SUM(CASE
+                    WHEN status = 'started'
+                     AND lease_expires_at IS NOT NULL
+                     AND julianday(lease_expires_at) <= julianday(?)
+                    THEN 1 ELSE 0 END
+                ) AS expired_leases,
+                SUM(CASE
+                    WHEN status = 'queued'
+                     AND retry_after IS NOT NULL
+                     AND julianday(retry_after) > julianday(?)
+                    THEN 1 ELSE 0 END
+                ) AS retry_scheduled,
+                SUM(CASE
+                    WHEN status = 'started'
+                     AND ? > 0
+                     AND last_progress_at IS NOT NULL
+                     AND julianday(last_progress_at) <= julianday(?)
+                     AND blocked_reason IS NULL
+                    THEN 1 ELSE 0 END
+                ) AS no_progress,
+                MIN(CASE WHEN status = 'started' THEN heartbeat_at END) AS oldest_heartbeat_at,
+                MIN(CASE
+                    WHEN status = 'queued'
+                     AND (retry_after IS NULL OR julianday(retry_after) <= julianday(?))
+                    THEN created_at END
+                ) AS oldest_eligible_created_at
+            FROM commands
+            WHERE name IN (${buildTypeInClause(options.types)})
+              AND status IN ('queued', 'started')
+        `).get(
+            nowTimestamp,
+            nowTimestamp,
+            noProgressMs,
+            cutoff,
+            nowTimestamp,
+            ...options.types,
+        ) as {
+            started: number | null;
+            expired_leases: number | null;
+            retry_scheduled: number | null;
+            no_progress: number | null;
+            oldest_heartbeat_at: string | null;
+            oldest_eligible_created_at: string | null;
+        };
+
+        const ageMs = (timestamp: string | null): number | null => {
+            if (!timestamp) return null;
+            const parsed = Date.parse(timestamp.includes("T") ? timestamp : `${timestamp.replace(" ", "T")}Z`);
+            return Number.isFinite(parsed) ? Math.max(0, now.getTime() - parsed) : null;
+        };
+        return {
+            started: Number(row.started) || 0,
+            expiredLeases: Number(row.expired_leases) || 0,
+            retryScheduled: Number(row.retry_scheduled) || 0,
+            noProgress: options.resolveNoProgressMs
+                ? this.findStaleExecutionLeases({
+                    types: options.types,
+                    now,
+                    noProgressMs: options.noProgressMs,
+                    resolveNoProgressMs: options.resolveNoProgressMs,
+                }).filter((command) => command.reason === "progress stopped").length
+                : Number(row.no_progress) || 0,
+            oldestHeartbeatAgeMs: ageMs(row.oldest_heartbeat_at),
+            oldestEligibleQueuedAgeMs: ageMs(row.oldest_eligible_created_at),
+        };
     }
 
     /**

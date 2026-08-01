@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 
 import {CommandNames} from "../command-names.js";
-import {type CommandModelOf} from "../command-queue-manager.js";
+import {CommandQueueManager, type CommandModelOf} from "../command-queue-manager.js";
 import { executeCommand } from "../command-context.js";
 import {
     DownloadedTracksImportService,
@@ -9,7 +9,13 @@ import {
 } from "../../mediafiles/downloaded-tracks-import-service.js";
 import { clearConfigCache } from "../../config/config.js";
 import { initCurationListeners } from "../../music/curation.listener.js";
-import { forwardImportProgress, isCommandWorker, type MainToWorkerMessage, type WorkerToMainMessage } from "./command-worker-protocol.js";
+import {
+    forwardImportProgress,
+    getCommandWorkerId,
+    isCommandWorker,
+    type MainToWorkerMessage,
+    type WorkerToMainMessage,
+} from "./command-worker-protocol.js";
 
 /**
  * Command worker thread entrypoint — one of the pool's real OS threads.
@@ -17,14 +23,14 @@ import { forwardImportProgress, isCommandWorker, type MainToWorkerMessage, type 
  * thread; WAL allows concurrent readers + one writer) and runs one command at
  * a time.
  *
- * The worker owns the command's *full lifecycle* (markProcessing → handler →
- * complete/fail → next monitoring pass) on its own connection, so the only
- * command-table writes during a scan backlog happen off the main thread and
- * can't block the API's event loop on write-lock contention. The curation
- * chaining listeners run here too, so their follow-up enqueues are off-main as
- * well. The handler's `appEvents` / `download-state` effects ride the protocol
- * bridge back to the main thread (see command-worker-protocol.ts). We never call
- * initDatabase() here — schema setup stays a main-thread, single-writer concern.
+ * The main executor atomically claims an attempt, then this worker owns its
+ * heartbeat, handler, ownership-guarded outcome, and monitoring handoff on its
+ * own connection. Heavy command-table/domain writes therefore remain off the
+ * API event loop. The curation chaining listeners run here too, so their
+ * follow-up enqueues are off-main as well. The handler's `appEvents` /
+ * `download-state` effects ride the protocol bridge back to the main thread.
+ * We never call initDatabase() here — schema setup stays a main-thread,
+ * single-writer concern.
  */
 
 if (!parentPort || !isCommandWorker()) {
@@ -43,6 +49,35 @@ function post(message: WorkerToMainMessage): void {
 
 async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): Promise<void> {
     const job = message.job;
+    const leaseMs = Math.max(1_000, message.leaseMs ?? 60_000);
+    const heartbeatMs = Math.max(250, Math.min(message.heartbeatMs ?? 10_000, Math.floor(leaseMs / 2)));
+    const physicalWorkerId = getCommandWorkerId();
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+    const heartbeat = () => {
+        if (!job.worker_id) return;
+        let renewed = false;
+        try {
+            renewed = CommandQueueManager.renewLease(job.id, job.worker_id, leaseMs);
+        } catch (error) {
+            console.error(`[CommandWorker] Could not renew lease for command #${job.id}:`, error);
+        }
+        post({
+            kind: "heartbeat",
+            commandId: job.id,
+            workerId: job.worker_id,
+            physicalWorkerId,
+            renewed,
+            sentAt: new Date().toISOString(),
+        });
+    };
+
+    if (job.worker_id) {
+        heartbeat();
+        heartbeatTimer = setInterval(heartbeat, heartbeatMs);
+        heartbeatTimer.unref?.();
+    }
+
     // Settings are written on the main thread. Workers keep a process-local
     // config cache, so without a refresh they keep boot-time defaults
     // (e.g. include_videos=false, old naming templates) forever.
@@ -69,6 +104,8 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
         post({ kind: "done", commandId: job.id });
     } catch (error: any) {
         post({ kind: "error", commandId: job.id, message: error?.message || "Unknown command worker error" });
+    } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
     }
 }
 
@@ -87,4 +124,4 @@ port.on("message", (message: MainToWorkerMessage) => {
     }
 });
 
-post({ kind: "ready" });
+post({ kind: "ready", physicalWorkerId: getCommandWorkerId() });

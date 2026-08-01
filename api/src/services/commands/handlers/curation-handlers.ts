@@ -4,6 +4,7 @@ import { getManagedArtists } from "../../music/managed-artists.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { queueDownloadMissingPass } from "../scheduler.js";
 import { nextArtistWorkflowPriority } from "../../music/artist-workflow.js";
+import { CommandQueueManager } from "../command-queue-manager.js";
 import type { CommandHandler } from "./handler-context.js";
 
 export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, ctx) => {
@@ -84,6 +85,9 @@ export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job, ct
     ArtistStatisticsService.refresh([job.payload.artistId]);
 
     if (job.payload.forceDownloadQueue) {
+        if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
+            return;
+        }
         queueDownloadMissingPass({
             artistIds: [String(job.payload.artistId)],
             trigger: job.trigger,

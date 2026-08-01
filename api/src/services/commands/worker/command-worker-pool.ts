@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
@@ -14,6 +15,7 @@ import {
 } from "../../download/download-state.js";
 import {
     COMMAND_WORKER_MARKER,
+    COMMAND_WORKER_ID,
     type CacheInvalidateTarget,
     type MainToWorkerMessage,
     type WorkerToMainMessage,
@@ -36,6 +38,23 @@ import {
 /** Optional per-run hooks. `onProgress` receives ImportDownload progress states. */
 export interface JobRunOptions {
     onProgress?: (state: unknown) => void;
+    leaseMs?: number;
+    heartbeatMs?: number;
+}
+
+export interface CommandWorkerSnapshot {
+    workerId: string;
+    busy: boolean;
+    currentCommandId: number | null;
+    executionToken: string | null;
+    lastSeenAt: string;
+    commandStartedAt: string | null;
+}
+
+export interface CommandWorkerPoolSnapshot {
+    started: boolean;
+    queuedJobs: number;
+    workers: CommandWorkerSnapshot[];
 }
 
 /**
@@ -52,14 +71,22 @@ export function isPoolShutdownError(error: unknown): boolean {
 
 interface JobSettle {
     commandId: number;
+    executionToken?: string;
     resolve: () => void;
     reject: (error: Error) => void;
     onProgress?: (state: unknown) => void;
+    leaseMs?: number;
+    heartbeatMs?: number;
 }
 
 interface PoolWorker {
     worker: Worker;
+    workerId: string;
     busy: boolean;
+    lastSeenAt: number;
+    commandStartedAt?: number;
+    exited: boolean;
+    forcedExitError?: Error;
     settle?: JobSettle;
 }
 
@@ -71,6 +98,7 @@ export class CommandWorkerPool {
     private static workers: PoolWorker[] = [];
     private static queue: QueuedJob[] = [];
     private static started = false;
+    private static testWorkerEntryUrl: string | null = null;
 
     /**
      * Whether the worker pool is running. True in the live app (started at boot),
@@ -90,10 +118,23 @@ export class CommandWorkerPool {
      * which registers tsx inside the worker and then imports the `.ts` entry
      * (passed via workerData.__entry). See command-worker-bootstrap.mjs.
      */
-    private static resolveSpawn(): { entry: string; workerData: Record<string, unknown> } {
+    private static resolveSpawn(workerId: string): { entry: string; workerData: Record<string, unknown> } {
         const here = path.dirname(fileURLToPath(import.meta.url));
         const isCompiled = here.includes(`${path.sep}dist${path.sep}`) || here.endsWith(`${path.sep}dist`);
-        const baseWorkerData: Record<string, unknown> = { [COMMAND_WORKER_MARKER]: true };
+        const baseWorkerData: Record<string, unknown> = {
+            [COMMAND_WORKER_MARKER]: true,
+            [COMMAND_WORKER_ID]: workerId,
+        };
+
+        if (this.testWorkerEntryUrl) {
+            return {
+                entry: path.join(here, "command-worker-bootstrap.mjs"),
+                workerData: {
+                    ...baseWorkerData,
+                    __entry: this.testWorkerEntryUrl,
+                },
+            };
+        }
 
         if (isCompiled) {
             return { entry: path.join(here, "command-worker-entry.js"), workerData: baseWorkerData };
@@ -117,6 +158,17 @@ export class CommandWorkerPool {
             this.spawnWorker();
         }
         console.log(`🧵 Command worker pool started (${size} thread${size === 1 ? "" : "s"})`);
+    }
+
+    /**
+     * Test seam for deterministic crash/hang fixtures. It cannot replace a
+     * running pool and is deliberately not read from runtime configuration.
+     */
+    static configureTestWorkerEntry(entryUrl: string | null): void {
+        if (this.started) {
+            throw new Error("Cannot replace the command worker entry while the pool is running");
+        }
+        this.testWorkerEntryUrl = entryUrl;
     }
 
     static async stop(): Promise<void> {
@@ -152,7 +204,15 @@ export class CommandWorkerPool {
             this.start();
         }
         return new Promise<void>((resolve, reject) => {
-            const queued: QueuedJob = { job, commandId: job.id, resolve, reject, onProgress: options.onProgress };
+            const queued: QueuedJob = {
+                job,
+                commandId: job.id,
+                resolve,
+                reject,
+                onProgress: options.onProgress,
+                leaseMs: options.leaseMs,
+                heartbeatMs: options.heartbeatMs,
+            };
             const idle = this.workers.find((entry) => !entry.busy);
             if (idle) {
                 this.assign(idle, queued);
@@ -164,8 +224,22 @@ export class CommandWorkerPool {
 
     private static assign(entry: PoolWorker, queued: QueuedJob): void {
         entry.busy = true;
-        entry.settle = { commandId: queued.commandId, resolve: queued.resolve, reject: queued.reject, onProgress: queued.onProgress };
-        entry.worker.postMessage({ kind: "run", job: queued.job } satisfies MainToWorkerMessage);
+        entry.commandStartedAt = Date.now();
+        entry.settle = {
+            commandId: queued.commandId,
+            executionToken: queued.job.worker_id ?? undefined,
+            resolve: queued.resolve,
+            reject: queued.reject,
+            onProgress: queued.onProgress,
+            leaseMs: queued.leaseMs,
+            heartbeatMs: queued.heartbeatMs,
+        };
+        entry.worker.postMessage({
+            kind: "run",
+            job: queued.job,
+            leaseMs: queued.leaseMs,
+            heartbeatMs: queued.heartbeatMs,
+        } satisfies MainToWorkerMessage);
     }
 
     private static drainQueue(entry: PoolWorker): void {
@@ -176,24 +250,53 @@ export class CommandWorkerPool {
     }
 
     private static spawnWorker(): void {
-        const { entry, workerData } = this.resolveSpawn();
+        const workerId = `command-worker:${process.pid}:${randomUUID()}`;
+        const { entry, workerData } = this.resolveSpawn(workerId);
         const worker = new Worker(entry, { workerData });
-        const poolWorker: PoolWorker = { worker, busy: false };
+        const poolWorker: PoolWorker = {
+            worker,
+            workerId,
+            busy: false,
+            lastSeenAt: Date.now(),
+            exited: false,
+        };
 
         worker.on("message", (message: WorkerToMainMessage) => this.handleMessage(poolWorker, message));
         worker.on("error", (error) => this.handleWorkerExit(poolWorker, error));
         worker.on("exit", (code) => {
-            if (code !== 0) {
-                this.handleWorkerExit(poolWorker, new Error(`Job worker exited with code ${code}`));
-            }
+            this.handleWorkerExit(
+                poolWorker,
+                new Error(
+                    code === 0
+                        ? "Job worker exited unexpectedly with code 0"
+                        : `Job worker exited with code ${code}`,
+                ),
+            );
         });
 
         this.workers.push(poolWorker);
     }
 
     private static handleMessage(entry: PoolWorker, message: WorkerToMainMessage): void {
+        // `error` and `exit` can both fire for one worker. Once the first signal
+        // recovered its command and removed the worker, ignore all late
+        // messages from that physical thread.
+        if (entry.exited) return;
+        entry.lastSeenAt = Date.now();
         switch (message.kind) {
             case "ready":
+                break;
+            case "heartbeat":
+                // The worker itself renewed the durable DB lease. This message
+                // provides independent worker last-seen/current-command
+                // evidence for diagnostics and watchdog decisions.
+                if (
+                    entry.settle
+                    && entry.settle.commandId === message.commandId
+                    && (!message.physicalWorkerId || message.physicalWorkerId === entry.workerId)
+                ) {
+                    entry.lastSeenAt = Date.parse(message.sentAt) || Date.now();
+                }
                 break;
             case "event":
                 // Re-emit on the main appEvents so SSE + main-thread listeners
@@ -239,18 +342,24 @@ export class CommandWorkerPool {
 
     private static finishJob(entry: PoolWorker, commandId: number, error: Error | null): void {
         const settle = entry.settle;
+        // A late result must never release a worker that is already associated
+        // with a different command.
+        if (!settle || settle.commandId !== commandId) {
+            return;
+        }
         entry.busy = false;
+        entry.commandStartedAt = undefined;
         entry.settle = undefined;
 
-        if (settle && settle.commandId === commandId) {
-            if (error) settle.reject(error);
-            else settle.resolve();
-        }
+        if (error) settle.reject(error);
+        else settle.resolve();
 
         this.drainQueue(entry);
     }
 
     private static handleWorkerExit(entry: PoolWorker, error: Error): void {
+        if (entry.exited) return;
+        entry.exited = true;
         // Reject the in-flight job (if any) and replace the dead worker so the
         // pool stays at full size. When the pool is stopping (deploy/restart),
         // the worker exit is expected — report it as a shutdown interruption so
@@ -258,8 +367,9 @@ export class CommandWorkerPool {
         // marking it failed.
         const settle = entry.settle;
         entry.settle = undefined;
+        entry.commandStartedAt = undefined;
         if (settle) {
-            settle.reject(this.started ? error : new Error(POOL_SHUTDOWN_MESSAGE));
+            settle.reject(this.started ? (entry.forcedExitError ?? error) : new Error(POOL_SHUTDOWN_MESSAGE));
         }
 
         const index = this.workers.indexOf(entry);
@@ -274,5 +384,62 @@ export class CommandWorkerPool {
             const replacement = this.workers[this.workers.length - 1];
             if (replacement) this.drainQueue(replacement);
         }
+    }
+
+    /**
+     * Terminate the worker currently executing a specific owned attempt. The
+     * pool exit handler rejects that run and immediately restores capacity.
+     */
+    static abortCommand(commandId: number, executionToken?: string, reason = "Command execution aborted"): boolean {
+        const queuedIndex = this.queue.findIndex((candidate) => (
+            candidate.commandId === commandId
+            && (!executionToken || candidate.job.worker_id === executionToken)
+        ));
+        if (queuedIndex !== -1) {
+            const [queued] = this.queue.splice(queuedIndex, 1);
+            queued.reject(new Error(reason));
+            return true;
+        }
+
+        const entry = this.workers.find((candidate) => {
+            if (candidate.settle?.commandId !== commandId) return false;
+            if (!executionToken) return true;
+            const queuedToken = this.getExecutionToken(candidate);
+            return queuedToken === executionToken;
+        });
+        if (!entry || entry.exited) return false;
+
+        const abortError = new Error(reason);
+        entry.forcedExitError = abortError;
+        const termination = entry.worker.terminate();
+        // Retire the ownership synchronously so a `done` message racing the
+        // asynchronous terminate cannot free this worker or receive a queued
+        // replacement command.
+        this.handleWorkerExit(entry, abortError);
+        void termination.catch((error) => {
+            this.handleWorkerExit(entry, error instanceof Error ? error : new Error(String(error)));
+        });
+        return true;
+    }
+
+    static getSnapshot(): CommandWorkerPoolSnapshot {
+        return {
+            started: this.started,
+            queuedJobs: this.queue.length,
+            workers: this.workers.map((entry) => ({
+                workerId: entry.workerId,
+                busy: entry.busy,
+                currentCommandId: entry.settle?.commandId ?? null,
+                executionToken: this.getExecutionToken(entry),
+                lastSeenAt: new Date(entry.lastSeenAt).toISOString(),
+                commandStartedAt: entry.commandStartedAt == null
+                    ? null
+                    : new Date(entry.commandStartedAt).toISOString(),
+            })),
+        };
+    }
+
+    private static getExecutionToken(entry: PoolWorker): string | null {
+        return entry.settle?.executionToken ?? null;
     }
 }

@@ -46,6 +46,14 @@ export function initCurationListeners() {
 
     // Trigger disk scan after metadata refresh is complete
     appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETE, (payload: ArtistRefreshCompleteEventPayload | undefined) => {
+        if (
+            payload?.commandId != null
+            && payload.workerId
+            && !CommandQueueManager.isExecutionOwner(payload.commandId, payload.workerId)
+        ) {
+            console.warn(`[Listeners] Ignoring stale refresh completion from command #${payload.commandId}`);
+            return;
+        }
         if (payload?.scanLibrary) {
             const shouldRescan = payload.isNewArtist
                 || payload.metadataChanged
@@ -95,6 +103,14 @@ export function initCurationListeners() {
     // Trigger missing search/curation after disk scan is complete
     appEvents.on(AppEvent.ARTIST_SCANNED, (payload: ArtistScannedEventPayload | undefined) => {
         if (!payload) {
+            return;
+        }
+        if (
+            payload.commandId != null
+            && payload.workerId
+            && !CommandQueueManager.isExecutionOwner(payload.commandId, payload.workerId)
+        ) {
+            console.warn(`[Listeners] Ignoring stale scan completion from command #${payload.commandId}`);
             return;
         }
 

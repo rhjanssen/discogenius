@@ -13,7 +13,21 @@ export function createCommandsSchema(db: Database.Database): void {
       trigger INT DEFAULT 0,            -- 0=Unspecified, 1=Manual, 2=Scheduled
       queue_order INT,
       attempts INT DEFAULT 0,
+      attempt INT NOT NULL DEFAULT 0,   -- durable execution-attempt number
       error TEXT,
+
+      -- Non-download command execution lease. worker_id is an opaque,
+      -- per-attempt ownership token rather than a reusable thread id.
+      worker_id TEXT,
+      heartbeat_at DATETIME,
+      last_progress_at DATETIME,
+      progress_phase TEXT,
+      progress_current INT,
+      progress_total INT,
+      lease_expires_at DATETIME,
+      blocked_reason TEXT,
+      retry_after DATETIME,
+      last_retry_reason TEXT,
       
       -- Timestamps
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -98,6 +112,9 @@ export function createCommandsIndexes(db: Database.Database): void {
   db.exec(`CREATE INDEX idx_commands_status_name_created ON commands(status, name, created_at)`);
   db.exec(`CREATE INDEX idx_commands_status_name_started ON commands(status, name, started_at)`);
   db.exec(`CREATE INDEX idx_commands_status_name_completed ON commands(status, name, completed_at DESC, id DESC)`);
+  db.exec(`CREATE INDEX idx_commands_status_lease ON commands(status, lease_expires_at)`);
+  db.exec(`CREATE INDEX idx_commands_status_retry_after ON commands(status, retry_after)`);
+  db.exec(`CREATE INDEX idx_commands_worker_id ON commands(worker_id)`);
   db.exec(`CREATE INDEX idx_commands_poll ON commands(status, priority DESC, trigger DESC, queue_order ASC, created_at ASC)`);
   db.exec(`CREATE INDEX idx_commands_queue_view ON commands(name, status, priority, trigger, queue_order, created_at, started_at, updated_at, id)`);
   db.exec(`CREATE INDEX idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)`);

@@ -23,6 +23,7 @@ import type {CommandModel} from "../command-model.js";
 
 /** Marker placed in `workerData` when *we* spawn a command worker. */
 export const COMMAND_WORKER_MARKER = "discogeniusCommandWorker" as const;
+export const COMMAND_WORKER_ID = "discogeniusCommandWorkerId" as const;
 const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
 
 /** download-state cache families the bridge can invalidate across threads. */
@@ -30,7 +31,15 @@ export type CacheInvalidateTarget = "album" | "releaseGroup" | "artist" | "media
 
 /** worker → main messages. */
 export type WorkerToMainMessage =
-    | { kind: "ready" }
+    | { kind: "ready"; physicalWorkerId?: string }
+    | {
+        kind: "heartbeat";
+        commandId: number;
+        workerId: string;
+        physicalWorkerId?: string;
+        renewed: boolean;
+        sentAt: string;
+      }
     | { kind: "event"; event: string; payload: unknown }
     | { kind: "cacheInvalidate"; target: CacheInvalidateTarget; key?: string }
     | { kind: "importProgress"; commandId: number; state: unknown }
@@ -39,7 +48,7 @@ export type WorkerToMainMessage =
 
 /** main → worker messages. */
 export type MainToWorkerMessage =
-    | { kind: "run"; job: CommandModel }
+    | { kind: "run"; job: CommandModel; leaseMs?: number; heartbeatMs?: number }
     | { kind: "shutdown" };
 
 /**
@@ -49,6 +58,12 @@ export type MainToWorkerMessage =
  */
 export function isCommandWorker(): boolean {
     return !isMainThread && !!parentPort && (workerData as Record<string, unknown> | null)?.[COMMAND_WORKER_MARKER] === true;
+}
+
+export function getCommandWorkerId(): string | undefined {
+    if (!isCommandWorker()) return undefined;
+    const value = (workerData as Record<string, unknown> | null)?.[COMMAND_WORKER_ID];
+    return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function isBridgeWorker(): boolean {

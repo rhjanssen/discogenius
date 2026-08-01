@@ -4,6 +4,7 @@ import express, { Request, Response, Router } from 'express';
 import {AnyCommandBody, CommandStatus} from "../../services/commands/command-model.js";
 import {DOWNLOAD_COMMAND_NAMES, NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
+import { CommandWorkerPool } from "../../services/commands/worker/command-worker-pool.js";
 import { downloadProcessor } from '../../services/download/download-processor.js';
 import { downloadEvents } from '../../services/download/download-events.js';
 import { authMiddleware } from '../../middleware/auth.js';
@@ -351,11 +352,15 @@ router.delete('/:id', async (req: Request, res: Response) => {
     }
 
     if (job.status === 'started') {
-      // The download loop owns active/pending-import state in its worker. Ask
-      // it to abort/detach that state before deleting the persisted command;
-      // this keeps the rest of the queue running and suppresses late progress
-      // or failure events from recreating the deleted row in the client.
-      await downloadProcessor.cancelJob(commandId);
+      if (job.worker_id) {
+        // Non-download command attempt: retire the owned worker before deleting
+        // the row so a cancelled hang cannot consume pool capacity forever.
+        CommandWorkerPool.abortCommand(commandId, job.worker_id, "Command deleted by user");
+      } else {
+        // The download loop owns active/pending-import state in its worker. Ask
+        // it to abort/detach that state before deleting the persisted command.
+        await downloadProcessor.cancelJob(commandId);
+      }
     }
 
     CommandQueueManager.deleteCommand(commandId);

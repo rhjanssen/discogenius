@@ -48,6 +48,10 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         description: ctx.formatArtistPhaseDescription(job, "metadata refreshed, matching providers"),
     });
 
+    if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
+        return;
+    }
+
     // Hand provider matching off to its own queued unit. That command emits
     // ARTIST_REFRESH_COMPLETE when matching finishes, so the existing
     // RescanFolders → CurateArtist chain still fires AFTER slots are selected.
@@ -140,9 +144,18 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         description: ctx.formatArtistPhaseDescription(job, "provider matching complete"),
     });
 
+    // A watchdog may have reclaimed this attempt while the handler was
+    // finishing an external call. Do not let the stale attempt fan out the
+    // next Artist stages or credited hydration.
+    if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
+        return;
+    }
+
     // Emit event so decoupled listeners (like curation.listener) can chain the
     // redundancy check / disk scan — AFTER provider slots are selected.
     appEvents.emit(AppEvent.ARTIST_REFRESH_COMPLETE, {
+        commandId: job.id,
+        workerId: job.worker_id ?? undefined,
         artistId: job.payload.artistId,
         artistName: job.payload.artistName,
         workflow: job.payload.workflow,
@@ -189,6 +202,9 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
     let skipped = 0;
 
     for (let i = 0; i < allArtists.length; i++) {
+        if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
+            return;
+        }
         const artist = allArtists[i];
         const artistId = String(artist.id);
         const artistName = String((artist as any).name || '').trim();

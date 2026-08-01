@@ -88,7 +88,20 @@ export interface CommandModelRecordBase<T extends CommandName> {
     trigger?: number;
     queue_order?: number | null;
     attempts: number;
+    /** Durable non-download execution-attempt number, incremented on claim. */
+    attempt: number;
     error?: string;
+    /** Opaque per-attempt ownership token. It is not a reusable OS thread id. */
+    worker_id?: string | null;
+    heartbeat_at?: string | null;
+    last_progress_at?: string | null;
+    progress_phase?: string | null;
+    progress_current?: number | null;
+    progress_total?: number | null;
+    lease_expires_at?: string | null;
+    blocked_reason?: string | null;
+    retry_after?: string | null;
+    last_retry_reason?: string | null;
     ref_id?: string;
     created_at: string;
     started_at?: string;

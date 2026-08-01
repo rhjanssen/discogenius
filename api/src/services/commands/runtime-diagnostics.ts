@@ -1,5 +1,9 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { readIntEnv } from "../../utils/env.js";
+import { NON_DOWNLOAD_COMMAND_NAMES } from "./command-names.js";
+import { resolveCommandNoProgressTimeoutMs } from "./command-liveness-policy.js";
+import { CommandQueueManager } from "./command-queue-manager.js";
+import { CommandWorkerPool } from "./worker/command-worker-pool.js";
 
 interface SlowRequestSnapshot {
   method: string;
@@ -105,6 +109,25 @@ export function trackRuntimeRequest(method: string, path: string) {
 }
 
 export function getRuntimeDiagnosticsSnapshot() {
+  let commandRuntime: {
+    leases: ReturnType<typeof CommandQueueManager.getLeaseMetrics>;
+    workerPool: ReturnType<typeof CommandWorkerPool.getSnapshot>;
+  } | null = null;
+  try {
+    const noProgressOverrideMs = readIntEnv("DISCOGENIUS_COMMAND_NO_PROGRESS_MS", 0, 0);
+    commandRuntime = {
+      leases: CommandQueueManager.getLeaseMetrics({
+        types: NON_DOWNLOAD_COMMAND_NAMES,
+        noProgressMs: noProgressOverrideMs > 0 ? noProgressOverrideMs : undefined,
+        resolveNoProgressMs: resolveCommandNoProgressTimeoutMs,
+      }),
+      workerPool: CommandWorkerPool.getSnapshot(),
+    };
+  } catch {
+    // Diagnostics can be read during early bootstrap before the active schema
+    // exists. The HTTP health path will include lease state once DB init ends.
+  }
+
   return {
     uptimeMs: Date.now() - startedAt,
     inFlightRequests,
@@ -124,5 +147,6 @@ export function getRuntimeDiagnosticsSnapshot() {
       p99Ms: nanosecondsToMilliseconds(eventLoopHistogram.percentile(99)),
     },
     lastSlowRequest,
+    commands: commandRuntime,
   };
 }
