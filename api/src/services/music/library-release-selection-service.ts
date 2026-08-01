@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { getConfigSection } from "../config/config.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
+import { resolveTrackListTabs, type TrackListTab } from "./track-list-tabs.js";
 
 export interface LibraryAcquisitionPlanView {
   id: number;
@@ -48,6 +49,11 @@ export interface LibrarySelectionView {
   qualityProfile: string;
   allowedSourceFormats: string[];
   selections: LibraryReleaseSelectionView[];
+  /**
+   * Track-list tabs this Album needs in this Library. Empty when one list
+   * suffices — equivalent or nested monitored Editions do not earn tabs.
+   */
+  trackListTabs: TrackListTab[];
 }
 
 export interface ProviderReleaseOfferView {
@@ -273,6 +279,7 @@ export class LibraryReleaseSelectionService {
             }
           })(),
           selections: [],
+          trackListTabs: [],
         };
         libraryById.set(row.library_id, library);
       }
@@ -389,6 +396,31 @@ export class LibraryReleaseSelectionService {
             : null;
         }
       }
+    }
+
+    // Tabs are a canonical-Recording question, so they are answered here rather
+    // than left to the page to infer from track counts.
+    const recordingIdsByEdition = new Map<number, Set<number>>();
+    for (const row of this.db.prepare(`
+      SELECT track.album_edition_id, track.recording_id
+      FROM Tracks track
+      JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+      WHERE edition.release_group_id = ?
+    `).all(releaseGroup.id) as Array<{ album_edition_id: number; recording_id: number }>) {
+      const recordingIds = recordingIdsByEdition.get(row.album_edition_id) || new Set<number>();
+      recordingIds.add(row.recording_id);
+      recordingIdsByEdition.set(row.album_edition_id, recordingIds);
+    }
+    for (const library of libraries) {
+      library.trackListTabs = resolveTrackListTabs(
+        library.selections
+          .filter((selection) => selection.monitored)
+          .map((selection) => ({
+            editionId: selection.editionId,
+            recordingIds: recordingIdsByEdition.get(selection.editionId) || new Set<number>(),
+            representative: selection.representative,
+          })),
+      );
     }
 
     return {
