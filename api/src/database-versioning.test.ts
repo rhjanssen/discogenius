@@ -114,6 +114,22 @@ test("fresh schema-42 TrackFiles baseline includes video_codec and frame size co
   assert.ok(columns.includes("height"), "Expected TrackFiles.height on CREATE TABLE baseline");
 });
 
+test("fresh schema-42 TrackFiles baseline indexes exact audio and video completion lookups", () => {
+  const indexes = tableIndexes("TrackFiles");
+  assert.ok(indexes.includes("idx_track_files_audio_completion"));
+  assert.ok(indexes.includes("idx_track_files_video_completion"));
+
+  const definitions = dbModule.db.prepare(`
+    SELECT name, sql
+    FROM sqlite_master
+    WHERE type = 'index'
+      AND name IN ('idx_track_files_audio_completion', 'idx_track_files_video_completion')
+    ORDER BY name
+  `).all() as Array<{ name: string; sql: string }>;
+  assert.match(definitions.find(({ name }) => name.endsWith("audio_completion"))?.sql ?? "", /WHERE file_class = 'audio'/);
+  assert.match(definitions.find(({ name }) => name.endsWith("video_completion"))?.sql ?? "", /WHERE file_class = 'video'/);
+});
+
 test("upgrade queue table is absent from the fresh schema", () => {
   const row = dbModule.db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='upgrade_queue'")

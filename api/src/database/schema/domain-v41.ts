@@ -636,6 +636,12 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_acquisition_tracks_match ON AcquisitionPlanTracks(provider_track_match_id);
     CREATE INDEX idx_track_files_library_track ON TrackFiles(library_id, track_id);
     CREATE INDEX idx_track_files_library_recording ON TrackFiles(library_id, recording_id);
+    CREATE INDEX idx_track_files_audio_completion
+      ON TrackFiles(library_id, track_id)
+      WHERE file_class = 'audio';
+    CREATE INDEX idx_track_files_video_completion
+      ON TrackFiles(library_id, recording_id)
+      WHERE file_class = 'video';
     CREATE INDEX idx_track_files_library_release ON TrackFiles(library_id, album_edition_id);
     CREATE INDEX idx_acquisition_plans_edition ON AcquisitionPlans(library_id, edition_id, rank);
 

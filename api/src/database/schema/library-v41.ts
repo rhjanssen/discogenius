@@ -365,6 +365,16 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       ON TrackFiles(library_id, track_id);
     CREATE INDEX idx_track_files_library_recording
       ON TrackFiles(library_id, recording_id);
+    -- Completion/statistics queries only care about media rows of the matching
+    -- class. Partial covering indexes avoid walking duplicate artwork,
+    -- sidecars, spatial/video siblings, and other file inventory entries for
+    -- every monitored Track or Recording under a large library.
+    CREATE INDEX idx_track_files_audio_completion
+      ON TrackFiles(library_id, track_id)
+      WHERE file_class = 'audio';
+    CREATE INDEX idx_track_files_video_completion
+      ON TrackFiles(library_id, recording_id)
+      WHERE file_class = 'video';
     CREATE INDEX idx_track_files_library_release
       ON TrackFiles(library_id, album_edition_id);
 

@@ -139,7 +139,7 @@ export class LibraryStatsQueryService {
                     requirement.track_id,
                     CASE WHEN EXISTS (
                         SELECT 1
-                        FROM TrackFiles track_file INDEXED BY idx_track_files_library_track
+                        FROM TrackFiles track_file INDEXED BY idx_track_files_audio_completion
                         WHERE track_file.library_id = requirement.library_id
                           AND track_file.track_id = requirement.track_id
                           AND track_file.file_class = 'audio'
@@ -186,7 +186,7 @@ export class LibraryStatsQueryService {
                     requirement.required_library_id,
                     CASE WHEN EXISTS (
                         SELECT 1
-                        FROM TrackFiles video_file INDEXED BY idx_track_files_library_recording
+                        FROM TrackFiles video_file INDEXED BY idx_track_files_video_completion
                         WHERE video_file.library_id = requirement.required_library_id
                           AND video_file.recording_id = requirement.recording_id
                           AND video_file.file_class = 'video'
