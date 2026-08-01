@@ -145,7 +145,18 @@ export class DownloadMissingService {
                   ON pi.id = video_match.provider_video_item_id
                  AND pi.entity_type = 'video'
                 WHERE r.is_video = 1
-                  AND r.monitored = 1
+                  -- Recordings has no monitored column on the active schema; a
+                  -- video is monitored by being selected into an enabled Video
+                  -- library. Reading r.monitored threw at prepare time, so every
+                  -- DownloadMissing run failed and nothing was ever queued.
+                  AND EXISTS (
+                    SELECT 1
+                    FROM LibraryVideos selected_video
+                    JOIN Libraries selected_video_library
+                      ON selected_video_library.id = selected_video.library_id
+                     AND selected_video_library.enabled = 1
+                    WHERE selected_video.video_recording_id = r.id
+                  )
                   AND pi.provider_id IS NOT NULL
                   AND NOT ${hasImportedVideoFile('r.id', 'r.mbid', 'pi.provider', 'pi.provider_id')}
             `;
