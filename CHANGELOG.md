@@ -2,6 +2,65 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.8.0] - unreleased
+
+Clean-start schema 42. There is no migration from 41: `initDatabase()` refuses
+any other `user_version` and creates a fresh database.
+
+### Changed
+- **A monitoring row means monitored, at every level.** `LibraryAlbums.monitored`
+  and `Recordings.monitored` / `monitored_lock` are gone; `LibraryAlbums`,
+  `LibraryEditions` and the new `LibraryVideos` all say the same thing the same
+  way — the row exists, or the thing is not monitored. Rows with `monitored = 0`
+  were previously written just to hold an album lock for an album nobody
+  monitored, and readers had to remember to filter on the column.
+- **Album commands name their library.** They fanned out over every enabled
+  library, so monitoring an album in Stereo monitored it in Spatial and in the
+  Video Library. Every command now takes one library or an explicit
+  `allLibraries`, which means every *audio* library; a library is an audio
+  library unless its quality profile accepts `video`.
+- **The album lock protects against automation, not against you.** Locked albums
+  used to reject every edition and plan change with 409. Curation and replanning
+  still honour the lock; the user may change editions, representative and plan
+  while locked, and none of it clears the lock. It disappears with the row when
+  the last monitored edition goes.
+- **Planning decides the outcome before it picks sources.** The optimizer
+  enumerated source subsets up to fifteen and fell back to "each alone, or all
+  together" beyond that — so a sixteenth, irrelevant offer turned a coherent
+  four-source composite into a fifteen-source one delivering identical audio.
+  The best per-track result is chosen first and the fewest sources are fitted to
+  it (~8ms where the old path took ~340ms). Every non-dominated single-source
+  offer is now kept, so the album page can offer real alternatives.
+- **Videos are selected by a Video Library, and remember where they go.**
+  `LibraryVideos` separates the videos we know about from the ones a library
+  chose, and records the single physical placement of each — so one video can
+  appear on several album pages without being downloaded more than once. A
+  partial unique index makes two occupants of the same Plex slot beside one
+  track unrepresentable.
+
+### Fixed
+- **Manual edition choices are overruled only when coverage is genuinely lost.**
+  A manual choice used to survive curation unconditionally, silently dropping
+  the recordings the declined edition carried. It now stands while those
+  recordings are reachable elsewhere in the artist's discography — curation goes
+  and monitors those instead — and gives way only when the declined edition is
+  the only place they exist. Locked albums are exempt, and automation may no
+  longer add editions to one either. Overruling writes
+  `curation_override_unreachable_recordings` onto the rows.
+- **Track-list tabs are drawn.** The decision existed and rode on the
+  availability payload; the album page had no way to fetch a second edition's
+  tracks. `GET /v1/album/:albumId/editions/:editionId/tracks` returns the
+  complete canonical list for one edition, never trimmed to provider coverage.
+- **Shared album extras survived a scoped deletion on Windows.** Folder-extra
+  ownership built a forward-slash `LIKE` prefix and matched it against paths
+  stored with the platform separator, so on Windows it matched nothing: a shared
+  `cover.jpg` looked unowned and was removed while another library still needed
+  it. Both sides are normalised at one boundary now.
+- **`yarn ci` no longer reports green over real failures.** When Node's test
+  runner hit its clone-serialisation flake, the harness re-ran the flaked file
+  and exited with *that* run's status, discarding every genuine assertion
+  failure elsewhere in the suite.
+
 ## [2.7.5] - 2026-07-27
 
 ### Changed

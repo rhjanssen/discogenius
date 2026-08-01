@@ -16,97 +16,84 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
-## Done: plans belong to a Library and a canonical Edition
+## Done: the 2.8.0 architecture
 
-An earlier plan for this slice proposed `LibraryEditions.monitored`, so one row
-per evaluated Edition could hold plans while saying whether it was monitored.
-That was rejected: it makes a row's existence and its `monitored` column two
-answers to one question, which drift. Acquisition Plans are scoped to
-`(library_id, edition_id)` instead, so an Edition needs no row of any kind to
-carry offers, and a `LibraryEditions` row keeps its single meaning — this
-Edition is monitored in this Library.
+Landed on `claude/implementation-brief-reconcile-taw5jb`. Schema 42 is
+clean-start; `initDatabase()` refuses any other `user_version`.
 
-Landed with it:
+**Monitoring is row existence, everywhere.** `LibraryAlbums.monitored` and
+`Recordings.monitored` / `monitored_lock` are gone. `LibraryAlbums`,
+`LibraryEditions` and `LibraryVideos` all say the same thing the same way.
+Unmonitoring an Album withdraws the Editions monitored under it, and takes the
+Album's lock with the row.
 
-- `LibraryEditions.locked` removed. `LibraryAlbums.locked` is the one Album lock
-  that curation, planning and the UI all read; there is no second value to keep
-  in step. A locked Album rejects every monitoring change with 409.
-- `AcquisitionPlans.chosen` removed. The monitored Edition's
-  `preferred_plan_key` is the only statement of which plan executes, backed by a
-  deferred composite foreign key so it cannot name another Edition's plan.
-- `SelectedAcquisitionPlans` view: monitored AND selected in one join, so a
-  reader cannot satisfy one condition and forget the other.
-- Plans are generated during provider matching, before curation, and survive
-  unmonitoring.
-- `require_provider_availability` both ways: on, only Editions a provider can
-  deliver are eligible for automatic monitoring; off, an Edition is monitored
-  with no plan and the UI says "No provider offer currently available" — never a
-  fabricated plan.
-- Selection: normal click is "use only this", Ctrl/Cmd-click and an explicit
-  button are additive, plus Make primary and Remove from monitored editions.
-- Track-list tabs decided from canonical Recording sets (`track-list-tabs.ts`)
-  and exposed per library on the availability endpoint.
+**Album and video commands name their library.** One library, or an explicit
+`allLibraries` meaning every *audio* library. A library is an audio library
+unless its quality profile accepts `video`, read from the profile so a renamed
+library stays classified. The Video Library never holds a `LibraryAlbums` row.
 
-## Next: render the track-list tab strip
+**The Album lock is aimed at automation.** Curation may not drop a locked
+Album's editions, add to them, or reclaim its plan choice; the user may change
+editions, representative and plan while locked, and none of it clears the lock.
+A locked plan the provider withdraws stays selected and marked `unavailable`
+rather than being swapped for another.
 
-The decision is made and tested; the Album page does not draw it yet. Drawing it
-needs a per-Edition track read the page payload does not currently expose — it
-returns one track list, for the representative Edition. Add an Edition-scoped
-track endpoint (or widen the page payload to carry a list per monitored
-Edition), then render the strip with the Dashboard Queue/Activity tab styling
-and the representative Edition as the default tab.
+**Acquisition Plans** are scoped to `(library_id, edition_id)`, so an Edition
+needs no row of any kind to carry offers. `LibraryEditions.preferred_plan_key`
+is the only statement of which plan executes, backed by a deferred composite
+foreign key. `SelectedAcquisitionPlans` joins monitored and selected in one
+place. Planning runs before curation and survives unmonitoring.
 
-## Also next: edition choice may be overruled when coverage becomes impossible
+**The planner decides the outcome first.** Best delivered result per canonical
+track, then the fewest sources fitted to it by minimum set cover with dominance
+pruning — no source-subset enumeration and no cliff at sixteen sources. Every
+non-dominated single-source offer is kept alongside a combined offer that earns
+its place.
 
-Not implemented. Everything else from the acquisition-plan design landed
-(schema 42, candidate plans, plan dedup, manual-choice coverage guard, lock
-semantics, album-page plan chooser).
+**A manual edition choice** stands while its missing recordings are reachable
+elsewhere in the artist's discography, and is overruled only when the declined
+edition is the only place they exist. Locked albums are exempt. Overruling
+writes `curation_override_unreachable_recordings`.
 
-A manual **edition** choice currently always survives curation — the curation
-repository only touches `selection_mode = 'auto' AND locked = 0`. The intended
-rule is narrower: a manual edition choice persists **only while full discography
-coverage is still reachable some other way**.
+**Track-list tabs** are decided from canonical Recording sets
+(`track-list-tabs.ts`), exposed per library on the availability endpoint, and
+drawn by the album page; `GET /v1/album/:albumId/editions/:editionId/tracks`
+serves the complete canonical list for one edition.
 
-Worked example: the user picks the standard edition over the deluxe. That is
-fine as long as the deluxe-only tracks are obtainable elsewhere — as individual
-singles, another edition, another provider — in which case curation should
-monitor those instead and leave the override alone. If those tracks are
-reachable *only* through the deluxe edition, curation may overrule the user and
-select it.
+**Videos** are canonical Recordings with `is_video = 1`, linked to audio by a
+Recording-level relation derived from provider-edition membership (read from
+both the album's side and the video's). `LibraryVideos` records which videos a
+Video Library selected and the one physical placement of each, with a partial
+unique index over `(library, placement library, track, slot)` so two files
+cannot claim the same Plex role. Canonical video types are `video` / `live` /
+`lyrics`; visualizer and official audio normalise to `video`.
 
-Implementation notes:
+## Remaining for 2.8.0
 
-- The comparison is artist-level, not album-level: `artist-coverage-optimizer.ts`
-  already reasons about canonical coverage across a discography and is the right
-  home for the check.
-- The rule needs "canonical recordings reachable under the current selection"
-  versus "reachable if this edition were selected too". Only a strict loss
-  justifies overruling.
-- An album `locked = 1` exempts the edition from this entirely; the lock now
-  covers monitored state, edition choice and plan choice alike.
-- Overruling must be visible in the same way a reclaimed plan choice is —
-  logged with a reason, not silent.
-
-## Still blocked on a schema decision (needs Robert)
-
-- **Persist the exact clicked provider audio variant.** The Release UI offers
-  Lossless, Hi-Res and Atmos as distinct choices, but only
-  `providerEditionMatchId` is sent and stored. `LibraryEditions` has no column
-  for the chosen variant or for an explicit exclusivity flag, so two visibly
-  different clicks collapse to the same persisted state and the variant is
-  re-derived by the planner's own ranking on every replan.
-
-  The fix needs `LibraryEditions.preferred_provider_edition_match_id`,
-  `preferred_audio_quality` and `source_exclusive`. `initDatabase()` is
-  clean-start only (`assertDatabaseVersionCanStart` refuses any
-  `user_version != 41`), so adding them means bumping to schema 42 and forcing a
-  runtime database reset. That is a destructive choice about live data, not an
-  implementation detail — it needs an explicit decision before the columns land.
-
-  Already fixed without a schema change (see `badcc59`): a preferred Provider
-  Edition is now a primary preference rather than an exclusive source lock, it
-  stays pinned as the plan's `primary` source so it survives replanning, and
-  selecting an Edition no longer deletes other deliberately selected Editions.
+- **Video curation and inline-slot winners.** `LibraryVideos` and its placement
+  columns exist and are enforced, but nothing yet *chooses* the inline winners:
+  the `separated` / `inline` / `inline_only` layout modes still run through the
+  2.7-era `video-folder-layout.ts` derivation rather than reading persisted
+  placement. Needs: one regular-video and one lyrics winner per eligible audio
+  track, ranked by (1) exact performance relation, (2) direct canonical
+  co-membership in the target monitored Edition, (3) natural release context,
+  (4) accepted over inferred, (5) evidence strength, (6) strongest then largest
+  monitored Edition, (7) representative, (8) id. Candidates for inline placement
+  are only Track occurrences whose Edition has a `LibraryEditions` row in the
+  applicable audio library.
+- **Organizer reads persisted placement.** Download, organize, rename and scan
+  still derive a video's destination independently. They should read
+  `LibraryVideos`, and moving a video when its placement Edition stops being
+  monitored must move the file rather than write a second copy.
+- **Plex suffix wiring.** `canonicalVideoType` / `videoTypeSuffix` exist and are
+  tested; `video-naming.ts` still maps from the raw provider variant, so a live
+  video placed inline is not yet named `-video`.
+- **Album pages list one preferred album per video.** The rule is that a video
+  appears on every album whose tracks carry its linked recording, with one
+  physical file. The second half is enforced; the first is not. Pinned as a
+  skipped test in `video-recording-relations.test.ts`.
+- **Live provider validation.** No controlled real-provider download was run in
+  the session that landed the above — see "Manual validation" at the top.
 
 ## Engineering principles (apply to every planned task below)
 
