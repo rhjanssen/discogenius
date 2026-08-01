@@ -56,9 +56,9 @@
     {
       "id": "compose-isolation-audit-20260801",
       "gitSha": "54a8193",
-      "layer": "Release-hardening Compose audit",
-      "status": "passed",
-      "evidence": "All five mounts are nested under ${DISCOGENIUS_RC_ROOT:?...}, so Compose refuses to start without an explicit disposable root; downloads default to disabled; host port defaults to 3837 rather than the normal 3737. Cannot resolve to real media roots without deliberate operator override."
+      "layer": "Compose deployment decision",
+      "status": "superseded",
+      "evidence": "The dedicated docker-compose.release-hardening.yml was removed by decision. Release validation now uses the repository default docker-compose.yml (service and container discogenius, image discogenius:latest, port ${PORT:-3737}). The isolation the RC file provided via a required DISCOGENIUS_RC_ROOT is replaced by a per-test precondition: resolve and print the Stereo/Spatial/Video/download/staging/unmapped host paths and prove each is an empty disposable directory before any destructive filesystem test. Not yet exercised."
     }
   ],
   "capabilities": [

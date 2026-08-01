@@ -165,10 +165,10 @@ leases, API/SSE responsiveness, provider matching, and the full per-Artist
 workflow remain separate Docker/load gates; their metrics are explicitly
 reported as unmeasured rather than inferred.
 
-### Isolated runtime workflow gate
+### Runtime workflow gate
 
-After starting `docker-compose.release-hardening.yml` with a disposable
-`DISCOGENIUS_RC_ROOT`, use
+After starting the ordinary Compose deployment (`docker compose up -d`, no `-f`)
+against verified disposable data roots, use
 `scripts/release-hardening/run-runtime-catalog-workflow.ts` to add Bastille and
 Bakermat through the real HTTP API. The gate follows each
 RefreshArtist → MatchArtistProviders → RescanFolders → CurateArtist →
@@ -178,18 +178,19 @@ delay to a run-id directory.
 
 ```powershell
 yarn --cwd api tsx scripts/release-hardening/run-runtime-catalog-workflow.ts `
-  --base-url http://127.0.0.1:3837 `
+  --base-url http://127.0.0.1:3737 `
   --catalog-mode musicbrainz-local `
   --catalog-host 192.168.1.100 `
   --refresh-concurrency 4 `
   --worker-pool-size 4 `
-  --container discogenius-release-hardening `
+  --container discogenius `
   --run-id local-mb-runtime-c4-p4-20260801
 ```
 
-The compose file disables downloads by default, so this validates catalog and
-workflow liveness without touching a real media collection. A Servarr run uses
-`--catalog-mode servarr-metadata` and a separately recreated disposable root.
+Set `DISCOGENIUS_DISABLE_DOWNLOADS=1` for this gate so it validates catalog and
+workflow liveness without starting provider downloads — the ordinary Compose
+deployment leaves downloads enabled by default. A Servarr run uses
+`--catalog-mode servarr-metadata` against a freshly wiped runtime.
 
 ## Catalog source ↔ schema parity
 

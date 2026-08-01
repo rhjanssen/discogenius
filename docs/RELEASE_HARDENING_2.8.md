@@ -171,24 +171,34 @@ Every durable load/soak run records:
 Long runs write heartbeat and final JSON files. A process still running normally
 at an intermediate observation is not a pass.
 
-### Isolated Docker release-candidate runtime
+### Docker runtime for release validation
 
-`docker-compose.release-hardening.yml` is a standalone Compose definition for
-functional, browser, restart, and final-integrity runs. It neither reads nor
-writes the ordinary repository `config`, `downloads`, or `library` mounts.
-Compose requires `DISCOGENIUS_RC_ROOT` to name an explicit disposable run
-directory and publishes the RC app on port `3837` by default. Provider downloads
-start disabled and require the test operator to opt in deliberately.
+Release validation uses the repository's ordinary Compose deployment. There is
+no separate release-candidate Compose file, project name, or port; the normal
+service (`discogenius`), the normal container name, and the normal published
+port are the validation targets.
 
-Example (PowerShell):
-
-```powershell
-$env:DISCOGENIUS_RC_ROOT = (Resolve-Path test-results/release-hardening/rc-docker).Path
-docker compose -p discogenius-rc -f docker-compose.release-hardening.yml up -d --build
+```bash
+docker compose config
+docker compose build
+docker compose up -d
 ```
 
-The named root must contain `config` and the five `media` subdirectories before
-startup. It must never point at Robert's real media collection.
+Call `docker compose` without `-f` so the default `docker-compose.yml` applies.
+Runtime data is disposable: every runtime gate starts from a wiped `config`,
+`downloads`, and `library` and expects a freshly created schema 42. Recreating
+the database, removing WAL/SHM files, and clearing download, staging, import,
+and unmapped data between runs is expected, not exceptional.
+
+**Filesystem safety is now a precondition of the test, not of the deployment.**
+The ordinary Compose file bind-mounts `./config`, `./downloads`, and `./library`
+relative to the repository. Before any import, rename, move, delete, download,
+or sidecar test, inspect `docker compose config` and `.env`, resolve the Stereo,
+Spatial, Video, download, staging, and unmapped roots to absolute host paths,
+print them, and confirm each is an empty disposable directory. Fail closed when
+a path is ambiguous. Point the deployment at disposable directories through the
+normal environment/configuration mechanism — never by adding another Compose
+file. These roots must never resolve to a real personal media collection.
 
 ## Statistics semantics and measured cost
 

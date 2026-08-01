@@ -78,7 +78,7 @@ function parseArgs(argv: string[]): Options {
   if (catalogMode !== "musicbrainz-local" && catalogMode !== "servarr-metadata") {
     throw new Error("--catalog-mode must be musicbrainz-local or servarr-metadata");
   }
-  const baseUrl = String(values.get("--base-url") ?? "http://127.0.0.1:3837")
+  const baseUrl = String(values.get("--base-url") ?? "http://127.0.0.1:3737")
     .replace(/\/+$/, "");
   const refreshConcurrency = Number(values.get("--refresh-concurrency") ?? "4");
   const workerPoolSize = Number(values.get("--worker-pool-size") ?? "4");

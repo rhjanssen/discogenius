@@ -30,7 +30,7 @@ the replacement gates have not been run.
 | `search-active-schema-20260801` | `13532a7` | Active-schema global search regression | Passed | Reproduced HTTP 500 on a fresh schema-42 database; fixed; 7/7 search route tests pass |
 | `baseline-windows-ci-20260801b` | `13532a7` | Windows CI | Passed with warnings | `yarn ci` exit 0 in 268.9s; 1,214/1,214 API tests; 0 skips; 7 lint warnings; two chunks over 500 kB |
 | `app-suite-20260801` | `54a8193` | App vitest suite | Passed | 19 files / 78 tests passed; suite was previously absent from CI |
-| `compose-isolation-audit-20260801` | `54a8193` | Release-hardening Compose audit | Passed | All mounts nested under a required disposable root; downloads disabled by default; port 3837 |
+| `compose-isolation-audit-20260801` | `54a8193` | Compose deployment decision | Superseded | Dedicated RC Compose file removed by decision; validation now uses the default `docker-compose.yml` |
 
 ## Corrections applied on this pass
 
@@ -42,6 +42,20 @@ the replacement gates have not been run.
   tracks and videos, which is why the album branch was never prepared.
 - **The app test suite was not in the CI gate.** Six app test files added by
   this branch never executed. Wired into `yarn ci` in `54a8193`.
+
+## Runtime environment
+
+Release validation uses the repository's ordinary Compose deployment
+(`docker compose` with no `-f`). There is no dedicated release-candidate Compose
+file, project name, or port. Runtime data is disposable and every runtime gate
+starts from a wiped `config`/`downloads`/`library` and a freshly created schema
+42.
+
+Because the ordinary deployment bind-mounts repository-relative directories,
+filesystem safety is a precondition of each test rather than a property of the
+deployment: resolve and print the Stereo, Spatial, Video, download, staging and
+unmapped host paths, prove each is an empty disposable directory, and fail
+closed when ambiguous.
 
 ## Blocking gates
 
