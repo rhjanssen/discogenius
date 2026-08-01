@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "2.8.0",
-  "updatedAt": "2026-08-01T16:30:00Z",
+  "updatedAt": "2026-08-01T21:10:00Z",
   "verdict": "not ready",
   "runs": [
     {
@@ -31,6 +31,34 @@
       "layer": "fast deterministic",
       "status": "passed",
       "evidence": "27/27 scheduler/task-history/time-policy tests passed; API build passed"
+    },
+    {
+      "id": "search-active-schema-20260801",
+      "gitSha": "13532a7",
+      "layer": "Active-schema global search regression",
+      "status": "passed",
+      "evidence": "Reproduced HTTP 500 on a fresh schema-42 database (SqliteError: no such column: provider_release.quality); fixed and covered by 7/7 search route tests. New album, fan-out and empty-catalog assertions fail against the previous query."
+    },
+    {
+      "id": "baseline-windows-ci-20260801b",
+      "gitSha": "13532a7",
+      "layer": "Windows CI",
+      "status": "passed",
+      "evidence": "yarn ci exit 0 in 268.9s; API 1214 passed, 0 failed, 0 skipped; lint 7 warnings, 0 errors; two Vite chunks over 500 kB (fluent-components 525.89 kB, FileMaintenanceDialogs 572.94 kB)"
+    },
+    {
+      "id": "app-suite-20260801",
+      "gitSha": "54a8193",
+      "layer": "App vitest suite",
+      "status": "passed",
+      "evidence": "19 files / 78 tests passed. Suite was previously absent from the CI gate; now wired into yarn ci via test:app."
+    },
+    {
+      "id": "compose-isolation-audit-20260801",
+      "gitSha": "54a8193",
+      "layer": "Release-hardening Compose audit",
+      "status": "passed",
+      "evidence": "All five mounts are nested under ${DISCOGENIUS_RC_ROOT:?...}, so Compose refuses to start without an explicit disposable root; downloads default to disabled; host port defaults to 3837 rather than the normal 3737. Cannot resolve to real media roots without deliberate operator override."
     }
   ],
   "capabilities": [
@@ -108,10 +136,10 @@
     },
     {
       "capability": "stuck recovery",
-      "status": "failed",
+      "status": "untested",
       "testRun": null,
-      "evidence": "Architecture audit found no durable command lease/heartbeat model; never-resolving handlers can consume the worker pool indefinitely",
-      "knownLimitations": "Recovery hardening is in progress",
+      "evidence": "Superseded: a durable lease/heartbeat model landed in 5973692 (command-leases.test.ts, command-liveness-policy.ts, worker liveness fixture) and 13/13 lease tests pass in CI. No-progress windows are command-specific (30 min refresh/provider-matching, 4 h filesystem, 60 min default) rather than a fixed short timeout, and filesystem-mutating commands are excluded from automatic infrastructure retry.",
+      "knownLimitations": "Unit-level only. Worker crash/hang, stale-attempt completion, poisoned-command and container-restart recovery matrices are still unrun.",
       "blockingSeverity": "critical"
     },
     {
@@ -132,18 +160,18 @@
     },
     {
       "capability": "queue reorder",
-      "status": "failed",
+      "status": "untested",
       "testRun": null,
-      "evidence": "Audit found non-transactional full pending-set read followed by dense rewrite; concurrent enqueue/claim can invalidate order",
-      "knownLimitations": "Large-queue and authoritative-bottom fixes not implemented",
+      "evidence": "Superseded: authoritative ordering landed in 073739a with queue-ordering.test.ts (24 tests), queue-scale.test.ts and app-side QueueTab.reorder.test.ts; all pass in CI.",
+      "knownLimitations": "Unit-level only. No API-restart, container-restart, concurrent-enqueue or 100k-row scale proof.",
       "blockingSeverity": "critical"
     },
     {
       "capability": "statistics",
-      "status": "failed",
+      "status": "untested",
       "testRun": null,
-      "evidence": "Audit found ArtistStatistics summation double counts shared entities, one file can mark an Album downloaded, and video downloads count raw files",
-      "knownLimitations": "Truth-query hardening and lifecycle invalidation tests are in progress",
+      "evidence": "Superseded: canonical-truth derivation landed in f50ee67 and 6875882 with statistics-truth-gate.test.ts and library-stats-query-service.test.ts; all pass in CI.",
+      "knownLimitations": "Unit-level only. Cross-layer truth comparison after the full lifecycle matrix, and the recorded ~694 ms cold query at 100k tracks, are unverified.",
       "blockingSeverity": "critical"
     },
     {
@@ -220,10 +248,10 @@
     },
     {
       "capability": "playback",
-      "status": "failed",
+      "status": "untested",
       "testRun": null,
-      "evidence": "UI audit found blank video source and missing progressive/HLS error-state handling paths",
-      "knownLimitations": "UI hardening is in progress; real media playback matrix not run",
+      "evidence": "Superseded: 60b2672 reworked VideoPage/AudioPlayer loading and recovery states.",
+      "knownLimitations": "No rendered-browser proof of local playback, provider preview, or the blank-player case.",
       "blockingSeverity": "critical"
     },
     {
@@ -252,10 +280,10 @@
     },
     {
       "capability": "accessibility",
-      "status": "failed",
+      "status": "untested",
       "testRun": null,
-      "evidence": "UI audit found mouse-only clickable table rows and a custom audio scrubber without slider semantics/keyboard support",
-      "knownLimitations": "Broad focus, contrast, keyboard, and assistive-semantic audit not completed",
+      "evidence": "Superseded: 7a7eb8b made DataGrid, AudioPlayer and GlobalSearch keyboard-operable with dedicated tests (now executed by CI). GlobalSearch rows place the primary action button as a sibling of the row action controls, so no nested interactive control is introduced.",
+      "knownLimitations": "No full audit. Only DataGrid and AudioPlayer have automated accessibility assertions; GlobalSearch was verified by inspection, not by test.",
       "blockingSeverity": "high"
     },
     {
@@ -280,6 +308,14 @@
       "testRun": null,
       "evidence": "No deterministic full workflow failure-injection result",
       "knownLimitations": "Queue continuation, bounded retry, recovery, and UI communication not proven",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "global search",
+      "status": "untested",
+      "testRun": "search-active-schema-20260801",
+      "evidence": "A retired ProviderItems.quality read made global search answer 500 for any matching album on the active schema. Fixed in 13532a7; album quality now derives from ProviderItemAudioVariants. All four entity types answer 200 on populated and empty catalogs.",
+      "knownLimitations": "Route-level only. No rendered browser pass for keyboard/pointer operation or console cleanliness.",
       "blockingSeverity": "critical"
     }
   ]
