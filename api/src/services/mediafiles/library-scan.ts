@@ -1075,15 +1075,21 @@ export class DiskScanService {
                             } | undefined;
 
                             if (providerItem?.release_group_id != null) {
+                                // Finding files for an Album in a Library root
+                                // is evidence the Library wants it, so the row
+                                // is asserted rather than a flag flipped. A
+                                // locked Album is left exactly as the user set
+                                // it.
                                 db.prepare(`
-                                    UPDATE LibraryAlbums
-                                    SET monitored = 1,
-                                        updated_at = CURRENT_TIMESTAMP
-                                    WHERE release_group_id = ?
-                                      AND library_id IN (
-                                        SELECT id FROM Libraries WHERE root_path = ? AND enabled = 1
-                                      )
-                                      AND locked = 0
+                                    INSERT INTO LibraryAlbums (
+                                      library_id, release_group_id, selection_mode,
+                                      locked, reason, curation_version, updated_at
+                                    )
+                                    SELECT id, ?, 'auto', 0, 'library_scan', 1, CURRENT_TIMESTAMP
+                                    FROM Libraries
+                                    WHERE root_path = ? AND enabled = 1
+                                    ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+                                      updated_at = CURRENT_TIMESTAMP
                                 `).run(providerItem.release_group_id, rootPath);
                             }
                             updateAlbumDownloadStatus(match.albumId);

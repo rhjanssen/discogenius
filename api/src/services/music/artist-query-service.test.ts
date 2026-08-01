@@ -96,9 +96,8 @@ function seedCanonicalArtistPage() {
   `).get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      reason, curation_version
-    ) VALUES (?, ?, 1, 'manual', 1, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'manual', 1, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryEditions (

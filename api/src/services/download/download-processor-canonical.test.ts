@@ -160,9 +160,8 @@ function seedTypedRelease(input: {
   };
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      reason, curation_version
-    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
     INSERT INTO LibraryEditions (

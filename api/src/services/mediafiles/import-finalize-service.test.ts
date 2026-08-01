@@ -162,12 +162,11 @@ test("finalizeImportedDirectories relocates linked separated videos inline after
   const { libraryFileId } = seedImportedTrack();
   dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-    )
-    SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-one'), 1, 'manual', 0, 'inline_video_test', 1
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-one'), 'manual', 0, 'inline_video_test', 1
     FROM Libraries
     WHERE enabled = 1
-    ON CONFLICT(library_id, release_group_id) DO UPDATE SET monitored = 1
+    ON CONFLICT(library_id, release_group_id) DO NOTHING
   `).run();
 
   const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")

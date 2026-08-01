@@ -107,8 +107,8 @@ function insertLibrarySelection(): { libraryId: number; libraryEditionId: number
     .get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 1, 'manual', 0, 'route_test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'manual', 0, 'route_test', 1)
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
     INSERT INTO LibraryEditions (
@@ -199,14 +199,14 @@ test("POST track monitor creates normalized library release-group selections", a
   assert.equal(res.body.success, true);
 
   const selections = dbModule.db.prepare(`
-    SELECT lrg.monitored AS wanted, lrg.selection_mode, lrg.reason
+    SELECT lrg.selection_mode, lrg.reason
     FROM LibraryAlbums lrg
     JOIN Albums a ON a.id = lrg.release_group_id
     WHERE a.mbid = 'rg-mbid'
     ORDER BY lrg.library_id
-  `).all() as Array<{ wanted: number; selection_mode: string; reason: string }>;
+  `).all() as Array<{ selection_mode: string; reason: string }>;
+  // The rows themselves are the monitoring statement.
   assert.ok(selections.length > 0);
-  assert.ok(selections.every((selection) => selection.wanted === 1));
   assert.ok(selections.every((selection) => selection.selection_mode === "manual"));
   assert.ok(selections.every((selection) => selection.reason === "track_monitor_action"));
 
@@ -229,9 +229,8 @@ test("PATCH track updates normalized library release-group wanted state", () => 
   insertCanonicalTrackFixture();
   dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-    )
-    SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-mbid'), 1, 'manual', 0, 'test', 1
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-mbid'), 'manual', 0, 'test', 1
     FROM Libraries
     WHERE enabled = 1
   `).run();
@@ -244,13 +243,17 @@ test("PATCH track updates normalized library release-group wanted state", () => 
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
-  const selections = dbModule.db.prepare(`
-    SELECT monitored AS wanted
-    FROM LibraryAlbums
-    WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'rg-mbid')
-  `).all() as Array<{ wanted: number }>;
-  assert.ok(selections.length > 0);
-  assert.ok(selections.every((selection) => selection.wanted === 0));
+  // Unmonitoring removes the rows; there is no flag left behind saying so.
+  // The seed deliberately covers every enabled library, so the surviving row
+  // also proves the Video Library takes no part in audio Album monitoring.
+  const remaining = dbModule.db.prepare(`
+    SELECT library.name
+    FROM LibraryAlbums library_album
+    JOIN Libraries library ON library.id = library_album.library_id
+    WHERE library_album.release_group_id = (SELECT id FROM Albums WHERE mbid = 'rg-mbid')
+    ORDER BY library.name
+  `).all() as Array<{ name: string }>;
+  assert.deepEqual(remaining.map((row) => row.name), ["Video"]);
 });
 
 test("GET tracks sorts popularity by track evidence instead of artist popularity", () => {

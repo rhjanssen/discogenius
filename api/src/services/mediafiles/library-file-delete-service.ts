@@ -206,7 +206,16 @@ export function deleteReleaseGroupLibraryFiles(
 
   let unmonitored = false;
   if (options.unmonitor) {
-    AlbumCommandService.updateAlbum(releaseGroupMbid, false, undefined);
+    // Unmonitor exactly the Library whose files were just deleted. Deleting
+    // Stereo's files says nothing about whether Spatial still wants the Album.
+    AlbumCommandService.updateAlbum(
+      releaseGroupMbid,
+      false,
+      undefined,
+      scope.kind === "library"
+        ? { kind: "library", libraryId: scope.libraryId }
+        : { kind: "all-audio-libraries" },
+    );
     unmonitored = true;
   }
 

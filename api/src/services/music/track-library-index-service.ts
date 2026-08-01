@@ -77,7 +77,6 @@ export class TrackLibraryIndexService {
         JOIN LibraryAlbums library_group
           ON library_group.library_id = library_release.library_id
          AND library_group.release_group_id = release.release_group_id
-         AND library_group.monitored = 1
         LEFT JOIN SelectedAcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
         LEFT JOIN AcquisitionPlanTracks plan_track

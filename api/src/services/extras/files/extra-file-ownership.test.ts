@@ -125,8 +125,8 @@ test("a curated album associates every library that selected it", () => {
     .get(ALBUM_MBID) as { id: number };
   const insert = dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, curation_version
-    ) VALUES (?, ?, 1, 'manual', 1, 1)
+      library_id, release_group_id, selection_mode, locked, curation_version
+    ) VALUES (?, ?, 'manual', 1, 1)
   `);
   insert.run(lossless, album.id);
   insert.run(lossy, album.id);
@@ -143,8 +143,8 @@ test("an album curated by one library does not associate the other", () => {
     .get(ALBUM_MBID) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, curation_version
-    ) VALUES (?, ?, 1, 'manual', 1, 1)
+      library_id, release_group_id, selection_mode, locked, curation_version
+    ) VALUES (?, ?, 'manual', 1, 1)
   `).run(lossless, album.id);
 
   const owners = ownership({ canonicalReleaseGroupMbid: ALBUM_MBID });

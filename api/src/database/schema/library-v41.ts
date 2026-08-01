@@ -114,11 +114,15 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(managed_artist_id) REFERENCES ManagedArtists(id) ON DELETE CASCADE
     );
 
+    -- A row here means exactly one thing: this Album is monitored in this
+    -- Library. Unmonitoring deletes the row, which takes the Album's lock with
+    -- it. There is deliberately no monitored column: a row saying monitored = 0
+    -- is a second answer to a question the row's existence already answers, and
+    -- the two drift. The same rule governs LibraryEditions below.
     CREATE TABLE LibraryAlbums (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
       release_group_id INTEGER NOT NULL,
-      monitored BOOLEAN NOT NULL DEFAULT 1,
       selection_mode TEXT NOT NULL CHECK(selection_mode IN ('auto', 'manual')),
       locked BOOLEAN NOT NULL DEFAULT 0,
       reason TEXT,
@@ -130,10 +134,10 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     );
 
     -- A row here means exactly one thing: this Edition is monitored in this
-    -- Library. Removing the row unmonitors it. There is deliberately no
-    -- monitored column — two ways to say the same thing drift apart — and no
-    -- locked column either: the Album lock on LibraryAlbums is the single
-    -- authority that curation, planning and the UI all consult.
+    -- Library. Removing the row unmonitors it. Same rule as LibraryAlbums: no
+    -- monitored column, and no locked column either — the Album lock on
+    -- LibraryAlbums is the single authority that curation, planning and the UI
+    -- all consult.
     CREATE TABLE LibraryEditions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
@@ -263,8 +267,8 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
     CREATE INDEX idx_library_artists_library
       ON LibraryArtists(library_id, monitored, managed_artist_id);
-    CREATE INDEX idx_library_release_groups_library
-      ON LibraryAlbums(library_id, monitored, release_group_id);
+    -- UNIQUE(library_id, release_group_id) already indexes the only lookup
+    -- LibraryAlbums has left, so no separate monitoring index is needed.
     CREATE INDEX idx_library_releases_library
       ON LibraryEditions(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist

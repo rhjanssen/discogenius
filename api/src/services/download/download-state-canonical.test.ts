@@ -125,9 +125,8 @@ function seedCanonicalArtistGraph() {
   `).get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      reason, curation_version
-    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(stereoLibrary.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryEditions (
@@ -357,9 +356,8 @@ test("download completion follows enabled libraries and keeps their track identi
   `).get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      reason, curation_version
-    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(spatialLibrary.id, graph.releaseGroupId);
   db.prepare(`
     INSERT INTO LibraryEditions (

@@ -120,7 +120,6 @@ test("canonical manual import pins Library, Release, Track and Recording", async
     });
     assert.deepEqual(db.prepare(`
       SELECT
-        release_group.monitored,
         release_group.selection_mode AS group_mode,
         release_group.locked AS group_locked,
         release.selection_mode AS release_mode
@@ -130,7 +129,6 @@ test("canonical manual import pins Library, Release, Track and Recording", async
        AND release.edition_id = 10
       WHERE release_group.library_id = 1 AND release_group.release_group_id = 1
     `).get(), {
-      monitored: 1,
       group_mode: "manual",
       // Importing establishes a custom selection and monitors the group, but it
       // is NOT a lock: "automatic curation may not change this" is separate
@@ -260,8 +258,8 @@ test("a recording shared by two selected releases keeps the release-track the us
     // Both releases are selected into the library.
     db.prepare(`
       INSERT INTO LibraryAlbums (
-        library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-      ) VALUES (1, 1, 1, 'auto', 0, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (1, 1, 'auto', 0, 'test', 1)
     `).run();
     for (const editionId of [10, 20]) {
       db.prepare(`
@@ -407,10 +405,11 @@ test("manual import monitors and custom-selects without silently locking", async
 
     // Monitored and custom-selected, but NOT locked: lock is separate user intent.
     const group = db.prepare(`
-      SELECT monitored, selection_mode, locked FROM LibraryAlbums
+      SELECT selection_mode, locked FROM LibraryAlbums
       WHERE library_id = 1 AND release_group_id = 1
-    `).get() as Record<string, unknown>;
-    assert.equal(group.monitored, 1);
+    `).get() as Record<string, unknown> | undefined;
+    // The row's existence is the monitoring statement.
+    assert.ok(group, "importing monitors the album in this library");
     assert.equal(group.selection_mode, "manual");
     assert.equal(group.locked, 0, "manual import must not silently lock the group");
 

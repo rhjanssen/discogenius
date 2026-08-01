@@ -270,9 +270,8 @@ function seedAlbum(options: {
   for (const library of libraries) {
     db.prepare(`
       INSERT INTO LibraryAlbums (
-        library_id, release_group_id, monitored, selection_mode, locked,
-        curation_version
-      ) VALUES (?, ?, 1, 'auto', 0, 1)
+      library_id, release_group_id, selection_mode, locked, curation_version
+    ) VALUES (?, ?, 'auto', 0, 1)
     `).run(library.id, album.id);
     const libraryRelease = db.prepare(`
       INSERT INTO LibraryEditions (

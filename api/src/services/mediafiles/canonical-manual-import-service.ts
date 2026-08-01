@@ -220,11 +220,10 @@ export class CanonicalManualImportService {
       // that is already locked keeps its lock.
       this.db.prepare(`
         INSERT INTO LibraryAlbums (
-          library_id, release_group_id, monitored, selection_mode, locked,
+          library_id, release_group_id, selection_mode, locked,
           reason, curation_version, updated_at
-        ) VALUES (?, ?, 1, 'manual', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-          monitored = 1,
           selection_mode = 'manual',
           reason = excluded.reason,
           updated_at = CURRENT_TIMESTAMP

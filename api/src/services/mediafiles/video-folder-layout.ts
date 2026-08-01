@@ -78,7 +78,6 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
         WHERE library_group.release_group_id = album.id
-          AND library_group.monitored = 1
           AND NOT EXISTS (
             SELECT 1
             FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed

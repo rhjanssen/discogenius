@@ -153,12 +153,13 @@ test("provider-match curation does not manufacture monitoring for an unmonitored
     JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
     WHERE canonical.mbid = ?
   `).all(artistMbid) as Array<{ monitored: number }>;
+  // A LibraryAlbums row IS the monitoring statement, so counting rows counts
+  // monitored Albums.
   const monitoredAlbums = dbModule.db.prepare(`
     SELECT COUNT(*) AS count
     FROM LibraryAlbums library_album
     JOIN Albums album ON album.id = library_album.release_group_id
     WHERE album.artist_mbid = ?
-      AND library_album.monitored = 1
   `).get(artistMbid) as { count: number };
 
   assert.ok(libraryArtists.length > 0);
@@ -198,8 +199,8 @@ test("unmonitoring an artist clears unlocked library curation and videos", () =>
   `).get(stereoLibraryId, managedArtistId) as { id: number }).id;
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(stereoLibraryId, releaseGroupId);
   db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title)
@@ -225,18 +226,19 @@ test("unmonitoring an artist clears unlocked library curation and videos", () =>
 const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
 
   const artist = db.prepare("SELECT monitored FROM Artists WHERE id = ?").get(artistMbid) as { monitored: number };
-  const libraryState = db.prepare(`
-    SELECT release_group.monitored, artist.monitored AS artist_monitored
-    FROM LibraryAlbums release_group
-    JOIN LibraryArtists artist ON artist.library_id = release_group.library_id
-    WHERE release_group.release_group_id = ? AND artist.managed_artist_id = ?
-  `).get(releaseGroupId, managedArtistId) as { monitored: number; artist_monitored: number };
+  // The withdrawn Album leaves no LibraryAlbums row behind at all.
+  const albumRow = db.prepare(`
+    SELECT id FROM LibraryAlbums WHERE release_group_id = ?
+  `).get(releaseGroupId) as { id: number } | undefined;
+  const libraryArtist = db.prepare(`
+    SELECT monitored AS artist_monitored FROM LibraryArtists WHERE managed_artist_id = ?
+  `).get(managedArtistId) as { artist_monitored: number };
   const recording = db.prepare("SELECT monitored FROM Recordings WHERE mbid = ?").get("video-recording-1") as { monitored: number };
 
   assert.equal(changes, 1);
   assert.equal(artist.monitored, 0);
-  assert.equal(libraryState.monitored, 0);
-  assert.equal(libraryState.artist_monitored, 0);
+  assert.equal(albumRow, undefined);
+  assert.equal(libraryArtist.artist_monitored, 0);
   assert.equal(recording.monitored, 0);
   assertRetiredProviderCatalogTablesAbsent();
 });

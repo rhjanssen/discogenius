@@ -107,7 +107,7 @@ function buildArtistReleaseGroupCountMap(artistMbids: string[]): Map<string, Art
         ),
         library_state AS (
             SELECT release_group.mbid AS release_group_mbid,
-                   MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
+                   1 AS monitored
             FROM LibraryAlbums library_group
             JOIN Libraries library
               ON library.id = library_group.library_id
@@ -157,7 +157,7 @@ function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCoun
         ),
         library_state AS (
             SELECT release_group.mbid AS release_group_mbid,
-                   MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
+                   1 AS monitored
             FROM LibraryAlbums library_group
             JOIN Libraries library
               ON library.id = library_group.library_id
@@ -508,15 +508,7 @@ const artistReleaseGroupLibraryStateCte = `
         FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
         WHERE allowed.value = 'spatial'
       ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-      MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) OVER (
-        PARTITION BY
-          library_group.release_group_id,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-            WHERE allowed.value = 'spatial'
-          ) THEN 'spatial' ELSE 'stereo' END
-      ) AS monitored,
+      1 AS monitored,
       MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) OVER (
         PARTITION BY
           library_group.release_group_id,
@@ -1367,7 +1359,6 @@ export class ArtistQueryService {
         FROM top_tracks
         JOIN LibraryAlbums library_group
           ON library_group.release_group_id = top_tracks.release_group_row_id
-         AND library_group.monitored = 1
         JOIN Libraries library
           ON library.id = library_group.library_id
          AND library.enabled = 1

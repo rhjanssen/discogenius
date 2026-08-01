@@ -61,8 +61,9 @@ export function createAlbumLibraryProjectionSchema(db: Database.Database): void 
       popularity REAL NOT NULL DEFAULT 0,
       first_release_date TEXT,
       album_updated_at DATETIME,
+      -- A LibraryAlbums row exists only for a monitored Album, so "included in
+      -- a library" and "monitored" are one fact; there is one column for it.
       included BOOLEAN NOT NULL DEFAULT 0,
-      monitored BOOLEAN NOT NULL DEFAULT 0,
       monitored_lock BOOLEAN NOT NULL DEFAULT 0,
       has_stereo_provider BOOLEAN NOT NULL DEFAULT 0,
       has_spatial_provider BOOLEAN NOT NULL DEFAULT 0,
@@ -77,13 +78,13 @@ export function createAlbumLibraryProjectionSchema(db: Database.Database): void 
     );
 
     CREATE INDEX idx_album_library_popularity
-      ON AlbumLibraryIndex(included, monitored, popularity DESC, title, release_group_id);
+      ON AlbumLibraryIndex(included, popularity DESC, title, release_group_id);
     CREATE INDEX idx_album_library_release_date
-      ON AlbumLibraryIndex(included, monitored, (first_release_date IS NULL), first_release_date DESC, title, release_group_id);
+      ON AlbumLibraryIndex(included, (first_release_date IS NULL), first_release_date DESC, title, release_group_id);
     CREATE INDEX idx_album_library_title
-      ON AlbumLibraryIndex(included, monitored, title, release_group_id);
+      ON AlbumLibraryIndex(included, title, release_group_id);
     CREATE INDEX idx_album_library_updated
-      ON AlbumLibraryIndex(included, monitored, (album_updated_at IS NULL), album_updated_at DESC, title, release_group_id);
+      ON AlbumLibraryIndex(included, (album_updated_at IS NULL), album_updated_at DESC, title, release_group_id);
   `);
 
   createProjectionInvalidationTriggers(db, {

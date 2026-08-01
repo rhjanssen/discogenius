@@ -23,7 +23,6 @@ const canonicalTrackMonitoredPredicate = `
       ON monitored_library.id = monitored_group.library_id
      AND monitored_library.enabled = 1
     WHERE monitored_group.release_group_id = release_group.id
-      AND monitored_group.monitored = 1
   )
 `;
 
@@ -779,9 +778,9 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
   const where: string[] = [];
   const params: Array<string | number> = [];
 
-  const monitoredCandidatePredicate = input.monitored === true
-    ? "AND library_group.monitored = 1"
-    : "";
+  // A LibraryAlbums row exists only for a monitored Album, so the candidate
+  // scope's own join already restricts to monitored ones.
+  const monitoredCandidatePredicate = "";
   const candidateScope = `
     WITH candidate_track_ids(id) AS MATERIALIZED (
       -- Every canonical track of a release this library has selected. Acquisition

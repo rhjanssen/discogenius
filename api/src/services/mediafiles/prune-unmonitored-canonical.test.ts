@@ -60,15 +60,17 @@ function seedArtist() {
 function seedLibraryGroup(rg: string, monitored: number, lock = 0) {
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')`)
     .run(rg, "artist-mbid", `RG ${rg}`);
-  db.prepare(`
-    INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      curation_version
-    )
-    SELECT ?, id, ?, 'auto', ?, 1
-    FROM Albums
-    WHERE mbid = ?
-  `).run(testLibraryId, monitored, lock, rg);
+  // Unmonitored means no row at all — there is no monitored column to set to 0.
+  if (monitored) {
+    db.prepare(`
+      INSERT INTO LibraryAlbums (
+        library_id, release_group_id, selection_mode, locked, curation_version
+      )
+      SELECT ?, id, 'auto', ?, 1
+      FROM Albums
+      WHERE mbid = ?
+    `).run(testLibraryId, lock, rg);
+  }
 }
 
 function seedVideoRecording(monitored: number, providerId: string) {
@@ -122,13 +124,16 @@ test("selectUnmonitoredFileRows keeps monitored/locked anchors and selects only 
   seedArtist();
   seedLibraryGroup("rg-mon", 1);
   seedLibraryGroup("rg-unmon", 0);
-  seedLibraryGroup("rg-lock", 0, 1);
+  // A lock lives on the LibraryAlbums row, so it cannot outlive monitoring: an
+  // unmonitored-but-locked Album is unrepresentable now, and the locked case
+  // that matters is a monitored Album the user pinned.
+  seedLibraryGroup("rg-lock", 1, 1);
   const monitoredVideoRecordingId = seedVideoRecording(1, "vp-mon");
   const unmonitoredVideoRecordingId = seedVideoRecording(0, "vp-unmon");
 
   const fMonAudio = insertFile({ fileType: "track", slot: "stereo", rg: "rg-mon" });        // keep
   const fUnmonAudio = insertFile({ fileType: "track", slot: "stereo", rg: "rg-unmon" });     // SELECT
-  const fLockAudio = insertFile({ fileType: "track", slot: "stereo", rg: "rg-lock" });       // keep (locked)
+  const fLockAudio = insertFile({ fileType: "track", slot: "stereo", rg: "rg-lock" });       // keep (monitored + locked)
   const fMonVideo = insertFile({
     fileType: "video",
     slot: "video",

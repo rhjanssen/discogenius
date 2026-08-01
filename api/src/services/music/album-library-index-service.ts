@@ -35,7 +35,6 @@ export class AlbumLibraryIndexService {
           first_release_date,
           album_updated_at,
           included,
-          monitored,
           monitored_lock,
           has_stereo_provider,
           has_spatial_provider,
@@ -45,7 +44,6 @@ export class AlbumLibraryIndexService {
           SELECT
             library_group.release_group_id,
             1 AS included,
-            MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored,
             MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) AS monitored_lock,
             MAX(CASE
               WHEN plan.state = 'current'
@@ -104,7 +102,6 @@ export class AlbumLibraryIndexService {
           album.first_release_date,
           album.updated_at,
           COALESCE(library_state.included, 0),
-          COALESCE(library_state.monitored, 0),
           COALESCE(library_state.monitored_lock, 0),
           COALESCE(library_state.has_stereo_provider, 0),
           COALESCE(library_state.has_spatial_provider, 0),

@@ -152,7 +152,7 @@ export const useAlbums = (options?: UseAlbumsOptions) => {
     );
 
     try {
-      await api.updateAlbum(albumId, { monitored: nextState });
+      await api.updateAlbum(albumId, { monitored: nextState }, { allLibraries: true });
       dispatchMonitorStateChanged({
         type: "album",
         providerId: albumId,
@@ -187,7 +187,7 @@ export const useAlbums = (options?: UseAlbumsOptions) => {
     );
 
     try {
-      await api.updateAlbum(albumId, { monitored_lock: nextState });
+      await api.updateAlbum(albumId, { monitored_lock: nextState }, { allLibraries: true });
       dispatchLibraryUpdated();
     } catch (error) {
       queryClient.setQueriesData<InfiniteData<AlbumsPage>>(

@@ -574,7 +574,7 @@ const Library = () => {
 
   const setSelectedAlbumMonitoring = async (monitored: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(albumSelection.selectedItems, async (album: any) => {
-      await api.updateAlbum(album.id, { monitored });
+      await api.updateAlbum(album.id, { monitored }, { allLibraries: true });
       dispatchMonitorStateChanged({ type: "album", providerId: album.id, monitored });
     });
 
@@ -588,7 +588,7 @@ const Library = () => {
 
   const setSelectedAlbumLockState = async (locked: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(albumSelection.selectedItems, async (album: any) => {
-      await api.updateAlbum(album.id, { monitored_lock: locked });
+      await api.updateAlbum(album.id, { monitored_lock: locked }, { allLibraries: true });
     });
 
     if (succeeded > 0) {
@@ -943,7 +943,7 @@ const Library = () => {
     e.stopPropagation();
     const nextMonitored = !album.is_monitored;
     try {
-      await api.updateAlbum(album.id, { monitored: nextMonitored });
+      await api.updateAlbum(album.id, { monitored: nextMonitored }, { allLibraries: true });
       dispatchMonitorStateChanged({
         type: 'album',
         providerId: album.id,
@@ -959,7 +959,7 @@ const Library = () => {
     e.stopPropagation();
     const nextLocked = !album.monitored_lock;
     try {
-      await api.updateAlbum(album.id, { monitored_lock: nextLocked });
+      await api.updateAlbum(album.id, { monitored_lock: nextLocked }, { allLibraries: true });
       dispatchLibraryUpdated();
     } catch (error) {
       console.error('Failed to toggle album lock:', error);

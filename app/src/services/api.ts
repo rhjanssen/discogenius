@@ -172,6 +172,15 @@ function toApiUrl(endpoint: string): string {
   return `${API_V1_PREFIX}${path}`;
 }
 
+/**
+ * Which libraries an Album command applies to.
+ *
+ * There is no default. Monitoring an Album in Stereo says nothing about
+ * Spatial, so a caller either names one library or states that it means every
+ * audio library.
+ */
+export type AlbumLibraryScope = { libraryId: number } | { allLibraries: true };
+
 type ApiRequestOptions = RequestInit & {
   timeoutMs?: number | null;
 };
@@ -751,8 +760,16 @@ class ApiClient {
     });
   }
 
-  async monitorAlbum(albumId: string) {
-    return this.request(`/v1/album/${albumId}/monitor`, { method: 'POST' });
+  /**
+   * Monitor an Album. The library scope is never implicit: pass one library, or
+   * say `allLibraries` and mean every audio library (the Video Library curates
+   * canonical video recordings and never takes part).
+   */
+  async monitorAlbum(albumId: string, scope: AlbumLibraryScope, monitored = true) {
+    return this.request(`/v1/album/${albumId}/monitor`, {
+      method: 'POST',
+      body: JSON.stringify({ monitored, ...scope }),
+    });
   }
 
   async getProviderAlbumTracks(providerId: string, albumId: string, releaseMbid?: string) {
@@ -818,10 +835,11 @@ class ApiClient {
     });
   }
 
-  async updateAlbum(albumId: string, updates: any) {
+  /** `scope` is required for monitored/monitored_lock changes — see monitorAlbum. */
+  async updateAlbum(albumId: string, updates: any, scope: AlbumLibraryScope) {
     return this.request(`/v1/album/${albumId}`, {
       method: 'PATCH',
-      body: JSON.stringify(updates),
+      body: JSON.stringify({ ...updates, ...scope }),
     });
   }
 

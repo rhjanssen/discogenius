@@ -17,6 +17,7 @@ import {
   getRequiredInteger,
   isRequestValidationError,
   rejectUnknownKeys,
+  RequestValidationError,
 } from "../../utils/request-validation.js";
 
 const router = Router();
@@ -35,6 +36,28 @@ function parseSelectionMode(
     throw new Error('mode must be "exclusive" or "additive"');
   }
   return mode;
+}
+
+/**
+ * Which Libraries an Album command touches. Never inferred.
+ *
+ * Monitoring an Album in Stereo says nothing about Spatial, and the Video
+ * Library is not an audio Library at all. A caller therefore names one Library,
+ * or says `allLibraries` and means every audio Library on purpose.
+ */
+function parseAlbumLibraryScope(
+  body: Record<string, unknown>,
+): { kind: "library"; libraryId: number } | { kind: "all-audio-libraries" } {
+  const libraryId = getOptionalInteger(body, "libraryId");
+  const allLibraries = getOptionalBoolean(body, "allLibraries");
+  if (libraryId != null && allLibraries === true) {
+    throw new RequestValidationError('Pass either "libraryId" or "allLibraries", not both');
+  }
+  if (libraryId != null) return { kind: "library", libraryId };
+  if (allLibraries === true) return { kind: "all-audio-libraries" };
+  throw new RequestValidationError(
+    'A library scope is required: pass "libraryId" for one library, or "allLibraries": true to apply to every audio library',
+  );
 }
 
 const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -132,16 +155,22 @@ router.get("/:albumId/tracks", async (req, res) => {
 router.post("/:albumId/monitor", async (req, res) => {
   try {
     const albumId = req.params.albumId;
-    const monitored = parseOptionalMonitored((req.body as any)?.monitored);
-    const result = AlbumCommandService.setAlbumMonitored(albumId, monitored);
+    const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["monitored", "libraryId", "allLibraries"], "Album monitor");
+    const monitored = parseOptionalMonitored(body.monitored);
+    const scope = parseAlbumLibraryScope(body);
+    const result = AlbumCommandService.setAlbumMonitored(albumId, monitored, scope);
 
     if (result.status === 404) {
       return res.status(404).json({ detail: "Album not found" });
     }
 
-    const { status, ...body } = result;
-    res.status(status || 200).json(body);
+    const { status, ...responseBody } = result;
+    res.status(status || 200).json(responseBody);
   } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
     res.status(500).json({ detail: error.message });
   }
 });
@@ -273,11 +302,19 @@ router.patch("/:albumId", async (req, res) => {
   try {
     const albumId = req.params.albumId;
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["monitored", "monitored_lock"], "Album update");
+    rejectUnknownKeys(
+      body,
+      ["monitored", "monitored_lock", "libraryId", "allLibraries"],
+      "Album update",
+    );
     const monitored = getOptionalBoolean(body, "monitored");
     const monitoredLock = getOptionalBoolean(body, "monitored_lock");
+    if (monitored === undefined && monitoredLock === undefined) {
+      return res.status(200).json({ success: true });
+    }
+    const scope = parseAlbumLibraryScope(body);
 
-    const result = AlbumCommandService.updateAlbum(albumId, monitored, monitoredLock);
+    const result = AlbumCommandService.updateAlbum(albumId, monitored, monitoredLock, scope);
 
     if (result.status === 404) {
       return res.status(404).json({ detail: result.message || "Album not found" });

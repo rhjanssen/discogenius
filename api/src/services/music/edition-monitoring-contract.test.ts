@@ -552,7 +552,7 @@ test("a locked album refuses every monitoring change until it is unlocked", () =
   service.selectRelease({
     releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
   });
-  AlbumCommandService.updateAlbum(ALBUM_MBID, true, true);
+  AlbumCommandService.updateAlbum(ALBUM_MBID, true, true, { kind: "library", libraryId: LIBRARY_ID });
 
   const standardPlanKey = service.getAvailability(ALBUM_MBID).libraries[0].selections
     .find((selection) => selection.editionId === STANDARD_EDITION_ID)!.plans[0].planKey;
@@ -573,7 +573,7 @@ test("a locked album refuses every monitoring change until it is unlocked", () =
 
   assert.deepEqual(monitoredEditionIds(), [DELUXE_EDITION_ID], "nothing moved");
 
-  AlbumCommandService.updateAlbum(ALBUM_MBID, true, false);
+  AlbumCommandService.updateAlbum(ALBUM_MBID, true, false, { kind: "library", libraryId: LIBRARY_ID });
   service.selectRelease({
     releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
   });
@@ -588,7 +588,7 @@ test("curation may not drop a locked album's editions", () => {
   new LibraryReleaseSelectionService(db).selectRelease({
     releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
   });
-  AlbumCommandService.updateAlbum(ALBUM_MBID, true, true);
+  AlbumCommandService.updateAlbum(ALBUM_MBID, true, true, { kind: "library", libraryId: LIBRARY_ID });
 
   curate();
 

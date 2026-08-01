@@ -111,12 +111,14 @@ function seedLibraryReleaseSelection(options: {
     SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(options.releaseMbid) as { id: number };
 
-  db.prepare(`
-    INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      curation_version
-    ) VALUES (?, ?, ?, 'auto', 0, 1)
-  `).run(library.id, releaseGroup.id, options.monitored ? 1 : 0);
+  // Unmonitored means no row at all — there is no monitored column to set to 0.
+  if (options.monitored) {
+    db.prepare(`
+      INSERT INTO LibraryAlbums (
+        library_id, release_group_id, selection_mode, locked, curation_version
+      ) VALUES (?, ?, 'auto', 0, 1)
+    `).run(library.id, releaseGroup.id);
+  }
   db.prepare(`
     INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, curation_version

@@ -89,8 +89,8 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
   const library = db.prepare("SELECT id FROM Libraries ORDER BY id LIMIT 1").get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryEditions (
@@ -144,7 +144,9 @@ test("a selected release's canonical tracks are listed before any plan or file e
 test("tracks of an unmonitored release group stay out of the monitored listing", () => {
   const { db } = dbModule;
   seedSelectedReleaseWithoutPlanOrFiles();
-  db.prepare("UPDATE LibraryAlbums SET monitored = 0").run();
+  // Unmonitoring is the row going away, not a flag flipping.
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   trackIndexModule.TrackLibraryIndexService.rebuild();
 
   const result = trackQueryModule.listTracks({

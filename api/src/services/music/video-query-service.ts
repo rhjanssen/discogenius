@@ -464,7 +464,6 @@ function preferredLibraryReleaseMbidSql(releaseGroupIdExpression: string): strin
         FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
         WHERE allowed.value = 'spatial'
       ) THEN 1 ELSE 0 END,
-      library_group.monitored DESC,
       library_release.updated_at DESC,
       library_release.id DESC
     LIMIT 1
@@ -1018,7 +1017,6 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
           ON library.id = library_group.library_id
          AND library.enabled = 1
         WHERE library_group.release_group_id = a.id
-          AND library_group.monitored = 1
       ) THEN 1 ELSE 0 END AS wanted,
       (
         SELECT t.mbid

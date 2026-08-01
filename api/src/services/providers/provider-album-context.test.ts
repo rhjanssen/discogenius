@@ -95,8 +95,9 @@ function seedTwoPlansDisagreeing(): {
     `).run(`lib-${key}`, path.join(tempDir, key), metadataProfile.id, qualityProfile.id);
     const library = db.prepare("SELECT id FROM Libraries WHERE name = ?").get(`lib-${key}`) as { id: number };
     db.prepare(`
-      INSERT INTO LibraryAlbums (library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version)
-      VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+      INSERT INTO LibraryAlbums (
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
     `).run(library.id, releaseGroup.id);
     const libraryRelease = db.prepare(`
       INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, reason, curation_version)

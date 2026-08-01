@@ -318,7 +318,6 @@ router.get("/", async (req, res) => {
                   ON library.id = library_group.library_id
                  AND library.enabled = 1
                 WHERE library_group.release_group_id = rg.id
-                  AND library_group.monitored = 1
               ) THEN 1 ELSE 0 END AS monitored
             FROM Albums rg
             LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
@@ -397,7 +396,6 @@ router.get("/", async (req, res) => {
                   ON monitored_library.id = library_group.library_id
                  AND monitored_library.enabled = 1
                 WHERE library_group.release_group_id = rg.id
-                  AND library_group.monitored = 1
               ) THEN 1 ELSE 0 END AS monitored
             FROM Tracks t
             JOIN AlbumEditions release ON release.id = t.album_edition_id
@@ -630,7 +628,6 @@ router.get("/", async (req, res) => {
                                 ON library.id = library_group.library_id
                                AND library.enabled = 1
                               WHERE library_group.release_group_id = rg.id
-                                AND library_group.monitored = 1
                             ) THEN 1 ELSE 0 END AS monitored
                             FROM Albums rg
                             WHERE rg.mbid = ?

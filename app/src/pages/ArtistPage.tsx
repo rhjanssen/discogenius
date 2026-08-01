@@ -903,7 +903,7 @@ const ArtistPage = () => {
   const toggleAlbumMonitored = useCallback(async (e: React.MouseEvent, albumId: string, nextMonitored: boolean) => {
     e.stopPropagation();
     try {
-      await api.updateAlbum(albumId, { monitored: nextMonitored });
+      await api.updateAlbum(albumId, { monitored: nextMonitored }, { allLibraries: true });
       dispatchMonitorStateChanged({ type: 'album', providerId: albumId, monitored: nextMonitored });
       dispatchLibraryUpdated();
       refetchPage();
@@ -927,7 +927,7 @@ const ArtistPage = () => {
   const handleToggleAlbumLock = useCallback(async (e: React.MouseEvent, albumId: string, isLocked: boolean) => {
     e.stopPropagation();
     try {
-      await api.updateAlbum(albumId, { monitored_lock: !isLocked });
+      await api.updateAlbum(albumId, { monitored_lock: !isLocked }, { allLibraries: true });
       dispatchLibraryUpdated();
       refetchPage();
     } catch (error) {

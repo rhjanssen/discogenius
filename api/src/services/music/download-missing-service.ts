@@ -56,7 +56,6 @@ export class DownloadMissingService {
             JOIN LibraryAlbums library_release_group
               ON library_release_group.library_id = library_release.library_id
              AND library_release_group.release_group_id = release.release_group_id
-             AND library_release_group.monitored = 1
             LEFT JOIN ArtistMetadata primary_artist
               ON primary_artist.id = release_group.artist_metadata_id
             WHERE plan.state = 'current'

@@ -485,7 +485,6 @@ function resolveCanonicalInlineAudioExpectedPath(
              JOIN Libraries library ON library.id = library_group.library_id
              JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
              WHERE library_group.release_group_id = a.id
-               AND library_group.monitored = 1
                AND library.enabled = 1
                AND NOT EXISTS (
                  SELECT 1
@@ -520,7 +519,6 @@ function resolveCanonicalInlineAudioExpectedPath(
         JOIN Libraries library ON library.id = library_group.library_id
         JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
         WHERE library_group.release_group_id = a.id
-          AND library_group.monitored = 1
           AND library.enabled = 1
           AND NOT EXISTS (
             SELECT 1
@@ -1104,7 +1102,6 @@ export class LibraryFilesService {
                   JOIN Libraries library ON library.id = library_group.library_id
                   JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
                   WHERE library_group.release_group_id = COALESCE(tf.release_group_id, track_rg.release_group_id)
-                    AND library_group.monitored = 1
                     AND library.enabled = 1
                     AND NOT EXISTS (
                       SELECT 1
@@ -2888,8 +2885,7 @@ export class LibraryFilesService {
           OR lf.recording_id IS NOT NULL
         )
         -- and none of the anchors may be monitored or user-locked
-        AND (library_group.monitored IS NULL OR library_group.monitored = 0)
-        AND (library_group.locked IS NULL OR library_group.locked = 0)
+        AND library_group.id IS NULL
         AND (rec.monitored IS NULL OR rec.monitored = 0) AND (rec.monitored_lock IS NULL OR rec.monitored_lock = 0)
     `).all(artistId) as Array<{
       id: number;

@@ -232,12 +232,10 @@ export class LibraryCurationRepository {
 
       const insertGroup = this.db.prepare(`
         INSERT INTO LibraryAlbums (
-          library_id, release_group_id, monitored, selection_mode, locked,
+          library_id, release_group_id, selection_mode, locked,
           reason, curation_version, updated_at
-        ) VALUES (?, ?, 1, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-          monitored = CASE WHEN LibraryAlbums.locked = 1
-            THEN LibraryAlbums.monitored ELSE 1 END,
           curation_version = CASE WHEN LibraryAlbums.locked = 1
             THEN LibraryAlbums.curation_version ELSE excluded.curation_version END,
           updated_at = CURRENT_TIMESTAMP

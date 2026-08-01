@@ -103,9 +103,8 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   `).get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      reason, curation_version
-    ) VALUES (?, ?, 1, 'auto', 1, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 1, 'test', 1)
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
     INSERT INTO LibraryEditions (
@@ -131,14 +130,13 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   assert.deepEqual(TrackLibraryIndexService.rebuild(), { rows: 1 });
   assert.deepEqual(
     db.prepare(`
-      SELECT included, monitored, monitored_lock,
+      SELECT included, monitored_lock,
              has_stereo_provider, has_spatial_provider
       FROM AlbumLibraryIndex
       WHERE release_group_id = ?
     `).get(releaseGroup.id),
     {
       included: 1,
-      monitored: 1,
       monitored_lock: 1,
       has_stereo_provider: 1,
       has_spatial_provider: 0,
@@ -221,19 +219,21 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
     { has_stereo: 0, has_spatial: 1 },
   );
 
+  // Unmonitoring is the row going away — the index then has nothing to include.
   db.prepare(`
-    UPDATE LibraryAlbums
-    SET monitored = 0
-    WHERE library_id = ? AND release_group_id = ?
+    DELETE FROM LibraryEditions WHERE library_id = ?
+  `).run(library.id);
+  db.prepare(`
+    DELETE FROM LibraryAlbums WHERE library_id = ? AND release_group_id = ?
   `).run(library.id, releaseGroup.id);
   AlbumLibraryIndexService.rebuild();
   assert.deepEqual(TrackLibraryIndexService.rebuild(), { rows: 0 });
   assert.deepEqual(
     db.prepare(`
-      SELECT included, monitored
+      SELECT included
       FROM AlbumLibraryIndex
       WHERE release_group_id = ?
     `).get(releaseGroup.id),
-    { included: 1, monitored: 0 },
+    { included: 0 },
   );
 });

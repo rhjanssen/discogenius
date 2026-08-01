@@ -289,7 +289,6 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
     FROM Albums release_group
     JOIN LibraryAlbums library_group
       ON library_group.release_group_id = release_group.id
-     AND library_group.monitored = 1
     JOIN Libraries library
       ON library.id = library_group.library_id
     JOIN quality_profiles quality_profile

@@ -4,6 +4,12 @@ import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
+import {
+    monitorAlbumInLibraries,
+    resolveScopedLibraryIds,
+    unmonitorAlbumInLibraries,
+    type AlbumLibraryScope,
+} from "./library-album-monitoring.js";
 
 export class AlbumCommandService {
     private static releaseGroupExists(releaseGroupMbid: string): { id: number; mbid: string } | null {
@@ -11,50 +17,63 @@ export class AlbumCommandService {
             .get(releaseGroupMbid) as { id: number; mbid: string } | null;
     }
 
-    private static setReleaseGroupMonitored(releaseGroupMbid: string, monitored: boolean): boolean {
+    private static setReleaseGroupMonitored(
+        releaseGroupMbid: string,
+        monitored: boolean,
+        scope: AlbumLibraryScope,
+    ): boolean {
         const releaseGroup = this.releaseGroupExists(releaseGroupMbid);
         if (!releaseGroup) {
             return false;
         }
 
-        db.prepare(`
-            INSERT INTO LibraryAlbums (
-              library_id, release_group_id, monitored, selection_mode,
-              locked, reason, curation_version, updated_at
-            )
-            SELECT id, ?, ?, 'manual', 0, 'user', 1, CURRENT_TIMESTAMP
-            FROM Libraries
-            WHERE enabled = 1
-            ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-              monitored = excluded.monitored,
-              selection_mode = 'manual',
-              reason = 'user',
-              updated_at = CURRENT_TIMESTAMP
-        `).run(releaseGroup.id, Number(monitored));
+        const libraryIds = resolveScopedLibraryIds(db, scope);
+        db.transaction(() => {
+            if (monitored) {
+                monitorAlbumInLibraries(db, releaseGroup.id, libraryIds, {
+                    reason: "user",
+                    actor: "user",
+                });
+            } else {
+                unmonitorAlbumInLibraries(db, releaseGroup.id, libraryIds, { actor: "user" });
+            }
+        })();
 
         return true;
     }
 
-    private static setReleaseGroupMonitoredLock(releaseGroupMbid: string, locked: boolean): boolean {
+    /**
+     * Lock or unlock an Album in the named Libraries.
+     *
+     * A lock protects an Album that is monitored; it is not a way to record an
+     * opinion about one that is not. Locking therefore never creates a
+     * `LibraryAlbums` row — an unmonitored Album has nothing to protect, and a
+     * row created to hold a lock would claim the Album is monitored.
+     */
+    private static setReleaseGroupMonitoredLock(
+        releaseGroupMbid: string,
+        locked: boolean,
+        scope: AlbumLibraryScope,
+    ): boolean {
         const releaseGroup = this.releaseGroupExists(releaseGroupMbid);
         if (!releaseGroup) {
             return false;
         }
 
-        db.prepare(`
-            INSERT INTO LibraryAlbums (
-              library_id, release_group_id, monitored, selection_mode,
-              locked, reason, curation_version, updated_at
-            )
-            SELECT id, ?, 0, 'manual', ?, 'user', 1, CURRENT_TIMESTAMP
-            FROM Libraries
-            WHERE enabled = 1
-            ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-              selection_mode = 'manual',
-              locked = excluded.locked,
-              reason = 'user',
-              updated_at = CURRENT_TIMESTAMP
-        `).run(releaseGroup.id, Number(locked));
+        const libraryIds = resolveScopedLibraryIds(db, scope);
+        if (libraryIds.length > 0) {
+            const update = db.prepare(`
+                UPDATE LibraryAlbums
+                SET locked = ?, selection_mode = 'manual', reason = 'user',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE library_id = ? AND release_group_id = ?
+            `);
+            db.transaction(() => {
+                for (const libraryId of libraryIds) {
+                    update.run(Number(locked), libraryId, releaseGroup.id);
+                }
+            })();
+        }
 
         // One Album-level lock, one meaning, one row. Curation, acquisition
         // planning and the edition-selection UX all read LibraryAlbums.locked;
@@ -66,9 +85,13 @@ export class AlbumCommandService {
         return true;
     }
 
-    /** Set release-group wanted state for every enabled library. */
-    static setAlbumMonitored(albumId: string, monitored: boolean): { success: boolean; albumId: string; monitored: boolean; message?: string; status?: number } {
-        if (this.setReleaseGroupMonitored(albumId, monitored)) {
+    /** Set release-group wanted state in the Libraries the caller named. */
+    static setAlbumMonitored(
+        albumId: string,
+        monitored: boolean,
+        scope: AlbumLibraryScope,
+    ): { success: boolean; albumId: string; monitored: boolean; message?: string; status?: number } {
+        if (this.setReleaseGroupMonitored(albumId, monitored, scope)) {
             invalidateReleaseGroupDownloadStatus(albumId);
             return { success: true, albumId, monitored };
         }
@@ -135,7 +158,14 @@ export class AlbumCommandService {
             return { success: false, message: 'Track not found', status: 404 };
         }
 
-        this.setReleaseGroupMonitored(String(track.release_group_mbid), true);
+        // Monitoring a track monitors its Album across the audio Libraries. The
+        // Video Library never takes part: it holds canonical video Recordings,
+        // which are curated through LibraryVideos, not through Albums.
+        this.setReleaseGroupMonitored(
+            String(track.release_group_mbid),
+            true,
+            { kind: "all-audio-libraries" },
+        );
         invalidateReleaseGroupDownloadStatus(String(track.release_group_mbid));
 
         let commandId: number | null = null;
@@ -185,7 +215,7 @@ export class AlbumCommandService {
             return { success: false, status: 404, message: 'Release group not found' };
         }
 
-        this.setReleaseGroupMonitored(albumId, true);
+        this.setReleaseGroupMonitored(albumId, true, { kind: "all-audio-libraries" });
         const normalizedPlanIds = (db.prepare(`
             SELECT plan.id
             FROM SelectedAcquisitionPlans plan
@@ -230,18 +260,23 @@ export class AlbumCommandService {
         return { success: true, albumId, commandId: commandIds[0] ?? null, commandIds };
     }
 
-    /** Update album monitored and/or monitor_lock state */
-    static updateAlbum(albumId: string, monitored?: boolean, monitoredLock?: boolean): { success: boolean; albumId?: string; monitored?: boolean; status?: number; message?: string } {
+    /** Update album monitored and/or monitor_lock state in the named Libraries. */
+    static updateAlbum(
+        albumId: string,
+        monitored: boolean | undefined,
+        monitoredLock: boolean | undefined,
+        scope: AlbumLibraryScope,
+    ): { success: boolean; albumId?: string; monitored?: boolean; status?: number; message?: string } {
         if (monitored === undefined && monitoredLock === undefined) {
             return { success: true };
         }
 
         if (this.releaseGroupExists(albumId)) {
             if (monitored !== undefined) {
-                this.setReleaseGroupMonitored(albumId, monitored);
+                this.setReleaseGroupMonitored(albumId, monitored, scope);
             }
             if (monitoredLock !== undefined) {
-                this.setReleaseGroupMonitoredLock(albumId, monitoredLock);
+                this.setReleaseGroupMonitoredLock(albumId, monitoredLock, scope);
             }
             return { success: true, albumId, monitored };
         }

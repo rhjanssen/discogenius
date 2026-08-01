@@ -2,6 +2,7 @@ import { CommandTrigger } from "../commands/command-trigger.js";
 import { db } from "../../database.js";
 import { invalidateReleaseGroupDownloadStatus, updateArtistDownloadStatus } from "../download/download-state.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
+import { unmonitorAlbumInLibraries } from "./library-album-monitoring.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueArtistIntake, queueArtistWorkflow } from "./artist-workflow.js";
 import { isMusicBrainzMbid } from "./refresh-artist-service.js";
@@ -126,28 +127,38 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
             )
         `).run(artistId);
 
-        db.prepare(`
-            UPDATE LibraryAlbums
-            SET monitored = 0,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE locked = 0
-              AND EXISTS (
-                SELECT 1
-                FROM LibraryEditions library_release
-                JOIN AlbumEditions release ON release.id = library_release.edition_id
-                JOIN LibraryEditionScopes scope
-                  ON scope.library_edition_id = library_release.id
-                JOIN LibraryArtists library_artist
-                  ON library_artist.id = scope.library_artist_id
-                JOIN ManagedArtists managed
-                  ON managed.id = library_artist.managed_artist_id
-                JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
-                JOIN Artists local ON local.mbid = canonical.mbid
-                WHERE library_release.library_id = LibraryAlbums.library_id
-                  AND release.release_group_id = LibraryAlbums.release_group_id
-                  AND CAST(local.id AS TEXT) = ?
-              )
-        `).run(artistId);
+        // Unmonitoring the Artist withdraws the Albums scoped to it. The Album
+        // row goes rather than gaining a "monitored = 0" flag, and its monitored
+        // Editions go with it. A locked Album survives both steps.
+        const scopedAlbums = `
+            SELECT DISTINCT
+              library_release.library_id AS library_id,
+              release.release_group_id AS release_group_id
+            FROM LibraryEditions library_release
+            JOIN AlbumEditions release ON release.id = library_release.edition_id
+            JOIN LibraryEditionScopes scope
+              ON scope.library_edition_id = library_release.id
+            JOIN LibraryArtists library_artist
+              ON library_artist.id = scope.library_artist_id
+            JOIN ManagedArtists managed
+              ON managed.id = library_artist.managed_artist_id
+            JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
+            JOIN Artists local ON local.mbid = canonical.mbid
+            WHERE CAST(local.id AS TEXT) = ?
+        `;
+        const withdrawn = db.prepare(`
+            SELECT library_id, release_group_id FROM (${scopedAlbums}) scoped
+            WHERE COALESCE((
+              SELECT locked FROM LibraryAlbums
+              WHERE library_id = scoped.library_id
+                AND release_group_id = scoped.release_group_id
+            ), 0) = 0
+        `).all(artistId) as Array<{ library_id: number; release_group_id: number }>;
+        for (const album of withdrawn) {
+            unmonitorAlbumInLibraries(db, album.release_group_id, [album.library_id], {
+                actor: "automation",
+            });
+        }
 
         db.prepare(`
             UPDATE Recordings

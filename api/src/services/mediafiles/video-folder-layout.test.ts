@@ -129,10 +129,8 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
   `).run(path.join(tempDir, "video-layout-stereo"));
   dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      reason, curation_version
-    )
-    SELECT library.id, release_group.id, 1, 'auto', 0, 'test', 1
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) SELECT library.id, release_group.id, 'auto', 0, 'test', 1
     FROM Libraries library
     JOIN Albums release_group ON release_group.mbid = 'rg-inline'
     WHERE library.name = 'Video Layout Stereo'

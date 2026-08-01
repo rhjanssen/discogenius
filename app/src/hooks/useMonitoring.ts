@@ -21,12 +21,14 @@ export const useMonitoring = () => {
                 return api.updateVideo(id, { monitored: !currentStatus });
             }
 
-            const endpoint =
-                type === "artist"
-                    ? `/artists/${id}/monitor`
-                    : type === "album"
-                        ? `/albums/${id}/monitor`
-                        : `/tracks/${id}/monitor`;
+            if (type === "album") {
+                // A library-wide toggle: every audio library, said out loud.
+                return api.monitorAlbum(id, { allLibraries: true }, !currentStatus);
+            }
+
+            const endpoint = type === "artist"
+                ? `/v1/artist/${id}/monitor`
+                : `/v1/track/${id}/monitor`;
 
             return api.request(endpoint, {
                 method: "POST",
@@ -74,7 +76,7 @@ export const useMonitoring = () => {
         }
 
         if (type === "album") {
-            return api.updateAlbum(id, { monitored_lock: !isLocked });
+            return api.updateAlbum(id, { monitored_lock: !isLocked }, { allLibraries: true });
         }
 
         // track

@@ -23,15 +23,7 @@ const releaseGroupLibraryStateCte = `
         FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
         WHERE allowed.value = 'spatial'
       ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-      MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) OVER (
-        PARTITION BY
-          library_group.release_group_id,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-            WHERE allowed.value = 'spatial'
-          ) THEN 'spatial' ELSE 'stereo' END
-      ) AS monitored,
+      1 AS monitored,
       MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) OVER (
         PARTITION BY
           library_group.release_group_id,
@@ -637,7 +629,9 @@ export class AlbumQueryService {
         }
 
         if (input.monitored !== undefined) {
-            where.push("library_album.monitored = ?");
+            // Row existence is the monitoring statement: an Album in the index
+            // with included = 1 is monitored in some enabled library.
+            where.push("library_album.included = ?");
             params.push(input.monitored ? 1 : 0);
             countParams.push(input.monitored ? 1 : 0);
         }

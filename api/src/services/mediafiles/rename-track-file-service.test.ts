@@ -451,9 +451,8 @@ test("rename preload follows the selected-release track identity for hybrid sour
   seedCanonicalGraph({ albumTitle: "Hybrid Album", trackTitle: "Selected Track" });
   dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-    )
-    SELECT library.id, album.id, 1, 'manual', 0, 'hybrid_rename_test', 1
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) SELECT library.id, album.id, 'manual', 0, 'hybrid_rename_test', 1
     FROM Libraries library
     JOIN quality_profiles profile ON profile.id = library.quality_profile_id
     JOIN Albums album ON album.mbid = 'release-group-mbid-1'
@@ -1056,11 +1055,11 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
   seedCanonicalGraph({ albumTitle: "Bad Blood", trackTitle: "Pompeii" });
   dbModule.db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
     )
-    SELECT id, (SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'), ?, 'manual', 0, 'inline_video_test', 1
+    SELECT id, (SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'), 'manual', 0, 'inline_video_test', 1
     FROM Libraries
-    WHERE enabled = 1
+    WHERE enabled = 1 AND ? = 1
   `).run(stereoMonitored ? 1 : 0);
 
   const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")

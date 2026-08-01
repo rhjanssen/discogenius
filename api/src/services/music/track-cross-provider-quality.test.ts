@@ -193,9 +193,8 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     `).get(providerTrack.id, options.qualityClass, options.qualityClass, options.quality) as { id: number };
     db.prepare(`
       INSERT INTO LibraryAlbums (
-        library_id, release_group_id, monitored, selection_mode, locked,
-        curation_version
-      ) VALUES (?, ?, 1, 'auto', 0, 1)
+      library_id, release_group_id, selection_mode, locked, curation_version
+    ) VALUES (?, ?, 'auto', 0, 1)
     `).run(options.libraryId, releaseGroup.id);
     const libraryRelease = db.prepare(`
       INSERT INTO LibraryEditions (

@@ -56,9 +56,8 @@ function seedCanonicalArtistGraph() {
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-    )
-    SELECT library.id, (SELECT id FROM Albums WHERE mbid = 'release-group-1'), 1, 'manual', 0, 'orphan_cleanup_test', 1
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) SELECT library.id, (SELECT id FROM Albums WHERE mbid = 'release-group-1'), 'manual', 0, 'orphan_cleanup_test', 1
     FROM Libraries library
     JOIN quality_profiles profile ON profile.id = library.quality_profile_id
     WHERE library.enabled = 1

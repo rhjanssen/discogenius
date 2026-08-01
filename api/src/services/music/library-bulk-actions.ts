@@ -12,6 +12,11 @@ import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
+import {
+    monitorAlbumInLibraries,
+    resolveScopedLibraryIds,
+    unmonitorAlbumInLibraries,
+} from "./library-album-monitoring.js";
 
 export const LIBRARY_BULK_ENTITIES = ["artist", "album", "track", "video"] as const;
 export const LIBRARY_BULK_ACTIONS = ["monitor", "unmonitor", "lock", "unlock", "download"] as const;
@@ -135,36 +140,23 @@ function applyReleaseGroupWantedState(releaseGroupMbids: string[], monitored: bo
         return;
     }
 
-    const wanted = monitored ? 1 : 0;
-    const upsert = db.prepare(`
-        INSERT INTO LibraryAlbums (
-          library_id, release_group_id, monitored, selection_mode, locked,
-          reason, curation_version, updated_at
-        )
-        SELECT library.id, release_group.id, ?, 'manual', 0,
-               'bulk_monitor_action', 1, CURRENT_TIMESTAMP
-        FROM Libraries library
-        CROSS JOIN Albums release_group
-        WHERE library.enabled = 1 AND release_group.mbid = ?
-        ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-          monitored = CASE
-            WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.monitored
-            ELSE excluded.monitored
-          END,
-          selection_mode = CASE
-            WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.selection_mode
-            ELSE 'manual'
-          END,
-          reason = CASE
-            WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.reason
-            ELSE excluded.reason
-          END,
-          updated_at = CURRENT_TIMESTAMP
-    `);
+    // Bulk monitoring is an audio-Library action; the Video Library curates
+    // canonical video Recordings through LibraryVideos and never appears here.
+    const libraryIds = resolveScopedLibraryIds(db, { kind: "all-audio-libraries" });
+    const findReleaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?");
 
     const tx = db.transaction(() => {
         for (const releaseGroupMbid of normalizedReleaseGroupMbids) {
-            upsert.run(wanted, releaseGroupMbid);
+            const releaseGroup = findReleaseGroup.get(releaseGroupMbid) as { id: number } | undefined;
+            if (!releaseGroup) continue;
+            if (monitored) {
+                monitorAlbumInLibraries(db, releaseGroup.id, libraryIds, {
+                    reason: "bulk_monitor_action",
+                    actor: "user",
+                });
+            } else {
+                unmonitorAlbumInLibraries(db, releaseGroup.id, libraryIds, { actor: "user" });
+            }
         }
     });
 
@@ -184,9 +176,31 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
         `).run(nextStatus, nextStatus, ...artistIds);
 
         if (!monitored) {
+            // Unmonitoring an Artist withdraws its Albums, which takes their
+            // monitored Editions with them: an Edition monitored under an
+            // unmonitored Album is the contradiction row existence prevents.
+            // A locked Album keeps both — that is what the lock is for.
             db.prepare(`
-            UPDATE LibraryAlbums
-            SET monitored = 0, updated_at = CURRENT_TIMESTAMP
+            DELETE FROM LibraryEditions
+            WHERE edition_id IN (
+                SELECT edition.id
+                FROM AlbumEditions edition
+                JOIN Albums release_group ON release_group.id = edition.release_group_id
+                JOIN Artists artist ON artist.mbid = release_group.artist_mbid
+                WHERE artist.id IN (${artistPlaceholders})
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM LibraryAlbums locked_album
+                JOIN AlbumEditions locked_edition
+                  ON locked_edition.release_group_id = locked_album.release_group_id
+                WHERE locked_album.library_id = LibraryEditions.library_id
+                  AND locked_edition.id = LibraryEditions.edition_id
+                  AND locked_album.locked = 1
+              )
+            `).run(...artistIds);
+
+            db.prepare(`
+            DELETE FROM LibraryAlbums
             WHERE release_group_id IN (
                 SELECT release_group.id
                 FROM Albums release_group
@@ -296,7 +310,6 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
            AND library_release_group.release_group_id = release.release_group_id
           WHERE release_group.mbid = ?
             AND plan.state = 'current'
-            AND library_release_group.monitored = 1
           ORDER BY library_release.library_id, plan.id
         `).all(releaseGroupMbid) as Array<{ id: number }>;
         for (const plan of plans) {
@@ -322,7 +335,6 @@ function queueTrackDownloads(trackIds: string[]): number[] {
           JOIN LibraryAlbums release_group
             ON release_group.library_id = library_release.library_id
            AND release_group.release_group_id = release.release_group_id
-           AND release_group.monitored = 1
           WHERE CAST(track.id AS TEXT) = ? OR track.mbid = ?
           ORDER BY plan.id
         `).all(trackId, trackId) as Array<{ plan_id: number; track_id: number }>;

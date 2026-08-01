@@ -130,7 +130,7 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     ["ArtistReleaseGroups", ["artist_metadata_id", "release_group_id", "artist_mbid", "release_group_mbid"]],
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
     ["Tracks", ["id", "album_edition_id", "recording_id", "release_mbid", "recording_mbid"]],
-    ["LibraryAlbums", ["id", "library_id", "release_group_id", "monitored", "selection_mode", "locked", "reason", "curation_version", "updated_at"]],
+    ["LibraryAlbums", ["id", "library_id", "release_group_id", "selection_mode", "locked", "reason", "curation_version", "updated_at"]],
     ["LibraryEditions", ["id", "library_id", "edition_id", "selection_mode", "representative", "reason", "curation_version", "preferred_plan_key", "plan_selection_mode", "selected_at", "updated_at"]],
     ["AcquisitionPlans", ["id", "library_id", "edition_id", "provider", "composition", "download_mode", "state", "plan_key", "rank", "coverage", "target_track_count", "planner_version", "policy_hash", "computed_at", "updated_at"]],
     ["AcquisitionPlanTracks", ["id", "plan_id", "track_id", "source_id", "provider_track_match_id", "provider_audio_variant_id", "source_quality_snapshot", "created_at", "updated_at"]],
@@ -150,9 +150,13 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
 });
 
 test("monitoring and plan ownership have exactly one representation each", () => {
+  // Row existence is the monitoring decision at BOTH levels; a column would be
+  // a second, driftable answer to the same question.
+  const libraryAlbums = tableColumns("LibraryAlbums");
+  assert.equal(libraryAlbums.includes("monitored"), false,
+    "LibraryAlbums.monitored would compete with row existence");
+
   const libraryEditions = tableColumns("LibraryEditions");
-  // Row existence is the monitoring decision; a column would be a second,
-  // driftable answer to the same question.
   assert.equal(libraryEditions.includes("monitored"), false,
     "LibraryEditions.monitored would compete with row existence");
   // One Album lock, on LibraryAlbums. Two independently mutable locks drift.

@@ -7,6 +7,11 @@ import {
 } from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteTrackLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import {
+  monitorAlbumInLibraries,
+  resolveScopedLibraryIds,
+  unmonitorAlbumInLibraries,
+} from "../../services/music/library-album-monitoring.js";
+import {
   getTrackDetail,
   getTrackFiles,
   listTracks,
@@ -71,30 +76,22 @@ function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boole
     return false;
   }
 
-  const wanted = monitored ? 1 : 0;
-  db.prepare(`
-    INSERT INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
-      reason, curation_version, updated_at
-    )
-    SELECT id, ?, ?, 'manual', 0, 'track_monitor_action', 1, CURRENT_TIMESTAMP
-    FROM Libraries
-    WHERE enabled = 1
-    ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-      monitored = CASE
-        WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.monitored
-        ELSE excluded.monitored
-      END,
-      selection_mode = CASE
-        WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.selection_mode
-        ELSE 'manual'
-      END,
-      reason = CASE
-        WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.reason
-        ELSE excluded.reason
-      END,
-      updated_at = CURRENT_TIMESTAMP
-  `).run(canonicalTrack.release_group_id, wanted);
+  // A track belongs to an Album, and an Album is monitored per audio Library.
+  // The Video Library is excluded: it curates canonical video Recordings, not
+  // Albums, so a track action has nothing to say about it.
+  const libraryIds = resolveScopedLibraryIds(db, { kind: "all-audio-libraries" });
+  db.transaction(() => {
+    if (monitored) {
+      monitorAlbumInLibraries(db, canonicalTrack.release_group_id, libraryIds, {
+        reason: "track_monitor_action",
+        actor: "user",
+      });
+    } else {
+      unmonitorAlbumInLibraries(db, canonicalTrack.release_group_id, libraryIds, {
+        actor: "user",
+      });
+    }
+  })();
 
   invalidateReleaseGroupDownloadStatus(canonicalTrack.release_group_mbid);
   return true;

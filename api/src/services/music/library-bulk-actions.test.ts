@@ -127,8 +127,8 @@ dbModule.db.prepare(`
     `).get(libraryId, managedArtistId) as { id: number }).id;
     dbModule.db.prepare(`
         INSERT INTO LibraryAlbums (
-            library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
-        ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
     `).run(libraryId, releaseGroupId);
     const libraryEditionId = (dbModule.db.prepare(`
         INSERT INTO LibraryEditions (
@@ -295,12 +295,12 @@ test("album bulk actions reject provider album IDs as catalog identity", async (
     assert.equal(result.missing, 1);
 
     const slot = dbModule.db.prepare(`
-        SELECT monitored AS wanted
+        SELECT id
         FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
-    `).get(seeded.albumId) as { wanted: number };
+    `).get(seeded.albumId) as { id: number } | undefined;
 
-    assert.equal(slot.wanted, 1);
+    assert.ok(slot, "the album stays monitored");
     assertRetiredProviderCatalogTablesAbsent();
 });
 
@@ -311,13 +311,14 @@ test("track and video monitor bulk actions write canonical state only", async ()
     await serviceModule.LibraryBulkActionService.apply("video", "monitor", [seeded.videoId]);
 
     const slot = dbModule.db.prepare(`
-        SELECT monitored AS wanted
+        SELECT id
         FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
-    `).get("release-group-mbid-1") as { wanted: number };
+    `).get("release-group-mbid-1") as { id: number } | undefined;
     const video = dbModule.db.prepare("SELECT monitored AS Monitor FROM Recordings WHERE id = ?").get(seeded.videoId) as { Monitor: number };
 
-    assert.equal(slot.wanted, 0);
+    // Unmonitoring removes the row rather than flagging it.
+    assert.equal(slot, undefined);
     assert.equal(video.Monitor, 1);
     assertRetiredProviderCatalogTablesAbsent();
 });

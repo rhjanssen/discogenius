@@ -122,7 +122,6 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
           SELECT 1
           FROM LibraryAlbums library_group
           WHERE library_group.release_group_id = rg.id
-            AND library_group.monitored = 1
         ) THEN 1 ELSE 0 END AS wanted,
         CASE WHEN EXISTS (
           SELECT 1

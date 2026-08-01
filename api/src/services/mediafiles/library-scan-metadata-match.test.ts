@@ -247,9 +247,9 @@ function seedCatalogTrack(params: {
     .get(libraryName) as { id: number };
   db.prepare(`
     INSERT OR IGNORE INTO LibraryAlbums (
-      library_id, release_group_id, monitored, selection_mode, locked,
+      library_id, release_group_id, selection_mode, locked,
       reason, curation_version
-    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT OR IGNORE INTO LibraryEditions (

@@ -271,7 +271,7 @@ export const useSearch = () => {
                     });
                     break;
                 case 'album':
-                    await api.monitorAlbum(item.providerId);
+                    await api.monitorAlbum(item.providerId, { allLibraries: true });
                     toastRef.current({
                         title: "Album monitored",
                         description: `${item.name} is now being monitored`,
@@ -373,7 +373,7 @@ export const useSearch = () => {
                     await api.updateArtist(item.providerId, { monitored: false });
                     break;
                 case 'album':
-                    await api.updateAlbum(item.providerId, { monitored: false });
+                    await api.updateAlbum(item.providerId, { monitored: false }, { allLibraries: true });
                     break;
                 case 'track':
                     await api.updateTrack(item.providerId, { monitored: false });

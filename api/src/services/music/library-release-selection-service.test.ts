@@ -192,10 +192,10 @@ test("manual library selection pins the exact provider edition on the active sch
       primaryProviderEditionMatchId: hiresOffer.providerEditionMatchId,
     }]);
     assert.deepEqual(db.prepare(`
-      SELECT selection_mode, locked, monitored
+      SELECT selection_mode, locked
       FROM LibraryAlbums
       WHERE library_id = 1 AND release_group_id = 1
-    `).get(), { selection_mode: "manual", locked: 0, monitored: 1 });
+    `).get(), { selection_mode: "manual", locked: 0 });
     assert.deepEqual(db.prepare(`
       SELECT source.provider_edition_match_id, source.role
       FROM AcquisitionPlanSources source
@@ -397,7 +397,7 @@ test("the album lock reaches the edition rows planning actually consults", () =>
       "an ordinary selection must not press Lock",
     );
 
-    AlbumCommandService.updateAlbum(albumMbid, true, true);
+    AlbumCommandService.updateAlbum(albumMbid, true, true, { kind: "library", libraryId: 1 });
 
     // There is exactly one lock, on the Album, and every consumer reads it from
     // there. A second per-edition lock could disagree with this one; that is the
@@ -415,7 +415,7 @@ test("the album lock reaches the edition rows planning actually consults", () =>
     assert.equal(service.getAvailability(albumMbid).libraries[0].selections
       .every((selection) => selection.locked), true);
 
-    AlbumCommandService.updateAlbum(albumMbid, true, false);
+    AlbumCommandService.updateAlbum(albumMbid, true, false, { kind: "library", libraryId: 1 });
     assert.equal(
       (db.prepare("SELECT locked FROM LibraryAlbums WHERE release_group_id = 1")
         .get() as { locked: number }).locked,
@@ -456,9 +456,8 @@ test("a locked album rejects an exclusive selection instead of absorbing it", ()
         id, name, root_path, metadata_profile_id, quality_profile_id, enabled
       ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
       INSERT INTO LibraryAlbums (
-        library_id, release_group_id, monitored, selection_mode, locked,
-        reason, curation_version
-      ) VALUES (1, 1, 1, 'manual', 1, 'user', 1);
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (1, 1, 'manual', 1, 'user', 1);
       INSERT INTO LibraryEditions (
         id, library_id, edition_id, selection_mode, reason, curation_version
       ) VALUES (99, 1, 2, 'manual', 'user', 1);

@@ -426,11 +426,11 @@ export function createDomainSchemaV41(db: Database.Database): void {
       FOREIGN KEY (managed_artist_id) REFERENCES ManagedArtists(id) ON DELETE CASCADE
     );
 
+    -- Row existence is the monitoring decision, exactly as for LibraryEditions.
     CREATE TABLE LibraryAlbums (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
       release_group_id INTEGER NOT NULL,
-      monitored INTEGER NOT NULL DEFAULT 1 CHECK (monitored IN (0, 1)),
       selection_mode TEXT NOT NULL CHECK (selection_mode IN ('auto', 'manual')),
       locked INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
       reason TEXT,
@@ -441,8 +441,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       FOREIGN KEY (release_group_id) REFERENCES Albums(id) ON DELETE CASCADE
     );
 
-    -- Row existence is the monitoring decision. No monitored column, and no
-    -- per-edition locked: LibraryAlbums.locked is the one Album lock.
+    -- No per-edition locked either: LibraryAlbums.locked is the one Album lock.
     CREATE TABLE LibraryEditions (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
@@ -629,7 +628,6 @@ export function createDomainSchemaV41(db: Database.Database): void {
 
     CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
     CREATE INDEX idx_library_artists_library ON LibraryArtists(library_id, monitored, managed_artist_id);
-    CREATE INDEX idx_library_release_groups_library ON LibraryAlbums(library_id, monitored, release_group_id);
     CREATE INDEX idx_library_releases_library ON LibraryEditions(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist ON LibraryEditionScopes(library_artist_id, scope_type, library_edition_id);
     CREATE INDEX idx_acquisition_sources_plan ON AcquisitionPlanSources(plan_id, sort_order);
