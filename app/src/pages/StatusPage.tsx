@@ -369,6 +369,19 @@ const StatusPage = () => {
             status.tools.tiddl,
         ]
         : [];
+    const runtimeChecks = status
+        ? [
+            status.subsystems.database.schema,
+            status.subsystems.database.wal,
+            status.subsystems.database.storage,
+            status.subsystems.database.deep,
+            status.subsystems.commandQueue,
+            status.subsystems.scheduledTasks,
+            status.subsystems.imports,
+            status.subsystems.statistics,
+            status.subsystems.catalog,
+        ]
+        : [];
 
     return (
         <div className={styles.container}>
@@ -422,6 +435,33 @@ const StatusPage = () => {
                                     check={check}
                                     styles={styles}
                                     last={index === pathChecks.length - 1}
+                                />
+                            ))}
+                        </div>
+                    </SettingsSection>
+
+                    <SettingsSection
+                        id="runtime"
+                        title="Runtime & Recovery"
+                        description="Database integrity, queue liveness, scheduled work, imports, statistics, and catalog readiness."
+                        actions={status ? (
+                            <Badge
+                                appearance="filled"
+                                color={status.controls.downloadQueue.isPaused ? "warning" : "success"}
+                            >
+                                {status.controls.downloadQueue.isPaused
+                                    ? "Downloads paused (saved)"
+                                    : "Downloads running"}
+                            </Badge>
+                        ) : undefined}
+                    >
+                        <div className={styles.card}>
+                            {runtimeChecks.map((check, index) => (
+                                <CheckRow
+                                    key={check.scope}
+                                    check={check}
+                                    styles={styles}
+                                    last={index === runtimeChecks.length - 1}
                                 />
                             ))}
                         </div>
