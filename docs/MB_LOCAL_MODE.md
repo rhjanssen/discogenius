@@ -137,12 +137,33 @@ Remaining UX work is optional “refresh monitored artists now” after a switch
 
 - `musicbrainz-ws-mapping` + `LocalMusicBrainzCatalogProvider`: fixture unit
   tests against recorded `/ws/2` responses with an injected fetcher (no live
-  network).
+  network); coverage verifies the shared DTO boundary.
 - `ServarrMetadataCatalogProvider`: delegating-adapter tests with a spy service.
 - `mb-connection`: host-only normalization plus derived Postgres DSN and
   co-located `/ws/2` search URL tests.
-- **Live container e2e is skipped** — no MB-docker container is provisioned in
-  CI; the behavior is covered by the fixture unit tests above.
+- CI does not provision MB-docker, so the live sweep below is an explicit
+  environment gate rather than part of ordinary CI.
+
+### Live read-only sweep
+
+- `scripts/release-hardening/run-local-mb-fetch-sweep.ts` performs a read-only
+  direct-PostgreSQL sweep at fetch concurrency `1,2,3,4,5,6,8`, plus pool sizes
+  `3,4,6,8`. Its fixed live fixtures include Bastille and Bakermat, it hydrates
+  every returned release group, checks the local `/ws/2` interface, and writes
+  machine-readable evidence under `test-results/release-hardening`.
+
+Example:
+
+```powershell
+yarn --cwd api tsx scripts/release-hardening/run-local-mb-fetch-sweep.ts `
+  --host 192.168.1.100 `
+  --run-id local-mb-fetch-20260801
+```
+
+This layer measures canonical PostgreSQL fetches only. SQLite commits, command
+leases, API/SSE responsiveness, provider matching, and the full per-Artist
+workflow remain separate Docker/load gates; their metrics are explicitly
+reported as unmeasured rather than inferred.
 
 ## Catalog source ↔ schema parity
 
