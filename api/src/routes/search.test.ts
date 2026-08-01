@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedSelectedAcquisitionPlan } from "../test-support/acquisition-plan-fixture.js";
+import { selectVideoInVideoLibraries } from "../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-search-route-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.search.test.db");
@@ -221,15 +222,11 @@ test("local search returns canonical videos", async () => {
   const artist = insertCanonicalArtist();
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
-      title, length_ms, is_video, metadata_status, release_date, cover_image_id, monitored
-    )
-    VALUES (
-      'mb-video-search-1', 'mb-video-search-1', ?, 'artist-mbid',
-      'Canonical Search Video', 201000, 1, 'musicbrainz', '2023-02-03', 'recording-cover', 1
-    )
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status, release_date, cover_image_id
+    ) VALUES ('mb-video-search-1', 'mb-video-search-1', ?, 'artist-mbid', 'Canonical Search Video', 201000, 1, 'musicbrainz', '2023-02-03', 'recording-cover')
     RETURNING id
   `).get(artist.id) as { id: number };
+  selectVideoInVideoLibraries(dbModule.db, video.id);
 
   const providerVideo = dbModule.db.prepare(`
     INSERT INTO ProviderItems (

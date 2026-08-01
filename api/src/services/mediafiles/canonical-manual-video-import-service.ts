@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { selectLibraryVideo } from "../music/library-video-monitoring.js";
 import type { ManualImportSummary } from "./manual-import-service.js";
 import type {
   LegacyManualImporter,
@@ -178,13 +179,15 @@ export class CanonicalManualVideoImportService {
           recordingMbid: recording.mbid,
           artistMbid: recording.artist_mbid,
         });
-        this.db.prepare(`
-          UPDATE Recordings
-          SET monitored = 1,
-              monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(recording.id);
+        // Importing a file for a video is the user selecting it, in the
+        // library the file landed in. Placement is what the import already did.
+        selectLibraryVideo(this.db, {
+          libraryId: request.libraryId,
+          videoRecordingId: recording.id,
+          placement: { mode: "separated" },
+          selectionMode: "manual",
+          reason: "canonical_manual_video_import",
+        });
       }
     })();
 

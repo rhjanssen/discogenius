@@ -198,10 +198,10 @@ test("SeedVideo monitors only the requested provider offer when IDs collide", as
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Bastille')").run();
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES ('artist-local', 'Bastille', 'artist-mbid')").run();
   dbModule.db.prepare(`
-    INSERT INTO Recordings (id, mbid, artist_mbid, title, is_video, monitored)
-    VALUES
-      (101, 'tidal-recording', 'artist-mbid', 'Tidal video', 1, 0),
-      (102, 'apple-recording', 'artist-mbid', 'Apple video', 1, 0)
+    INSERT INTO Recordings (
+      id, mbid, artist_mbid, title, is_video
+    ) VALUES (101, 'tidal-recording', 'artist-mbid', 'Tidal video', 1),
+      (102, 'apple-recording', 'artist-mbid', 'Apple video', 1)
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -254,11 +254,14 @@ test("SeedVideo monitors only the requested provider offer when IDs collide", as
 
   assert.equal(receivedProvider, "tidal");
   assert.equal(
-    (dbModule.db.prepare("SELECT monitored FROM Recordings WHERE id = 101").get() as { monitored: number }).monitored,
+    // Selected into the Video Library — that row IS the monitoring statement.
+    (dbModule.db.prepare("SELECT COUNT(*) AS n FROM LibraryVideos WHERE video_recording_id = 101")
+      .get() as { n: number }).n > 0 ? 1 : 0,
     1,
   );
   assert.equal(
-    (dbModule.db.prepare("SELECT monitored FROM Recordings WHERE id = 102").get() as { monitored: number }).monitored,
+    (dbModule.db.prepare("SELECT COUNT(*) AS n FROM LibraryVideos WHERE video_recording_id = 102")
+      .get() as { n: number }).n > 0 ? 1 : 0,
     0,
   );
 });

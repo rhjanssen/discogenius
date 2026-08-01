@@ -22,12 +22,13 @@ function fixture() {
   db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, 'Bastille', ?)").run(ARTIST_MBID, ARTIST_MBID);
   db.prepare(`
     INSERT INTO Recordings (
-      id, mbid, title, artist_metadata_id, artist_mbid, artist_credit, is_video, monitored
-    ) VALUES (10, ?, 'Pompeii', 1, ?, 'Bastille', 1, 0)
+      id, mbid, title, artist_metadata_id, artist_mbid, artist_credit, is_video
+    ) VALUES (10, ?, 'Pompeii', 1, ?, 'Bastille', 1)
   `).run(VIDEO_MBID, ARTIST_MBID);
   db.prepare(`
-    INSERT INTO Recordings (id, mbid, title, is_video, monitored)
-    VALUES (20, '33333333-3333-4333-8333-333333333333', 'Audio recording', 0, 0)
+    INSERT INTO Recordings (
+      id, mbid, title, is_video
+    ) VALUES (20, '33333333-3333-4333-8333-333333333333', 'Audio recording', 0)
   `).run();
   db.prepare(`
     INSERT INTO MetadataProfiles (
@@ -118,7 +119,8 @@ test("canonical video import pins the exact TrackFiles row without provider prov
       imported_quality: "1080p",
     });
     assert.equal(
-      (db.prepare("SELECT monitored FROM Recordings WHERE id = 10").get() as { monitored: number }).monitored,
+      (db.prepare("SELECT COUNT(*) AS n FROM LibraryVideos WHERE video_recording_id = 10")
+        .get() as { n: number }).n,
       1,
     );
   } finally {

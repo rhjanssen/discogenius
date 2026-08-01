@@ -259,12 +259,25 @@ export const handleSeedVideo: CommandHandler<"SeedVideo"> = async (job, ctx) => 
         ) as { recordingId?: number | null } | undefined;
 
         if (providerItem?.recordingId) {
+            // Seeding a video selects it into every Video Library. A
+            // selection the user already made by hand is left alone.
             db.prepare(`
-                UPDATE Recordings
-                SET monitored = CASE WHEN monitored_lock = 1 THEN monitored ELSE 1 END,
-                    monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                INSERT INTO LibraryVideos (
+                                    library_id, video_recording_id, selection_mode,
+                                    placement_mode, reason, selected_at, updated_at
+                                )
+                                SELECT library.id, ?, 'auto', 'separated',
+                                       'seed_video', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                                FROM Libraries library
+                                JOIN quality_profiles library_quality_profile
+                                  ON library_quality_profile.id = library.quality_profile_id
+                                WHERE library.enabled = 1
+                                  AND EXISTS (
+                                    SELECT 1
+                                    FROM json_each(COALESCE(library_quality_profile.allowed_source_formats, '[]')) allowed_format
+                                    WHERE allowed_format.value = 'video'
+                                  )
+                                ON CONFLICT(library_id, video_recording_id) DO NOTHING
             `).run(providerItem.recordingId);
         }
     }

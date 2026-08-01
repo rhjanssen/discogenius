@@ -77,6 +77,38 @@ export function assertTableHasColumns(
 }
 
 /**
+ * Select a canonical video into the enabled Video Libraries.
+ *
+ * A `LibraryVideos` row IS the monitoring statement — there is no
+ * `Recordings.monitored` to set — so a fixture that wants a monitored video
+ * says so by selecting it. Placement defaults to separated; tests exercising
+ * inline placement set it explicitly.
+ */
+export function selectVideoInVideoLibraries(
+  db: { prepare: (sql: string) => { run: (...args: any[]) => unknown } },
+  videoRecordingId: number | string,
+  options: { selectionMode?: "auto" | "manual" } = {},
+): void {
+  db.prepare(`
+    INSERT INTO LibraryVideos (
+      library_id, video_recording_id, selection_mode, placement_mode, reason
+    )
+    SELECT library.id, ?, ?, 'separated', 'fixture'
+    FROM Libraries library
+    JOIN quality_profiles quality_profile
+      ON quality_profile.id = library.quality_profile_id
+    WHERE library.enabled = 1
+      AND EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'video'
+      )
+    ON CONFLICT(library_id, video_recording_id) DO UPDATE SET
+      selection_mode = excluded.selection_mode
+  `).run(videoRecordingId, options.selectionMode ?? "auto");
+}
+
+/**
  * Tables whose rows are provider/library state rather than canonical catalogue
  * facts. Delete in this order between tests — children before parents, so an
  * FK-enforced database does not reject the reset.
@@ -98,6 +130,7 @@ export const PROVIDER_STATE_TABLES_IN_DELETE_ORDER = [
 ] as const;
 
 export const CANONICAL_TABLES_IN_DELETE_ORDER = [
+  "LibraryVideos",
   "LibraryEditions",
   "LibraryAlbums",
   "Tracks",

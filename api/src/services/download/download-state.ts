@@ -314,7 +314,8 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
 
   // 2. Monitored videos — one indexed query per artist-link column instead of
   //    an OR-join that defeats both indexes.
-  const monitoredVideoFlag = "(recording.monitored = 1 OR recording.monitored_lock = 1)";
+  // A LibraryVideos row IS the monitoring statement for a canonical video.
+  const monitoredVideoFlag = `EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id)`;
   const videosLinkedByMbid = !enabledLibrarySlots.video || mbids.length === 0 ? [] : db.prepare(`
     SELECT recording.artist_mbid AS link, recording.id AS recording_id
     FROM Recordings recording

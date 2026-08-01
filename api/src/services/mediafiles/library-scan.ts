@@ -1038,12 +1038,14 @@ export class DiskScanService {
                     if (match.mediaId && (match.fileType === "track" || match.fileType === "video")) {
                         shouldPromoteArtist = true;
                         if (match.fileType === "video") {
+                            // A video file on disk is evidence the library
+                            // wants the video, so the selection is asserted.
                             db.prepare(`
-                                UPDATE Recordings
-                                SET monitored = 1,
-                                    monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-                                    updated_at = CURRENT_TIMESTAMP
-                                WHERE id = (
+                                INSERT INTO LibraryVideos (
+                                    library_id, video_recording_id, selection_mode,
+                                    placement_mode, reason, selected_at, updated_at
+                                )
+                                SELECT library.id, (
                                     SELECT MIN(video_match.recording_id)
                                     FROM ProviderItems item
                                     JOIN ProviderVideoMatches video_match
@@ -1053,8 +1055,18 @@ export class DiskScanService {
                                       AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                                       AND (? IS NULL OR item.provider = ?)
                                     HAVING COUNT(DISTINCT video_match.recording_id) = 1
-                                )
-                                  AND (monitored_lock = 0 OR monitored_lock IS NULL)
+                                ), 'auto', 'separated',
+                                       'library_scan', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                                FROM Libraries library
+                                JOIN quality_profiles library_quality_profile
+                                  ON library_quality_profile.id = library.quality_profile_id
+                                WHERE library.enabled = 1
+                                  AND EXISTS (
+                                    SELECT 1
+                                    FROM json_each(COALESCE(library_quality_profile.allowed_source_formats, '[]')) allowed_format
+                                    WHERE allowed_format.value = 'video'
+                                  )
+                                ON CONFLICT(library_id, video_recording_id) DO NOTHING
                             `).run(match.mediaId, matchProvider, matchProvider);
                         }
 

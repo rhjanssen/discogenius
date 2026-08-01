@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-artist-query-"));
@@ -194,14 +195,10 @@ function seedCanonicalArtistPage() {
 
   db.prepare(`
     INSERT INTO Recordings (
-      id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
-      title, length_ms, is_video, metadata_status, release_date, cover_image_id, monitored
-    )
-    VALUES (
-      501, 'video-recording-mbid-1', 'video-recording-mbid-1', ?, 'artist-mbid-1',
-      'Canonical Video', 210000, 1, 'musicbrainz', '2024-02-01', 'video-cover', 1
-    )
+      id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status, release_date, cover_image_id
+    ) VALUES (501, 'video-recording-mbid-1', 'video-recording-mbid-1', ?, 'artist-mbid-1', 'Canonical Video', 210000, 1, 'musicbrainz', '2024-02-01', 'video-cover')
   `).run(artistMetadata.id);
+  selectVideoInVideoLibraries(db, 501);
 
   const providerVideo = db.prepare(`
     INSERT INTO ProviderItems (

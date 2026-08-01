@@ -547,34 +547,58 @@ export class ManualImportService {
 
                 if (c.isVideo) {
                     if (c.canonicalRecordingId) {
+                        // Importing a video file selects it into the Video
+                        // Libraries; the file is the evidence.
                         db.prepare(`
-                            UPDATE Recordings
-                            SET monitored = 1,
-                                monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
+                            INSERT INTO LibraryVideos (
+                                    library_id, video_recording_id, selection_mode,
+                                    placement_mode, reason, selected_at, updated_at
+                                )
+                                SELECT library.id, ?, 'auto', 'separated',
+                                       'manual_import', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                                FROM Libraries library
+                                JOIN quality_profiles library_quality_profile
+                                  ON library_quality_profile.id = library.quality_profile_id
+                                WHERE library.enabled = 1
+                                  AND EXISTS (
+                                    SELECT 1
+                                    FROM json_each(COALESCE(library_quality_profile.allowed_source_formats, '[]')) allowed_format
+                                    WHERE allowed_format.value = 'video'
+                                  )
+                                ON CONFLICT(library_id, video_recording_id) DO NOTHING
                         `).run(c.canonicalRecordingId);
                     } else {
                         db.prepare(`
-                        UPDATE Recordings
-                        SET monitored = 1,
-                            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = (
-                            SELECT match.recording_id
-                            FROM ProviderItems item
-                            JOIN ProviderVideoMatches match
-                              ON match.provider_video_item_id = item.id
-                             AND match.match_state = 'accepted'
-                            WHERE item.entity_type = 'video'
-                              AND item.provider = ?
-                              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-                            ORDER BY
-                              CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-                              match.confidence DESC,
-                              match.id
-                            LIMIT 1
-                        )
+                            INSERT INTO LibraryVideos (
+                                library_id, video_recording_id, selection_mode,
+                                placement_mode, reason, selected_at, updated_at
+                            )
+                            SELECT library.id, (
+                                SELECT match.recording_id
+                                FROM ProviderItems item
+                                JOIN ProviderVideoMatches match
+                                  ON match.provider_video_item_id = item.id
+                                 AND match.match_state = 'accepted'
+                                WHERE item.entity_type = 'video'
+                                  AND item.provider = ?
+                                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                                ORDER BY
+                                  CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                                  match.confidence DESC,
+                                  match.id
+                                LIMIT 1
+                            ), 'auto', 'separated', 'manual_import',
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                            FROM Libraries library
+                            JOIN quality_profiles library_quality_profile
+                              ON library_quality_profile.id = library.quality_profile_id
+                            WHERE library.enabled = 1
+                              AND EXISTS (
+                                SELECT 1
+                                FROM json_each(COALESCE(library_quality_profile.allowed_source_formats, '[]')) allowed_format
+                                WHERE allowed_format.value = 'video'
+                              )
+                            ON CONFLICT(library_id, video_recording_id) DO NOTHING
                         `).run(provider.id, c.providerId);
                     }
                 }

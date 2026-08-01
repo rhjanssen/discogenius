@@ -8,6 +8,11 @@ import {
   scopeToOptions,
 } from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteVideoLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
+import {
+  resolveVideoLibraryIds,
+  selectLibraryVideo,
+  unselectLibraryVideo,
+} from "../../services/music/library-video-monitoring.js";
 import { getVideoDetail, listVideos } from "../../services/music/video-query-service.js";
 import {
   getObjectBody,
@@ -156,47 +161,59 @@ router.patch("/:videoId", (req, res) => {
     const videoId = req.params.videoId;
     const body = getObjectBody(req.body);
     rejectUnknownKeys(body, ["monitored", "monitored_lock"], "Video update");
-    const updates: string[] = [];
-    const values: any[] = [];
     const monitored = getOptionalBoolean(body, "monitored");
     const monitoredLock = getOptionalBoolean(body, "monitored_lock");
-
-    if (monitored !== undefined) {
-      updates.push("monitored = ?");
-      values.push(monitored ? 1 : 0);
-    }
-
-    if (monitoredLock !== undefined) {
-      updates.push("monitored_lock = ?");
-      values.push(monitoredLock ? 1 : 0);
-      updates.push("locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END");
-      values.push(monitoredLock ? 1 : 0);
-    }
-
-    if (updates.length === 0) {
+    if (monitored === undefined && monitoredLock === undefined) {
       return res.json({ success: true });
     }
 
-    values.push(videoId);
-
-    const canonicalUpdates = updates
-      .map((update) => update
-        .replace(/^monitored = \?$/, "monitored = ?")
-        .replace(/^monitored_lock = \?$/, "monitored_lock = ?")
-        .replace(/^locked_at = /, "locked_at = "))
-      .concat("updated_at = CURRENT_TIMESTAMP");
-
-    const canonicalResult = db.prepare(`
-      UPDATE Recordings
-      SET ${canonicalUpdates.join(", ")}
+    const recording = db.prepare(`
+      SELECT id FROM Recordings
       WHERE is_video = 1 AND CAST(id AS TEXT) = CAST(? AS TEXT)
-    `).run(...values);
-
-    if (canonicalResult.changes > 0) {
-      return res.json({ success: true });
+    `).get(videoId) as { id: number } | undefined;
+    if (!recording) {
+      return res.status(404).json({ detail: "Video not found" });
     }
 
-    return res.status(404).json({ detail: "Video not found" });
+    // Monitoring a video is a Video Library selecting it, not a flag on the
+    // canonical recording — a video may be wanted by one video library and not
+    // another. `monitored_lock` is the user saying "I chose this one", which is
+    // recorded as a manual selection so curation leaves it alone.
+    const videoLibraryIds = resolveVideoLibraryIds(db);
+    db.transaction(() => {
+      for (const libraryId of videoLibraryIds) {
+        const existing = db.prepare(`
+          SELECT selection_mode FROM LibraryVideos
+          WHERE library_id = ? AND video_recording_id = ?
+        `).get(libraryId, recording.id) as { selection_mode: string } | undefined;
+
+        if (monitored === false) {
+          unselectLibraryVideo(db, libraryId, recording.id);
+          continue;
+        }
+        if (monitored === true || (monitoredLock === true && !existing)) {
+          selectLibraryVideo(db, {
+            libraryId,
+            videoRecordingId: recording.id,
+            // Placement is decided by video curation; a bare monitor request
+            // says nothing about where the file belongs.
+            placement: { mode: "separated" },
+            selectionMode: monitoredLock === true ? "manual" : "manual",
+            reason: "user",
+          });
+          continue;
+        }
+        if (monitoredLock !== undefined && existing) {
+          db.prepare(`
+            UPDATE LibraryVideos
+            SET selection_mode = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE library_id = ? AND video_recording_id = ?
+          `).run(monitoredLock ? "manual" : "auto", libraryId, recording.id);
+        }
+      }
+    })();
+
+    return res.json({ success: true });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });

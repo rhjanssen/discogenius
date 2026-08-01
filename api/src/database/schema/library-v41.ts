@@ -253,6 +253,84 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(provider_audio_variant_id) REFERENCES ProviderItemAudioVariants(id)
     );
 
+    -- The videos a Library actually selected.
+    --
+    -- Three layers, deliberately not collapsed into one. Canonical video
+    -- Recordings and ProviderVideoMatches are every video Discogenius knows
+    -- about — usually several per audio recording, since an artist may put out
+    -- an official video, a lyric video and a live cut of the same song. A row
+    -- here means one Library chose one of them. And the placement columns say
+    -- where that one video lives on disk: exactly one location per selected
+    -- video, so it can appear on a dozen Album pages without ever being
+    -- downloaded twice.
+    --
+    -- Row existence is the monitoring statement, as it is for LibraryAlbums and
+    -- LibraryEditions. Videos that lose curation keep their canonical and
+    -- provider rows and stay visible as alternatives; they simply have no row
+    -- here.
+    CREATE TABLE LibraryVideos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      -- The Video Library (or video policy) that selected this video.
+      library_id INTEGER NOT NULL,
+      video_recording_id INTEGER NOT NULL,
+      -- The provider offer that will execute, by stable key. A video offer is
+      -- atomic; it is never folded into an audio AcquisitionPlan.
+      preferred_offer_key TEXT,
+      selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK(selection_mode IN ('auto', 'manual')),
+      placement_mode TEXT NOT NULL DEFAULT 'separated'
+        CHECK(placement_mode IN ('separated', 'inline')),
+      -- The AUDIO library receiving an inline file. Null when separated.
+      placement_library_id INTEGER,
+      -- The exact canonical audio Track occurrence the inline file sits beside.
+      inline_track_id INTEGER,
+      inline_slot TEXT CHECK(inline_slot IN ('video', 'lyrics')),
+      placement_selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK(placement_selection_mode IN ('auto', 'manual')),
+      reason TEXT,
+      selected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(library_id, video_recording_id),
+      -- Inline placement needs all three of its columns or none of them.
+      CHECK(
+        (placement_mode = 'inline'
+          AND placement_library_id IS NOT NULL
+          AND inline_track_id IS NOT NULL
+          AND inline_slot IS NOT NULL)
+        OR (placement_mode = 'separated'
+          AND placement_library_id IS NULL
+          AND inline_track_id IS NULL
+          AND inline_slot IS NULL)
+      ),
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(video_recording_id) REFERENCES Recordings(id) ON DELETE CASCADE,
+      FOREIGN KEY(placement_library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(inline_track_id) REFERENCES Tracks(id) ON DELETE CASCADE
+    );
+
+    -- One occupant per Plex role. A track has one video extra and one lyrics
+    -- extra; several official videos, or an official and a live cut, compete for
+    -- the first. Making a second winner unrepresentable is what stops two files
+    -- resolving to the same name and silently overwriting each other.
+    CREATE UNIQUE INDEX idx_library_videos_inline_slot
+      ON LibraryVideos(library_id, placement_library_id, inline_track_id, inline_slot)
+      WHERE placement_mode = 'inline';
+    CREATE INDEX idx_library_videos_recording
+      ON LibraryVideos(video_recording_id, library_id);
+    CREATE INDEX idx_library_videos_inline_track
+      ON LibraryVideos(inline_track_id) WHERE placement_mode = 'inline';
+
+    -- Only a canonical VIDEO recording may be selected as one.
+    CREATE TRIGGER library_videos_validate_insert
+    BEFORE INSERT ON LibraryVideos
+    BEGIN
+      SELECT CASE
+        WHEN NOT EXISTS (
+          SELECT 1 FROM Recordings WHERE id = NEW.video_recording_id AND is_video = 1
+        ) THEN RAISE(ABORT, 'LibraryVideos target must be a canonical video recording')
+      END;
+    END;
+
     CREATE TABLE MediaCoverSelections (
       release_group_id INTEGER PRIMARY KEY,
       source_kind TEXT NOT NULL CHECK(source_kind IN ('manual', 'canonical', 'provider')),

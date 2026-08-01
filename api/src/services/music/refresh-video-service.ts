@@ -1034,15 +1034,21 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         FROM RecordingRelations
         WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
     `);
+    // Merging one canonical video into another carries the selections with it:
+    // a library that wanted the duplicate wants the survivor. A selection the
+    // survivor already has is left exactly as the user set it.
     const inheritMonitoredState = db.prepare(`
-        UPDATE Recordings
-        SET monitored = CASE
-                WHEN monitored_lock = 1 THEN monitored
-                WHEN (SELECT monitored FROM Recordings WHERE id = ?) = 1 THEN 1
-                ELSE monitored
-            END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        INSERT INTO LibraryVideos (
+            library_id, video_recording_id, preferred_offer_key, selection_mode,
+            placement_mode, placement_selection_mode, reason, selected_at, updated_at
+        )
+        SELECT
+            merged.library_id, @survivorRecordingId, merged.preferred_offer_key,
+            merged.selection_mode, 'separated', merged.placement_selection_mode,
+            merged.reason, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        FROM LibraryVideos merged
+        WHERE merged.video_recording_id = @mergedRecordingId
+        ON CONFLICT(library_id, video_recording_id) DO NOTHING
     `);
     const rejectMatch = db.prepare(`
         UPDATE ProviderVideoMatches
@@ -1128,7 +1134,10 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         }
 
         copyAudioRelations.run(targetRecordingId, targetRecordingId, row.recording_id);
-        inheritMonitoredState.run(row.recording_id, targetRecordingId);
+        inheritMonitoredState.run({
+          mergedRecordingId: row.recording_id,
+          survivorRecordingId: targetRecordingId,
+        });
         updateTrackFiles.run(targetRecordingId, targetRecordingId, row.provider, row.provider_id);
         // Provider-native facts ONLY. The old attached recording's MBID is the
         // attachment this sweep just decided against, so it must not reappear here:
@@ -1410,7 +1419,7 @@ function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
         WHERE recording.is_video = 1
           AND recording.mbid IS NULL
           AND recording.artist_mbid = ?
-          AND recording.monitored_lock = 0
+          AND NOT EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual')
           AND NOT EXISTS (
             SELECT 1
             FROM ProviderVideoMatches video_match

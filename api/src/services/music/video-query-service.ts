@@ -197,8 +197,8 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       NULL AS path,
       CAST(COALESCE(managed_artist.id, artist.mbid, recording.artist_mbid, recording.artist_metadata_id, artist.id) AS TEXT) AS artist_id,
       COALESCE(managed_artist.name, artist.name) AS artist_name,
-      recording.monitored AS monitored,
-      recording.monitored_lock AS monitored_lock,
+      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id) AS monitored,
+      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual') AS monitored_lock,
       recording.updated_at AS created_at,
       recording.updated_at AS updated_at,
       recording.updated_at AS last_scanned,
@@ -271,13 +271,15 @@ function buildCanonicalVideoWhere(input: ListVideosQuery): {
   }
 
   if (input.monitored !== undefined) {
-    where.push("recording.monitored = ?");
-    params.push(input.monitored ? 1 : 0);
+    // Row existence is the monitoring statement, so the filter asks whether a
+    // LibraryVideos row exists rather than reading a flag off the recording.
+    where.push(input.monitored ? `EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id)` : `NOT EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id)`);
   }
 
   if (input.locked !== undefined) {
-    where.push("recording.monitored_lock = ?");
-    params.push(input.locked ? 1 : 0);
+    // A manual selection is the video equivalent of a lock: the user chose this
+    // one, so curation may not reconsider it.
+    where.push(input.locked ? `EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual')` : `NOT EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual')`);
   }
 
   const providerFilter = String(input.provider || "").trim();
@@ -516,8 +518,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       END AS title,
       video.video_variant AS video_variant,
       video.release_date AS release_date,
-      video.monitored AS monitored,
-      video.monitored_lock AS monitored_lock,
+      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id) AS monitored,
+      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id AND selected_video.selection_mode = 'manual') AS monitored_lock,
       CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
       pi.provider AS provider,
       pi.video_quality AS quality,
@@ -665,8 +667,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       END AS title,
       video.video_variant AS video_variant,
       video.release_date AS release_date,
-      video.monitored AS monitored,
-      video.monitored_lock AS monitored_lock,
+      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id) AS monitored,
+      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id AND selected_video.selection_mode = 'manual') AS monitored_lock,
       CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
       pi.provider AS provider,
       pi.video_quality AS quality,

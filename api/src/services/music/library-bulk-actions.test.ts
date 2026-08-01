@@ -96,9 +96,9 @@ dbModule.db.prepare(`
 
     dbModule.db.prepare(`
         INSERT INTO Recordings (
-            id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status, monitored, monitored_lock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(301, "recording-mbid-1", "recording-mbid-1", 101, "artist-mbid-1", "Track One", 180000, 0, "musicbrainz", 0, 0);
+            id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(301, "recording-mbid-1", "recording-mbid-1", 101, "artist-mbid-1", "Track One", 180000, 0, "musicbrainz");
 
     dbModule.db.prepare(`
         INSERT INTO Tracks (
@@ -108,9 +108,9 @@ dbModule.db.prepare(`
 
     dbModule.db.prepare(`
         INSERT INTO Recordings (
-            id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status, monitored, monitored_lock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(501, "video-recording-mbid-1", "video-recording-mbid-1", 101, "artist-mbid-1", "Video One", 200000, 1, "provider_only", 0, 0);
+            id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(501, "video-recording-mbid-1", "video-recording-mbid-1", 101, "artist-mbid-1", "Video One", 200000, 1, "provider_only");
 
     const releaseGroupId = (dbModule.db.prepare(`
         SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'
@@ -252,6 +252,17 @@ test("artist monitor bulk updates related rows and queues intake", async () => {
 test("album and video lock bulk actions write canonical state", async () => {
     const seeded = seedLibrary();
 
+    // A lock protects something that is monitored. Locking a video nobody
+    // selected has nothing to protect, and inventing a row to hold the lock
+    // would claim the video is monitored — the same rule as albums.
+    await serviceModule.LibraryBulkActionService.apply("video", "lock", [seeded.videoId]);
+    assert.equal(
+        (dbModule.db.prepare("SELECT COUNT(*) AS n FROM LibraryVideos WHERE video_recording_id = ?")
+            .get(seeded.videoId) as { n: number }).n,
+        0,
+    );
+    await serviceModule.LibraryBulkActionService.apply("video", "monitor", [seeded.videoId]);
+
     const albumLock = await serviceModule.LibraryBulkActionService.apply("album", "lock", [seeded.albumId]);
     const trackLock = await serviceModule.LibraryBulkActionService.apply("track", "lock", [seeded.trackId]);
     const videoLock = await serviceModule.LibraryBulkActionService.apply("video", "lock", [seeded.videoId]);
@@ -266,10 +277,13 @@ test("album and video lock bulk actions write canonical state", async () => {
         FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get(seeded.albumId) as { monitor_lock: number };
-    const video = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
+    // "Locked" for a video is a manual selection: curation may not reconsider it.
+    const video = dbModule.db.prepare(`
+        SELECT selection_mode FROM LibraryVideos WHERE video_recording_id = ?
+    `).get(seeded.videoId) as { selection_mode: string } | undefined;
 
     assert.equal(album.monitor_lock, 1);
-    assert.equal(video.monitored_lock, 1);
+    assert.equal(video?.selection_mode, "manual");
     assertRetiredProviderCatalogTablesAbsent();
 
     await serviceModule.LibraryBulkActionService.apply("album", "unlock", [seeded.albumId]);
@@ -280,10 +294,12 @@ test("album and video lock bulk actions write canonical state", async () => {
         FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get(seeded.albumId) as { monitor_lock: number };
-    const unlockedVideo = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
+    const unlockedVideo = dbModule.db.prepare(`
+        SELECT selection_mode FROM LibraryVideos WHERE video_recording_id = ?
+    `).get(seeded.videoId) as { selection_mode: string } | undefined;
 
     assert.equal(unlockedAlbum.monitor_lock, 0);
-    assert.equal(unlockedVideo.monitored_lock, 0);
+    assert.equal(unlockedVideo?.selection_mode, "auto");
 });
 
 test("album bulk actions reject provider album IDs as catalog identity", async () => {
@@ -315,7 +331,9 @@ test("track and video monitor bulk actions write canonical state only", async ()
         FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get("release-group-mbid-1") as { id: number } | undefined;
-    const video = dbModule.db.prepare("SELECT monitored AS Monitor FROM Recordings WHERE id = ?").get(seeded.videoId) as { Monitor: number };
+    const video = dbModule.db.prepare(`
+        SELECT COUNT(*) AS Monitor FROM LibraryVideos WHERE video_recording_id = ?
+    `).get(seeded.videoId) as { Monitor: number };
 
     // Unmonitoring removes the row rather than flagging it.
     assert.equal(slot, undefined);

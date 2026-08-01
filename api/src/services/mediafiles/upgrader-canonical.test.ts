@@ -3,6 +3,7 @@ import { after, afterEach, before, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-upgrader-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -230,8 +231,12 @@ test("checkUpgrades queues canonical video upgrades without provider catalog row
   db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
     .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Canonical Artist");
-  db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored)
-    VALUES (?, ?, ?, ?, ?)`).run("video-recording-1", "Video One", "artist-mbid", 1, 1);
+  db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES (?, ?, ?, ?)`).run("video-recording-1", "Video One", "artist-mbid", 1);
+  selectVideoInVideoLibraries(
+    db,
+    (db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("video-recording-1") as { id: number }).id,
+  );
   providerItem("tidal", "video", "video-provider-1", "Video One");
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",

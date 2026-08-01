@@ -90,8 +90,8 @@ function seedAlbum(options: {
   ) as { id: number };
   const recording = db.prepare(`
     INSERT INTO Recordings (
-      mbid, artist_mbid, title, is_video, metadata_status, monitored
-    ) VALUES (?, ?, ?, 0, 'canonical', 1)
+      mbid, artist_mbid, title, is_video, metadata_status
+    ) VALUES (?, ?, ?, 0, 'canonical')
     RETURNING id
   `).get(`${options.mbid}-recording`, artistMbid, `${options.title} Track`) as { id: number };
   const track = db.prepare(`

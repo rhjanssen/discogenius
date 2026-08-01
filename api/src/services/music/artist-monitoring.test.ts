@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-artist-monitoring-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -218,10 +219,13 @@ test("unmonitoring an artist clears unlocked library curation and videos", () =>
     VALUES (?, ?, 'primary')
   `).run(libraryEditionId, libraryArtistId);
 
-  db.prepare(`
-    INSERT INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status, monitored)
-    VALUES (?, ?, ?, 1, 'provider_only', 1)
-  `).run("video-recording-1", artistMbid, "Bastille Video");
+  const videoRecordingId = (db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_mbid, title, is_video, metadata_status
+    ) VALUES (?, ?, ?, 1, 'provider_only')
+    RETURNING id
+  `).get("video-recording-1", artistMbid, "Bastille Video") as { id: number }).id;
+  selectVideoInVideoLibraries(db, videoRecordingId);
 
 const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
 
@@ -233,12 +237,16 @@ const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
   const libraryArtist = db.prepare(`
     SELECT monitored AS artist_monitored FROM LibraryArtists WHERE managed_artist_id = ?
   `).get(managedArtistId) as { artist_monitored: number };
-  const recording = db.prepare("SELECT monitored FROM Recordings WHERE mbid = ?").get("video-recording-1") as { monitored: number };
+  // The automatically selected video is withdrawn with the artist: its
+  // LibraryVideos row goes, and the canonical recording itself stays.
+  const videoSelections = db.prepare(`
+    SELECT COUNT(*) AS n FROM LibraryVideos WHERE video_recording_id = ?
+  `).get(videoRecordingId) as { n: number };
 
   assert.equal(changes, 1);
   assert.equal(artist.monitored, 0);
   assert.equal(albumRow, undefined);
   assert.equal(libraryArtist.artist_monitored, 0);
-  assert.equal(recording.monitored, 0);
+  assert.equal(videoSelections.n, 0);
   assertRetiredProviderCatalogTablesAbsent();
 });

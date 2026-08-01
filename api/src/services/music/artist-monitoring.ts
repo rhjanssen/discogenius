@@ -160,13 +160,14 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
             });
         }
 
+        // Automatically selected videos are withdrawn with the artist; the
+        // ones the user chose by hand survive.
         db.prepare(`
-            UPDATE Recordings
-            SET monitored = 0,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE is_video = 1
-              AND artist_mbid = ?
-              AND (monitored_lock = 0 OR monitored_lock IS NULL)
+            DELETE FROM LibraryVideos
+            WHERE selection_mode = 'auto'
+              AND video_recording_id IN (
+                SELECT id FROM Recordings WHERE is_video = 1 AND artist_mbid = ?
+              )
         `).run(artistId);
 
         return artistResult.changes;

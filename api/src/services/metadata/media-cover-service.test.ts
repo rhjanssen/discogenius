@@ -621,10 +621,8 @@ test("provider video artwork ids resolve through the provider interface before c
     .run("video-artist-mbid", "Video Artist");
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, mbid, artist_mbid, title, is_video,
-      metadata_status, cover_image_id, monitored
-    )
-    VALUES (?, ?, ?, ?, 1, 'provider_only', ?, 1)
+      foreign_recording_id, mbid, artist_mbid, title, is_video, metadata_status, cover_image_id
+    ) VALUES (?, ?, ?, ?, 1, 'provider_only', ?)
     RETURNING id
   `).get("provider-video-id", "video-recording-mbid", "video-artist-mbid", "Video Title", "video-image-id") as { id: number };
   dbModule.db.prepare(`
@@ -821,10 +819,8 @@ test("provider video artwork can resolve from provider id when no image id is st
     .run("video-provider-id-artist-mbid", "Video Provider Id Artist");
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, mbid, artist_mbid, title, is_video,
-      metadata_status, monitored
-    )
-    VALUES (?, ?, ?, ?, 1, 'provider_only', 1)
+      foreign_recording_id, mbid, artist_mbid, title, is_video, metadata_status
+    ) VALUES (?, ?, ?, ?, 1, 'provider_only')
     RETURNING id
   `).get("provider-video-without-image-id", "video-provider-id-recording-mbid", "video-provider-id-artist-mbid", "Provider Id Video") as { id: number };
   dbModule.db.prepare(`

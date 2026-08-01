@@ -503,7 +503,7 @@ router.get("/", async (req, res) => {
               recording.id AS id,
               recording.title,
               artist.name AS artist_name,
-              recording.monitored AS monitored,
+              EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id) AS monitored,
               COALESCE(recording.cover_image_id, provider_video.cover_id) AS cover,
               recording.cover_image_url AS cover_url,
               COALESCE(recording.release_date, provider_video.release_date) AS release_date,

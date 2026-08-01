@@ -43,7 +43,7 @@ export function buildArtistCompletionPredicate(alias: string = "a"): string {
       SELECT recording.artist_mbid
       FROM Recordings recording
       WHERE recording.is_video = 1
-        AND recording.monitored_lock = 1
+        AND EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual')
     )
   )`;
 }

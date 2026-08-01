@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-state-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -134,10 +135,11 @@ function seedCanonicalArtistGraph() {
     ) VALUES (?, ?, 'auto', 'test', 1)
   `).run(stereoLibrary.id, release.id);
 
-  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, artist_metadata_id, is_video, monitored) VALUES (?, ?, ?, ?, ?, ?)")
-    .run("video-recording-1", "Track One", "artist-mbid", artistMetadata.id, 1, 1);
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, artist_metadata_id, is_video) VALUES (?, ?, ?, ?, ?)")
+    .run("video-recording-1", "Track One", "artist-mbid", artistMetadata.id, 1);
   const videoRecording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-recording-1") as { id: number };
+  selectVideoInVideoLibraries(db, videoRecording.id);
   db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title

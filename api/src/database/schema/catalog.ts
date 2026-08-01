@@ -302,10 +302,10 @@ export function createCatalogSchema(db: Database.Database): void {
       copyright TEXT,
       popularity INT,
       credits TEXT,
-      monitored BOOLEAN NOT NULL DEFAULT 0,
-      monitored_lock BOOLEAN NOT NULL DEFAULT 0,
-      monitored_at DATETIME,
-      locked_at DATETIME,
+      -- No monitored / monitored_lock here. A canonical Recording is a fact
+      -- about the world, not a library decision, and a video may legitimately be
+      -- monitored by one Video Library and not another. LibraryVideos row
+      -- existence is the monitoring statement.
       isrcs TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
@@ -711,11 +711,10 @@ export function createCatalogSchema(db: Database.Database): void {
   db.exec("CREATE INDEX idx_recordings_artist_mbid ON Recordings(artist_mbid, is_video)");
   db.exec("CREATE INDEX idx_recordings_artist_metadata ON Recordings(artist_metadata_id, is_video)");
   db.exec("CREATE INDEX idx_recordings_video ON Recordings(is_video) WHERE is_video = 1");
-  db.exec("CREATE INDEX idx_recordings_video_monitored ON Recordings(is_video, monitored) WHERE is_video = 1");
-  db.exec("CREATE INDEX idx_recordings_video_library_release_date ON Recordings(monitored, (release_date IS NULL), release_date DESC, id) WHERE is_video = 1");
-  db.exec("CREATE INDEX idx_recordings_video_library_popularity ON Recordings(monitored, COALESCE(popularity, 0) DESC, id) WHERE is_video = 1");
-  db.exec("CREATE INDEX idx_recordings_video_library_title ON Recordings(monitored, title, id) WHERE is_video = 1");
-  db.exec("CREATE INDEX idx_recordings_video_library_updated ON Recordings(monitored, (updated_at IS NULL), updated_at DESC, id) WHERE is_video = 1");
+  db.exec("CREATE INDEX idx_recordings_video_release_date ON Recordings((release_date IS NULL), release_date DESC, id) WHERE is_video = 1");
+  db.exec("CREATE INDEX idx_recordings_video_popularity ON Recordings(COALESCE(popularity, 0) DESC, id) WHERE is_video = 1");
+  db.exec("CREATE INDEX idx_recordings_video_title ON Recordings(title, id) WHERE is_video = 1");
+  db.exec("CREATE INDEX idx_recordings_video_updated ON Recordings((updated_at IS NULL), updated_at DESC, id) WHERE is_video = 1");
   // ArtistMetadata.mbid/foreign_artist_id are UNIQUE (autoindexed). Name lookups
   // and sort-name browsing need an explicit covering index for artist search UI.
   db.exec("CREATE INDEX idx_artist_metadata_name ON ArtistMetadata(name COLLATE NOCASE)");

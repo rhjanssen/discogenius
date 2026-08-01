@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-prune-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -75,10 +76,12 @@ function seedLibraryGroup(rg: string, monitored: number, lock = 0) {
 
 function seedVideoRecording(monitored: number, providerId: string) {
   const recording = db.prepare(`
-    INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored)
-    VALUES (?, ?, ?, 1, ?)
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES (?, ?, ?, 1)
     RETURNING id
-  `).get(`mb-video-${providerId}`, "A Video", "artist-mbid", monitored) as { id: number };
+  `).get(`mb-video-${providerId}`, "A Video", "artist-mbid") as { id: number };
+  // A LibraryVideos row is the monitoring statement; unmonitored means none.
+  if (monitored) selectVideoInVideoLibraries(db, recording.id);
   const providerItem = db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', ?, 'A Video')

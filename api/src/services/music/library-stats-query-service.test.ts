@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-stats-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -50,14 +51,17 @@ test("library stats count videos from canonical recordings and ignore legacy pro
 
   dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, artist_metadata_id, artist_mbid,
-      title, is_video, metadata_status, monitored
-    )
-    VALUES
-      ('provider-video-1', ?, 'artist-mbid', 'Canonical Video', 1, 'provider_only', 1),
-      ('provider-video-2', ?, 'artist-mbid', 'Unmonitored Video', 1, 'provider_only', 0),
-      ('audio-recording-1', ?, 'artist-mbid', 'Audio Recording', 0, 'musicbrainz', 1)
+      foreign_recording_id, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('provider-video-1', ?, 'artist-mbid', 'Canonical Video', 1, 'provider_only'),
+      ('provider-video-2', ?, 'artist-mbid', 'Unmonitored Video', 1, 'provider_only'),
+      ('audio-recording-1', ?, 'artist-mbid', 'Audio Recording', 0, 'musicbrainz')
   `).run(artistMetadata.id, artistMetadata.id, artistMetadata.id);
+  // Only the first video is selected — monitoring is a LibraryVideos row.
+  selectVideoInVideoLibraries(
+    dbModule.db,
+    (dbModule.db.prepare("SELECT id FROM Recordings WHERE foreign_recording_id = ?")
+      .get("provider-video-1") as { id: number }).id,
+  );
 dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_recording_mbid,

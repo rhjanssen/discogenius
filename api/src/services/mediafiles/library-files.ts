@@ -2886,7 +2886,7 @@ export class LibraryFilesService {
         )
         -- and none of the anchors may be monitored or user-locked
         AND library_group.id IS NULL
-        AND (rec.monitored IS NULL OR rec.monitored = 0) AND (rec.monitored_lock IS NULL OR rec.monitored_lock = 0)
+        AND NOT EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = rec.id)
     `).all(artistId) as Array<{
       id: number;
       artist_id: number;

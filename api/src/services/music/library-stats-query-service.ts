@@ -106,19 +106,20 @@ export class LibraryStatsQueryService {
                 downloaded: Number(cachedArtistStats.track_downloaded || 0),
             },
             videos: {
-                // is_video / monitored are NOT NULL DEFAULT 0, so the bare
-                // equality is equivalent to COALESCE(...) = 1 but lets SQLite
-                // use the partial idx_recordings_video index (full scan → seek).
+                // is_video is NOT NULL DEFAULT 0, so the bare equality lets
+                // SQLite use the partial idx_recordings_video index.
                 total: (db.prepare(`
                     SELECT COUNT(*) AS count
                     FROM Recordings
                     WHERE is_video = 1
                 `).get() as { count: number }).count,
+                // A LibraryVideos row IS the monitoring statement, so monitored
+                // videos are counted by counting the distinct videos selected.
                 monitored: (db.prepare(`
-                    SELECT COUNT(*) AS count
-                    FROM Recordings
-                    WHERE is_video = 1
-                      AND monitored = 1
+                    SELECT COUNT(DISTINCT selected.video_recording_id) AS count
+                    FROM LibraryVideos selected
+                    JOIN Libraries library
+                      ON library.id = selected.library_id AND library.enabled = 1
                 `).get() as { count: number }).count,
                 downloaded: countDownloadedVideos(),
             },

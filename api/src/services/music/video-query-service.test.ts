@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-video-query-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -132,15 +133,11 @@ test("video list and detail use canonical video recordings with provider offers"
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
-      title, length_ms, is_video, metadata_status, release_date, cover_image_id, monitored
-    )
-    VALUES (
-      'mb-video-1', 'mb-video-1', ?, 'artist-mbid',
-      'Canonical Video', 215000, 1, 'musicbrainz', '2024-01-02', 'canonical-cover', 1
-    )
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status, release_date, cover_image_id
+    ) VALUES ('mb-video-1', 'mb-video-1', ?, 'artist-mbid', 'Canonical Video', 215000, 1, 'musicbrainz', '2024-01-02', 'canonical-cover')
     RETURNING id
   `).get(artist.id) as { id: number };
+  selectVideoInVideoLibraries(dbModule.db, recording.id);
 
   seedVideoOffer({
     provider: "tidal",
@@ -296,13 +293,8 @@ test("video detail backfills null offer quality from TrackFiles", () => {
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
-      title, length_ms, is_video, metadata_status, monitored
-    )
-    VALUES (
-      'mb-file-quality-video', 'mb-file-quality-video', ?, 'file-quality-artist',
-      'Pompeii', 233000, 1, 'musicbrainz', 1
-    )
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status
+    ) VALUES ('mb-file-quality-video', 'mb-file-quality-video', ?, 'file-quality-artist', 'Pompeii', 233000, 1, 'musicbrainz')
     RETURNING id
   `).get(artist.id) as { id: number };
 
@@ -611,11 +603,12 @@ test("video detail appears-on prefers studio album over larger monitored live co
   `).get(artist.id) as { id: number };
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      mbid, artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored
-    ) VALUES ('rec-studio-pref-video', ?, 'artist-studio-pref', 'Back to Black', 1, 'video', 'complete', 1)
+      mbid, artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status
+    ) VALUES ('rec-studio-pref-video', ?, 'artist-studio-pref', 'Back to Black', 1, 'video', 'complete')
     RETURNING id
   `).get(artist.id) as { id: number };
 
+  selectVideoInVideoLibraries(dbModule.db, video.id);
   dbModule.db.prepare(`
     INSERT INTO Tracks (
       mbid, release_mbid, recording_mbid, recording_id,
@@ -760,10 +753,11 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
 
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      mbid, artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored
-    ) VALUES ('mb-video-assoc', ?, 'artist-mbid', 'Oblivion', 1, 'official', 'musicbrainz', 1)
+      mbid, artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status
+    ) VALUES ('mb-video-assoc', ?, 'artist-mbid', 'Oblivion', 1, 'official', 'musicbrainz')
     RETURNING id
   `).get(artist.id) as { id: number };
+  selectVideoInVideoLibraries(dbModule.db, video.id);
   seedVideoOffer({
     provider: "tidal",
     providerId: "assoc-video-1",
@@ -844,10 +838,12 @@ test("album associated videos honor monitored state and music-video type filters
 
   const makeVideo = (title: string, variant: string, monitored: number): number => {
     const row = dbModule.db.prepare(`
-      INSERT INTO Recordings (artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored)
-      VALUES (?, 'artist-mbid', ?, 1, ?, 'provider_only', ?)
+      INSERT INTO Recordings (artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status)
+      VALUES (?, 'artist-mbid', ?, 1, ?, 'provider_only')
       RETURNING id
-    `).get(artist.id, title, variant, monitored) as { id: number };
+    `).get(artist.id, title, variant) as { id: number };
+    // Monitoring is a LibraryVideos row, not a column on the recording.
+    if (monitored) selectVideoInVideoLibraries(dbModule.db, row.id);
     dbModule.db.prepare(`
       INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, source, confidence)
       VALUES (?, ?, 'provider_video_for', 'tidal', 0.95)

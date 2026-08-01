@@ -1120,8 +1120,8 @@ export class ArtistQueryService {
            provider_item.provider_url AS url,
            CAST(COALESCE(recording.artist_metadata_id, @artistIdNum) AS TEXT) AS artist_id,
            @artistName AS artist_name,
-           recording.monitored AS monitored,
-           recording.monitored_lock AS monitored_lock,
+           EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id) AS monitored,
+           EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual') AS monitored_lock,
            recording.updated_at AS last_scanned,
            MAX(
              COALESCE(CAST(recording.popularity AS REAL), 0),

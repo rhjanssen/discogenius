@@ -17,6 +17,11 @@ import {
     resolveScopedLibraryIds,
     unmonitorAlbumInLibraries,
 } from "./library-album-monitoring.js";
+import {
+    resolveVideoLibraryIds,
+    selectLibraryVideo,
+    unselectLibraryVideo,
+} from "./library-video-monitoring.js";
 
 export const LIBRARY_BULK_ENTITIES = ["artist", "album", "track", "video"] as const;
 export const LIBRARY_BULK_ACTIONS = ["monitor", "unmonitor", "lock", "unlock", "download"] as const;
@@ -210,14 +215,18 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
               AND locked = 0
             `).run(...artistIds);
 
+            // The artist's automatically selected videos go with it; ones the
+            // user picked by hand stay, exactly as a locked album does.
             db.prepare(`
-                UPDATE Recordings
-                SET monitored = 0
-                WHERE is_video = 1
-                  AND artist_mbid IN (
-                    SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
+                DELETE FROM LibraryVideos
+                WHERE selection_mode = 'auto'
+                  AND video_recording_id IN (
+                    SELECT id FROM Recordings
+                    WHERE is_video = 1
+                      AND artist_mbid IN (
+                        SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
+                      )
                   )
-                  AND monitored_lock = 0
             `).run(...artistIds);
         }
     });
@@ -243,17 +252,30 @@ function applyTrackMonitorState(trackIds: string[], monitored: boolean): void {
 }
 
 function applyVideoMonitorState(videoIds: string[], monitored: boolean): void {
-    const nextStatus = monitored ? 1 : 0;
-    const videoPlaceholders = buildPlaceholders(videoIds.length);
+    // Monitoring a video is a Video Library selecting it. Placement is video
+    // curation's decision; a bulk monitor says only that the video is wanted.
+    const videoLibraryIds = resolveVideoLibraryIds(db);
+    const recordings = db.prepare(`
+        SELECT id FROM Recordings
+        WHERE is_video = 1 AND CAST(id AS TEXT) IN (${buildPlaceholders(videoIds.length)})
+    `).all(...videoIds) as Array<{ id: number }>;
 
     const tx = db.transaction(() => {
-        db.prepare(`
-            UPDATE Recordings
-            SET monitored = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE id IN (${videoPlaceholders})
-              AND is_video = 1
-        `).run(nextStatus, nextStatus, ...videoIds);
+        for (const recording of recordings) {
+            for (const libraryId of videoLibraryIds) {
+                if (monitored) {
+                    selectLibraryVideo(db, {
+                        libraryId,
+                        videoRecordingId: recording.id,
+                        placement: { mode: "separated" },
+                        selectionMode: "manual",
+                        reason: "bulk_monitor_action",
+                    });
+                } else {
+                    unselectLibraryVideo(db, libraryId, recording.id);
+                }
+            }
+        }
     });
 
     tx();
@@ -279,17 +301,18 @@ function applyAlbumLockState(releaseGroupMbids: string[], locked: boolean): void
 }
 
 function applyVideoLockState(videoIds: string[], locked: boolean): void {
-    const nextStatus = locked ? 1 : 0;
+    // A video has no separate lock: "the user chose this one" is a manual
+    // selection, and curation only reconsiders automatic ones.
     const videoPlaceholders = buildPlaceholders(videoIds.length);
-
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE Recordings
-            SET monitored_lock = ?,
-                locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
-            WHERE id IN (${videoPlaceholders})
-              AND is_video = 1
-        `).run(nextStatus, nextStatus, ...videoIds);
+            UPDATE LibraryVideos
+            SET selection_mode = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE video_recording_id IN (
+              SELECT id FROM Recordings
+              WHERE is_video = 1 AND CAST(id AS TEXT) IN (${videoPlaceholders})
+            )
+        `).run(locked ? "manual" : "auto", ...videoIds);
     });
 
     tx();

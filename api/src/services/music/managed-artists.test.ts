@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-managed-artists-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.managed-artists.test.db");
@@ -78,9 +79,16 @@ test("artist completion predicate uses canonical locks instead of provider catal
     ) VALUES (?, ?, 'manual', 1, 'test', 1)
     `).run(library.id, releaseGroup.id);
     dbModule.db.prepare(`
-        INSERT INTO Recordings (mbid, artist_mbid, title, is_video, monitored_lock)
-        VALUES (?, ?, ?, ?, ?)
-    `).run("video-recording-mbid", "video-locked-mbid", "Video", 1, 1);
+        INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+        VALUES (?, ?, ?, ?)
+    `).run("video-recording-mbid", "video-locked-mbid", "Video", 1);
+    // "Locked" for a video is a manual selection: the user chose this one.
+    selectVideoInVideoLibraries(
+      dbModule.db,
+      (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+        .get("video-recording-mbid") as { id: number }).id,
+      { selectionMode: "manual" },
+    );
 
     const predicate = managedArtistsModule.buildArtistCompletionPredicate("a");
     const rows = dbModule.db.prepare(`
