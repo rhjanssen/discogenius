@@ -2,6 +2,7 @@ import { db } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { LibraryCurationService } from "./library-curation-service.js";
+import { curateArtistVideos } from "./video-curation-service.js";
 
 interface ArtistCurationIdentity {
   localArtistId: string | null;
@@ -102,6 +103,20 @@ export class CurationService {
         providerPriority,
       });
     }
+    // Videos are curated after the audio editions, because inline placement can
+    // only choose among Tracks of Editions that are monitored — which the loop
+    // above has just decided.
+    const identityMbid = String(identity.artistMbid || "").trim();
+    if (identityMbid) {
+      for (const summary of curateArtistVideos(db, identityMbid)) {
+        console.log(
+          `[Curation] Video library ${summary.libraryId} (${summary.layout}): `
+          + `${summary.selected} selected (${summary.inline} inline, `
+          + `${summary.separated} separated), ${summary.unselected} left unmonitored`,
+        );
+      }
+    }
+
     const selectedAfter = Number((db.prepare(`
       SELECT COUNT(*) AS count
       FROM LibraryEditions release
