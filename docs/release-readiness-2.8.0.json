@@ -1,0 +1,286 @@
+{
+  "schemaVersion": 1,
+  "release": "2.8.0",
+  "updatedAt": "2026-08-01T16:30:00Z",
+  "verdict": "not ready",
+  "runs": [
+    {
+      "id": "merge-smoke-20260801",
+      "gitSha": "96f87c033648cbbf26ac8384c822eb1746839188",
+      "layer": "fast deterministic",
+      "status": "passed",
+      "evidence": "API/app typecheck passed; 76/76 focused architecture tests passed"
+    },
+    {
+      "id": "baseline-windows-ci-20260801",
+      "gitSha": "96f87c033648cbbf26ac8384c822eb1746839188",
+      "layer": "Windows CI",
+      "status": "passed",
+      "evidence": "yarn ci exit 0; API 1143 passed, 0 failed/skipped; lint 7 warnings; two Vite chunk-size warnings"
+    },
+    {
+      "id": "queue-pause-unit-20260801",
+      "gitSha": "0df2fc3",
+      "layer": "fast deterministic",
+      "status": "passed",
+      "evidence": "44/44 queue-control/schema/download-processor tests passed; API build passed"
+    },
+    {
+      "id": "scheduler-hardening-unit-20260801",
+      "gitSha": "cabcac0",
+      "layer": "fast deterministic",
+      "status": "passed",
+      "evidence": "27/27 scheduler/task-history/time-policy tests passed; API build passed"
+    }
+  ],
+  "capabilities": [
+    {
+      "capability": "metadata local MB",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Existing deterministic provider tests only; substantial configured local PostgreSQL integration and concurrency sweep not run",
+      "knownLimitations": "Connection mode, large-discography fidelity, and measured safe concurrency are not yet release-proven",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "metadata Servarr",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Existing deterministic tests only; controlled live comparison not run",
+      "knownLimitations": "No local-MB versus Servarr reconciliation matrix",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "credited Artists",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Static audit found first-degree unmonitored hydration and lower base priority, but no 500-Artist fairness result",
+      "knownLimitations": "No global credited-work budget; terminal reconciliation can wait behind credited backlog",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "provider matching",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Deterministic unit coverage exists; controlled real provider run not completed",
+      "knownLimitations": "TIDAL and Apple Music identity/idempotency not release-proven",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "Acquisition Plans",
+      "status": "untested",
+      "testRun": "merge-smoke-20260801",
+      "evidence": "Focused optimizer tests passed",
+      "knownLimitations": "Full synthetic offer matrix, stale-plan replacement, and locked-plan recovery not completed",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "curation",
+      "status": "untested",
+      "testRun": "merge-smoke-20260801",
+      "evidence": "Focused architecture tests passed",
+      "knownLimitations": "Complete deterministic settings matrix not completed",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "Lock",
+      "status": "untested",
+      "testRun": "merge-smoke-20260801",
+      "evidence": "Focused automation-lock coverage passed",
+      "knownLimitations": "Concurrent user selection versus background curation not tested",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "scheduled monitoring",
+      "status": "passed",
+      "testRun": "scheduler-hardening-unit-20260801",
+      "evidence": "Intervals persist, UTC due-time parsing is correct, duplicate active scheduling is prevented, and queued/start/terminal/success/failure times are distinct",
+      "knownLimitations": "Long mixed-load scheduler behavior remains covered by the separate load and soak gates",
+      "blockingSeverity": "none"
+    },
+    {
+      "capability": "500+ Artist load",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Harness/run not completed",
+      "knownLimitations": "No liveness, fairness, queue-age, latency, WAL, or final-state evidence",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "stuck recovery",
+      "status": "failed",
+      "testRun": null,
+      "evidence": "Architecture audit found no durable command lease/heartbeat model; never-resolving handlers can consume the worker pool indefinitely",
+      "knownLimitations": "Recovery hardening is in progress",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "restart recovery",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Startup currently requeues interrupted commands without a full persisted ownership/retry reason proof",
+      "knownLimitations": "Deterministic process/container restart run not completed",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "queue pause",
+      "status": "untested",
+      "testRun": "queue-pause-unit-20260801",
+      "evidence": "Pause is now a durable control-plane record; focused restart initialization, claim, attempt/order, and safe-import policy tests passed",
+      "knownLimitations": "Page/API/container restart and active Album/provider-retry/reorder browser-functional matrix not completed",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "queue reorder",
+      "status": "failed",
+      "testRun": null,
+      "evidence": "Audit found non-transactional full pending-set read followed by dense rewrite; concurrent enqueue/claim can invalidate order",
+      "knownLimitations": "Large-queue and authoritative-bottom fixes not implemented",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "statistics",
+      "status": "failed",
+      "testRun": null,
+      "evidence": "Audit found ArtistStatistics summation double counts shared entities, one file can mark an Album downloaded, and video downloads count raw files",
+      "knownLimitations": "Truth-query hardening and lifecycle invalidation tests are in progress",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "downloads",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Unit suite green; complete workflow/fallback/pause/restart matrix not run",
+      "knownLimitations": "No safe controlled real-provider end-to-end result",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "imports",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Unit suite green and exact identity is directionally strong",
+      "knownLimitations": "No complete isolated-root known-import lifecycle run",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "unmapped imports",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Unit coverage exists",
+      "knownLimitations": "Full multi-disc/compilation/collision/manual-mapping matrix not run",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "rename",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Unit coverage exists",
+      "knownLimitations": "Mixed-operation and restart recovery not run",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "retag",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Unit coverage exists",
+      "knownLimitations": "Mixed-operation and byte/tag verification not run",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "move",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Static audit found filesystem mutation can precede database commit without a durable operation journal",
+      "knownLimitations": "Failure/restart recovery not release-proven",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "delete",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Unit coverage exists",
+      "knownLimitations": "Shared-root and multi-Library ownership run not completed",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "sidecars",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Unit coverage exists",
+      "knownLimitations": "Failure injection and complete file-state verification not run",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "video",
+      "status": "untested",
+      "testRun": "merge-smoke-20260801",
+      "evidence": "Focused canonical video curation/display/placement/naming tests passed",
+      "knownLimitations": "Complete physical-file, multi-candidate, playback, and responsive UI run not completed",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "playback",
+      "status": "failed",
+      "testRun": null,
+      "evidence": "UI audit found blank video source and missing progressive/HLS error-state handling paths",
+      "knownLimitations": "UI hardening is in progress; real media playback matrix not run",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "desktop UI",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Existing Playwright coverage is not a complete release pass",
+      "knownLimitations": "Background-load, large-table, and end-to-end task-state UX not completed",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "tablet UI",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "No required landscape/portrait release matrix",
+      "knownLimitations": "Responsive behavior not release-proven",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "mobile UI",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "No required portrait/landscape release matrix",
+      "knownLimitations": "Responsive behavior not release-proven",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "accessibility",
+      "status": "failed",
+      "testRun": null,
+      "evidence": "UI audit found mouse-only clickable table rows and a custom audio scrubber without slider semantics/keyboard support",
+      "knownLimitations": "Broad focus, contrast, keyboard, and assistive-semantic audit not completed",
+      "blockingSeverity": "high"
+    },
+    {
+      "capability": "database integrity",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "Fresh test databases pass existing schema tests",
+      "knownLimitations": "Final Docker PRAGMA and invariant checks not run",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "performance",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "No current concurrency sweep or large-queue/load profile",
+      "knownLimitations": "No p50/p95/p99 API, event-loop, write-lock, WAL, or worker-utilization evidence",
+      "blockingSeverity": "critical"
+    },
+    {
+      "capability": "provider authentication failures",
+      "status": "untested",
+      "testRun": null,
+      "evidence": "No deterministic full workflow failure-injection result",
+      "knownLimitations": "Queue continuation, bounded retry, recovery, and UI communication not proven",
+      "blockingSeverity": "critical"
+    }
+  ]
+}
