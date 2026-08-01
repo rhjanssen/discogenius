@@ -171,6 +171,25 @@ Every durable load/soak run records:
 Long runs write heartbeat and final JSON files. A process still running normally
 at an intermediate observation is not a pass.
 
+### Isolated Docker release-candidate runtime
+
+`docker-compose.release-hardening.yml` is a standalone Compose definition for
+functional, browser, restart, and final-integrity runs. It neither reads nor
+writes the ordinary repository `config`, `downloads`, or `library` mounts.
+Compose requires `DISCOGENIUS_RC_ROOT` to name an explicit disposable run
+directory and publishes the RC app on port `3837` by default. Provider downloads
+start disabled and require the test operator to opt in deliberately.
+
+Example (PowerShell):
+
+```powershell
+$env:DISCOGENIUS_RC_ROOT = (Resolve-Path test-results/release-hardening/rc-docker).Path
+docker compose -p discogenius-rc -f docker-compose.release-hardening.yml up -d --build
+```
+
+The named root must contain `config` and the five `media` subdirectories before
+startup. It must never point at Robert's real media collection.
+
 ## Statistics semantics and measured cost
 
 Dashboard entity buckets are canonical-global:

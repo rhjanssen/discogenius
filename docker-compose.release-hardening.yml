@@ -1,0 +1,47 @@
+services:
+  discogenius:
+    build:
+      context: .
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    image: discogenius:release-hardening
+    container_name: discogenius-release-hardening
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      NODE_ENV: production
+      DOCKER: "true"
+      PORT: "3737"
+      TZ: Etc/UTC
+      DISCOGENIUS_DISABLE_MONITORING: "${DISCOGENIUS_RC_DISABLE_MONITORING:-0}"
+      DISCOGENIUS_DISABLE_SCHEDULER: "${DISCOGENIUS_RC_DISABLE_SCHEDULER:-0}"
+      # Safe default: functional/browser runs cannot start real provider
+      # downloads until the operator deliberately opts in for a controlled run.
+      DISCOGENIUS_DISABLE_DOWNLOADS: "${DISCOGENIUS_RC_DISABLE_DOWNLOADS:-1}"
+      DISCOGENIUS_STARTUP_INTEGRITY_CHECK: quick
+      DISCOGENIUS_WRITE_PROFILE_MS: "${DISCOGENIUS_RC_WRITE_PROFILE_MS:-50}"
+      DISCOGENIUS_READ_PROFILE_MS: "${DISCOGENIUS_RC_READ_PROFILE_MS:-50}"
+      DISCOGENIUS_LOCAL_MB_REFRESH_CONCURRENCY: "${DISCOGENIUS_RC_LOCAL_MB_CONCURRENCY:-2}"
+      DISCOGENIUS_SCHEDULER_THREAD_LIMIT: "${DISCOGENIUS_RC_WORKER_POOL_SIZE:-3}"
+    ports:
+      - "${DISCOGENIUS_RC_PORT:-3837}:3737"
+    volumes:
+      # Compose refuses to interpolate these mounts unless the caller names an
+      # explicit disposable run root. Never point this at the repository's
+      # ordinary config/downloads/library directories or at a real media root.
+      - "${DISCOGENIUS_RC_ROOT:?Set DISCOGENIUS_RC_ROOT to an isolated disposable run directory}/config:/config"
+      - "${DISCOGENIUS_RC_ROOT:?Set DISCOGENIUS_RC_ROOT to an isolated disposable run directory}/media/downloads:/downloads"
+      - "${DISCOGENIUS_RC_ROOT:?Set DISCOGENIUS_RC_ROOT to an isolated disposable run directory}/media/stereo:/library/stereo-music"
+      - "${DISCOGENIUS_RC_ROOT:?Set DISCOGENIUS_RC_ROOT to an isolated disposable run directory}/media/spatial:/library/spatial-music"
+      - "${DISCOGENIUS_RC_ROOT:?Set DISCOGENIUS_RC_ROOT to an isolated disposable run directory}/media/video:/library/music-videos"
+    restart: "no"
+    healthcheck:
+      interval: 10s
+      timeout: 10s
+      start_period: 60s
+      retries: 6
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3737/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
