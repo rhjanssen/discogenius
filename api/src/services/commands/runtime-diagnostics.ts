@@ -15,6 +15,7 @@ interface SlowRequestSnapshot {
 
 const slowRequestThresholdMs = readIntEnv("DISCOGENIUS_SLOW_REQUEST_MS", 1500, 100);
 const eventLoopResolutionMs = readIntEnv("DISCOGENIUS_EVENT_LOOP_RESOLUTION_MS", 20, 5);
+const requestLatencySampleSize = readIntEnv("DISCOGENIUS_REQUEST_LATENCY_SAMPLES", 4096, 100);
 const eventLoopHistogram = monitorEventLoopDelay({ resolution: eventLoopResolutionMs });
 
 let diagnosticsStarted = false;
@@ -25,6 +26,9 @@ let totalRequests = 0;
 let totalStreamingRequests = 0;
 let slowRequests = 0;
 let lastSlowRequest: SlowRequestSnapshot | null = null;
+const requestLatenciesMs = new Array<number>(requestLatencySampleSize);
+let requestLatencySamples = 0;
+let nextRequestLatencySample = 0;
 
 function nanosecondsToMilliseconds(value: number) {
   if (!Number.isFinite(value) || value < 0) {
@@ -44,6 +48,51 @@ function isStreamingLikePath(path: string) {
     path === "/api/v1/queue/progress-stream" ||
     path === "/api/v1/artist/import-stream"
   );
+}
+
+function recordRequestLatency(durationMs: number) {
+  requestLatenciesMs[nextRequestLatencySample] = durationMs;
+  nextRequestLatencySample = (nextRequestLatencySample + 1) % requestLatencySampleSize;
+  requestLatencySamples = Math.min(requestLatencySamples + 1, requestLatencySampleSize);
+}
+
+function requestLatencySnapshot() {
+  if (requestLatencySamples === 0) {
+    return {
+      sampleCount: 0,
+      capacity: requestLatencySampleSize,
+      minMs: 0,
+      meanMs: 0,
+      maxMs: 0,
+      p50Ms: 0,
+      p95Ms: 0,
+      p99Ms: 0,
+    };
+  }
+
+  const sorted = requestLatenciesMs
+    .slice(0, requestLatencySamples)
+    .sort((left, right) => left - right);
+  const percentile = (value: number) => {
+    const index = Math.min(
+      sorted.length - 1,
+      Math.max(0, Math.ceil((value / 100) * sorted.length) - 1),
+    );
+    return sorted[index] ?? 0;
+  };
+  const total = sorted.reduce((sum, value) => sum + value, 0);
+  const rounded = (value: number) => Number(value.toFixed(2));
+
+  return {
+    sampleCount: sorted.length,
+    capacity: requestLatencySampleSize,
+    minMs: rounded(sorted[0] ?? 0),
+    meanMs: rounded(total / sorted.length),
+    maxMs: rounded(sorted[sorted.length - 1] ?? 0),
+    p50Ms: rounded(percentile(50)),
+    p95Ms: rounded(percentile(95)),
+    p99Ms: rounded(percentile(99)),
+  };
 }
 
 export function startRuntimeDiagnostics() {
@@ -89,6 +138,9 @@ export function trackRuntimeRequest(method: string, path: string) {
     }
 
     const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+    if (!isStreamingRequest) {
+      recordRequestLatency(durationMs);
+    }
     if (isStreamingRequest || durationMs < slowRequestThresholdMs) {
       return;
     }
@@ -138,7 +190,9 @@ export function getRuntimeDiagnosticsSnapshot() {
     thresholds: {
       slowRequestMs: slowRequestThresholdMs,
       eventLoopResolutionMs,
+      requestLatencySamples: requestLatencySampleSize,
     },
+    requestLatency: requestLatencySnapshot(),
     eventLoopLag: {
       minMs: nanosecondsToMilliseconds(eventLoopHistogram.min),
       meanMs: nanosecondsToMilliseconds(eventLoopHistogram.mean),

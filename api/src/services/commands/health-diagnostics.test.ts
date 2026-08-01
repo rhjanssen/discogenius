@@ -25,6 +25,7 @@ for (const directory of [
 
 let dbModule: typeof import("../../database.js");
 let healthModule: typeof import("./health.js");
+let runtimeDiagnosticsModule: typeof import("./runtime-diagnostics.js");
 let queueModule: typeof import("./command-queue-manager.js");
 let workerPoolModule: typeof import("./worker/command-worker-pool.js");
 let bootstrapSnapshot: ReturnType<typeof import("./health.js").collectHealthDiagnosticsSnapshot>;
@@ -32,6 +33,7 @@ let bootstrapSnapshot: ReturnType<typeof import("./health.js").collectHealthDiag
 before(async () => {
   dbModule = await import("../../database.js");
   healthModule = await import("./health.js");
+  runtimeDiagnosticsModule = await import("./runtime-diagnostics.js");
   queueModule = await import("./command-queue-manager.js");
   workerPoolModule = await import("./worker/command-worker-pool.js");
 
@@ -85,6 +87,24 @@ test("lightweight diagnostics expose schema, WAL, storage, queue, and configured
     /does not make live catalog requests/,
   );
   assert.equal(snapshot.subsystems.database.deep.status, "warning");
+});
+
+test("runtime diagnostics retain bounded API latency percentiles and exclude streams", () => {
+  const before = runtimeDiagnosticsModule.getRuntimeDiagnosticsSnapshot();
+
+  runtimeDiagnosticsModule.trackRuntimeRequest("GET", "/api/v1/artist?limit=1")(200);
+  runtimeDiagnosticsModule.trackRuntimeRequest("GET", "/api/v1/stats")(200);
+  runtimeDiagnosticsModule.trackRuntimeRequest("GET", "/api/v1/events")(200);
+  runtimeDiagnosticsModule.trackRuntimeRequest("GET", "/assets/index.js")(200);
+
+  const after = runtimeDiagnosticsModule.getRuntimeDiagnosticsSnapshot();
+  assert.equal(after.totalRequests, before.totalRequests + 2);
+  assert.equal(after.totalStreamingRequests, before.totalStreamingRequests + 1);
+  assert.equal(after.requestLatency.sampleCount, before.requestLatency.sampleCount + 2);
+  assert.ok(after.requestLatency.capacity >= after.requestLatency.sampleCount);
+  assert.ok(after.requestLatency.p50Ms >= 0);
+  assert.ok(after.requestLatency.p95Ms >= after.requestLatency.p50Ms);
+  assert.ok(after.requestLatency.p99Ms >= after.requestLatency.p95Ms);
 });
 
 test("deep database audit persists quick_check and foreign-key evidence", () => {
