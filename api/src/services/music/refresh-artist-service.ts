@@ -69,6 +69,7 @@ import {
     scoreSoundCloudDownloadableCoverage,
     soundCloudOfferHasDownloadableMatch,
 } from "../providers/soundcloud/soundcloud-downloadability.js";
+import { syncVideoRelationsFromEditionMembership } from "./video-edition-relation-sync.js";
 
 function isWidePlaylistSearchReleaseGroup(
     primaryType?: string | null,
@@ -126,6 +127,13 @@ export class RefreshArtistService {
             const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
             if (syncedVideos > 0) {
                 console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
+            }
+            // An Edition carrying both audio and video Tracks says which
+            // performance each video is of — the festival/deluxe shape, where
+            // MusicBrainz represents the video tracks but states no relation.
+            const editionVideoRelations = syncVideoRelationsFromEditionMembership(artistMbid);
+            if (editionVideoRelations > 0) {
+                console.log(`[RefreshArtistService] Derived ${editionVideoRelations} video→audio relation(s) from canonical edition membership for ${artistMbid}`);
             }
             // MusicBrainz free-streaming URL offers are written inside a sync
             // transaction and cannot probe resolution inline, so they land with
