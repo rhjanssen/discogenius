@@ -269,6 +269,82 @@ function loadAudioRecordingCandidatesForProviderAlbum(
     `).all(provider, providerAlbumId) as AudioRecordingCandidateRow[];
 }
 
+/**
+ * Audio recordings sitting on the same Provider Editions this VIDEO is a member
+ * of.
+ *
+ * A provider edition routinely mixes members: five audio tracks then two videos.
+ * That membership is evidence — video member 6 and audio member 1 being on one
+ * release is a real reason to think they are the same performance — but a
+ * provider often reports no album id on the video payload itself, so the
+ * album-keyed lookup never fires and the relation is never derived. Walking the
+ * membership rows from the video's side finds the same candidates.
+ *
+ * Only editions that are themselves matched to a canonical Edition count. An
+ * unmatched provider release is not evidence about canonical identity.
+ */
+function loadAudioRecordingCandidatesForProviderVideoMembership(
+    provider: string,
+    providerVideoId: string,
+): AudioRecordingCandidateRow[] {
+    const liveAlbumSql = livePerformanceTitleSql("a.title");
+    return db.prepare(`
+        SELECT DISTINCT
+          rec.id,
+          rec.mbid,
+          rec.title,
+          rec.length_ms,
+          rec.isrcs,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM Tracks t
+            JOIN AlbumEditions ar
+              ON ar.id = t.album_edition_id
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+            JOIN Albums a ON a.mbid = ar.release_group_mbid
+            WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
+              AND (
+                a.secondary_types IS NULL
+                OR TRIM(a.secondary_types) = ''
+                OR a.secondary_types = '[]'
+                OR LOWER(a.secondary_types) NOT LIKE '%"live"%'
+              )
+          ) THEN 1 ELSE 0 END AS has_non_live_album,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM Tracks t
+            JOIN AlbumEditions ar
+              ON ar.id = t.album_edition_id
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+            JOIN Albums a ON a.mbid = ar.release_group_mbid
+            WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
+              AND (
+                LOWER(COALESCE(a.secondary_types, '')) LIKE '%"live"%'
+                OR ${liveAlbumSql}
+              )
+          ) THEN 1 ELSE 0 END AS has_live_album
+        FROM ProviderItems video_item
+        JOIN ProviderEditionMembers video_member
+          ON video_member.member_item_id = video_item.id
+        JOIN ProviderEditionMembers audio_member
+          ON audio_member.provider_edition_item_id = video_member.provider_edition_item_id
+        JOIN ProviderItems track
+          ON track.id = audio_member.member_item_id
+         AND track.entity_type = 'track'
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_edition_member_id = audio_member.id
+         AND track_match.match_state = 'accepted'
+        JOIN ProviderEditionMatches release_match
+          ON release_match.id = track_match.provider_edition_match_id
+         AND release_match.match_state = 'accepted'
+        JOIN Recordings rec ON rec.id = track_match.recording_id
+        WHERE video_item.provider = ?
+          AND video_item.entity_type = 'video'
+          AND CAST(video_item.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND (rec.is_video IS NULL OR rec.is_video = 0)
+    `).all(provider, providerVideoId) as AudioRecordingCandidateRow[];
+}
+
 function findAudioRecordingByProviderTrack(
     provider: string,
     providerTrackId: string,
@@ -352,6 +428,30 @@ function resolveProviderVideoAudioMatch(input: {
         // Album present but no in-album audio hit — fall through to artist
         // exact title+duration for official MVs (YouTube often lists the OMV
         // itself as the album track without an ATV audio row).
+    }
+
+    // The video may itself be a member of a matched provider edition even when
+    // the payload carries no album id — Apple lists videos as trailing members
+    // of the album they belong to. Same evidence, read from the other side.
+    const providerVideoId = nullableText(input.video.provider_id ?? input.video.providerId);
+    if (providerVideoId) {
+        const memberCandidates = loadAudioRecordingCandidatesForProviderVideoMembership(
+            input.provider,
+            providerVideoId,
+        );
+        const memberMatch = findRelatedAudioRecordingForVideo(input.video, memberCandidates, {
+            videoVariant: parseVideoVariant(nullableText(input.video.title)),
+        });
+        if (memberMatch) {
+            return {
+                ...memberMatch,
+                method: "provider-video-edition-membership",
+                evidence: {
+                    ...memberMatch.evidence,
+                    providerVideoId,
+                },
+            };
+        }
     }
 
     const artistMbid = nullableText(input.artistMbid ?? input.video.artist_mbid);
