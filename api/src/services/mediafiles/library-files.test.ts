@@ -1185,9 +1185,12 @@ dbModule.db.prepare(`
   assert.equal(snapshot.albums.total, 1);
   assert.equal(snapshot.albums.monitored, 1);
   assert.equal(snapshot.albums.downloaded, 1);
-  assert.equal(snapshot.tracks.total, 2);
-  assert.equal(snapshot.tracks.monitored, 2);
-  assert.equal(snapshot.tracks.downloaded, 2);
+  // Dashboard statistics count canonical entities once. Stereo and Spatial
+  // create two independent completion requirements for this one Track, not two
+  // Tracks in the catalogue.
+  assert.equal(snapshot.tracks.total, 1);
+  assert.equal(snapshot.tracks.monitored, 1);
+  assert.equal(snapshot.tracks.downloaded, 1);
   assert.equal(snapshot.files?.total, 2);
 });
 
