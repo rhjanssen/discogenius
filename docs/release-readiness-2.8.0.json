@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "2.8.0",
-  "updatedAt": "2026-08-01T23:40:00Z",
+  "updatedAt": "2026-08-02T00:05:00Z",
   "verdict": "not ready",
   "runs": [
     {
@@ -87,6 +87,13 @@
       "layer": "Global search on the compiled runtime + browser",
       "status": "passed",
       "evidence": "Against the running container: all four types return 200 on an empty catalog and on a populated one. Local-only queries exercised the previously failing album branch and returned rows (Bad Blood 3 albums/14 tracks/2 videos; Pompeii 7/20/3; Bastille 1 artist/2/1/1), and an unmatched term returned all zeros. Browser: the Albums tab of global search rendered a full album grid, console had zero errors, and both search XHRs (including the combined artists,albums,tracks,videos fan-out) returned 200. Album result cards expose role=button, tabindex=0, an aria-label and zero nested interactive controls; MediaCard.accessibility.test.tsx pins Enter/Space activation."
+    },
+    {
+      "id": "durable-pause-restart-20260801",
+      "gitSha": "2f64ba7",
+      "layer": "Durable download pause across container restart",
+      "status": "passed",
+      "evidence": "Found and fixed a release blocker. Graceful shutdown called downloadProcessor.pause(), which unconditionally persists download_queue_paused=true, so every SIGTERM recorded an operator pause and the next start came back paused with nothing to un-pause it. Reproduced on the deployed runtime: resume wrote \"false\" at 21:29:37 and the row was rewritten to \"true\" at 21:29:41 during restart, leaving isPaused=true. Fixed by splitting haltProcessing()/pause()/suspend() and having shutdown suspend. Re-verified with downloads enabled and START_PAUSED unset: resume then restart returns isPaused=false (row \"false\"), pause then restart returns isPaused=true (row \"true\"). Earlier, with the pause held across a force-recreate, all 75 queued DownloadAlbum commands stayed queued with 0 started."
     }
   ],
   "capabilities": [
@@ -180,10 +187,10 @@
     },
     {
       "capability": "queue pause",
-      "status": "untested",
-      "testRun": "queue-pause-unit-20260801",
-      "evidence": "Pause is now a durable control-plane record; focused restart initialization, claim, attempt/order, and safe-import policy tests passed",
-      "knownLimitations": "Page/API/container restart and active Album/provider-retry/reorder browser-functional matrix not completed",
+      "status": "passed",
+      "testRun": "durable-pause-restart-20260801",
+      "evidence": "Durable pause and resume both survive a container restart on the deployed runtime, verified in both directions with downloads enabled. While paused, 75 queued DownloadAlbum commands stayed queued with 0 started. A shutdown path that silently persisted a pause was found and fixed in 2f64ba7.",
+      "knownLimitations": "Covers pause while idle, pause with a queued download backlog, container restart in both directions, and resume. Pause during an active provider download, pause between download and import, isolated API-only or worker-only restart, scheduler ticks while paused, and queue reorder while paused are still unverified.",
       "blockingSeverity": "critical"
     },
     {

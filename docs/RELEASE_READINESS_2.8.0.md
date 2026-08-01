@@ -11,7 +11,8 @@ integration, or browser result.
 which is now the authoritative development branch. Windows CI is green in a
 single root invocation covering both suites, a fresh schema-42 runtime builds
 and deploys on the ordinary Compose deployment, and global search is verified
-end to end. Of 32 tracked capabilities, 3 are `passed` and 29 are `untested`.
+end to end, as is durable download pause across restart. Of 32 tracked
+capabilities, 4 are `passed` and 28 are `untested`.
 
 The release-defining gates — load, restart and failure recovery, live
 metadata/provider integration, file lifecycle, responsive browser sweep, Linux
@@ -40,9 +41,17 @@ the replacement gates have not been run.
 | `docker-normal-compose-20260801` | `60a3cb8` | Normal Compose build and deploy | Passed | Image `sha256:4a58c361…`; container healthy in ~10s; compiled `search.js` in the image carries the fix |
 | `schema-integrity-runtime-20260801` | `60a3cb8` | Fresh schema-42 runtime integrity | Passed | `user_version=42`, `quick_check=ok`, `foreign_key_check=0 rows`, 74 tables — empty and populated |
 | `global-search-runtime-20260801` | `d722cee` | Global search on compiled runtime + browser | Passed | All four types 200 on empty and populated catalogs; album grid renders; console clean |
+| `durable-pause-restart-20260801` | `2f64ba7` | Durable download pause across container restart | Passed | Blocker found and fixed; pause and resume both survive restart; 75 queued downloads stayed queued while paused |
 
 ## Corrections applied on this pass
 
+- **Every container restart silently paused downloads for good.** Graceful
+  shutdown called `downloadProcessor.pause()`, which persists
+  `download_queue_paused=true`. Because the persisted row wins over the startup
+  default, the next start came back paused with nothing to un-pause it — a
+  routine `docker compose restart` stopped downloading permanently. Fixed in
+  `2f64ba7` by separating the shutdown halt (`suspend()`) from the operator
+  pause, and re-verified in both directions on the deployed runtime.
 - **Global search was returning HTTP 500 on the active schema.** The album
   branch coalesced a retired `ProviderItems.quality` scalar. Schema 42 has no
   such column, so SQLite failed at prepare time for any query matching an
@@ -74,8 +83,8 @@ These remain the largest blockers, none of which has been run:
 - No deterministic 500+ primary-Artist mixed-load run from a committed SHA.
 - No lease/heartbeat, worker-death, worker-hang, or poisoned-command recovery
   matrix beyond unit level.
-- No container-restart proof for durable pause or authoritative queue order,
-  and no 100k-row queue scale result.
+- No container-restart proof for authoritative queue order, and no 100k-row
+  queue scale result. (Durable pause is now proven; queue order is not.)
 - No real local-MusicBrainz concurrency sweep at full runtime, so the shipped
   concurrency default is unjustified by end-to-end evidence.
 - No Servarr comparison result.
