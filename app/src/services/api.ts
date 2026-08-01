@@ -1680,6 +1680,7 @@ class ApiClient {
       'command.added', 'command.updated', 'command.deleted', 'queue.cleared',
       'history.added',
       'artist.scanned', 'artist.refresh.complete', 'config.updated',
+      'library.updated',
       'file.added', 'file.deleted', 'file.upgraded'
     ];
 

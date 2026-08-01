@@ -30,6 +30,7 @@ const LIBRARY_STATS_GLOBAL_EVENTS = [
   "artist.scanned",
   "artist.refresh.complete",
   "config.updated",
+  "library.updated",
   "file.added",
   "file.deleted",
   "file.upgraded",

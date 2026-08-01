@@ -372,7 +372,7 @@ const Dashboard = () => {
     } = useStatusOverview();
     useDebouncedQueryInvalidation({
         queryKeys: [LIBRARY_STATS_QUERY_KEY],
-        globalEvents: ["file.added", "file.deleted", "file.upgraded", "config.updated"],
+        globalEvents: ["file.added", "file.deleted", "file.upgraded", "config.updated", "library.updated"],
         windowEvents: [LIBRARY_UPDATED_EVENT, ACTIVITY_REFRESH_EVENT],
         debounceMs: 500,
     });

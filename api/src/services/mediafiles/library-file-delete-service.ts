@@ -24,6 +24,7 @@ import {
   LibraryFilesService,
   removeEmptyParents,
 } from "./library-files.js";
+import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import {
   resolveLibraryRootPath,
   resolveStoredLibraryPath,
@@ -81,6 +82,7 @@ function deleteTrackFileRows(
   let skippedOutsideRoot = 0;
 
   const deletedTrackFileIds: number[] = [];
+  const affectedArtistIds = new Set<string>();
   const storedFilePaths: string[] = [];
   const parentsToPrune: Array<{ directory: string; root: string }> = [];
 
@@ -123,6 +125,7 @@ function deleteTrackFileRows(
 
     db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
     deletedTrackFileIds.push(row.id);
+    affectedArtistIds.add(String(row.artist_id));
     storedFilePaths.push(row.file_path);
 
     LibraryFilesService.emitFileDeleted({
@@ -157,6 +160,14 @@ function deleteTrackFileRows(
 
   for (const parent of parentsToPrune) {
     removeEmptyParents(parent.directory, parent.root);
+  }
+
+  // FILE_DELETED invalidates the global snapshot and the browser query, but
+  // Artist list counts come from the persisted ArtistStatistics projection.
+  // Refresh the bounded affected set before the route returns so the immediate
+  // browser refetch cannot observe a stale numerator or size-on-disk value.
+  if (affectedArtistIds.size > 0) {
+    ArtistStatisticsService.refresh([...affectedArtistIds]);
   }
 
   return { deleted, missing, errors, skippedOutsideRoot, extras };

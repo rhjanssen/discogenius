@@ -1,8 +1,10 @@
 import type Database from "better-sqlite3";
+import { emitLibraryUpdated } from "../commands/app-events.js";
 import { getConfigSection } from "../config/config.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { resolveTrackListTabs, type TrackListTab } from "./track-list-tabs.js";
+import { ArtistStatisticsService } from "./artist-statistics-service.js";
 
 export interface LibraryAcquisitionPlanView {
   id: number;
@@ -131,6 +133,19 @@ interface ReleaseRow {
  */
 export class LibraryReleaseSelectionService {
   constructor(private readonly db: Database.Database) {}
+
+  private notifyMonitoringChanged(input: {
+    releaseGroupMbid: string;
+    libraryId: number;
+    reason: string;
+  }): void {
+    ArtistStatisticsService.refreshForReleaseGroupMbids([input.releaseGroupMbid]);
+    emitLibraryUpdated({
+      reason: input.reason,
+      releaseGroupMbids: [input.releaseGroupMbid],
+      libraryIds: [input.libraryId],
+    });
+  }
 
   getAvailability(releaseGroupMbid: string): LibraryReleaseGroupAvailabilityView {
     const releaseGroup = this.db.prepare(`
@@ -496,6 +511,11 @@ export class LibraryReleaseSelectionService {
         );
       }
     })();
+    this.notifyMonitoringChanged({
+      releaseGroupMbid: input.releaseGroupMbid,
+      libraryId: input.libraryId,
+      reason: "acquisition-plan-selected",
+    });
     return this.getAvailability(input.releaseGroupMbid);
   }
 
@@ -547,6 +567,11 @@ export class LibraryReleaseSelectionService {
         `).run(remaining[0].id);
       }
     })();
+    this.notifyMonitoringChanged({
+      releaseGroupMbid: input.releaseGroupMbid,
+      libraryId: input.libraryId,
+      reason: "edition-unmonitored",
+    });
     return this.getAvailability(input.releaseGroupMbid);
   }
 
@@ -791,6 +816,11 @@ export class LibraryReleaseSelectionService {
         WHERE library_id = ? AND edition_id = ? AND preferred_plan_key IS NOT NULL
       `).run(input.libraryId, input.editionId);
     }
+    this.notifyMonitoringChanged({
+      releaseGroupMbid: input.releaseGroupMbid,
+      libraryId: input.libraryId,
+      reason: "edition-monitored",
+    });
     return this.getAvailability(input.releaseGroupMbid);
   }
 }

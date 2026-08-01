@@ -1,4 +1,5 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
+import { emitLibraryUpdated } from "../commands/app-events.js";
 import { db } from "../../database.js";
 import { invalidateReleaseGroupDownloadStatus, updateArtistDownloadStatus } from "../download/download-state.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
@@ -6,6 +7,7 @@ import { unmonitorAlbumInLibraries } from "./library-album-monitoring.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueArtistIntake, queueArtistWorkflow } from "./artist-workflow.js";
 import { isMusicBrainzMbid } from "./refresh-artist-service.js";
+import { ArtistStatisticsService } from "./artist-statistics-service.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 export type ArtistMonitorRow = Record<string, unknown> & {
@@ -176,6 +178,11 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
     const changes = Number(applyChanges() || 0);
     if (changes > 0) {
         refreshArtistProgress(artistId);
+        ArtistStatisticsService.refresh([artistId]);
+        emitLibraryUpdated({
+            reason: monitored ? "artist-monitored" : "artist-unmonitored",
+            artistIds: [artistId],
+        });
     }
 
     return changes;

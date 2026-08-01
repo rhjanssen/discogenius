@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { emitLibraryUpdated } from "../commands/app-events.js";
 import {
   curateLibraryReleases,
   type CanonicalMediumKind,
@@ -424,6 +425,10 @@ export class LibraryCurationService {
         plannerVersion: input.acquisitionPlannerVersion,
       });
     }
+    emitLibraryUpdated({
+      reason: "library-curated",
+      libraryIds: [input.libraryId],
+    });
     return result;
   }
 

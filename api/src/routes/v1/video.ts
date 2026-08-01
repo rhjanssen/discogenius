@@ -3,6 +3,7 @@ import { db, runWithAsyncBusyRetry } from "../../database.js";
 import { CommandNames } from "../../services/commands/command-names.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
+import { emitLibraryUpdated } from "../../services/commands/app-events.js";
 import {
   deletionScopeFromRequest,
   scopeToOptions,
@@ -212,6 +213,10 @@ router.patch("/:videoId", (req, res) => {
         }
       }
     })();
+    emitLibraryUpdated({
+      reason: monitored === false ? "video-unmonitored" : "video-monitoring-updated",
+      libraryIds: videoLibraryIds,
+    });
 
     return res.json({ success: true });
   } catch (error: any) {

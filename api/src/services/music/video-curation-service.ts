@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { emitLibraryUpdated } from "../commands/app-events.js";
 import { getConfigSection } from "../config/config.js";
 import { canonicalVideoType } from "./canonical-video-type.js";
 import {
@@ -274,6 +275,12 @@ export function curateArtistVideos(
       inline: decision.selected.filter((entry) => entry.placement.mode === "inline").length,
       separated: decision.selected.filter((entry) => entry.placement.mode === "separated").length,
       unselected: decision.unselected.length,
+    });
+  }
+  if (summaries.length > 0) {
+    emitLibraryUpdated({
+      reason: "videos-curated",
+      libraryIds: summaries.map((summary) => summary.libraryId),
     });
   }
   return summaries;

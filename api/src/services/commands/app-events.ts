@@ -23,6 +23,11 @@ export enum AppEvent {
     // Config Events
     CONFIG_UPDATED = 'config.updated',
 
+    // Canonical/library curation state changed. This is separate from config
+    // and file events: selecting an Edition or Video changes monitored and
+    // completion denominators even when no file or setting changed.
+    LIBRARY_UPDATED = 'library.updated',
+
     // File Events
     FILE_ADDED = 'file.added',
     FILE_DELETED = 'file.deleted',
@@ -100,6 +105,13 @@ export interface FileChangeEventPayload {
     timestamp?: string | null;
 }
 
+export interface LibraryUpdatedEventPayload {
+    reason: string;
+    artistIds?: string[];
+    releaseGroupMbids?: string[];
+    libraryIds?: number[];
+}
+
 export interface AppEventPayloadMap {
     [AppEvent.COMMAND_ADDED]: CommandEventPayload;
     [AppEvent.COMMAND_UPDATED]: CommandEventPayload;
@@ -109,6 +121,7 @@ export interface AppEventPayloadMap {
     [AppEvent.ARTIST_REFRESH_COMPLETE]: ArtistRefreshCompleteEventPayload;
     [AppEvent.ARTIST_SCANNED]: ArtistScannedEventPayload;
     [AppEvent.CONFIG_UPDATED]: Record<string, unknown>;
+    [AppEvent.LIBRARY_UPDATED]: LibraryUpdatedEventPayload;
     [AppEvent.FILE_ADDED]: FileChangeEventPayload;
     [AppEvent.FILE_DELETED]: FileChangeEventPayload;
     [AppEvent.FILE_UPGRADED]: FileChangeEventPayload;
@@ -157,4 +170,8 @@ export function emitFileDeleted(payload: FileChangeEventPayload) {
 
 export function emitFileUpgraded(payload: FileChangeEventPayload) {
     appEvents.emit(AppEvent.FILE_UPGRADED, payload);
+}
+
+export function emitLibraryUpdated(payload: LibraryUpdatedEventPayload) {
+    appEvents.emit(AppEvent.LIBRARY_UPDATED, payload);
 }

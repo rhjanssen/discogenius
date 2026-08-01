@@ -1,6 +1,5 @@
 import { db } from "../../database.js";
-import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
-import { getEnabledDownloadLibrarySlots } from "../download/download-library-slots.js";
+import { audioLibraryPredicate } from "./library-album-monitoring.js";
 
 export interface ArtistStatisticsRow {
   artist_id: string;
@@ -54,6 +53,88 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+type ReleaseGroupProjectionStats = {
+  totalTracks: number;
+  downloadedTracks: number;
+  isDownloaded: boolean;
+};
+
+/**
+ * ArtistStatistics is a projection of persisted Library curation, not a
+ * prediction of what the current filtering settings would curate next. Once an
+ * enabled Library has selected an Edition, every exact (Library, Track)
+ * occurrence remains a completion requirement until that row is withdrawn.
+ *
+ * The download-state helpers intentionally honour include_spatial/include_video
+ * as acquisition-policy switches, so using them here made the projection
+ * disagree with the canonical global dashboard whenever an existing Spatial
+ * selection survived a later policy change.
+ */
+function getReleaseGroupProjectionStats(
+  releaseGroupMbids: string[],
+): Map<string, ReleaseGroupProjectionStats> {
+  const result = new Map<string, ReleaseGroupProjectionStats>();
+  for (const mbidChunk of chunk(releaseGroupMbids, 500)) {
+    const rows = db.prepare(`
+      WITH selected_requirements AS (
+        SELECT DISTINCT
+          album.mbid AS release_group_mbid,
+          selected_album.library_id,
+          track.id AS track_id
+        FROM Albums album
+        JOIN LibraryAlbums selected_album
+          ON selected_album.release_group_id = album.id
+        JOIN Libraries library
+          ON library.id = selected_album.library_id
+         AND library.enabled = 1
+        JOIN LibraryEditions selected_edition
+          ON selected_edition.library_id = selected_album.library_id
+        JOIN AlbumEditions edition
+          ON edition.id = selected_edition.edition_id
+         AND edition.release_group_id = album.id
+        JOIN Tracks track
+          ON track.album_edition_id = edition.id
+        JOIN Recordings recording
+          ON recording.id = track.recording_id
+         AND recording.is_video = 0
+        WHERE album.mbid IN (${mbidChunk.map(() => "?").join(",")})
+          AND ${audioLibraryPredicate("library")}
+      )
+      SELECT
+        requirement.release_group_mbid,
+        COUNT(*) AS total_tracks,
+        SUM(CASE WHEN EXISTS (
+          SELECT 1
+          FROM TrackFiles file INDEXED BY idx_track_files_audio_completion
+          WHERE file.library_id = requirement.library_id
+            AND file.track_id = requirement.track_id
+            AND file.file_class = 'audio'
+        ) THEN 1 ELSE 0 END) AS downloaded_tracks
+      FROM selected_requirements requirement
+      GROUP BY requirement.release_group_mbid
+    `).all(...mbidChunk) as Array<{
+      release_group_mbid: string;
+      total_tracks: number;
+      downloaded_tracks: number;
+    }>;
+    for (const row of rows) {
+      const totalTracks = Number(row.total_tracks || 0);
+      const downloadedTracks = Number(row.downloaded_tracks || 0);
+      result.set(String(row.release_group_mbid), {
+        totalTracks,
+        downloadedTracks,
+        isDownloaded: totalTracks > 0 && downloadedTracks >= totalTracks,
+      });
+    }
+  }
+  for (const mbid of releaseGroupMbids) {
+    if (!result.has(mbid)) {
+      result.set(mbid, { totalTracks: 0, downloadedTracks: 0, isDownloaded: false });
+    }
+  }
+  return result;
+}
+
 /** Compute statistics for an explicit, already-bounded set of artist ids. */
 function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistStatisticsRow[] {
   if (normalizedArtistIds.length === 0) {
@@ -88,9 +169,6 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
   const scopedMetadataIds = Array.from(new Set(
     scopedArtists.map((artist) => artist.artistMetadataId).filter((id): id is number => id != null),
   ));
-  const enabledAudioSlots = getEnabledDownloadLibrarySlots().audio;
-  const includeSpatial = enabledAudioSlots.includes("spatial") ? 1 : 0;
-
   // release-group scope + monitored flag, one row per (artist_mbid, release group)
   const scopeRows = scopedMbids.length === 0 ? [] : db.prepare(`
     WITH scope(artist_mbid, release_group_mbid) AS (
@@ -106,14 +184,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
       JOIN Libraries library
         ON library.id = library_group.library_id
        AND library.enabled = 1
-      JOIN quality_profiles quality_profile
-        ON quality_profile.id = library.quality_profile_id
-      WHERE EXISTS (
-        SELECT 1
-        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-        WHERE allowed.value <> 'spatial'
-           OR (? = 1 AND allowed.value = 'spatial')
-      )
+      WHERE ${audioLibraryPredicate("library")}
       GROUP BY library_group.release_group_id
     )
     SELECT scope.artist_mbid,
@@ -122,14 +193,14 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
     FROM scope
     LEFT JOIN Albums scoped_group ON scoped_group.mbid = scope.release_group_mbid
     LEFT JOIN library_state ON library_state.release_group_id = scoped_group.id
-  `).all(...scopedMbids, ...scopedMbids, includeSpatial) as Array<{
+  `).all(...scopedMbids, ...scopedMbids) as Array<{
     artist_mbid: string;
     release_group_mbid: string;
     monitored: number;
   }>;
 
   const releaseGroupMbids = Array.from(new Set(scopeRows.map((row) => String(row.release_group_mbid))));
-  const releaseGroupStats = getReleaseGroupDownloadStatsMap(releaseGroupMbids);
+  const releaseGroupStats = getReleaseGroupProjectionStats(releaseGroupMbids);
 
   const scopeByMbid = new Map<string, Array<{ releaseGroupMbid: string; monitored: boolean }>>();
   for (const row of scopeRows) {
@@ -309,5 +380,49 @@ export class ArtistStatisticsService {
     })();
 
     return rows;
+  }
+
+  /**
+   * Refresh every Artist projection whose canonical discography contains one
+   * of these Albums. A release-group selection affects primary and credited
+   * Artists alike, so refreshing only Albums.artist_mbid would leave
+   * collaboration rows stale.
+   */
+  static refreshForReleaseGroupMbids(
+    releaseGroupMbids: Array<string | number | null | undefined>,
+  ): ArtistStatisticsRow[] {
+    const normalizedMbids = normalizeArtistIds(releaseGroupMbids);
+    if (normalizedMbids.length === 0) {
+      return [];
+    }
+
+    const artistIds = new Set<string>();
+    for (const mbidChunk of chunk(normalizedMbids, ARTIST_STATISTICS_CHUNK_SIZE)) {
+      const placeholders = mbidChunk.map(() => "?").join(",");
+      const rows = db.prepare(`
+        WITH affected_artist_mbids(artist_mbid) AS (
+          SELECT album.artist_mbid
+          FROM Albums album
+          WHERE album.mbid IN (${placeholders})
+
+          UNION
+
+          SELECT scope.artist_mbid
+          FROM ArtistReleaseGroups scope
+          WHERE scope.release_group_mbid IN (${placeholders})
+        )
+        SELECT CAST(artist.id AS TEXT) AS artist_id
+        FROM Artists artist
+        JOIN affected_artist_mbids affected
+          ON affected.artist_mbid = artist.mbid
+      `).all(...mbidChunk, ...mbidChunk) as Array<{ artist_id: string }>;
+      for (const row of rows) {
+        artistIds.add(String(row.artist_id));
+      }
+    }
+    if (artistIds.size === 0) {
+      return [];
+    }
+    return this.refresh([...artistIds]);
   }
 }

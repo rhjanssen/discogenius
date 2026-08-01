@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { emitLibraryUpdated } from "../commands/app-events.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
@@ -10,6 +11,7 @@ import {
     unmonitorAlbumInLibraries,
     type AlbumLibraryScope,
 } from "./library-album-monitoring.js";
+import { ArtistStatisticsService } from "./artist-statistics-service.js";
 
 export class AlbumCommandService {
     private static releaseGroupExists(releaseGroupMbid: string): { id: number; mbid: string } | null {
@@ -39,6 +41,12 @@ export class AlbumCommandService {
             }
         })();
 
+        ArtistStatisticsService.refreshForReleaseGroupMbids([releaseGroupMbid]);
+        emitLibraryUpdated({
+            reason: monitored ? "album-monitored" : "album-unmonitored",
+            releaseGroupMbids: [releaseGroupMbid],
+            libraryIds,
+        });
         return true;
     }
 

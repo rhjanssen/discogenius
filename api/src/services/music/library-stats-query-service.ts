@@ -325,6 +325,7 @@ const invalidateLibraryStats = () => LibraryStatsQueryService.clearCache();
 appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETE, invalidateLibraryStats);
 appEvents.on(AppEvent.ARTIST_SCANNED, invalidateLibraryStats);
 appEvents.on(AppEvent.CONFIG_UPDATED, invalidateLibraryStats);
+appEvents.on(AppEvent.LIBRARY_UPDATED, invalidateLibraryStats);
 appEvents.on(AppEvent.FILE_ADDED, invalidateLibraryStats);
 appEvents.on(AppEvent.FILE_DELETED, invalidateLibraryStats);
 appEvents.on(AppEvent.FILE_UPGRADED, invalidateLibraryStats);
