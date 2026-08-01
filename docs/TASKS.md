@@ -16,47 +16,45 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
-## Next: LibraryEditions must represent evaluated-but-unmonitored Editions
+## Done: plans belong to a Library and a canonical Edition
 
-Not implemented — this is the foundational slice the remaining UX work depends
-on, and it is deliberately not started rather than half-migrated.
+An earlier plan for this slice proposed `LibraryEditions.monitored`, so one row
+per evaluated Edition could hold plans while saying whether it was monitored.
+That was rejected: it makes a row's existence and its `monitored` column two
+answers to one question, which drift. Acquisition Plans are scoped to
+`(library_id, edition_id)` instead, so an Edition needs no row of any kind to
+carry offers, and a `LibraryEditions` row keeps its single meaning — this
+Edition is monitored in this Library.
 
-Today a `LibraryEditions` row's *existence* is the monitoring decision. An
-Edition that curation evaluated and did not pick has no row, so it can carry no
-Acquisition Plans, so the Album page cannot show meaningful plan alternatives
-beneath an unmonitored Edition — which is the whole point of choosing one.
+Landed with it:
 
-Target model: add `LibraryEditions.monitored BOOLEAN NOT NULL DEFAULT 1`, so one
-row per (Library, evaluated Edition) can express monitored, selection_mode
-(auto/manual), locked, its persisted plans, and its preferred plan. Plans then
-attach to evaluated Editions rather than to selected-only rows, and no second
-Library/Edition identity is introduced anywhere.
+- `LibraryEditions.locked` removed. `LibraryAlbums.locked` is the one Album lock
+  that curation, planning and the UI all read; there is no second value to keep
+  in step. A locked Album rejects every monitoring change with 409.
+- `AcquisitionPlans.chosen` removed. The monitored Edition's
+  `preferred_plan_key` is the only statement of which plan executes, backed by a
+  deferred composite foreign key so it cannot name another Edition's plan.
+- `SelectedAcquisitionPlans` view: monitored AND selected in one join, so a
+  reader cannot satisfy one condition and forget the other.
+- Plans are generated during provider matching, before curation, and survive
+  unmonitoring.
+- `require_provider_availability` both ways: on, only Editions a provider can
+  deliver are eligible for automatic monitoring; off, an Edition is monitored
+  with no plan and the UI says "No provider offer currently available" — never a
+  fabricated plan.
+- Selection: normal click is "use only this", Ctrl/Cmd-click and an explicit
+  button are additive, plus Make primary and Remove from monitored editions.
+- Track-list tabs decided from canonical Recording sets (`track-list-tabs.ts`)
+  and exposed per library on the availability endpoint.
 
-Blast radius, measured: 73 references across 36 non-test files treat a
-LibraryEditions row as a monitoring decision. Every one needs `AND monitored = 1`
-unless it genuinely wants evaluated alternatives — the same mechanical guard the
-`AcquisitionPlans.chosen` split used successfully (31 joins, 20 files). Do it as
-its own commit with the full suite green before any behaviour change rides on it.
+## Next: render the track-list tab strip
 
-Behaviour that follows once the column exists:
-
-- Curation writes `monitored = 0` for redundant unlocked automatic Editions
-  instead of deleting the row, preserving their plans as visible alternatives.
-- Clicking a plan beneath an Edition becomes one atomic action: monitor that
-  target Edition for the Library, select that exact plan, reconcile redundant
-  unlocked automatic Editions, and leave manual or locked Editions alone.
-- `require_provider_availability`: when enabled, automatic curation may monitor
-  only Editions with at least one viable plan, and the UI lists the rest with
-  "No provider offer currently available"; when disabled, an Edition may be
-  monitored with no plan at all and acquisition state stays unavailable — never
-  a fabricated plan.
-- Track-list tabs: compare canonical Recording sets across monitored Editions.
-  Equivalent or strictly nested sets keep one representative list; only genuinely
-  non-nested sets get tabs, styled like the Dashboard Queue/Activity tabs, with
-  the representative stereo Edition as the default tab.
-
-Schema 42 is still branch-only and undeployed, so this lands as a revision to 42
-rather than a new 43.
+The decision is made and tested; the Album page does not draw it yet. Drawing it
+needs a per-Edition track read the page payload does not currently expose — it
+returns one track list, for the representative Edition. Add an Edition-scoped
+track endpoint (or widen the page payload to carry a list per monitored
+Edition), then render the strip with the Dashboard Queue/Activity tab styling
+and the representative Edition as the default tab.
 
 ## Also next: edition choice may be overruled when coverage becomes impossible
 
