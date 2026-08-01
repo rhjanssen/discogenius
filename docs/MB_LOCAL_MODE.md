@@ -96,6 +96,19 @@ The overlay sets:
   concurrency used by local-MB mode only (default `2`, supported sweep range
   `1`–`8`). Servarr remains fixed at one concurrent Artist refresh.
 
+Online Servarr refreshes also bound the requests made within that one Artist:
+
+- `DISCOGENIUS_SERVARR_REQUEST_CONCURRENCY` — concurrent Servarr Metadata
+  Server requests (default `2`, bounded `1`–`4`);
+- `DISCOGENIUS_SERVARR_MAX_ATTEMPTS` — total attempts for transient network,
+  HTTP 408/425/429, and selected 5xx failures (default `3`, bounded `1`–`5`);
+- `DISCOGENIUS_SERVARR_REQUEST_TIMEOUT_MS` — timeout for each attempt (default
+  `12000`, bounded `1000`–`60000` ms).
+
+Servarr `Retry-After` is honored up to 30 seconds; otherwise retries back off
+from 500 ms. Permanent HTTP errors and malformed successful responses fail
+visibly without retrying, allowing unrelated queued Artists to continue.
+
 The Settings page uses the same host-only value. Enter `localhost`,
 `musicbrainz.mydomain.com`, `db`, or `host:postgresPort` for non-standard
 Postgres ports; Discogenius derives the Postgres DSN and `/ws/2` probe URL.

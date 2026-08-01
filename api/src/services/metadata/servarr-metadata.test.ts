@@ -144,6 +144,115 @@ function resetCatalog(): void {
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
 }
 
+test("Servarr metadata retries bounded transient responses and honors Retry-After", async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  const service = new servarrMetadataModule.ServarrMetadataService({
+    maxAttempts: 3,
+    requestConcurrency: 1,
+    sleep: async (delayMs) => {
+      delays.push(delayMs);
+    },
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response("temporarily unavailable", {
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: { "Retry-After": "0.001" },
+        });
+      }
+      return new Response(JSON.stringify({
+        id: "artist-mbid",
+        artistname: "Bastille",
+        sortname: "Bastille",
+        images: [],
+        Albums: [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+
+  const artist = await service.getArtistInfo("artist-mbid");
+
+  assert.equal(artist.id, "artist-mbid");
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [1]);
+});
+
+test("Servarr metadata does not retry permanent or malformed responses", async () => {
+  let permanentCalls = 0;
+  const permanent = new servarrMetadataModule.ServarrMetadataService({
+    maxAttempts: 3,
+    sleep: async () => {
+      assert.fail("permanent failures must not back off");
+    },
+    fetch: async () => {
+      permanentCalls += 1;
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    },
+  });
+  await assert.rejects(
+    permanent.getArtistInfo("missing"),
+    /failed: 404 Not Found/,
+  );
+  assert.equal(permanentCalls, 1);
+
+  let malformedCalls = 0;
+  const malformed = new servarrMetadataModule.ServarrMetadataService({
+    maxAttempts: 3,
+    sleep: async () => {
+      assert.fail("malformed successful responses must fail visibly without retrying");
+    },
+    fetch: async () => {
+      malformedCalls += 1;
+      return new Response("{not-json", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+  await assert.rejects(
+    malformed.getArtistInfo("malformed"),
+    /returned malformed JSON/,
+  );
+  assert.equal(malformedCalls, 1);
+});
+
+test("Servarr metadata enforces its configured request concurrency", async () => {
+  let active = 0;
+  let maximumActive = 0;
+  const service = new servarrMetadataModule.ServarrMetadataService({
+    requestConcurrency: 2,
+    maxAttempts: 1,
+    fetch: async (input) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+      const url = new URL(String(input));
+      return new Response(JSON.stringify({
+        id: url.pathname.split("/").at(-1),
+        artistname: "Synthetic",
+        sortname: "Synthetic",
+        images: [],
+        Albums: [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+
+  await Promise.all(
+    Array.from({ length: 8 }, (_, index) => service.getArtistInfo(`artist-${index}`)),
+  );
+
+  assert.equal(maximumActive, 2);
+});
+
 test("syncReleaseGroup skips rewriting an unchanged release group (diff-reconcile)", async () => {
   const { db } = dbModule;
   resetCatalog();

@@ -121,6 +121,62 @@ export interface MediaCover {
   extension?: string;
 }
 
+export interface ServarrMetadataServiceOptions {
+  baseUrl?: string;
+  fetch?: typeof globalThis.fetch;
+  sleep?: (delayMs: number) => Promise<void>;
+  requestConcurrency?: number;
+  maxAttempts?: number;
+  requestTimeoutMs?: number;
+}
+
+const DEFAULT_SERVARR_REQUEST_CONCURRENCY = 2;
+const DEFAULT_SERVARR_MAX_ATTEMPTS = 3;
+const DEFAULT_SERVARR_REQUEST_TIMEOUT_MS = 12_000;
+const MAX_SERVARR_RETRY_DELAY_MS = 30_000;
+
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(minimum, Math.min(maximum, Math.floor(parsed)));
+}
+
+function retryAfterDelayMs(response: Response): number | null {
+  const raw = response.headers?.get?.("retry-after")?.trim();
+  if (!raw) return null;
+
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(MAX_SERVARR_RETRY_DELAY_MS, Math.ceil(seconds * 1_000));
+  }
+
+  const date = Date.parse(raw);
+  if (!Number.isFinite(date)) return null;
+  return Math.min(MAX_SERVARR_RETRY_DELAY_MS, Math.max(0, date - Date.now()));
+}
+
+function isRetryableServarrStatus(status: number): boolean {
+  return status === 408
+    || status === 425
+    || status === 429
+    || status === 500
+    || status === 502
+    || status === 503
+    || status === 504;
+}
+
+class ServarrMetadataRequestError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    readonly retryAfterMs: number | null = null,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "ServarrMetadataRequestError";
+  }
+}
+
 /**
  * Cheap change-key over a remote metadata payload. Refresh compares this to the
  * stored `content_hash` to decide whether a row actually changed — Lidarr's
@@ -197,7 +253,36 @@ export function extractLinkUrls(linksJson?: string | null): string[] {
 }
 
 export class ServarrMetadataService {
-  private readonly baseUrl = "https://api.lidarr.audio/api/v0.4";
+  private readonly baseUrl: string;
+  private readonly fetchOverride?: typeof globalThis.fetch;
+  private readonly sleep: (delayMs: number) => Promise<void>;
+  private readonly requestLimit: ReturnType<typeof pLimit>;
+  private readonly maxAttempts: number;
+  private readonly requestTimeoutMs: number;
+
+  constructor(options: ServarrMetadataServiceOptions = {}) {
+    this.baseUrl = options.baseUrl ?? "https://api.lidarr.audio/api/v0.4";
+    this.fetchOverride = options.fetch;
+    this.sleep = options.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+    this.requestLimit = pLimit(boundedInteger(
+      options.requestConcurrency ?? process.env.DISCOGENIUS_SERVARR_REQUEST_CONCURRENCY,
+      DEFAULT_SERVARR_REQUEST_CONCURRENCY,
+      1,
+      4,
+    ));
+    this.maxAttempts = boundedInteger(
+      options.maxAttempts ?? process.env.DISCOGENIUS_SERVARR_MAX_ATTEMPTS,
+      DEFAULT_SERVARR_MAX_ATTEMPTS,
+      1,
+      5,
+    );
+    this.requestTimeoutMs = boundedInteger(
+      options.requestTimeoutMs ?? process.env.DISCOGENIUS_SERVARR_REQUEST_TIMEOUT_MS,
+      DEFAULT_SERVARR_REQUEST_TIMEOUT_MS,
+      1_000,
+      60_000,
+    );
+  }
 
   private normalizeSearchText(value: string): string {
     return value
@@ -230,17 +315,60 @@ export class ServarrMetadataService {
   }
 
   private async fetchJson<T>(path: string): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": getDiscogeniusUserAgent("metadata service"),
-      },
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!res.ok) {
-      throw new Error(`MusicBrainz metadata API ${path} failed: ${res.status} ${res.statusText}`);
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      try {
+        const res = await this.requestLimit(() => (
+          (this.fetchOverride ?? globalThis.fetch)(`${this.baseUrl}${path}`, {
+            headers: {
+              Accept: "application/json",
+              "User-Agent": getDiscogeniusUserAgent("metadata service"),
+            },
+            signal: AbortSignal.timeout(this.requestTimeoutMs),
+          })
+        ));
+        if (!res.ok) {
+          throw new ServarrMetadataRequestError(
+            `Servarr metadata API ${path} failed: ${res.status} ${res.statusText}`,
+            isRetryableServarrStatus(res.status),
+            retryAfterDelayMs(res),
+          );
+        }
+
+        try {
+          return await res.json() as T;
+        } catch (error) {
+          throw new ServarrMetadataRequestError(
+            `Servarr metadata API ${path} returned malformed JSON`,
+            false,
+            null,
+            { cause: error },
+          );
+        }
+      } catch (error) {
+        lastError = error;
+        const requestError = error instanceof ServarrMetadataRequestError
+          ? error
+          : new ServarrMetadataRequestError(
+            `Servarr metadata API ${path} request failed: ${error instanceof Error ? error.message : String(error)}`,
+            true,
+            null,
+            { cause: error },
+          );
+        if (!requestError.retryable || attempt >= this.maxAttempts) {
+          throw requestError;
+        }
+
+        const delayMs = requestError.retryAfterMs
+          ?? Math.min(MAX_SERVARR_RETRY_DELAY_MS, 500 * (2 ** (attempt - 1)));
+        await this.sleep(delayMs);
+      }
     }
-    return res.json() as Promise<T>;
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`Servarr metadata API ${path} failed after ${this.maxAttempts} attempts`);
   }
 
   async getArtistInfo(mbid: string): Promise<LidarrArtist> {
