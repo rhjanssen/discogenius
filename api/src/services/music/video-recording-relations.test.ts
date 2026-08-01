@@ -133,16 +133,7 @@ test("the Alchemy live video does not attach to the Making Movies studio recordi
 // Derived album associations
 // ---------------------------------------------------------------------------
 
-/**
- * KNOWN GAP (2.8.0): the association reader still picks ONE preferred album per
- * video rather than listing it on every album whose tracks carry the linked
- * recording. The rule this suite documents is that one canonical video may
- * appear on several album pages while owning exactly one physical file; the
- * second half of that is already true and enforced by LibraryVideos, the first
- * half is not yet. Kept as a skipped test rather than deleted so the gap is
- * visible where the rule is stated.
- */
-test("one video appears on every album whose tracks carry its linked recording", { skip: "2.8.0: association reader still picks one preferred album per video" }, () => {
+test("one video appears on every album whose tracks carry its linked recording", () => {
   seed();
   // A compilation that also carries the live recording.
   db.exec(`

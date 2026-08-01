@@ -629,12 +629,22 @@ test("video detail appears-on prefers studio album over larger monitored live co
   assert.equal(detail?.albums?.[0]?.id, "rg-studio-pref", "studio album outranks larger monitored live compilation");
   assert.equal(detail?.albums?.[1]?.id, "rg-live-comp");
 
+  // Appears On is an ORDERED list, and ordering is where the studio preference
+  // belongs. It is not a filter: the video is a track of the live compilation
+  // too, so the compilation page shows it as well. Deciding display by "which
+  // album would host the file" is a placement question wearing a display hat,
+  // and it made the video vanish from every page but one.
   const onStudio = videoQueryModule.getAlbumAssociatedVideos("rg-studio-pref");
   assert.equal(onStudio.length, 1);
   assert.equal(onStudio[0]?.id, String(video.id));
 
   const onLiveComp = videoQueryModule.getAlbumAssociatedVideos("rg-live-comp");
-  assert.equal(onLiveComp.length, 0, "live compilation strip must not list studio OMV that prefers the studio album");
+  assert.deepEqual(
+    onLiveComp.map((entry) => entry.id),
+    [String(video.id)],
+    "the compilation carries this video as a canonical track, so it is shown there too",
+  );
+  assert.equal(onLiveComp[0]?.association, "direct");
 });
 
 test("video detail appears-on prefers selected multi-disc release over earliest single", () => {

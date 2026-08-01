@@ -143,6 +143,25 @@ export function monitoredVideoPredicate(recordingIdExpr: string): string {
   )`;
 }
 
+/**
+ * SQL fragment: some enabled Library selected this video *by hand*.
+ *
+ * A video has no separate lock column. "The user chose this one" is a manual
+ * selection, and that is what stops curation reconsidering it — the same
+ * distinction `LibraryAlbums.locked` draws for albums.
+ */
+export function manuallySelectedVideoPredicate(recordingIdExpr: string): string {
+  return `EXISTS (
+    SELECT 1
+    FROM LibraryVideos selected_video
+    JOIN Libraries selected_video_library
+      ON selected_video_library.id = selected_video.library_id
+     AND selected_video_library.enabled = 1
+    WHERE selected_video.video_recording_id = ${recordingIdExpr}
+      AND selected_video.selection_mode = 'manual'
+  )`;
+}
+
 /** The persisted placement of one selected video, or null when unselected. */
 export function videoPlacement(
   db: Database.Database,

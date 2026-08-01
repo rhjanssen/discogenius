@@ -7,6 +7,7 @@ import {
 } from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteReleaseGroupLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { LibraryReleaseSelectionService } from "../../services/music/library-release-selection-service.js";
+import { getAlbumAssociatedVideos } from "../../services/music/video-query-service.js";
 import { db } from "../../database.js";
 import {
   getObjectBody,
@@ -167,6 +168,26 @@ router.get("/:albumId/editions/:editionId/tracks", async (req, res) => {
       return res.status(400).json({ detail: "editionId must be a positive integer" });
     }
     res.json(await AlbumQueryService.getEditionTracks(req.params.albumId, editionId));
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+/**
+ * The videos one Edition of this Album should show.
+ *
+ * Association is derived and many-to-many — a video belongs on every Edition
+ * that carries it as a Track, or carries a Track for the exact audio Recording
+ * it is a video of. The response reports each video's single physical placement
+ * alongside it; it never uses placement to decide what to show.
+ */
+router.get("/:albumId/editions/:editionId/videos", (req, res) => {
+  try {
+    const editionId = Number.parseInt(req.params.editionId, 10);
+    if (!Number.isInteger(editionId) || editionId <= 0) {
+      return res.status(400).json({ detail: "editionId must be a positive integer" });
+    }
+    res.json(getAlbumAssociatedVideos(req.params.albumId, editionId));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

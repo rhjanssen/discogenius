@@ -13,6 +13,10 @@ import { getConfigSection } from "../config/config.js";
 import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "./video-album-association.js";
 import { mainVideoMayFollowAudioRelationSql } from "./live-performance-markers.js";
+import {
+  manuallySelectedVideoPredicate,
+  monitoredVideoPredicate,
+} from "./library-video-monitoring.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -483,26 +487,94 @@ function preferredLibraryReleaseMbidSql(releaseGroupIdExpression: string): strin
  * Track position prefers the selected nonspatial library edition (then any
  * selected spatial edition), followed by the richest and earliest edition.
  */
-export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssociatedVideoContract[] {
-  const rgMbid = String(releaseGroupMbid || "").trim();
-  if (!rgMbid) return [];
+/**
+ * The videos an Album or Edition page should show.
+ *
+ * Two entirely separate questions live in this file and must not be confused:
+ *
+ *   association — on which Album and Edition pages does this video appear?
+ *   placement   — where does its one physical file go?
+ *
+ * Association is derived, many-to-many, and cheap: a canonical video belongs on
+ * every Edition that either carries it as a Track outright, or carries a Track
+ * for the exact audio Recording it is a video of. One official video therefore
+ * appears on the original Album, the deluxe Edition, the Single and the
+ * compilation — all of them, correctly, because the recording really is on all
+ * of them.
+ *
+ * This used to end by asking `getVideoAlbumRefs(video)[0]` whether *this* album
+ * was the video's single preferred one, and dropping the video otherwise. That
+ * is a placement question — which album should host the file — and using it to
+ * decide display meant a video vanished from four of the five pages it belongs
+ * on. Placement is now `LibraryVideos.placement_*`, is reported alongside each
+ * association rather than filtering it, and is chosen once per selected video.
+ */
+type AssociatedVideoRow = {
+  id: string;
+  title: string;
+  video_variant: string | null;
+  release_date: string | null;
+  monitored: number | boolean | null;
+  monitored_lock: number | boolean | null;
+  explicit: number | boolean | null;
+  provider: string | null;
+  quality: string | null;
+  provider_id: string | null;
+  provider_url: string | null;
+  downloaded: number;
+  track_mbid: string | null;
+  track_title: string | null;
+  track_number: number | null;
+  volume_number: number | null;
+  audio_recording_mbid: string | null;
+  placement_mode: "separated" | "inline" | null;
+  placement_library_id: number | null;
+  inline_track_id: number | null;
+  inline_slot: "video" | "lyrics" | null;
+};
 
-  // Prefer the selected library release, then richest tracklist, then earliest
-  // date — mirrors Appears On track pick order for a stable album-page label.
-  const trackPickOrder = `
-    CASE
-      WHEN ar.mbid = ${preferredLibraryReleaseMbidSql("ar.release_group_id")} THEN 0
-      ELSE 1
-    END ASC,
-    COALESCE(ar.track_count, 0) DESC,
-    COALESCE(ar.media_count, 0) DESC,
-    CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
-    ar.date ASC,
-    t.medium_position ASC,
-    t.position ASC
+/**
+ * One row shape for both association paths.
+ *
+ * `trackRecordingExpr` is the recording whose Track row supplies the page's
+ * position label: the video itself for direct membership, the linked audio
+ * Recording for a derived association.
+ */
+function associatedVideoSelectSql(input: {
+  trackRecordingExpr: string;
+  audioRecordingMbidExpr: string;
+  editionScoped: boolean;
+}): string {
+  // Scoped to the requested album (and Edition, when asked), so the label
+  // describes where the video is being shown rather than some other release.
+  const editionFilter = input.editionScoped ? "AND ar.id = @editionId" : "";
+  const trackScope = `
+    FROM Tracks t
+    JOIN AlbumEditions ar
+      ON ar.id = t.album_edition_id
+      OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+    WHERE ar.release_group_mbid = @releaseGroupMbid
+      ${editionFilter}
+      AND (
+        t.recording_id = ${input.trackRecordingExpr}.id
+        OR (${input.trackRecordingExpr}.mbid IS NOT NULL
+            AND t.recording_mbid = ${input.trackRecordingExpr}.mbid)
+      )
   `;
-
-  const linkedViaRelation = db.prepare(`
+  // Within one album the richest medium wins the label, then disc/track order.
+  // This picks WHICH row labels the video on this page; it never decides
+  // whether the video appears at all.
+  const trackPickOrder = `
+    ORDER BY
+      COALESCE(ar.track_count, 0) DESC,
+      COALESCE(ar.media_count, 0) DESC,
+      CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
+      ar.date ASC,
+      t.medium_position ASC,
+      t.position ASC
+    LIMIT 1
+  `;
+  return `
     SELECT
       CAST(video.id AS TEXT) AS id,
       CASE
@@ -518,8 +590,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       END AS title,
       video.video_variant AS video_variant,
       video.release_date AS release_date,
-      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id) AS monitored,
-      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id AND selected_video.selection_mode = 'manual') AS monitored_lock,
+      ${monitoredVideoPredicate("video.id")} AS monitored,
+      ${manuallySelectedVideoPredicate("video.id")} AS monitored_lock,
       CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
       pi.provider AS provider,
       pi.video_quality AS quality,
@@ -538,233 +610,117 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
             )
           )
       ) THEN 1 ELSE 0 END AS downloaded,
-      (
-        SELECT t.mbid
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = audio.id
-            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS track_mbid,
-      (
-        SELECT COALESCE(NULLIF(TRIM(t.title), ''), audio.title)
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = audio.id
-            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS track_title,
-      (
-        SELECT t.position
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = audio.id
-            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS track_number,
-      (
-        SELECT t.medium_position
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = audio.id
-            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS volume_number,
-      audio.mbid AS audio_recording_mbid
+      (SELECT t.mbid ${trackScope} ${trackPickOrder}) AS track_mbid,
+      (SELECT COALESCE(NULLIF(TRIM(t.title), ''), ${input.trackRecordingExpr}.title)
+         ${trackScope} ${trackPickOrder}) AS track_title,
+      (SELECT t.position ${trackScope} ${trackPickOrder}) AS track_number,
+      (SELECT t.medium_position ${trackScope} ${trackPickOrder}) AS volume_number,
+      ${input.audioRecordingMbidExpr} AS audio_recording_mbid,
+      -- The single physical destination, reported rather than used as a filter.
+      placement.placement_mode AS placement_mode,
+      placement.placement_library_id AS placement_library_id,
+      placement.inline_track_id AS inline_track_id,
+      placement.inline_slot AS inline_slot
+  `;
+}
+
+/** The best available provider offer for a canonical video, as a join target. */
+const PROVIDER_OFFER_JOIN = `
+  LEFT JOIN ProviderItems pi
+    ON pi.id = (
+      SELECT candidate.id
+      FROM ProviderVideoMatches candidate_match
+      JOIN ProviderItems candidate
+        ON candidate.id = candidate_match.provider_video_item_id
+      WHERE candidate_match.recording_id = video.id
+        AND candidate_match.match_state = 'accepted'
+        AND candidate.entity_type = 'video'
+        AND (
+          candidate.availability IS NULL
+          OR LOWER(CAST(candidate.availability AS TEXT))
+             NOT IN ('0', 'false', 'unavailable', 'no', '')
+        )
+      ORDER BY
+        CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+        candidate_match.confidence DESC,
+        candidate_match.updated_at DESC
+      LIMIT 1
+    )
+  LEFT JOIN LibraryVideos placement
+    ON placement.video_recording_id = video.id
+   AND placement.id = (
+     SELECT MIN(peer.id) FROM LibraryVideos peer
+     WHERE peer.video_recording_id = video.id
+   )
+`;
+
+/**
+ * Videos to show for one Album, or for one Edition of it.
+ *
+ * Returns every valid association, deduplicated by canonical video Recording,
+ * so the same video legitimately appears on several Album pages while owning
+ * exactly one file.
+ */
+export function getAlbumAssociatedVideos(
+  releaseGroupMbid: string,
+  editionId?: number | null,
+): AlbumAssociatedVideoContract[] {
+  const rgMbid = String(releaseGroupMbid || "").trim();
+  if (!rgMbid) return [];
+  const editionScoped = editionId != null;
+  const params = editionScoped
+    ? { releaseGroupMbid: rgMbid, editionId }
+    : { releaseGroupMbid: rgMbid };
+  const editionFilter = editionScoped ? "AND ar.id = @editionId" : "";
+
+  // (B) Derived: the video is a video OF an exact audio Recording that this
+  // Edition carries. The live/studio gate stays on this path — a main video
+  // must not follow live-marked audio — because the relation table can hold
+  // rows written by looser earlier matchers.
+  const mayFollowRelatedAudio = mainVideoMayFollowAudioRelationSql({
+    videoVariantExpr: "video.video_variant",
+    trackTitleExpr: "audio.title",
+    recordingIdExpr: "audio.id",
+    recordingMbidExpr: "audio.mbid",
+  });
+  const linkedViaRelation = db.prepare(`
+    ${associatedVideoSelectSql({
+      trackRecordingExpr: "audio",
+      audioRecordingMbidExpr: "audio.mbid",
+      editionScoped,
+    })}
     FROM RecordingRelations rr
     JOIN Recordings video ON video.id = rr.source_recording_id AND video.is_video = 1
     JOIN Recordings audio ON audio.id = rr.target_recording_id
-    LEFT JOIN ProviderItems pi
-      ON pi.id = (
-        SELECT candidate.id
-        FROM ProviderVideoMatches candidate_match
-        JOIN ProviderItems candidate
-          ON candidate.id = candidate_match.provider_video_item_id
-        WHERE candidate_match.recording_id = video.id
-          AND candidate_match.match_state = 'accepted'
-          AND candidate.entity_type = 'video'
-          AND (
-            candidate.availability IS NULL
-            OR LOWER(CAST(candidate.availability AS TEXT))
-               NOT IN ('0', 'false', 'unavailable', 'no', '')
-          )
-        ORDER BY
-          CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-          candidate_match.confidence DESC,
-          candidate_match.updated_at DESC
-        LIMIT 1
-      )
+    ${PROVIDER_OFFER_JOIN}
     WHERE rr.relation_type IN ('provider_video_for', 'music_video_for')
+      AND ${mayFollowRelatedAudio}
       AND EXISTS (
         SELECT 1
         FROM Tracks t
         JOIN AlbumEditions ar
           ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
+        WHERE ar.release_group_mbid = @releaseGroupMbid
+          ${editionFilter}
           AND (
             t.recording_id = audio.id
             OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
           )
       )
-  `).all(rgMbid, rgMbid, rgMbid, rgMbid, rgMbid) as Array<{
-    id: string;
-    title: string;
-    video_variant: string | null;
-    release_date: string | null;
-    monitored: number | boolean | null;
-    monitored_lock: number | boolean | null;
-    explicit: number | boolean | null;
-    provider: string | null;
-    quality: string | null;
-    provider_id: string | null;
-    provider_url: string | null;
-    downloaded: number;
-    track_mbid: string | null;
-    track_title: string | null;
-    track_number: number | null;
-    volume_number: number | null;
-    audio_recording_mbid: string | null;
-  }>;
+  `).all(params) as AssociatedVideoRow[];
 
+  // (A) Direct: the video Recording is itself a canonical Track of the Edition.
+  // This is the iTunes Festival shape — MusicBrainz represents the video tracks,
+  // so no relation is needed for them to belong here.
   const onAlbumVideoTracks = db.prepare(`
-    SELECT
-      CAST(video.id AS TEXT) AS id,
-      CASE
-        WHEN video.title IS NOT NULL
-          AND TRIM(video.title) != ''
-          AND LOWER(TRIM(video.title)) != 'unknown video'
-        THEN video.title
-        ELSE COALESCE(
-          NULLIF(TRIM(pi.title), ''),
-          NULLIF(TRIM(video.title), ''),
-          'Unknown Video'
-        )
-      END AS title,
-      video.video_variant AS video_variant,
-      video.release_date AS release_date,
-      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id) AS monitored,
-      EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = video.id AND selected_video.selection_mode = 'manual') AS monitored_lock,
-      CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
-      pi.provider AS provider,
-      pi.video_quality AS quality,
-      CAST(pi.provider_id AS TEXT) AS provider_id,
-      pi.provider_url AS provider_url,
-      CASE WHEN EXISTS (
-        SELECT 1 FROM TrackFiles lf
-        WHERE lf.file_type = 'video'
-          AND (
-            lf.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND lf.canonical_recording_mbid = video.mbid)
-            OR (
-              pi.provider_id IS NOT NULL
-              AND lf.provider = pi.provider
-              AND CAST(lf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
-            )
-          )
-      ) THEN 1 ELSE 0 END AS downloaded,
-      (
-        SELECT t.mbid
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS track_mbid,
-      (
-        SELECT COALESCE(NULLIF(TRIM(t.title), ''), video.title)
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS track_title,
-      (
-        SELECT t.position
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS track_number,
-      (
-        SELECT t.medium_position
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
-          AND (
-            t.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
-          )
-        ORDER BY ${trackPickOrder}
-        LIMIT 1
-      ) AS volume_number,
-      CAST(NULL AS TEXT) AS audio_recording_mbid
+    ${associatedVideoSelectSql({
+      trackRecordingExpr: "video",
+      audioRecordingMbidExpr: "CAST(NULL AS TEXT)",
+      editionScoped,
+    })}
     FROM Recordings video
-    LEFT JOIN ProviderItems pi
-      ON pi.id = (
-        SELECT candidate.id
-        FROM ProviderVideoMatches candidate_match
-        JOIN ProviderItems candidate
-          ON candidate.id = candidate_match.provider_video_item_id
-        WHERE candidate_match.recording_id = video.id
-          AND candidate_match.match_state = 'accepted'
-          AND candidate.entity_type = 'video'
-          AND (
-            candidate.availability IS NULL
-            OR LOWER(CAST(candidate.availability AS TEXT))
-               NOT IN ('0', 'false', 'unavailable', 'no', '')
-          )
-        ORDER BY
-          CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-          candidate_match.confidence DESC,
-          candidate_match.updated_at DESC
-        LIMIT 1
-      )
+    ${PROVIDER_OFFER_JOIN}
     WHERE video.is_video = 1
       AND EXISTS (
         SELECT 1
@@ -772,40 +728,21 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
         JOIN AlbumEditions ar
           ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = ?
+        WHERE ar.release_group_mbid = @releaseGroupMbid
+          ${editionFilter}
           AND (
             t.recording_id = video.id
             OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
           )
       )
-  `).all(rgMbid, rgMbid, rgMbid, rgMbid, rgMbid) as Array<{
-    id: string;
-    title: string;
-    video_variant: string | null;
-    release_date: string | null;
-    monitored: number | boolean | null;
-    monitored_lock: number | boolean | null;
-    explicit: number | boolean | null;
-    provider: string | null;
-    quality: string | null;
-    provider_id: string | null;
-    provider_url: string | null;
-    downloaded: number;
-    track_mbid: string | null;
-    track_title: string | null;
-    track_number: number | null;
-    volume_number: number | null;
-    audio_recording_mbid: string | null;
-  }>;
+  `).all(params) as AssociatedVideoRow[];
 
-  // Honor the same monitored + music-video-type gating the tracklist glyphs and
-  // download automation use, so a video whose type is turned off in Settings
-  // (e.g. lyric videos) or that curation has unmonitored no longer clutters the
-  // album page. Anything already on disk stays visible — never hide a video the
-  // user physically has downloaded.
+  // A video whose type is turned off in Settings, or that no library selected,
+  // stays off the page — unless it is already on disk, because hiding a file the
+  // user physically has is never right.
   const filtering = getConfigSection("filtering");
   const byId = new Map<string, AlbumAssociatedVideoContract>();
-  const upsert = (row: typeof linkedViaRelation[number]) => {
+  const upsert = (row: AssociatedVideoRow, association: "direct" | "related_audio") => {
     const id = String(row.id);
     if (byId.has(id)) return;
     const isDownloaded = Boolean(row.downloaded);
@@ -829,32 +766,29 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       explicit: row.explicit == null ? undefined : Boolean(row.explicit),
       is_monitored: Boolean(row.monitored),
       monitored_lock: Boolean(row.monitored_lock),
-      downloaded: Boolean(row.downloaded),
-      is_downloaded: Boolean(row.downloaded),
+      downloaded: isDownloaded,
+      is_downloaded: isDownloaded,
       track_mbid: row.track_mbid ?? null,
       track_title: row.track_title ?? null,
       track_number: row.track_number == null ? null : Number(row.track_number),
       volume_number: row.volume_number == null ? null : Number(row.volume_number),
       audio_recording_mbid: row.audio_recording_mbid ?? null,
+      association,
+      placement: row.placement_mode == null ? null : {
+        mode: row.placement_mode,
+        placement_library_id: row.placement_library_id ?? null,
+        inline_track_id: row.inline_track_id ?? null,
+        inline_slot: row.inline_slot ?? null,
+      },
     });
   };
 
-  // Relation-linked first (prefer audio-track affiliation), then on-RG video tracks.
-  for (const row of linkedViaRelation) upsert(row);
-  for (const row of onAlbumVideoTracks) upsert(row);
+  // Direct membership first: when a video is a Track of this Edition, that Track
+  // is the more accurate label than the linked audio track's position.
+  for (const row of onAlbumVideoTracks) upsert(row, "direct");
+  for (const row of linkedViaRelation) upsert(row, "related_audio");
 
-  // Album pages only show videos whose preferred association is this RG.
-  // Studio OMVs that also appear as DVD tracks on a Live/Compilation set stay
-  // on Appears On (ranked below studio) but do not clutter the live album strip.
-  const preferredForRg: AlbumAssociatedVideoContract[] = [];
-  for (const video of byId.values()) {
-    const preferred = getVideoAlbumRefs(String(video.id))[0];
-    if (preferred && String(preferred.id) === rgMbid) {
-      preferredForRg.push(video);
-    }
-  }
-
-  return preferredForRg.sort((left, right) => {
+  return [...byId.values()].sort((left, right) => {
     const leftVol = left.volume_number ?? 0;
     const rightVol = right.volume_number ?? 0;
     if (leftVol !== rightVol) return leftVol - rightVol;

@@ -253,6 +253,32 @@ export interface AlbumAssociatedVideoContract {
   volume_number?: number | null;
   /** Audio recording MBID when linked via provider_video_for. */
   audio_recording_mbid?: string | null;
+  /**
+   * Why this video belongs on this page.
+   *
+   * `direct` — the video Recording is itself a canonical Track of the Edition.
+   * `related_audio` — the video links to an exact audio Recording that is.
+   *
+   * Both are valid, so a video can be shown on several Album pages at once.
+   * Association is a display question and says nothing about where the single
+   * physical file lives; see `placement`.
+   */
+  association?: "direct" | "related_audio";
+  /**
+   * Where the one physical file for this selected video actually goes, when a
+   * Video Library has selected it. Null when nothing has selected it yet.
+   *
+   * A video shown on five Album pages still has exactly one of these, which is
+   * why the page must never read association as "download it here".
+   */
+  placement?: {
+    mode: "separated" | "inline";
+    /** The audio library receiving an inline file. */
+    placement_library_id?: number | null;
+    /** The exact canonical audio Track occurrence an inline file sits beside. */
+    inline_track_id?: number | null;
+    inline_slot?: "video" | "lyrics" | null;
+  } | null;
 }
 
 export interface VideoDetailContract {
@@ -435,6 +461,27 @@ function parseAlbumAssociatedVideoContract(value: unknown, index: number): Album
     track_number: expectOptionalNumber(record.track_number, `${label}.track_number`) ?? null,
     volume_number: expectOptionalNumber(record.volume_number, `${label}.volume_number`) ?? null,
     audio_recording_mbid: expectNullableString(record.audio_recording_mbid, `${label}.audio_recording_mbid`),
+    association: record.association === "direct" || record.association === "related_audio"
+      ? record.association
+      : undefined,
+    placement: parseAssociatedVideoPlacement(record.placement, `${label}.placement`),
+  };
+}
+
+function parseAssociatedVideoPlacement(
+  value: unknown,
+  label: string,
+): AlbumAssociatedVideoContract["placement"] {
+  if (value == null) return null;
+  const record = expectRecord(value, label);
+  const mode = record.mode === "inline" ? "inline" : "separated";
+  return {
+    mode,
+    placement_library_id: expectOptionalNumber(record.placement_library_id, `${label}.placement_library_id`) ?? null,
+    inline_track_id: expectOptionalNumber(record.inline_track_id, `${label}.inline_track_id`) ?? null,
+    inline_slot: record.inline_slot === "video" || record.inline_slot === "lyrics"
+      ? record.inline_slot
+      : null,
   };
 }
 
