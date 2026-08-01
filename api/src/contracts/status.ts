@@ -312,18 +312,28 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
 
 function parseActivityJobContract(value: unknown, index: number, label: string): ActivityJobContract {
   const record = expectRecord(value, `${label}[${index}]`);
+  const itemLabel = `${label}[${index}]`;
   return {
-    id: typeof record.id === "number" ? record.id : expectIdentifierString(record.id, `${label}[${index}].id`),
-    type: expectString(record.type, `${label}[${index}].type`),
-    description: expectString(record.description, `${label}[${index}].description`),
-    queuePosition: expectOptionalNumber(record.queuePosition, `${label}[${index}].queuePosition`),
-    progress: expectOptionalNumber(record.progress, `${label}[${index}].progress`),
-    startTime: expectNumber(record.startTime, `${label}[${index}].startTime`),
-    endTime: expectOptionalNumber(record.endTime, `${label}[${index}].endTime`),
-    status: expectOptionalString(record.status, `${label}[${index}].status`),
-    error: expectOptionalString(record.error, `${label}[${index}].error`),
-    trigger: expectOptionalNumber(record.trigger, `${label}[${index}].trigger`),
+    id: typeof record.id === "number" ? record.id : expectIdentifierString(record.id, `${itemLabel}.id`),
+    type: expectString(record.type, `${itemLabel}.type`),
+    description: expectString(record.description, `${itemLabel}.description`),
+    queuePosition: expectOptionalNumber(record.queuePosition, `${itemLabel}.queuePosition`),
+    progress: expectOptionalNumber(record.progress, `${itemLabel}.progress`),
+    startTime: expectNumber(record.startTime, `${itemLabel}.startTime`),
+    endTime: expectOptionalNumber(record.endTime, `${itemLabel}.endTime`),
+    status: expectOptionalString(record.status, `${itemLabel}.status`),
+    error: expectOptionalString(record.error, `${itemLabel}.error`),
+    trigger: expectOptionalNumber(record.trigger, `${itemLabel}.trigger`),
     payload: record.payload,
+    outcome: (() => {
+      const outcome = expectOptionalString(record.outcome, `${itemLabel}.outcome`);
+      if (outcome === undefined) return undefined;
+      if (outcome !== "ok" && outcome !== "completedWithWarning") {
+        throw new Error(`${itemLabel}.outcome must be a known download outcome`);
+      }
+      return outcome as DownloadOutcomeContract;
+    })(),
+    warningMessage: expectNullableString(record.warningMessage, `${itemLabel}.warningMessage`),
   };
 }
 

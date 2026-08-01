@@ -383,7 +383,9 @@ test("status contract parsers validate queue and status overview payloads", () =
         description: "Refresh Artist: Bastille",
         queuePosition: 1,
         startTime: Date.now(),
-        status: "queued",
+        status: "completed",
+        outcome: "completedWithWarning",
+        warningMessage: "Provider metadata was temporarily unavailable.",
       },
     ],
     total: 1,
@@ -392,6 +394,8 @@ test("status contract parsers validate queue and status overview payloads", () =
     hasMore: false,
   });
   assert.equal(activity.items[0].queuePosition, 1);
+  assert.equal(activity.items[0].outcome, "completedWithWarning");
+  assert.equal(activity.items[0].warningMessage, "Provider metadata was temporarily unavailable.");
 });
 
 test("system task contract parsers validate scheduled and manual task payloads", () => {
@@ -413,7 +417,11 @@ test("system task contract parsers validate scheduled and manual task payloads",
       intervalMinutes: 240,
       enabled: true,
       active: false,
+      lastQueuedTime: "2026-03-24T11:29:00.000Z",
       lastExecution: "2026-03-24T12:00:00.000Z",
+      lastExecutionStatus: "completed",
+      lastSuccessTime: "2026-03-24T12:00:00.000Z",
+      lastFailureTime: null,
       lastStartTime: "2026-03-24T11:30:00.000Z",
       nextExecution: "2026-03-24T16:00:00.000Z",
     },
@@ -434,7 +442,11 @@ test("system task contract parsers validate scheduled and manual task payloads",
       intervalMinutes: null,
       enabled: null,
       active: true,
+      lastQueuedTime: null,
       lastExecution: null,
+      lastExecutionStatus: null,
+      lastSuccessTime: null,
+      lastFailureTime: null,
       lastStartTime: null,
       nextExecution: null,
     },
@@ -442,6 +454,7 @@ test("system task contract parsers validate scheduled and manual task payloads",
 
   assert.equal(tasks[0].kind, "scheduled");
   assert.equal(tasks[0].enabled, true);
+  assert.equal(tasks[0].lastExecutionStatus, "completed");
   assert.equal(tasks[1].kind, "manual");
   assert.equal(tasks[1].intervalMinutes, null);
 
