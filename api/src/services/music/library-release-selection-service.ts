@@ -424,7 +424,7 @@ export class LibraryReleaseSelectionService {
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
     const exclusive = input.mode !== "additive";
-    this.assertAlbumUnlocked(target, exclusive);
+    this.assertAlbumUnlocked(target);
 
     this.db.transaction(() => {
       this.ensureLibraryAlbum(input.libraryId, target.releaseGroupId);
@@ -460,7 +460,7 @@ export class LibraryReleaseSelectionService {
     editionId: number;
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
-    this.assertAlbumUnlocked(target, true);
+    this.assertAlbumUnlocked(target);
 
     this.db.transaction(() => {
       const removed = this.db.prepare(`
@@ -506,7 +506,7 @@ export class LibraryReleaseSelectionService {
     editionId: number;
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
-    this.assertAlbumUnlocked(target, true);
+    this.assertAlbumUnlocked(target);
     this.db.transaction(() => {
       const promoted = this.db.prepare(`
         UPDATE LibraryEditions
@@ -582,13 +582,12 @@ export class LibraryReleaseSelectionService {
   /**
    * A locked Album holds its monitored state, its edition set, its
    * representative and its selected plan alike. Changing any of them requires an
-   * explicit unlock first — never a silent one.
+   * explicit unlock first — never a silent one, and never a tie-break the next
+   * action can win. Additive selection is no exception: adding an Edition to a
+   * locked Album still changes what the lock was pressed to protect.
    */
-  private assertAlbumUnlocked(
-    target: { locked: boolean },
-    changesMonitoring: boolean,
-  ): void {
-    if (target.locked && changesMonitoring) {
+  private assertAlbumUnlocked(target: { locked: boolean }): void {
+    if (target.locked) {
       const error = new Error(
         "This album is locked in this library. Unlock it to change the monitored editions or the selected offer.",
       ) as Error & { status?: number };
@@ -710,7 +709,7 @@ export class LibraryReleaseSelectionService {
     mode?: "exclusive" | "additive";
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
-    this.assertAlbumUnlocked(target, true);
+    this.assertAlbumUnlocked(target);
     if (input.providerEditionMatchId != null) {
       const offer = this.db.prepare(`
         SELECT match.id

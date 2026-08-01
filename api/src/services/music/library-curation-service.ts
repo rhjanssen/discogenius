@@ -296,9 +296,17 @@ export class LibraryCurationService {
     }
 
     const viableEditionIds = this.viablePlanEditionIds(input.libraryId);
+    // The set curation is trying to cover. With provider availability required
+    // it is what a provider can actually deliver; without it the canonical
+    // Recording set is the target, because an Edition with no offer at all is
+    // still a legitimate thing to monitor — it simply has nothing to execute.
+    const canonicalByRelease = requireProviderAvailability
+      ? null
+      : this.canonicalRecordingIdsByEdition();
     const candidates: CurationReleaseCandidate[] = [];
     for (const release of evaluatedEditions) {
-      const attainableRecordingIds = attainableByRelease.get(release.edition_id) || new Set<number>();
+      const attainableRecordingIds = (canonicalByRelease ?? attainableByRelease)
+        .get(release.edition_id) || new Set<number>();
       // With provider availability required, only an Edition a provider can
       // actually deliver is eligible for automatic monitoring. Without it, any
       // canonical Edition may be monitored and simply has no plan to execute.
@@ -347,6 +355,19 @@ export class LibraryCurationService {
       });
     }
     return result;
+  }
+
+  /** The complete canonical Recording set of every Edition. */
+  private canonicalRecordingIdsByEdition(): Map<number, Set<number>> {
+    const byEdition = new Map<number, Set<number>>();
+    for (const row of this.db.prepare(`
+      SELECT album_edition_id, recording_id FROM Tracks
+    `).all() as Array<{ album_edition_id: number; recording_id: number }>) {
+      const recordingIds = byEdition.get(row.album_edition_id) || new Set<number>();
+      recordingIds.add(row.recording_id);
+      byEdition.set(row.album_edition_id, recordingIds);
+    }
+    return byEdition;
   }
 
   /**
