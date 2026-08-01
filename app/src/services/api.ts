@@ -53,6 +53,8 @@ import {
   parseLibraryReleaseGroupAvailabilityContract,
   parseVideoDetailContract,
 } from '@contracts/media';
+import type { AlbumTrackContract } from '@contracts/media';
+import { parseAlbumTracksContract } from '@contracts/media';
 import type { AlbumPageContract } from '@contracts/pages';
 import { parseAlbumPageContract } from '@contracts/pages';
 import type {
@@ -826,6 +828,25 @@ class ApiClient {
 
   async getAlbumPage(albumId: string, options: RequestControlOptions = {}): Promise<AlbumPageContract> {
     return this.request(`/v1/album/${albumId}/page`, options, parseAlbumPageContract);
+  }
+
+  /**
+   * The complete canonical track list of one Edition.
+   *
+   * Used by the album page's track-list tab strip, which appears only when an
+   * Album is monitored as Editions whose canonical recordings do not nest and
+   * one list therefore cannot show everything.
+   */
+  async getAlbumEditionTracks(
+    albumId: string,
+    editionId: number,
+    options: RequestControlOptions = {},
+  ): Promise<AlbumTrackContract[]> {
+    return this.request(
+      `/v1/album/${albumId}/editions/${editionId}/tracks`,
+      options,
+      parseAlbumTracksContract,
+    );
   }
 
   async addAlbum(albumId: string, options?: { slot?: 'stereo' | 'spatial' }) {

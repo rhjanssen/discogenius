@@ -152,6 +152,26 @@ router.get("/:albumId/tracks", async (req, res) => {
   }
 });
 
+/**
+ * The complete canonical track list of one Edition of this Album.
+ *
+ * The page payload carries a single list, for the representative Edition. When
+ * an Album is monitored as several Editions whose canonical recordings do not
+ * nest, the track-list tab strip needs one list per Edition, and this is how it
+ * asks for the others.
+ */
+router.get("/:albumId/editions/:editionId/tracks", async (req, res) => {
+  try {
+    const editionId = Number.parseInt(req.params.editionId, 10);
+    if (!Number.isInteger(editionId) || editionId <= 0) {
+      return res.status(400).json({ detail: "editionId must be a positive integer" });
+    }
+    res.json(await AlbumQueryService.getEditionTracks(req.params.albumId, editionId));
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
 router.post("/:albumId/monitor", async (req, res) => {
   try {
     const albumId = req.params.albumId;

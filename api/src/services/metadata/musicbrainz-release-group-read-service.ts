@@ -1076,6 +1076,42 @@ export class MusicBrainzReleaseGroupReadService {
         return buildReleaseGroupTrackContracts(releaseGroup, release, album);
     }
 
+    /**
+     * The complete canonical track list of ONE Edition.
+     *
+     * `getTracks` answers for whichever Edition the Library happens to prefer,
+     * which is the wrong question when an Album is monitored as two Editions
+     * whose recordings do not nest — the page then needs a list per Edition and
+     * has to be able to ask for each by name.
+     *
+     * Canonical means canonical: every Track of the Edition is returned,
+     * including the ones no provider can currently deliver. Trimming the list to
+     * provider coverage would redefine the Edition as the subset somebody
+     * happens to sell.
+     */
+    static async getEditionTracks(
+        releaseGroupMbid: string,
+        editionId: number,
+    ): Promise<AlbumTrackContract[]> {
+        const releaseGroup = await this.loadReleaseGroup(releaseGroupMbid);
+        if (!releaseGroup) return [];
+
+        const release = db.prepare(`
+            SELECT edition.*
+            FROM AlbumEditions edition
+            JOIN Albums release_group ON release_group.id = edition.release_group_id
+            WHERE edition.id = ? AND release_group.mbid = ?
+        `).get(editionId, releaseGroupMbid) as any | undefined;
+        if (!release) return [];
+
+        const album = normalizeMusicBrainzReleaseGroupAlbum(
+            releaseGroup,
+            release,
+            await resolveReleaseGroupArtwork(releaseGroup),
+        );
+        return buildReleaseGroupTrackContracts(releaseGroup, release, album);
+    }
+
     static async getPage(releaseGroupMbid: string): Promise<AlbumPageContract | null> {
         const releaseGroup = await this.loadReleaseGroup(releaseGroupMbid);
         if (!releaseGroup) {

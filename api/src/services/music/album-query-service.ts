@@ -737,6 +737,13 @@ export class AlbumQueryService {
         return tracks.map((track) => sanitizeAlbumTrack(track, includeSpatial));
     }
 
+    /** Complete canonical tracks of one Edition — never trimmed to provider coverage. */
+    static async getEditionTracks(albumId: string, editionId: number): Promise<AlbumTrackContract[]> {
+        const tracks = await MusicBrainzReleaseGroupReadService.getEditionTracks(albumId, editionId);
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        return tracks.map((track) => sanitizeAlbumTrack(track, includeSpatial));
+    }
+
     static async getAlbumPage(albumId: string): Promise<AlbumPageContract | null> {
         const page = await MusicBrainzReleaseGroupReadService.getPage(albumId);
         if (!page) return null;

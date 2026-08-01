@@ -27,6 +27,8 @@ import {
   Overflow,
   OverflowItem,
   mergeClasses,
+  Tab,
+  TabList,
 } from "@fluentui/react-components";
 import { MediaCard } from "@/components/cards/MediaCard";
 import {
@@ -602,6 +604,24 @@ const useStyles = makeStyles({
 
 /* ── Album overflow helpers ─────────────────────────────────── */
 
+type AvailabilityRelease = NonNullable<AlbumPageData["releaseAvailability"]>["releases"][number];
+
+/**
+ * What a track-list tab is called.
+ *
+ * Every tab in the strip belongs to the same Album, so the album title is
+ * useless as a label; what distinguishes editions is the disambiguation MB
+ * carries ("Deluxe Edition"), then the country/date, and only then the id.
+ */
+function editionTabLabel(edition: AvailabilityRelease | undefined): string {
+  if (!edition) return "Edition";
+  const disambiguation = String(edition.disambiguation || "").trim();
+  if (disambiguation) return disambiguation;
+  const year = edition.date ? String(edition.date).slice(0, 4) : "";
+  const parts = [edition.country, year].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : String(edition.title || "Edition");
+}
+
 const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
 const EMPTY_ASSOCIATED_VIDEOS: AlbumAssociatedVideo[] = [];
 
@@ -657,7 +677,66 @@ const AlbumPage = () => {
   const releaseAvailability = pageData?.releaseAvailability ?? null;
   const artistImage = pageData?.artistImage ?? undefined;
 
+  /**
+   * The track-list tabs, decided by the API from canonical recording sets.
+   *
+   * A tab strip appears only when this album is monitored as editions whose
+   * canonical recordings do not nest, so one list genuinely cannot show
+   * everything. Equivalent editions, a deluxe that contains its standard, and a
+   * single monitored edition all keep the plain one-list page.
+   *
+   * Libraries decide independently, so the strip is the union of what each one
+   * asked for; the default tab is the representative edition of the first
+   * library that needed tabs at all.
+   */
+  const trackListTabs = useMemo(() => {
+    const byEditionId = new Map<number, { editionId: number; label: string; default: boolean }>();
+    for (const library of releaseAvailability?.libraries ?? []) {
+      for (const tab of library.trackListTabs) {
+        if (byEditionId.has(tab.editionId)) continue;
+        const edition = releaseAvailability?.releases
+          .find((release) => release.id === tab.editionId);
+        byEditionId.set(tab.editionId, {
+          editionId: tab.editionId,
+          label: editionTabLabel(edition),
+          default: tab.default,
+        });
+      }
+    }
+    const tabs = [...byEditionId.values()];
+    return tabs.some((tab) => tab.default) ? tabs : tabs.map((tab, index) => ({
+      ...tab,
+      default: index === 0,
+    }));
+  }, [releaseAvailability]);
+
+  const defaultTabEditionId = trackListTabs.find((tab) => tab.default)?.editionId ?? null;
+  const [selectedTabEditionId, setSelectedTabEditionId] = useState<number | null>(null);
+  const activeTabEditionId = trackListTabs.some((tab) => tab.editionId === selectedTabEditionId)
+    ? selectedTabEditionId
+    : defaultTabEditionId;
+
+  // Only fetched when the strip is actually drawn; with no tabs the page keeps
+  // the single list it already has.
+  const editionTracksQuery = useQuery({
+    queryKey: ['albumPage', albumId, 'editionTracks', activeTabEditionId],
+    queryFn: ({ signal }) => albumId && activeTabEditionId != null
+      ? api.getAlbumEditionTracks(albumId, activeTabEditionId, { signal, timeoutMs: 15_000 })
+      : Promise.resolve(EMPTY_ALBUM_TRACKS),
+    enabled: Boolean(albumId) && activeTabEditionId != null,
+    refetchOnWindowFocus: false,
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  // While an edition's list is still loading, the page keeps showing the one it
+  // has rather than blanking the section.
+  const visibleTracks = activeTabEditionId != null && editionTracksQuery.data
+    ? editionTracksQuery.data
+    : tracks;
+
   const tracksWithAssociatedVideos = useMemo(() => {
+    const tracks = visibleTracks;
     if (associatedVideos.length === 0) return tracks;
     const videoByTrackMbid = new Map<string, string>();
     const videoByAudioRecordingMbid = new Map<string, string>();
@@ -680,7 +759,7 @@ const AlbumPage = () => {
       if (!associatedVideoId) return track;
       return { ...track, associated_video_id: associatedVideoId };
     });
-  }, [associatedVideos, tracks]);
+  }, [associatedVideos, visibleTracks]);
 
   const scrollToAssociatedVideo = useCallback((videoId: string) => {
     const elementId = albumAssociatedVideoElementId(videoId);
@@ -1563,10 +1642,11 @@ const AlbumPage = () => {
                 <div className={styles.metadataFacts}>
                   <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
                   <div className={styles.metadataSeparator} />
-                  <Text>{tracks.length} Tracks</Text>
+                  {/* Counts describe the edition currently on screen. */}
+                  <Text>{visibleTracks.length} Tracks</Text>
                   <div className={styles.metadataSeparator} />
                   <Text>
-                    {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
+                    {formatDurationSeconds(visibleTracks.reduce((acc, t) => acc + t.duration, 0))}
                   </Text>
                   {hasSpatialOffer && !hasStereoOffer && (
                     <>
@@ -1722,7 +1802,22 @@ const AlbumPage = () => {
         </div>
 
         {/* Track List Section */}
-        {tracks.length === 0 ? (
+        {/* One tab per monitored edition, and only when the API says one list
+            cannot show them all. The strip reuses the Dashboard's Queue/Activity
+            TabList so the two read as the same control. */}
+        {trackListTabs.length > 0 ? (
+          <TabList
+            selectedValue={activeTabEditionId ?? undefined}
+            onTabSelect={(_, data) => setSelectedTabEditionId(Number(data.value))}
+          >
+            {trackListTabs.map((tab) => (
+              <Tab key={tab.editionId} value={tab.editionId} title={tab.label}>
+                {tab.label}
+              </Tab>
+            ))}
+          </TabList>
+        ) : null}
+        {tracksWithAssociatedVideos.length === 0 ? (
           <EmptyState
             title="No tracks found"
             description="This album doesn't have any surfaced tracks yet."

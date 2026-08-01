@@ -351,6 +351,86 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
   assert.equal(tracks[0].downloaded, true);
 });
 
+/**
+ * The track-list tab strip asks for one edition at a time, so the read has to
+ * answer for the edition named — not for whichever one the library prefers.
+ */
+test("edition-scoped tracks answer for the edition asked for, complete", async () => {
+  const artistMbid = "artist-mbid-tabs";
+  const releaseGroupMbid = "release-group-tabs";
+  const standardMbid = "release-tabs-standard";
+  const deluxeMbid = "release-tabs-deluxe";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Dire Straits");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Dire Straits", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Making Movies", "Album", "1980-10-17");
+
+  const insertRelease = dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run(standardMbid, releaseGroupMbid, artistMbid, "Making Movies",
+    "Official", "1980-10-17", 1, 2);
+  insertRelease.run(deluxeMbid, releaseGroupMbid, artistMbid, "Making Movies (Deluxe)",
+    "Official", "1996-01-01", 1, 3);
+
+  const insertRecording = dbModule.db.prepare(
+    "INSERT INTO Recordings (mbid, title, length_ms) VALUES (?, ?, ?)",
+  );
+  const insertTrack = dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const [index, title] of ["Tunnel of Love", "Romeo and Juliet"].entries()) {
+    insertRecording.run(`recording-tabs-${index}`, title, 200000);
+    insertTrack.run(`track-tabs-standard-${index}`, standardMbid, `recording-tabs-${index}`,
+      1, index + 1, String(index + 1), title, 200000);
+    insertTrack.run(`track-tabs-deluxe-${index}`, deluxeMbid, `recording-tabs-${index}`,
+      1, index + 1, String(index + 1), title, 200000);
+  }
+  // A recording only the deluxe carries, and which no provider offers.
+  insertRecording.run("recording-tabs-exclusive", "Les Boys", 250000);
+  insertTrack.run("track-tabs-deluxe-2", deluxeMbid, "recording-tabs-exclusive",
+    1, 3, "3", "Les Boys", 250000);
+
+  hydrateCanonicalForeignKeys(releaseGroupMbid);
+  // The library prefers the standard edition; the deluxe tab must not inherit
+  // that preference.
+  selectLibraryRelease(releaseGroupMbid, standardMbid);
+
+  const editionId = (dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
+    .get(deluxeMbid) as { id: number }).id;
+  const deluxeTracks = await readServiceModule.MusicBrainzReleaseGroupReadService
+    .getEditionTracks(releaseGroupMbid, editionId);
+
+  assert.deepEqual(
+    deluxeTracks.map((track) => track.title),
+    ["Tunnel of Love", "Romeo and Juliet", "Les Boys"],
+    "the deluxe list is the deluxe edition's, complete and in canonical order",
+  );
+
+  const standardEditionId = (dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
+    .get(standardMbid) as { id: number }).id;
+  const standardTracks = await readServiceModule.MusicBrainzReleaseGroupReadService
+    .getEditionTracks(releaseGroupMbid, standardEditionId);
+  assert.deepEqual(standardTracks.map((track) => track.title),
+    ["Tunnel of Love", "Romeo and Juliet"]);
+
+  // An edition id belonging to a different album is not this album's business.
+  assert.deepEqual(
+    await readServiceModule.MusicBrainzReleaseGroupReadService
+      .getEditionTracks(releaseGroupMbid, 99999),
+    [],
+  );
+});
+
 test("single release group does not inherit album files by shared recording MBID", async () => {
   const artistMbid = "artist-mbid-amy";
   const albumReleaseGroupMbid = "release-group-back-to-black";
