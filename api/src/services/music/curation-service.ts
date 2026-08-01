@@ -74,13 +74,24 @@ export class CurationService {
       WHERE library.enabled = 1
     `).run(managedArtistId, identity.artistMbid);
 
+    // AUDIO libraries only. A Video Library has no Albums, no Editions and no
+    // acquisition plans to compose — running audio curation for one made the
+    // audio planner reject its `video` quality policy and abort the whole cycle
+    // before video curation ever ran. Videos are curated separately below.
     const libraries = db.prepare(`
       SELECT library.id
       FROM Libraries library
       JOIN LibraryArtists library_artist ON library_artist.library_id = library.id
+      JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
       WHERE library.enabled = 1
         AND library_artist.managed_artist_id = ?
         AND library_artist.monitored = 1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+          WHERE allowed.value = 'video'
+        )
       ORDER BY library.id
     `).all(managedArtistId) as Array<{ id: number }>;
     const selectedBefore = Number((db.prepare(`

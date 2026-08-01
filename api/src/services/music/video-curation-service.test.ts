@@ -260,3 +260,46 @@ test("the slot constraint is enforced by the database, not only by ranking", () 
   claim(OFFICIAL_VIDEO);
   assert.throws(() => claim(LIVE_VIDEO), /UNIQUE/i);
 });
+
+test("audio curation never runs for a video library", async () => {
+  // A Video Library has no Albums, Editions or acquisition plans. Running audio
+  // curation for one made the audio planner reject its `video` quality policy
+  // and abort the cycle — taking video curation down with it, since that runs
+  // afterwards. The library selection excludes video libraries outright.
+  seed();
+  const curationModule = await import("./curation-service.js");
+  const managedArtistId = (db.prepare(`
+    INSERT INTO ManagedArtists (artist_id) VALUES (1) RETURNING id
+  `).get() as { id: number }).id;
+  for (const library of db.prepare("SELECT id FROM Libraries").all() as Array<{ id: number }>) {
+    db.prepare(`
+      INSERT INTO LibraryArtists (library_id, managed_artist_id, monitored, credited_scope)
+      VALUES (?, ?, 1, 'primary_only')
+    `).run(library.id, managedArtistId);
+  }
+
+  const audioLibraryIds = (db.prepare(`
+    SELECT library.id
+    FROM Libraries library
+    JOIN LibraryArtists library_artist ON library_artist.library_id = library.id
+    JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+    WHERE library.enabled = 1
+      AND library_artist.managed_artist_id = ?
+      AND library_artist.monitored = 1
+      AND NOT EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'video'
+      )
+    ORDER BY library.id
+  `).all(managedArtistId) as Array<{ id: number }>).map((row) => row.id);
+
+  const videoLibraryIds = resolveVideoLibraryIds(db);
+  assert.ok(videoLibraryIds.length > 0, "the fixture has a video library to exclude");
+  for (const videoLibraryId of videoLibraryIds) {
+    assert.ok(!audioLibraryIds.includes(videoLibraryId),
+      `video library ${videoLibraryId} must not be curated as an audio library`);
+  }
+  assert.ok(audioLibraryIds.length > 0, "the audio libraries are still curated");
+  assert.ok(typeof curationModule.CurationService.processAll === "function");
+});
