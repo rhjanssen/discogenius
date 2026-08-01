@@ -56,6 +56,20 @@ export class AlbumCommandService {
               updated_at = CURRENT_TIMESTAMP
         `).run(releaseGroup.id, Number(locked));
 
+        // One Album-level lock, one meaning. The lock previously only reached
+        // LibraryAlbums, while both curation and acquisition planning consult
+        // LibraryEditions.locked — so pressing Lock protected the monitored
+        // state and nothing else. It now also covers the curated edition set,
+        // the representative edition and the chosen acquisition plan.
+        db.prepare(`
+            UPDATE LibraryEditions
+            SET locked = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE edition_id IN (
+              SELECT id FROM AlbumEditions WHERE release_group_id = ?
+            )
+              AND library_id IN (SELECT id FROM Libraries WHERE enabled = 1)
+        `).run(Number(locked), releaseGroup.id);
+
         invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
         return true;
     }

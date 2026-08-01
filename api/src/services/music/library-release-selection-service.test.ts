@@ -8,6 +8,7 @@ import {
 } from "../../test-support/active-schema-fixture.js";
 import { ProviderReleaseIngestionService } from "../providers/provider-release-ingestion-service.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
+import { AlbumCommandService } from "./album-command-service.js";
 import { LibraryReleaseSelectionService } from "./library-release-selection-service.js";
 
 const { tempDir } = prepareActiveSchemaEnv("library-release-selection");
@@ -170,6 +171,7 @@ test("manual library selection pins the exact provider edition on the active sch
     assert.deepEqual(after.libraries[0].selections.map((selection) => ({
       editionId: selection.editionId,
       selectionMode: selection.selectionMode,
+      // Manual selection is a preference, not a lock: Lock is its own action.
       locked: selection.locked,
       composition: selection.plan?.composition,
       downloadMode: selection.plan?.downloadMode,
@@ -177,7 +179,7 @@ test("manual library selection pins the exact provider edition on the active sch
     })), [{
       editionId: 1,
       selectionMode: "manual",
-      locked: true,
+      locked: false,
       composition: "single_source",
       downloadMode: "album",
       primaryProviderEditionMatchId: hiresOffer.providerEditionMatchId,
@@ -248,11 +250,11 @@ test("selecting an edition keeps another deliberately selected edition for the a
       INSERT INTO Libraries (
         id, name, root_path, metadata_profile_id, quality_profile_id, enabled
       ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
-      -- Curation auto-selected the standard edition; the user then locked the
-      -- deluxe edition by hand.
+      -- The user deliberately selected the deluxe edition by hand (manual, but
+      -- not locked — Lock is a separate action).
       INSERT INTO LibraryEditions (
         id, library_id, edition_id, selection_mode, locked, reason, curation_version
-      ) VALUES (99, 1, 2, 'manual', 1, 'user', 1);
+      ) VALUES (99, 1, 2, 'manual', 0, 'user', 1);
     `);
 
     const service = new LibraryReleaseSelectionService(db);
@@ -336,6 +338,123 @@ test("an auto-curated edition is replaced by a manual selection", () => {
         SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id
       `).all() as Array<{ edition_id: number }>).map((row) => row.edition_id),
       [1],
+    );
+  } finally {
+    resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});
+
+test("the album lock reaches the edition rows planning actually consults", () => {
+  const artistMbid = "cccccccc-1111-4111-8111-111111111111";
+  const albumMbid = "cccccccc-2222-4222-8222-222222222222";
+  resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  try {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, '${artistMbid}', 'Bastille');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title)
+      VALUES (1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days');
+      INSERT INTO AlbumEditions (
+        id, mbid, release_group_id, release_group_mbid, artist_metadata_id, artist_mbid, title
+      ) VALUES
+        (1, 'cccccccc-3333-4333-8333-333333333333', 1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days'),
+        (2, 'cccccccc-4444-4444-8444-444444444444', 1, '${albumMbid}', 1, '${artistMbid}', 'Deluxe');
+      INSERT INTO MetadataProfiles (
+        id, name, release_type_policy, explicit_policy, require_provider_availability, redundancy_enabled
+      ) VALUES (1, 'Default', '{}', 'allow', 1, 0);
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        continue_upgrades, fallback_policy, output_format, transcode_policy
+      ) VALUES (
+        1, 'High Quality', '["lossless","hires-lossless"]',
+        '["hires-lossless","lossless"]', 'lossless', 0, 'best_allowed',
+        '{"codec":"flac"}', 'preserve'
+      );
+      INSERT INTO Libraries (
+        id, name, root_path, metadata_profile_id, quality_profile_id, enabled
+      ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
+    `);
+
+    const service = new LibraryReleaseSelectionService(db);
+    service.selectRelease({ releaseGroupMbid: albumMbid, libraryId: 1, editionId: 1 });
+
+    // Manual selection records a preference without silently locking.
+    assert.deepEqual(
+      db.prepare("SELECT selection_mode, locked FROM LibraryEditions WHERE edition_id = 1").get(),
+      { selection_mode: "manual", locked: 0 },
+    );
+
+    AlbumCommandService.updateAlbum(albumMbid, true, true);
+
+    // The lock must land on LibraryEditions, which is what acquisition planning
+    // and curation consult — not only on LibraryAlbums.
+    assert.equal(
+      (db.prepare("SELECT locked FROM LibraryEditions WHERE edition_id = 1")
+        .get() as { locked: number }).locked,
+      1,
+    );
+    assert.equal(
+      (db.prepare("SELECT locked FROM LibraryAlbums WHERE release_group_id = 1")
+        .get() as { locked: number }).locked,
+      1,
+    );
+
+    AlbumCommandService.updateAlbum(albumMbid, true, false);
+    assert.equal(
+      (db.prepare("SELECT locked FROM LibraryEditions WHERE edition_id = 1")
+        .get() as { locked: number }).locked,
+      0,
+      "unlocking lets curation reconsider the preference again",
+    );
+  } finally {
+    resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});
+
+test("an explicitly locked edition survives an exclusive selection", () => {
+  const artistMbid = "dddddddd-1111-4111-8111-111111111111";
+  const albumMbid = "dddddddd-2222-4222-8222-222222222222";
+  resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  try {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, '${artistMbid}', 'Bastille');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title)
+      VALUES (1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days');
+      INSERT INTO AlbumEditions (
+        id, mbid, release_group_id, release_group_mbid, artist_metadata_id, artist_mbid, title
+      ) VALUES
+        (1, 'dddddddd-3333-4333-8333-333333333333', 1, '${albumMbid}', 1, '${artistMbid}', 'Doom Days'),
+        (2, 'dddddddd-4444-4444-8444-444444444444', 1, '${albumMbid}', 1, '${artistMbid}', 'Deluxe');
+      INSERT INTO MetadataProfiles (
+        id, name, release_type_policy, explicit_policy, require_provider_availability, redundancy_enabled
+      ) VALUES (1, 'Default', '{}', 'allow', 1, 0);
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        continue_upgrades, fallback_policy, output_format, transcode_policy
+      ) VALUES (
+        1, 'High Quality', '["lossless","hires-lossless"]',
+        '["hires-lossless","lossless"]', 'lossless', 0, 'best_allowed',
+        '{"codec":"flac"}', 'preserve'
+      );
+      INSERT INTO Libraries (
+        id, name, root_path, metadata_profile_id, quality_profile_id, enabled
+      ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
+      INSERT INTO LibraryEditions (
+        id, library_id, edition_id, selection_mode, locked, reason, curation_version
+      ) VALUES (99, 1, 2, 'manual', 1, 'user', 1);
+    `);
+
+    new LibraryReleaseSelectionService(db).selectRelease({
+      releaseGroupMbid: albumMbid,
+      libraryId: 1,
+      editionId: 1,
+      exclusive: true,
+    });
+
+    assert.deepEqual(
+      (db.prepare("SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id")
+        .all() as Array<{ edition_id: number }>).map((row) => row.edition_id),
+      [1, 2],
+      "an explicit lock outranks an exclusive selection",
     );
   } finally {
     resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);

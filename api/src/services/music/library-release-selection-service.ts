@@ -538,6 +538,7 @@ export class LibraryReleaseSelectionService {
           AND edition_id IN (
             SELECT id FROM AlbumEditions WHERE release_group_id = ?
           )
+          AND locked = 0
           AND (? = 1 OR selection_mode = 'auto')
       `).run(
         input.libraryId,
@@ -545,14 +546,16 @@ export class LibraryReleaseSelectionService {
         target.release_group_id,
         input.exclusive === true ? 1 : 0,
       );
+      // Manual selection records a preference; it does not silently press Lock.
+      // Locking is a separate, explicit Album-level action, and only it protects
+      // a choice from being reconsidered by coverage-driven curation.
       return (this.db.prepare(`
         INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
-        ) VALUES (?, ?, 'manual', 1, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, 'manual', 0, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, edition_id) DO UPDATE SET
           selection_mode = 'manual',
-          locked = 1,
           reason = 'user',
           updated_at = CURRENT_TIMESTAMP
         RETURNING id
