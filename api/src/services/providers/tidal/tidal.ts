@@ -1504,7 +1504,11 @@ export async function getAlbumTracks(albumId: string) {
     volume_number: item.volumeNumber || 1,
     version: item.version || null,
     isrc: item.isrc || null,
-    explicit: item.explicit || false,
+    // `|| false` claimed every track was clean whenever the album tracklist
+    // omits the field, which is what made explicit releases plan as clean.
+    // Unknown must stay unknown so planExplicitContent reports "unknown"
+    // instead of asserting "clean".
+    explicit: item.explicit == null ? null : Boolean(item.explicit),
     quality: deriveQuality(item) || 'LOSSLESS',  // Derived from mediaMetadata.tags, ready for DB
     copyright: item.copyright || null,
     artist_id: item.artist?.id?.toString() || null,
