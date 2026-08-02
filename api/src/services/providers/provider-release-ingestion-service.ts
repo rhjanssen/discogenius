@@ -12,13 +12,78 @@ import {
 } from "../music/provider-match-repository.js";
 import {
   assignRankedTrackMatches,
-  scoreTrackMatch,
+  describeTrackMatch,
+  trackMatchMethodRank,
   TRACK_MATCH_THRESHOLD,
   type MatchProviderTrack,
   type MatchTargetTrack,
+  type TrackMatchEvidence,
 } from "../music/provider-track-matcher.js";
 
 const MIN_AMBIGUITY_MARGIN = 0.1;
+
+/**
+ * Ambiguity is judged *within an evidence tier*. A rival supported by weaker
+ * evidence cannot cast doubt on a stronger match however close its score: an
+ * ISRC match is not made doubtful by a title coincidence, and a proven
+ * medium+position+duration slot is not made doubtful by a same-title track
+ * sitting elsewhere on the release. Comparing raw scores across tiers is what
+ * used to reject structurally certain matches and leave canonical tracks
+ * uncovered.
+ */
+function marginWithinTier(
+  best: TrackMatchEvidence,
+  rivals: readonly TrackMatchEvidence[],
+): number {
+  const bestRank = trackMatchMethodRank(best.method);
+  let strongestRival = Number.NEGATIVE_INFINITY;
+  for (const rival of rivals) {
+    if (trackMatchMethodRank(rival.method) > bestRank) continue;
+    if (rival.score > strongestRival) strongestRival = rival.score;
+  }
+  return strongestRival === Number.NEGATIVE_INFINITY
+    ? Number.POSITIVE_INFINITY
+    : best.score - strongestRival;
+}
+
+/** The best evidence in a list, strongest tier first then highest score. */
+function bestEvidence(evidence: readonly TrackMatchEvidence[]): TrackMatchEvidence {
+  let best: TrackMatchEvidence = { score: 0, method: "none" };
+  for (const candidate of evidence) {
+    const better = trackMatchMethodRank(candidate.method) < trackMatchMethodRank(best.method)
+      || (trackMatchMethodRank(candidate.method) === trackMatchMethodRank(best.method)
+        && candidate.score > best.score);
+    if (better) best = candidate;
+  }
+  return best;
+}
+
+/**
+ * Persisted margins are score differences, so they live in 0..1. "No rival at
+ * this tier" is maximal confidence, recorded as 1 rather than Infinity, which
+ * SQLite cannot store.
+ */
+function persistableMargin(margin: number): number {
+  return Number.isFinite(margin) ? Math.max(0, Math.min(1, margin)) : 1;
+}
+
+/**
+ * Margin of the best evidence in a list against the strongest rival of at least
+ * the same tier, excluding the best entry itself.
+ */
+function tierAwareMargin(evidence: readonly TrackMatchEvidence[]): number {
+  const best = bestEvidence(evidence);
+  const rivals: TrackMatchEvidence[] = [];
+  let skippedBest = false;
+  for (const candidate of evidence) {
+    if (!skippedBest && candidate === best) {
+      skippedBest = true;
+      continue;
+    }
+    rivals.push(candidate);
+  }
+  return marginWithinTier(best, rivals);
+}
 
 export interface ProviderArtistCreditFacts {
   providerId: string;
@@ -192,22 +257,17 @@ export class ProviderReleaseIngestionService {
       const audioSources = memberRows
         .map(({ member }, index) => ({ member, memberId: memberIds[index] }))
         .filter(({ member }) => member.item.entityType === "track");
-      const scores = audioSources.map(({ member }) =>
-        targets.map((target) => scoreTrackMatch(target.target, providerTrack(member))));
-      const sourceMargins = scores.map((sourceScores) => {
-        const ranked = [...sourceScores].sort((left, right) => right - left);
-        return (ranked[0] ?? 0) - (ranked[1] ?? 0);
-      });
-      const targetMargins = targets.map((_, targetIndex) => {
-        const ranked = scores.map((sourceScores) => sourceScores[targetIndex] || 0)
-          .sort((left, right) => right - left);
-        return (ranked[0] ?? 0) - (ranked[1] ?? 0);
-      });
+      const evidence = audioSources.map(({ member }) =>
+        targets.map((target) => describeTrackMatch(target.target, providerTrack(member))));
+      const sourceMargins = evidence.map((sourceEvidence) => tierAwareMargin(sourceEvidence));
+      const targetMargins = targets.map((_, targetIndex) =>
+        tierAwareMargin(evidence.map((sourceEvidence) => sourceEvidence[targetIndex])));
       const edges = targets.map((target, targetIndex) =>
         audioSources.map((source, sourceIndex) => ({
           sourceKey: String(source.memberId),
           source: { ...source, sourceIndex },
-          matchScore: scores[sourceIndex][targetIndex] || 0,
+          matchScore: evidence[sourceIndex][targetIndex].score || 0,
+          method: evidence[sourceIndex][targetIndex].method,
         }))
           .filter((edge) => {
             if (edge.matchScore < TRACK_MATCH_THRESHOLD) return false;
@@ -216,7 +276,8 @@ export class ProviderReleaseIngestionService {
               && targetMargins[targetIndex] >= MIN_AMBIGUITY_MARGIN;
           })
           .sort((left, right) =>
-            right.matchScore - left.matchScore
+            trackMatchMethodRank(left.method) - trackMatchMethodRank(right.method)
+            || right.matchScore - left.matchScore
             || left.sourceKey.localeCompare(right.sourceKey)),
       );
       const accepted = assignRankedTrackMatches(edges);
@@ -238,16 +299,16 @@ export class ProviderReleaseIngestionService {
           matchState: "accepted",
           decisionSource: input.decisionSource || "automatic",
           confidence: edge.matchScore,
-          method: edge.matchScore === 1 ? "external_id" : "title_duration",
+          method: edge.method,
           evidence: { source: "normalized-provider-release-ingestion" },
           matcherVersion: input.matcherVersion,
           durationDeltaMs: durationMs == null || targetDurationMs == null
             ? null
             : Math.round(durationMs - targetDurationMs),
-          ambiguityMargin: Math.min(
+          ambiguityMargin: persistableMargin(Math.min(
             sourceMargins[edge.source.sourceIndex],
             targetMargins[targetIndex],
-          ),
+          )),
         });
       }
       for (let sourceIndex = 0; sourceIndex < audioSources.length; sourceIndex += 1) {
@@ -255,10 +316,14 @@ export class ProviderReleaseIngestionService {
         const rankedTargets = targets
           .map((target, targetIndex) => ({
             target,
-            score: scores[sourceIndex][targetIndex] || 0,
+            score: evidence[sourceIndex][targetIndex].score || 0,
+            method: evidence[sourceIndex][targetIndex].method,
             targetIndex,
           }))
-          .sort((left, right) => right.score - left.score || left.target.id - right.target.id);
+          .sort((left, right) =>
+            trackMatchMethodRank(left.method) - trackMatchMethodRank(right.method)
+            || right.score - left.score
+            || left.target.id - right.target.id);
         const best = rankedTargets[0];
         if (!best || best.score < TRACK_MATCH_THRESHOLD) continue;
         trackMatches.push({
@@ -268,13 +333,13 @@ export class ProviderReleaseIngestionService {
           matchState: "ambiguous",
           decisionSource: input.decisionSource || "automatic",
           confidence: best.score,
-          method: "title_duration_ambiguous",
+          method: "ambiguous",
           evidence: { source: "normalized-provider-release-ingestion" },
           matcherVersion: input.matcherVersion,
-          ambiguityMargin: Math.min(
+          ambiguityMargin: persistableMargin(Math.min(
             sourceMargins[sourceIndex],
             targetMargins[best.targetIndex],
-          ),
+          )),
         });
       }
 

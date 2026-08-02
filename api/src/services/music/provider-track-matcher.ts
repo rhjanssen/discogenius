@@ -68,39 +68,152 @@ export interface RankedTrackMatchEdge<TSource> {
 }
 
 /**
- * Deterministic maximum-cardinality one-to-one assignment for caller-ranked
- * track edges. Keeping the augmenting-path implementation here prevents the
- * slot selector and provider-offer materializer from growing subtly different
- * copies of the same matching workflow.
+ * How a match was established, strongest evidence first. The rank orders
+ * *evidence*, not score: a structural match at 0.95 is better evidence than a
+ * title/duration coincidence at 0.95, and ambiguity is judged within a tier so
+ * a weak title rival can never cast doubt on a proven slot.
  */
-export function assignRankedTrackMatches<TSource>(
-    edgesByTarget: Array<Array<RankedTrackMatchEdge<TSource>>>,
-): Map<number, RankedTrackMatchEdge<TSource>> {
-    const sourceOwner = new Map<string, number>();
-    const assignedEdge = new Map<number, RankedTrackMatchEdge<TSource>>();
+export type TrackMatchMethod =
+    | "external_id"
+    | "medium_position_duration"
+    | "title_duration"
+    | "none";
 
-    const tryAssign = (targetIndex: number, visitedSources: Set<string>): boolean => {
+const METHOD_RANK: Record<TrackMatchMethod, number> = {
+    external_id: 0,
+    medium_position_duration: 1,
+    title_duration: 2,
+    none: 3,
+};
+
+export function trackMatchMethodRank(method: TrackMatchMethod): number {
+    return METHOD_RANK[method];
+}
+
+export interface TrackMatchEvidence {
+    score: number;
+    method: TrackMatchMethod;
+}
+
+/**
+ * Deterministic maximum-cardinality, maximum-weight one-to-one assignment.
+ *
+ * Cardinality dominates: every additional canonical track covered is worth more
+ * than any achievable sum of scores, so the solver never trades coverage for a
+ * prettier score. Among assignments of equal cardinality it maximises total
+ * confidence, which the previous greedy augmenting path could not guarantee —
+ * that approach kept full coverage while settling for lower-confidence edges
+ * whenever the augmenting order happened to reach a contested source first.
+ *
+ * Implemented as the O(n^3) Hungarian shortest-augmenting-path assignment.
+ * Track lists are small (tens, rarely hundreds), so this is cheap and avoids a
+ * dependency.
+ *
+ * Determinism under input reordering comes from canonicalising the source order
+ * by sourceKey before solving: the solver is deterministic given its input, so
+ * a stable input order gives a stable result regardless of how the caller
+ * happened to collect the edges.
+ */
+export function assignRankedTrackMatches<TEdge extends RankedTrackMatchEdge<unknown>>(
+    edgesByTarget: Array<Array<TEdge>>,
+): Map<number, TEdge> {
+    const targetCount = edgesByTarget.length;
+    if (targetCount === 0) return new Map();
+
+    // Canonical source ordering: sourceKey ascending.
+    const bySourceKey = new Map<string, TEdge>();
+    for (const edges of edgesByTarget) {
+        for (const edge of edges || []) {
+            if (!bySourceKey.has(edge.sourceKey)) bySourceKey.set(edge.sourceKey, edge);
+        }
+    }
+    const sourceKeys = [...bySourceKey.keys()].sort((left, right) => left.localeCompare(right));
+    const sourceIndexByKey = new Map(sourceKeys.map((key, index) => [key, index]));
+    const sourceCount = sourceKeys.length;
+    if (sourceCount === 0) return new Map();
+
+    // Best edge per (target, source) pair. COVERAGE_WEIGHT must exceed the
+    // largest achievable score sum so one extra assignment always beats any
+    // redistribution of confidence.
+    const SCORE_SCALE = 1_000_000;
+    const COVERAGE_WEIGHT = SCORE_SCALE * (targetCount + 1);
+    const edgeAt = new Map<number, TEdge>();
+    const key = (targetIndex: number, sourceIndex: number) => targetIndex * sourceCount + sourceIndex;
+    for (let targetIndex = 0; targetIndex < targetCount; targetIndex += 1) {
         for (const edge of edgesByTarget[targetIndex] || []) {
-            if (visitedSources.has(edge.sourceKey)) continue;
-            visitedSources.add(edge.sourceKey);
-            const previousTarget = sourceOwner.get(edge.sourceKey);
-            if (previousTarget == null || tryAssign(previousTarget, visitedSources)) {
-                sourceOwner.set(edge.sourceKey, targetIndex);
-                assignedEdge.set(targetIndex, edge);
-                return true;
+            const sourceIndex = sourceIndexByKey.get(edge.sourceKey);
+            if (sourceIndex == null) continue;
+            const existing = edgeAt.get(key(targetIndex, sourceIndex));
+            if (!existing || edge.matchScore > existing.matchScore) {
+                edgeAt.set(key(targetIndex, sourceIndex), edge);
             }
         }
-        return false;
+    }
+    if (edgeAt.size === 0) return new Map();
+
+    // Rectangular Hungarian needs rows <= cols; pad columns with dummies.
+    const rows = targetCount;
+    const cols = Math.max(sourceCount, targetCount);
+    const INF = Number.POSITIVE_INFINITY;
+    const cost = (row: number, col: number): number => {
+        if (col >= sourceCount) return 0;
+        const edge = edgeAt.get(key(row, col));
+        // Minimisation: negate, so a real edge is strongly preferred over none.
+        return edge ? -(COVERAGE_WEIGHT + Math.round(edge.matchScore * SCORE_SCALE)) : 0;
     };
 
-    const targetOrder = edgesByTarget
-        .map((edges, targetIndex) => ({ targetIndex, choices: edges.length }))
-        .filter((entry) => entry.choices > 0)
-        .sort((left, right) => left.choices - right.choices || left.targetIndex - right.targetIndex);
-    for (const { targetIndex } of targetOrder) {
-        tryAssign(targetIndex, new Set());
+    const u = new Float64Array(rows + 1);
+    const v = new Float64Array(cols + 1);
+    const p = new Int32Array(cols + 1); // p[col] = row assigned to col (1-based), 0 = free
+    const way = new Int32Array(cols + 1);
+
+    for (let row = 1; row <= rows; row += 1) {
+        p[0] = row;
+        let j0 = 0;
+        const minv = new Float64Array(cols + 1).fill(INF);
+        const used = new Uint8Array(cols + 1);
+        do {
+            used[j0] = 1;
+            const i0 = p[j0];
+            let delta = INF;
+            let j1 = 0;
+            for (let j = 1; j <= cols; j += 1) {
+                if (used[j]) continue;
+                const cur = cost(i0 - 1, j - 1) - u[i0] - v[j];
+                if (cur < minv[j]) {
+                    minv[j] = cur;
+                    way[j] = j0;
+                }
+                if (minv[j] < delta) {
+                    delta = minv[j];
+                    j1 = j;
+                }
+            }
+            for (let j = 0; j <= cols; j += 1) {
+                if (used[j]) {
+                    u[p[j]] += delta;
+                    v[j] -= delta;
+                } else {
+                    minv[j] -= delta;
+                }
+            }
+            j0 = j1;
+        } while (p[j0] !== 0);
+        do {
+            const j1 = way[j0];
+            p[j0] = p[j1];
+            j0 = j1;
+        } while (j0);
     }
 
+    const assignedEdge = new Map<number, TEdge>();
+    for (let col = 1; col <= cols; col += 1) {
+        const row = p[col];
+        if (!row) continue;
+        if (col - 1 >= sourceCount) continue; // padded dummy column
+        const edge = edgeAt.get(key(row - 1, col - 1));
+        if (edge) assignedEdge.set(row - 1, edge);
+    }
     return assignedEdge;
 }
 
@@ -116,20 +229,24 @@ function normalizeIsrc(value: string | null | undefined): string {
 
 /**
  * Score how confidently a provider track is the same recording as a target
- * MusicBrainz track. Range 0..1; >= TRACK_MATCH_THRESHOLD counts as a match.
+ * MusicBrainz track, and report which evidence established it. Range 0..1;
+ * >= TRACK_MATCH_THRESHOLD counts as a match.
+ *
+ * The method matters beyond bookkeeping: ambiguity is judged within an evidence
+ * tier, so a proven slot is not talked out of a match by a title coincidence.
  */
-export function scoreTrackMatch(
+export function describeTrackMatch(
     target: MatchTargetTrack,
     pt: MatchProviderTrack,
     options: TrackMatchOptions = {},
-): number {
+): TrackMatchEvidence {
     // 1. Deterministic identifiers win outright.
     if (target.recordingMbid && pt.mbid && target.recordingMbid === pt.mbid) {
-        return 1.0;
+        return { score: 1.0, method: "external_id" };
     }
     const providerIsrc = normalizeIsrc(pt.isrc);
     if (providerIsrc && target.isrcs.has(providerIsrc)) {
-        return 1.0;
+        return { score: 1.0, method: "external_id" };
     }
 
     const positionAligned = Number(target.trackNumber || 0) > 0
@@ -176,10 +293,10 @@ export function scoreTrackMatch(
     //    Mad" vs "Distorted Light Beam"), and that used to promote a false 0.95
     //    cover that beat the barcode-matched single on HIRES quality.
     if ((versionsOk || oneSidedStructurallyConfirmed) && positionAligned && baseMatch) {
-        return 0.95;
+        return { score: 0.95, method: "medium_position_duration" };
     }
     if (versionsOk && positionAligned && durationClose && titleSim >= 0.55) {
-        return 0.95;
+        return { score: 0.95, method: "medium_position_duration" };
     }
     // 3. Title + duration agree but the position differs — the case when a
     //    standalone single is combined into an album to cover a target. A
@@ -187,7 +304,7 @@ export function scoreTrackMatch(
     //    path assigned a studio track to "… (live at Kalkscheune, Berlin)"
     //    purely on a coincidental runtime.
     if (versionsOk && baseMatch && durationClose) {
-        return 0.9;
+        return { score: 0.9, method: "title_duration" };
     }
     // A small number of provider releases are supersets containing several
     // editions back-to-back while flattening their displayed titles (for
@@ -202,7 +319,10 @@ export function scoreTrackMatch(
         && baseMatch
         && durationClose
     ) {
-        return Number((0.9 + (1 - (durationDiff / DURATION_GRACE_SEC)) * 0.04).toFixed(3));
+        return {
+            score: Number((0.9 + (1 - (durationDiff / DURATION_GRACE_SEC)) * 0.04).toFixed(3)),
+            method: "title_duration",
+        };
     }
 
     // 4. Blended fallback (title is the dominant signal, structure
@@ -215,7 +335,23 @@ export function scoreTrackMatch(
     // Conflicting significant versions can still share enough base-title text to
     // drift over the threshold; hold them just under it so they never count as
     // the same recording on title alone.
-    return versionsOk ? blended : Math.min(blended, TRACK_MATCH_THRESHOLD - 0.05);
+    const score = versionsOk ? blended : Math.min(blended, TRACK_MATCH_THRESHOLD - 0.05);
+    return {
+        score,
+        method: score >= TRACK_MATCH_THRESHOLD ? "title_duration" : "none",
+    };
+}
+
+/**
+ * Score-only view of {@link describeTrackMatch}, for callers that rank on
+ * confidence alone.
+ */
+export function scoreTrackMatch(
+    target: MatchTargetTrack,
+    pt: MatchProviderTrack,
+    options: TrackMatchOptions = {},
+): number {
+    return describeTrackMatch(target, pt, options).score;
 }
 
 export function isTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack): boolean {

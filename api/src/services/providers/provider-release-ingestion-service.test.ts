@@ -220,6 +220,161 @@ test("contextual member title and duration outrank the standalone item facts", (
   });
 });
 
+// Structure resolves most repeated titles, but when two provider tracks are
+// genuinely indistinguishable — same title, same runtime, and neither slot
+// matches the canonical track — the match must stay ambiguous rather than pick
+// one arbitrarily.
+test("genuinely indistinguishable candidates stay ambiguous", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-interlude', 'Interlude', 60000);
+      -- The canonical track sits at disc 1 position 5; neither provider track does.
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't-interlude', 1, 1, 1, 5, 'Interlude', 60000);
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "release-two-interludes",
+        title: "Release A",
+        availability: "available",
+      },
+      members: [
+        trackMember({ providerId: "p-interlude-1", title: "Interlude", mediumPosition: 1, position: 2, durationMs: 60000 }),
+        trackMember({ providerId: "p-interlude-2", title: "Interlude", mediumPosition: 1, position: 9, durationMs: 60000 }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 0, "neither candidate may be picked arbitrarily");
+    assert.equal(result.ambiguousTrackCount, 2);
+    // With no accepted overlap there is nothing to anchor a release match on, so
+    // ingestion persists neither the relation nor the ambiguous rows rather than
+    // inventing a link.
+    assert.equal(result.releaseMatchId, null);
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM ProviderEditionMatches").get() as { count: number }).count,
+      0,
+    );
+  });
+});
+
+// Maximum cardinality must dominate confidence: taking the highest-scoring edge
+// for one target can strand another target that had only that one candidate.
+test("assignment maximises coverage before confidence", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+      INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
+        (1, 'rec-one', 'Landslide',        200000, '["GBAAA0000001"]'),
+        (2, 'rec-two', 'Landslide (edit)', 200000, NULL);
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't-one', 1, 1, 1, 1, 'Landslide',        200000),
+        (2, 't-two', 1, 2, 1, 2, 'Landslide (edit)', 200000);
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "release-landslide",
+        title: "Release A",
+        availability: "available",
+      },
+      members: [
+        // Carries the ISRC of canonical track 1, so it is a perfect 1.0 for it —
+        // but it also scores well against track 2. Track 2's only other
+        // candidate is the second member, so the solver must not let the ISRC
+        // track take slot 2.
+        trackMember({ providerId: "p-one", title: "Landslide", mediumPosition: 1, position: 1, durationMs: 200000, isrc: "GBAAA0000001" }),
+        trackMember({ providerId: "p-two", title: "Landslide", mediumPosition: 1, position: 2, durationMs: 200000 }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 2, "both canonical tracks must be covered");
+    assert.deepEqual(
+      db.prepare(`
+        SELECT ptm.track_id, pi.provider_id, ptm.method
+        FROM ProviderTrackMatches ptm
+        JOIN ProviderEditionMembers mem ON mem.id = ptm.provider_edition_member_id
+        JOIN ProviderItems pi ON pi.id = mem.member_item_id
+        WHERE ptm.match_state = 'accepted'
+        ORDER BY ptm.track_id
+      `).all(),
+      [
+        { track_id: 1, provider_id: "p-one", method: "external_id" },
+        { track_id: 2, provider_id: "p-two", method: "medium_position_duration" },
+      ],
+    );
+  });
+});
+
+// Callers collect edges in whatever order the provider returned members; the
+// assignment must not depend on it.
+test("assignment is deterministic when member order changes", () => {
+  const ingestOrder = (reversed: boolean) => {
+    let assignments: Array<{ track_id: number; provider_id: string }> = [];
+    withDb((db) => {
+      db.exec(`
+        INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
+        INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
+        INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+        INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
+          (1, 'rec-a', 'Alpha', 200000),
+          (2, 'rec-b', 'Beta',  210000),
+          (3, 'rec-c', 'Gamma', 220000);
+        INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+          (1, 't-a', 1, 1, 1, 1, 'Alpha', 200000),
+          (2, 't-b', 1, 2, 1, 2, 'Beta',  210000),
+          (3, 't-c', 1, 3, 1, 3, 'Gamma', 220000);
+      `);
+      const members = [
+        trackMember({ providerId: "p-a", title: "Alpha", mediumPosition: 1, position: 1, durationMs: 200000 }),
+        trackMember({ providerId: "p-b", title: "Beta", mediumPosition: 1, position: 2, durationMs: 210000 }),
+        trackMember({ providerId: "p-c", title: "Gamma", mediumPosition: 1, position: 3, durationMs: 220000 }),
+      ];
+      new ProviderReleaseIngestionService(db).ingest({
+        canonicalReleaseId: 1,
+        matcherVersion: 1,
+        release: {
+          provider: "tidal",
+          entityType: "release",
+          providerId: "release-abc",
+          title: "Release A",
+          availability: "available",
+        },
+        members: reversed ? [...members].reverse() : members,
+      });
+      assignments = db.prepare(`
+        SELECT ptm.track_id, pi.provider_id
+        FROM ProviderTrackMatches ptm
+        JOIN ProviderEditionMembers mem ON mem.id = ptm.provider_edition_member_id
+        JOIN ProviderItems pi ON pi.id = mem.member_item_id
+        WHERE ptm.match_state = 'accepted'
+        ORDER BY ptm.track_id
+      `).all() as Array<{ track_id: number; provider_id: string }>;
+    });
+    return assignments;
+  };
+
+  assert.deepEqual(ingestOrder(false), ingestOrder(true));
+  assert.deepEqual(ingestOrder(false), [
+    { track_id: 1, provider_id: "p-a" },
+    { track_id: 2, provider_id: "p-b" },
+    { track_id: 3, provider_id: "p-c" },
+  ]);
+});
+
 test("normalized provider ingestion preserves membership reuse, credits, and ambiguous repeated titles", () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-provider-release-ingestion-"));
   const db = new Database(path.join(folder, "test.db"));
@@ -311,8 +466,8 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
         },
       ],
     });
-    assert.equal(first.acceptedTrackCount, 1);
-    assert.equal(first.ambiguousTrackCount, 1);
+    assert.equal(first.acceptedTrackCount, 2);
+    assert.equal(first.ambiguousTrackCount, 0);
     assert.ok(first.releaseMatchId);
     assert.deepEqual(
       db.prepare(`
@@ -328,13 +483,15 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
           method: "external_id",
         },
         {
-          match_state: "ambiguous",
-          track_id: null,
+          match_state: "accepted",
+          track_id: 2,
           recording_id: 2,
-          method: "title_duration_ambiguous",
+          method: "medium_position_duration",
         },
       ],
-      "Repeated titles on different discs must not be assigned by position",
+      "The disc-1 provider track belongs to the disc-1 canonical track; the disc-2"
+      + " instrumental of the same name and runtime is a weaker title-only rival"
+      + " and must not cast doubt on a proven slot",
     );
     assert.deepEqual(
       db.prepare(`
