@@ -69,15 +69,31 @@ function normalizeIsrcs(value: string | null): Set<string> {
   }
 }
 
-function providerTrack(item: ProviderItemFacts): MatchProviderTrack {
+/**
+ * Adapt a provider edition member into the shared matcher's shape.
+ *
+ * The member row — not the item — carries this release's structure: an item is
+ * one provider track identity that can appear on several releases at different
+ * positions, so medium/position/contextual title/duration only mean anything in
+ * membership context. Feeding the matcher nulls for them threw away the exact
+ * evidence it is built around and left it guessing from the title alone, which
+ * is how "Distorted Light Beam (reprise)" on disc 2 went unmatched while the
+ * provider had it at precisely disc 2 track 4 with an identical runtime.
+ *
+ * Contextual fields win when present: a release can retitle or edit a track
+ * relative to the standalone item.
+ */
+function providerTrack(member: ProviderReleaseMemberFacts): MatchProviderTrack {
+  const { item } = member;
+  const durationMs = member.contextualDurationMs ?? item.durationMs;
   return {
     mbid: null,
     isrc: item.isrc || null,
-    title: item.title || "",
+    title: member.contextualTitle || item.title || "",
     version: item.version || null,
-    trackNumber: null,
-    volumeNumber: null,
-    durationSec: item.durationMs == null ? null : item.durationMs / 1000,
+    trackNumber: member.position,
+    volumeNumber: member.mediumPosition,
+    durationSec: durationMs == null ? null : durationMs / 1000,
   };
 }
 
@@ -177,7 +193,7 @@ export class ProviderReleaseIngestionService {
         .map(({ member }, index) => ({ member, memberId: memberIds[index] }))
         .filter(({ member }) => member.item.entityType === "track");
       const scores = audioSources.map(({ member }) =>
-        targets.map((target) => scoreTrackMatch(target.target, providerTrack(member.item))));
+        targets.map((target) => scoreTrackMatch(target.target, providerTrack(member))));
       const sourceMargins = scores.map((sourceScores) => {
         const ranked = [...sourceScores].sort((left, right) => right - left);
         return (ranked[0] ?? 0) - (ranked[1] ?? 0);
@@ -210,7 +226,8 @@ export class ProviderReleaseIngestionService {
       const trackMatches: ProviderTrackMatchInput[] = [];
       for (const [targetIndex, edge] of accepted) {
         const target = targets[targetIndex];
-        const durationMs = edge.source.member.item.durationMs;
+        const durationMs = edge.source.member.contextualDurationMs
+          ?? edge.source.member.item.durationMs;
         const targetDurationMs = target.target.durationSec == null
           ? null
           : target.target.durationSec * 1000;
