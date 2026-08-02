@@ -229,7 +229,10 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
 
   const syncArtist = useCallback(async (artistId: string) => {
     try {
-      const data: any = await api.scanArtist(artistId, { forceUpdate: false });
+      // A person clicking refresh means "do it now", so freshness is ignored the
+      // same way metadata refresh already ignores it. Scheduled work still
+      // passes forceUpdate: false and skips fetching while data is fresh.
+      const data: any = await api.scanArtist(artistId, { forceUpdate: true });
 
       toast({
         title: "Refresh & scan queued",

@@ -337,8 +337,14 @@ router.post("/:artistId/scan", async (req, res) => {
   try {
     const artistId = req.params.artistId;
 
+    // This route is the operator-initiated refresh, so it ignores freshness by
+    // default. Omitting the flag used to mean forceUpdate=false, which made
+    // MatchArtistProviders complete successfully while skipping every provider
+    // fetch — a refresh that looked like it ran and changed nothing. Scheduled
+    // refreshes enqueue RefreshArtist directly and still honour staleness.
+    const requested = (req.body as any)?.forceUpdate;
     const queued = await queueArtistRefreshScan(artistId, {
-      forceUpdate: Boolean((req.body as any)?.forceUpdate),
+      forceUpdate: requested == null ? true : Boolean(requested),
     });
 
     if (!queued) {

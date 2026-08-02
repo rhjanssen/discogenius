@@ -492,7 +492,8 @@ const Library = () => {
 
   const queueSelectedArtistScan = async () => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
-      await api.scanArtist(artist.id, { forceUpdate: false });
+      // Manual bulk action: ignore freshness, like the single-artist refresh.
+      await api.scanArtist(artist.id, { forceUpdate: true });
     });
 
     if (succeeded > 0) {
@@ -896,7 +897,7 @@ const Library = () => {
   const handleArtistScan = useCallback(async (e: React.MouseEvent, artist: any) => {
     e.stopPropagation();
     try {
-      const result: any = await api.scanArtist(artist.id, { forceUpdate: false });
+      const result: any = await api.scanArtist(artist.id, { forceUpdate: true });
       toast({
         title: "Refresh & scan queued",
         description: result?.message || artist.name,
