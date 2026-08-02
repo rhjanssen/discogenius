@@ -144,8 +144,11 @@ function importedQualityFor(output: DesiredOutputFormat, source: SourceAudioFact
 }
 
 /**
- * Decide import conversion from normalized facts only. A lossy source is never
- * accepted for a lossless output, preventing fabricated/upscaled quality.
+ * Decide import conversion from normalized facts only.
+ *
+ * Settings quality is a preference ladder (try higher, fall back lower), so a
+ * lossy source on a Max/High profile is accepted when the profile allows it —
+ * imported and labelled as lossy, never upscaled to a fabricated lossless file.
  */
 export function decideImportedQuality(
   profile: QualityProfilePolicy,
@@ -162,14 +165,23 @@ export function decideImportedQuality(
     };
   }
   const output = profile.outputFormat;
-  if (output.lossless && source.quality === "lossy") {
+  // Lossy can only land as lossy. Prefer keep-as-is over rejecting the only
+  // available offer when Max/High fell back to SoundCloud / YouTube Music.
+  if (source.quality === "lossy" && output.lossless) {
     return {
-      accepted: false,
+      accepted: true,
       transcode: false,
-      reason: "lossy sources cannot be upscaled and labelled lossless",
+      reason: "lossy source preserved; cannot be upscaled to a lossless label",
       sourceQuality: source.quality,
-      importedQuality: null,
-      output: null,
+      importedQuality: "lossy",
+      output: {
+        codec: "preserve",
+        lossless: false,
+        bitDepth: null,
+        sampleRate: null,
+        bitrate: source.bitrate ?? output.bitrate ?? null,
+        spatial: false,
+      },
     };
   }
   const preserve = output.codec === "preserve"

@@ -65,12 +65,21 @@ test("MAX preserves hi-res and never invents technical facts", () => {
   assert.equal(decision.importedQuality, "hires-lossless");
 });
 
-test("lossy input is never upscaled to a lossless profile", () => {
-  const permissive = profile({
-    allowed_source_formats: JSON.stringify(["lossy", "lossless", "hires-lossless"]),
+test("lossy input on a Max/High-style profile is accepted as lossy, never labelled lossless", () => {
+  const maxWithFallback = profile({
+    name: "Max Quality",
+    allowed_source_formats: JSON.stringify(["hires-lossless", "lossless", "lossy"]),
+    preference_order: JSON.stringify(["hires-lossless", "lossless", "lossy"]),
+    cutoff: "hires-lossless",
+    continue_upgrades: 1,
+    output_format: JSON.stringify({ codec: "preserve", lossless: true }),
+    transcode_policy: "preserve",
   });
-  const decision = decideImportedQuality(permissive, { quality: "lossy", codec: "mp3" });
-  assert.equal(decision.accepted, false);
+  const decision = decideImportedQuality(maxWithFallback, { quality: "lossy", codec: "mp3" });
+  assert.equal(decision.accepted, true);
+  assert.equal(decision.transcode, false);
+  assert.equal(decision.importedQuality, "lossy");
+  assert.equal(decision.output?.lossless, false);
   assert.match(decision.reason, /cannot be upscaled/);
 });
 

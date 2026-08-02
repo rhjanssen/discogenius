@@ -54,10 +54,10 @@ const QUALITY_OPTIONS: Array<{
     label: string;
     description: string;
 }> = [
-    { value: "low", label: "Low", description: "Smaller files, lower quality" },
-    { value: "normal", label: "Normal", description: "Good quality for everyday listening" },
-    { value: "high", label: "High", description: "CD quality (lossless)" },
-    { value: "max", label: "Max", description: "Highest available quality (hi-res when offered)" },
+    { value: "low", label: "Low", description: "Prefer smaller files; higher quality still used when it is all that is offered" },
+    { value: "normal", label: "Normal", description: "Prefer good everyday quality; falls back if needed" },
+    { value: "high", label: "High", description: "Prefer CD quality (lossless); uses lower quality when lossless is unavailable" },
+    { value: "max", label: "Max", description: "Prefer hi-res, then lossless, then lower — never hide a provider that only has lossy" },
 ];
 
 const useStyles = makeStyles({

@@ -161,3 +161,39 @@ test("ensureDefaultQualityProfiles is idempotent", () => {
     assert.equal(count, 6);
   });
 });
+
+test("Max and High allow lossy as a fallback rung, not only lossless", () => {
+  withDb((db) => {
+    ensureDefaultQualityProfiles(db);
+    const rows = db.prepare(`
+      SELECT name, allowed_source_formats, preference_order, cutoff
+      FROM quality_profiles
+      WHERE name IN ('Max Quality', 'High Quality')
+      ORDER BY name
+    `).all() as Array<{
+      name: string;
+      allowed_source_formats: string;
+      preference_order: string;
+      cutoff: string;
+    }>;
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      const allowed = JSON.parse(row.allowed_source_formats) as string[];
+      const preference = JSON.parse(row.preference_order) as string[];
+      assert.ok(allowed.includes("lossy"), `${row.name} must allow lossy fallback`);
+      assert.ok(allowed.includes("lossless"), `${row.name} must allow lossless`);
+      assert.ok(preference.includes("lossy"), `${row.name} preference must rank lossy`);
+      // Higher rungs first.
+      assert.ok(
+        preference.indexOf("lossless") < preference.indexOf("lossy"),
+        `${row.name} must prefer lossless over lossy`,
+      );
+    }
+    const max = rows.find((row) => row.name === "Max Quality")!;
+    assert.equal(max.cutoff, "hires-lossless");
+    assert.equal(
+      (JSON.parse(max.preference_order) as string[])[0],
+      "hires-lossless",
+    );
+  });
+});

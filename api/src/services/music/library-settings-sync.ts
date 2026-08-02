@@ -6,7 +6,11 @@
  *   - Settings → Audio quality  → Stereo library quality profile
  *   - Settings → Spatial toggle → Spatial library enabled (Atmos planning)
  *
- * Download backends (tiddl) already read `quality.audio_quality` as a delivery
+ * Audio quality is a preference ladder, not a hard floor:
+ *   Max → High → Normal → Low. Prefer the best available; still plan and accept
+ *   lower rungs (including lossy-only providers) when better quality is missing.
+ *
+ * Download backends (tiddl) still read `quality.audio_quality` as a delivery
  * ceiling; acquisition planning reads the library profile. This module keeps
  * those two layers pointing at the same user intent.
  */
@@ -55,27 +59,34 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
       updated_at = CURRENT_TIMESTAMP
   `);
 
-  // Max — plan for hi-res; continue upgrades past lossless.
+  // Stereo ladder is preference + fallback, not a hard floor:
+  //   Max  → prefer hi-res, then lossless, then lossy (YT/SC still plan)
+  //   High → prefer lossless (hi-res treated equal once cutoff is met), then lossy
+  //   Normal / Low → same allowlist; preference_order + output change
+  // allowed_source_formats must include every rung that may be used as a
+  // fallback. preference_order + cutoff decide which plan wins; they do not
+  // hide weaker providers when stronger quality is unavailable.
   upsert.run(
     "Max Quality",
     1,
     "hires-lossless",
     JSON.stringify(["HIRES_LOSSLESS", "LOSSLESS"]),
-    JSON.stringify(["lossless", "hires-lossless"]),
-    JSON.stringify(["hires-lossless", "lossless"]),
+    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
+    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
     1,
     "best_allowed",
     JSON.stringify({ codec: "preserve", lossless: true }),
     "preserve",
   );
-  // High — full lossless album preferred over fragmented hi-res composites.
+  // High — coherent lossless album preferred over fragmented hi-res composites
+  // (continue_upgrades off); lossy remains a last-resort fallback.
   upsert.run(
     "High Quality",
     1,
     "lossless",
     JSON.stringify(["LOSSLESS"]),
-    JSON.stringify(["lossless", "hires-lossless"]),
-    JSON.stringify(["hires-lossless", "lossless"]),
+    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
+    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
     0,
     "best_allowed",
     JSON.stringify({ codec: "flac", lossless: true, bitDepth: 16, sampleRate: 44100 }),
