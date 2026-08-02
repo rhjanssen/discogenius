@@ -402,8 +402,25 @@ async function tidalFetchWithRetry(
 }
 
 /**
+ * Preserve TIDAL's explicitness exactly as reported.
+ *
+ * `true` and `false` are both affirmative answers to "does this contain
+ * explicit content?"; a missing field is not. Not every endpoint carries the
+ * property — the album track list and the OpenAPI bulk payload omit it in cases
+ * where the v1 album detail supplies it — and coercing that absence to `false`
+ * asserts something the provider never said. That is what made explicit releases
+ * plan as clean, so unknown must stay unknown all the way to the plan.
+ *
+ * Note `false` alone never means "clean edit": a track that was never explicit
+ * reports exactly the same value as a censored counterpart.
+ */
+export function nullableExplicit(value: unknown): boolean | null {
+  return value == null ? null : Boolean(value);
+}
+
+/**
  * Extract quality from mediaMetadata.tags
- * 
+ *
  * Tidal API returns exactly three possible tags: LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS
  * When multiple tags are present (e.g., ["LOSSLESS", "HIRES_LOSSLESS"]), return the highest quality.
  * 
@@ -930,7 +947,7 @@ export async function searchTidal(query: string, type: string | string[], limit:
       quality: deriveQuality(item),
       audioQuality: item.audioQuality,
       mediaMetadata: { tags: item.mediaMetadata?.tags || [] },
-      explicit: item.explicit || false,
+      explicit: nullableExplicit(item.explicit),
       popularity: item.popularity || 0,
       duration: item.duration || 0,
       numberOfTracks: item.numberOfTracks || 0,
@@ -1101,7 +1118,7 @@ export async function getArtistAlbums(artistId: string) {
         duration: item.duration || 0,
         type: item.type || 'ALBUM',  // Release type: ALBUM, EP, SINGLE
         version: item.version || null,
-        explicit: item.explicit || false,
+        explicit: nullableExplicit(item.explicit),
         quality: quality || 'LOSSLESS',  // Derived from mediaMetadata.tags
         url: item.url || `https://listen.tidal.com/album/${item.id}`,
         popularity: item.popularity || 0,
@@ -1135,7 +1152,7 @@ export async function getTrack(trackId: string) {
     artist_name: data.artist?.name || null,
     isrc: data.isrc || null,
     quality: deriveQuality(data) || "LOSSLESS",
-    explicit: data.explicit || false,
+    explicit: nullableExplicit(data.explicit),
     url: data.url || `https://listen.tidal.com/track/${data.id}`,
   };
 }
@@ -1449,7 +1466,7 @@ export async function getAlbum(albumId: string) {
     release_date: data.releaseDate || data.streamStartDate || null,
     type: data.type || "ALBUM",
     quality: deriveQuality(data),
-    explicit: data.explicit || false,
+    explicit: nullableExplicit(data.explicit),
     popularity: data.popularity || 0,
     duration: data.duration || 0,
     numberOfTracks: data.numberOfTracks || 0,
@@ -1504,11 +1521,7 @@ export async function getAlbumTracks(albumId: string) {
     volume_number: item.volumeNumber || 1,
     version: item.version || null,
     isrc: item.isrc || null,
-    // `|| false` claimed every track was clean whenever the album tracklist
-    // omits the field, which is what made explicit releases plan as clean.
-    // Unknown must stay unknown so planExplicitContent reports "unknown"
-    // instead of asserting "clean".
-    explicit: item.explicit == null ? null : Boolean(item.explicit),
+    explicit: nullableExplicit(item.explicit),
     quality: deriveQuality(item) || 'LOSSLESS',  // Derived from mediaMetadata.tags, ready for DB
     copyright: item.copyright || null,
     artist_id: item.artist?.id?.toString() || null,
@@ -1570,7 +1583,7 @@ export function mapTidalOpenApiTrack(
     volume_number: item?.meta?.volumeNumber || 1,
     version: attr.version || null,
     isrc: attr.isrc || null,
-    explicit: attr.explicit || false,
+    explicit: nullableExplicit(attr.explicit),
     quality: deriveQuality({ mediaMetadata: { tags: attr.mediaTags || [] } }) || "LOSSLESS",
     copyright,
     artist_id: primaryArtist?.id || null,
@@ -1654,7 +1667,7 @@ export async function getAlbumItems(albumId: string) {
         track_number: item.trackNumber || 0,
         volume_number: item.volumeNumber || 1,
         version: item.version || null,
-        explicit: item.explicit || false,
+        explicit: nullableExplicit(item.explicit),
         quality: tidalVideoQualityTag(item.quality),
         image_id: item.imageId || item.image || null,
         artist_id: item.artist?.id?.toString() || null,
@@ -1677,7 +1690,7 @@ export async function getAlbumItems(albumId: string) {
       volume_number: item.volumeNumber || 1,
       version: item.version || null,
       isrc: item.isrc || null,
-      explicit: item.explicit || false,
+      explicit: nullableExplicit(item.explicit),
       quality: deriveQuality(item) || 'LOSSLESS',
       copyright: item.copyright || null,
       artist_id: item.artist?.id?.toString() || null,
@@ -1713,7 +1726,7 @@ export async function getArtistVideos(artistId: string) {
     duration: item.duration || 0,
     release_date: item.releaseDate || item.streamStartDate || null,
     version: item.version || null,
-    explicit: item.explicit || false,
+    explicit: nullableExplicit(item.explicit),
     quality: tidalVideoQualityTag(item.quality),  // null for untrusted catalog MP4_1080P
     image_id: item.imageId || item.image || null,  // UUID for video thumbnail
     vibrant_color: item.vibrantColor || null,  // Hex color code
@@ -1748,7 +1761,7 @@ export async function getVideo(videoId: string) {
     image_id: data.imageId || data.image || null,  // UUID for video thumbnail
     vibrant_color: data.vibrantColor || null,  // Hex color code
     quality,
-    explicit: data.explicit || false,
+    explicit: nullableExplicit(data.explicit),
     popularity: data.popularity || 0,
     url: `https://listen.tidal.com/video/${data.id}`,
     type: 'Music Video'

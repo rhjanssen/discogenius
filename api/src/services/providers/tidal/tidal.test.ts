@@ -5,8 +5,45 @@ import {
   extractImportListsFromPage,
   getTidalPageImage,
   mapTidalOpenApiTrack,
+  nullableExplicit,
   tidalSquareImageUrl,
 } from "./tidal.js";
+
+test("explicitness keeps the provider's three answers apart", () => {
+  assert.equal(nullableExplicit(true), true);
+  assert.equal(nullableExplicit(false), false, "an affirmative 'not explicit' must survive");
+  assert.equal(nullableExplicit(undefined), null, "an omitted field is not a claim of clean");
+  assert.equal(nullableExplicit(null), null);
+});
+
+test("bulk JSON:API tracks report unknown explicitness when the payload omits it", () => {
+  const noArtists = new Map<string, unknown>();
+
+  const withoutExplicit = mapTidalOpenApiTrack(
+    { id: "1" },
+    { attributes: { title: "Track", isrc: "GBAAA0000001" } },
+    noArtists,
+  );
+  assert.equal(
+    withoutExplicit.explicit,
+    null,
+    "the OpenAPI payload omitting explicit must not be recorded as clean",
+  );
+
+  const affirmativelyClean = mapTidalOpenApiTrack(
+    { id: "2" },
+    { attributes: { title: "Track", explicit: false } },
+    noArtists,
+  );
+  assert.equal(affirmativelyClean.explicit, false);
+
+  const affirmativelyExplicit = mapTidalOpenApiTrack(
+    { id: "3" },
+    { attributes: { title: "Track", explicit: true } },
+    noArtists,
+  );
+  assert.equal(affirmativelyExplicit.explicit, true);
+});
 
 test("deriveQuality checks mediaMetadata.tags priority", () => {
   assert.equal(deriveQuality({ mediaMetadata: { tags: ["LOSSLESS", "HIRES_LOSSLESS", "DOLBY_ATMOS"] } }), "DOLBY_ATMOS");
