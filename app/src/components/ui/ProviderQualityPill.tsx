@@ -61,8 +61,10 @@ interface ProviderQualityRowProps {
     /**
      * Interactive mode (release switcher): each badge becomes a selectable
      * control that reports its offer. Display-only rows leave this unset.
+     * The click event is forwarded so callers can read Ctrl/Cmd for additive
+     * multi-edition selection.
      */
-    onSelectOffer?: (offer: ProviderQualityOffer) => void;
+    onSelectOffer?: (offer: ProviderQualityOffer, event: React.MouseEvent) => void;
     /** Provider album id (set) currently filling the slot — highlighted, not clickable. */
     selectedOfferAlbumId?: string | null;
     /** Owning provider for selectedOfferAlbumId; provider ids are not globally unique. */
@@ -309,31 +311,15 @@ function mergeOffersByRelease(offers: ProviderQualityOffer[]): MergedOffer[] {
     return merged;
 }
 
-function statusLabel(offer: ProviderQualityOffer): string {
-    const hasSelection = Boolean(String(offer.providerAlbumId || "").trim());
-    // Video offers reference a concrete provider video, not a matched release.
-    if (offer.slot === "video") return hasSelection ? "available" : "no provider video";
-    if (!hasSelection) return "no provider release selected";
-    const providerAlbumIds = offer.providerAlbumIds?.length
-        ? offer.providerAlbumIds
-        : splitProviderAlbumIds(offer.providerAlbumId);
-    if (offer.matchKind === "composite" || providerAlbumIds.length > 1) return "hybrid complete match";
-    const status = String(offer.matchStatus || "probable").toLowerCase();
-    if (status === "verified") return "verified match";
-    if (status === "ambiguous") return "ambiguous match";
-    if (status === "unmatched") return "no provider release selected";
-    return "probable match";
-}
-
 /**
  * Shared quality-badge tooltip used by the album header and the releases
  * switcher (and every other ProviderQualityRow). Keep one format everywhere.
  *
  * Provider mark already identifies the source — do not lead with `TIDAL · …`.
  *
- *   Stereo · verified match
- *   TIDAL album ID: 287367980   ← hyperlink
- *   TIDAL track ID: 394045534   ← when known
+ *   Stereo · single-source match   (or composite match)
+ *   TIDAL album ID: 287367980   ← hyperlink; multiple lines for composites
+ *   TIDAL track ID: 394045534   ← when known (tracklist rows)
  *   MusicBrainz edition <mbid>
  *   MusicBrainz track / recording when known
  */
@@ -352,16 +338,29 @@ function buildQualityOfferTooltip(
     const fillsBothLibraries = offer.slots.length > 1;
     const providerTrackId = String(offer.providerTrackId || "").trim();
     const isVideo = offer.slot === "video";
+    const isComposite = offer.matchKind === "composite" || providerAlbumIds.length > 1;
     // Video: skip redundant "Video · available" — provider mark + ID lines are enough.
-    // Audio: slot + conviction, without repeating the provider name.
+    // Audio: composition first (single-source vs composite), then slot context.
     const summaryLine = isVideo
         ? null
-        : `${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`;
-    const albumIdLabel = isVideo ? `${providerName} ID` : `${providerName} album ID`;
+        : (isComposite
+            ? `Composite · ${slotsDisplayName(offer.slots)}`
+            : `Single-source · ${slotsDisplayName(offer.slots)}`);
+    const detailLine = isVideo ? null : (
+        offer.coverageSummary && !/^composite|^single-source/i.test(offer.coverageSummary)
+            ? offer.coverageSummary
+            : null
+    );
+    const albumIdLabel = isVideo
+        ? `${providerName} ID`
+        : (isComposite
+            ? `${providerName} album ID (source)`
+            : `${providerName} album ID`);
     const trackIdLabel = `${providerName} track ID`;
 
     const ariaParts = [
         summaryLine,
+        detailLine,
         ...providerAlbumIds.map((id) => `${albumIdLabel}: ${id}`),
         providerTrackId ? `${trackIdLabel}: ${providerTrackId}` : null,
         offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
@@ -377,13 +376,16 @@ function buildQualityOfferTooltip(
             ? "Video download is not supported by this provider."
             : null,
         options.interactive
-            ? (options.isSelectedOffer ? "Currently selected" : "Click to use this offer")
+            ? (options.isSelectedOffer
+                ? "Currently selected"
+                : "Click to use only this edition · Ctrl+click to monitor alongside")
             : null,
     ].filter(Boolean) as string[];
 
     const content = (
         <div className={options.styles.tooltipBody}>
             {summaryLine ? <span>{summaryLine}</span> : null}
+            {detailLine ? <span>{detailLine}</span> : null}
             {providerAlbumIds.map((id) => {
                 const storedUrl = providerAlbumIds.length === 1 ? offer.providerUrl : null;
                 const href = isVideo
@@ -481,7 +483,11 @@ function buildQualityOfferTooltip(
                 <span>Video download is not supported by this provider.</span>
             ) : null}
             {options.interactive ? (
-                <span>{options.isSelectedOffer ? "Currently selected" : "Click to use this offer"}</span>
+                <span>
+                    {options.isSelectedOffer
+                        ? "Currently selected"
+                        : "Click to use only this edition · Ctrl+click to monitor alongside"}
+                </span>
             ) : null}
         </div>
     );
@@ -663,8 +669,8 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                         className={mergeClasses(styles.offerSelectButton, isSelectedOffer ? styles.offerSelectButtonSelected : undefined)}
                         aria-label={ariaLabel}
                         aria-pressed={isSelectedOffer}
-                        onClick={() => {
-                            if (!isSelectedOffer) onSelectOffer(offer);
+                        onClick={(event) => {
+                            if (!isSelectedOffer) onSelectOffer(offer, event);
                         }}
                     >
                         {badge}

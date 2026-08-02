@@ -8,6 +8,7 @@ import {
   Card,
   Text,
   makeStyles,
+  mergeClasses,
   tokens,
 } from "@fluentui/react-components";
 import { AppTooltip } from "@/components/ui/AppTooltip";
@@ -84,6 +85,21 @@ function releaseMeta(release: Release): string {
   ].filter(Boolean).join(" · ");
 }
 
+/**
+ * Resolve exclusive vs additive plan selection from the click modifiers.
+ *
+ * - Ctrl/Cmd: always additive (add/switch plan without unmonitoring siblings).
+ * - Already-monitored edition: plan switch only — do not collapse multi-monitor.
+ * - Plain click on an unmonitored edition: exclusive (replace the monitored set).
+ */
+function planSelectionMode(
+  event: { ctrlKey?: boolean; metaKey?: boolean },
+  editionAlreadyMonitored: boolean,
+): "exclusive" | "additive" {
+  if (event.ctrlKey || event.metaKey || editionAlreadyMonitored) return "additive";
+  return "exclusive";
+}
+
 function isAvailable(value: string): boolean {
   return !UNAVAILABLE_STATES.has(value.trim().toLowerCase());
 }
@@ -101,141 +117,39 @@ function libraryQualities(library: Library): Set<AudioQuality> {
   ));
 }
 
-function offersForLibrary(release: Release, library: Library): Array<{
-  source: Offer;
-  quality: AudioQuality;
-  view: ProviderQualityOffer;
-}> {
+function librarySlot(library: Library): "stereo" | "spatial" {
   const allowed = libraryQualities(library);
-  const slot = allowed.has("spatial") && allowed.size === 1 ? "spatial" : "stereo";
-  return selectableOffers(release).flatMap((offer) =>
-    offer.variants
-      .filter((variant) => allowed.has(variant.qualityClass) && isAvailable(variant.availability))
-      .map((variant) => ({
-        source: offer,
-        quality: variant.qualityClass,
-        view: {
-          slot,
-          quality: variant.qualityClass === "hires-lossless"
-            ? "HIRES_LOSSLESS"
-            : variant.qualityClass === "spatial"
-              ? (variant.spatialFormat === "atmos" ? "DOLBY_ATMOS" : "SPATIAL")
-              : variant.qualityClass === "lossless"
-                ? "LOSSLESS"
-                : "HIGH",
-          provider: offer.provider,
-          matchStatus: offer.matchState === "accepted" ? "verified" : offer.matchState,
-          matchKind: "direct",
-          coverageSummary: offer.relation === "exact"
-            ? "Exact edition match"
-            : `${offer.relation.replace(/_/g, " ")} · track download`,
-          providerAlbumId: offer.providerId,
-          providerUrl: offer.providerUrl,
-          selectedReleaseMbid: release.mbid,
-          available: true,
-        },
-      })));
+  return allowed.has("spatial") && allowed.size === 1 ? "spatial" : "stereo";
 }
 
-function bestQualityRank(release: Release): number {
-  return Math.max(
-    0,
-    ...selectableOffers(release).flatMap((offer) =>
-      offer.variants.map((variant) => QUALITY_RANK[variant.qualityClass] || 0)),
-  );
+function providerLabel(provider: string): string {
+  const key = provider.trim().toLowerCase();
+  if (key === "tidal") return "TIDAL";
+  if (key.startsWith("apple")) return "Apple Music";
+  if (key.includes("amazon")) return "Amazon Music";
+  if (key.includes("youtube")) return "YouTube Music";
+  if (key === "deezer") return "Deezer";
+  if (key === "soundcloud") return "SoundCloud";
+  if (key === "spotify") return "Spotify";
+  return provider;
 }
 
-const useStyles = makeStyles({
-  root: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-    width: "100%",
-  },
-  list: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
-  },
-  release: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr)",
-    gap: tokens.spacingVerticalM,
-    padding: tokens.spacingVerticalM,
-    color: tokens.colorNeutralForeground1,
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
-    boxShadow: tokens.shadow2,
-    "@media (min-width: 900px)": {
-      gridTemplateColumns: "minmax(260px, 0.8fr) minmax(420px, 1.2fr)",
-      alignItems: "start",
-      columnGap: tokens.spacingHorizontalXL,
-    },
-  },
-  details: {
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
-  },
-  titleRow: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
-  },
-  metadata: {
-    color: tokens.colorNeutralForeground2,
-  },
-  sourceSummary: {
-    color: tokens.colorNeutralForeground2,
-  },
-  libraries: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-  },
-  libraryRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(120px, 0.3fr) minmax(0, 1fr)",
-    alignItems: "start",
-    gap: tokens.spacingHorizontalM,
-  },
-  libraryLabel: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-  },
-  unavailable: {
-    color: tokens.colorNeutralForeground3,
-  },
-  plans: {
-    display: "flex",
-    flexDirection: "column",
-    rowGap: tokens.spacingVerticalXXS,
-    marginTop: tokens.spacingVerticalXS,
-  },
-  planRow: {
-    display: "flex",
-    alignItems: "center",
-    columnGap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
-  },
-  planCard: {
-    display: "flex",
-    flexDirection: "column",
-    rowGap: "2px",
-    paddingTop: tokens.spacingVerticalXXS,
-    paddingBottom: tokens.spacingVerticalXXS,
-  },
-  catalogAccordion: {
-    backgroundColor: tokens.colorNeutralBackground1,
-    borderRadius: tokens.borderRadiusMedium,
-  },
-  catalogPanel: {
-    paddingBottom: tokens.spacingVerticalM,
-  },
-});
+/** Map a plan's normalized quality_tier onto the badge vocabulary. */
+function planQualityTag(plan: AcquisitionPlan, release: Release): string {
+  const tier = String(plan.qualityTier || "").toLowerCase();
+  if (tier === "hires-lossless") return "HIRES_LOSSLESS";
+  if (tier === "lossless") return "LOSSLESS";
+  if (tier === "lossy") return "HIGH";
+  if (tier === "spatial") {
+    const atmos = plan.providerEditionMatchIds.some((matchId) => {
+      const offer = release.offers.find((candidate) => candidate.providerEditionMatchId === matchId);
+      return offer?.variants.some((variant) =>
+        variant.qualityClass === "spatial" && variant.spatialFormat === "atmos");
+    });
+    return atmos ? "DOLBY_ATMOS" : "SPATIAL";
+  }
+  return plan.qualityTier || "LOSSLESS";
+}
 
 const QUALITY_TIER_LABEL: Record<string, string> = {
   "hires-lossless": "Hi-Res",
@@ -257,60 +171,260 @@ const RELATION_LABEL: Record<string, string> = {
   overlap: "Overlap match",
 };
 
-/** Headline: what you get, not how it is assembled. */
-function planHeadline(plan: AcquisitionPlan): string {
-  const tier = QUALITY_TIER_LABEL[plan.qualityTier] ?? plan.qualityTier;
-  return `${plan.provider} · ${tier} · ${EXPLICIT_LABEL[plan.explicitContent] ?? plan.explicitContent}`;
-}
-
 /**
- * Sub-line: composition and how many provider releases it draws on.
- *
- * "Single offer" rather than "Direct offer" — a single-source plan is not
- * necessarily an exact match, and exact/superset/subset/overlap already name the
- * match relation separately.
+ * One badge per acquisition plan — not one badge per raw provider-release
+ * quality variant. The plan already collapsed the offer to the quality tier it
+ * delivers; exploding variants again made the row look like several plans.
  */
-function planSourceSummary(plan: AcquisitionPlan): string {
-  const shape = plan.composition === "composite" ? "Combined offer" : "Single offer";
-  const count = plan.providerEditionMatchIds.length || 1;
-  const releases = count === 1
-    ? `Uses 1 ${plan.provider} release`
-    : `Combines ${count} ${plan.provider} releases`;
-  // The denominator is the plan's own target, not the release row's track_count:
-  // the plan knows which canonical Edition it targets, so 11/12 stays honest
-  // even when the catalogue row is stale.
+function planToQualityOffer(
+  plan: AcquisitionPlan,
+  release: Release,
+  library: Library,
+): ProviderQualityOffer {
+  const slot = librarySlot(library);
+  const sourceOffers = plan.providerEditionMatchIds
+    .map((matchId) => release.offers.find((offer) => offer.providerEditionMatchId === matchId))
+    .filter((offer): offer is Offer => Boolean(offer));
+  // Primary first so the quality-pill tooltip leads with the main album id,
+  // not a 1-track EP that only fills a hole in a composite.
+  const ordered = [...sourceOffers].sort((left, right) => {
+    const leftPrimary = left.providerEditionMatchId === plan.primaryProviderEditionMatchId ? 0 : 1;
+    const rightPrimary = right.providerEditionMatchId === plan.primaryProviderEditionMatchId ? 0 : 1;
+    return leftPrimary - rightPrimary;
+  });
+  const albumIds = ordered
+    .map((offer) => String(offer.providerId || "").trim())
+    .filter(Boolean);
+  const primary = ordered[0];
+  const isComposite = plan.composition === "composite" || albumIds.length > 1;
   const coverage = plan.targetTrackCount > 0
-    ? ` · ${plan.coverage}/${plan.targetTrackCount} Tracks`
-    : ` · ${plan.coverage} Tracks`;
-  return `${shape} · ${releases}${coverage}`;
+    ? `${plan.coverage}/${plan.targetTrackCount} tracks`
+    : `${plan.coverage} tracks`;
+  const relation = primary?.relation
+    ? (RELATION_LABEL[primary.relation] ?? primary.relation.replace(/_/g, " "))
+    : null;
+  return {
+    slot,
+    quality: planQualityTag(plan, release),
+    provider: plan.provider,
+    matchStatus: "verified",
+    matchKind: isComposite ? "composite" : "direct",
+    coverageSummary: isComposite
+      ? `Composite · ${albumIds.length} sources · ${coverage}`
+      : [
+        "Single-source",
+        relation,
+        coverage,
+      ].filter(Boolean).join(" · "),
+    providerAlbumId: albumIds.join(";"),
+    providerAlbumIds: albumIds,
+    providerUrl: primary?.providerUrl ?? null,
+    selectedReleaseMbid: release.mbid,
+    explicit: plan.explicitContent === "explicit"
+      ? true
+      : plan.explicitContent === "clean"
+        ? false
+        : null,
+    available: plan.state !== "unavailable" && plan.state !== "failed",
+  };
 }
 
-function planRelationSummary(plan: AcquisitionPlan, release: Release): string | null {
-  const relations = plan.providerEditionMatchIds
-    .map((matchId) => release.offers.find(
-      (offer) => offer.providerEditionMatchId === matchId,
-    )?.relation)
-    .filter((relation): relation is NonNullable<typeof relation> => Boolean(relation))
-    .map((relation) => RELATION_LABEL[relation] ?? relation);
-  return relations.length > 0 ? relations.join(" + ") : null;
+/** Fallback when plans have not been computed yet: one badge per offer, best quality only. */
+function bestOfferViewsForLibrary(release: Release, library: Library): ProviderQualityOffer[] {
+  const allowed = libraryQualities(library);
+  const slot = librarySlot(library);
+  const byProviderAlbum = new Map<string, ProviderQualityOffer>();
+  for (const offer of selectableOffers(release)) {
+    const variants = offer.variants
+      .filter((variant) => allowed.has(variant.qualityClass) && isAvailable(variant.availability))
+      .sort((left, right) => (QUALITY_RANK[right.qualityClass] || 0) - (QUALITY_RANK[left.qualityClass] || 0));
+    const best = variants[0];
+    if (!best) continue;
+    const key = `${offer.provider}\0${offer.providerId}`;
+    byProviderAlbum.set(key, {
+      slot,
+      quality: best.qualityClass === "hires-lossless"
+        ? "HIRES_LOSSLESS"
+        : best.qualityClass === "spatial"
+          ? (best.spatialFormat === "atmos" ? "DOLBY_ATMOS" : "SPATIAL")
+          : best.qualityClass === "lossless"
+            ? "LOSSLESS"
+            : "HIGH",
+      provider: offer.provider,
+      matchStatus: offer.matchState === "accepted" ? "verified" : offer.matchState,
+      matchKind: "direct",
+      coverageSummary: offer.relation === "exact"
+        ? "Single-source · exact edition match"
+        : `Single-source · ${offer.relation.replace(/_/g, " ")}`,
+      providerAlbumId: offer.providerId,
+      providerAlbumIds: [offer.providerId],
+      providerUrl: offer.providerUrl,
+      selectedReleaseMbid: release.mbid,
+      available: true,
+    });
+  }
+  return [...byProviderAlbum.values()];
 }
 
-/**
- * Monitored state of one canonical Edition in one Library.
- *
- * "Primary" is the Edition whose track list the Album page shows by default;
- * "Additional" is monitored alongside it. Unmonitored Editions still list their
- * offers — being able to see what switching would get you is the point.
- */
-function monitoringLabel(selection: Selection): {
-  text: string;
-  color: "brand" | "informative" | "subtle";
+function bestQualityRank(release: Release): number {
+  return Math.max(
+    0,
+    ...selectableOffers(release).flatMap((offer) =>
+      offer.variants.map((variant) => QUALITY_RANK[variant.qualityClass] || 0)),
+  );
+}
+
+/** Compact one-line summary of the plan currently in use. */
+function selectedPlanSummary(plan: AcquisitionPlan, release: Release): {
+  headline: string;
+  detail: string;
+  tooltip: string;
 } {
-  if (!selection.monitored) return { text: "Unmonitored", color: "subtle" };
-  return selection.representative
-    ? { text: "Primary edition", color: "brand" }
-    : { text: "Additional edition", color: "informative" };
+  const sourceOffers = plan.providerEditionMatchIds
+    .map((matchId) => release.offers.find((offer) => offer.providerEditionMatchId === matchId))
+    .filter((offer): offer is Offer => Boolean(offer));
+  const ordered = [...sourceOffers].sort((left, right) => {
+    const leftPrimary = left.providerEditionMatchId === plan.primaryProviderEditionMatchId ? 0 : 1;
+    const rightPrimary = right.providerEditionMatchId === plan.primaryProviderEditionMatchId ? 0 : 1;
+    return leftPrimary - rightPrimary;
+  });
+  const ids = ordered.map((offer) => String(offer.providerId || "").trim()).filter(Boolean);
+  const primary = ordered[0];
+  const isComposite = plan.composition === "composite" || ids.length > 1;
+  const coverage = plan.targetTrackCount > 0
+    ? `${plan.coverage}/${plan.targetTrackCount} tracks`
+    : `${plan.coverage} tracks`;
+  const relation = primary?.relation
+    ? (RELATION_LABEL[primary.relation] ?? primary.relation.replace(/_/g, " "))
+    : null;
+  const detail = isComposite
+    ? `Composite · ${ids.length} sources · ${coverage}`
+    : ["Single-source", relation, coverage].filter(Boolean).join(" · ");
+  const tier = QUALITY_TIER_LABEL[plan.qualityTier] ?? plan.qualityTier;
+  const explicit = EXPLICIT_LABEL[plan.explicitContent] ?? plan.explicitContent;
+  const headline = `${providerLabel(plan.provider)} · ${tier} · ${explicit}`;
+  const idLine = ids.length === 0
+    ? ""
+    : ids.length === 1
+      ? `${providerLabel(plan.provider)} album ID: ${ids[0]}`
+      : `${providerLabel(plan.provider)} album IDs (primary first):\n${ids.map((id, i) => `${i === 0 ? "•" : "·"} ${id}`).join("\n")}`;
+  const tooltip = [
+    detail,
+    idLine,
+    plan.state === "stale" ? "Plan is stale — re-curate to refresh." : null,
+    plan.state === "unavailable" || plan.state === "failed" ? "Plan is currently unavailable." : null,
+  ].filter(Boolean).join("\n");
+  return { headline, detail, tooltip };
 }
+
+const useStyles = makeStyles({
+  root: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalM,
+    width: "100%",
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+  },
+  release: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalM,
+    padding: tokens.spacingVerticalM,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow2,
+  },
+  releaseMonitored: {
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorBrandStroke1}`,
+    boxShadow: tokens.shadow4,
+  },
+  details: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+  },
+  titleRow: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalS,
+  },
+  metadata: {
+    color: tokens.colorNeutralForeground2,
+  },
+  libraries: {
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: tokens.spacingVerticalM,
+    "@media (min-width: 720px)": {
+      gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+      columnGap: tokens.spacingHorizontalL,
+    },
+  },
+  libraryColumn: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+    minWidth: 0,
+    padding: tokens.spacingVerticalS,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  libraryColumnActive: {
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorBrandStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
+  libraryHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+  },
+  libraryTitle: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0,
+  },
+  planSummary: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0,
+  },
+  planSummaryHeadline: {
+    color: tokens.colorNeutralForeground1,
+  },
+  actions: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXS,
+    marginTop: tokens.spacingVerticalXXS,
+  },
+  unavailable: {
+    color: tokens.colorNeutralForeground3,
+  },
+  hint: {
+    color: tokens.colorNeutralForeground3,
+  },
+  catalogAccordion: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  catalogPanel: {
+    paddingBottom: tokens.spacingVerticalM,
+  },
+});
 
 export interface ReleaseSwitcherProps {
   availability: ReleaseGroupAvailability;
@@ -318,8 +432,14 @@ export interface ReleaseSwitcherProps {
   pendingSelectionKey?: string | null;
   onSelect: (libraryId: number, editionId: number, providerEditionMatchId: number) => void;
   /**
-   * Monitor this edition and execute this plan. `mode` is "exclusive" for a
-   * normal click and "additive" for Ctrl/Cmd-click or the explicit control.
+   * Use this edition and execute this plan for the library.
+   *
+   * - Plain click on an unmonitored edition: exclusive — only this edition
+   *   stays monitored for the album in this library.
+   * - Ctrl/Cmd+click: additive — monitor this edition without unmonitoring
+   *   others (e.g. keep Dreams and also monitor Deluxe).
+   * - Click on an already-monitored edition (any modifier): plan switch only
+   *   for that edition; sibling editions stay monitored.
    */
   onSelectPlan?: (
     libraryId: number,
@@ -327,12 +447,8 @@ export interface ReleaseSwitcherProps {
     planKey: string,
     mode: "exclusive" | "additive",
   ) => void;
-  /** Hand the plan choice back to the planner. */
   onRevertPlan?: (libraryId: number, editionId: number) => void;
-  /** Stop monitoring this edition. Never deletes files. */
   onRemoveEdition?: (libraryId: number, editionId: number) => void;
-  /** Make this monitored edition the Primary one. */
-  onMakePrimary?: (libraryId: number, editionId: number) => void;
 }
 
 export function ReleaseSwitcher({
@@ -343,16 +459,19 @@ export function ReleaseSwitcher({
   onSelectPlan,
   onRevertPlan,
   onRemoveEdition,
-  onMakePrimary,
 }: ReleaseSwitcherProps) {
   const styles = useStyles();
   if (availability.releases.length === 0) return null;
 
-  const audioLibraries = availability.libraries.filter(
-    (library) => libraryQualities(library).size > 0,
-  );
-  // Only MONITORED editions sort to the top. Every edition now has a selection
-  // entry, so treating any entry as "selected" would sort the whole discography.
+  // Stereo first, then Spatial. Hide libraries with no audio qualities (e.g. Video).
+  const audioLibraries = availability.libraries
+    .filter((library) => libraryQualities(library).size > 0)
+    .sort((left, right) => {
+      const leftSlot = librarySlot(left) === "spatial" ? 1 : 0;
+      const rightSlot = librarySlot(right) === "spatial" ? 1 : 0;
+      return leftSlot - rightSlot || left.id - right.id;
+    });
+
   const selectedReleaseIds = new Set(
     audioLibraries.flatMap((library) =>
       library.selections
@@ -372,214 +491,192 @@ export function ReleaseSwitcher({
   const catalogOnly = sorted.filter((release) =>
     selectableOffers(release).length === 0 && !selectedReleaseIds.has(release.id));
 
+  const renderLibraryColumn = (release: Release, library: Library) => {
+    const selection = library.selections.find(
+      (candidate) => candidate.editionId === release.id,
+    );
+    const planOffers = (selection?.plans ?? []).map((plan) =>
+      planToQualityOffer(plan, release, library));
+    const badgeOffers = planOffers.length > 0
+      ? planOffers
+      : bestOfferViewsForLibrary(release, library);
+    if (badgeOffers.length === 0) return null;
+
+    const chosenPlan = selection?.monitored
+      ? (selection.plan ?? selection.plans.find((plan) => plan.chosen) ?? null)
+      : null;
+    const chosenView = chosenPlan
+      ? planToQualityOffer(chosenPlan, release, library)
+      : null;
+    const rowPending = Boolean(pendingSelectionKey?.startsWith(`${library.id}:${release.id}:`));
+    const monitored = Boolean(selection?.monitored);
+    const summary = chosenPlan ? selectedPlanSummary(chosenPlan, release) : null;
+    const slot = librarySlot(library);
+    const slotLabel = slot === "spatial" ? "Spatial" : "Stereo";
+
+    return (
+      <div
+        key={library.id}
+        className={mergeClasses(
+          styles.libraryColumn,
+          monitored ? styles.libraryColumnActive : undefined,
+        )}
+      >
+        <div className={styles.libraryHeader}>
+          <div className={styles.libraryTitle}>
+            <Text size={200} weight="semibold">{slotLabel}</Text>
+            <Text size={100} className={styles.metadata}>
+              {rowPending
+                ? "Saving…"
+                : monitored
+                  ? (selection?.planSelectionMode === "manual" ? "Chosen by you" : "Automatic")
+                  : library.qualityProfile}
+            </Text>
+          </div>
+          {monitored ? (
+            <Badge appearance="tint" color="brand" size="small">Monitoring</Badge>
+          ) : null}
+          {selection?.locked ? (
+            <AppTooltip
+              content="Automatic curation will not change this album. Your own choices still apply."
+              relationship="description"
+            >
+              <Badge appearance="tint" color="warning" size="small">Locked</Badge>
+            </AppTooltip>
+          ) : null}
+        </div>
+
+        <ProviderQualityRow
+          offers={badgeOffers}
+          size="small"
+          selectedOfferAlbumId={chosenView?.providerAlbumId ?? null}
+          selectedOfferProvider={chosenPlan?.provider ?? null}
+          onSelectOffer={pendingSelectionKey || !onSelectPlan
+            ? undefined
+            : (picked, event) => {
+              const plan = (selection?.plans ?? []).find((candidate) => {
+                const view = planToQualityOffer(candidate, release, library);
+                return view.provider === picked.provider
+                  && view.quality === picked.quality
+                  && (
+                    view.providerAlbumId === picked.providerAlbumId
+                    || (picked.providerAlbumIds?.length
+                      && view.providerAlbumIds?.join(";") === picked.providerAlbumIds.join(";"))
+                  );
+              });
+              if (plan) {
+                onSelectPlan(
+                  library.id,
+                  release.id,
+                  plan.planKey,
+                  planSelectionMode(event, Boolean(selection?.monitored)),
+                );
+                return;
+              }
+              const offer = selectableOffers(release).find((candidate) =>
+                candidate.provider === picked.provider
+                && candidate.providerId === picked.providerAlbumId);
+              if (offer) {
+                onSelect(library.id, release.id, offer.providerEditionMatchId);
+              }
+            }}
+        />
+
+        {summary ? (
+          <AppTooltip content={summary.tooltip} relationship="description">
+            <div className={styles.planSummary}>
+              <Text size={200} weight="semibold" className={styles.planSummaryHeadline}>
+                {summary.headline}
+              </Text>
+              <Text size={100} className={styles.metadata}>{summary.detail}</Text>
+            </div>
+          </AppTooltip>
+        ) : (
+          <Text size={100} className={styles.hint}>
+            Click a plan to monitor this edition
+            {audioLibraries.length > 1 ? " · Ctrl+click to add alongside others" : ""}
+          </Text>
+        )}
+
+        {monitored && (onRevertPlan || onRemoveEdition) ? (
+          <div className={styles.actions}>
+            {selection?.planSelectionMode === "manual" && onRevertPlan ? (
+              <Button
+                size="small"
+                appearance="subtle"
+                onClick={() => onRevertPlan(library.id, release.id)}
+              >
+                Use automatic
+              </Button>
+            ) : null}
+            {onRemoveEdition ? (
+              <Button
+                size="small"
+                appearance="subtle"
+                onClick={() => onRemoveEdition(library.id, release.id)}
+              >
+                Stop monitoring
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderRelease = (release: Release) => {
     const offers = selectableOffers(release);
-    const providerCount = new Set(offers.map((offer) => offer.provider)).size;
     const meta = releaseMeta(release);
+    const isMonitored = selectedReleaseIds.has(release.id);
+    const monitoredSlots = audioLibraries
+      .filter((library) =>
+        library.selections.some(
+          (selection) => selection.editionId === release.id && selection.monitored,
+        ))
+      .map((library) => (librarySlot(library) === "spatial" ? "Spatial" : "Stereo"));
+
+    const libraryColumns = audioLibraries
+      .map((library) => renderLibraryColumn(release, library))
+      .filter(Boolean);
+
     return (
-      <Card key={release.id} className={styles.release}>
+      <Card
+        key={release.id}
+        className={mergeClasses(
+          styles.release,
+          isMonitored ? styles.releaseMonitored : undefined,
+        )}
+      >
         <div className={styles.details}>
           <div className={styles.titleRow}>
-            <Text weight="semibold">{release.title}</Text>
-            {release.disambiguation ? (
-              <Badge appearance="filled" color="informative">{release.disambiguation}</Badge>
+            <Text weight="semibold">
+              {release.disambiguation || release.title}
+            </Text>
+            {release.disambiguation && release.title
+              && release.disambiguation !== release.title ? (
+                <Text size={200} className={styles.metadata}>{release.title}</Text>
+              ) : null}
+            {isMonitored ? (
+              <Badge appearance="filled" color="brand" size="small">
+                {monitoredSlots.length > 0
+                  ? `Monitoring · ${monitoredSlots.join(" + ")}`
+                  : "Monitoring"}
+              </Badge>
             ) : null}
             {release.mbid === currentReleaseMbid ? (
-              <Badge appearance="filled" color="brand">Current page</Badge>
+              <Badge appearance="outline" color="informative" size="small">
+                Current page
+              </Badge>
             ) : null}
           </div>
           {meta ? <Text size={200} className={styles.metadata}>{meta}</Text> : null}
-          {offers.length > 0 ? (
-            <Text size={200} className={styles.sourceSummary}>
-              {offers.length} provider {offers.length === 1 ? "offer" : "offers"} across{" "}
-              {providerCount} {providerCount === 1 ? "provider" : "providers"}
-            </Text>
-          ) : (
+          {offers.length === 0 ? (
             <Text size={200} className={styles.unavailable}>No accepted provider match</Text>
-          )}
-          <AppTooltip content={release.mbid} relationship="label">
-            <Text size={100} className={styles.metadata}>{release.mbid}</Text>
-          </AppTooltip>
+          ) : null}
         </div>
 
-        {offers.length > 0 ? (
-          <div className={styles.libraries}>
-            {audioLibraries.map((library) => {
-              const compatible = offersForLibrary(release, library);
-              if (compatible.length === 0) return null;
-              const selection = library.selections.find(
-                (candidate) => candidate.editionId === release.id,
-              );
-              const selectedMatchId = selection?.plan?.primaryProviderEditionMatchId ?? null;
-              const selectedOffer = compatible.find(
-                ({ source }) => source.providerEditionMatchId === selectedMatchId,
-              )?.source;
-              const rowPending = compatible.some(({ source }) =>
-                pendingSelectionKey === `${library.id}:${release.id}:${source.providerEditionMatchId}`);
-              return (
-                <div key={library.id} className={styles.libraryRow}>
-                  <div className={styles.libraryLabel}>
-                    <Text size={200} weight="semibold">{library.name}</Text>
-                    <Text size={100} className={styles.metadata}>
-                      {rowPending ? "Saving choice…" : `${library.qualityProfile} target`}
-                    </Text>
-                  </div>
-                  <ProviderQualityRow
-                    offers={compatible.map(({ view }) => view)}
-                    size="small"
-                    selectedOfferAlbumId={selectedOffer?.providerId ?? null}
-                    selectedOfferProvider={selectedOffer?.provider ?? null}
-                    onSelectOffer={pendingSelectionKey ? undefined : (picked) => {
-                      const selected = compatible.find(({ source, quality }) =>
-                        source.provider === picked.provider
-                        && source.providerId === picked.providerAlbumId
-                        && picked.quality === (
-                          quality === "hires-lossless"
-                            ? "HIRES_LOSSLESS"
-                            : quality === "spatial"
-                              ? (source.variants.find((variant) =>
-                                variant.qualityClass === quality)?.spatialFormat === "atmos"
-                                ? "DOLBY_ATMOS"
-                                : "SPATIAL")
-                              : quality === "lossless" ? "LOSSLESS" : "HIGH"
-                        ));
-                      if (selected) {
-                        onSelect(library.id, release.id, selected.source.providerEditionMatchId);
-                      }
-                    }}
-                  />
-                  {selection && onSelectPlan ? (
-                    <div className={styles.plans}>
-                      <div className={styles.planRow}>
-                        {(() => {
-                          const label = monitoringLabel(selection);
-                          return (
-                            <Badge
-                              appearance={selection.monitored ? "filled" : "outline"}
-                              color={label.color}
-                            >
-                              {label.text}
-                            </Badge>
-                          );
-                        })()}
-                        {/* A lock holds this album against automatic curation
-                            and replanning. It never blocks the user, so every
-                            control below stays live while it is on. */}
-                        {selection.locked ? (
-                          <AppTooltip
-                            content="Automatic curation and replanning will not change this album. Your own choices still apply."
-                            relationship="description"
-                          >
-                            <Badge appearance="tint" color="warning">Locked</Badge>
-                          </AppTooltip>
-                        ) : null}
-                        {selection.monitored && selection.planSelectionMode === "manual" ? (
-                          <Badge appearance="tint" color="brand">Chosen by you</Badge>
-                        ) : null}
-                        {selection.monitored
-                          && selection.planSelectionMode === "manual"
-                          && onRevertPlan ? (
-                            <Button
-                              size="small"
-                              appearance="subtle"
-                              onClick={() => onRevertPlan(library.id, release.id)}
-                            >
-                              Use automatic choice
-                            </Button>
-                          ) : null}
-                        {/* Explicit equivalents of Ctrl/Cmd-click, so the
-                            keyboard modifier is never the only way in. */}
-                        {selection.monitored && !selection.representative
-                          && onMakePrimary ? (
-                            <Button
-                              size="small"
-                              appearance="subtle"
-                              onClick={() => onMakePrimary(library.id, release.id)}
-                            >
-                              Make primary
-                            </Button>
-                          ) : null}
-                        {selection.monitored && onRemoveEdition ? (
-                          <Button
-                            size="small"
-                            appearance="subtle"
-                            onClick={() => onRemoveEdition(library.id, release.id)}
-                          >
-                            Remove from monitored editions
-                          </Button>
-                        ) : null}
-                      </div>
-                      {selection.monitored && selection.plans.length === 0 ? (
-                        <Text size={100} className={styles.unavailable}>
-                          No provider offer currently available
-                        </Text>
-                      ) : null}
-                      {selection.plans.map((plan) => {
-                        const relations = planRelationSummary(plan, release);
-                        const unavailable = plan.state === "unavailable"
-                          || plan.state === "failed";
-                        const executing = selection.monitored && plan.chosen;
-                        return (
-                          <div key={plan.planKey} className={styles.planCard}>
-                            <div className={styles.planRow}>
-                              <AppTooltip
-                                content={
-                                  selection.locked
-                                    ? "This album is locked against automatic changes. Your own choice still applies: click to use only this edition and offer, Ctrl/Cmd-click to monitor it alongside the current ones."
-                                    : "Click to use only this edition and offer. Ctrl/Cmd-click to monitor it alongside the current ones."
-                                }
-                                relationship="description"
-                              >
-                                <Button
-                                  size="small"
-                                  appearance={executing ? "primary" : "outline"}
-                                  disabled={executing}
-                                  onClick={(event) => onSelectPlan(
-                                    library.id,
-                                    release.id,
-                                    plan.planKey,
-                                    event.ctrlKey || event.metaKey ? "additive" : "exclusive",
-                                  )}
-                                >
-                                  {planHeadline(plan)}
-                                </Button>
-                              </AppTooltip>
-                              {executing ? (
-                                <Badge appearance="tint" color="brand">Executing</Badge>
-                              ) : null}
-                              {!selection.monitored && onSelectPlan ? (
-                                <Button
-                                  size="small"
-                                  appearance="subtle"
-                                  onClick={() => onSelectPlan(
-                                    library.id, release.id, plan.planKey, "additive",
-                                  )}
-                                >
-                                  Monitor alongside current editions
-                                </Button>
-                              ) : null}
-                              {plan.state === "stale" ? (
-                                <Badge appearance="tint" color="warning">Stale</Badge>
-                              ) : null}
-                              {unavailable ? (
-                                <Badge appearance="tint" color="danger">Unavailable</Badge>
-                              ) : null}
-                            </div>
-                            <Text size={100} className={styles.metadata}>
-                              {planSourceSummary(plan)}
-                            </Text>
-                            {relations ? (
-                              <Text size={100} className={styles.metadata}>{relations}</Text>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
+        {libraryColumns.length > 0 ? (
+          <div className={styles.libraries}>{libraryColumns}</div>
         ) : null}
       </Card>
     );

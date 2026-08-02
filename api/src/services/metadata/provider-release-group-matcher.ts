@@ -93,8 +93,20 @@ function normalizeType(value?: string | null): string {
     return normalized;
 }
 
+/**
+ * Digits only, leading zeros stripped.
+ *
+ * Provider UPCs are often zero-padded to 12/13/14 digits (e.g. TIDAL
+ * `00602445489220`) while MusicBrainz barcodes frequently drop the pad
+ * (`602445489220`). Comparing the raw digit strings made UPC identity miss
+ * the release that actually shares the code, so track assignment later pinned
+ * the offer to a sibling edition in the same group instead.
+ */
 function normalizeBarcode(value?: string | null): string {
-    return String(value || "").replace(/\D+/g, "");
+    const digits = String(value || "").replace(/\D+/g, "");
+    if (!digits) return "";
+    const stripped = digits.replace(/^0+/, "");
+    return stripped || "0";
 }
 
 function providerAlbumResourceIds(album: ProviderAlbumForReleaseGroupMatching): Set<string> {

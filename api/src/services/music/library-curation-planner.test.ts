@@ -68,3 +68,59 @@ test("manual or locked releases survive final irredundancy", () => {
   const result = curateLibraryReleases([protectedSingle, album], true);
   assert.deepEqual(result.selectedReleaseIds, [101, 201]);
 });
+
+test("explicit preference rank breaks ties when coverage units are equal", () => {
+  const clean = candidate(1, 20, [1, 2, 3], { explicitPreferenceRank: 0 });
+  const explicit = candidate(1, 21, [1, 2, 3], { explicitPreferenceRank: 2 });
+  const result = curateLibraryReleases([clean, explicit], true);
+  assert.deepEqual(result.selectedReleaseIds, [21]);
+});
+
+test("unit-equal clean/explicit peers collapse to the preferred edition", () => {
+  const clean = candidate(1, 20, [1, 2, 3], { explicitPreferenceRank: 0 });
+  const explicit = candidate(1, 21, [1, 2, 3], { explicitPreferenceRank: 2 });
+  const result = curateLibraryReleases([clean, explicit], true);
+  assert.deepEqual(result.selectedReleaseIds, [21]);
+});
+
+test("true unique material keeps a second edition of the same album", () => {
+  // Deluxe exclusive remix is a real coverage unit the standard lacks.
+  const standard = candidate(1, 10, [1, 2, 3]);
+  const deluxe = candidate(1, 11, [1, 2, 3, 4]);
+  const result = curateLibraryReleases([standard, deluxe], true);
+  assert.deepEqual(result.selectedReleaseIds, [11], "superset alone covers everything");
+});
+
+test("peer completes with different unique units both enter the baseline", () => {
+  // Belgian vs 10th Anniversary: different live bonuses. With correct units
+  // both contribute; set-cover may keep both when redundancy cannot drop one.
+  const tenth = candidate(1, 393, [1, 2, 3, 10, 11]);
+  const belgian = candidate(1, 395, [1, 2, 3, 20, 21]);
+  const result = curateLibraryReleases([tenth, belgian], true);
+  assert.deepEqual(result.selectedReleaseIds.sort((a, b) => a - b), [393, 395]);
+});
+
+test("a pure re-pack compilation is dropped when redundancy is on", () => {
+  const frank = candidate(1, 100, [1, 2, 3, 4]);
+  const backToBlack = candidate(2, 200, [5, 6, 7, 8]);
+  const pureRepack = candidate(3, 301, [1, 2, 3, 4, 5, 6, 7, 8], {
+    secondaryTypeRank: 3,
+  });
+  assert.deepEqual(
+    curateLibraryReleases([frank, backToBlack, pureRepack], true).selectedReleaseIds,
+    [100, 200],
+  );
+});
+
+test("one unique track on a compilation is enough to keep it", () => {
+  const frank = candidate(1, 100, [1, 2, 3, 4]);
+  const backToBlack = candidate(2, 200, [5, 6, 7, 8]);
+  const boxsetWithDemo = candidate(3, 300, [1, 2, 3, 4, 5, 6, 7, 8, 9], {
+    secondaryTypeRank: 3,
+  });
+  assert.deepEqual(
+    curateLibraryReleases([frank, backToBlack, boxsetWithDemo], true).selectedReleaseIds
+      .sort((a, b) => a - b),
+    [100, 200, 300],
+  );
+});

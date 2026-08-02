@@ -354,6 +354,25 @@ test("uses UPC evidence to verify a provider album against a MusicBrainz release
     assert.equal(match.evidence.matchedReleaseMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
 });
 
+// TIDAL (and others) zero-pad UPCs to 12–14 digits; MusicBrainz often stores the
+// same code without the pad. Leading zeros must not make identity miss.
+test("UPC identity ignores leading-zero padding", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "243864035",
+        title: "Give Me The Future + Dreams Of The Past",
+        releaseDate: "2022-08-26",
+        type: "ALBUM",
+        upc: "00602445123456",
+        trackCount: 13,
+        volumeCount: 1,
+    }, releaseGroups);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.method, "musicbrainz-release-upc");
+    assert.equal(match.evidence.upcMatched, true);
+    assert.equal(match.evidence.matchedReleaseMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
+});
+
 test("uses MusicBrainz external links before UPC and title fallback", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "287367980",

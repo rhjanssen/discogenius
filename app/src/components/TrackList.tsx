@@ -351,31 +351,47 @@ const getQualityTags = (track: TrackListItem): string[] => orderedQualityTags(tr
 const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOffer[] => {
   const remote = track.remoteOffers || [];
   if (remote.length > 0) {
-    return remote.map((offer) => {
+    // One badge per library slot: the plan already picked the source quality for
+    // this track. Keep album id + track id on the tooltip so a composite plan
+    // still shows exactly which provider release and track fill this row.
+    const bySlot = new Map<string, ProviderQualityOffer>();
+    for (const offer of remote) {
       const slotRaw = String(offer.slot || "stereo").toLowerCase();
       const slot: ProviderQualityOffer["slot"] = slotRaw === "spatial" || slotRaw === "video"
         ? slotRaw
         : "stereo";
+      if (bySlot.has(slot)) continue;
       const providerTrackId = String(offer.providerTrackId || "").trim()
         || (String(track.preview_provider || "").toLowerCase() === String(offer.provider || "").toLowerCase()
           ? String(track.preview_provider_track_id || "").trim()
           : "");
-      return {
+      const albumId = String(offer.providerAlbumId || "").trim();
+      bySlot.set(slot, {
         slot,
         quality: offer.quality,
         provider: offer.provider,
-        providerAlbumId: offer.providerAlbumId,
+        providerAlbumId: albumId || null,
+        providerAlbumIds: albumId ? [albumId] : [],
         providerUrl: offer.providerUrl,
-        matchStatus: offer.matchStatus,
+        matchStatus: offer.matchStatus || "verified",
+        // Per-track source is always a single album id, even when the parent
+        // acquisition plan is composite.
+        matchKind: "direct",
+        coverageSummary: albumId && providerTrackId
+          ? "Track source from acquisition plan"
+          : "Track source",
         selectedReleaseMbid: offer.selectedReleaseMbid || track.musicbrainz_release_id || null,
         providerTrackId: providerTrackId || null,
         providerTrackUrl: offer.providerTrackUrl,
         musicbrainzTrackId: track.musicbrainz_track_id || null,
         musicbrainzRecordingId: track.musicbrainz_recording_id || null,
-      };
-    });
+      });
+    }
+    return [...bySlot.values()];
   }
 
+  // Fallback when the plan has not attached remote offers yet: at most one
+  // stereo and one spatial badge from quality tags, still carrying track id.
   const tags = getQualityTags(track);
   const qualities = tags.length > 0 ? tags : (track.quality ? [String(track.quality)] : []);
   if (qualities.length === 0) {
@@ -388,19 +404,27 @@ const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOf
         musicbrainzTrackId: track.musicbrainz_track_id || null,
         musicbrainzRecordingId: track.musicbrainz_recording_id || null,
         selectedReleaseMbid: track.musicbrainz_release_id || null,
+        matchKind: "direct",
       }]
       : [];
   }
 
-  return qualities.map((quality) => ({
-    slot: /atmos|spatial/i.test(quality) ? "spatial" as const : "stereo" as const,
-    quality,
-    provider: track.preview_provider || null,
-    providerTrackId: track.preview_provider_track_id || null,
-    musicbrainzTrackId: track.musicbrainz_track_id || null,
-    musicbrainzRecordingId: track.musicbrainz_recording_id || null,
-    selectedReleaseMbid: track.musicbrainz_release_id || null,
-  }));
+  const bySlot = new Map<string, ProviderQualityOffer>();
+  for (const quality of qualities) {
+    const slot: ProviderQualityOffer["slot"] = /atmos|spatial/i.test(quality) ? "spatial" : "stereo";
+    if (bySlot.has(slot)) continue;
+    bySlot.set(slot, {
+      slot,
+      quality,
+      provider: track.preview_provider || null,
+      providerTrackId: track.preview_provider_track_id || null,
+      musicbrainzTrackId: track.musicbrainz_track_id || null,
+      musicbrainzRecordingId: track.musicbrainz_recording_id || null,
+      selectedReleaseMbid: track.musicbrainz_release_id || null,
+      matchKind: "direct",
+    });
+  }
+  return [...bySlot.values()];
 };
 const getFileQualityTags = (files: TrackFiles): string[] => orderedQualityTags({
   qualityTags: files

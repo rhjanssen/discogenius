@@ -131,13 +131,16 @@ test("library curation uses canonical scope and recording coverage without chang
     seedProviderExactMatch(db, 401, [7]);
 
     const service = new LibraryCurationService(db);
-    const baseline = service.curateLibrary({
+    // filtering.enable_redundancy_filter defaults to true, so a Laura Palmer EP
+    // whose only recording is already on Bad Blood must not stay monitored —
+    // the Ampersand-Part-One-inside-& case.
+    const curated = service.curateLibrary({
       libraryId: 1,
       curationVersion: 1,
       acquisitionPlannerVersion: 1,
       providerPriority: ["tidal"],
     });
-    assert.deepEqual(baseline.selectedReleaseIds, [101, 201, 301]);
+    assert.deepEqual(curated.selectedReleaseIds, [101, 301]);
     assert.deepEqual(
       db.prepare(`
         SELECT release.edition_id, scope.scope_type
@@ -147,9 +150,9 @@ test("library curation uses canonical scope and recording coverage without chang
       `).all(),
       [
         { edition_id: 101, scope_type: "primary" },
-        { edition_id: 201, scope_type: "primary" },
         { edition_id: 301, scope_type: "release_credit" },
       ],
+      "Covered EP drops while the credited collaboration remains in scope",
     );
     assert.equal(
       (db.prepare("SELECT artist_metadata_id FROM Albums WHERE id = 3").get() as {
@@ -158,23 +161,17 @@ test("library curation uses canonical scope and recording coverage without chang
       2,
       "Credited scope must not rewrite canonical release ownership",
     );
+    // Plans are computed for every evaluated edition *before* curation picks
+    // which ones to monitor, so the covered EP still has a plan row even though
+    // it is not monitored.
     assert.equal(
       (db.prepare("SELECT COUNT(*) AS count FROM AcquisitionPlans").get() as { count: number }).count,
       3,
     );
-
-    db.prepare("UPDATE MetadataProfiles SET redundancy_enabled = 1 WHERE id = 1").run();
-    const deduplicated = service.curateLibrary({
-      libraryId: 1,
-      curationVersion: 2,
-      acquisitionPlannerVersion: 1,
-      providerPriority: ["tidal"],
-    });
-    assert.deepEqual(deduplicated.selectedReleaseIds, [101, 301]);
-    assert.deepEqual(
-      db.prepare("SELECT edition_id FROM LibraryEditions ORDER BY edition_id").all(),
-      [{ edition_id: 101 }, { edition_id: 301 }],
-      "Covered EP drops while the credited collaboration remains in scope",
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM LibraryEditions").get() as { count: number }).count,
+      2,
+      "only non-redundant editions stay monitored",
     );
   } finally {
     db.close();

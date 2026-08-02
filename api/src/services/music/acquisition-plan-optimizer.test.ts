@@ -87,6 +87,63 @@ test("MAX creates a justified standard plus deluxe quality composite", () => {
   ]);
 });
 
+// Back to Black deluxe shape: a MAX hi-res standard (vol. 1) plus a HIGH
+// lossless deluxe exact should outrank the pure lossless single-source plan.
+// Live failure: the standard was only matched to its own edition, so the
+// deluxe never saw the subset and stayed on lossless-only.
+test("MAX ranks the standard+deluxe composite above the lossless single source", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4, 5],
+    profile: max,
+    providerPriority: ["tidal", "apple-music"],
+    sources: [
+      // TIDAL standard: hi-res on the first volume only.
+      source(10, "source_subset", [
+        [1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"],
+      ]),
+      // TIDAL deluxe: lossless exact on the whole tracklist.
+      source(20, "exact", [
+        [1, "lossless"], [2, "lossless"], [3, "lossless"],
+        [4, "lossless"], [5, "lossless"],
+      ]),
+      // Apple Music exact lossless — same coverage as TIDAL deluxe, lower
+      // fidelity than the TIDAL standard+deluxe composite. Must not be mixed
+      // into a TIDAL plan; at equal quality it would lose only on provider
+      // priority, but here quality already ranks the composite first.
+      source(30, "exact", [
+        [1, "lossless"], [2, "lossless"], [3, "lossless"],
+        [4, "lossless"], [5, "lossless"],
+      ], { provider: "apple-music" }),
+    ],
+  });
+
+  assert.ok(plans.length >= 2);
+  const best = plans[0];
+  assert.equal(best.composition, "composite");
+  assert.equal(best.provider, "tidal");
+  assert.deepEqual(best.sourceIds.slice().sort((a, b) => a - b), [10, 20]);
+  assert.equal(best.qualityTier, "hires-lossless");
+  assert.ok(
+    plans.every((plan) => plan.sourceIds.every((id) => {
+      const providers = new Set(
+        [10, 20, 30].includes(id)
+          ? [id === 30 ? "apple-music" : "tidal"]
+          : [],
+      );
+      // Every plan is mono-provider: all of its source ids map to one provider.
+      const planProvider = plan.provider;
+      return plan.sourceIds.every((sourceId) =>
+        (sourceId === 30 ? "apple-music" : "tidal") === planProvider);
+    })),
+    "no plan may mix TIDAL and Apple Music sources",
+  );
+  const multiProvider = plans.filter((plan) => {
+    const providers = new Set(plan.sourceIds.map((id) => (id === 30 ? "apple-music" : "tidal")));
+    return providers.size > 1;
+  });
+  assert.equal(multiProvider.length, 0, "cross-provider composites are unsupported");
+});
+
 test("same-quality singles do not fragment an equivalent coherent plan", () => {
   const plan = optimizeAcquisitionPlan({
     orderedTrackIds: [1, 2, 3],
@@ -139,6 +196,76 @@ test("provider-local plans are compared only after optimization", () => {
   });
   assert.equal(plan?.provider, "apple-music");
   assert.deepEqual(plan?.sourceIds, [50]);
+});
+
+// Quality outranks provider preference: Apple MAX (24-bit) beats preferred-provider
+// TIDAL HIGH (16-bit) even when both are coherent single-source exacts.
+test("higher fidelity beats preferred-provider lower fidelity single-source", () => {
+  const plan = optimizeAcquisitionPlan({
+    orderedTrackIds: [1, 2, 3],
+    profile: max,
+    providerPriority: ["tidal", "apple-music"],
+    sources: [
+      source(10, "exact", [
+        [1, "lossless"], [2, "lossless"], [3, "lossless"],
+      ]),
+      source(20, "exact", [
+        [1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"],
+      ], { provider: "apple-music" }),
+    ],
+  });
+
+  assert.equal(plan?.provider, "apple-music");
+  assert.equal(plan?.composition, "single_source");
+  assert.deepEqual(plan?.sourceIds, [20]);
+  assert.equal(plan?.qualityTier, "hires-lossless");
+});
+
+// Quality also outranks single-source preference: an Apple composite that
+// reaches 24-bit on every track beats a TIDAL single-source 16-bit exact.
+test("higher fidelity composite beats preferred-provider lower fidelity single-source", () => {
+  const plan = optimizeAcquisitionPlan({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: max,
+    providerPriority: ["tidal", "apple-music"],
+    sources: [
+      source(10, "exact", [
+        [1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"],
+      ]),
+      source(20, "source_subset", [
+        [1, "hires-lossless"], [2, "hires-lossless"],
+      ], { provider: "apple-music" }),
+      source(21, "source_subset", [
+        [3, "hires-lossless"], [4, "hires-lossless"],
+      ], { provider: "apple-music" }),
+    ],
+  });
+
+  assert.equal(plan?.provider, "apple-music");
+  assert.equal(plan?.composition, "composite");
+  assert.deepEqual(plan?.sourceIds.slice().sort((a, b) => a - b), [20, 21]);
+  assert.ok(plan?.tracks.every((track) => track.sourceQuality === "hires-lossless"));
+});
+
+// Equal quality: provider preference and single-source still break the tie.
+test("equal quality keeps provider priority and single-source as tie-breakers", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: max,
+    providerPriority: ["tidal", "apple-music"],
+    sources: [
+      source(10, "exact", [
+        [1, "hires-lossless"], [2, "hires-lossless"],
+      ]),
+      source(20, "exact", [
+        [1, "hires-lossless"], [2, "hires-lossless"],
+      ], { provider: "apple-music" }),
+    ],
+  });
+
+  assert.equal(plans[0].provider, "tidal");
+  assert.equal(plans[0].composition, "single_source");
+  assert.equal(plans[0].qualityTier, "hires-lossless");
 });
 
 test("a preferred provider edition is a primary preference, not a source lock", () => {
@@ -282,6 +409,35 @@ test("a composite that reproduces the direct match is not stored", () => {
   assert.deepEqual(fullCoverage[0].sourceIds, [60]);
 });
 
+// GMTF-shaped catalog: one MAX exact edition plus every single as its own
+// subset match, plus a lower-quality full exact. Only the best single-source
+// survives — multi-single rebuilds and same-tracklist lower tiers are noise.
+test("a full MAX single-source plan eliminates partial singles, rebuild composites, and worse-tier exacts", () => {
+  const exactMax = source(1, "exact", [
+    [1, "hires-lossless"], [2, "hires-lossless"], [3, "hires-lossless"], [4, "hires-lossless"],
+  ]);
+  const singles = [1, 2, 3, 4].map((trackId) =>
+    source(10 + trackId, "source_subset", [[trackId, "hires-lossless"]]));
+  // Same tracklist at lower quality — not a second product under the one-best-
+  // single policy; the MAX exact dominates it.
+  const exactLossless = source(2, "exact", [
+    [1, "lossless"], [2, "lossless"], [3, "lossless"], [4, "lossless"],
+  ]);
+
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: max,
+    providerPriority: ["tidal"],
+    sources: [exactMax, exactLossless, ...singles],
+  });
+
+  assert.equal(plans.length, 1, "one best single-source only");
+  assert.equal(plans[0].composition, "single_source");
+  assert.deepEqual(plans[0].sourceIds, [1]);
+  assert.equal(plans[0].coverage, 4);
+  assert.equal(plans[0].qualityTier, "hires-lossless");
+});
+
 // Regression: with a cutoff of lossless and no continue-upgrades, every allowed
 // quality scores 0, so a hi-res and a lossless offer tied and the winner fell
 // out of the lexicographic source-id fallback. Observed live: the same album
@@ -304,9 +460,9 @@ test("a hi-res offer beats a lossless one even when both clear the cutoff", () =
 });
 
 // Regression: qualityTier was copied from the library target, so a source that
-// only offers lossless was persisted and displayed as Hi-Res, and shared a plan
-// key with a genuinely hi-res plan.
-test("a plan is labelled with the tier it reaches, not the tier it targeted", () => {
+// only offers lossless was persisted and displayed as Hi-Res.
+test("a plan is labelled with the tier it reaches, not the library cutoff", () => {
+  // Only the best single-source is stored; label it by what it actually delivers.
   const plans = enumerateAcquisitionPlans({
     orderedTrackIds: [1, 2],
     profile: high,
@@ -317,16 +473,15 @@ test("a plan is labelled with the tier it reaches, not the tier it targeted", ()
     ],
   });
 
-  const tierBySource = new Map(
-    plans.filter((plan) => plan.sourceIds.length === 1)
-      .map((plan) => [plan.sourceIds[0], plan.qualityTier]),
-  );
-  assert.equal(tierBySource.get(10), "lossless");
-  assert.equal(tierBySource.get(20), "hires-lossless");
+  assert.equal(plans.length, 1);
+  assert.deepEqual(plans[0].sourceIds, [20]);
+  assert.equal(plans[0].qualityTier, "hires-lossless");
 });
 
-test("each achievable quality tier yields one plan, not every partial upgrade", () => {
-  // Tracks 1-2 exist in hi-res, tracks 3-4 only in lossless.
+test("one best single-source picks the highest quality per track, not every partial upgrade", () => {
+  // Tracks 1-2 exist in hi-res, tracks 3-4 only in lossless. One plan: best
+  // available on each track. Never "1 hi-res + 3 lossless", "2 hi-res + 2
+  // lossless", and every step between as separate stored plans.
   const mixed: AcquisitionSourceCandidate = {
     provider: "tidal",
     providerEditionMatchId: 80,
@@ -358,13 +513,68 @@ test("each achievable quality tier yields one plan, not every partial upgrade", 
     sources: [mixed],
   });
 
-  // Two achievable tiers, so at most two plans — never "1 hi-res + 3 lossless",
-  // "2 hi-res + 2 lossless", and every step between.
-  assert.ok(plans.length <= 2, `expected at most one plan per tier, got ${plans.length}`);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].composition, "single_source");
   assert.deepEqual(
-    [...new Set(plans.map((plan) => plan.qualityTier))].sort(),
-    ["hires-lossless", "lossless"],
+    plans[0].tracks.map((track) => track.sourceQuality),
+    ["hires-lossless", "hires-lossless", "lossless", "lossless"],
   );
+  assert.equal(plans[0].qualityTier, "hires-lossless");
+});
+
+// Stereo and Spatial are separate libraries with separate profiles. Planning
+// one must not suppress the other — even if both quality families somehow
+// appeared in one profile's preference order.
+test("stereo and spatial plans stay independent products", () => {
+  const stereoProfile: AcquisitionQualityProfile = {
+    allowedQualities: new Set(["lossless", "hires-lossless"]),
+    preferenceOrder: ["hires-lossless", "lossless"],
+    cutoff: "hires-lossless",
+    continueUpgradesAfterCutoff: true,
+  };
+  const spatialProfile: AcquisitionQualityProfile = {
+    allowedQualities: new Set(["spatial"]),
+    preferenceOrder: ["spatial"],
+    cutoff: "spatial",
+    continueUpgradesAfterCutoff: true,
+  };
+  const stereoExact = source(1, "exact", [
+    [1, "hires-lossless"], [2, "hires-lossless"],
+  ]);
+  const spatialExact: AcquisitionSourceCandidate = {
+    provider: "tidal",
+    providerEditionMatchId: 2,
+    relation: "exact",
+    sourceTrackCount: 2,
+    albumDownloadSafe: true,
+    trackMatches: [
+      { providerTrackMatchId: 201, providerEditionMemberId: 2001, trackId: 1,
+        variants: [{ id: 2101, quality: "spatial", available: true }] },
+      { providerTrackMatchId: 202, providerEditionMemberId: 2002, trackId: 2,
+        variants: [{ id: 2102, quality: "spatial", available: true }] },
+    ],
+  };
+
+  const stereoPlans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: stereoProfile,
+    providerPriority: ["tidal"],
+    sources: [stereoExact, spatialExact],
+  });
+  const spatialPlans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: spatialProfile,
+    providerPriority: ["tidal"],
+    sources: [stereoExact, spatialExact],
+  });
+
+  assert.equal(stereoPlans.length, 1);
+  assert.deepEqual(stereoPlans[0].sourceIds, [1]);
+  assert.equal(stereoPlans[0].qualityTier, "hires-lossless");
+
+  assert.equal(spatialPlans.length, 1);
+  assert.deepEqual(spatialPlans[0].sourceIds, [2]);
+  assert.equal(spatialPlans[0].qualityTier, "spatial");
 });
 
 
@@ -440,6 +650,33 @@ test("absent explicitness evidence is unknown, never clean", () => {
   assert.equal(plans[0].explicitnessCounts.unknownExplicitnessCount, 1);
 });
 
+test("release-level explicit makes the plan explicit when every track row is clean", () => {
+  // Live failure: TIDAL album 243864035 is explicit and 5 tracks are explicit,
+  // but stale ProviderItems track rows all said clean (0), so the plan was
+  // stored/shown as clean and the E badge never appeared.
+  const staleTracks: AcquisitionSourceCandidate = {
+    provider: "tidal",
+    providerEditionMatchId: 97,
+    relation: "exact",
+    sourceTrackCount: 2,
+    albumDownloadSafe: true,
+    releaseExplicit: true,
+    trackMatches: [
+      { providerTrackMatchId: 971, providerEditionMemberId: 9701, trackId: 1, explicit: false,
+        variants: [{ id: 9801, quality: "hires-lossless", available: true }] },
+      { providerTrackMatchId: 972, providerEditionMemberId: 9702, trackId: 2, explicit: false,
+        variants: [{ id: 9802, quality: "hires-lossless", available: true }] },
+    ],
+  };
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: max,
+    providerPriority: ["tidal"],
+    sources: [staleTracks],
+  });
+  assert.equal(plans[0].explicitContent, "explicit");
+});
+
 test("a fully clean plan is classified clean", () => {
   const clean: AcquisitionSourceCandidate = {
     provider: "tidal",
@@ -447,6 +684,7 @@ test("a fully clean plan is classified clean", () => {
     relation: "exact",
     sourceTrackCount: 2,
     albumDownloadSafe: true,
+    releaseExplicit: false,
     trackMatches: [
       { providerTrackMatchId: 961, providerEditionMemberId: 9601, trackId: 1, explicit: false,
         variants: [{ id: 9701, quality: "lossless", available: true }] },
@@ -683,4 +921,99 @@ test("the preferred provider edition stays primary without locking out the rest"
   assert.ok(best.sourceIds.includes(11),
     "and the other edition may still cover the track it does not carry");
   assert.equal(best.coverage, 3);
+});
+
+const spatialProfile: AcquisitionQualityProfile = {
+  allowedQualities: new Set(["spatial"]),
+  preferenceOrder: ["spatial"],
+  cutoff: "spatial",
+  continueUpgradesAfterCutoff: true,
+};
+
+function spatialSource(
+  id: number,
+  trackIds: number[],
+  explicit: boolean,
+): AcquisitionSourceCandidate {
+  return source(
+    id,
+    "exact",
+    trackIds.map((trackId) => [trackId, "spatial"] as [number, NormalizedAudioQuality]),
+    {
+      releaseExplicit: explicit,
+      trackMatches: trackIds.map((trackId, index) => ({
+        providerTrackMatchId: id * 100 + index,
+        providerEditionMemberId: id * 1000 + index,
+        trackId,
+        explicit,
+        variants: [{ id: id * 10 + index, quality: "spatial" as const, available: true }],
+      })),
+    },
+  );
+}
+
+test("prefer_explicit builds an explicit composite that fills clean-only tracks", () => {
+  // GMTF Atmos: clean 10/10 vs explicit 9/10 → composite uses explicit for 9
+  // and clean for the reprise → full coverage, plan marked explicit.
+  const all = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: all,
+    profile: spatialProfile,
+    providerPriority: ["tidal"],
+    preferExplicit: true,
+    sources: [
+      spatialSource(10, all, false),
+      spatialSource(11, all.slice(0, 9), true),
+    ],
+  });
+
+  assert.equal(plans[0].explicitContent, "explicit");
+  assert.equal(plans[0].coverage, 10);
+  assert.ok(plans[0].sourceIds.includes(11));
+});
+
+test("prefer_explicit still prefers a pure clean single when explicit is tiny", () => {
+  // Explicit only covers 2 of 20 with no way to reach 90% without the clean
+  // product dominating — composite still uses explicit as seed when possible.
+  // When the explicit product is a tiny subset, the best plan remains full clean
+  // only if no composite improves; with seeding, composite may still form.
+  // Guard: a *single* explicit plan of 2 tracks alone must not beat clean 20.
+  const ids = Array.from({ length: 20 }, (_, i) => i + 1);
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: ids,
+    profile: spatialProfile,
+    providerPriority: ["tidal"],
+    preferExplicit: true,
+    sources: [
+      spatialSource(10, ids, false),
+      spatialSource(11, ids.slice(0, 2), true),
+    ],
+  });
+
+  // Full coverage is required; explicitness preferred when it does not lose tracks.
+  assert.equal(plans[0].coverage, 20);
+  assert.equal(plans[0].explicitContent, "explicit",
+    "even a small explicit seed plus clean fill yields an explicit full plan");
+});
+
+test("explicit album plus clean fill for one track composes an explicit plan", () => {
+  // Distorted Light Beam (reprise): Atmos only on clean product; rest on explicit.
+  const all = [1, 2, 3, 4, 5];
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: all,
+    profile: spatialProfile,
+    providerPriority: ["tidal"],
+    preferExplicit: true,
+    sources: [
+      spatialSource(10, all, false),
+      spatialSource(11, [1, 2, 3, 4], true), // missing track 5
+    ],
+  });
+
+  const best = plans[0];
+  assert.equal(best.explicitContent, "explicit");
+  assert.equal(best.coverage, 5, "clean fills the missing non-explicit track");
+  assert.ok(best.sourceIds.includes(11) && best.sourceIds.includes(10),
+    "composite draws from both products");
+  assert.equal(best.composition, "composite");
 });

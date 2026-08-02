@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
+import { getConfigSection } from "../config/config.js";
 import {
   enumerateAcquisitionPlans,
   type AcquisitionQualityProfile,
@@ -63,6 +64,7 @@ interface CandidateRow {
   provider_edition_match_id: number;
   relation: AcquisitionSourceCandidate["relation"];
   source_track_count: number;
+  release_explicit: number | null;
   provider_edition_member_id: number;
   provider_track_match_id: number;
   track_id: number;
@@ -169,6 +171,7 @@ export class AcquisitionPlanningService {
         release_match.id AS provider_edition_match_id,
         release_match.relation,
         release_match.source_track_count,
+        release_item.explicit AS release_explicit,
         member.id AS provider_edition_member_id,
         track_match.id AS provider_track_match_id,
         track_match.track_id,
@@ -214,6 +217,7 @@ export class AcquisitionPlanningService {
           relation: row.relation,
           sourceTrackCount: row.source_track_count,
           albumDownloadSafe: row.relation === "exact",
+          releaseExplicit: row.release_explicit == null ? null : Boolean(row.release_explicit),
           trackMatches: [],
         };
         sourceById.set(row.provider_edition_match_id, source);
@@ -290,6 +294,7 @@ export class AcquisitionPlanningService {
       providerPriority: input.providerPriority,
       preferredProviderEditionMatchId,
       exclusive: input.exclusiveSource === true,
+      preferExplicit: getConfigSection("filtering").prefer_explicit !== false,
     });
     if (plans.length === 0) {
       this.repository.clear(input.libraryId, input.editionId);

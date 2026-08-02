@@ -1217,8 +1217,12 @@ class ApiClient {
   /**
    * Monitor an edition and execute exactly this plan.
    *
-   * `mode` defaults to "exclusive" — the same "use only this" a normal click
-   * means. "additive" keeps the album's other monitored editions.
+   * - `exclusive` (default plain click): only this edition stays monitored for
+   *   the album in this library; other editions are unmonitored.
+   * - `additive` (Ctrl/Cmd+click, or plan switch on an already-monitored
+   *   edition): keep other monitored editions; just add/switch this plan.
+   *
+   * One plan per edition either way.
    */
   async setAlbumLibraryPlan(
     albumId: string,

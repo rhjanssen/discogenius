@@ -4,6 +4,7 @@ import { getConfigSection } from "../config/config.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { resolveTrackListTabs, type TrackListTab } from "./track-list-tabs.js";
+import { buildRecordingCoverageUnitMap } from "./recording-coverage-units.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
 
 export interface LibraryAcquisitionPlanView {
@@ -435,28 +436,54 @@ export class LibraryReleaseSelectionService {
     }
 
     // Tabs are a canonical-Recording question, so they are answered here rather
-    // than left to the page to infer from track counts.
+    // than left to the page to infer from track counts. Compute once for the
+    // whole album: Stereo and Spatial often monitor the same tracklist as two
+    // MB editions (e.g. Dreams stereo vs Dreams Atmos). Per-library resolution
+    // then unioned on the page produced three tabs for two musical products.
+    //
+    // Coverage units collapse clean/explicit recording twins so those editions
+    // look equal/nested the same way curation sees them — otherwise two tabs
+    // appear for the same musical product with different MBIDs.
+    const coverageUnitByRecording = buildRecordingCoverageUnitMap(
+      (this.db.prepare(`
+        SELECT recording_id AS recordingId, title, length_ms AS lengthMs
+        FROM Tracks
+        WHERE recording_id IS NOT NULL
+          AND album_edition_id IN (
+            SELECT id FROM AlbumEditions WHERE release_group_id = ?
+          )
+      `).all(releaseGroup.id) as Array<{
+        recordingId: number;
+        title: string;
+        lengthMs: number | null;
+      }>),
+    );
     const recordingIdsByEdition = new Map<number, Set<number>>();
     for (const row of this.db.prepare(`
       SELECT track.album_edition_id, track.recording_id
       FROM Tracks track
       JOIN AlbumEditions edition ON edition.id = track.album_edition_id
       WHERE edition.release_group_id = ?
+        AND track.recording_id IS NOT NULL
     `).all(releaseGroup.id) as Array<{ album_edition_id: number; recording_id: number }>) {
       const recordingIds = recordingIdsByEdition.get(row.album_edition_id) || new Set<number>();
-      recordingIds.add(row.recording_id);
+      recordingIds.add(
+        coverageUnitByRecording.get(row.recording_id) ?? row.recording_id,
+      );
       recordingIdsByEdition.set(row.album_edition_id, recordingIds);
     }
-    for (const library of libraries) {
-      library.trackListTabs = resolveTrackListTabs(
+    const albumTrackListTabs = resolveTrackListTabs(
+      libraries.flatMap((library) =>
         library.selections
           .filter((selection) => selection.monitored)
           .map((selection) => ({
             editionId: selection.editionId,
             recordingIds: recordingIdsByEdition.get(selection.editionId) || new Set<number>(),
             representative: selection.representative,
-          })),
-      );
+          }))),
+    );
+    for (const library of libraries) {
+      library.trackListTabs = albumTrackListTabs;
     }
 
     return {
@@ -472,13 +499,15 @@ export class LibraryReleaseSelectionService {
    *
    * A plan card sits under a canonical Edition that may or may not be monitored,
    * so clicking one has to mean the whole thing: monitor this Edition for this
-   * Library and execute exactly this offer.
+   * Library and execute exactly this offer. One plan per edition — never several.
    *
-   * `mode: "exclusive"` (a normal click) is "use only this" — it replaces every
-   * other monitored Edition of the Album in this Library and takes over as the
-   * representative. `mode: "additive"` (Ctrl/Cmd-click, or the explicit
-   * "Monitor alongside current editions" control) keeps the others and the
-   * current representative, adding this Edition as a supplemental one.
+   * `mode: "exclusive"` (plain click on an unmonitored edition) is "use only
+   * this" — it replaces every other monitored Edition of the Album in this
+   * Library and takes over as the representative.
+   *
+   * `mode: "additive"` (Ctrl/Cmd+click, or a plan switch on an already-monitored
+   * edition) keeps other monitored editions. One plan per edition either way —
+   * additive never stacks two plans on the same card.
    *
    * Neither mode presses Lock. Lock is a separate, explicit action, and it is
    * what makes a choice permanent rather than merely preferred.
@@ -756,7 +785,7 @@ export class LibraryReleaseSelectionService {
    * this", replacing whatever else the Album had monitored here. An Album may
    * still legitimately keep several monitored Editions — deluxe beside standard,
    * a stereo choice beside a spatial one — but that is the deliberate additive
-   * action, `mode: "additive"`, not the default.
+   * action (`mode: "additive"`, Ctrl/Cmd+click in the UI), not a plain click.
    */
   selectRelease(input: {
     releaseGroupMbid: string;

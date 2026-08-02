@@ -687,14 +687,10 @@ const AlbumPage = () => {
   /**
    * The track-list tabs, decided by the API from canonical recording sets.
    *
-   * A tab strip appears only when this album is monitored as editions whose
-   * canonical recordings do not nest, so one list genuinely cannot show
-   * everything. Equivalent editions, a deluxe that contains its standard, and a
-   * single monitored edition all keep the plain one-list page.
-   *
-   * Libraries decide independently, so the strip is the union of what each one
-   * asked for; the default tab is the representative edition of the first
-   * library that needed tabs at all.
+   * The API resolves tabs once for the whole album (all libraries): equivalent
+   * sets and nested subsets collapse to one product (strip hidden when ≤1).
+   * Only partial-overlap products (unique tracks on each side) get a strip.
+   * Track rows still attach stereo + spatial plan badges via recording identity.
    */
   const trackListTabs = useMemo(() => {
     const byEditionId = new Map<number, { editionId: number; label: string; default: boolean }>();
@@ -824,31 +820,140 @@ const AlbumPage = () => {
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!album?.monitored_lock;
-  const hasStereoOffer = Boolean(album?.stereo_provider_id);
-  const hasSpatialOffer = Boolean(album?.spatial_provider_id);
-  const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
-  const selectedOfferExplicitBySlot = { stereo: null, spatial: null };
-  const selectedProviderUrlBySlot = {
-    stereo: album?.stereo_provider_url ?? null,
-    spatial: album?.spatial_provider_url ?? null,
-  };
+  /**
+   * Header pills come from the *executing* acquisition plan per library slot
+   * (one quality badge each), not every raw provider-release quality variant.
+   * Availability supplies composition + every provider album id a composite uses.
+   */
+  const headerPlanOffers = useMemo((): ProviderQualityOffer[] => {
+    if (!album) return [];
+    const offers: ProviderQualityOffer[] = [];
+    const pushFromPlan = (
+      slot: "stereo" | "spatial",
+      libraryNameHint: RegExp,
+      fallback: {
+        quality?: string | null;
+        provider?: string | null;
+        providerAlbumId?: string | null;
+        providerUrl?: string | null;
+        matchStatus?: string | null;
+        releaseMbid?: string | null;
+      },
+    ) => {
+      const library = releaseAvailability?.libraries.find((candidate) =>
+        libraryNameHint.test(candidate.name)
+        || (slot === "spatial"
+          ? candidate.allowedSourceFormats.includes("spatial")
+            && !candidate.allowedSourceFormats.some((q) => q !== "spatial" && q !== "video")
+          : candidate.allowedSourceFormats.some((q) =>
+            q === "lossless" || q === "hires-lossless" || q === "lossy")));
+      const selection = library?.selections.find((entry) => entry.monitored && entry.representative)
+        ?? library?.selections.find((entry) => entry.monitored && entry.plan);
+      const plan = selection?.plan ?? null;
+      const release = releaseAvailability?.releases.find(
+        (candidate) => candidate.id === selection?.editionId,
+      );
+      if (plan && release) {
+        const sourceOffers = plan.providerEditionMatchIds
+          .map((matchId) => release.offers.find((offer) => offer.providerEditionMatchId === matchId))
+          .filter((offer): offer is NonNullable<typeof offer> => Boolean(offer));
+        const albumIds = sourceOffers
+          .map((offer) => String(offer.providerId || "").trim())
+          .filter(Boolean);
+        const primary = sourceOffers.find(
+          (offer) => offer.providerEditionMatchId === plan.primaryProviderEditionMatchId,
+        ) ?? sourceOffers[0];
+        const tier = String(plan.qualityTier || "").toLowerCase();
+        const quality = tier === "hires-lossless"
+          ? "HIRES_LOSSLESS"
+          : tier === "spatial"
+            ? (sourceOffers.some((offer) =>
+              offer.variants.some((v) => v.qualityClass === "spatial" && v.spatialFormat === "atmos"))
+              ? "DOLBY_ATMOS"
+              : "SPATIAL")
+            : tier === "lossless"
+              ? "LOSSLESS"
+              : tier === "lossy"
+                ? "HIGH"
+                : (fallback.quality || "LOSSLESS");
+        const isComposite = plan.composition === "composite" || albumIds.length > 1;
+        offers.push({
+          slot,
+          quality,
+          provider: plan.provider,
+          matchStatus: "verified",
+          matchKind: isComposite ? "composite" : "direct",
+          coverageSummary: isComposite
+            ? `Composite plan · ${plan.coverage}/${plan.targetTrackCount || plan.coverage} tracks`
+            : `Single-source plan · ${plan.coverage}/${plan.targetTrackCount || plan.coverage} tracks`,
+          providerAlbumId: albumIds.join(";") || fallback.providerAlbumId || null,
+          providerAlbumIds: albumIds.length > 0
+            ? albumIds
+            : (fallback.providerAlbumId ? [fallback.providerAlbumId] : []),
+          providerUrl: primary?.providerUrl ?? fallback.providerUrl ?? null,
+          selectedReleaseMbid: release.mbid || fallback.releaseMbid || null,
+          explicit: plan.explicitContent === "explicit"
+            ? true
+            : plan.explicitContent === "clean"
+              ? false
+              : null,
+        });
+        return;
+      }
+      if (fallback.providerAlbumId || fallback.quality) {
+        offers.push({
+          slot,
+          quality: fallback.quality,
+          provider: fallback.provider,
+          matchStatus: fallback.matchStatus,
+          matchKind: "direct",
+          coverageSummary: "Single-source plan",
+          providerAlbumId: fallback.providerAlbumId,
+          providerAlbumIds: fallback.providerAlbumId ? [fallback.providerAlbumId] : [],
+          providerUrl: fallback.providerUrl,
+          selectedReleaseMbid: fallback.releaseMbid,
+        });
+      }
+    };
+
+    pushFromPlan("stereo", /stereo/i, {
+      quality: album.stereo_quality || album.quality,
+      provider: album.stereo_provider || album.selected_provider,
+      providerAlbumId: album.stereo_provider_id,
+      providerUrl: album.stereo_provider_url,
+      matchStatus: album.stereo_match_status,
+      releaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
+    });
+    if (album.spatial_provider_id || album.spatial_quality) {
+      pushFromPlan("spatial", /spatial/i, {
+        quality: album.spatial_quality || "DOLBY_ATMOS",
+        provider: album.spatial_provider || album.selected_provider,
+        providerAlbumId: album.spatial_provider_id,
+        providerUrl: album.spatial_provider_url,
+        matchStatus: album.spatial_match_status,
+        releaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
+      });
+    }
+    return offers;
+  }, [album, releaseAvailability]);
+
+  const hasStereoOffer = headerPlanOffers.some((offer) => offer.slot === "stereo")
+    || Boolean(album?.stereo_provider_id);
+  const hasSpatialOffer = headerPlanOffers.some((offer) => offer.slot === "spatial")
+    || Boolean(album?.spatial_provider_id);
+  const hasAnyProviderOffer = headerPlanOffers.length > 0 || hasStereoOffer || hasSpatialOffer;
   const headerQualityBadges = useMemo(() => {
     const badges: Array<{ key: string; quality: string }> = [];
-
-    if (album?.spatial_quality) {
-      badges.push({ key: "spatial", quality: album.spatial_quality });
+    for (const offer of headerPlanOffers) {
+      if (offer.quality && !badges.some((badge) => badge.quality === offer.quality)) {
+        badges.push({ key: offer.slot, quality: offer.quality });
+      }
     }
-
-    if (album?.stereo_quality && !badges.some((badge) => badge.quality === album.stereo_quality)) {
-      badges.push({ key: "stereo", quality: album.stereo_quality });
-    }
-
     if (badges.length === 0 && album?.quality) {
       badges.push({ key: "primary", quality: album.quality });
     }
-
     return badges;
-  }, [album?.quality, album?.spatial_quality, album?.stereo_quality]);
+  }, [album?.quality, headerPlanOffers]);
 
   const renderAlbumArtists = () => {
     if (albumArtists.length > 1) {
@@ -1084,7 +1189,13 @@ const AlbumPage = () => {
       mode?: "exclusive" | "additive";
     }) => (planKey == null
       ? api.revertAlbumLibraryPlan(albumId!, libraryId, editionId)
-      : api.setAlbumLibraryPlan(albumId!, libraryId, editionId, planKey, mode ?? "exclusive")),
+      : api.setAlbumLibraryPlan(
+        albumId!,
+        libraryId,
+        editionId,
+        planKey,
+        mode ?? "exclusive",
+      )),
     onSuccess: async (releaseAvailability, variables) => {
       queryClient.setQueryData(
         albumReleaseAvailabilityQueryKey(albumId),
@@ -1095,16 +1206,17 @@ const AlbumPage = () => {
         queryClient.invalidateQueries({ queryKey: albumReleaseAvailabilityQueryKey(albumId) }),
       ]);
       dispatchLibraryUpdated();
+      const additive = variables.mode === "additive";
       toast({
         title: variables.planKey == null
           ? "Acquisition plan set to automatic"
-          : variables.mode === "additive"
-            ? "Edition monitored alongside the others"
+          : additive
+            ? "Edition monitored alongside others"
             : "Edition and offer selected",
         description: variables.planKey == null
           ? "The planner will choose the best plan for this library again."
-          : variables.mode === "additive"
-            ? "This library keeps its other monitored editions and acquires this one too."
+          : additive
+            ? "This edition is now monitored for this library without changing other editions."
             : "This library now monitors only this edition and acquires it with the selected offer.",
       });
     },
@@ -1121,7 +1233,7 @@ const AlbumPage = () => {
     libraryId: number,
     editionId: number,
     planKey: string,
-    mode: "exclusive" | "additive",
+    mode: "exclusive" | "additive" = "exclusive",
   ) => {
     if (!albumId) return;
     libraryPlanMutation.mutate({ libraryId, editionId, planKey, mode });
@@ -1131,15 +1243,11 @@ const AlbumPage = () => {
     mutationFn: async ({
       libraryId,
       editionId,
-      action,
     }: {
       libraryId: number;
       editionId: number;
-      action: "remove" | "primary";
-    }) => (action === "remove"
-      ? api.removeAlbumLibraryEdition(albumId!, libraryId, editionId)
-      : api.setAlbumLibraryRepresentative(albumId!, libraryId, editionId)),
-    onSuccess: async (releaseAvailability, variables) => {
+    }) => api.removeAlbumLibraryEdition(albumId!, libraryId, editionId),
+    onSuccess: async (releaseAvailability) => {
       queryClient.setQueryData(
         albumReleaseAvailabilityQueryKey(albumId),
         releaseAvailability,
@@ -1150,12 +1258,8 @@ const AlbumPage = () => {
       ]);
       dispatchLibraryUpdated();
       toast({
-        title: variables.action === "remove"
-          ? "Edition no longer monitored"
-          : "Primary edition changed",
-        description: variables.action === "remove"
-          ? "Files already on disk were left untouched."
-          : "This edition's track list is now the one shown by default.",
+        title: "Edition no longer monitored",
+        description: "Files already on disk were left untouched.",
       });
     },
     onError: (mutationError) => {
@@ -1169,12 +1273,7 @@ const AlbumPage = () => {
 
   const handleRemoveEditionForLibrary = useCallback((libraryId: number, editionId: number) => {
     if (!albumId) return;
-    editionMonitoringMutation.mutate({ libraryId, editionId, action: "remove" });
-  }, [albumId, editionMonitoringMutation]);
-
-  const handleMakePrimaryForLibrary = useCallback((libraryId: number, editionId: number) => {
-    if (!albumId) return;
-    editionMonitoringMutation.mutate({ libraryId, editionId, action: "primary" });
+    editionMonitoringMutation.mutate({ libraryId, editionId });
   }, [albumId, editionMonitoringMutation]);
 
   const handleRevertPlanForLibrary = useCallback((
@@ -1623,36 +1722,11 @@ const AlbumPage = () => {
               <div className={styles.metadata}>
                 {/* Provider+quality pills sit in the middle; the year/track/
                     duration facts go on the bottom row (column on mobile). */}
-                {hasAnyProviderOffer ? (
+                {headerPlanOffers.length > 0 ? (
                   <div className={styles.metadataBadges}>
                     <ProviderQualityRow
                       size="medium"
-                      offers={[
-                        ...(hasStereoOffer
-                          ? [{
-                              slot: "stereo",
-                              quality: album.stereo_quality || album.quality,
-                              provider: album.stereo_provider || album.selected_provider,
-                              matchStatus: album.stereo_match_status,
-                              providerAlbumId: album.stereo_provider_id,
-                              providerUrl: selectedProviderUrlBySlot.stereo,
-                              selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
-                              explicit: selectedOfferExplicitBySlot.stereo,
-                            }]
-                          : []),
-                        ...(hasSpatialOffer
-                          ? [{
-                              slot: "spatial",
-                              quality: album.spatial_quality || "DOLBY_ATMOS",
-                              provider: album.spatial_provider || album.selected_provider,
-                              matchStatus: album.spatial_match_status,
-                              providerAlbumId: album.spatial_provider_id,
-                              providerUrl: selectedProviderUrlBySlot.spatial,
-                              selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
-                              explicit: selectedOfferExplicitBySlot.spatial,
-                            }]
-                          : []),
-                      ] as ProviderQualityOffer[]}
+                      offers={headerPlanOffers}
                     />
                   </div>
                 ) : headerQualityBadges.length > 0 ? (
@@ -1836,7 +1910,7 @@ const AlbumPage = () => {
         {/* One tab per monitored edition, and only when the API says one list
             cannot show them all. The strip reuses the Dashboard's Queue/Activity
             TabList so the two read as the same control. */}
-        {trackListTabs.length > 0 ? (
+        {trackListTabs.length > 1 ? (
           <TabList
             selectedValue={activeTabEditionId ?? undefined}
             onTabSelect={(_, data) => setSelectedTabEditionId(Number(data.value))}
@@ -1968,7 +2042,7 @@ const AlbumPage = () => {
         {releaseAvailability && releaseAvailability.releases.length > 0 ? (
           <div className={styles.sectionSpacing}>
             <div className={styles.sectionHeader}>
-              <Title2>Releases</Title2>
+              <Title2>Editions</Title2>
             </div>
             <ReleaseSwitcher
               availability={releaseAvailability}
@@ -1978,7 +2052,6 @@ const AlbumPage = () => {
               onSelectPlan={handleSelectPlanForLibrary}
               onRevertPlan={handleRevertPlanForLibrary}
               onRemoveEdition={handleRemoveEditionForLibrary}
-              onMakePrimary={handleMakePrimaryForLibrary}
             />
           </div>
         ) : otherVersions.length > 0 ? (

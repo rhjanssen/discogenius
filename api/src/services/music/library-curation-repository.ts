@@ -1,5 +1,11 @@
 import type Database from "better-sqlite3";
 import type { LibraryCurationResult } from "./library-curation-planner.js";
+import {
+  applyLibrarySettingsFromConfig,
+  ensureDefaultQualityProfiles,
+  stereoQualityProfileName,
+  type StereoAudioQuality,
+} from "./library-settings-sync.js";
 
 export type CreditedScope = "primary_only" | "release_credit" | "release_and_track_credit";
 export type LibraryScopeType = "primary" | "release_credit" | "track_credit";
@@ -8,6 +14,13 @@ export interface LibraryBootstrapPaths {
   stereoRoot: string;
   spatialRoot: string;
   videoRoot: string;
+}
+
+export interface LibraryBootstrapSettings {
+  /** Settings → Audio quality. Defaults to max (product default). */
+  audioQuality?: StereoAudioQuality;
+  /** Settings → Spatial audio toggle. Defaults to false (product default). */
+  includeSpatial?: boolean;
 }
 
 export interface LibraryReleaseScopeInput {
@@ -20,11 +33,25 @@ export interface LibraryReleaseScopeInput {
 export class LibraryCurationRepository {
   constructor(private readonly db: Database.Database) {}
 
-  bootstrapDefaultLibraries(paths: LibraryBootstrapPaths): {
+  /**
+   * Materialize the fixed Stereo / Spatial / Video libraries.
+   *
+   * Quality preference for Stereo and the Spatial enabled flag come from
+   * Settings (`audioQuality` / `includeSpatial`), not hard-coded High Quality.
+   * Path/metadata updates on restart never stomp those Settings-derived fields
+   * — `applyLibrarySettingsFromConfig` is the only writer for them.
+   */
+  bootstrapDefaultLibraries(
+    paths: LibraryBootstrapPaths,
+    settings: LibraryBootstrapSettings = {},
+  ): {
     stereoId: number;
     spatialId: number;
     videoId: number;
   } {
+    const audioQuality = settings.audioQuality ?? "max";
+    const includeSpatial = settings.includeSpatial === true;
+
     return this.db.transaction(() => {
       this.db.prepare(`
         INSERT OR IGNORE INTO MetadataProfiles (
@@ -32,105 +59,40 @@ export class LibraryCurationRepository {
           require_provider_availability, redundancy_enabled
         ) VALUES ('Default', '{}', 'allow', 1, 0)
       `).run();
-      this.db.prepare(`
-        INSERT INTO quality_profiles (
-          name, allowed_source_formats, preference_order, cutoff,
-          continue_upgrades, fallback_policy, output_format, transcode_policy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-          allowed_source_formats = excluded.allowed_source_formats,
-          preference_order = excluded.preference_order,
-          cutoff = excluded.cutoff,
-          continue_upgrades = excluded.continue_upgrades,
-          fallback_policy = excluded.fallback_policy,
-          output_format = excluded.output_format,
-          transcode_policy = excluded.transcode_policy,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(
-        "High Quality",
-        JSON.stringify(["lossless", "hires-lossless"]),
-        JSON.stringify(["hires-lossless", "lossless"]),
-        "lossless",
-        0,
-        "best_allowed",
-        JSON.stringify({ codec: "flac", bitDepth: 16, sampleRate: 44100 }),
-        "downconvert_hires",
-      );
-      this.db.prepare(`
-        INSERT INTO quality_profiles (
-          name, allowed_source_formats, preference_order, cutoff,
-          continue_upgrades, fallback_policy, output_format, transcode_policy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-          allowed_source_formats = excluded.allowed_source_formats,
-          preference_order = excluded.preference_order,
-          cutoff = excluded.cutoff,
-          continue_upgrades = excluded.continue_upgrades,
-          fallback_policy = excluded.fallback_policy,
-          output_format = excluded.output_format,
-          transcode_policy = excluded.transcode_policy,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(
-        "Spatial",
-        JSON.stringify(["spatial"]),
-        JSON.stringify(["spatial"]),
-        "spatial",
-        1,
-        "unavailable",
-        JSON.stringify({ spatial: true }),
-        "preserve",
-      );
-      this.db.prepare(`
-        INSERT INTO quality_profiles (
-          name, allowed_source_formats, preference_order, cutoff,
-          continue_upgrades, fallback_policy, output_format, transcode_policy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-          allowed_source_formats = excluded.allowed_source_formats,
-          preference_order = excluded.preference_order,
-          cutoff = excluded.cutoff,
-          continue_upgrades = excluded.continue_upgrades,
-          fallback_policy = excluded.fallback_policy,
-          output_format = excluded.output_format,
-          transcode_policy = excluded.transcode_policy,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(
-        "Video",
-        JSON.stringify(["video"]),
-        JSON.stringify(["video"]),
-        "video",
-        0,
-        "unavailable",
-        JSON.stringify({ video: true }),
-        "preserve",
-      );
+
+      ensureDefaultQualityProfiles(this.db);
+
       const metadataProfileId = (this.db.prepare(`
         SELECT id FROM MetadataProfiles WHERE name = 'Default'
       `).get() as { id: number }).id;
       const qualityProfileRows = this.db.prepare(`
-        SELECT id, name FROM quality_profiles WHERE name IN ('High Quality', 'Spatial', 'Video')
+        SELECT id, name FROM quality_profiles
+        WHERE name IN ('Max Quality', 'High Quality', 'Normal Quality', 'Low Quality', 'Spatial', 'Video')
       `).all() as Array<{ id: number; name: string }>;
       const qualityProfileIdByName = new Map(
         qualityProfileRows.map((profile) => [profile.name, profile.id]),
       );
-      const highQualityProfileId = qualityProfileIdByName.get("High Quality");
+      const stereoProfileName = stereoQualityProfileName(audioQuality);
+      const stereoProfileId = qualityProfileIdByName.get(stereoProfileName)
+        ?? qualityProfileIdByName.get("Max Quality");
       const spatialQualityProfileId = qualityProfileIdByName.get("Spatial");
       const videoQualityProfileId = qualityProfileIdByName.get("Video");
       if (
-        highQualityProfileId == null
+        stereoProfileId == null
         || spatialQualityProfileId == null
         || videoQualityProfileId == null
       ) {
         throw new Error("Default library quality profiles were not materialized");
       }
+
+      // Paths/metadata refresh on every boot; quality_profile_id and enabled are
+      // owned by Settings sync so a restart never rewrites Max→High.
       const upsertLibrary = this.db.prepare(`
         INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id, enabled)
-        VALUES (?, ?, ?, ?, 1)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET
           root_path = excluded.root_path,
           metadata_profile_id = excluded.metadata_profile_id,
-          quality_profile_id = excluded.quality_profile_id,
-          enabled = excluded.enabled,
           updated_at = CURRENT_TIMESTAMP
         RETURNING id
       `);
@@ -138,20 +100,26 @@ export class LibraryCurationRepository {
         "Stereo",
         paths.stereoRoot,
         metadataProfileId,
-        highQualityProfileId,
+        stereoProfileId,
+        1,
       ) as { id: number }).id;
       const spatialId = (upsertLibrary.get(
         "Spatial",
         paths.spatialRoot,
         metadataProfileId,
         spatialQualityProfileId,
+        includeSpatial ? 1 : 0,
       ) as { id: number }).id;
       const videoId = (upsertLibrary.get(
         "Video",
         paths.videoRoot,
         metadataProfileId,
         videoQualityProfileId,
+        1,
       ) as { id: number }).id;
+
+      applyLibrarySettingsFromConfig(this.db, { audioQuality, includeSpatial });
+
       return { stereoId, spatialId, videoId };
     })();
   }

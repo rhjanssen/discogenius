@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { emitLibraryUpdated } from "../commands/app-events.js";
+import { getConfigSection } from "../config/config.js";
 import {
   curateLibraryReleases,
   type CanonicalMediumKind,
@@ -17,12 +18,20 @@ import {
   findUnreachableManualEditionChoices,
   type ManualEditionChoiceAlbum,
 } from "./artist-coverage-optimizer.js";
+import {
+  buildRecordingCoverageUnitMap,
+  editionExplicitLabelScore,
+  editionExplicitPreferenceRank,
+  mapRecordingsToCoverageUnits,
+} from "./recording-coverage-units.js";
+import { planExplicitPreferenceRank } from "./acquisition-plan-optimizer.js";
+import {
+  getMusicBrainzReleaseGroupIncludeDecision,
+  parseMusicBrainzSecondaryTypes,
+} from "../metadata/musicbrainz-release-group-filter.js";
 
 interface LibraryPolicyRow {
   id: number;
-  release_type_policy: string;
-  redundancy_enabled: number;
-  require_provider_availability: number;
   allowed_source_formats: string;
 }
 
@@ -43,11 +52,8 @@ interface ReleaseRow {
   date: string | null;
   media_count: number | null;
   media: string | null;
-}
-
-interface ReleaseTypePolicy {
-  includePrimaryTypes?: string[];
-  excludeSecondaryTypes?: string[];
+  title: string | null;
+  disambiguation: string | null;
 }
 
 function parseStringArray(value: unknown): string[] {
@@ -62,22 +68,32 @@ function parseStringArray(value: unknown): string[] {
   }
 }
 
-function parsePolicy(value: string): ReleaseTypePolicy {
-  try {
-    const parsed = JSON.parse(value || "{}");
-    return parsed && typeof parsed === "object" ? parsed as ReleaseTypePolicy : {};
-  } catch {
-    return {};
-  }
+/**
+ * Settings → Filters is the single authority for which release types enter
+ * curation. MetadataProfiles.release_type_policy is not a second user-facing
+ * config — libraries point at a profile for schema/FK reasons, but type toggles
+ * live only under settings.filtering (same pattern as quality: Settings write
+ * the profile row, users never edit two disconnected knobs).
+ */
+function releaseIncluded(release: ReleaseRow): boolean {
+  return getMusicBrainzReleaseGroupIncludeDecision({
+    primary_type: release.primary_type,
+    secondary_types: release.secondary_types,
+  }, getConfigSection("filtering")).include;
 }
 
-function releaseIncluded(release: ReleaseRow, policy: ReleaseTypePolicy): boolean {
-  const primary = String(release.primary_type || "album").trim().toLowerCase();
-  const included = parseStringArray(policy.includePrimaryTypes);
-  if (included.length > 0 && !included.includes(primary)) return false;
-  const excludedSecondary = new Set(parseStringArray(policy.excludeSecondaryTypes));
-  const secondary = parseStringArray(release.secondary_types);
-  return !secondary.some((type) => excludedSecondary.has(type));
+/**
+ * Compilations / remix dumps / DJ mixes sort after normal albums so set-cover
+ * prefers the studio products that already own the recordings.
+ */
+function secondaryTypeRankFor(secondaryTypes: string | null): number {
+  const secondary = parseMusicBrainzSecondaryTypes(secondaryTypes);
+  let rank = 0;
+  if (secondary.includes("compilation")) rank = Math.max(rank, 3);
+  if (secondary.includes("dj-mix") || secondary.includes("mixtape/street")) rank = Math.max(rank, 3);
+  if (secondary.includes("remix")) rank = Math.max(rank, 2);
+  if (secondary.includes("live") || secondary.includes("soundtrack")) rank = Math.max(rank, 1);
+  return rank;
 }
 
 function mediumKind(value: string | null): CanonicalMediumKind {
@@ -86,6 +102,21 @@ function mediumKind(value: string | null): CanonicalMediumKind {
   if (/\bcd\b|compact disc/.test(media)) return "cd";
   if (/vinyl|12"|10"|7"/.test(media)) return "vinyl";
   return "other";
+}
+
+/** True when the edition targets a preferred market (world / US / GB). */
+function isPreferredCountry(country: string | null): boolean {
+  const raw = String(country || "").trim();
+  if (!raw) return true;
+  let tokens: string[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    tokens = Array.isArray(parsed) ? parsed.map(String) : [raw];
+  } catch {
+    tokens = raw.split(/[;,]/);
+  }
+  const preferred = new Set(["xw", "xe", "us", "gb", "uk"]);
+  return tokens.some((token) => preferred.has(token.trim().toLowerCase()));
 }
 
 export class LibraryCurationService {
@@ -106,17 +137,15 @@ export class LibraryCurationService {
     const library = this.db.prepare(`
       SELECT
         library.id,
-        metadata.release_type_policy,
-        metadata.redundancy_enabled,
-        metadata.require_provider_availability,
         quality.allowed_source_formats
       FROM Libraries library
-      JOIN MetadataProfiles metadata ON metadata.id = library.metadata_profile_id
       JOIN quality_profiles quality ON quality.id = library.quality_profile_id
       WHERE library.id = ? AND library.enabled = 1
     `).get(input.libraryId) as LibraryPolicyRow | undefined;
     if (!library) throw new Error(`Enabled library ${input.libraryId} was not found`);
-    const requireProviderAvailability = Boolean(library.require_provider_availability);
+    // Settings → Filters owns these toggles (not MetadataProfiles columns).
+    const filtering = getConfigSection("filtering");
+    const requireProviderAvailability = filtering.require_provider_availability === true;
 
     const libraryArtists = this.db.prepare(`
       SELECT
@@ -139,12 +168,24 @@ export class LibraryCurationService {
         release.country,
         release.date,
         release.media_count,
-        release.media
+        release.media,
+        release.title,
+        release.disambiguation
       FROM AlbumEditions release
       JOIN Albums release_group ON release_group.id = release.release_group_id
       ORDER BY release.release_group_id, release.id
     `).all() as ReleaseRow[];
-    const policy = parsePolicy(library.release_type_policy);
+    // Clean/explicit counterparts are distinct MusicBrainz recordings. Collapse
+    // them to one coverage unit so prefer_explicit can keep one edition instead
+    // of both twins for "full discography" coverage.
+    const coverageUnitByRecording = buildRecordingCoverageUnitMap(
+      (this.db.prepare(`
+        SELECT recording_id AS recordingId, title, length_ms AS lengthMs
+        FROM Tracks
+        WHERE recording_id IS NOT NULL
+      `).all() as Array<{ recordingId: number; title: string; lengthMs: number | null }>),
+    );
+    const preferExplicit = filtering.prefer_explicit !== false;
     const allowedQualities = parseStringArray(library.allowed_source_formats);
     const qualityPlaceholders = allowedQualities.map(() => "?").join(",");
     // Editions automation may not drop: the user picked them, or their Album is
@@ -264,6 +305,12 @@ export class LibraryCurationService {
 
     const attainableByRelease = new Map<number, Set<number>>();
     if (allowedQualities.length > 0) {
+      // Per-track quality only. A release-level spatial (Atmos) flag must not
+      // make every member attainable — e.g. a stereo-only remix on a deluxe
+      // that also has Atmos for the main tracks. That wrongly kept the deluxe
+      // monitored in the Spatial library for a remix Atmos cannot deliver.
+      // Release-level quality is used only when the track has no variants of its
+      // own (providers that only declare quality on the album resource).
       const attainableRows = this.db.prepare(`
         SELECT DISTINCT release_match.edition_id, track_match.recording_id
         FROM ProviderEditionMatches release_match
@@ -284,14 +331,20 @@ export class LibraryCurationService {
                   'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
                 )
             )
-            OR EXISTS (
-              SELECT 1 FROM ProviderItemAudioVariants variant
-              WHERE variant.provider_item_id = release_match.provider_edition_item_id
-                AND variant.quality_class IN (${qualityPlaceholders})
-                AND variant.availability NOT IN (
-                  'unavailable', 'no_longer_available', 'geography_restricted',
-                  'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
-                )
+            OR (
+              NOT EXISTS (
+                SELECT 1 FROM ProviderItemAudioVariants any_track
+                WHERE any_track.provider_item_id = member.member_item_id
+              )
+              AND EXISTS (
+                SELECT 1 FROM ProviderItemAudioVariants variant
+                WHERE variant.provider_item_id = release_match.provider_edition_item_id
+                  AND variant.quality_class IN (${qualityPlaceholders})
+                  AND variant.availability NOT IN (
+                    'unavailable', 'no_longer_available', 'geography_restricted',
+                    'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
+                  )
+              )
             )
           )
       `).all(...allowedQualities, ...allowedQualities) as Array<{
@@ -306,11 +359,11 @@ export class LibraryCurationService {
     }
 
     // Every canonical Edition this library could conceivably monitor: in an
-    // artist scope and allowed by the release-type policy. Provider coverage is
+    // artist scope and allowed by Settings → Filters. Provider coverage is
     // deliberately NOT a filter here — an Edition with no offer still has to be
     // evaluated, planned and offered, it just will not be picked automatically.
     const evaluatedEditions = releases.filter((release) =>
-      releaseIncluded(release, policy)
+      releaseIncluded(release)
       && (candidateScopes.get(release.edition_id) || []).length > 0);
 
     // Plan BEFORE curating. Curation needs to weigh what a provider can actually
@@ -326,6 +379,26 @@ export class LibraryCurationService {
     }
 
     const viableEditionIds = this.viablePlanEditionIds(input.libraryId);
+    // Best plan already computed above — use its explicitness so two equal-size
+    // "explicit" editions (GMTF #348 vs #350) prefer the one whose provider
+    // product is actually explicit rather than a full clean Atmos stream.
+    const bestPlanByEdition = new Map<number, {
+      explicit_content: string;
+      coverage: number;
+      quality_tier: string;
+    }>();
+    for (const row of this.db.prepare(`
+      SELECT edition_id, explicit_content, coverage, quality_tier
+      FROM AcquisitionPlans
+      WHERE library_id = ? AND rank = 0
+    `).all(input.libraryId) as Array<{
+      edition_id: number;
+      explicit_content: string;
+      coverage: number;
+      quality_tier: string;
+    }>) {
+      bestPlanByEdition.set(row.edition_id, row);
+    }
     // The set curation is trying to cover. With provider availability required
     // it is what a provider can actually deliver; without it the canonical
     // Recording set is the target, because an Edition with no offer at all is
@@ -335,8 +408,12 @@ export class LibraryCurationService {
       : this.canonicalRecordingIdsByEdition();
     const candidates: CurationReleaseCandidate[] = [];
     for (const release of evaluatedEditions) {
-      const attainableRecordingIds = (canonicalByRelease ?? attainableByRelease)
+      const rawAttainable = (canonicalByRelease ?? attainableByRelease)
         .get(release.edition_id) || new Set<number>();
+      const attainableRecordingIds = mapRecordingsToCoverageUnits(
+        rawAttainable,
+        coverageUnitByRecording,
+      );
       // With provider availability required, only an Edition a provider can
       // actually deliver is eligible for automatic monitoring. Without it, any
       // canonical Edition may be monitored and simply has no plan to execute.
@@ -344,15 +421,32 @@ export class LibraryCurationService {
         ? viableEditionIds.has(release.edition_id)
         : true;
       if (!eligible && !protectedReleaseIds.has(release.edition_id)) continue;
+      const labelScore = editionExplicitLabelScore(release.title, release.disambiguation);
+      const labelRank = editionExplicitPreferenceRank(labelScore, preferExplicit);
+      const bestPlan = bestPlanByEdition.get(release.edition_id);
+      const planRank = bestPlan
+        ? planExplicitPreferenceRank(
+          bestPlan.explicit_content === "explicit" || bestPlan.explicit_content === "clean"
+            || bestPlan.explicit_content === "unknown"
+            ? bestPlan.explicit_content
+            : "unknown",
+          preferExplicit,
+        )
+        : 1;
+      // Plan explicitness outranks the MusicBrainz disambiguation label when
+      // both editions claim "explicit" but only one has an explicit provider plan.
+      const explicitPreferenceRank = planRank * 3 + labelRank;
       candidates.push({
         releaseGroupId: release.release_group_id,
         editionId: release.edition_id,
         attainableRecordingIds,
         official: !release.status || release.status.toLowerCase() === "official",
         medium: mediumKind(release.media),
-        preferredCountry: !release.country || ["xw", "us", "gb"].includes(release.country.toLowerCase()),
+        preferredCountry: isPreferredCountry(release.country),
         mediaCount: Math.max(1, Number(release.media_count || 1)),
         releaseDate: release.date,
+        explicitPreferenceRank,
+        secondaryTypeRank: secondaryTypeRankFor(release.secondary_types),
         protected: protectedReleaseIds.has(release.edition_id),
       });
     }
@@ -372,6 +466,7 @@ export class LibraryCurationService {
     const overruledReleaseGroupIds = this.overruledManualEditionAlbums({
       overrulableManualEditions,
       candidates: eligibleCandidates,
+      coverageUnitByRecording,
     });
     // Where the choice stands, the editions the user declined leave the running
     // entirely. Otherwise the fewest-releases optimizer would reach for the
@@ -389,9 +484,11 @@ export class LibraryCurationService {
       candidate.protected = false;
     }
 
+    // Settings → "Hide redundant singles" is the only redundancy switch.
+    const redundancyEnabled = filtering.enable_redundancy_filter !== false;
     const result = curateLibraryReleases(
       curatedCandidates,
-      Boolean(library.redundancy_enabled),
+      redundancyEnabled,
     );
 
     const releaseGroupIdByReleaseId = new Map(
@@ -448,10 +545,16 @@ export class LibraryCurationService {
   private overruledManualEditionAlbums(input: {
     overrulableManualEditions: ReadonlyArray<{ edition_id: number; release_group_id: number }>;
     candidates: readonly CurationReleaseCandidate[];
+    coverageUnitByRecording: ReadonlyMap<number, number>;
   }): Set<number> {
     if (input.overrulableManualEditions.length === 0) return new Set();
 
     const canonicalByEdition = this.canonicalRecordingIdsByEdition();
+    const unitsForEdition = (editionId: number): Set<number> =>
+      mapRecordingsToCoverageUnits(
+        canonicalByEdition.get(editionId) || new Set(),
+        input.coverageUnitByRecording,
+      );
     const manualEditionIdsByAlbum = new Map<number, Set<number>>();
     for (const row of input.overrulableManualEditions) {
       const editionIds = manualEditionIdsByAlbum.get(row.release_group_id) || new Set<number>();
@@ -470,8 +573,8 @@ export class LibraryCurationService {
     for (const [releaseGroupId, manualEditionIds] of manualEditionIdsByAlbum) {
       const chosenRecordingIds = new Set<number>();
       for (const editionId of manualEditionIds) {
-        for (const recordingId of canonicalByEdition.get(editionId) || []) {
-          chosenRecordingIds.add(recordingId);
+        for (const unitId of unitsForEdition(editionId)) {
+          chosenRecordingIds.add(unitId);
         }
       }
       // Only editions curation considers eligible count as alternatives. One no
@@ -479,8 +582,8 @@ export class LibraryCurationService {
       const alternativeRecordingIds = new Set<number>();
       for (const candidate of candidatesByAlbum.get(releaseGroupId) || []) {
         if (manualEditionIds.has(candidate.editionId)) continue;
-        for (const recordingId of canonicalByEdition.get(candidate.editionId) || []) {
-          alternativeRecordingIds.add(recordingId);
+        for (const unitId of unitsForEdition(candidate.editionId)) {
+          alternativeRecordingIds.add(unitId);
         }
       }
       // Everything the rest of the discography could supply. An album cannot
@@ -489,8 +592,8 @@ export class LibraryCurationService {
       for (const [otherAlbumId, otherCandidates] of candidatesByAlbum) {
         if (otherAlbumId === releaseGroupId) continue;
         for (const candidate of otherCandidates) {
-          for (const recordingId of canonicalByEdition.get(candidate.editionId) || []) {
-            reachableRecordingIds.add(recordingId);
+          for (const unitId of unitsForEdition(candidate.editionId)) {
+            reachableRecordingIds.add(unitId);
           }
         }
       }

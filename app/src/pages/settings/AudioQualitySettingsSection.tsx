@@ -141,7 +141,7 @@ export const AudioQualitySettingsSection = ({
         <SettingsSection
             id="audio-quality"
             title="Audio quality"
-            description="Preferred quality for new stereo downloads and upgrades."
+            description="Stereo library preference: acquisition planning, downloads, and upgrades. Spatial audio is a separate on/off library."
             className={styles.section}
         >
             <SettingsCard>
@@ -168,7 +168,7 @@ export const AudioQualitySettingsSection = ({
                     <div className={styles.rowContent}>
                         <Text weight="semibold">Spatial audio</Text>
                         <Text size={200} className={styles.mutedText}>
-                            Also keep Dolby Atmos or other spatial versions when available.
+                            Enable the Spatial library for Dolby Atmos / spatial editions. Quality ladder stays on stereo; spatial is on or off.
                         </Text>
                     </div>
                     <div className={styles.rowControl}>

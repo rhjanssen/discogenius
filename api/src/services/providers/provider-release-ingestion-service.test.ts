@@ -677,3 +677,174 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+// A provider release matched to one edition must also land on sibling editions
+// in the same release group that share the tracklist (region / barcode
+// variants). Planning only reads matches for the edition it is planning, so a
+// single-target write left every non-primary sibling with zero plans.
+test("fan-out matches sibling editions that share the tracklist", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title)
+        VALUES (1, 'group-gmtf', 1, 'Give Me the Future + Dreams of the Past');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, barcode) VALUES
+        (1, '18d7cf25-d2fa-448a-ae11-72aa6b474a42', 1, 'GMTF AF', '00602445489176'),
+        (2, '60d849a0-cd90-418f-8ff3-651d138c11de', 1, 'GMTF DZ', '602445489220'),
+        (3, '0a0bd5a8-6635-48df-980e-1f9b4d22c722', 1, 'GMTF CD', '0602445499946');
+      INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
+        (1, 'rec-a', 'Distorted Light Beam', 177000, '["GBUM72103268"]'),
+        (2, 'rec-b', 'Thelma + Louise', 138000, '["GBUM72104380"]');
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't1a', 1, 1, 1, 1, 'Distorted Light Beam', 177000),
+        (2, 't1b', 1, 2, 1, 2, 'Thelma + Louise', 138000),
+        (3, 't2a', 2, 1, 1, 1, 'Distorted Light Beam', 177000),
+        (4, 't2b', 2, 2, 1, 2, 'Thelma + Louise', 138000),
+        (5, 't3a', 3, 1, 1, 1, 'Distorted Light Beam', 177000),
+        (6, 't3b', 3, 2, 1, 2, 'Thelma + Louise', 138000);
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "243864035",
+        title: "Give Me The Future + Dreams Of The Past",
+        upc: "00602445489220",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "p-a", title: "Distorted Light Beam",
+          mediumPosition: 1, position: 1, durationMs: 177000, isrc: "GBUM72103268",
+        }),
+        trackMember({
+          providerId: "p-b", title: "Thelma + Louise",
+          mediumPosition: 1, position: 2, durationMs: 138000, isrc: "GBUM72104380",
+        }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 2, "primary edition still reports its coverage");
+    const editionMatches = db.prepare(`
+      SELECT edition_id, relation, matched_track_count, match_state
+      FROM ProviderEditionMatches
+      WHERE match_state = 'accepted'
+      ORDER BY edition_id
+    `).all() as Array<{
+      edition_id: number; relation: string; matched_track_count: number; match_state: string;
+    }>;
+    assert.deepEqual(
+      editionMatches.map((row) => [row.edition_id, row.relation, row.matched_track_count]),
+      [
+        [1, "exact", 2],
+        [2, "exact", 2],
+        [3, "exact", 2],
+      ],
+      "all three sibling editions must receive an exact match to the same provider release",
+    );
+  });
+});
+
+// A one-track provider single must also become a source_subset of a larger
+// edition of the same artist that contains the same recording — that is how a
+// three-track single gets a composite plan from two provider singles.
+test("fan-out matches a provider single as a subset of a larger same-artist edition", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES
+        (1, 'group-kms', 1, 'Killing Me Softly With His Song (MTV Unplugged)'),
+        (2, 'group-pompeii', 1, 'Pompeii / Come as You Are (MTV Unplugged)');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES
+        (1, '36f2b40f-b46d-4f37-8931-02c487a7ad3e', 1, 'KMS 1-track'),
+        (2, 'fab7ff68-52e8-45e4-9218-c4eb369c4bc2', 1, 'KMS 3-track'),
+        (3, '03358ffb-95aa-4b21-b506-fd79cb0c838b', 2, 'Pompeii 2-track');
+      INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
+        (1, 'rec-kms', 'Killing Me Softly With His Song (edit)', 298000, '["GBUM72302334"]'),
+        (2, 'rec-pompeii', 'Pompeii (edit)', 268000, '["GBUM72302279"]'),
+        (3, 'rec-cay', 'Come as You Are (edit)', 231000, '["GBUM72302277"]');
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't-kms-1', 1, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000),
+        (2, 't-kms-3a', 2, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000),
+        (3, 't-kms-3b', 2, 2, 1, 2, 'Pompeii (edit)', 268000),
+        (4, 't-kms-3c', 2, 3, 1, 3, 'Come as You Are (edit)', 231000),
+        (5, 't-pom-a', 3, 2, 1, 1, 'Pompeii (edit)', 268000),
+        (6, 't-pom-b', 3, 3, 1, 2, 'Come as You Are (edit)', 231000);
+    `);
+
+    // Ingest the KMS one-track single against its primary edition.
+    new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "290132977",
+        title: "Killing Me Softly With His Song (MTV Unplugged / Edit)",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "p-kms", title: "Killing Me Softly With His Song (edit)",
+          mediumPosition: 1, position: 1, durationMs: 298000, isrc: "GBUM72302334",
+        }),
+      ],
+    });
+
+    // Ingest the Pompeii two-track single against its primary edition.
+    new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 3,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "287367980",
+        title: "Pompeii / Come As You Are (MTV Unplugged)",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "p-pompeii", title: "Pompeii (edit)",
+          mediumPosition: 1, position: 1, durationMs: 268000, isrc: "GBUM72302279",
+        }),
+        trackMember({
+          providerId: "p-cay", title: "Come as You Are (edit)",
+          mediumPosition: 1, position: 2, durationMs: 231000, isrc: "GBUM72302277",
+        }),
+      ],
+    });
+
+    const threeTrackMatches = db.prepare(`
+      SELECT pi.provider_id, pem.relation, pem.matched_track_count, pem.target_track_count
+      FROM ProviderEditionMatches pem
+      JOIN ProviderItems pi ON pi.id = pem.provider_edition_item_id
+      WHERE pem.edition_id = 2 AND pem.match_state = 'accepted'
+      ORDER BY pi.provider_id
+    `).all() as Array<{
+      provider_id: string; relation: string;
+      matched_track_count: number; target_track_count: number;
+    }>;
+
+    assert.deepEqual(
+      threeTrackMatches,
+      [
+        {
+          provider_id: "287367980",
+          relation: "source_subset",
+          matched_track_count: 2,
+          target_track_count: 3,
+        },
+        {
+          provider_id: "290132977",
+          relation: "source_subset",
+          matched_track_count: 1,
+          target_track_count: 3,
+        },
+      ],
+      "the 3-track edition must see both provider singles as subset sources",
+    );
+  });
+});

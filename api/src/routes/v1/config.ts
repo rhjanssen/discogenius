@@ -24,10 +24,20 @@ import {
 import * as TOML from "@iarna/toml";
 import pg from "pg";
 import fs from "fs";
+import { db } from "../../database.js";
+import { applyLibrarySettingsFromConfig } from "../../services/music/library-settings-sync.js";
 
 const { Client: PgClient } = pg;
 import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
+
+/** Push Settings quality + spatial toggle onto the fixed Stereo / Spatial libraries. */
+function syncLibrariesFromSettings(): void {
+  applyLibrarySettingsFromConfig(db, {
+    audioQuality: getConfigSection("quality").audio_quality,
+    includeSpatial: getConfigSection("filtering").include_spatial === true,
+  });
+}
 import {
   queueConfigPrune,
   queueCurationPass,
@@ -110,6 +120,8 @@ router.post("/quality", async (req, res) => {
   try {
     const updates = parseQualityConfigUpdate(getObjectBody(req.body), getConfigSection("quality"));
     updateConfig("quality", updates);
+    // Stereo library profile follows audio_quality (max/high/normal/low).
+    syncLibrariesFromSettings();
     await syncDownloadBackends();
 
     // Trigger upgrade check asynchronously if enabled
@@ -209,6 +221,8 @@ const updateFilteringConfig = (req: any, res: any) => {
   try {
     const updates = parseFilteringConfigUpdate(getObjectBody(req.body), getConfigSection("filtering"));
     updateConfig("filtering", updates);
+    // Spatial library enabled flag follows include_spatial.
+    syncLibrariesFromSettings();
     const commandId = queueCurationPass({ trigger: CommandTrigger.Manual });
     res.json({ success: true, commandId });
   } catch (error: any) {

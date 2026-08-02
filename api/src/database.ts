@@ -35,6 +35,8 @@ import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
 import { REPO_ROOT } from "./services/config/bootstrap.js";
 import path from "node:path";
 import { LibraryCurationRepository } from "./services/music/library-curation-repository.js";
+import { ensureDefaultQualityProfiles } from "./services/music/library-settings-sync.js";
+import { clearConfigCache, getConfigSection } from "./services/config/config.js";
 
 let _db: Database.Database | null = null;
 
@@ -789,102 +791,10 @@ function recordDatabaseVersionState() {
 }
 
 function initializeDefaultData() {
-  // Check if quality profiles exist
-  const profileCount = db.prepare("SELECT COUNT(*) as count FROM quality_profiles").get() as { count: number };
-
-  if (profileCount.count === 0) {
-    console.log("📋 Creating default quality profiles...");
-
-    // Quality profiles define what to MONITOR, not what the downloader fetches.
-    // TIDAL only reports LOSSLESS and HIRES_LOSSLESS as quality metadata.
-    // When the user wants lossy AAC we still monitor LOSSLESS; tiddl picks the
-    // delivery tier from its track_quality setting.
-
-    // Max Quality - monitors HIRES_LOSSLESS, upgrades from LOSSLESS to HIRES_LOSSLESS
-    // Pair with audio_quality=max to get 24-bit Hi-Res files
-    db.prepare(`
-      INSERT INTO quality_profiles (
-        name, upgrade_allowed, cutoff, items, allowed_source_formats,
-        preference_order, continue_upgrades, fallback_policy,
-        output_format, transcode_policy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "Max Quality",
-      1,
-      "HIRES_LOSSLESS",
-      JSON.stringify(["HIRES_LOSSLESS", "LOSSLESS"]),
-      JSON.stringify(["lossless", "hires-lossless"]),
-      JSON.stringify(["hires-lossless", "lossless"]),
-      1,
-      "best_allowed",
-      JSON.stringify({ codec: "preserve", lossless: true }),
-      "preserve",
-    );
-
-    // High Quality - monitors LOSSLESS, no upgrades needed
-    // Pair with audio_quality=high to get 16-bit FLAC files
-    db.prepare(`
-      INSERT INTO quality_profiles (
-        name, upgrade_allowed, cutoff, items, allowed_source_formats,
-        preference_order, continue_upgrades, fallback_policy,
-        output_format, transcode_policy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "High Quality",
-      1,
-      "LOSSLESS",
-      JSON.stringify(["LOSSLESS"]),
-      JSON.stringify(["lossless", "hires-lossless"]),
-      JSON.stringify(["hires-lossless", "lossless"]),
-      0,
-      "best_allowed",
-      JSON.stringify({ codec: "flac", lossless: true, bitDepth: 16, sampleRate: 44100 }),
-      "downconvert_hires",
-    );
-
-    // Normal Quality - monitors LOSSLESS, downloads 320kbps AAC
-    // Pair with audio_quality=normal
-    db.prepare(`
-      INSERT INTO quality_profiles (
-        name, upgrade_allowed, cutoff, items, allowed_source_formats,
-        preference_order, continue_upgrades, fallback_policy,
-        output_format, transcode_policy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "Normal Quality",
-      0,
-      "LOSSLESS",
-      JSON.stringify(["LOSSLESS"]),
-      JSON.stringify(["lossy", "lossless", "hires-lossless"]),
-      JSON.stringify(["lossless", "hires-lossless", "lossy"]),
-      0,
-      "best_allowed",
-      JSON.stringify({ codec: "mp3", lossless: false, bitrate: 320000 }),
-      "transcode_allowed",
-    );
-
-    // Low Quality - accepts any source and imports a compact MP3 128 output.
-    db.prepare(`
-      INSERT INTO quality_profiles (
-        name, upgrade_allowed, cutoff, items, allowed_source_formats,
-        preference_order, continue_upgrades, fallback_policy,
-        output_format, transcode_policy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "Low Quality",
-      0,
-      "LOSSLESS",
-      JSON.stringify(["HIRES_LOSSLESS", "LOSSLESS"]),
-      JSON.stringify(["lossy", "lossless", "hires-lossless"]),
-      JSON.stringify(["lossy", "lossless", "hires-lossless"]),
-      0,
-      "best_allowed",
-      JSON.stringify({ codec: "mp3", lossless: false, bitrate: 128000 }),
-      "transcode_allowed",
-    );
-
-    console.log("✅ Created 4 default quality profiles");
-  }
+  // Stereo quality ladder + Spatial/Video profiles. Settings.audio_quality picks
+  // which stereo profile the fixed Stereo library uses (see library-settings-sync).
+  console.log("📋 Ensuring default quality profiles...");
+  ensureDefaultQualityProfiles(db);
 
   // Initialize default config
   const configDefaults = [
@@ -921,11 +831,21 @@ function initializeDefaultData() {
       ? `/${relativePath.replaceAll("\\", "/")}`
       : path.resolve(REPO_ROOT, relativePath);
   };
-  new LibraryCurationRepository(db).bootstrapDefaultLibraries({
-    stereoRoot: resolveLibraryRoot(process.env.MUSIC_PATH, "library/stereo-music"),
-    spatialRoot: resolveLibraryRoot(process.env.SPATIAL_PATH, "library/spatial-music"),
-    videoRoot: resolveLibraryRoot(process.env.VIDEO_PATH, "library/music-videos"),
-  });
+  // Config defaults land before this so Settings → library mapping is available.
+  clearConfigCache();
+  const quality = getConfigSection("quality");
+  const filtering = getConfigSection("filtering");
+  new LibraryCurationRepository(db).bootstrapDefaultLibraries(
+    {
+      stereoRoot: resolveLibraryRoot(process.env.MUSIC_PATH, "library/stereo-music"),
+      spatialRoot: resolveLibraryRoot(process.env.SPATIAL_PATH, "library/spatial-music"),
+      videoRoot: resolveLibraryRoot(process.env.VIDEO_PATH, "library/music-videos"),
+    },
+    {
+      audioQuality: quality.audio_quality,
+      includeSpatial: filtering.include_spatial === true,
+    },
+  );
 
   recordDatabaseVersionState();
 

@@ -45,6 +45,12 @@ export interface AcquisitionSourceCandidate {
   relation: ProviderReleaseRelation;
   sourceTrackCount: number;
   albumDownloadSafe: boolean;
+  /**
+   * Provider release/album explicit flag. Track lists are sometimes missing or
+   * stale (every track stored clean while the album is affirmatively explicit).
+   * Planning uses this so an explicit edition still gets an explicit plan badge.
+   */
+  releaseExplicit?: boolean | null;
   trackMatches: readonly AcquisitionTrackMatch[];
 }
 
@@ -135,10 +141,25 @@ function effectiveQualityScore(
   return Number.MAX_SAFE_INTEGER - option.qualityRank;
 }
 
+function trackExplicitPreferenceRank(
+  explicit: boolean | null | undefined,
+  preferExplicit: boolean,
+): number {
+  if (preferExplicit) {
+    if (explicit === true) return 2;
+    if (explicit == null) return 1;
+    return 0;
+  }
+  if (explicit === false) return 2;
+  if (explicit == null) return 1;
+  return 0;
+}
+
 function compareOptions(
   profile: AcquisitionQualityProfile,
   left: TrackOption,
   right: TrackOption,
+  preferExplicit: boolean = true,
 ): number {
   return Number(right.cutoffSatisfied) - Number(left.cutoffSatisfied)
     || effectiveQualityScore(profile, right) - effectiveQualityScore(profile, left)
@@ -147,6 +168,9 @@ function compareOptions(
     // out of row-id order. The cutoff governs whether we keep upgrading files;
     // it must not make a fresh choice between offers arbitrary.
     || left.qualityRank - right.qualityRank
+    // Same quality: prefer the explicit stream when Settings says so.
+    || trackExplicitPreferenceRank(right.explicit, preferExplicit)
+      - trackExplicitPreferenceRank(left.explicit, preferExplicit)
     || right.relationRank - left.relationRank
     || left.providerEditionMatchId - right.providerEditionMatchId
     || left.providerTrackMatchId - right.providerTrackMatchId
@@ -202,24 +226,109 @@ function planFragmentation(
   return transitions + outsidePrincipal + isolated;
 }
 
+/**
+ * Plan-ranking fidelity total. Lower is better.
+ *
+ * When the library continues upgrades past the cutoff (Max), every step of the
+ * ladder counts — so a 24-bit plan beats a 16-bit plan even across providers or
+ * composite vs single-source.
+ *
+ * When upgrades are off (High), anything at-or-better-than the cutoff is treated
+ * as equal fidelity for ranking. That keeps a coherent lossless album preferred
+ * over a fragmented hi-res composite once the cutoff is met, while still
+ * preferring lossless over lossy.
+ */
+function rankingQualityRankTotal(
+  profile: AcquisitionQualityProfile,
+  tracks: readonly { sourceQuality: NormalizedAudioQuality }[],
+): number {
+  const cutoff = qualityRank(profile, profile.cutoff);
+  let total = 0;
+  for (const track of tracks) {
+    let rank = qualityRank(profile, track.sourceQuality);
+    if (!profile.continueUpgradesAfterCutoff && rank < cutoff) {
+      rank = cutoff;
+    }
+    total += rank;
+  }
+  return total;
+}
+
+/**
+ * Rank plan-level explicitness under Settings → prefer_explicit.
+ * Higher is better.
+ */
+export function planExplicitPreferenceRank(
+  explicitContent: PlanExplicitContent,
+  preferExplicit: boolean,
+): number {
+  if (preferExplicit) {
+    if (explicitContent === "explicit") return 2;
+    if (explicitContent === "unknown") return 1;
+    return 0;
+  }
+  if (explicitContent === "clean") return 2;
+  if (explicitContent === "unknown") return 1;
+  return 0;
+}
+
+/**
+ * Rank stored plan alternatives for default selection.
+ *
+ * Order of importance:
+ *   1. Coverage / cutoff — more complete plans win, but a near-tie (±1 track or
+ *      ≤5%) yields to prefer_explicit so a 26/27 explicit Atmos product beats a
+ *      27/27 clean one. Large gaps (13 vs 27) still favour completeness.
+ *   2. prefer_explicit / prefer clean — Settings → filtering.prefer_explicit
+ *   3. Delivered quality — when the profile chases upgrades, 24-bit beats
+ *      16-bit even via another provider or a composite
+ *   4. Assembly simplicity — single-source over composite only once quality ties
+ *   5. Relation / provider preference — tie-breakers when the product is equal
+ *
+ * Provider priority and "prefer single-source" must never demote a plan that
+ * is genuinely higher fidelity under the library profile.
+ */
 function compareCandidatePlans(
   left: CandidatePlan,
   right: CandidatePlan,
   providerPriority: ReadonlyMap<string, number>,
+  profile: AcquisitionQualityProfile,
+  preferExplicit: boolean,
 ): number {
+  const bestCoverage = Math.max(left.coverage, right.coverage, 1);
+  // Explicit wins when it is at least 90% as complete as the rival (and within
+  // a one-track soft floor for small albums). A full clean Atmos product must
+  // not beat a 26/27 explicit composite that only lacks a non-explicit reprise.
+  const explicitCoverageFloor = Math.max(1, Math.ceil(bestCoverage * 0.9));
+  const leftExplicitOk = planExplicitPreferenceRank(left.explicitContent, preferExplicit) >= 2
+    && left.coverage >= explicitCoverageFloor;
+  const rightExplicitOk = planExplicitPreferenceRank(right.explicitContent, preferExplicit) >= 2
+    && right.coverage >= explicitCoverageFloor;
+  if (preferExplicit && leftExplicitOk !== rightExplicitOk) {
+    return Number(rightExplicitOk) - Number(leftExplicitOk);
+  }
+  if (!preferExplicit) {
+    const leftCleanOk = planExplicitPreferenceRank(left.explicitContent, false) >= 2
+      && left.coverage >= explicitCoverageFloor;
+    const rightCleanOk = planExplicitPreferenceRank(right.explicitContent, false) >= 2
+      && right.coverage >= explicitCoverageFloor;
+    if (leftCleanOk !== rightCleanOk) {
+      return Number(rightCleanOk) - Number(leftCleanOk);
+    }
+  }
+
   return right.coverage - left.coverage
     || right.cutoffSatisfied - left.cutoffSatisfied
+    || planExplicitPreferenceRank(right.explicitContent, preferExplicit)
+      - planExplicitPreferenceRank(left.explicitContent, preferExplicit)
     || right.qualityScore - left.qualityScore
+    || rankingQualityRankTotal(profile, left.tracks)
+      - rankingQualityRankTotal(profile, right.tracks)
     || left.sourceIds.length - right.sourceIds.length
     || left.fragmentation - right.fragmentation
     || right.relationScore - left.relationScore
     || (providerPriority.get(left.provider) ?? Number.MAX_SAFE_INTEGER)
       - (providerPriority.get(right.provider) ?? Number.MAX_SAFE_INTEGER)
-    // Provider order first, then genuine quality. Without this, two offers from
-    // the same provider that both clear the cutoff were separated only by the
-    // lexicographic source-id fallback below, so a lossless offer beat a hi-res
-    // one whenever its match row happened to sort first.
-    || left.qualityRankTotal - right.qualityRankTotal
     || left.sourceIds.join(",").localeCompare(right.sourceIds.join(","));
 }
 
@@ -283,6 +392,106 @@ function outcomeSignature(provider: string, tracks: readonly TrackOption[]): str
   return `${provider}|${perTrack.join(",")}`;
 }
 
+/**
+ * Whether `other` covers every track of `candidate` at equal-or-better quality
+ * (same provider and plan-level explicitness). Used for dominance pruning so a
+ * full MAX single-source plan eliminates both partial singles and multi-single
+ * composites that only rebuild the same tracklist.
+ */
+/** Stereo and spatial are different media products — never rank one over the other. */
+function isSpatialQuality(quality: NormalizedAudioQuality): boolean {
+  return quality === "spatial";
+}
+
+function planWeaklyCovers(
+  profile: AcquisitionQualityProfile,
+  other: CandidatePlan,
+  candidate: CandidatePlan,
+): boolean {
+  if (other.provider !== candidate.provider) return false;
+  if (other.explicitContent !== candidate.explicitContent) return false;
+  const otherByTrack = new Map(other.tracks.map((track) => [track.trackId, track]));
+  for (const track of candidate.tracks) {
+    const rival = otherByTrack.get(track.trackId);
+    if (!rival) return false;
+    // Spatial never fills stereo and vice versa, even if a (misconfigured) profile
+    // listed both. Those plans live on separate libraries and stay independent.
+    if (isSpatialQuality(rival.sourceQuality) !== isSpatialQuality(track.sourceQuality)) {
+      return false;
+    }
+    // qualityRank is preference-order index: lower is better. Rival must be
+    // at least as good as the candidate track (rank <= candidate rank).
+    if (qualityRank(profile, rival.sourceQuality) > qualityRank(profile, track.sourceQuality)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * `other` dominates `candidate` when candidate is not a real alternative product.
+ *
+ * Dominated (drop candidate):
+ *  - same tracklist quality outcome (outcomeSignature), worse assembly
+ *  - proper track-set subset of other, at ≤ quality per track (partial singles)
+ *  - same track set, equal-or-better quality on every track (worse single-source
+ *    tier, or composite rebuild of the same product)
+ *
+ * Not dominated (keep both):
+ *  - composite that upgrades at least one track above every single-source plan
+ *  - clean vs explicit (different explicitContent — planWeaklyCovers refuses)
+ *  - stereo vs spatial (different media family — planWeaklyCovers refuses; also
+ *    planned on separate libraries under separate quality profiles)
+ *
+ * Policy is per edition × library × provider × explicitness: at most one best
+ * single-source, plus a composite only when it is strictly better. Stereo and
+ * Spatial libraries each run this independently, so a Spatial Atmos plan is
+ * never discarded because a Stereo MAX plan exists (or vice versa).
+ */
+function planDominates(
+  profile: AcquisitionQualityProfile,
+  other: CandidatePlan,
+  candidate: CandidatePlan,
+): boolean {
+  if (other === candidate) return false;
+  if (!planWeaklyCovers(profile, other, candidate)) return false;
+
+  // Identical product (tracks + quality + explicitness): prefer fewer sources.
+  if (other.outcomeSignature === candidate.outcomeSignature) {
+    return other.sourceIds.length < candidate.sourceIds.length
+      || (other.sourceIds.length === candidate.sourceIds.length
+        && other.sourceIds.join(",") < candidate.sourceIds.join(","));
+  }
+
+  const otherTrackIds = new Set(other.tracks.map((track) => track.trackId));
+  const candidateIsTrackSubset = candidate.tracks.every((track) =>
+    otherTrackIds.has(track.trackId));
+
+  // Full edition eliminates partial singles/subsets of the same (or worse) quality.
+  if (candidateIsTrackSubset && other.tracks.length > candidate.tracks.length) {
+    return true;
+  }
+
+  // Same tracks, other is ≥ quality on every track (and not identical outcome —
+  // handled above). Drop the worse tier single or the noisier assembly.
+  if (other.tracks.length === candidate.tracks.length && candidateIsTrackSubset) {
+    const otherByTrack = new Map(other.tracks.map((track) => [track.trackId, track]));
+    let anyStrictlyBetter = false;
+    for (const track of candidate.tracks) {
+      const rival = otherByTrack.get(track.trackId)!;
+      const rivalRank = qualityRank(profile, rival.sourceQuality);
+      const trackRank = qualityRank(profile, track.sourceQuality);
+      if (rivalRank < trackRank) anyStrictlyBetter = true;
+    }
+    // Strictly better quality on any track → dominate the inferior product.
+    // Equal quality everywhere → dominate when fewer sources (composite noise).
+    if (anyStrictlyBetter) return true;
+    if (other.sourceIds.length < candidate.sourceIds.length) return true;
+  }
+
+  return false;
+}
+
 /** The exact canonical tracks a plan covers, order-independent. */
 export function planTrackSetKey(plan: { tracks: readonly { trackId: number }[] }): string {
   return [...new Set(plan.tracks.map((track) => track.trackId))]
@@ -314,64 +523,38 @@ function explicitnessCounts(tracks: readonly TrackOption[]): PlanExplicitnessCou
  *
  * A composite whose standard source is clean and whose deluxe source carries one
  * explicit track is an explicit plan — not a "mixed" one.
+ *
+ * Release-level `true` also makes the plan explicit: TIDAL (and others) often
+ * mark only a subset of tracks explicit, and stale track rows can all say clean
+ * while the album resource is still the explicit edition. Without this, the UI
+ * never shows an E badge on plans for albums that are explicitly explicit.
  */
-function planExplicitContent(counts: PlanExplicitnessCounts): PlanExplicitContent {
+function planExplicitContent(
+  counts: PlanExplicitnessCounts,
+  sourceReleaseExplicit: readonly (boolean | null | undefined)[] = [],
+): PlanExplicitContent {
   if (counts.explicitTrackCount > 0) return "explicit";
+  if (sourceReleaseExplicit.some((value) => value === true)) return "explicit";
   if (counts.unknownExplicitnessCount > 0) return "unknown";
+  if (sourceReleaseExplicit.some((value) => value == null) && counts.cleanTrackCount === 0) {
+    return "unknown";
+  }
   return counts.cleanTrackCount > 0 ? "clean" : "unknown";
 }
 
 /**
- * A profile that aims at one specific tier: that tier is preferred above all
- * others and is the cutoff, so the search maximises tracks at it and fills the
- * remainder from lower tiers.
+ * Quality tier the listener receives for one track — the dimension composite
+ * cover uses when deciding whether source A fills a hole left by source B.
  *
- * Enumerating one plan per tier is what keeps the stored set finite. Without it
- * the optimizer would happily produce "1 track at max + 19 at high", "2 at max
- * + 18 at high" and every step in between, all of which are strictly worse than
- * the best plan for their tier.
- */
-function profileTargeting(
-  profile: AcquisitionQualityProfile,
-  tier: NormalizedAudioQuality,
-): AcquisitionQualityProfile {
-  const rest = profile.preferenceOrder.filter((quality) => quality !== tier);
-  return {
-    allowedQualities: profile.allowedQualities,
-    preferenceOrder: [tier, ...rest],
-    cutoff: tier,
-    continueUpgradesAfterCutoff: false,
-  };
-}
-
-/** Tiers the provider's own variants can actually deliver, best first. */
-function availableTiers(
-  profile: AcquisitionQualityProfile,
-  sources: readonly AcquisitionSourceCandidate[],
-): NormalizedAudioQuality[] {
-  const present = new Set<NormalizedAudioQuality>();
-  for (const source of sources) {
-    for (const match of source.trackMatches) {
-      for (const variant of match.variants) {
-        if (variant.available && profile.allowedQualities.has(variant.quality)) {
-          present.add(variant.quality);
-        }
-      }
-    }
-  }
-  return profile.preferenceOrder.filter((quality) => present.has(quality));
-}
-
-/**
- * The delivered result for one canonical track, independent of who supplies it.
- *
- * Two provider editions offering the same track at the same quality and the same
- * explicitness deliver the same file to the listener. Compressing a plan onto
- * the fewest sources is only sound because of that: swapping a source for
- * another that matches this key changes nothing the user can hear.
+ * Explicitness is intentionally *not* in this key. Distorted Light Beam
+ * (reprise) often has Atmos only on the clean TIDAL product while the rest of
+ * the album has Atmos on the explicit product; the composite must be free to
+ * take explicit for 26 tracks and clean for that one non-explicit reprise.
+ * Plan-level explicitContent still becomes "explicit" as soon as any selected
+ * track/release is explicit, and plan ranking still prefers that plan.
  */
 function trackOutcomeKey(option: TrackOption): string {
-  return `${option.sourceQuality}|${option.explicit === null ? "?" : option.explicit ? "e" : "c"}`;
+  return option.sourceQuality;
 }
 
 /**
@@ -531,7 +714,7 @@ function buildProviderPlans(
   profile: AcquisitionQualityProfile,
   sources: readonly AcquisitionSourceCandidate[],
   preferredSource: AcquisitionSourceCandidate | null,
-  targetTier: NormalizedAudioQuality,
+  preferExplicit: boolean = true,
 ): CandidatePlan[] {
   if (sources.length === 0) return [];
   const orderedSources = [...sources]
@@ -544,6 +727,16 @@ function buildProviderPlans(
     for (const match of source.trackMatches) {
       for (const variant of match.variants) {
         if (!variant.available || !profile.allowedQualities.has(variant.quality)) continue;
+        // A track on an explicit *album* counts as the explicit product for
+        // preference even when the track row itself is stored clean (instrumental
+        // / non-swearing). Otherwise an exact clean match outranks an overlap
+        // explicit Atmos product purely on relation, and we never seed a
+        // composite that fills Distorted Light Beam (reprise) from clean.
+        const optionExplicit = match.explicit === true || source.releaseExplicit === true
+          ? true
+          : match.explicit === false
+            ? false
+            : null;
         const option: TrackOption = {
           trackId: match.trackId,
           providerEditionMatchId: source.providerEditionMatchId,
@@ -554,7 +747,7 @@ function buildProviderPlans(
           qualityRank: qualityRank(profile, variant.quality),
           cutoffSatisfied: cutoffSatisfied(profile, variant.quality),
           relationRank: relationRank[source.relation],
-          explicit: match.explicit ?? null,
+          explicit: optionExplicit,
         };
         const options = optionsByTrack.get(match.trackId) || [];
         options.push(option);
@@ -573,7 +766,8 @@ function buildProviderPlans(
       : 1;
   const bestOption = (options: readonly TrackOption[]): TrackOption | undefined =>
     [...options].sort((left, right) =>
-      preferredFirst(left) - preferredFirst(right) || compareOptions(profile, left, right))[0];
+      preferredFirst(left) - preferredFirst(right)
+      || compareOptions(profile, left, right, preferExplicit))[0];
 
   /** Walk the complete canonical track list against one set of sources. */
   const materialize = (allowedSourceIds: readonly number[]): CandidatePlan | null => {
@@ -606,17 +800,21 @@ function buildProviderPlans(
       && singleSource.trackMatches.length === orderedTrackIds.length,
     );
     const counts = explicitnessCounts(tracks);
+    const usedReleaseExplicit = usedSourceIds.map(
+      (sourceId) => sourceById.get(sourceId)?.releaseExplicit,
+    );
     return {
       provider: orderedSources[0].provider,
       preferredSourceId: preferredSource
         && usedSourceIds.includes(preferredSource.providerEditionMatchId)
         ? preferredSource.providerEditionMatchId
         : null,
-      // The tier the plan actually delivers, not the tier it aimed at. Labelling
-      // every plan with the library target made a lossless plan display as
-      // Hi-Res and collapsed genuinely different offers onto one plan key.
-      qualityTier: achievedTier(tracks, targetTier),
-      explicitContent: planExplicitContent(counts),
+      // The tier the plan actually delivers (best track quality), not the
+      // library cutoff. Labelling every plan with the profile target made a
+      // lossless plan display as Hi-Res and collapsed different offers onto
+      // one plan key.
+      qualityTier: achievedTier(tracks, profile.cutoff),
+      explicitContent: planExplicitContent(counts, usedReleaseExplicit),
       explicitnessCounts: counts,
       outcomeSignature: outcomeSignature(orderedSources[0].provider, tracks),
       composition: usedSourceIds.length === 1 ? "single_source" : "composite",
@@ -643,26 +841,15 @@ function buildProviderPlans(
     .map((source) => materialize([source.providerEditionMatchId]))
     .filter((plan): plan is CandidatePlan => plan != null);
 
-  // Keep every single offer that something else does not already beat outright.
-  // A user choosing between "the exact match" and "the deluxe superset" is
-  // choosing between real alternatives; collapsing them to one hides a choice.
-  const meaningfulSingles = singles.filter((candidate) => !singles.some((other) => {
-    if (other === candidate) return false;
-    if (other.explicitContent !== candidate.explicitContent) return false;
-    const otherByTrack = new Map(other.tracks.map((track) => [track.trackId, track]));
-    for (const track of candidate.tracks) {
-      const rival = otherByTrack.get(track.trackId);
-      if (!rival) return false;
-      if (qualityRank(profile, rival.sourceQuality) > qualityRank(profile, track.sourceQuality)) {
-        return false;
-      }
-    }
-    // Strictly better somewhere, or identical and losing the id tie-break.
-    return other.tracks.length > candidate.tracks.length
-      || other.qualityScore > candidate.qualityScore
-      || (other.outcomeSignature === candidate.outcomeSignature
-        && other.sourceIds.join(",") < candidate.sourceIds.join(","));
-  }));
+  // Drop singles that another single already weakly covers at ≥ quality with a
+  // strictly better product (more tracks, better quality, or same outcome with
+  // fewer/preferred sources). A full MAX exact edition therefore eliminates
+  // every partial single that only rebuilds a subset of its tracklist — those
+  // are not choices, they are noise. Distinct products stay: e.g. a deluxe
+  // superset vs a standard exact, or a hi-res partial that a lossless full
+  // cannot match track-for-track.
+  const meaningfulSingles = singles.filter((candidate) =>
+    !singles.some((other) => planDominates(profile, other, candidate)));
 
   // D. The best delivered outcome per canonical track, whoever supplies it.
   const desiredByTrack = new Map<number, string>();
@@ -671,7 +858,9 @@ function buildProviderPlans(
     if (option) desiredByTrack.set(trackId, trackOutcomeKey(option));
   }
 
-  // E. Fit the fewest sources to that outcome.
+  // E. Fit the fewest sources to that outcome. When prefer_explicit is on, seed
+  // with the best explicit source so clean fills holes (Distorted Light Beam
+  // reprise) rather than a full clean single winning the set cover alone.
   const coveredBySource = new Map<number, Set<number>>();
   for (const source of orderedSources) {
     const covered = new Set<number>();
@@ -684,22 +873,85 @@ function buildProviderPlans(
     }
     coveredBySource.set(source.providerEditionMatchId, covered);
   }
+
+  let compositeSeedId = preferredSource?.providerEditionMatchId ?? null;
+  if (preferExplicit && compositeSeedId == null) {
+    const explicitSeed = orderedSources
+      .map((source) => ({
+        id: source.providerEditionMatchId,
+        explicitBias: source.releaseExplicit === true
+          ? 2
+          : source.trackMatches.some((match) => match.explicit === true)
+            ? 1
+            : 0,
+        coverage: coveredBySource.get(source.providerEditionMatchId)?.size ?? 0,
+      }))
+      .filter((entry) => entry.explicitBias > 0 && entry.coverage > 0)
+      .sort((left, right) =>
+        right.explicitBias - left.explicitBias
+        || right.coverage - left.coverage
+        || left.id - right.id)[0];
+    compositeSeedId = explicitSeed?.id ?? null;
+  }
+
   const combinedSourceIds = minimumSourceCover({
     universe: [...desiredByTrack.keys()],
     coveredBySource,
-    preferredSourceId: preferredSource?.providerEditionMatchId ?? null,
+    preferredSourceId: compositeSeedId,
   });
   const combined = combinedSourceIds.length > 1 ? materialize(combinedSourceIds) : null;
 
-  // F. The combined offer earns its place only by delivering something no single
-  // offer does. Outcome-equivalent duplicates are dropped by the caller's
-  // signature dedup, which prefers the already-higher-ranked plan.
+  // F. A composite is only worth storing when no single-source plan already
+  // delivers that tracklist at equal-or-better quality *and* equal-or-better
+  // explicitness. A full clean single must not silence an explicit+clean
+  // composite that prefers the explicit product for every track that has it.
+  //
+  // Exception: when the user preferred a specific offer, a composite that keeps
+  // that offer must not be silenced by a pure secondary single that merely
+  // scores higher on quality. Preference is a ranking axis, not a quality one.
+  const preservesPreference = (plan: CandidatePlan): boolean =>
+    preferredSource != null
+    && plan.sourceIds.includes(preferredSource.providerEditionMatchId);
+
+  if (
+    combined
+    && meaningfulSingles.some((single) => {
+      if (preservesPreference(combined) && !preservesPreference(single)) {
+        return false;
+      }
+      if (planDominates(profile, single, combined)) return true;
+      // Same tracklist quality, worse assembly — but only drop the composite
+      // when the single is at least as preferred on explicitness.
+      if (
+        planWeaklyCovers(profile, single, combined)
+        && single.tracks.length >= combined.tracks.length
+        && single.qualityScore >= combined.qualityScore
+        && planExplicitPreferenceRank(single.explicitContent, preferExplicit)
+          >= planExplicitPreferenceRank(combined.explicitContent, preferExplicit)
+      ) {
+        return true;
+      }
+      return false;
+    })
+  ) {
+    return meaningfulSingles;
+  }
   return combined ? [...meaningfulSingles, combined] : meaningfulSingles;
 }
 
 /**
  * Optimize within each provider first, then compare the best provider-local
  * plans. Cross-provider composite plans are intentionally unsupported.
+ *
+ * Policy (per edition × library × provider × explicitness):
+ *   - one best single-source plan under the library's quality profile
+ *   - one composite only when it strictly improves coverage or quality
+ *   - clean and explicit both kept when MusicBrainz does not split them
+ *
+ * Stereo vs Spatial is a library dimension, not a plan-tier dimension. Each
+ * library has its own quality profile (stereo ladder vs spatial-only) and
+ * plans are computed per library, so an Atmos plan is never discarded because
+ * a stereo MAX plan exists, and vice versa.
  *
  * A `preferredProviderEditionMatchId` is a primary preference, not a source
  * lock: planning stays inside that offer's provider, and plans containing the
@@ -714,11 +966,14 @@ export function enumerateAcquisitionPlans(input: {
   providerPriority: readonly string[];
   preferredProviderEditionMatchId?: number | null;
   exclusive?: boolean;
+  /** Settings → filtering.prefer_explicit (default true). */
+  preferExplicit?: boolean;
 }): OptimizedAcquisitionPlan[] {
   const preferredId = input.preferredProviderEditionMatchId ?? null;
   const preferredSource = preferredId == null
     ? null
     : input.sources.find((source) => source.providerEditionMatchId === preferredId) ?? null;
+  const preferExplicit = input.preferExplicit !== false;
 
   let candidateSources = input.sources;
   if (preferredSource) {
@@ -738,46 +993,67 @@ export function enumerateAcquisitionPlans(input: {
   );
   const preferredKept = (plan: CandidatePlan): number =>
     preferredSource && plan.sourceIds.includes(preferredSource.providerEditionMatchId) ? 0 : 1;
+  const planRank = (left: CandidatePlan, right: CandidatePlan): number =>
+    preferredKept(left) - preferredKept(right)
+    || compareCandidatePlans(left, right, providerPriority, input.profile, preferExplicit);
 
-  // One plan per provider, per achievable quality tier, per composition shape.
-  // That is the axis set a user actually chooses along; everything else is a
-  // permutation of the same product.
+  // One search under the library profile (not one fan-out per quality tier).
+  // Dominance then keeps the best single-source and an optional better composite
+  // per provider × explicitness.
   const built: CandidatePlan[] = [];
   for (const sources of byProvider.values()) {
-    for (const tier of availableTiers(input.profile, sources)) {
-      built.push(...buildProviderPlans(
-        input.orderedTrackIds,
-        profileTargeting(input.profile, tier),
-        sources,
-        preferredSource,
-        tier,
-      ));
-    }
+    built.push(...buildProviderPlans(
+      input.orderedTrackIds,
+      input.profile,
+      sources,
+      preferredSource,
+      preferExplicit,
+    ));
   }
 
-  // Each candidate was searched under a profile aimed at its own tier, so its
-  // cutoff and quality scores are relative to that target. Re-score every
-  // candidate against the library's real profile before ranking them against
-  // each other, otherwise a lossless-targeted plan looks like it satisfies more
-  // of the cutoff than a hi-res-targeted plan simply because its bar was lower.
+  // Scores are already relative to the library profile; re-score is still
+  // applied so any future builder path stays comparable.
   const ranked = built
     .map((candidate) => rescoreAgainstProfile(input.profile, candidate))
-    .sort((left, right) =>
-      preferredKept(left) - preferredKept(right)
-      || compareCandidatePlans(left, right, providerPriority));
+    .sort(planRank);
 
-  // Collapse plans that deliver an identical result. The survivor is the one
-  // already ranked highest, which prefers fewer sources — so a direct match
-  // beats the composite that reproduces it, and one subset match beats ten
-  // singles that cover the same tracks at the same quality.
+  // Collapse plans that deliver an identical *or dominated* result. Exact
+  // outcome signatures keep only the highest-ranked assembly; weak dominance
+  // also drops a composite or partial that a better full plan already covers
+  // at equal-or-better per-track quality (GMTF: keep the MAX single-source,
+  // drop the multi-single rebuild *and* a same-tracklist lossless exact).
+  //
+  // A plan that still carries the user's preferred offer is never dominated by
+  // one that dropped it — preference survives as a real alternative.
+  const preservesPreference = (plan: CandidatePlan): boolean =>
+    preferredSource != null
+    && plan.sourceIds.includes(preferredSource.providerEditionMatchId);
+
   const seenOutcomes = new Set<string>();
-  const distinct = ranked.filter((candidate) => {
-    if (seenOutcomes.has(candidate.outcomeSignature)) return false;
+  const kept: CandidatePlan[] = [];
+  for (const candidate of ranked) {
+    if (seenOutcomes.has(candidate.outcomeSignature)) continue;
+    if (kept.some((other) => {
+      if (preservesPreference(candidate) && !preservesPreference(other)) return false;
+      return planDominates(input.profile, other, candidate);
+    })) continue;
     seenOutcomes.add(candidate.outcomeSignature);
-    return true;
-  });
+    kept.push(candidate);
+  }
 
-  return distinct.map((candidate) => {
+  // Cap to one best single-source and at most one composite per
+  // (provider, explicitContent). Dominance already dropped worse tiers; this
+  // guarantees the stored set matches the product policy even when two
+  // non-dominated singles remain (e.g. disjoint track sets of equal rank).
+  const selected = selectBestPlansPerBucket(
+    kept,
+    providerPriority,
+    preferredKept,
+    input.profile,
+    preferExplicit,
+  );
+
+  return selected.map((candidate) => {
     const {
       coverage,
       outcomeSignature: _outcomeSignature,
@@ -792,6 +1068,45 @@ export function enumerateAcquisitionPlans(input: {
 }
 
 /**
+ * Per (provider, explicitContent): keep the best single-source and the best
+ * composite (if any). Stereo/spatial never share a bucket with each other in
+ * practice — they use different libraries and profiles — but explicit clean
+ * vs explicit do, and both survive when MusicBrainz has not split them.
+ */
+function selectBestPlansPerBucket(
+  plans: readonly CandidatePlan[],
+  providerPriority: ReadonlyMap<string, number>,
+  preferredKept: (plan: CandidatePlan) => number,
+  profile: AcquisitionQualityProfile,
+  preferExplicit: boolean,
+): CandidatePlan[] {
+  const rank = (left: CandidatePlan, right: CandidatePlan): number =>
+    preferredKept(left) - preferredKept(right)
+    || compareCandidatePlans(left, right, providerPriority, profile, preferExplicit);
+
+  const buckets = new Map<string, CandidatePlan[]>();
+  for (const plan of plans) {
+    const key = `${plan.provider}|${plan.explicitContent}`;
+    const group = buckets.get(key) || [];
+    group.push(plan);
+    buckets.set(key, group);
+  }
+  const selected: CandidatePlan[] = [];
+  for (const group of buckets.values()) {
+    const singles = group
+      .filter((plan) => plan.composition === "single_source")
+      .sort(rank);
+    const composites = group
+      .filter((plan) => plan.composition === "composite")
+      .sort(rank);
+    if (singles[0]) selected.push(singles[0]);
+    if (composites[0]) selected.push(composites[0]);
+  }
+  // Preserve global ranking order among the survivors.
+  return selected.sort(rank);
+}
+
+/**
  * Best plan only. Kept for callers that genuinely want one answer; the ranked
  * list is what gets persisted so a library can be offered its alternatives.
  */
@@ -802,6 +1117,7 @@ export function optimizeAcquisitionPlan(input: {
   providerPriority: readonly string[];
   preferredProviderEditionMatchId?: number | null;
   exclusive?: boolean;
+  preferExplicit?: boolean;
 }): OptimizedAcquisitionPlan | null {
   return enumerateAcquisitionPlans(input)[0] ?? null;
 }

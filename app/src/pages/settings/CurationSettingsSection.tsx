@@ -265,20 +265,20 @@ export const CurationSettingsSection = ({
                 </div>
                 {renderToggleRow({
                     title: "Prefer explicit",
-                    description: "Choose explicit editions when both clean and explicit are available.",
+                    description: "When clean and explicit versions both exist, prefer the explicit edition and acquisition plan (including when one non-explicit track must be filled from the clean product).",
                     checked: curationConfig?.prefer_explicit !== false,
                     onChange: (checked) => void onUpdate({ prefer_explicit: checked }),
                     afterGroup: true,
                 })}
                 {renderToggleRow({
-                    title: "Hide redundant singles",
-                    description: "Skip singles when those tracks already appear on an album.",
+                    title: "Deduplicate coverage",
+                    description: "Drop singles, EPs, and re-packages whose tracks are already covered by a larger monitored product (clean/explicit twins count as the same track).",
                     checked: curationConfig?.enable_redundancy_filter !== false,
                     onChange: (checked) => void onUpdate({ enable_redundancy_filter: checked }),
                 })}
                 {renderToggleRow({
                     title: "Require a download source",
-                    description: "Only keep releases that at least one connected service can download.",
+                    description: "Only auto-monitor releases that at least one connected service can download.",
                     checked: curationConfig?.require_provider_availability === true,
                     onChange: (checked) => void onUpdate({ require_provider_availability: checked }),
                 })}
