@@ -1608,15 +1608,33 @@ export class RefreshArtistService {
                 // were already fetched for release-group matching.
                 const { RefreshAlbumService: RefreshAlbumSvc, providerTrackToTrackMetadataRow: toTrackRow } =
                     await import("./refresh-album-service.js");
+                let rematchedReleases = 0;
                 for (const album of albums) {
+                    const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
+                        providerReleaseGroupMatches.get(String(album.provider_id)) || null,
+                    );
                     const rawTracks = album._provider_raw_tracks;
                     if (!Array.isArray(rawTracks) || rawTracks.length === 0) {
+                        // Already materialized, so nothing was fetched for it. Matching
+                        // still has to run: it is a decision over stored rows, not a
+                        // consequence of new data, and gating it on a fetch meant a
+                        // matcher fix could never reach an existing catalog. Replay it
+                        // from the stored membership — no provider traffic.
+                        if (!album._provider_tracks) continue;
+                        try {
+                            if (RefreshAlbumSvc.rematchStoredProviderRelease(
+                                provider.id,
+                                String(album.provider_id),
+                                matchedReleaseMbid,
+                            )) {
+                                rematchedReleases += 1;
+                            }
+                        } catch (error) {
+                            console.warn(`[RefreshArtistService] Failed to re-match stored release ${album.provider_id}:`, error);
+                        }
                         continue;
                     }
                     try {
-                        const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
-                            providerReleaseGroupMatches.get(String(album.provider_id)) || null,
-                        );
                         await RefreshAlbumSvc.storeProviderTrackOffers(
                             provider.id,
                             String(album.provider_id),
@@ -1627,6 +1645,9 @@ export class RefreshArtistService {
                     } catch (error) {
                         console.warn(`[RefreshArtistService] Failed to persist track offers for album ${album.provider_id}:`, error);
                     }
+                }
+                if (rematchedReleases > 0) {
+                    console.log(`[RefreshArtistService] Re-matched ${rematchedReleases} already-materialized ${provider.name} release(s) from stored rows`);
                 }
 
                 for (const album of albums) {

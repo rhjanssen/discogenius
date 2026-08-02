@@ -743,6 +743,135 @@ export class RefreshAlbumService {
     }
 
     /**
+     * Re-run track matching for a provider release from rows already stored,
+     * without contacting the provider.
+     *
+     * Refresh reuses materialized track offers instead of re-fetching a
+     * tracklist it already has, which is right for provider traffic but meant
+     * matching only ever ran the first time an album was seen. A matcher fix
+     * could then never reach an existing catalog: Bastille's reprise stayed
+     * unmatched through repeated forced refreshes because the album was already
+     * materialized, so the improved matcher was never asked about it.
+     *
+     * Item facts and audio variants are deliberately left alone — this replays
+     * the *decision*, not the data. Credits and variants are omitted from the
+     * ingest input so their existing rows survive untouched.
+     */
+    static rematchStoredProviderRelease(
+        providerId: string,
+        albumId: string,
+        canonicalReleaseMbid?: string | null,
+    ): { acceptedTrackCount: number; ambiguousTrackCount: number } | null {
+        // Mirror storeProviderTrackOffers: when the release-group matcher does not
+        // name a release this pass, the edition this provider release is already
+        // accepted against is the canonical target. Requiring a freshly selected
+        // MBID would silently skip exactly the established releases that most need
+        // re-matching.
+        const canonicalRelease = (canonicalReleaseMbid
+            ? db.prepare(`
+                SELECT id FROM AlbumEditions WHERE mbid = ? LIMIT 1
+              `).get(canonicalReleaseMbid)
+            : db.prepare(`
+                SELECT edition.id
+                FROM ProviderItems item
+                JOIN ProviderEditionMatches match
+                  ON match.provider_edition_item_id = item.id
+                 AND match.match_state = 'accepted'
+                JOIN AlbumEditions edition ON edition.id = match.edition_id
+                WHERE item.provider = ?
+                  AND item.entity_type = 'release'
+                  AND item.provider_id = ?
+                ORDER BY
+                  CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                  match.confidence DESC,
+                  match.id
+                LIMIT 1
+              `).get(providerId, albumId)) as { id: number } | undefined;
+        if (!canonicalRelease) return null;
+
+        const releaseRow = db.prepare(`
+            SELECT
+              id, title, version, provider_type, upc, duration_ms, release_date,
+              explicit, availability, checked_at, provider_url, cover_id,
+              artwork_url, volume_count, copyright
+            FROM ProviderItems
+            WHERE provider = ? AND entity_type = 'release' AND provider_id = ?
+            LIMIT 1
+        `).get(providerId, albumId) as Record<string, any> | undefined;
+        if (!releaseRow) return null;
+
+        const memberRows = db.prepare(`
+            SELECT
+              member.medium_position, member.position, member.number,
+              member.contextual_title, member.contextual_duration_ms,
+              item.entity_type, item.provider_id, item.title, item.version,
+              item.isrc, item.duration_ms, item.release_date, item.explicit,
+              item.availability, item.provider_url, item.cover_id, item.artwork_url,
+              item.replay_gain, item.peak, item.bpm, item.musical_key, item.copyright
+            FROM ProviderEditionMembers member
+            JOIN ProviderItems item ON item.id = member.member_item_id
+            WHERE member.provider_edition_item_id = ?
+            ORDER BY member.medium_position, member.position, member.id
+        `).all(releaseRow.id) as Array<Record<string, any>>;
+        if (memberRows.length === 0) return null;
+
+        const ingested = new ProviderReleaseIngestionService(db).ingest({
+            canonicalReleaseId: canonicalRelease.id,
+            matcherVersion: 1,
+            release: {
+                provider: providerId,
+                entityType: "release",
+                providerId: String(albumId),
+                title: textOrNull(releaseRow.title),
+                version: textOrNull(releaseRow.version),
+                providerType: textOrNull(releaseRow.provider_type),
+                upc: textOrNull(releaseRow.upc),
+                durationMs: positiveNumberOrNull(releaseRow.duration_ms),
+                releaseDate: textOrNull(releaseRow.release_date),
+                explicit: releaseRow.explicit == null ? null : Boolean(releaseRow.explicit),
+                availability: textOrNull(releaseRow.availability) || "available",
+                checkedAt: textOrNull(releaseRow.checked_at) || new Date().toISOString(),
+                providerUrl: textOrNull(releaseRow.provider_url),
+                coverId: textOrNull(releaseRow.cover_id),
+                artworkUrl: textOrNull(releaseRow.artwork_url),
+                volumeCount: positiveNumberOrNull(releaseRow.volume_count),
+                copyright: textOrNull(releaseRow.copyright),
+            },
+            members: memberRows.map((row) => ({
+                item: {
+                    provider: providerId,
+                    entityType: row.entity_type === "video" ? "video" as const : "track" as const,
+                    providerId: String(row.provider_id),
+                    title: textOrNull(row.title),
+                    version: textOrNull(row.version),
+                    isrc: textOrNull(row.isrc),
+                    durationMs: positiveNumberOrNull(row.duration_ms),
+                    releaseDate: textOrNull(row.release_date),
+                    explicit: row.explicit == null ? null : Boolean(row.explicit),
+                    availability: textOrNull(row.availability) || "available",
+                    providerUrl: textOrNull(row.provider_url),
+                    coverId: textOrNull(row.cover_id),
+                    artworkUrl: textOrNull(row.artwork_url),
+                    replayGain: finiteNumberOrNull(row.replay_gain),
+                    peak: finiteNumberOrNull(row.peak),
+                    bpm: finiteNumberOrNull(row.bpm),
+                    musicalKey: textOrNull(row.musical_key),
+                    copyright: textOrNull(row.copyright),
+                },
+                mediumPosition: Number(row.medium_position || 1),
+                position: Number(row.position || 0),
+                number: textOrNull(row.number),
+                contextualTitle: textOrNull(row.contextual_title),
+                contextualDurationMs: positiveNumberOrNull(row.contextual_duration_ms),
+            })),
+        });
+        return {
+            acceptedTrackCount: ingested.acceptedTrackCount,
+            ambiguousTrackCount: ingested.ambiguousTrackCount,
+        };
+    }
+
+    /**
      * Persist provider-native release membership and, when a canonical release
      * is known, publish typed release/track matches through the shared matcher.
      */

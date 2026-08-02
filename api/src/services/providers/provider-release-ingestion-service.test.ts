@@ -220,6 +220,104 @@ test("contextual member title and duration outrank the standalone item facts", (
   });
 });
 
+// Acquisition plans reference the individual track matches they deliver. With
+// no ON DELETE clause on that reference, a planned release used to make its own
+// matches undeletable, so re-matching died on a foreign-key error and matching
+// was frozen for every release that had ever been planned.
+test("re-matching a planned release replaces its matches instead of failing", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-a', 'Alpha', 200000);
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms)
+        VALUES (1, 't-a', 1, 1, 1, 1, 'Alpha', 200000);
+      INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Standard', '{}');
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        fallback_policy, output_format, transcode_policy
+      ) VALUES (1, 'Lossless', '[]', '[]', 'lossless', 'none', 'source', 'never');
+      INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
+        VALUES (1, 'Stereo', '/library/stereo', 1, 1);
+    `);
+
+    const service = new ProviderReleaseIngestionService(db);
+    const ingestOnce = () => service.ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "release-planned",
+        title: "Release A",
+        availability: "available",
+      },
+      members: [{
+        ...trackMember({
+          providerId: "p-a",
+          title: "Alpha",
+          mediumPosition: 1,
+          position: 1,
+          durationMs: 200000,
+        }),
+        audioVariants: [{
+          variantKey: "lossless",
+          qualityClass: "lossless",
+          availability: "available",
+        }],
+      }],
+    });
+
+    const first = ingestOnce();
+    assert.equal(first.acceptedTrackCount, 1);
+
+    // Plan the release, so its track match is referenced.
+    const trackMatchId = (db.prepare(
+      "SELECT id FROM ProviderTrackMatches WHERE match_state = 'accepted'",
+    ).get() as { id: number }).id;
+    db.prepare(`
+      INSERT INTO AcquisitionPlans (
+        id, library_id, edition_id, provider, composition, download_mode, state,
+        plan_key, rank, coverage, target_track_count, quality_tier,
+        explicit_content, planner_version, policy_hash, computed_at
+      ) VALUES (1, 1, 1, 'tidal', 'single_source', 'album', 'current',
+                'tidal|lossless|clean|single_source|1', 0, 1, 1, 'lossless', 'clean', 1, 'hash',
+                CURRENT_TIMESTAMP)
+    `).run();
+    const editionMatchId = (db.prepare(
+      "SELECT id FROM ProviderEditionMatches",
+    ).get() as { id: number }).id;
+    db.prepare(`
+      INSERT INTO AcquisitionPlanSources (id, plan_id, provider_edition_match_id, role, sort_order)
+      VALUES (1, 1, ?, 'primary', 0)
+    `).run(editionMatchId);
+    const variantId = (db.prepare(
+      "SELECT id FROM ProviderItemAudioVariants LIMIT 1",
+    ).get() as { id: number }).id;
+    db.prepare(`
+      INSERT INTO AcquisitionPlanTracks (
+        plan_id, track_id, source_id, provider_track_match_id, provider_audio_variant_id
+      ) VALUES (1, 1, 1, ?, ?)
+    `).run(trackMatchId, variantId);
+
+    // The whole point: this must not throw.
+    const second = ingestOnce();
+    assert.equal(second.acceptedTrackCount, 1, "re-matching a planned release must succeed");
+
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM AcquisitionPlans").get() as { count: number }).count,
+      0,
+      "plans built on replaced matches are dropped for the planner to rebuild",
+    );
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM AcquisitionPlanTracks").get() as { count: number }).count,
+      0,
+      "plan tracks cascade with their plan",
+    );
+  });
+});
+
 // Structure resolves most repeated titles, but when two provider tracks are
 // genuinely indistinguishable — same title, same runtime, and neither slot
 // matches the canonical track — the match must stay ambiguous rather than pick

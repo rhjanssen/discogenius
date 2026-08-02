@@ -216,6 +216,7 @@ export class ProviderReleaseIngestionService {
 
     return this.db.transaction(() => {
       const providerEditionItemId = this.catalog.upsertItem(input.release);
+      this.clearDependentAcquisitionPlans(providerEditionItemId);
       if (input.releaseAudioVariants) {
         this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants);
       }
@@ -375,6 +376,38 @@ export class ProviderReleaseIngestionService {
         ambiguousTrackCount,
       };
     })();
+  }
+
+  /**
+   * Drop the acquisition plans built on this provider release before its rows
+   * are rewritten.
+   *
+   * Plan tracks point at both the track match and the exact audio variant they
+   * would download, and neither reference carries an ON DELETE clause. Re-
+   * ingesting replaces both, so a release that had ever been planned could not
+   * be re-ingested at all: it failed on a foreign-key error. That is what froze
+   * matching for an established catalog and kept a matcher fix from ever
+   * reaching it.
+   *
+   * This has to run before any replace, not alongside the match rewrite — the
+   * audio variants are replaced first.
+   *
+   * Plans are derived state, so the planner rebuilds them. The operator's
+   * choice survives because a selection is remembered by stable plan_key on
+   * LibraryEditions, not by plan row id. Composites are caught too: a composite
+   * that draws on this release records it as one of its sources.
+   */
+  private clearDependentAcquisitionPlans(providerEditionItemId: number): void {
+    this.db.prepare(`
+      DELETE FROM AcquisitionPlans
+      WHERE id IN (
+        SELECT source.plan_id
+        FROM AcquisitionPlanSources source
+        JOIN ProviderEditionMatches edition_match
+          ON edition_match.id = source.provider_edition_match_id
+        WHERE edition_match.provider_edition_item_id = ?
+      )
+    `).run(providerEditionItemId);
   }
 
   private materializeCredits(
