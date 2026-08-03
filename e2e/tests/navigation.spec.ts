@@ -132,13 +132,17 @@ test.describe('App shell & navigation', () => {
     const resp = await request.get(`${baseURL}/health`);
     expect(resp.status()).toBe(200);
     const data = await resp.json();
+    // /health wraps the diagnostics snapshot under preflight (plus a frozen
+    // startup snapshot), rather than returning the flat HealthDiagnosticsSnapshot.
     expect(data.status).toBe('degraded');
-    expect(data.subsystems.database.schema.status).toBe('ok');
-    expect(data.subsystems.database.deep).toMatchObject({
+    expect(data.preflight).toBeTruthy();
+    expect(data.startup).toBeTruthy();
+    expect(data.preflight.subsystems.database.schema.status).toBe('ok');
+    expect(data.preflight.subsystems.database.deep).toMatchObject({
       status: 'warning',
       message: 'No completed deep database integrity check has been recorded',
     });
-    expect(data.issues).toEqual(expect.arrayContaining([
+    expect(data.preflight.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ scope: 'database.deep', status: 'warning' }),
     ]));
   });
