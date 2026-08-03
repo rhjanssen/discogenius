@@ -74,6 +74,16 @@ function parseFailures(stdout) {
   return { files: [...files], tests };
 }
 
+const MAX_CLONE_FLAKE_RETRIES = 3;
+
+function isCloneFlakeOnly(stdout, stderr, status) {
+  if ((status ?? 1) === 0) return { flaked: false };
+  const combined = `${String(stdout || "")}\n${String(stderr || "")}`;
+  if (!combined.includes(CLONE_FLAKE_SIGNATURE)) return { flaked: false };
+  const { files: failedFiles, tests: failedTests } = parseFailures(combined);
+  return { flaked: true, failedFiles, failedTests, combined };
+}
+
 let result = runOnce(testFiles, { capture: true });
 if (result.stdout) process.stdout.write(result.stdout);
 if (result.stderr) process.stderr.write(result.stderr);
@@ -83,24 +93,39 @@ if (result.stderr) process.stderr.write(result.stderr);
 // test assertion. Detect it across both output streams because Node has emitted
 // the signature on either one. Real assertion failures do not match and fail
 // immediately; retrying those would hide a flaky or genuinely broken test.
-const combinedOutput = `${String(result.stdout || "")}\n${String(result.stderr || "")}`;
-if ((result.status ?? 1) !== 0 && combinedOutput.includes(CLONE_FLAKE_SIGNATURE)) {
-  const { files: failedFiles, tests: failedTests } = parseFailures(combinedOutput);
-  if (failedTests.length > 0) {
-    // Assertions failed for reasons that have nothing to do with the flake.
-    // Re-running the flaked file cannot absolve them, so the suite stays red.
+// Isolation retries still flake occasionally on CI — allow a few attempts.
+let flake = isCloneFlakeOnly(result.stdout, result.stderr, result.status);
+if (flake.flaked) {
+  if (flake.failedTests.length > 0) {
     console.error(
-      `[api tests] Test-runner clone flake detected, but ${failedTests.length} test(s) failed on their own merits; not retrying:\n`
-      + failedTests.map((name) => `  - ${name}`).join("\n"),
+      `[api tests] Test-runner clone flake detected, but ${flake.failedTests.length} test(s) failed on their own merits; not retrying:\n`
+      + flake.failedTests.map((name) => `  - ${name}`).join("\n"),
     );
     process.exit(result.status ?? 1);
   }
-  if (failedFiles.length > 0) {
-    console.warn(`[api tests] Test-runner clone flake detected; re-running ${failedFiles.length} affected file(s) in isolation: ${failedFiles.join(", ")}`);
-    result = runOnce(failedFiles, { capture: false });
-  } else {
-    console.warn("[api tests] Test-runner clone flake detected without a parseable file; retrying the whole suite once.");
-    result = runOnce(testFiles, { capture: false });
+  let retryFiles = flake.failedFiles.length > 0 ? flake.failedFiles : testFiles;
+  for (let attempt = 1; attempt <= MAX_CLONE_FLAKE_RETRIES; attempt += 1) {
+    console.warn(
+      `[api tests] Test-runner clone flake detected; isolation retry ${attempt}/${MAX_CLONE_FLAKE_RETRIES}`
+      + (retryFiles === testFiles
+        ? " (whole suite)"
+        : `: ${retryFiles.join(", ")}`),
+    );
+    result = runOnce(retryFiles, { capture: true });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    flake = isCloneFlakeOnly(result.stdout, result.stderr, result.status);
+    if (!flake.flaked) break;
+    if (flake.failedTests.length > 0) {
+      console.error(
+        `[api tests] Isolation retry saw real assertion failures; not retrying further:\n`
+        + flake.failedTests.map((name) => `  - ${name}`).join("\n"),
+      );
+      process.exit(result.status ?? 1);
+    }
+    if (flake.failedFiles.length > 0) {
+      retryFiles = flake.failedFiles;
+    }
   }
 }
 
