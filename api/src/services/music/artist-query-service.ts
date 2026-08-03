@@ -22,6 +22,7 @@ import {
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
 import { ARTIST_TOP_TRACK_LIMIT, ArtistTopTrackService } from "./artist-top-track-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 
@@ -524,15 +525,7 @@ const artistReleaseGroupLibraryStateCte = `
       provider_item.provider_id AS selected_provider_id,
       provider_item.provider_url,
       (
-          SELECT COALESCE(
-            NULLIF(TRIM(CASE
-              WHEN json_valid(plan_track.source_quality_snapshot)
-              THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
-              ELSE plan_track.source_quality_snapshot
-            END), ''),
-            NULLIF(TRIM(variant.provider_quality_label), ''),
-            variant.quality_class
-          )
+          SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
           FROM AcquisitionPlanTracks plan_track
           JOIN ProviderItemAudioVariants variant
             ON variant.id = plan_track.provider_audio_variant_id

@@ -292,7 +292,13 @@ export function describeTrackMatch(
     //    common for unrelated short titles of similar length (e.g. "World Gone
     //    Mad" vs "Distorted Light Beam"), and that used to promote a false 0.95
     //    cover that beat the barcode-matched single on HIRES quality.
-    if ((versionsOk || oneSidedStructurallyConfirmed) && positionAligned && baseMatch) {
+    //
+    //    When both sides know duration, always require the 10s grace. Skipping
+    //    that accepted Bakermat "The Spirit (commentary)" (47s, pos 1) against
+    //    the standard-album song "The Spirit" (136s, pos 1) on a source_subset
+    //    match — base titles agree and slots align, but the recording is wrong.
+    const durationOk = !durationKnown || durationClose;
+    if ((versionsOk || oneSidedStructurallyConfirmed) && positionAligned && baseMatch && durationOk) {
         return { score: 0.95, method: "medium_position_duration" };
     }
     if (versionsOk && positionAligned && durationClose && titleSim >= 0.55) {

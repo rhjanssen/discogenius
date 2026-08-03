@@ -73,11 +73,11 @@ const secondaryReleaseTypeRows = [
 ] as const;
 
 const musicVideoTypeRows = [
-    { key: "include_video_official", title: "Official music video" },
+    { key: "include_video_official", title: "Official video" },
     { key: "include_video_live", title: "Live" },
-    { key: "include_video_lyric", title: "Lyric video" },
-    { key: "include_video_visualizer", title: "Visualizer" },
-    { key: "include_video_official_audio", title: "Official audio" },
+    { key: "include_video_lyric", title: "Lyric" },
+    // Visualiser also covers Official Audio / audio-only catalog cuts.
+    { key: "include_video_visualizer", title: "Visualiser" },
 ] as const;
 
 const useStyles = makeStyles({

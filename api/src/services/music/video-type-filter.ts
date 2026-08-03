@@ -4,9 +4,9 @@
  * Curation (unlocked rows only). Existing imported files are kept on disk
  * unless remove_unmonitored_files is enabled.
  *
- * Exposed Settings checkboxes: official/OMV, lyric, live, visualizer,
- * official audio. Catalog `audio` ("(Official Audio)" / "(Audio)") is its own
- * filter — same pattern as Visualizer.
+ * Exposed Settings checkboxes: Official, Live, Lyric, Visualiser.
+ * Catalog `audio` ("(Official Audio)" / "(Audio)") shares the Visualiser
+ * filter with `visualizer` cuts — one toggle covers both.
  */
 
 import type { FilteringConfig } from "../config/config.js";
@@ -20,8 +20,7 @@ export type VideoTypeFilterKey =
   | "official"
   | "lyric"
   | "live"
-  | "visualizer"
-  | "official_audio";
+  | "visualizer";
 
 export function resolveVideoTypeFilterKey(
   variant: VideoVariant | string | null | undefined,
@@ -29,8 +28,8 @@ export function resolveVideoTypeFilterKey(
   const normalized = normalizeVideoVariant(variant);
   if (normalized === "lyric") return "lyric";
   if (normalized === "live") return "live";
-  if (normalized === "visualizer") return "visualizer";
-  if (normalized === "audio") return "official_audio";
+  // Official Audio / Audio-only shares Visualiser — not the OMV bucket.
+  if (normalized === "visualizer" || normalized === "audio") return "visualizer";
   // video / official → official OMV bucket
   return "official";
 }
@@ -51,10 +50,18 @@ export function isVideoVariantDownloadAllowed(
   >,
 ): boolean {
   const key = resolveVideoTypeFilterKey(variant);
-  if (key === "lyric") return filtering.include_video_lyric !== false;
+  if (key === "lyric") return filtering.include_video_lyric === true;
   if (key === "live") return filtering.include_video_live !== false;
-  if (key === "visualizer") return filtering.include_video_visualizer !== false;
-  if (key === "official_audio") return filtering.include_video_official_audio !== false;
+  if (key === "visualizer") {
+    // Visualiser checkbox is authoritative. Legacy `include_video_official_audio`
+    // still enables Audio-only cuts when Visualiser is off (pre-merge configs).
+    if (filtering.include_video_visualizer === true) return true;
+    if (normalizeVideoVariant(variant) === "audio"
+      && filtering.include_video_official_audio === true) {
+      return true;
+    }
+    return false;
+  }
   return filtering.include_video_official !== false;
 }
 

@@ -36,13 +36,19 @@ export interface FilteringConfig {
   include_videos: boolean;             // Monitor music videos
   /** Official Music Video / OMV (`video` + `official`). Factory default ON. */
   include_video_official: boolean;
-  /** Official lyric videos (`lyric`). Factory default ON. */
+  /** Official lyric videos (`lyric`). Factory default OFF. */
   include_video_lyric: boolean;
   /** Live performance videos (`live`). Factory default ON. */
   include_video_live: boolean;
-  /** Visualizer / visualiser cuts (`visualizer`). Factory default ON. */
+  /**
+   * Visualiser cuts + Official Audio / audio-only (`visualizer` + `audio`).
+   * Factory default OFF. One Settings toggle covers both catalog classes.
+   */
   include_video_visualizer: boolean;
-  /** Official Audio / Audio cuts (`audio`). Factory default ON. */
+  /**
+   * Legacy alias for Official Audio only. Kept for config API compatibility;
+   * the UI no longer exposes it. Filter logic prefers `include_video_visualizer`.
+   */
   include_video_official_audio: boolean;
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
@@ -200,10 +206,10 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_spatial: false,
     include_videos: false,
     include_video_official: true,
-    include_video_lyric: true,
+    include_video_lyric: false,
     include_video_live: true,
-    include_video_visualizer: true,
-    include_video_official_audio: true,
+    include_video_visualizer: false,
+    include_video_official_audio: false,
     require_provider_availability: true,
   },
   path: {
@@ -215,8 +221,10 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   naming: {
     artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
-    album_track_path_single: "{Album Title} ({Release Year})/{track:00} - {Track Title}",
-    album_track_path_multi: "{Album Title} ({Release Year})/{medium:0}{track:00} - {Track Title}",
+    // Prefer edition (release) title so deluxe / Track-by-Track / region products
+    // get distinct folders; falls back to the album title when no edition is set.
+    album_track_path_single: "{Edition Title} ({Release Year})/{track:00} - {Track Title}",
+    album_track_path_multi: "{Edition Title} ({Release Year})/{medium:0}{track:00} - {Track Title}",
     // The default "separated" layout already puts video files in per-artist
     // folders, so the artist prefix in the filename is redundant. Include
     // {Video Type} so Plex/Jellyfin extras classification is template-owned

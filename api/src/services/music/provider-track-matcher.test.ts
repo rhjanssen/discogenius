@@ -64,6 +64,26 @@ test("same position + close duration matches when the base title still agrees", 
   assert.ok(s >= 0.9, `got ${s}`);
 });
 
+test("commentary track does not match same-slot song with a large duration gap", () => {
+  // Bakermat "The Spirit (Track by Track)": pos 1 is a 47s commentary clip;
+  // the standard album's pos 1 is the 136s song. Base titles agree and slots
+  // align, but duration must reject the false medium_position_duration cover.
+  const s = scoreTrackMatch(
+    target({ title: "The Spirit (commentary)", trackNumber: 1, durationSec: 47 }),
+    provider({ title: "The Spirit", trackNumber: 1, durationSec: 136 }),
+  );
+  assert.ok(s < TRACK_MATCH_THRESHOLD, `commentary must not match song, got ${s}`);
+});
+
+test("commentary matches the same-slot commentary when duration is close", () => {
+  const s = scoreTrackMatch(
+    target({ title: "The Spirit (commentary)", trackNumber: 1, durationSec: 47 }),
+    provider({ title: "The Spirit", trackNumber: 1, durationSec: 46 }),
+  );
+  // One-sided "commentary" qualifier + position + duration → structural OK.
+  assert.ok(s >= 0.9, `commentary should match short slot peer, got ${s}`);
+});
+
 test("two genuinely different songs at the same position with a coincidental duration do NOT match", () => {
   // Guard against false coverage when combining releases.
   const s = scoreTrackMatch(

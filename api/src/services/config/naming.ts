@@ -11,11 +11,20 @@ export type NamingContext = {
   artistDisambiguation?: string | null;
   artistGenre?: string | null;
 
+  /** MusicBrainz release-group (album) title. */
   albumTitle?: string | null;
   albumType?: string | null;
   albumMbId?: string | null;
+  /** MusicBrainz release-group disambiguation. */
   albumDisambiguation?: string | null;
   albumGenre?: string | null;
+  /**
+   * MusicBrainz release (edition) title. Falls back to albumTitle when unset.
+   * Prefer this for folder names when editions differ (deluxe, Track by Track, …).
+   */
+  editionTitle?: string | null;
+  /** MusicBrainz release (edition) disambiguation. */
+  editionDisambiguation?: string | null;
   releaseGroupMbId?: string | null;
   releaseYear?: string | null;
   explicit?: boolean | null;
@@ -191,6 +200,10 @@ function buildDerived(context: NamingContext) {
   const albumMbId = context.albumMbId || "";
   const albumDisambiguation = context.albumDisambiguation || "";
   const albumGenre = context.albumGenre || "";
+  // Edition title falls back to the release-group title so templates using
+  // {Edition Title} still work when only the album title is known.
+  const editionTitle = String(context.editionTitle || "").trim() || albumTitle;
+  const editionDisambiguation = context.editionDisambiguation || "";
   const releaseGroupMbId = context.releaseGroupMbId || "";
 
   const trackTitle = context.trackTitle || "Unknown Track";
@@ -230,6 +243,8 @@ function buildDerived(context: NamingContext) {
     albumMbId,
     albumDisambiguation,
     albumGenre,
+    editionTitle,
+    editionDisambiguation,
     releaseGroupMbId,
     releaseYear,
     trackTitle,
@@ -335,7 +350,7 @@ function resolveTokenValue(
       break;
     }
 
-    // Album titles - all variants
+    // Album titles - all variants (MusicBrainz release-group)
     case "albumtitle":
       baseValue = derived.albumTitle;
       break;
@@ -371,6 +386,28 @@ function resolveTokenValue(
       break;
     case "releaseyear":
       baseValue = derived.releaseYear;
+      break;
+
+    // Edition / release titles (MusicBrainz release — one specific product)
+    case "editiontitle":
+    case "releasetitle":
+      baseValue = derived.editionTitle;
+      break;
+    case "editioncleantitle":
+    case "releasecleantitle":
+      baseValue = cleanTitle(derived.editionTitle);
+      break;
+    case "editiontitlethe":
+    case "releasetitlethe":
+      baseValue = titleThe(derived.editionTitle);
+      break;
+    case "editioncleantitlethe":
+    case "releasecleantitlethe":
+      baseValue = cleanTitleThe(derived.editionTitle);
+      break;
+    case "editiondisambiguation":
+    case "releasedisambiguation":
+      baseValue = derived.editionDisambiguation;
       break;
 
     // Track titles - all variants
@@ -740,6 +777,16 @@ const KNOWN_TOKEN_NAMES = new Set([
   "releasegroupmbid",
   "albumid",
   "releaseyear",
+  "editiontitle",
+  "editioncleantitle",
+  "editiontitlethe",
+  "editioncleantitlethe",
+  "editiondisambiguation",
+  "releasetitle",
+  "releasecleantitle",
+  "releasetitlethe",
+  "releasecleantitlethe",
+  "releasedisambiguation",
   "tracktitle",
   "trackcleantitle",
   "tracktitlethe",
@@ -898,6 +945,8 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     albumMbId: "a1a8c886-df06-44ec-b851-f76156a086cf",
     albumDisambiguation: "extended cut",
     albumGenre: "Pop Rock",
+    editionTitle: "Bad Blood",
+    editionDisambiguation: "deluxe edition",
     releaseGroupMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
     releaseYear: "2013",
     trackTitle: "Pompeii",

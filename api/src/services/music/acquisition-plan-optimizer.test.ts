@@ -90,7 +90,9 @@ test("HIGH chooses one coherent exact lossless source over a fragmented hi-res c
   assert.equal(plan?.downloadMode, "album");
 });
 
-test("MAX: partial hi-res beats full lossy (never demote quality class for coverage)", () => {
+test("MAX: full lossy beats partial hi-res (coverage before fidelity)", () => {
+  // A complete match at any quality outranks a partial higher-tier plan.
+  // Only another full-coverage plan at higher quality may win.
   const plans = enumerateAcquisitionPlans({
     orderedTrackIds: [1, 2, 3, 4],
     profile: maxWithLossy,
@@ -130,9 +132,9 @@ test("MAX: partial hi-res beats full lossy (never demote quality class for cover
     ],
   });
   assert.ok(plans.length >= 1);
-  assert.equal(plans[0].provider, "tidal");
-  assert.equal(plans[0].qualityTier, "hires-lossless");
-  assert.equal(plans[0].coverage, 3);
+  assert.equal(plans[0].provider, "soundcloud");
+  assert.equal(plans[0].qualityTier, "lossy");
+  assert.equal(plans[0].coverage, 4);
 });
 
 test("MAX: hi-res composite beats lossless single-source when upgrades continue", () => {

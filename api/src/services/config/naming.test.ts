@@ -331,8 +331,8 @@ test("renderRelativePath returns \"Unknown\" when all segments collapse", () => 
 test("factory default naming templates render Plex/Jellyfin-friendly previews", () => {
   const config = {
     artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
-    album_track_path_single: "{Album Title} ({Release Year})/{track:00} - {Track Title}",
-    album_track_path_multi: "{Album Title} ({Release Year})/{medium:0}{track:00} - {Track Title}",
+    album_track_path_single: "{Edition Title} ({Release Year})/{track:00} - {Track Title}",
+    album_track_path_multi: "{Edition Title} ({Release Year})/{medium:0}{track:00} - {Track Title}",
     video_file: "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}",
   };
 
@@ -526,4 +526,34 @@ test("{Album Disambiguation} renders the release-group disambiguation", () => {
   );
 
   assert.equal(rendered, "Bad Blood (extended cut)");
+});
+
+test("{Edition Title} and {Edition Disambiguation} use the release product", () => {
+  const rendered = renderFileStem(
+    "{Edition Title} ({Edition Disambiguation})",
+    {
+      artistName: "Bakermat",
+      albumTitle: "The Spirit",
+      editionTitle: "The Spirit (Track by Track)",
+      editionDisambiguation: "commentary",
+    },
+  );
+  assert.equal(rendered, "The Spirit (Track by Track) (commentary)");
+});
+
+test("{Edition Title} falls back to album title when edition is unset", () => {
+  const rendered = renderFileStem("{Edition Title}", {
+    artistName: "Bastille",
+    albumTitle: "Bad Blood",
+  });
+  assert.equal(rendered, "Bad Blood");
+});
+
+test("{Release Title} is an alias of {Edition Title}", () => {
+  const rendered = renderFileStem("{Release Title}", {
+    artistName: "Bastille",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood (Deluxe)",
+  });
+  assert.equal(rendered, "Bad Blood (Deluxe)");
 });

@@ -158,8 +158,8 @@ function seedAlbum(options: {
   const insertVariant = db.prepare(`
     INSERT INTO ProviderItemAudioVariants (
       provider_item_id, variant_key, quality_class,
-      provider_quality_label, availability
-    ) VALUES (?, ?, ?, ?, 'available')
+      provider_quality_label, spatial_format, availability
+    ) VALUES (?, ?, ?, ?, ?, 'available')
     RETURNING id
   `);
   const createTrackSource = (
@@ -189,11 +189,17 @@ function seedAlbum(options: {
         : /LOSSLESS|FLAC|ALAC/i.test(quality)
           ? "lossless"
           : "lossy";
+    const spatialFormat = /ATMOS/i.test(quality)
+      ? "atmos"
+      : /360/i.test(quality)
+        ? "360ra"
+        : null;
     const variant = insertVariant.get(
       providerTrack.id,
       suffix,
       qualityClass,
       quality,
+      spatialFormat,
     ) as { id: number };
     return { trackMatchId: trackMatch.id, variantId: variant.id };
   };
@@ -288,7 +294,9 @@ function seedAlbum(options: {
       RETURNING id
     `).get(plan.id, spatial ? spatialMatch.id : stereoMatch.id) as { id: number };
     const trackSource = spatial ? spatialTrackSource : stereoTrackSource;
-    const quality = spatial ? options.spatialQuality : options.stereoQuality;
+    // Snapshots store the ladder class (spatial/lossless); display tags like
+    // DOLBY_ATMOS come from the variant's spatial_format at query time.
+    const quality = spatial ? "spatial" : options.stereoQuality;
     db.prepare(`
       INSERT INTO AcquisitionPlanTracks (
         plan_id, track_id, source_id, provider_track_match_id,
@@ -304,6 +312,32 @@ function seedAlbum(options: {
     );
   }
 }
+
+test("spatial album quality surfaces DOLBY_ATMOS from variant spatial_format", async () => {
+  const configModule = await import("../config/config.js");
+  const config = configModule.readConfig();
+  config.filtering.include_spatial = true;
+  configModule.writeConfig(config);
+  dbModule.db.prepare(`UPDATE Libraries SET enabled = 1 WHERE name = 'Album Query Spatial'`).run();
+
+  seedAlbum({
+    mbid: "atmos-badge-album",
+    title: "Atmos Badge",
+    stereoProvider: "tidal",
+    stereoQuality: "HIRES_LOSSLESS",
+    spatialProvider: "apple-music",
+    spatialQuality: "DOLBY_ATMOS",
+  });
+
+  const result = albumQueryModule.AlbumQueryService.listAlbums({
+    limit: 20,
+    offset: 0,
+  });
+  const album = result.items.find((item) => item.id === "atmos-badge-album");
+  assert.ok(album);
+  assert.equal(album?.spatial_quality, "DOLBY_ATMOS");
+  assert.equal(album?.spatial_provider, "apple-music");
+});
 
 test("album list carries selected provider permalinks through the indexed detail path", async () => {
   seedAlbum({

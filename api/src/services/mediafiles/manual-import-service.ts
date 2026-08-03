@@ -434,6 +434,13 @@ export class ManualImportService {
                     artistName: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
                     artistMbId: artistRow?.mbid || null,
                     albumTitle: canonicalAlbum?.title || trackData.album?.title || trackData.album_title || "Unknown Album",
+                    albumDisambiguation: canonicalAlbum?.disambiguation || null,
+                    editionTitle: canonicalAlbum?.editionTitle
+                      || canonicalAlbum?.title
+                      || trackData.album?.title
+                      || trackData.album_title
+                      || "Unknown Album",
+                    editionDisambiguation: canonicalAlbum?.editionDisambiguation || null,
                     releaseYear: canonicalReleaseYear,
                     trackTitle: canonicalPosition?.title || trackData.title,
                     trackNumber: canonicalPosition?.trackNumber ?? trackData.trackNumber ?? trackData.track_num ?? 1,

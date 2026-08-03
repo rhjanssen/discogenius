@@ -98,9 +98,9 @@ function videoVariantLabel(variant: string | null | undefined): string {
         case "live":
             return "Live";
         case "audio":
-            return "Audio";
         case "visualizer":
-            return "Visualizer";
+            // Settings folds Official Audio into Visualiser.
+            return "Visualiser";
         default:
             return "Video";
     }

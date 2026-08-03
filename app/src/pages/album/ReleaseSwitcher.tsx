@@ -132,6 +132,17 @@ function mediaTypeLabel(formats: readonly string[] | undefined | null): string |
   return unique.join(" + ");
 }
 
+/** Lower is better: Digital → CD → Vinyl → Cassette → other. */
+function mediaTypeRank(formats: readonly string[] | undefined | null): number {
+  const label = (mediaTypeLabel(formats) || "").toLowerCase();
+  if (label.includes("digital")) return 0;
+  if (label.includes("cd")) return 1;
+  if (label.includes("vinyl")) return 2;
+  if (label.includes("cassette")) return 3;
+  if (!label) return 5;
+  return 4;
+}
+
 /** Media type · year · disc/track counts · region (status when not Official). */
 function releaseMeta(release: Release): string {
   const formats = (release as Release & { mediaFormats?: string[] }).mediaFormats;
@@ -656,9 +667,13 @@ export function ReleaseSwitcher({
         .filter((selection) => selection.monitored)
         .map((selection) => selection.editionId)),
   );
+  // Monitored first, then media type (Digital > CD > Vinyl), larger tracklists
+  // before smaller, then quality / confidence / date as soft tie-breaks.
   const sorted = [...availability.releases].sort((left, right) =>
     Number(selectedReleaseIds.has(right.id)) - Number(selectedReleaseIds.has(left.id))
     || Number(selectableOffers(right).length > 0) - Number(selectableOffers(left).length > 0)
+    || mediaTypeRank(left.mediaFormats) - mediaTypeRank(right.mediaFormats)
+    || (right.trackCount || 0) - (left.trackCount || 0)
     || bestQualityRank(right) - bestQualityRank(left)
     || Math.max(0, ...right.offers.map((offer) => offer.confidence))
       - Math.max(0, ...left.offers.map((offer) => offer.confidence))

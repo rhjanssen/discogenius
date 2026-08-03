@@ -1413,6 +1413,9 @@ export class LibraryFilesService {
       albumTitle: canonicalAlbum.title || "Unknown Album",
       albumType: canonicalAlbum.albumType || null,
       albumMbId: canonicalAlbum.albumMbid || releaseGroupMbid || null,
+      albumDisambiguation: canonicalAlbum.disambiguation || null,
+      editionTitle: canonicalAlbum.editionTitle || canonicalAlbum.title || "Unknown Album",
+      editionDisambiguation: canonicalAlbum.editionDisambiguation || null,
       releaseYear,
       explicit: false,
     };

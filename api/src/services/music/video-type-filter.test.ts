@@ -16,7 +16,8 @@ const allOn = {
 test("resolveVideoTypeFilterKey maps catalog variants to Settings buckets", () => {
   assert.equal(resolveVideoTypeFilterKey("video"), "official");
   assert.equal(resolveVideoTypeFilterKey("official"), "official");
-  assert.equal(resolveVideoTypeFilterKey("audio"), "official_audio");
+  // Official Audio / audio-only shares the Visualiser Settings toggle.
+  assert.equal(resolveVideoTypeFilterKey("audio"), "visualizer");
   assert.equal(resolveVideoTypeFilterKey("visualizer"), "visualizer");
   assert.equal(resolveVideoTypeFilterKey("lyric"), "lyric");
   assert.equal(resolveVideoTypeFilterKey("live"), "live");
@@ -30,6 +31,16 @@ test("isVideoVariantDownloadAllowed respects type filters", () => {
   assert.equal(isVideoVariantDownloadAllowed("visualizer", { ...allOn, include_video_official: false }), true);
   assert.equal(isVideoVariantDownloadAllowed("visualizer", { ...allOn, include_video_visualizer: false }), false);
   assert.equal(isVideoVariantDownloadAllowed("audio", { ...allOn, include_video_official: false }), true);
-  assert.equal(isVideoVariantDownloadAllowed("audio", { ...allOn, include_video_official_audio: false }), false);
+  // Visualiser off + legacy official_audio still enables Audio-only cuts.
+  assert.equal(isVideoVariantDownloadAllowed("audio", {
+    ...allOn,
+    include_video_visualizer: false,
+    include_video_official_audio: true,
+  }), true);
+  assert.equal(isVideoVariantDownloadAllowed("audio", {
+    ...allOn,
+    include_video_visualizer: false,
+    include_video_official_audio: false,
+  }), false);
   assert.equal(isVideoVariantDownloadAllowed("video", { ...allOn, include_video_lyric: false }), true);
 });

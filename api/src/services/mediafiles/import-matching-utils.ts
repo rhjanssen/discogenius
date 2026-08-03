@@ -175,7 +175,7 @@ export function baseComparableTitle(input?: string | null): string {
 // base title but are NOT the same recording. Shared by provider track matching
 // and provider↔MusicBrainz video matching so there is one definition.
 const SIGNIFICANT_VERSION_RE =
-    /\b(remix|re-?edit|\bedit\b|\bmix\b|version|live|acoustic|unplugged|instrumental|a\s*cappella|acappella|karaoke|dub|rework|refix|flip|vip|bootleg|reprise|orchestral|symphonic|extended|radio|club|demo|session|rerecorded|re-?recorded)\b/;
+    /\b(remix|re-?edit|\bedit\b|\bmix\b|version|live|acoustic|unplugged|instrumental|a\s*cappella|acappella|karaoke|dub|rework|refix|flip|vip|bootleg|reprise|orchestral|symphonic|extended|radio|club|demo|session|rerecorded|re-?recorded|commentary|interview|spoken\s*word|\bskit\b|\bintro\b|\boutro\b)\b/;
 
 /**
  * The significant version signature of a title — the normalized text of its

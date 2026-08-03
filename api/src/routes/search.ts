@@ -256,15 +256,31 @@ router.get("/", async (req, res) => {
                 -- selected plan. ProviderItems carries no scalar quality column;
                 -- audio capability lives in ProviderItemAudioVariants.
                 SELECT (
-                  SELECT COALESCE(
-                    NULLIF(TRIM(CASE
-                      WHEN json_valid(plan_track.source_quality_snapshot)
-                      THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
-                      ELSE plan_track.source_quality_snapshot
-                    END), ''),
-                    NULLIF(TRIM(variant.provider_quality_label), ''),
-                    variant.quality_class
-                  )
+                  SELECT CASE
+                    WHEN LOWER(COALESCE(variant.spatial_format, '')) IN (
+                      'atmos', 'dolby_atmos', 'dolby-atmos'
+                    ) THEN 'DOLBY_ATMOS'
+                    WHEN LOWER(COALESCE(variant.spatial_format, '')) IN (
+                      '360ra', 'sony_360ra', '360', 'mpeg-h'
+                    ) THEN 'SONY_360RA'
+                    WHEN LOWER(COALESCE(variant.quality_class, '')) = 'spatial'
+                      AND LOWER(COALESCE(variant.provider_quality_label, '')) LIKE '%atmos%'
+                      THEN 'DOLBY_ATMOS'
+                    WHEN LOWER(COALESCE(variant.quality_class, '')) = 'spatial'
+                      THEN COALESCE(
+                        NULLIF(TRIM(variant.provider_quality_label), ''),
+                        'SPATIAL'
+                      )
+                    ELSE COALESCE(
+                      NULLIF(TRIM(CASE
+                        WHEN json_valid(plan_track.source_quality_snapshot)
+                        THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
+                        ELSE plan_track.source_quality_snapshot
+                      END), ''),
+                      NULLIF(TRIM(variant.provider_quality_label), ''),
+                      variant.quality_class
+                    )
+                  END
                   FROM AcquisitionPlanTracks plan_track
                   JOIN ProviderItemAudioVariants variant
                     ON variant.id = plan_track.provider_audio_variant_id

@@ -1007,6 +1007,9 @@ class LibraryMetadataBackfillService {
         const albumContext: NamingContext = {
             artistName: "",
             albumTitle: canonicalAlbum?.title || album.title,
+            albumDisambiguation: canonicalAlbum?.disambiguation || null,
+            editionTitle: canonicalAlbum?.editionTitle || canonicalAlbum?.title || album.title,
+            editionDisambiguation: canonicalAlbum?.editionDisambiguation || null,
             releaseYear,
         };
 

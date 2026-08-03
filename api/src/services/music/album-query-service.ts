@@ -13,6 +13,7 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { AlbumLibraryIndexService } from "./album-library-index-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "../metadata/musicbrainz-artist-credit-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
+import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
 
 const releaseGroupLibraryStateCte = `
   WITH ranked_library_state AS MATERIALIZED (
@@ -40,15 +41,7 @@ const releaseGroupLibraryStateCte = `
       provider_item.provider_id AS selected_provider_id,
       provider_item.provider_url,
       (
-          SELECT COALESCE(
-            NULLIF(TRIM(CASE
-              WHEN json_valid(plan_track.source_quality_snapshot)
-              THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
-              ELSE plan_track.source_quality_snapshot
-            END), ''),
-            NULLIF(TRIM(variant.provider_quality_label), ''),
-            variant.quality_class
-          )
+          SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
           FROM AcquisitionPlanTracks plan_track
           JOIN ProviderItemAudioVariants variant
             ON variant.id = plan_track.provider_audio_variant_id

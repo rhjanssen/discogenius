@@ -291,8 +291,9 @@ export function planExplicitPreferenceRank(
  *   **Normal / Low** — cutoff lossy, no continue: hi-res ≡ lossless ≡ lossy
  *
  * So under Normal, a single-source “normal” plan and a hi-res composite compete
- * on coverage / assembly / provider — not on fidelity class. Under Max, a
- * partial hi-res plan still beats a full lossy one.
+ * on coverage / assembly / provider — not on fidelity class. Coverage is ranked
+ * *before* fidelity: a complete lossy plan always outranks a partial hi-res one.
+ * Among equal-coverage (including full vs full) plans, higher quality wins.
  *
  * Gap fill (Option B) is **not** nested plans: one AcquisitionPlan may assign
  * lower-quality variants only to holes; band reflects the best tier reached.
@@ -318,8 +319,8 @@ function planFidelityBand(
  *
  * Order of importance:
  *   1. prefer_explicit / prefer clean — soft coverage floor (GMTF reprise case)
- *   2. **Fidelity band** — Settings preferred max (see planFidelityBand)
- *   3. Coverage within that band
+ *   2. **Coverage** — complete beats partial at any quality band
+ *   3. **Fidelity band** — among equal coverage (see planFidelityBand)
  *   4. Quality score / rank total (Max still splits hi-res vs lossless inside band)
  *   5. Assembly simplicity — single-source over composite when bands/coverage tie
  *   6. Relation / provider preference
@@ -353,8 +354,11 @@ function compareCandidatePlans(
     }
   }
 
-  return planFidelityBand(profile, left) - planFidelityBand(profile, right)
-    || right.coverage - left.coverage
+  // Coverage before fidelity: a full High/Normal/Low plan outranks a partial
+  // Max plan. Only another full-coverage plan (single-source or composite) at
+  // higher quality may outrank a complete lower-tier match.
+  return right.coverage - left.coverage
+    || planFidelityBand(profile, left) - planFidelityBand(profile, right)
     || right.cutoffSatisfied - left.cutoffSatisfied
     || planExplicitPreferenceRank(right.explicitContent, preferExplicit)
       - planExplicitPreferenceRank(left.explicitContent, preferExplicit)

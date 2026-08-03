@@ -69,6 +69,14 @@ const ALBUM_NAMING_TOKENS: NamingToken[] = [
     { section: "Album", token: "{Release Group MbId}", example: "1d5f10c6-4d7f-4f94-b76f-2f61fb5c42f8" },
     { section: "Album", token: "{Release Year}", example: "2001" },
     { section: "Album", token: "{Album Id}", example: "1550545" },
+    // Edition = MusicBrainz release (specific product). Preferred for folder names.
+    { section: "Edition", token: "{Edition Title}", example: "Discovery (Deluxe)" },
+    { section: "Edition", token: "{Edition CleanTitle}", example: "Discovery Deluxe" },
+    { section: "Edition", token: "{Edition TitleThe}", example: "Discovery (Deluxe)" },
+    { section: "Edition", token: "{Edition CleanTitleThe}", example: "Discovery Deluxe" },
+    { section: "Edition", token: "{Edition Disambiguation}", example: "deluxe edition" },
+    { section: "Edition", token: "{Release Title}", example: "Discovery (Deluxe)" },
+    { section: "Edition", token: "{Release Disambiguation}", example: "deluxe edition" },
 ];
 
 const TRACK_NAMING_TOKENS: NamingToken[] = [
@@ -128,8 +136,10 @@ const NAMING_HELP: Record<
     },
     album_track_path_single: {
         title: "Album track path (single disc)",
-        description: "Path under the artist folder for tracks on single-disc albums (album folder + filename, no extension).",
+        description: "Path under the artist folder for tracks on single-disc albums (album folder + filename, no extension). Prefer {Edition Title} so deluxe/region products get distinct folders.",
         tokens: [
+            { section: "Formats", token: "{Edition Title} ({Release Year})/{track:00} - {Track Title}", example: "Discovery (2001)/01 - One More Time", mode: "replace" },
+            { section: "Formats", token: "{Edition Title} ({Edition Disambiguation}) ({Release Year})/{track:00} - {Track Title}", example: "Discovery (deluxe edition) (2001)/01 - One More Time", mode: "replace" },
             { section: "Formats", token: "{Album Title} ({Release Year})/{track:00} - {Track Title}", example: "Discovery (2001)/01 - One More Time", mode: "replace" },
             { section: "Formats", token: "{Album Title} ({Release Year})/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
             ...ARTIST_NAMING_TOKENS,
@@ -143,6 +153,7 @@ const NAMING_HELP: Record<
         title: "Album track path (multi disc)",
         description: "Path under the artist folder for multi-disc albums (album folder, optional disc folder, filename).",
         tokens: [
+            { section: "Formats", token: "{Edition Title} ({Release Year})/{medium:0}{track:00} - {Track Title}", example: "Discovery (2001)/201 - One More Time", mode: "replace" },
             { section: "Formats", token: "{Album Title} ({Release Year})/{medium:0}{track:00} - {Track Title}", example: "Discovery (2001)/201 - One More Time", mode: "replace" },
             { section: "Formats", token: "{Album Title} ({Release Year})/{medium:00}/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/02/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
             ...ARTIST_NAMING_TOKENS,
