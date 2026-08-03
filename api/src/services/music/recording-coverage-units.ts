@@ -221,8 +221,12 @@ export function parseRecordingIsrcs(raw: string | null | undefined): string[] {
   return text.split(/[,\s]+/).map(normalizeIsrcCode).filter(Boolean);
 }
 
+/** Minimal surface used by loadAcquisitionUnitMapFromDb (better-sqlite3 Database). */
 type SqliteLike = {
-  prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] };
+  // better-sqlite3 Statement generics are too strict for a structural type —
+  // accept any prepared statement that can run .all().
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prepare: (sql: string) => { all: (...args: any[]) => any[] };
 };
 
 /**

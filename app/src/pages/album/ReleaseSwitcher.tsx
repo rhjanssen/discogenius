@@ -81,7 +81,10 @@ function countryDisplayName(code: string): string {
  */
 function releaseCountryLabel(country?: string | null): string | null {
   const text = String(country || "").trim();
-  if (!text || text === "[]") return null;
+  // Empty / blank MB payloads: [], [""], null.
+  if (!text || text === "[]" || text === "[\"\"]" || text === "['']" || text === "null") {
+    return null;
+  }
   let countries: string[];
   try {
     const parsed = JSON.parse(text);
@@ -90,7 +93,9 @@ function releaseCountryLabel(country?: string | null): string | null {
     countries = text.split(/[,;|]/);
   }
   const normalized = [...new Set(
-    countries.map((value) => value.trim().toUpperCase()).filter(Boolean),
+    countries
+      .map((value) => value.replace(/^\[+|\]+$/g, "").trim().toUpperCase())
+      .filter((value) => value && value !== "UNKNOWN"),
   )];
   if (normalized.length === 0) return null;
 

@@ -617,10 +617,13 @@ const useStyles = makeStyles({
 
 type AvailabilityRelease = NonNullable<AlbumPageData["releaseAvailability"]>["releases"][number];
 
-/** Parse MB country JSON (`["Japan"]`, `[]`, `["[Worldwide]"]`) into a short label. */
+/** Parse MB country JSON (`["Japan"]`, `[]`, `[""]`, `["[Worldwide]"]`) into a short label. */
 function editionRegionLabel(country: string | null | undefined): string | null {
   const text = String(country || "").trim();
-  if (!text || text === "[]" || text === "null") return null;
+  // Empty / blank MB payloads: [], [""], null, whitespace-only.
+  if (!text || text === "[]" || text === "[\"\"]" || text === "['']" || text === "null") {
+    return null;
+  }
   let values: string[];
   try {
     const parsed = JSON.parse(text);
