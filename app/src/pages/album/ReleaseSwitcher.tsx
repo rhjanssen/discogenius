@@ -13,10 +13,10 @@ import {
 } from "@fluentui/react-components";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import {
-  formatAcquisitionPlanCoverageSummary,
   ProviderQualityRow,
   type ProviderQualityOffer,
 } from "@/components/ui/ProviderQualityPill";
+import { formatAcquisitionPlanCoverageSummary } from "@/utils/acquisitionPlanCoverage";
 import type { ReleaseGroupAvailability } from "@/hooks/useAlbumPage";
 
 type Release = ReleaseGroupAvailability["releases"][number];

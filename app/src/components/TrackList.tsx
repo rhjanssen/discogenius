@@ -347,7 +347,6 @@ const getAlbumArtworkUrl = (track: TrackListItem) =>
   track.cover_url ?? track.album_cover ?? track.album?.cover_id ?? null;
 const getDisplayTitle = (track: TrackListItem) =>
   track.title;
-const getQualityTags = (track: TrackListItem): string[] => orderedQualityTags(track);
 /**
  * Provider column = acquisition-plan sources only.
  *

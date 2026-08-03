@@ -61,10 +61,10 @@ import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import {
-  formatAcquisitionPlanCoverageSummary,
   ProviderQualityRow,
   type ProviderQualityOffer,
 } from "@/components/ui/ProviderQualityPill";
+import { formatAcquisitionPlanCoverageSummary } from "@/utils/acquisitionPlanCoverage";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
