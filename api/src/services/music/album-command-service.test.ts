@@ -14,6 +14,11 @@ let serviceModule: typeof import("./album-command-service.js");
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  // Multi-library contract tests need Spatial enabled (default Settings leave
+  // include_spatial off → Spatial library disabled at bootstrap).
+  dbModule.db.prepare(`
+    UPDATE Libraries SET enabled = 1 WHERE name = 'Spatial'
+  `).run();
   serviceModule = await import("./album-command-service.js");
 });
 

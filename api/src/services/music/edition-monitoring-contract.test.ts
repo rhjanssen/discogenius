@@ -354,10 +354,12 @@ test("each canonical edition is offered the plans that target it", () => {
     .map((selection) => [selection.editionId, selection]));
 
   const standard = byEdition.get(STANDARD_EDITION_ID)!;
+  // Apple is exact for the standard product; TIDAL deluxe also fan-outs as a
+  // source_superset that covers the standard tracklist (2/2). Both are valid plans.
   assert.deepEqual(
-    [...new Set(standard.plans.map((plan) => plan.provider))],
-    ["apple-music"],
-    "only Apple has an offer for the standard edition",
+    [...new Set(standard.plans.map((plan) => plan.provider))].sort(),
+    ["apple-music", "tidal"],
+    "Apple exact + TIDAL deluxe superset both plan the standard edition",
   );
   assert.ok(standard.plans.every((plan) => plan.coverage === 2 && plan.targetTrackCount === 2));
 
@@ -729,15 +731,25 @@ test("curation may not drop a locked album's editions", () => {
 // Provider availability policy
 // ---------------------------------------------------------------------------
 
-test("require_provider_availability decides eligibility without inventing a plan", () => {
+test("require_provider_availability decides eligibility without inventing a plan", async () => {
+  // Settings → Filters owns this toggle (not MetadataProfiles columns).
+  const { readConfig, writeConfig } = await import("../config/config.js");
+  const setRequireAvailability = (required: boolean) => {
+    const full = readConfig();
+    full.filtering.require_provider_availability = required;
+    writeConfig(full);
+  };
+
   // With availability required and no provider data at all, curation monitors
   // nothing rather than monitoring something it cannot acquire.
+  setRequireAvailability(true);
   seedCatalog({ requireProviderAvailability: true });
   curate();
   assert.deepEqual(monitoredEditionIds(), [],
     "no viable plan means no automatic monitoring");
 
   // With it disabled, the same catalogue is monitored and simply has no plan.
+  setRequireAvailability(false);
   seedCatalog({ requireProviderAvailability: false });
   curate();
   const monitored = monitoredEditionIds();

@@ -3,17 +3,17 @@
     "providerId": "10779569",
     "providerTitle": "Lioness: Hidden Treasures",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "86da8ce7-05ef-4109-8186-c6fa69c57729",
-    "releaseMbid": "157f27fb-7f7f-4ea9-9674-fd84ed9db612"
+    "releaseMbid": "d075b94b-049a-44f6-b0eb-18cc1e084e48"
   },
   {
     "providerId": "12914927",
     "providerTitle": "Back To Black - The Singles Remixes",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "287c9187-08c3-4c36-bbfa-20fea5eccb9d",
     "releaseMbid": "db5c7402-aa93-4bc0-aaf2-e265e89adca0"
   },
@@ -29,18 +29,18 @@
   {
     "providerId": "174263919",
     "providerTitle": "I Told You I Was Trouble: Live In London",
-    "status": "probable",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.95,
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "e486d041-a5c0-3afc-be8d-e506172e4ec3",
-    "releaseMbid": "4ff1c0c4-98f6-4bab-b8c8-c2c09e7f11dd"
+    "releaseMbid": "86797a1f-259c-4291-8a0d-510092aa1e51"
   },
   {
     "providerId": "182434156",
     "providerTitle": "At The BBC",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "ea0ce6b1-9842-4a39-bbcc-d953fad2d2bc",
     "releaseMbid": "9762afeb-e17e-45e7-aac8-12f72c111c5d"
   },
@@ -78,7 +78,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "6eac2e57-ee50-36f8-b0c4-c4c847a2c098",
-    "releaseMbid": "8e87d349-514c-48b4-8f3b-e55af64c3b70"
+    "releaseMbid": "e437eca8-29ed-422d-bd25-f19780b48d87"
   },
   {
     "providerId": "321517814",
@@ -191,9 +191,9 @@
   {
     "providerId": "49174555",
     "providerTitle": "Back To Black (Remixes & B Sides)",
-    "status": "probable",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.95,
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "10ee9e20-ea0e-4863-b563-85a485099855",
     "releaseMbid": "5264fdae-7c98-45e5-ba8a-99d5c47e6783"
   },
@@ -227,11 +227,11 @@
   {
     "providerId": "52603664",
     "providerTitle": "AMY (Original Motion Picture Soundtrack)",
-    "status": "probable",
-    "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.99,
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "628ed87c-789d-4839-b92d-df7b1ed8c86d",
-    "releaseMbid": null
+    "releaseMbid": "ef23abb2-4dd7-49f5-afdb-e4d17154bcaa"
   },
   {
     "providerId": "77555663",
@@ -246,10 +246,10 @@
     "providerId": "77655302",
     "providerTitle": "Frank",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "9a9d41e9-2080-3293-8676-9e26f44a05b1",
-    "releaseMbid": "a7dc3e8b-f8bb-401e-9662-649b80f0b9f3"
+    "releaseMbid": "e5bb7df7-3081-4a41-a6d9-ad8db373699c"
   },
   {
     "providerId": "77661290",

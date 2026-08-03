@@ -21,6 +21,11 @@ function writeFilteringConfig(includeSpatial: boolean, includeVideos: boolean) {
   config.filtering.include_spatial = includeSpatial;
   config.filtering.include_videos = includeVideos;
   configModule.writeConfig(config);
+  // Download stats gate on Libraries.enabled as well as filtering.include_spatial.
+  // Mirror Settings apply so toggling include_spatial actually enables Spatial.
+  db.prepare(`
+    UPDATE Libraries SET enabled = ? WHERE name = 'Spatial'
+  `).run(includeSpatial ? 1 : 0);
 }
 
 function resetRows() {

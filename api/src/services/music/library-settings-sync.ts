@@ -40,31 +40,65 @@ export function stereoQualityProfileName(audioQuality: StereoAudioQuality): stri
 
 /** Ensure the four stereo tiers + Spatial + Video profiles exist with stable definitions. */
 export function ensureDefaultQualityProfiles(db: Database.Database): void {
+  // Production quality_profiles still carries legacy upgrade_allowed/items;
+  // domain-v41 (contract fixtures) does not. Write only columns that exist.
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(quality_profiles)").all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
+  const hasUpgradeAllowed = columns.has("upgrade_allowed");
+  const hasItems = columns.has("items");
+
+  const insertColumns = [
+    "name",
+    ...(hasUpgradeAllowed ? ["upgrade_allowed"] : []),
+    "cutoff",
+    ...(hasItems ? ["items"] : []),
+    "allowed_source_formats",
+    "preference_order",
+    "continue_upgrades",
+    "fallback_policy",
+    "output_format",
+    "transcode_policy",
+  ];
+  const placeholders = insertColumns.map(() => "?").join(", ");
+  const updateAssignments = insertColumns
+    .filter((column) => column !== "name")
+    .map((column) => `${column} = excluded.${column}`)
+    .concat("updated_at = CURRENT_TIMESTAMP")
+    .join(", ");
   const upsert = db.prepare(`
-    INSERT INTO quality_profiles (
-      name, upgrade_allowed, cutoff, items, allowed_source_formats,
-      preference_order, continue_upgrades, fallback_policy,
-      output_format, transcode_policy
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(name) DO UPDATE SET
-      upgrade_allowed = excluded.upgrade_allowed,
-      cutoff = excluded.cutoff,
-      items = excluded.items,
-      allowed_source_formats = excluded.allowed_source_formats,
-      preference_order = excluded.preference_order,
-      continue_upgrades = excluded.continue_upgrades,
-      fallback_policy = excluded.fallback_policy,
-      output_format = excluded.output_format,
-      transcode_policy = excluded.transcode_policy,
-      updated_at = CURRENT_TIMESTAMP
+    INSERT INTO quality_profiles (${insertColumns.join(", ")})
+    VALUES (${placeholders})
+    ON CONFLICT(name) DO UPDATE SET ${updateAssignments}
   `);
 
   // Shared stereo ladder. Only cutoff / continue_upgrades / output_format differ.
   const stereoAllowed = JSON.stringify(["hires-lossless", "lossless", "lossy"]);
   const stereoPreference = JSON.stringify(["hires-lossless", "lossless", "lossy"]);
 
+  const row = (
+    name: string,
+    upgradeAllowed: number,
+    cutoff: string,
+    items: string,
+    allowed: string,
+    preference: string,
+    continueUpgrades: number,
+    fallback: string,
+    outputFormat: string,
+    transcode: string,
+  ): unknown[] => {
+    const values: unknown[] = [name];
+    if (hasUpgradeAllowed) values.push(upgradeAllowed);
+    values.push(cutoff);
+    if (hasItems) values.push(items);
+    values.push(allowed, preference, continueUpgrades, fallback, outputFormat, transcode);
+    return values;
+  };
+
   // Max — preferred maximum is hi-res; keep ranking every rung above cutoff.
-  upsert.run(
+  upsert.run(...row(
     "Max Quality",
     1,
     "hires-lossless",
@@ -75,9 +109,9 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     "best_allowed",
     JSON.stringify({ codec: "preserve", lossless: true }),
     "preserve",
-  );
+  ));
   // High — preferred max = lossless (hi-res ≡ lossless for ranking; lossy worse).
-  upsert.run(
+  upsert.run(...row(
     "High Quality",
     1,
     "lossless",
@@ -88,10 +122,10 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     "best_allowed",
     JSON.stringify({ codec: "flac", lossless: true, bitDepth: 16, sampleRate: 44100 }),
     "downconvert_hires",
-  );
+  ));
   // Normal — preferred max = lossy band: hi-res ≡ lossless ≡ lossy for ranking;
   // coverage / single-source / provider decide. Output still targets ~320k when converting.
-  upsert.run(
+  upsert.run(...row(
     "Normal Quality",
     0,
     "lossy",
@@ -102,9 +136,9 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     "best_allowed",
     JSON.stringify({ codec: "mp3", lossless: false, bitrate: 320000 }),
     "transcode_allowed",
-  );
+  ));
   // Low — same equal band as Normal for ranking; smaller lossy output target.
-  upsert.run(
+  upsert.run(...row(
     "Low Quality",
     0,
     "lossy",
@@ -115,8 +149,8 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     "best_allowed",
     JSON.stringify({ codec: "mp3", lossless: false, bitrate: 128000 }),
     "transcode_allowed",
-  );
-  upsert.run(
+  ));
+  upsert.run(...row(
     "Spatial",
     1,
     "spatial",
@@ -127,8 +161,8 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     "unavailable",
     JSON.stringify({ spatial: true }),
     "preserve",
-  );
-  upsert.run(
+  ));
+  upsert.run(...row(
     "Video",
     1,
     "video",
@@ -139,7 +173,7 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     "unavailable",
     JSON.stringify({ video: true }),
     "preserve",
-  );
+  ));
 }
 
 function profileIdByName(db: Database.Database, name: string): number | null {

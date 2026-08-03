@@ -2,18 +2,18 @@
   {
     "providerId": "102004838",
     "providerTitle": "Believer",
-    "status": "ambiguous",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
-    "releaseGroupMbid": "8bcb5dcd-88bd-4651-9822-51b069b5e0d9",
-    "releaseMbid": "9e182980-1696-4064-9071-6fe727128c02"
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "93f9ba25-64c9-4074-9401-0443dae9c76b",
+    "releaseMbid": "42ce0e5b-b533-4f82-a698-6a1fcf621ce3"
   },
   {
     "providerId": "110147418",
     "providerTitle": "Bad Liar – Stripped",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "be9b09ab-d507-4963-b708-4674f7f81845",
     "releaseMbid": "63309851-15f7-4c5c-87a3-90338fff52b9"
   },
@@ -21,8 +21,8 @@
     "providerId": "111149371",
     "providerTitle": "Birds",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "e336805b-a48b-4d57-a1fc-f6dd90be7abb",
     "releaseMbid": "72fd4b76-a71b-44b3-8f16-34ed63834144"
   },
@@ -66,8 +66,8 @@
     "providerId": "185744547",
     "providerTitle": "Follow You (Summer ’21 Version)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "5637e463-cd3f-44b9-9e8f-052931bbe7fb",
     "releaseMbid": "35a9747e-0998-4b7a-8415-12c1575efa36"
   },
@@ -78,7 +78,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "caef5f01-8568-4573-8458-c9e99ff7c734",
-    "releaseMbid": "10eef06f-b74a-4db8-a775-dc2107a038c0"
+    "releaseMbid": "c59635da-8a3a-4aff-adbb-93be2eb3e5ba"
   },
   {
     "providerId": "188897376",
@@ -174,8 +174,8 @@
     "providerId": "202445638",
     "providerTitle": "Enemy (from the series Arcane League of Legends)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "35990e4e-72da-4ca1-9193-2ee30cc23050",
     "releaseMbid": "8b04bf33-d51b-4ae8-95e5-9da557f80f0a"
   },
@@ -228,8 +228,8 @@
     "providerId": "218953139",
     "providerTitle": "Bones",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "0359e46f-7050-4f6a-ba24-5e4118db8943",
     "releaseMbid": "65a4d048-15ba-434b-bc4c-28ea927c021c"
   },
@@ -249,7 +249,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "caef5f01-8568-4573-8458-c9e99ff7c734",
-    "releaseMbid": "792bf9d6-fd11-4aee-adb4-f98ba2e27adb"
+    "releaseMbid": "161477d4-ad53-471c-adf2-806855ffd7b1"
   },
   {
     "providerId": "226738556",
@@ -389,11 +389,11 @@
   {
     "providerId": "25711599",
     "providerTitle": "Radioactive",
-    "status": "ambiguous",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "4e673944-ce73-451a-b44b-2656d853d34d",
-    "releaseMbid": "868bc651-2961-40d7-b69e-17fbc7de1414"
+    "releaseMbid": "e2b3dae3-0033-4e13-af83-b4d0b73a5a65"
   },
   {
     "providerId": "299807357",
@@ -426,8 +426,8 @@
     "providerId": "304630344",
     "providerTitle": "Smoke + Mirrors Live (Live At The Air Canada Centre)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "768a1cf4-84ae-4df5-ab4a-78cc9bfa30c8",
     "releaseMbid": "0a0fb8be-9cd1-456a-b39d-eeb1d3c48aa0"
   },
@@ -569,9 +569,9 @@
   {
     "providerId": "391234957",
     "providerTitle": "Take Me to the Beach",
-    "status": "ambiguous",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
     "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
   },
@@ -587,11 +587,11 @@
   {
     "providerId": "392623580",
     "providerTitle": "Take Me to the Beach",
-    "status": "ambiguous",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
-    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
-    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a9dbf373-747c-49de-bba0-09a1a23e186b",
+    "releaseMbid": "c635434d-87a6-4de7-b7c3-94dfd8814f38"
   },
   {
     "providerId": "392625990",
@@ -623,11 +623,11 @@
   {
     "providerId": "395528654",
     "providerTitle": "Take Me to the Beach",
-    "status": "ambiguous",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
-    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
-    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8ae4a6ce-f44e-4363-a63e-200fdff52036",
+    "releaseMbid": "41e70411-2f57-4f5e-a502-2a2a4e1b2266"
   },
   {
     "providerId": "395529501",
@@ -650,11 +650,11 @@
   {
     "providerId": "404032581",
     "providerTitle": "Take Me to the Beach",
-    "status": "ambiguous",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
-    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
-    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a401a5c7-e1e7-46ea-a81b-f1046fa9dda6",
+    "releaseMbid": "67bd3804-c1be-4350-9459-3c00ace3ac81"
   },
   {
     "providerId": "404032583",
@@ -687,8 +687,8 @@
     "providerId": "41009432",
     "providerTitle": "I Bet My Life (Riot Games Remix)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "a2e01377-d1c8-45c2-8eee-47af13e82b20",
     "releaseMbid": "6828db89-fb9a-4d28-963d-93245eacfde9"
   },
@@ -696,8 +696,8 @@
     "providerId": "413690076",
     "providerTitle": "Monica (Demo)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "93bc060c-9125-4f5b-a3a9-32f64e7166ce",
     "releaseMbid": "872a40bb-e456-41a6-93e8-69ecfde4b67f"
   },
@@ -786,8 +786,8 @@
     "providerId": "74645981",
     "providerTitle": "Believer (Kaskade Remix)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "36377fca-3f71-48f8-aebe-4fa34f32d357",
     "releaseMbid": "4e7c92e4-aee3-430f-9ba6-4c81f38641b7"
   },
@@ -795,10 +795,10 @@
     "providerId": "76786045",
     "providerTitle": "Live At AllSaints Studios",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "08908163-2db9-4417-9966-4c82e79adf32",
-    "releaseMbid": "b6a630fd-0ece-44e2-a0b5-e48102f89a67"
+    "releaseMbid": "dee6f417-046f-4d68-a269-138373638ab9"
   },
   {
     "providerId": "77703570",
@@ -813,8 +813,8 @@
     "providerId": "78174698",
     "providerTitle": "Thunder (Official Remix)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "b6af94e2-4675-4b78-a48a-e437f59a4ad0",
     "releaseMbid": "fb1a5053-dc41-4a5a-8f6e-9e7276f715bb"
   },
@@ -840,8 +840,8 @@
     "providerId": "82471118",
     "providerTitle": "Thunder / Young Dumb & Broke (Medley)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "477be0a3-64ef-4829-a4a8-06d0a13dad92",
     "releaseMbid": "1992f1b5-8377-4acd-986e-31ed09c8cba5"
   },
@@ -858,45 +858,45 @@
     "providerId": "91950965",
     "providerTitle": "Evolve",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "8341c952-694d-4866-870e-df48c9e10f17",
-    "releaseMbid": "09d04174-898d-4c65-a87f-69f9dc541968"
+    "releaseMbid": "0a0e6fcb-d944-4d1c-b70b-7b8d1a587b6d"
   },
   {
     "providerId": "94966168",
     "providerTitle": "Zero (From the Original Motion Picture \"Ralph Breaks The Internet\")",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "9bfe6874-c497-4e03-813e-80c7f63860ff",
-    "releaseMbid": "51fe171c-a770-45d3-8fab-12fa412bdb3d"
+    "releaseMbid": "ea9d3a37-2ecc-4a57-b38b-41834887cbb2"
   },
   {
     "providerId": "97872450",
     "providerTitle": "Origins (Deluxe)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "042160ca-6094-42b4-8399-9e0141fa9515",
-    "releaseMbid": "28adcf65-8c07-4da2-96eb-582943c0327d"
+    "releaseMbid": "a4c62cc8-f574-4f07-8008-4c363dd9ee9f"
   },
   {
     "providerId": "97872466",
     "providerTitle": "Origins",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "042160ca-6094-42b4-8399-9e0141fa9515",
-    "releaseMbid": "3743dd50-a33f-44b6-bf71-613d249fabe3"
+    "releaseMbid": "3883933c-8b48-443d-ac6c-388bdd4fb24e"
   },
   {
     "providerId": "97874143",
     "providerTitle": "Origins (Deluxe Edition)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "042160ca-6094-42b4-8399-9e0141fa9515",
-    "releaseMbid": "28adcf65-8c07-4da2-96eb-582943c0327d"
+    "releaseMbid": "fe8db7f8-0151-4839-8a5b-5600b62e86f1"
   }
 ]

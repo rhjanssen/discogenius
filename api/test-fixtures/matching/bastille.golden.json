@@ -21,10 +21,10 @@
     "providerId": "110750628",
     "providerTitle": "Doom Days",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "2a3e2187-e939-4a92-9a93-d78cf85436a7",
-    "releaseMbid": "408c1344-ea69-4556-b00b-05bca620baf5"
+    "releaseMbid": "9b5224d7-beee-4b2a-a93a-3b4b2b3d25c3"
   },
   {
     "providerId": "110750752",
@@ -120,8 +120,8 @@
     "providerId": "149702320",
     "providerTitle": "WHAT YOU GONNA DO???",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "4618e4ef-9f9d-45e9-8dfa-88a9d0b830a3",
     "releaseMbid": "eb62de69-8fbb-470f-bf9e-b47c6ff01175"
   },
@@ -138,8 +138,8 @@
     "providerId": "155351523",
     "providerTitle": "survivin'",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "53d6034d-61f2-4eaf-9c7e-869e44bc27f1",
     "releaseMbid": "07de6c28-ec42-45ea-b61b-0793d0306b35"
   },
@@ -219,8 +219,8 @@
     "providerId": "176790064",
     "providerTitle": "Roots Of ReOrchestrated",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "521d3b02-a9be-4c83-904a-b4bdb2e2a195",
     "releaseMbid": "3e9ab457-bf34-4d36-a99a-1e835f797ba3"
   },
@@ -237,17 +237,17 @@
     "providerId": "18158565",
     "providerTitle": "Bad Blood",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "8cb2b353-0d1b-4155-ac07-35b56a44f15d",
-    "releaseMbid": "5bca186e-3dfb-4191-a3b1-8876d454c53c"
+    "releaseMbid": "f3f36d7e-3544-4910-bfc4-0f52fe844abf"
   },
   {
     "providerId": "18405190",
     "providerTitle": "Pompeii",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "895aa928-6c4d-4216-b3be-933f37cd4b5b",
     "releaseMbid": "f74c5763-5b39-4e4c-b91a-359692c2d8a0"
   },
@@ -255,8 +255,8 @@
     "providerId": "18764957",
     "providerTitle": "Bad Blood",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "bf37b1a0-d94f-4230-b2c7-09b17f9f8a68",
     "releaseMbid": "53967218-4f1d-4418-b60f-29ee6ec6199d"
   },
@@ -363,8 +363,8 @@
     "providerId": "200977857",
     "providerTitle": "No Bad Days",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "b59c5df7-467a-4478-8e43-d2bc6439718a",
     "releaseMbid": "c1ec4985-3174-44ed-b81a-46c97aca748e"
   },
@@ -381,8 +381,8 @@
     "providerId": "200977867",
     "providerTitle": "No Bad Days",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "b59c5df7-467a-4478-8e43-d2bc6439718a",
     "releaseMbid": "44a5c47d-9c84-4b83-9d54-09a82d5909a7"
   },
@@ -516,10 +516,10 @@
     "providerId": "214827728",
     "providerTitle": "Give Me The Future (Deluxe Edition)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "bc411157-431c-4f04-81e1-18e1c21d50ec",
-    "releaseMbid": "3888c164-4ae0-414c-8183-ca59ac0a000b"
+    "releaseMbid": "f7f99d1d-8d78-41f6-ac45-74b03e71ce72"
   },
   {
     "providerId": "214836469",
@@ -534,10 +534,10 @@
     "providerId": "214838471",
     "providerTitle": "Give Me The Future (Deluxe Edition)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "bc411157-431c-4f04-81e1-18e1c21d50ec",
-    "releaseMbid": "85152ab0-bcbd-4b6f-b91a-b2a18edbbc31"
+    "releaseMbid": "f26807a5-da19-4206-94fc-9e3b7bfdee2b"
   },
   {
     "providerId": "222057357",
@@ -597,8 +597,8 @@
     "providerId": "23685977",
     "providerTitle": "Of The Night",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "c910954c-6168-4629-a933-04c975a8dd35",
     "releaseMbid": "fcb64b9c-0e4d-4798-bcc5-a9371f9657fc"
   },
@@ -660,10 +660,10 @@
     "providerId": "243863148",
     "providerTitle": "Give Me The Future + Dreams Of The Past",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "bc411157-431c-4f04-81e1-18e1c21d50ec",
-    "releaseMbid": "063b19f1-73b7-4a4c-b98c-6bf50838d377"
+    "releaseMbid": "8b5b8dbd-305f-4f61-ae74-8d41dfa204b6"
   },
   {
     "providerId": "243863332",
@@ -678,10 +678,10 @@
     "providerId": "243864035",
     "providerTitle": "Give Me The Future + Dreams Of The Past",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "bc411157-431c-4f04-81e1-18e1c21d50ec",
-    "releaseMbid": "18d7cf25-d2fa-448a-ae11-72aa6b474a42"
+    "releaseMbid": "60d849a0-cd90-418f-8ff3-651d138c11de"
   },
   {
     "providerId": "27338970",
@@ -804,10 +804,10 @@
     "providerId": "320186059",
     "providerTitle": "Bad Blood X (10th Anniversary Edition)",
     "status": "verified",
-    "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "bf37b1a0-d94f-4230-b2c7-09b17f9f8a68",
-    "releaseMbid": null
+    "releaseMbid": "7c49f1fc-785a-43b5-9b04-dc02b540aec0"
   },
   {
     "providerId": "321517886",
@@ -840,8 +840,8 @@
     "providerId": "330314020",
     "providerTitle": "Pompeii MMXXIII (Edit)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "a3501218-4eb4-4963-829a-b31bae28b929",
     "releaseMbid": "6e45fb72-8247-4ebb-9202-5d0df4a30eed"
   },
@@ -930,8 +930,8 @@
     "providerId": "38078606",
     "providerTitle": "Bite Down (Bastille Vs. HAIM)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "f364ad67-7e13-401b-a021-ef0fc2ade0c3",
     "releaseMbid": "816f7ed7-27a1-49ef-a5ad-d3cc6c027c36"
   },
@@ -939,8 +939,8 @@
     "providerId": "38093157",
     "providerTitle": "VS. (Other People’s Heartache, Pt. III)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "170fd567-5f24-4dc5-b6a5-91995ec6dca4",
     "releaseMbid": "27bf1ce1-8cdc-40cd-955f-e47270d6bb6f"
   },
@@ -1011,8 +1011,8 @@
     "providerId": "394021247",
     "providerTitle": "“&” (Ampersand)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "b35978dd-8069-4c75-b9e0-6f6327900823",
     "releaseMbid": "2f9dbbe0-8f80-4e1e-90ee-2b4c38cd48ca"
   },
@@ -1155,10 +1155,10 @@
     "providerId": "473839983",
     "providerTitle": "SAVE MY SOUL",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "64f380df-7a34-4634-baf3-85331ba12790",
-    "releaseMbid": "218d2f07-99a1-4271-8386-39210b41daec"
+    "releaseMbid": "3627b42b-a361-4854-8ccd-aa4235887bf9"
   },
   {
     "providerId": "475266491",
@@ -1209,8 +1209,8 @@
     "providerId": "64538404",
     "providerTitle": "Wild World",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "32bfd872-8075-4f32-ac61-742c88030ddb",
     "releaseMbid": "11a0662a-521e-448f-9e84-8e7c86bc517f"
   },
@@ -1218,10 +1218,10 @@
     "providerId": "64538439",
     "providerTitle": "Wild World (Complete Edition)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "32bfd872-8075-4f32-ac61-742c88030ddb",
-    "releaseMbid": "0feb5813-fbfe-4960-9e82-d0186e7966d1"
+    "releaseMbid": "2903b1df-ba9c-4c2d-8ef3-7475fd218e6c"
   },
   {
     "providerId": "65253079",
@@ -1236,8 +1236,8 @@
     "providerId": "65253081",
     "providerTitle": "Send Them Off! (Whethan Remix)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "627c5387-1dd4-4d81-8831-6656407aa1f3",
     "releaseMbid": "9124fe7c-1983-4f48-a15a-c75f75f86c09"
   },
@@ -1245,8 +1245,8 @@
     "providerId": "65761051",
     "providerTitle": "Send Them Off! (Tiësto Remix)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "7366f2d1-3fd6-4066-9702-0acad256e2b4",
     "releaseMbid": "e61770a8-5ea8-44d1-84f1-8e128d2053c7"
   },
@@ -1290,8 +1290,8 @@
     "providerId": "75170064",
     "providerTitle": "Glory (Single Version)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "e25831a4-811a-4c6a-8bd8-6a2a8633c659",
     "releaseMbid": "89554e90-1a36-4131-af4c-9aff0afe99b9"
   },
@@ -1326,10 +1326,10 @@
     "providerId": "76280589",
     "providerTitle": "Glory (Jack Wins Remix)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "29a10dbd-9cf5-4bef-a468-478b5fc5adda",
-    "releaseMbid": "38059ce0-2434-4592-bfc0-71f530a7f2ee"
+    "releaseMbid": "6c34ef8b-0aa6-4ce1-93b0-0bd4e33f65f5"
   },
   {
     "providerId": "77326734",
@@ -1344,17 +1344,17 @@
     "providerId": "79147746",
     "providerTitle": "Wild World",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "32bfd872-8075-4f32-ac61-742c88030ddb",
-    "releaseMbid": "11a0662a-521e-448f-9e84-8e7c86bc517f"
+    "releaseMbid": "c098ae94-113d-45d0-9b56-33b4b9cd2d5e"
   },
   {
     "providerId": "79152894",
     "providerTitle": "Wild World (Complete Edition)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "32bfd872-8075-4f32-ac61-742c88030ddb",
     "releaseMbid": "0feb5813-fbfe-4960-9e82-d0186e7966d1"
   },
@@ -1380,10 +1380,10 @@
     "providerId": "88687544",
     "providerTitle": "Quarter Past Midnight",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "8d7682d9-6aa0-45f7-a50b-3b078b0e06ca",
-    "releaseMbid": "c574ba64-d88e-4897-81a3-22a7185476a5"
+    "releaseMbid": "cdbd8bb9-2d89-42ab-8b31-1f72a6c2b857"
   },
   {
     "providerId": "90811526",

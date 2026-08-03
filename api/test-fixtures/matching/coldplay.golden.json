@@ -128,20 +128,20 @@
   {
     "providerId": "128526",
     "providerTitle": "The Blue Room",
-    "status": "probable",
-    "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.83,
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "859bac1f-fbd1-333e-af66-f1423af39a87",
-    "releaseMbid": null
+    "releaseMbid": "b9c2b0d8-76c3-475a-b664-927f7bbdb768"
   },
   {
     "providerId": "128546",
     "providerTitle": "X&Y",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "c50b180a-12c9-3153-8ba5-eac6a6537d6f",
-    "releaseMbid": "19c937af-98b3-4cf4-bba7-5dede9fd1fc9"
+    "releaseMbid": "7ae165f2-83fe-4932-8964-76d6f9757a7d"
   },
   {
     "providerId": "128601",
@@ -273,8 +273,8 @@
     "providerId": "164679",
     "providerTitle": "Murder",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "1ed86191-279f-431e-b535-86998fae6869",
     "releaseMbid": "34144716-3d33-40f2-97db-f865929d217c"
   },
@@ -525,8 +525,8 @@
     "providerId": "22302843",
     "providerTitle": "Atlas (From “The Hunger Games: Catching Fire” Soundtrack)",
     "status": "verified",
-    "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "cccf3b43-3a88-4083-b8b9-e271df6b4f61",
     "releaseMbid": "262de19d-4ed6-4f6f-aa7a-61dc50a34bce"
   },

@@ -102,8 +102,8 @@
     "providerId": "251215280",
     "providerTitle": "Madan (King)",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "387d361b-7a7b-4f43-aed9-4e95e02ed4b7",
     "releaseMbid": "2d967fb9-9b58-4680-9789-7a4b52bfe880"
   },
@@ -156,8 +156,8 @@
     "providerId": "257021477",
     "providerTitle": "Temptation",
     "status": "verified",
-    "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
     "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
