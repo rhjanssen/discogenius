@@ -17,6 +17,9 @@ import {
     PLAYLIST_TRACKLIST_COVERAGE_METHOD,
 } from "../providers/soundcloud/soundcloud-playlist-match.js";
 import {
+    isSoundCloudTrackKnownUndownloadable,
+} from "../providers/soundcloud/soundcloud-downloadability.js";
+import {
     ProviderCatalogRepository,
     type ProviderAudioVariantInput,
 } from "../providers/provider-catalog-repository.js";
@@ -98,6 +101,13 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         // prefer-explicit preference had nothing to act on.
         explicit: providerTrack.explicit ?? rawRow.explicit ?? null,
         quality: providerTrack.quality || "LOSSLESS",
+        // Provider-native fidelity tags (e.g. Apple audioTraits: dolby-atmos,
+        // lossless). storeProviderTrackOffers maps these into
+        // ProviderItemAudioVariants — dropping them left every Apple track as
+        // stereo-only even when the live song payload advertised Atmos.
+        qualityTags: Array.isArray(providerTrack.qualityTags)
+            ? providerTrack.qualityTags
+            : (Array.isArray(rawRow.qualityTags) ? rawRow.qualityTags : undefined),
         copyright: providerTrack.copyright || null,
         replay_gain: providerTrack.replayGain ?? rawRow.replay_gain ?? rawRow.replayGain ?? null,
         peak: providerTrack.peak ?? rawRow.peak ?? null,
@@ -876,6 +886,75 @@ export class RefreshAlbumService {
      * is known, publish typed release/track matches through the shared matcher.
      */
 
+    /**
+     * SoundCloud DRM/SNIP/BLOCK tracks are not Discogenius download sources.
+     * Drop them before ProviderEditionMembers / ProviderTrackMatches so they
+     * cannot appear in acquisition plans. Unhydrated stubs stay (unknown).
+     */
+    static filterSoundCloudDownloadableTrackOffers<T>(tracks: T[]): T[] {
+        return tracks.filter((track) => !isSoundCloudTrackKnownUndownloadable(track as any));
+    }
+
+    /**
+     * Mark a SoundCloud release (and its members) unavailable and reject
+     * automatic edition matches so planners drop the offer.
+     */
+    static markSoundCloudReleaseUndownloadable(
+        albumId: string,
+        reason: "drm-only" | "empty" = "drm-only",
+    ): void {
+        db.transaction(() => {
+            const releaseItem = db.prepare(`
+                SELECT id
+                FROM ProviderItems
+                WHERE provider = 'soundcloud'
+                  AND entity_type = 'release'
+                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                LIMIT 1
+            `).get(albumId) as { id: number } | undefined;
+            if (!releaseItem) return;
+
+            db.prepare(`
+                UPDATE ProviderItems
+                SET availability = 'unavailable',
+                    availability_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(reason, releaseItem.id);
+
+            db.prepare(`
+                UPDATE ProviderItems
+                SET availability = 'unavailable',
+                    availability_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id IN (
+                  SELECT member_item_id
+                  FROM ProviderEditionMembers
+                  WHERE provider_edition_item_id = ?
+                )
+            `).run(reason, releaseItem.id);
+
+            db.prepare(`
+                UPDATE ProviderEditionMatches
+                SET match_state = 'rejected',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE provider_edition_item_id = ?
+                  AND decision_source != 'manual'
+            `).run(releaseItem.id);
+
+            db.prepare(`
+                UPDATE ProviderTrackMatches
+                SET match_state = 'rejected',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE provider_edition_match_id IN (
+                  SELECT id FROM ProviderEditionMatches
+                  WHERE provider_edition_item_id = ?
+                )
+                  AND decision_source != 'manual'
+            `).run(releaseItem.id);
+        })();
+    }
+
     static async storeProviderTrackOffers(
         providerId: string,
         albumId: string,
@@ -884,6 +963,22 @@ export class RefreshAlbumService {
         canonicalReleaseMbid?: string | null,
     ): Promise<void> {
         if (!Array.isArray(tracks) || tracks.length === 0) {
+            return;
+        }
+
+        // SoundCloud: never materialize DRM/SNIP/BLOCK as matchable members.
+        // Progressive/plain-HLS (and unhydrated unknowns) remain.
+        const tracksForMatching = providerId === "soundcloud"
+            ? this.filterSoundCloudDownloadableTrackOffers(tracks)
+            : tracks;
+        if (providerId === "soundcloud" && tracksForMatching.length === 0) {
+            // Every classifiable track was undownloadable — reject the offer so
+            // it cannot remain as an accepted plan source after a re-refresh.
+            const hadKnownUndownloadable = tracks.some((track) =>
+                isSoundCloudTrackKnownUndownloadable(track));
+            if (hadKnownUndownloadable) {
+                this.markSoundCloudReleaseUndownloadable(String(albumId), "drm-only");
+            }
             return;
         }
 
@@ -908,7 +1003,11 @@ export class RefreshAlbumService {
             durationMs: positiveNumberOrNull(existingRelease?.duration_ms),
             releaseDate: textOrNull(existingRelease?.release_date),
             explicit: existingRelease?.explicit == null ? null : Boolean(existingRelease.explicit),
-            availability: textOrNull(existingRelease?.availability) || "available",
+            // SoundCloud re-store of downloadable members clears a prior drm-only reject.
+            availability: providerId === "soundcloud"
+                ? "available"
+                : (textOrNull(existingRelease?.availability) || "available"),
+            ...(providerId === "soundcloud" ? { availabilityReason: null as string | null } : {}),
             checkedAt: textOrNull(existingRelease?.checked_at) || new Date().toISOString(),
             providerUrl: textOrNull(existingRelease?.provider_url),
             coverId: textOrNull(existingRelease?.cover_id),
@@ -916,7 +1015,7 @@ export class RefreshAlbumService {
             volumeCount: positiveNumberOrNull(existingRelease?.volume_count),
             copyright: textOrNull(existingRelease?.copyright),
         };
-        const members = tracks
+        const members = tracksForMatching
             .filter((track) => track?.provider_id != null)
             .map((currentTrack) => {
                 const qualityTags = [

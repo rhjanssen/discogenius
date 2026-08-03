@@ -10,7 +10,9 @@ import {
   soundCloudOfferHasDownloadableMatch,
 } from "./soundcloud-downloadability.js";
 import {
+  matchPlaylistTracksToCanonical,
   playlistCoversCanonicalTracklistDownloadable,
+  scorePlaylistTracklistCoverage,
 } from "./soundcloud-playlist-match.js";
 
 const progressive = {
@@ -172,4 +174,28 @@ test("downloadable coverage prefers progressive assignments for ranking", () => 
   );
   assert.equal(mostlyProgressive.downloadableCovered, 3);
   assert.equal(soundCloudOfferHasDownloadableMatch(mostlyProgressive), true);
+});
+
+test("playlist matching never assigns DRM/SNIP/BLOCK tracks", () => {
+  const canonical = [
+    { title: "Adagio for Strings", durationSec: 239, trackNumber: 1 },
+    { title: "Of the Night", durationSec: 213, trackNumber: 2 },
+    { title: "Falling", durationSec: 225, trackNumber: 3 },
+  ];
+  const playlist = [
+    { title: "Adagio for Strings", duration: 239, raw: progressive },
+    { title: "Of the Night", duration: 213, raw: drmEncrypted },
+    { title: "Falling", duration: 225, raw: snipOnly },
+  ];
+  const assignments = matchPlaylistTracksToCanonical(canonical, playlist);
+  assert.deepEqual(
+    assignments.map((row) => row.playlistIndex),
+    [0],
+    "only the progressive track is assignable",
+  );
+  const coverage = scorePlaylistTracklistCoverage(canonical, playlist);
+  assert.equal(coverage.covered, 1);
+  assert.equal(coverage.downloadable?.downloadableCovered, 1);
+  assert.equal(coverage.downloadable?.knownUndownloadableCovered, 0);
+  assert.equal(playlistCoversCanonicalTracklistDownloadable(canonical, playlist), false);
 });

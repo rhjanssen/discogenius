@@ -51,6 +51,30 @@ const max: AcquisitionQualityProfile = {
   continueUpgradesAfterCutoff: true,
 };
 
+/** Stereo Max ladder including lossy fallback (production Max profile). */
+const maxWithLossy: AcquisitionQualityProfile = {
+  allowedQualities: new Set(["hires-lossless", "lossless", "lossy"]),
+  preferenceOrder: ["hires-lossless", "lossless", "lossy"],
+  cutoff: "hires-lossless",
+  continueUpgradesAfterCutoff: true,
+};
+
+/** Stereo High: hi-res ≡ lossless for ranking; lossy still worse. */
+const highWithLossy: AcquisitionQualityProfile = {
+  allowedQualities: new Set(["hires-lossless", "lossless", "lossy"]),
+  preferenceOrder: ["hires-lossless", "lossless", "lossy"],
+  cutoff: "lossless",
+  continueUpgradesAfterCutoff: false,
+};
+
+/** Stereo Normal: hi-res ≡ lossless ≡ lossy for ranking. */
+const normalWithLossy: AcquisitionQualityProfile = {
+  allowedQualities: new Set(["hires-lossless", "lossless", "lossy"]),
+  preferenceOrder: ["hires-lossless", "lossless", "lossy"],
+  cutoff: "lossy",
+  continueUpgradesAfterCutoff: false,
+};
+
 test("HIGH chooses one coherent exact lossless source over a fragmented hi-res composite", () => {
   const plan = optimizeAcquisitionPlan({
     orderedTrackIds: [1, 2, 3, 4],
@@ -64,6 +88,154 @@ test("HIGH chooses one coherent exact lossless source over a fragmented hi-res c
   assert.deepEqual(plan?.sourceIds, [20]);
   assert.equal(plan?.composition, "single_source");
   assert.equal(plan?.downloadMode, "album");
+});
+
+test("MAX: partial hi-res beats full lossy (never demote quality class for coverage)", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: maxWithLossy,
+    providerPriority: ["tidal", "soundcloud"],
+    preferExplicit: true,
+    sources: [
+      {
+        ...source(10, "overlap", [
+          [1, "hires-lossless"],
+          [2, "hires-lossless"],
+          [3, "hires-lossless"],
+        ]),
+        provider: "tidal",
+        releaseExplicit: true,
+        trackMatches: source(10, "overlap", [
+          [1, "hires-lossless"],
+          [2, "hires-lossless"],
+          [3, "hires-lossless"],
+        ]).trackMatches.map((match) => ({ ...match, explicit: true })),
+      },
+      {
+        ...source(20, "exact", [
+          [1, "lossy"],
+          [2, "lossy"],
+          [3, "lossy"],
+          [4, "lossy"],
+        ]),
+        provider: "soundcloud",
+        releaseExplicit: false,
+        trackMatches: source(20, "exact", [
+          [1, "lossy"],
+          [2, "lossy"],
+          [3, "lossy"],
+          [4, "lossy"],
+        ]).trackMatches.map((match) => ({ ...match, explicit: false })),
+      },
+    ],
+  });
+  assert.ok(plans.length >= 1);
+  assert.equal(plans[0].provider, "tidal");
+  assert.equal(plans[0].qualityTier, "hires-lossless");
+  assert.equal(plans[0].coverage, 3);
+});
+
+test("MAX: hi-res composite beats lossless single-source when upgrades continue", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: maxWithLossy,
+    providerPriority: ["tidal", "apple-music"],
+    preferExplicit: false,
+    sources: [
+      {
+        ...source(10, "source_subset", [
+          [1, "hires-lossless"],
+          [2, "hires-lossless"],
+          [3, "hires-lossless"],
+        ]),
+        provider: "tidal",
+      },
+      {
+        ...source(11, "overlap", [[4, "lossless"]]),
+        provider: "tidal",
+      },
+      {
+        ...source(20, "exact", [
+          [1, "lossless"],
+          [2, "lossless"],
+          [3, "lossless"],
+          [4, "lossless"],
+        ]),
+        provider: "apple-music",
+      },
+    ],
+  });
+  assert.equal(plans[0].provider, "tidal");
+  assert.equal(plans[0].composition, "composite");
+  assert.equal(plans[0].qualityTier, "hires-lossless");
+  assert.equal(plans[0].coverage, 4);
+});
+
+test("HIGH: lossless single-source beats hi-res composite when bands are equal", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: highWithLossy,
+    providerPriority: ["tidal", "apple-music"],
+    preferExplicit: false,
+    sources: [
+      {
+        ...source(10, "source_subset", [
+          [1, "hires-lossless"],
+          [2, "hires-lossless"],
+          [3, "hires-lossless"],
+        ]),
+        provider: "tidal",
+      },
+      {
+        ...source(11, "overlap", [[4, "hires-lossless"]]),
+        provider: "tidal",
+      },
+      {
+        ...source(20, "exact", [
+          [1, "lossless"],
+          [2, "lossless"],
+          [3, "lossless"],
+          [4, "lossless"],
+        ]),
+        provider: "apple-music",
+      },
+    ],
+  });
+  assert.equal(plans[0].provider, "apple-music");
+  assert.equal(plans[0].composition, "single_source");
+  assert.equal(plans[0].qualityTier, "lossless");
+  assert.equal(plans[0].coverage, 4);
+});
+
+test("NORMAL: hi-res, lossless and lossy share a band so full lossy single can beat partial hi-res", () => {
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2, 3, 4],
+    profile: normalWithLossy,
+    providerPriority: ["tidal", "soundcloud"],
+    preferExplicit: false,
+    sources: [
+      {
+        ...source(10, "overlap", [
+          [1, "hires-lossless"],
+          [2, "hires-lossless"],
+          [3, "hires-lossless"],
+        ]),
+        provider: "tidal",
+      },
+      {
+        ...source(20, "exact", [
+          [1, "lossy"],
+          [2, "lossy"],
+          [3, "lossy"],
+          [4, "lossy"],
+        ]),
+        provider: "soundcloud",
+      },
+    ],
+  });
+  // Fidelity equal under Normal → coverage wins (4 > 3).
+  assert.equal(plans[0].provider, "soundcloud");
+  assert.equal(plans[0].coverage, 4);
 });
 
 test("MAX creates a justified standard plus deluxe quality composite", () => {

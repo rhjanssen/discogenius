@@ -4,7 +4,10 @@ import { getConfigSection } from "../config/config.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { resolveTrackListTabs, type TrackListTab } from "./track-list-tabs.js";
-import { buildRecordingCoverageUnitMap } from "./recording-coverage-units.js";
+import {
+  buildRecordingCoverageUnitMap,
+  editionExplicitLabelScore,
+} from "./recording-coverage-units.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
 
 export interface LibraryAcquisitionPlanView {
@@ -89,6 +92,8 @@ export interface CanonicalReleaseAvailabilityView {
   country: string | null;
   mediumCount: number | null;
   trackCount: number | null;
+  /** Unique medium formats from MusicBrainz (e.g. Digital Media, CD, Vinyl). */
+  mediaFormats: string[];
   offers: ProviderReleaseOfferView[];
 }
 
@@ -109,6 +114,67 @@ interface ReleaseRow {
   country: string | null;
   media_count: number | null;
   track_count: number | null;
+  media: string | null;
+}
+
+/** Distinct formats from AlbumEditions.media JSON (Lidarr-style Format fields). */
+function parseMediaFormats(mediaJson: string | null | undefined): string[] {
+  if (!mediaJson) return [];
+  try {
+    const parsed = JSON.parse(mediaJson);
+    if (!Array.isArray(parsed)) return [];
+    const formats: string[] = [];
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as Record<string, unknown>;
+      const format = String(record.Format ?? record.format ?? "").trim();
+      if (format && !formats.includes(format)) formats.push(format);
+    }
+    return formats;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * When MusicBrainz clearly labels an edition clean or explicit, hide provider
+ * plans of the opposite explicitness. Unknown plans always stay.
+ */
+export function planAllowedForEditionLabel(
+  plan: Pick<LibraryAcquisitionPlanView, "explicitContent">,
+  title: string | null | undefined,
+  disambiguation: string | null | undefined,
+): boolean {
+  const label = editionExplicitLabelScore(title, disambiguation);
+  if (label === 0) return true;
+  if (plan.explicitContent === "unknown") return true;
+  if (label === 1 && plan.explicitContent === "clean") return false;
+  if (label === -1 && plan.explicitContent === "explicit") return false;
+  return true;
+}
+
+/**
+ * Group plans by provider for display: providers ordered by their best (lowest)
+ * rank so preference is preserved, but clean+explicit from the same provider
+ * sit together (one provider mark, not icon spam).
+ */
+export function sortPlansGroupedByProvider(
+  plans: readonly LibraryAcquisitionPlanView[],
+): LibraryAcquisitionPlanView[] {
+  const byRank = [...plans].sort((left, right) =>
+    left.rank - right.rank || left.id - right.id);
+  const groups = new Map<string, LibraryAcquisitionPlanView[]>();
+  const providerOrder: string[] = [];
+  for (const plan of byRank) {
+    const list = groups.get(plan.provider);
+    if (!list) {
+      providerOrder.push(plan.provider);
+      groups.set(plan.provider, [plan]);
+    } else {
+      list.push(plan);
+    }
+  }
+  return providerOrder.flatMap((provider) => groups.get(provider) || []);
 }
 
 /**
@@ -159,7 +225,7 @@ export class LibraryReleaseSelectionService {
 
     const releaseRows = this.db.prepare(`
       SELECT id, mbid, title, disambiguation, status, date, country,
-             media_count, track_count
+             media_count, track_count, media
       FROM AlbumEditions
       WHERE release_group_id = ?
       ORDER BY COALESCE(date, '9999-99-99'), id
@@ -174,6 +240,7 @@ export class LibraryReleaseSelectionService {
       country: release.country,
       mediumCount: release.media_count,
       trackCount: release.track_count,
+      mediaFormats: parseMediaFormats(release.media),
       offers: [] as ProviderReleaseOfferView[],
     }));
     const releaseById = new Map(releases.map((release) => [release.id, release]));
@@ -421,13 +488,28 @@ export class LibraryReleaseSelectionService {
         }
       }
 
+      const releaseMetaById = new Map(
+        releases.map((release) => [release.id, release] as const),
+      );
       for (const library of libraries) {
         for (const selection of library.selections) {
-          const plans = plansByEdition.get(`${library.id}:${selection.editionId}`) || [];
+          const release = releaseMetaById.get(selection.editionId);
+          const rawPlans = plansByEdition.get(`${library.id}:${selection.editionId}`) || [];
+          // Gate clean↔explicit against a clear MB edition label, then group by
+          // provider so TIDAL clean+explicit sit together in the Editions UI.
+          const plans = sortPlansGroupedByProvider(
+            rawPlans.filter((plan) => planAllowedForEditionLabel(
+              plan,
+              release?.title,
+              release?.disambiguation,
+            )),
+          );
           selection.plans = plans;
           for (const plan of plans) plan.selectionMode = selection.planSelectionMode;
           // Only a monitored Edition executes a plan. An unmonitored one lists
           // its offers without any of them being the one that runs.
+          // If the stored preference was gated out (e.g. clean plan on an
+          // explicit MB edition), do not surface it as chosen.
           selection.plan = selection.monitored
             ? plans.find((plan) => plan.chosen) ?? null
             : null;

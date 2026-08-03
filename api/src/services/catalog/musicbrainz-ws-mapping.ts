@@ -193,13 +193,32 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
   const labels = (release["label-info"] || [])
     .map((info) => String(info.label?.name || "").trim())
     .filter(Boolean);
-  const country = String(release.country || "").trim();
+  // Prefer every ISO code we know about. Postgres bulk hydration joins them
+  // with commas; WS payloads may only have the primary `country` field.
+  // release-events (when present) are the full multi-territory truth.
+  const countries = new Set<string>();
+  const primary = String(release.country || "").trim();
+  if (primary) {
+    for (const part of primary.split(/[,;|]/)) {
+      const code = part.trim().toUpperCase();
+      if (code) countries.add(code);
+    }
+  }
+  const events = (release as { "release-events"?: Array<{ area?: { "iso-3166-1-codes"?: string[] } }> })["release-events"];
+  if (Array.isArray(events)) {
+    for (const event of events) {
+      for (const code of event?.area?.["iso-3166-1-codes"] || []) {
+        const normalized = String(code || "").trim().toUpperCase();
+        if (normalized) countries.add(normalized);
+      }
+    }
+  }
 
   return {
     Id: String(release.id ?? ""),
     Title: release.title ?? "",
     Status: release.status ?? "",
-    Country: country ? [country] : [],
+    Country: [...countries].sort(),
     Barcode: release.barcode ?? undefined,
     Label: labels,
     Media: media.map((medium) => ({

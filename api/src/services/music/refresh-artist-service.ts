@@ -1498,7 +1498,11 @@ export class RefreshArtistService {
                         track_number: number | null;
                         volume_number: number | null;
                     }>;
-                    if (materialized.length === numTracks) {
+                    // On forceUpdate always re-fetch tracklists: stored members
+                    // omit live-only fields (SoundCloud DRM/media, Apple
+                    // audioTraits/qualityTags such as dolby-atmos). Reusing them
+                    // left Atmos never written to ProviderItemAudioVariants.
+                    if (materialized.length === numTracks && options.forceUpdate !== true) {
                         album._provider_tracks = materialized.map((row) => ({
                             mbid: null,
                             provider_id: row.provider_id || null,

@@ -405,6 +405,98 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
   ]);
 });
 
+test("SoundCloud storeProviderTrackOffers drops DRM tracks so they never become plan sources", async () => {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "91111111-1111-4111-8111-111111111119";
+  const releaseMbid = "92222222-2222-4222-8222-222222222229";
+  const progressiveRecordingMbid = "93333333-3333-4333-8333-333333333339";
+  const drmRecordingMbid = "94444444-4444-4444-8444-444444444449";
+  const progressiveTrackMbid = "95555555-5555-4555-8555-555555555559";
+  const drmTrackMbid = "96666666-6666-4666-8666-666666666669";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
+    .run(releaseGroupMbid, artistMbid, "DRM Filter EP");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
+    VALUES (?, ?, ?, ?, 'Official')
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "DRM Filter EP");
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(progressiveRecordingMbid, artistMbid, "Progressive Fan Cut");
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(drmRecordingMbid, artistMbid, "Official DRM Cut");
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+  `).run(progressiveTrackMbid, releaseMbid, progressiveRecordingMbid, 1, "1", "Progressive Fan Cut", 180000);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+  `).run(drmTrackMbid, releaseMbid, drmRecordingMbid, 2, "2", "Official DRM Cut", 200000);
+
+  await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
+    "soundcloud",
+    "sc-mixed-drm",
+    [
+      {
+        provider_id: "sc-progressive",
+        title: "Progressive Fan Cut",
+        duration: 180,
+        track_number: 1,
+        volume_number: 1,
+        policy: "ALLOW",
+        media: {
+          transcodings: [{
+            url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:1/progressive",
+            snipped: false,
+            format: { protocol: "progressive", mime_type: "audio/mpeg" },
+          }],
+        },
+      },
+      {
+        provider_id: "sc-drm",
+        title: "Official DRM Cut",
+        duration: 200,
+        track_number: 2,
+        volume_number: 1,
+        policy: "ALLOW",
+        media: {
+          transcodings: [{
+            url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:2/enc",
+            snipped: false,
+            format: { protocol: "ctr-encrypted-hls", mime_type: "audio/mp4" },
+          }],
+        },
+      },
+    ],
+    null,
+    releaseMbid,
+  );
+
+  const members = dbModule.db.prepare(`
+    SELECT item.provider_id, track_match.match_state, track.mbid AS track_mbid
+    FROM ProviderItems release_item
+    JOIN ProviderEditionMembers member
+      ON member.provider_edition_item_id = release_item.id
+    JOIN ProviderItems item ON item.id = member.member_item_id
+    LEFT JOIN ProviderTrackMatches track_match
+      ON track_match.provider_edition_member_id = member.id
+     AND track_match.match_state = 'accepted'
+    LEFT JOIN Tracks track ON track.id = track_match.track_id
+    WHERE release_item.provider = 'soundcloud'
+      AND release_item.provider_id = 'sc-mixed-drm'
+    ORDER BY item.provider_id
+  `).all() as Array<{ provider_id: string; match_state: string | null; track_mbid: string | null }>;
+
+  assert.deepEqual(members.map((row) => row.provider_id), ["sc-progressive"]);
+  assert.equal(members[0]?.match_state, "accepted");
+  assert.equal(members[0]?.track_mbid, progressiveTrackMbid);
+  assert.ok(!members.some((row) => row.provider_id === "sc-drm"));
+});
+
 test("same-release provider superset maps exact-duration version tracks and clears stale positional links", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "81111111-1111-4111-8111-111111111111";
@@ -620,4 +712,25 @@ test("provider track rows carry through explicitness", () => {
     providerTrackToTrackMetadataRow({ ...base, raw: { explicit: true } } as never).explicit,
     true,
   );
+});
+
+// Apple songs advertise dolby-atmos on qualityTags; without passthrough,
+// storeProviderTrackOffers only saw quality="LOSSLESS" and never wrote spatial
+// ProviderItemAudioVariants — so Spatial library plans never offered Apple Atmos.
+test("provider track rows carry through qualityTags for audio variants", () => {
+  const { providerTrackToTrackMetadataRow } = refreshServiceModule;
+  const base = {
+    providerId: "1590841387",
+    title: "Distorted Light Beam",
+    artist: { providerId: "a", name: "Bastille" },
+    album: { providerId: "1590841197", title: "Give Me The Future", artist: { providerId: "a", name: "Bastille" } },
+    duration: 180,
+    trackNumber: 1,
+    quality: "LOSSLESS",
+    qualityTags: ["dolby-atmos", "lossless", "lossy-stereo"],
+  };
+
+  const row = providerTrackToTrackMetadataRow(base as never);
+  assert.deepEqual(row.qualityTags, ["dolby-atmos", "lossless", "lossy-stereo"]);
+  assert.equal(row.quality, "LOSSLESS");
 });

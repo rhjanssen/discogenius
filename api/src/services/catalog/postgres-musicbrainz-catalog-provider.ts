@@ -350,13 +350,18 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       [ids],
     );
     const releaseDate = new Map<string, string | null>();
-    const releaseCountry = new Map<string, string | null>();
+    // Every release_country ISO code — not only the first. MB's single
+    // `country` field is a primary/representative code; digital releases often
+    // list 100+ release events (e.g. "DZ" primary with 167 territories).
+    const releaseCountries = new Map<string, string[]>();
     for (const row of dateRows) {
       const date = formatMbDate(row.y, row.m, row.d);
       releaseDate.set(row.release_gid, earlierDate(releaseDate.get(row.release_gid) ?? null, date));
-      if (row.code && !releaseCountry.get(row.release_gid)) {
-        releaseCountry.set(row.release_gid, row.code);
-      }
+      const code = String(row.code || "").trim().toUpperCase();
+      if (!code) continue;
+      const list = releaseCountries.get(row.release_gid) || [];
+      if (!list.includes(code)) list.push(code);
+      releaseCountries.set(row.release_gid, list);
     }
 
     const labelRows = await this.query<{ release_gid: string; label_name: string }>(
@@ -409,7 +414,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           id: row.release_gid,
           title: row.release_name,
           status: row.status,
-          country: releaseCountry.get(row.release_gid) ?? null,
+          // All ISO territories for this release (sorted later in mapping).
+          country: (releaseCountries.get(row.release_gid) || []).join(","),
           barcode: row.barcode,
           date: releaseDate.get(row.release_gid) ?? null,
           disambiguation: row.release_comment || null,

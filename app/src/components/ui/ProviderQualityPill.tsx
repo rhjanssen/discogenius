@@ -27,6 +27,11 @@ export interface ProviderQualityOffer {
     provider?: string | null;
     matchStatus?: string | null;
     matchKind?: "direct" | "composite";
+    /**
+     * Album-level plan summary line for the quality-badge tooltip
+     * (e.g. "Complete match", "Single source · Full coverage").
+     * Track-scoped offers leave this unused — tooltips show ID lines only.
+     */
     coverageSummary?: string | null;
     providerAlbumId?: string | null;
     providerAlbumIds?: string[];
@@ -44,6 +49,29 @@ export interface ProviderQualityOffer {
     canDownload?: boolean;
     /** Explicit edition marker (null/undefined = unknown, false = clean). */
     explicit?: boolean | null;
+}
+
+/**
+ * Album-level acquisition plan tooltip headline.
+ * - single-source + exact → "Complete match"
+ * - single-source + other relation → "Single source · Full/Partial coverage"
+ * - composite → "Composite · Full/Partial coverage"
+ */
+export function formatAcquisitionPlanCoverageSummary(input: {
+    composition: "single_source" | "composite";
+    relation?: string | null;
+    coverage: number;
+    targetTrackCount: number;
+}): string {
+    const full = input.targetTrackCount <= 0 || input.coverage >= input.targetTrackCount;
+    const coverageLabel = full ? "Full coverage" : "Partial coverage";
+    if (input.composition === "composite") {
+        return `Composite · ${coverageLabel}`;
+    }
+    if (String(input.relation || "").toLowerCase() === "exact") {
+        return "Complete match";
+    }
+    return `Single source · ${coverageLabel}`;
 }
 
 interface ProviderQualityRowProps {
@@ -226,8 +254,26 @@ const useStyles = makeStyles({
         flexDirection: "column",
         rowGap: tokens.spacingVerticalXXS,
     },
+    /**
+     * Identity lines are fully clickable but look like plain text until hover —
+     * no brand colour or underline at rest.
+     */
     tooltipLink: {
-        fontWeight: tokens.fontWeightSemibold,
+        color: "inherit",
+        textDecorationLine: "none",
+        fontWeight: "inherit",
+        display: "inline",
+        ":hover": {
+            color: tokens.colorBrandForegroundLinkHover,
+            textDecorationLine: "none",
+        },
+        ":hover:active": {
+            color: tokens.colorBrandForegroundLinkPressed,
+        },
+        ":focus-visible": {
+            outline: `2px solid ${tokens.colorStrokeFocus2}`,
+            outlineOffset: "2px",
+        },
     },
 });
 
@@ -253,12 +299,6 @@ function videoOfferUnknownQualityLabel(): string {
     return "Video";
 }
 
-function slotDisplayName(slot: SlotName): string {
-    if (slot === "spatial") return "Spatial";
-    if (slot === "video") return "Video";
-    return "Stereo";
-}
-
 function splitProviderAlbumIds(providerAlbumId?: string | null): string[] {
     return String(providerAlbumId || "")
         .split(/[+;]/)
@@ -277,11 +317,6 @@ function sameProviderAlbumIdSet(left?: string | null, right?: string | null): bo
 interface MergedOffer extends ProviderQualityOffer {
     /** Every library slot this single release fills (e.g. ["stereo", "spatial"]). */
     slots: SlotName[];
-}
-
-/** Human label for the set of slots a release fills, e.g. "Stereo + Spatial". */
-function slotsDisplayName(slots: SlotName[]): string {
-    return slots.map(slotDisplayName).join(" + ");
 }
 
 /**
@@ -312,16 +347,18 @@ function mergeOffersByRelease(offers: ProviderQualityOffer[]): MergedOffer[] {
 }
 
 /**
- * Shared quality-badge tooltip used by the album header and the releases
- * switcher (and every other ProviderQualityRow). Keep one format everywhere.
+ * Shared quality-badge tooltip used by the album header, editions switcher,
+ * and tracklist. Keep one format everywhere.
  *
- * Provider mark already identifies the source — do not lead with `TIDAL · …`.
- *
- *   Stereo · single-source match   (or composite match)
- *   TIDAL album ID: 287367980   ← hyperlink; multiple lines for composites
- *   TIDAL track ID: 394045534   ← when known (tracklist rows)
+ * Album-level:
+ *   Complete match / Single source · Full|Partial coverage / Composite · …
+ *   TIDAL album ID: 287367980     ← entire line is the hyperlink
  *   MusicBrainz edition <mbid>
- *   MusicBrainz track / recording when known
+ *
+ * Track-level (provider track id present): ID lines only — no composition line.
+ *   TIDAL album ID: …
+ *   TIDAL track ID: …
+ *   MusicBrainz edition / track / recording …
  */
 function buildQualityOfferTooltip(
     offer: MergedOffer,
@@ -338,29 +375,47 @@ function buildQualityOfferTooltip(
     const fillsBothLibraries = offer.slots.length > 1;
     const providerTrackId = String(offer.providerTrackId || "").trim();
     const isVideo = offer.slot === "video";
+    const isTrackScoped = Boolean(providerTrackId) || Boolean(offer.musicbrainzTrackId);
     const isComposite = offer.matchKind === "composite" || providerAlbumIds.length > 1;
-    // Video: skip redundant "Video · available" — provider mark + ID lines are enough.
-    // Audio: composition first (single-source vs composite), then slot context.
-    const summaryLine = isVideo
+    // Album-level summary only. Track rows skip the composition line.
+    // Prefer the caller's coverageSummary (Complete match / Full|Partial …).
+    const summaryLine = isVideo || isTrackScoped
         ? null
-        : (isComposite
-            ? `Composite · ${slotsDisplayName(offer.slots)}`
-            : `Single-source · ${slotsDisplayName(offer.slots)}`);
-    const detailLine = isVideo ? null : (
-        offer.coverageSummary && !/^composite|^single-source/i.test(offer.coverageSummary)
-            ? offer.coverageSummary
-            : null
-    );
+        : (String(offer.coverageSummary || "").trim()
+            || (isComposite
+                ? "Composite · Full coverage"
+                : "Single source · Full coverage"));
     const albumIdLabel = isVideo
         ? `${providerName} ID`
-        : (isComposite
+        : (isComposite && !isTrackScoped
             ? `${providerName} album ID (source)`
             : `${providerName} album ID`);
     const trackIdLabel = `${providerName} track ID`;
 
+    const linkLine = (
+        key: string,
+        text: string,
+        href: string | null | undefined,
+    ) => {
+        if (href) {
+            return (
+                <Link
+                    key={key}
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className={options.styles.tooltipLink}
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    {text}
+                </Link>
+            );
+        }
+        return <span key={key}>{text}</span>;
+    };
+
     const ariaParts = [
         summaryLine,
-        detailLine,
         ...providerAlbumIds.map((id) => `${albumIdLabel}: ${id}`),
         providerTrackId ? `${trackIdLabel}: ${providerTrackId}` : null,
         offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
@@ -385,94 +440,41 @@ function buildQualityOfferTooltip(
     const content = (
         <div className={options.styles.tooltipBody}>
             {summaryLine ? <span>{summaryLine}</span> : null}
-            {detailLine ? <span>{detailLine}</span> : null}
             {providerAlbumIds.map((id) => {
                 const storedUrl = providerAlbumIds.length === 1 ? offer.providerUrl : null;
                 const href = isVideo
                     ? providerVideoUrl(offer.provider, id, storedUrl)
                     : providerAlbumUrl(offer.provider, id, storedUrl);
-                return (
-                    <span key={id}>
-                        {albumIdLabel}:{" "}
-                        {href ? (
-                            <Link
-                                href={href}
-                                target="_blank"
-                                rel="noreferrer noopener"
-                                className={options.styles.tooltipLink}
-                                onClick={(event) => event.stopPropagation()}
-                            >
-                                {id}
-                            </Link>
-                        ) : id}
-                    </span>
-                );
+                return linkLine(id, `${albumIdLabel}: ${id}`, href);
             })}
-            {providerTrackId ? (
-                <span>
-                    {trackIdLabel}:{" "}
-                    {(() => {
-                        const href = providerTrackUrl(
-                            offer.provider,
-                            providerTrackId,
-                            offer.providerTrackUrl,
-                        );
-                        return href ? (
-                            <Link
-                                href={href}
-                                target="_blank"
-                                rel="noreferrer noopener"
-                                className={options.styles.tooltipLink}
-                                onClick={(event) => event.stopPropagation()}
-                            >
-                                {providerTrackId}
-                            </Link>
-                        ) : providerTrackId;
-                    })()}
-                </span>
-            ) : null}
-            {offer.selectedReleaseMbid ? (
-                <span>
-                    MusicBrainz edition{" "}
-                    <Link
-                        href={`https://musicbrainz.org/release/${offer.selectedReleaseMbid}`}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className={options.styles.tooltipLink}
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        {offer.selectedReleaseMbid}
-                    </Link>
-                </span>
-            ) : null}
-            {offer.musicbrainzTrackId ? (
-                <span>
-                    MusicBrainz track{" "}
-                    <Link
-                        href={`https://musicbrainz.org/track/${offer.musicbrainzTrackId}`}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className={options.styles.tooltipLink}
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        {offer.musicbrainzTrackId}
-                    </Link>
-                </span>
-            ) : null}
-            {offer.musicbrainzRecordingId ? (
-                <span>
-                    MusicBrainz recording{" "}
-                    <Link
-                        href={`https://musicbrainz.org/recording/${offer.musicbrainzRecordingId}`}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className={options.styles.tooltipLink}
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        {offer.musicbrainzRecordingId}
-                    </Link>
-                </span>
-            ) : null}
+            {providerTrackId
+                ? linkLine(
+                    `track-${providerTrackId}`,
+                    `${trackIdLabel}: ${providerTrackId}`,
+                    providerTrackUrl(offer.provider, providerTrackId, offer.providerTrackUrl),
+                )
+                : null}
+            {offer.selectedReleaseMbid
+                ? linkLine(
+                    `mb-edition-${offer.selectedReleaseMbid}`,
+                    `MusicBrainz edition ${offer.selectedReleaseMbid}`,
+                    `https://musicbrainz.org/release/${offer.selectedReleaseMbid}`,
+                )
+                : null}
+            {offer.musicbrainzTrackId
+                ? linkLine(
+                    `mb-track-${offer.musicbrainzTrackId}`,
+                    `MusicBrainz track ${offer.musicbrainzTrackId}`,
+                    `https://musicbrainz.org/track/${offer.musicbrainzTrackId}`,
+                )
+                : null}
+            {offer.musicbrainzRecordingId
+                ? linkLine(
+                    `mb-rec-${offer.musicbrainzRecordingId}`,
+                    `MusicBrainz recording ${offer.musicbrainzRecordingId}`,
+                    `https://musicbrainz.org/recording/${offer.musicbrainzRecordingId}`,
+                )
+                : null}
             {fillsBothLibraries ? (
                 <span>Same release fills both libraries (no separate stereo release available)</span>
             ) : null}
@@ -526,7 +528,12 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
         color: palette.SpatialText,
     };
 
-    const visibleRaw = (offers || []).filter((offer) => offer && offer.available !== false);
+    // Drop offers with no real provider — a quality chip without a mark is how
+    // manual-import / plan-hole tracks used to look "empty provider + HIGH".
+    const visibleRaw = (offers || []).filter((offer) =>
+        offer
+        && offer.available !== false
+        && Boolean(providerKey(offer.provider)));
     if (visibleRaw.length === 0) {
         return null;
     }
@@ -537,12 +544,16 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const groups: ProviderGroup[] = [];
     for (const offer of visible) {
         const key = providerKey(offer.provider);
+        if (!key) continue;
         const last = groups[groups.length - 1];
         if (last && last.key === key) {
             last.offers.push(offer);
         } else {
             groups.push({ provider: offer.provider, key, offers: [offer] });
         }
+    }
+    if (groups.length === 0) {
+        return null;
     }
 
     const diameter = PILL_DIAMETER[size];

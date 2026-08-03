@@ -14,6 +14,7 @@ import {
 } from "../../music/provider-track-matcher.js";
 import type { ProviderAlbum } from "../streaming-provider.js";
 import {
+  isSoundCloudTrackKnownUndownloadable,
   scoreSoundCloudDownloadableCoverage,
   soundCloudOfferHasDownloadableMatch,
   type SoundCloudDownloadableCoverage,
@@ -225,6 +226,10 @@ function bestPlaylistTrackMatchScore(
  * Assign SoundCloud playlist tracks to canonical tracks one-to-one using the
  * same title/duration matcher that gates playlist coverage. Positions are
  * intentionally excluded: fan playlists commonly reorder the release.
+ *
+ * Known undownloadable rows (DRM / SNIP / BLOCK) are never assignable — they
+ * must not count as coverage or become ProviderTrackMatches / plan sources.
+ * Unhydrated stubs (`unknown`) stay eligible so callers can hydrate later.
  */
 export function matchPlaylistTracksToCanonical(
   canonicalTracks: CanonicalTrackForCoverage[],
@@ -249,6 +254,7 @@ export function matchPlaylistTracksToCanonical(
     for (let index = 0; index < playlistTracks.length; index += 1) {
       if (used.has(index)) continue;
       const row = playlistTracks[index]!;
+      if (isSoundCloudTrackKnownUndownloadable(row)) continue;
       const score = bestPlaylistTrackMatchScore(
         target,
         String(row.title || ""),

@@ -162,13 +162,13 @@ test("ensureDefaultQualityProfiles is idempotent", () => {
   });
 });
 
-test("Max and High allow lossy as a fallback rung, not only lossless", () => {
+test("all stereo profiles share one ladder; only preferred max (cutoff) differs", () => {
   withDb((db) => {
     ensureDefaultQualityProfiles(db);
     const rows = db.prepare(`
       SELECT name, allowed_source_formats, preference_order, cutoff
       FROM quality_profiles
-      WHERE name IN ('Max Quality', 'High Quality')
+      WHERE name IN ('Max Quality', 'High Quality', 'Normal Quality', 'Low Quality')
       ORDER BY name
     `).all() as Array<{
       name: string;
@@ -176,24 +176,18 @@ test("Max and High allow lossy as a fallback rung, not only lossless", () => {
       preference_order: string;
       cutoff: string;
     }>;
-    assert.equal(rows.length, 2);
+    assert.equal(rows.length, 4);
+    const sharedAllowed = '["hires-lossless","lossless","lossy"]';
+    const sharedPreference = '["hires-lossless","lossless","lossy"]';
     for (const row of rows) {
-      const allowed = JSON.parse(row.allowed_source_formats) as string[];
-      const preference = JSON.parse(row.preference_order) as string[];
-      assert.ok(allowed.includes("lossy"), `${row.name} must allow lossy fallback`);
-      assert.ok(allowed.includes("lossless"), `${row.name} must allow lossless`);
-      assert.ok(preference.includes("lossy"), `${row.name} preference must rank lossy`);
-      // Higher rungs first.
-      assert.ok(
-        preference.indexOf("lossless") < preference.indexOf("lossy"),
-        `${row.name} must prefer lossless over lossy`,
-      );
+      assert.equal(row.allowed_source_formats, sharedAllowed, `${row.name} allowlist`);
+      assert.equal(row.preference_order, sharedPreference, `${row.name} preference`);
     }
-    const max = rows.find((row) => row.name === "Max Quality")!;
-    assert.equal(max.cutoff, "hires-lossless");
-    assert.equal(
-      (JSON.parse(max.preference_order) as string[])[0],
-      "hires-lossless",
-    );
+    const byName = Object.fromEntries(rows.map((row) => [row.name, row]));
+    assert.equal(byName["Max Quality"].cutoff, "hires-lossless");
+    assert.equal(byName["High Quality"].cutoff, "lossless");
+    // Normal/Low: cutoff at lossy so Max/High/Normal tiers share one ranking band.
+    assert.equal(byName["Normal Quality"].cutoff, "lossy");
+    assert.equal(byName["Low Quality"].cutoff, "lossy");
   });
 });

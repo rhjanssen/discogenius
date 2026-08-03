@@ -174,6 +174,8 @@ export interface LibraryReleaseGroupAvailabilityContract {
     country: string | null;
     mediumCount: number | null;
     trackCount: number | null;
+    /** MusicBrainz medium formats (Digital Media, CD, Vinyl, …). */
+    mediaFormats: string[];
     offers: Array<{
       providerEditionMatchId: number;
       providerItemId: number;
@@ -624,6 +626,11 @@ export function parseLibraryReleaseGroupAvailabilityContract(
         country: expectNullableString(release.country, `${label}.country`) ?? null,
         mediumCount: expectOptionalNumber(release.mediumCount, `${label}.mediumCount`) ?? null,
         trackCount: expectOptionalNumber(release.trackCount, `${label}.trackCount`) ?? null,
+        mediaFormats: expectArray(
+          release.mediaFormats ?? [],
+          `${label}.mediaFormats`,
+          (format, formatIndex) => expectString(format, `${label}.mediaFormats[${formatIndex}]`),
+        ),
         offers: expectArray(release.offers, `${label}.offers`, (offerItem, offerIndex) => {
           const offerLabel = `${label}.offers[${offerIndex}]`;
           const offer = expectRecord(offerItem, offerLabel);

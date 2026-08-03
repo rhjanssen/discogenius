@@ -348,82 +348,90 @@ const getAlbumArtworkUrl = (track: TrackListItem) =>
 const getDisplayTitle = (track: TrackListItem) =>
   track.title;
 const getQualityTags = (track: TrackListItem): string[] => orderedQualityTags(track);
+/**
+ * Provider column = acquisition-plan sources only.
+ *
+ * Manual imports and plan holes (file on disk, no provider track) must render
+ * nothing here — never a hollow provider mark + quality chip invented from
+ * local file tags. File quality belongs in the Local Files column.
+ */
 const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOffer[] => {
-  const remote = track.remoteOffers || [];
-  if (remote.length > 0) {
-    // One badge per library slot: the plan already picked the source quality for
-    // this track. Keep album id + track id on the tooltip so a composite plan
-    // still shows exactly which provider release and track fill this row.
-    const bySlot = new Map<string, ProviderQualityOffer>();
-    for (const offer of remote) {
-      const slotRaw = String(offer.slot || "stereo").toLowerCase();
-      const slot: ProviderQualityOffer["slot"] = slotRaw === "spatial" || slotRaw === "video"
-        ? slotRaw
-        : "stereo";
-      if (bySlot.has(slot)) continue;
-      const providerTrackId = String(offer.providerTrackId || "").trim()
-        || (String(track.preview_provider || "").toLowerCase() === String(offer.provider || "").toLowerCase()
-          ? String(track.preview_provider_track_id || "").trim()
-          : "");
-      const albumId = String(offer.providerAlbumId || "").trim();
-      bySlot.set(slot, {
-        slot,
-        quality: offer.quality,
-        provider: offer.provider,
-        providerAlbumId: albumId || null,
-        providerAlbumIds: albumId ? [albumId] : [],
-        providerUrl: offer.providerUrl,
-        matchStatus: offer.matchStatus || "verified",
-        // Per-track source is always a single album id, even when the parent
-        // acquisition plan is composite.
-        matchKind: "direct",
-        coverageSummary: albumId && providerTrackId
-          ? "Track source from acquisition plan"
-          : "Track source",
-        selectedReleaseMbid: offer.selectedReleaseMbid || track.musicbrainz_release_id || null,
-        providerTrackId: providerTrackId || null,
-        providerTrackUrl: offer.providerTrackUrl,
-        musicbrainzTrackId: track.musicbrainz_track_id || null,
-        musicbrainzRecordingId: track.musicbrainz_recording_id || null,
-      });
-    }
-    return [...bySlot.values()];
-  }
-
-  // Fallback when the plan has not attached remote offers yet: at most one
-  // stereo and one spatial badge from quality tags, still carrying track id.
-  const tags = getQualityTags(track);
-  const qualities = tags.length > 0 ? tags : (track.quality ? [String(track.quality)] : []);
-  if (qualities.length === 0) {
-    return track.preview_provider
-      ? [{
-        slot: "stereo",
-        quality: null,
-        provider: track.preview_provider,
-        providerTrackId: track.preview_provider_track_id,
-        musicbrainzTrackId: track.musicbrainz_track_id || null,
-        musicbrainzRecordingId: track.musicbrainz_recording_id || null,
-        selectedReleaseMbid: track.musicbrainz_release_id || null,
-        matchKind: "direct",
-      }]
-      : [];
-  }
-
   const bySlot = new Map<string, ProviderQualityOffer>();
-  for (const quality of qualities) {
-    const slot: ProviderQualityOffer["slot"] = /atmos|spatial/i.test(quality) ? "spatial" : "stereo";
-    if (bySlot.has(slot)) continue;
-    bySlot.set(slot, {
-      slot,
-      quality,
-      provider: track.preview_provider || null,
-      providerTrackId: track.preview_provider_track_id || null,
+
+  const pushOffer = (input: {
+    slot: ProviderQualityOffer["slot"];
+    provider: string;
+    providerTrackId: string;
+    quality?: string | null;
+    providerAlbumId?: string | null;
+    providerUrl?: string | null;
+    providerTrackUrl?: string | null;
+    matchStatus?: string | null;
+    selectedReleaseMbid?: string | null;
+  }) => {
+    if (bySlot.has(input.slot)) return;
+    const albumId = String(input.providerAlbumId || "").trim();
+    bySlot.set(input.slot, {
+      slot: input.slot,
+      quality: input.quality ?? null,
+      provider: input.provider,
+      providerAlbumId: albumId || null,
+      providerAlbumIds: albumId ? [albumId] : [],
+      providerUrl: input.providerUrl ?? null,
+      matchStatus: input.matchStatus || "verified",
+      matchKind: "direct",
+      // Track tooltips are ID lines only — no composition summary.
+      coverageSummary: null,
+      selectedReleaseMbid: input.selectedReleaseMbid || track.musicbrainz_release_id || null,
+      providerTrackId: input.providerTrackId,
+      providerTrackUrl: input.providerTrackUrl ?? null,
       musicbrainzTrackId: track.musicbrainz_track_id || null,
       musicbrainzRecordingId: track.musicbrainz_recording_id || null,
-      selectedReleaseMbid: track.musicbrainz_release_id || null,
-      matchKind: "direct",
+    });
+  };
+
+  for (const offer of track.remoteOffers || []) {
+    const provider = String(offer.provider || "").trim();
+    const providerTrackId = String(offer.providerTrackId || "").trim()
+      || (String(track.preview_provider || "").toLowerCase() === provider.toLowerCase()
+        ? String(track.preview_provider_track_id || "").trim()
+        : "");
+    // Require a concrete provider *track* — album id alone is not enough
+    // (would paint the whole plan's quality onto uncovered tracks).
+    if (!provider || !providerTrackId) continue;
+    const slotRaw = String(offer.slot || "stereo").toLowerCase();
+    const slot: ProviderQualityOffer["slot"] = slotRaw === "spatial" || slotRaw === "video"
+      ? slotRaw
+      : "stereo";
+    pushOffer({
+      slot,
+      provider,
+      providerTrackId,
+      quality: offer.quality,
+      providerAlbumId: offer.providerAlbumId,
+      providerUrl: offer.providerUrl,
+      providerTrackUrl: offer.providerTrackUrl,
+      matchStatus: offer.matchStatus,
+      selectedReleaseMbid: offer.selectedReleaseMbid,
     });
   }
+
+  // No remoteOffers: only show a badge when the track already carries an
+  // explicit provider track id (e.g. artist top tracks). Never invent from
+  // qualityTags / file quality alone.
+  if (bySlot.size === 0) {
+    const provider = String(track.preview_provider || "").trim();
+    const providerTrackId = String(track.preview_provider_track_id || "").trim();
+    if (provider && providerTrackId) {
+      pushOffer({
+        slot: "stereo",
+        provider,
+        providerTrackId,
+        quality: null,
+      });
+    }
+  }
+
   return [...bySlot.values()];
 };
 const getFileQualityTags = (files: TrackFiles): string[] => orderedQualityTags({
@@ -910,7 +918,8 @@ const TrackList = <T extends TrackListItem>({
         render: (track) => {
           const offers = getRemoteProviderQualityOffers(track);
           if (offers.length === 0) {
-            return <span className={styles.emptyValue}>—</span>;
+            // Manual import / plan hole: leave the cell blank (not a hollow pill).
+            return null;
           }
           return (
             <div className={styles.qualityContent} aria-label="Available provider quality">

@@ -3,16 +3,16 @@
  *
  * Until users can define their own libraries (Lidarr-style), the product surface
  * is intentionally small:
- *   - Settings → Audio quality  → Stereo library quality profile
+ *   - Settings → Audio quality  → Stereo library quality profile (preferred max)
  *   - Settings → Spatial toggle → Spatial library enabled (Atmos planning)
  *
- * Audio quality is a preference ladder, not a hard floor:
- *   Max → High → Normal → Low. Prefer the best available; still plan and accept
- *   lower rungs (including lossy-only providers) when better quality is missing.
+ * Stereo quality is one ladder for every setting. Profiles share the same
+ * allowed formats and preference order (hi-res → lossless → lossy). Settings
+ * only picks the preferred maximum (cutoff) and whether to keep chasing above
+ * it; lower rungs always remain valid fallbacks (SoundCloud / YouTube Music).
  *
  * Download backends (tiddl) still read `quality.audio_quality` as a delivery
- * ceiling; acquisition planning reads the library profile. This module keeps
- * those two layers pointing at the same user intent.
+ * ceiling; acquisition planning reads the library profile.
  */
 import type Database from "better-sqlite3";
 import type { QualityConfig } from "../config/config.js";
@@ -59,58 +59,58 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
       updated_at = CURRENT_TIMESTAMP
   `);
 
-  // Stereo ladder is preference + fallback, not a hard floor:
-  //   Max  → prefer hi-res, then lossless, then lossy (YT/SC still plan)
-  //   High → prefer lossless (hi-res treated equal once cutoff is met), then lossy
-  //   Normal / Low → same allowlist; preference_order + output change
-  // allowed_source_formats must include every rung that may be used as a
-  // fallback. preference_order + cutoff decide which plan wins; they do not
-  // hide weaker providers when stronger quality is unavailable.
+  // Shared stereo ladder. Only cutoff / continue_upgrades / output_format differ.
+  const stereoAllowed = JSON.stringify(["hires-lossless", "lossless", "lossy"]);
+  const stereoPreference = JSON.stringify(["hires-lossless", "lossless", "lossy"]);
+
+  // Max — preferred maximum is hi-res; keep ranking every rung above cutoff.
   upsert.run(
     "Max Quality",
     1,
     "hires-lossless",
     JSON.stringify(["HIRES_LOSSLESS", "LOSSLESS"]),
-    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
-    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
+    stereoAllowed,
+    stereoPreference,
     1,
     "best_allowed",
     JSON.stringify({ codec: "preserve", lossless: true }),
     "preserve",
   );
-  // High — coherent lossless album preferred over fragmented hi-res composites
-  // (continue_upgrades off); lossy remains a last-resort fallback.
+  // High — preferred max = lossless (hi-res ≡ lossless for ranking; lossy worse).
   upsert.run(
     "High Quality",
     1,
     "lossless",
     JSON.stringify(["LOSSLESS"]),
-    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
-    JSON.stringify(["hires-lossless", "lossless", "lossy"]),
+    stereoAllowed,
+    stereoPreference,
     0,
     "best_allowed",
     JSON.stringify({ codec: "flac", lossless: true, bitDepth: 16, sampleRate: 44100 }),
     "downconvert_hires",
   );
+  // Normal — preferred max = lossy band: hi-res ≡ lossless ≡ lossy for ranking;
+  // coverage / single-source / provider decide. Output still targets ~320k when converting.
   upsert.run(
     "Normal Quality",
     0,
-    "lossless",
+    "lossy",
     JSON.stringify(["LOSSLESS"]),
-    JSON.stringify(["lossy", "lossless", "hires-lossless"]),
-    JSON.stringify(["lossless", "hires-lossless", "lossy"]),
+    stereoAllowed,
+    stereoPreference,
     0,
     "best_allowed",
     JSON.stringify({ codec: "mp3", lossless: false, bitrate: 320000 }),
     "transcode_allowed",
   );
+  // Low — same equal band as Normal for ranking; smaller lossy output target.
   upsert.run(
     "Low Quality",
     0,
-    "lossless",
+    "lossy",
     JSON.stringify(["HIRES_LOSSLESS", "LOSSLESS"]),
-    JSON.stringify(["lossy", "lossless", "hires-lossless"]),
-    JSON.stringify(["lossy", "lossless", "hires-lossless"]),
+    stereoAllowed,
+    stereoPreference,
     0,
     "best_allowed",
     JSON.stringify({ codec: "mp3", lossless: false, bitrate: 128000 }),

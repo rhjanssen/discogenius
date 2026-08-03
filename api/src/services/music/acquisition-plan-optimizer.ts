@@ -185,14 +185,22 @@ function compareOptions(
  * Hi-Res and shared a plan key with a genuinely hi-res one.
  */
 function achievedTier(
-  tracks: readonly TrackOption[],
+  tracks: readonly { sourceQuality: NormalizedAudioQuality; qualityRank?: number }[],
   fallback: NormalizedAudioQuality,
+  profile?: AcquisitionQualityProfile,
 ): NormalizedAudioQuality {
-  let best: TrackOption | undefined;
+  let bestQuality: NormalizedAudioQuality | undefined;
+  let bestRank = Number.MAX_SAFE_INTEGER;
   for (const track of tracks) {
-    if (!best || track.qualityRank < best.qualityRank) best = track;
+    const rank = typeof track.qualityRank === "number"
+      ? track.qualityRank
+      : (profile ? qualityRank(profile, track.sourceQuality) : Number.MAX_SAFE_INTEGER);
+    if (rank < bestRank) {
+      bestRank = rank;
+      bestQuality = track.sourceQuality;
+    }
   }
-  return best?.sourceQuality ?? fallback;
+  return bestQuality ?? fallback;
 }
 
 function planFragmentation(
@@ -273,20 +281,48 @@ export function planExplicitPreferenceRank(
 }
 
 /**
+ * Fidelity band for preferred-plan ranking. Lower is better.
+ *
+ * Settings quality is a *preferred maximum* (cutoff). Tiers at or better than
+ * that maximum share one band when `continueUpgradesAfterCutoff` is false:
+ *
+ *   **Max**  — continue upgrades: hi-res < lossless < lossy (each step distinct)
+ *   **High** — cutoff lossless, no continue: hi-res ≡ lossless; lossy worse
+ *   **Normal / Low** — cutoff lossy, no continue: hi-res ≡ lossless ≡ lossy
+ *
+ * So under Normal, a single-source “normal” plan and a hi-res composite compete
+ * on coverage / assembly / provider — not on fidelity class. Under Max, a
+ * partial hi-res plan still beats a full lossy one.
+ *
+ * Gap fill (Option B) is **not** nested plans: one AcquisitionPlan may assign
+ * lower-quality variants only to holes; band reflects the best tier reached.
+ */
+function planFidelityBand(
+  profile: AcquisitionQualityProfile,
+  plan: Pick<CandidatePlan, "qualityTier" | "tracks">,
+): number {
+  const tier = plan.tracks.length > 0
+    ? achievedTier(plan.tracks, profile.cutoff, profile)
+    : (plan.qualityTier as NormalizedAudioQuality);
+  let rank = qualityRank(profile, tier);
+  const cutoff = qualityRank(profile, profile.cutoff);
+  // Collapse everything better than the preferred maximum into one band.
+  if (!profile.continueUpgradesAfterCutoff && rank < cutoff) {
+    rank = cutoff;
+  }
+  return rank;
+}
+
+/**
  * Rank stored plan alternatives for default selection.
  *
  * Order of importance:
- *   1. Coverage / cutoff — more complete plans win, but a near-tie (±1 track or
- *      ≤5%) yields to prefer_explicit so a 26/27 explicit Atmos product beats a
- *      27/27 clean one. Large gaps (13 vs 27) still favour completeness.
- *   2. prefer_explicit / prefer clean — Settings → filtering.prefer_explicit
- *   3. Delivered quality — when the profile chases upgrades, 24-bit beats
- *      16-bit even via another provider or a composite
- *   4. Assembly simplicity — single-source over composite only once quality ties
- *   5. Relation / provider preference — tie-breakers when the product is equal
- *
- * Provider priority and "prefer single-source" must never demote a plan that
- * is genuinely higher fidelity under the library profile.
+ *   1. prefer_explicit / prefer clean — soft coverage floor (GMTF reprise case)
+ *   2. **Fidelity band** — Settings preferred max (see planFidelityBand)
+ *   3. Coverage within that band
+ *   4. Quality score / rank total (Max still splits hi-res vs lossless inside band)
+ *   5. Assembly simplicity — single-source over composite when bands/coverage tie
+ *   6. Relation / provider preference
  */
 function compareCandidatePlans(
   left: CandidatePlan,
@@ -317,7 +353,8 @@ function compareCandidatePlans(
     }
   }
 
-  return right.coverage - left.coverage
+  return planFidelityBand(profile, left) - planFidelityBand(profile, right)
+    || right.coverage - left.coverage
     || right.cutoffSatisfied - left.cutoffSatisfied
     || planExplicitPreferenceRank(right.explicitContent, preferExplicit)
       - planExplicitPreferenceRank(left.explicitContent, preferExplicit)

@@ -60,7 +60,11 @@ import {
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { ProviderQualityRow, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
+import {
+  formatAcquisitionPlanCoverageSummary,
+  ProviderQualityRow,
+  type ProviderQualityOffer,
+} from "@/components/ui/ProviderQualityPill";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -883,9 +887,12 @@ const AlbumPage = () => {
           provider: plan.provider,
           matchStatus: "verified",
           matchKind: isComposite ? "composite" : "direct",
-          coverageSummary: isComposite
-            ? `Composite plan · ${plan.coverage}/${plan.targetTrackCount || plan.coverage} tracks`
-            : `Single-source plan · ${plan.coverage}/${plan.targetTrackCount || plan.coverage} tracks`,
+          coverageSummary: formatAcquisitionPlanCoverageSummary({
+            composition: isComposite ? "composite" : "single_source",
+            relation: primary?.relation ?? null,
+            coverage: plan.coverage,
+            targetTrackCount: plan.targetTrackCount || plan.coverage,
+          }),
           providerAlbumId: albumIds.join(";") || fallback.providerAlbumId || null,
           providerAlbumIds: albumIds.length > 0
             ? albumIds
@@ -907,7 +914,12 @@ const AlbumPage = () => {
           provider: fallback.provider,
           matchStatus: fallback.matchStatus,
           matchKind: "direct",
-          coverageSummary: "Single-source plan",
+          coverageSummary: formatAcquisitionPlanCoverageSummary({
+            composition: "single_source",
+            relation: "exact",
+            coverage: 1,
+            targetTrackCount: 1,
+          }),
           providerAlbumId: fallback.providerAlbumId,
           providerAlbumIds: fallback.providerAlbumId ? [fallback.providerAlbumId] : [],
           providerUrl: fallback.providerUrl,
