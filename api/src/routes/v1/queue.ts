@@ -357,9 +357,24 @@ router.delete('/:id', async (req: Request, res: Response) => {
         // the row so a cancelled hang cannot consume pool capacity forever.
         CommandWorkerPool.abortCommand(commandId, job.worker_id, "Command deleted by user");
       } else {
-        // The download loop owns active/pending-import state in its worker. Ask
-        // it to abort/detach that state before deleting the persisted command.
-        await downloadProcessor.cancelJob(commandId);
+        // The download worker may be mid-download or mid-import. Signal cancel,
+        // but never block the DELETE on a long import/worker stall — under a
+        // busy main-thread SQLite load that made the queue UI feel stuck for
+        // several seconds or appear to fail.
+        const CANCEL_WAIT_MS = 2_500;
+        try {
+          await Promise.race([
+            downloadProcessor.cancelJob(commandId),
+            new Promise<void>((resolve) => {
+              setTimeout(resolve, CANCEL_WAIT_MS);
+            }),
+          ]);
+        } catch (cancelError) {
+          console.warn(
+            `[QUEUE-API] cancelJob(${commandId}) before delete failed:`,
+            cancelError instanceof Error ? cancelError.message : cancelError,
+          );
+        }
       }
     }
 
