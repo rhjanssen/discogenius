@@ -41,10 +41,27 @@ if (testFiles.length === 0) {
 
 const CLONE_FLAKE_SIGNATURE = "Unable to deserialize cloned data";
 
-function runOnce(files, { capture = false } = {}) {
+// Default process isolation is required for the full suite: many files set
+// DB_PATH / import database at module load, so they need a clean process each.
+// Clone-flake retries re-run only the flaked file(s) with isolation=none so
+// results never cross a structured-clone boundary (the IPC path that flakes).
+function runOnce(files, { capture = false, isolation = "process" } = {}) {
+  // Node 22 still ships this as --experimental-test-isolation; the non-prefixed
+  // alias is not available on all 22.x builds used in CI and locally.
+  const isolationArgs = isolation === "none"
+    ? ["--experimental-test-isolation=none"]
+    : [];
   return spawnSync(
     process.execPath,
-    ["--import", "tsx", "--test", "--test-concurrency=1", ...runnerArgs, ...files],
+    [
+      "--import",
+      "tsx",
+      "--test",
+      "--test-concurrency=1",
+      ...isolationArgs,
+      ...runnerArgs,
+      ...files,
+    ],
     {
       cwd: root,
       stdio: capture ? ["inherit", "pipe", "pipe"] : "inherit",
@@ -53,6 +70,11 @@ function runOnce(files, { capture = false } = {}) {
       maxBuffer: 256 * 1024 * 1024,
     },
   );
+}
+
+function writeCaptured(result) {
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
 }
 
 // Parse the top-level TAP results. A whole file that dies reports as
@@ -67,14 +89,15 @@ function parseFailures(stdout) {
   for (const rawLine of String(stdout || "").split(/\r?\n/)) {
     const match = /^not ok \d+ - (\S.*)$/.exec(rawLine.trim());
     if (!match) continue;
-    const name = match[1].trim();
+    // Windows TAP names use backslashes; normalize so retries open the file.
+    const name = match[1].trim().replace(/\\/g, "/");
     if (/\.test\.ts$/.test(name)) files.add(name);
     else tests.push(name);
   }
   return { files: [...files], tests };
 }
 
-const MAX_CLONE_FLAKE_RETRIES = 3;
+const MAX_CLONE_FLAKE_RETRIES = 5;
 
 function isCloneFlakeOnly(stdout, stderr, status) {
   if ((status ?? 1) === 0) return { flaked: false };
@@ -84,17 +107,21 @@ function isCloneFlakeOnly(stdout, stderr, status) {
   return { flaked: true, failedFiles, failedTests, combined };
 }
 
-let result = runOnce(testFiles, { capture: true });
-if (result.stdout) process.stdout.write(result.stdout);
-if (result.stderr) process.stderr.write(result.stderr);
+// A single file can safely run in-process and avoids the process-isolation
+// clone flake entirely. The full suite still needs process isolation so each
+// file gets a clean module graph / DB_PATH.
+const initialIsolation = testFiles.length === 1 ? "none" : "process";
+let result = runOnce(testFiles, { capture: true, isolation: initialIsolation });
+writeCaptured(result);
 
 // Node's test runner intermittently fails a whole file with "Unable to
 // deserialize cloned data" — a child-process result-serialization flake, not a
 // test assertion. Detect it across both output streams because Node has emitted
 // the signature on either one. Real assertion failures do not match and fail
 // immediately; retrying those would hide a flaky or genuinely broken test.
-// Isolation retries still flake occasionally on CI — allow a few attempts.
-let flake = isCloneFlakeOnly(result.stdout, result.stderr, result.status);
+// Isolation retries still flake under process isolation on CI, so each flaked
+// file is re-run alone with --test-isolation=none (no structured-clone IPC).
+const flake = isCloneFlakeOnly(result.stdout, result.stderr, result.status);
 if (flake.flaked) {
   if (flake.failedTests.length > 0) {
     console.error(
@@ -103,29 +130,65 @@ if (flake.flaked) {
     );
     process.exit(result.status ?? 1);
   }
-  let retryFiles = flake.failedFiles.length > 0 ? flake.failedFiles : testFiles;
-  for (let attempt = 1; attempt <= MAX_CLONE_FLAKE_RETRIES; attempt += 1) {
-    console.warn(
-      `[api tests] Test-runner clone flake detected; isolation retry ${attempt}/${MAX_CLONE_FLAKE_RETRIES}`
-      + (retryFiles === testFiles
-        ? " (whole suite)"
-        : `: ${retryFiles.join(", ")}`),
-    );
-    result = runOnce(retryFiles, { capture: true });
-    if (result.stdout) process.stdout.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
-    flake = isCloneFlakeOnly(result.stdout, result.stderr, result.status);
-    if (!flake.flaked) break;
-    if (flake.failedTests.length > 0) {
-      console.error(
-        `[api tests] Isolation retry saw real assertion failures; not retrying further:\n`
-        + flake.failedTests.map((name) => `  - ${name}`).join("\n"),
+
+  // Prefer the files Node named. If TAP did not name a file, re-run the whole
+  // suite under process isolation (cannot safely isolation=none the full set).
+  const namedFiles = flake.failedFiles;
+  if (namedFiles.length === 0) {
+    for (let attempt = 1; attempt <= MAX_CLONE_FLAKE_RETRIES; attempt += 1) {
+      console.warn(
+        `[api tests] Test-runner clone flake detected without a file name; whole-suite retry ${attempt}/${MAX_CLONE_FLAKE_RETRIES}`,
       );
-      process.exit(result.status ?? 1);
+      result = runOnce(testFiles, { capture: true });
+      writeCaptured(result);
+      if ((result.status ?? 1) === 0) process.exit(0);
+      const again = isCloneFlakeOnly(result.stdout, result.stderr, result.status);
+      if (!again.flaked) process.exit(result.status ?? 1);
+      if (again.failedTests.length > 0) process.exit(result.status ?? 1);
+      if (again.failedFiles.length > 0) {
+        // Named files appeared — fall through to per-file isolation=none below.
+        namedFiles.push(...again.failedFiles);
+        break;
+      }
     }
-    if (flake.failedFiles.length > 0) {
-      retryFiles = flake.failedFiles;
+  }
+
+  if (namedFiles.length > 0) {
+    for (const file of namedFiles) {
+      let passed = false;
+      for (let attempt = 1; attempt <= MAX_CLONE_FLAKE_RETRIES; attempt += 1) {
+        console.warn(
+          `[api tests] Test-runner clone flake detected; isolation=none retry ${attempt}/${MAX_CLONE_FLAKE_RETRIES}: ${file}`,
+        );
+        result = runOnce([file], { capture: true, isolation: "none" });
+        writeCaptured(result);
+        if ((result.status ?? 1) === 0) {
+          passed = true;
+          break;
+        }
+        const again = isCloneFlakeOnly(result.stdout, result.stderr, result.status);
+        if (!again.flaked) {
+          console.error(
+            `[api tests] Isolation retry for ${file} failed without clone-flake signature; treating as real failure.`,
+          );
+          process.exit(result.status ?? 1);
+        }
+        if (again.failedTests.length > 0) {
+          console.error(
+            `[api tests] Isolation retry saw real assertion failures; not retrying further:\n`
+            + again.failedTests.map((name) => `  - ${name}`).join("\n"),
+          );
+          process.exit(result.status ?? 1);
+        }
+      }
+      if (!passed) {
+        console.error(
+          `[api tests] Clone-flake isolation retries exhausted for ${file}.`,
+        );
+        process.exit(result.status ?? 1);
+      }
     }
+    process.exit(0);
   }
 }
 
