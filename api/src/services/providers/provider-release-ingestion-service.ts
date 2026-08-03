@@ -22,6 +22,14 @@ import {
 
 const MIN_AMBIGUITY_MARGIN = 0.1;
 
+/** Same digit-strip rules as provider-release-group-matcher (UPC identity). */
+function normalizeBarcodeDigits(value?: string | null): string {
+  const digits = String(value || "").replace(/\D+/g, "");
+  if (!digits) return "";
+  const stripped = digits.replace(/^0+/, "");
+  return stripped || "0";
+}
+
 /**
  * Ambiguity is judged *within an evidence tier*. A rival supported by weaker
  * evidence cannot cast doubt on a stronger match however close its score: an
@@ -181,19 +189,23 @@ export class ProviderReleaseIngestionService {
   }
 
   /**
-   * Persist a provider release and publish typed matches against every
-   * canonical edition it can cover.
+   * Persist a provider release and publish typed matches against the editions
+   * it is allowed to cover.
    *
-   * The release-group matcher names one preferred edition (UPC, URL, ISRC
-   * shape). That is the primary target, but equivalent editions in the same
-   * group — and other editions of the same artist that share the matched
-   * recordings — also need their own ProviderEditionMatches rows. Planning
-   * only reads matches for the edition it is building a plan for, so a
-   * single-target write left sibling editions and composite-host editions
-   * with zero plans even when the tracklists were identical or superset.
+   * **Identity exclusivity (local-MB / rich metadata):**
+   * When the provider release has a UPC that matches one or more
+   * `AlbumEditions.barcode` values, only those editions receive matches — no
+   * soft title/duration fan-out to other siblings (the Frank Japan problem).
+   * Multiple UPC hits are all kept. Track-level ISRC hits similarly lock that
+   * provider track to identity targets only (see {@link matchAgainstEdition}).
    *
-   * Return stats describe the *primary* edition so existing callers keep a
-   * stable contract; fan-out matches are a side effect.
+   * **Soft path (Servarr / no UPC):** primary edition plus fan-out to siblings
+   * and same-artist subset hosts, with Munkres-style title/duration assignment.
+   *
+   * Planning still runs per edition later; this only decides which
+   * ProviderEditionMatches rows exist.
+   *
+   * Return stats describe the caller's primary edition for a stable contract.
    */
   ingest(input: ProviderReleaseIngestionInput): {
     providerEditionItemId: number;
@@ -246,57 +258,131 @@ export class ProviderReleaseIngestionService {
         .map(({ member }, index) => ({ member, memberId: memberIds[index] }))
         .filter(({ member }) => member.item.entityType === "track");
 
-      const primary = this.matchAgainstEdition({
+      const decisionSource = input.decisionSource || "automatic";
+      const upcNorm = normalizeBarcodeDigits(input.release.upc);
+      const upcEditionIds = upcNorm ? this.findEditionIdsByBarcode(upcNorm) : [];
+      const identityMode = upcEditionIds.length > 0;
+
+      const matchOne = (editionId: number) => this.matchAgainstEdition({
         providerEditionItemId,
-        editionId: input.canonicalReleaseId,
+        editionId,
         audioSources,
         matcherVersion: input.matcherVersion,
-        decisionSource: input.decisionSource || "automatic",
+        decisionSource,
       });
 
-      // Fan out to every other edition this provider release can cover: same
-      // release group first (identical tracklists / layout variants), then
-      // other editions of the same artist that share accepted recordings
-      // (subset sources for composite plans on multi-track singles).
-      //
-      // Cross-group expansion is deliberately one-way: the provider release may
-      // only become a *source* for a larger or equal host (subset / exact /
-      // overlap). Writing a source_superset match onto a single that happens to
-      // share one recording would attach full albums to every single that
-      // reuses a track, which is noise and not how composites are meant to work.
-      const primaryGroupId = this.releaseGroupIdOf(input.canonicalReleaseId);
-      const fanOutEditionIds = this.findFanOutEditionIds({
-        primaryEditionId: input.canonicalReleaseId,
-        acceptedRecordingIds: primary.acceptedRecordingIds,
-        providerMemberCount: audioSources.length,
-        providerIsrcs: audioSources
-          .map(({ member }) => normalizeProviderIsrc(member.item.isrc))
-          .filter(Boolean),
-      });
-      for (const editionId of fanOutEditionIds) {
-        const result = this.matchAgainstEdition({
-          providerEditionItemId,
-          editionId,
-          audioSources,
-          matcherVersion: input.matcherVersion,
-          decisionSource: input.decisionSource || "automatic",
+      const matchedEditionIds = new Set<number>();
+      const identityRecordings = new Set<number>();
+      let primaryStats = {
+        releaseMatchId: null as number | null,
+        acceptedTrackCount: 0,
+        ambiguousTrackCount: 0,
+        acceptedRecordingIds: [] as number[],
+      };
+
+      const runMatch = (editionId: number): void => {
+        if (matchedEditionIds.has(editionId)) return;
+        matchedEditionIds.add(editionId);
+        const result = matchOne(editionId);
+        for (const id of result.identityRecordingIds) identityRecordings.add(id);
+        if (editionId === input.canonicalReleaseId) {
+          primaryStats = {
+            releaseMatchId: result.releaseMatchId,
+            acceptedTrackCount: result.acceptedTrackCount,
+            ambiguousTrackCount: result.ambiguousTrackCount,
+            acceptedRecordingIds: result.acceptedRecordingIds,
+          };
+        }
+      };
+
+      if (identityMode) {
+        // UPC claims the product: match every barcode-tied edition only.
+        for (const editionId of upcEditionIds) runMatch(editionId);
+        // Composite hosts that carry the same ISRC-linked recordings (not soft).
+        const subsetHosts = this.findFanOutEditionIds({
+          primaryEditionId: upcEditionIds[0] ?? input.canonicalReleaseId,
+          acceptedRecordingIds: [...identityRecordings],
+          providerMemberCount: audioSources.length,
+          providerIsrcs: [],
+          softSiblingFanOut: false,
         });
-        if (
-          result.relation === "source_superset"
-          && primaryGroupId != null
-          && this.releaseGroupIdOf(editionId) !== primaryGroupId
-        ) {
-          this.clearEditionMatch(providerEditionItemId, editionId);
+        const primaryGroupId = this.releaseGroupIdOf(upcEditionIds[0] ?? input.canonicalReleaseId);
+        for (const editionId of subsetHosts) {
+          if (matchedEditionIds.has(editionId)) continue;
+          runMatch(editionId);
+          const row = this.db.prepare(`
+            SELECT relation FROM ProviderEditionMatches
+            WHERE provider_edition_item_id = ? AND edition_id = ?
+          `).get(providerEditionItemId, editionId) as { relation: string } | undefined;
+          if (
+            row?.relation === "source_superset"
+            && primaryGroupId != null
+            && this.releaseGroupIdOf(editionId) !== primaryGroupId
+          ) {
+            this.clearEditionMatch(providerEditionItemId, editionId);
+          }
+        }
+        // Caller stats: if preferred edition was not UPC-tied, leave counts at 0
+        // (no soft match to non-UPC primary).
+        if (!matchedEditionIds.has(input.canonicalReleaseId) && upcEditionIds.length > 0) {
+          // Report the first UPC match as accepted coverage for callers that
+          // only check acceptedTrackCount > 0.
+          const first = this.db.prepare(`
+            SELECT matched_track_count FROM ProviderEditionMatches
+            WHERE provider_edition_item_id = ? AND edition_id = ? AND match_state = 'accepted'
+          `).get(providerEditionItemId, upcEditionIds[0]) as { matched_track_count: number } | undefined;
+          if (first && primaryStats.acceptedTrackCount === 0) {
+            primaryStats.acceptedTrackCount = first.matched_track_count;
+          }
+        }
+      } else {
+        // Soft / Servarr path: primary then sibling + recording fan-out.
+        runMatch(input.canonicalReleaseId);
+        const primaryGroupId = this.releaseGroupIdOf(input.canonicalReleaseId);
+        const fanOutEditionIds = this.findFanOutEditionIds({
+          primaryEditionId: input.canonicalReleaseId,
+          acceptedRecordingIds: primaryStats.acceptedRecordingIds,
+          providerMemberCount: audioSources.length,
+          providerIsrcs: audioSources
+            .map(({ member }) => normalizeProviderIsrc(member.item.isrc))
+            .filter(Boolean),
+          softSiblingFanOut: true,
+        });
+        for (const editionId of fanOutEditionIds) {
+          runMatch(editionId);
+          const row = this.db.prepare(`
+            SELECT relation FROM ProviderEditionMatches
+            WHERE provider_edition_item_id = ? AND edition_id = ?
+          `).get(providerEditionItemId, editionId) as { relation: string } | undefined;
+          if (
+            row?.relation === "source_superset"
+            && primaryGroupId != null
+            && this.releaseGroupIdOf(editionId) !== primaryGroupId
+          ) {
+            this.clearEditionMatch(providerEditionItemId, editionId);
+          }
         }
       }
 
       return {
         providerEditionItemId,
-        releaseMatchId: primary.releaseMatchId,
-        acceptedTrackCount: primary.acceptedTrackCount,
-        ambiguousTrackCount: primary.ambiguousTrackCount,
+        releaseMatchId: primaryStats.releaseMatchId,
+        acceptedTrackCount: primaryStats.acceptedTrackCount,
+        ambiguousTrackCount: primaryStats.ambiguousTrackCount,
       };
     })();
+  }
+
+  /** Editions whose barcode equals the provider UPC (after digit normalize). */
+  private findEditionIdsByBarcode(normalizedUpc: string): number[] {
+    if (!normalizedUpc) return [];
+    const rows = this.db.prepare(`
+      SELECT id, barcode FROM AlbumEditions
+      WHERE barcode IS NOT NULL AND TRIM(barcode) != ''
+    `).all() as Array<{ id: number; barcode: string }>;
+    return rows
+      .filter((row) => normalizeBarcodeDigits(row.barcode) === normalizedUpc)
+      .map((row) => row.id);
   }
 
   private releaseGroupIdOf(editionId: number): number | null {
@@ -376,6 +462,11 @@ export class ProviderReleaseIngestionService {
     acceptedRecordingIds: readonly number[];
     providerMemberCount: number;
     providerIsrcs: readonly string[];
+    /**
+     * When false (UPC identity mode), skip soft sibling fan-out — only
+     * recording/ISRC-based hosts for composites. Soft path keeps true.
+     */
+    softSiblingFanOut?: boolean;
   }): number[] {
     const primary = this.db.prepare(`
       SELECT edition.release_group_id, album.artist_metadata_id
@@ -387,15 +478,18 @@ export class ProviderReleaseIngestionService {
     if (!primary) return [];
 
     const ids = new Set<number>();
+    const softSiblings = input.softSiblingFanOut !== false;
 
-    // Same-group siblings always: layout / region / barcode variants of the
-    // same content, regardless of track-count differences (a deluxe provider
-    // may still cover a standard sibling as a source_superset).
-    const siblings = this.db.prepare(`
-      SELECT id FROM AlbumEditions
-      WHERE release_group_id = ? AND id != ?
-    `).all(primary.release_group_id, input.primaryEditionId) as Array<{ id: number }>;
-    for (const row of siblings) ids.add(row.id);
+    // Soft path only: same-group siblings (layout / region variants). Identity
+    // (UPC) mode already matched every barcode-tied edition and must not soft-
+    // attach the product to Japan/CD siblings with different barcodes.
+    if (softSiblings) {
+      const siblings = this.db.prepare(`
+        SELECT id FROM AlbumEditions
+        WHERE release_group_id = ? AND id != ?
+      `).all(primary.release_group_id, input.primaryEditionId) as Array<{ id: number }>;
+      for (const row of siblings) ids.add(row.id);
+    }
 
     // Cross-group candidates must be large enough that this provider release
     // can act as a subset or equal source, not a superset dump onto a single.
@@ -475,6 +569,8 @@ export class ProviderReleaseIngestionService {
     acceptedTrackCount: number;
     ambiguousTrackCount: number;
     acceptedRecordingIds: number[];
+    /** Recordings accepted via ISRC/MBID identity (not soft title/duration). */
+    identityRecordingIds: number[];
     relation: string | null;
   } {
     const targets = this.loadCanonicalTracks(input.editionId);
@@ -484,6 +580,7 @@ export class ProviderReleaseIngestionService {
         acceptedTrackCount: 0,
         ambiguousTrackCount: 0,
         acceptedRecordingIds: [],
+        identityRecordingIds: [],
         relation: null,
       };
     }
@@ -494,6 +591,22 @@ export class ProviderReleaseIngestionService {
     }));
     const evidence = audioSources.map(({ member }) =>
       targets.map((target) => describeTrackMatch(target.target, providerTrack(member))));
+
+    // Identity exclusivity per provider track: if any target hits via ISRC/MBID
+    // (external_id), drop soft edges for that source so Munkres cannot also
+    // assign the same track to a different recording by title/duration.
+    for (let sourceIndex = 0; sourceIndex < evidence.length; sourceIndex += 1) {
+      const hasIdentity = evidence[sourceIndex].some(
+        (row) => row.method === "external_id" && row.score >= TRACK_MATCH_THRESHOLD,
+      );
+      if (!hasIdentity) continue;
+      for (let targetIndex = 0; targetIndex < evidence[sourceIndex].length; targetIndex += 1) {
+        if (evidence[sourceIndex][targetIndex].method !== "external_id") {
+          evidence[sourceIndex][targetIndex] = { score: 0, method: "none" };
+        }
+      }
+    }
+
     const sourceMargins = evidence.map((sourceEvidence) => tierAwareMargin(sourceEvidence));
     const targetMargins = targets.map((_, targetIndex) =>
       tierAwareMargin(evidence.map((sourceEvidence) => sourceEvidence[targetIndex])));
@@ -521,6 +634,7 @@ export class ProviderReleaseIngestionService {
     );
     const trackMatches: ProviderTrackMatchInput[] = [];
     const acceptedRecordingIds: number[] = [];
+    const identityRecordingIds: number[] = [];
     for (const [targetIndex, edge] of accepted) {
       const target = targets[targetIndex];
       const durationMs = edge.source.member.contextualDurationMs
@@ -529,6 +643,9 @@ export class ProviderReleaseIngestionService {
         ? null
         : target.target.durationSec * 1000;
       acceptedRecordingIds.push(target.recordingId);
+      if (edge.method === "external_id") {
+        identityRecordingIds.push(target.recordingId);
+      }
       trackMatches.push({
         providerEditionMemberId: edge.source.memberId,
         trackId: target.id,
@@ -588,6 +705,7 @@ export class ProviderReleaseIngestionService {
         acceptedTrackCount,
         ambiguousTrackCount,
         acceptedRecordingIds: [],
+        identityRecordingIds: [],
         relation: null,
       };
     }
@@ -611,6 +729,7 @@ export class ProviderReleaseIngestionService {
       acceptedTrackCount,
       ambiguousTrackCount,
       acceptedRecordingIds,
+      identityRecordingIds,
       relation: result.relation.relation,
     };
   }
@@ -618,7 +737,7 @@ export class ProviderReleaseIngestionService {
   /**
    * Drop the acquisition plans built on this provider release before its rows
    * are rewritten.
-   *
+ *
    * Plan tracks point at both the track match and the exact audio variant they
    * would download, and neither reference carries an ON DELETE clause. Re-
    * ingesting replaces both, so a release that had ever been planned could not

@@ -678,11 +678,9 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
   }
 });
 
-// A provider release matched to one edition must also land on sibling editions
-// in the same release group that share the tracklist (region / barcode
-// variants). Planning only reads matches for the edition it is planning, so a
-// single-target write left every non-primary sibling with zero plans.
-test("fan-out matches sibling editions that share the tracklist", () => {
+// Soft path (no UPC): siblings that share the tracklist still get fan-out so
+// region/layout variants without barcodes can plan.
+test("soft fan-out matches sibling editions that share the tracklist when UPC is absent", () => {
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
@@ -712,7 +710,6 @@ test("fan-out matches sibling editions that share the tracklist", () => {
         entityType: "release",
         providerId: "243864035",
         title: "Give Me The Future + Dreams Of The Past",
-        upc: "00602445489220",
         availability: "available",
       },
       members: [
@@ -743,8 +740,155 @@ test("fan-out matches sibling editions that share the tracklist", () => {
         [2, "exact", 2],
         [3, "exact", 2],
       ],
-      "all three sibling editions must receive an exact match to the same provider release",
+      "without UPC, soft fan-out still covers siblings",
     );
+  });
+});
+
+// UPC identity: no soft sibling fan-out. Editions that share the *same*
+// ISRC-linked recordings still get matches (provider track valid wherever that
+// recording appears). Orphan region MBIDs with different recordings do not.
+test("UPC identity blocks soft fan-out to region orphans without shared recordings", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-amy', 'Amy');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-frank', 1, 'Frank');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, barcode) VALUES
+        (1, 'deluxe-mb', 1, 'Frank Deluxe', '602445489220'),
+        (2, 'japan-mb', 1, 'Frank Japan', '4988005541130');
+      -- Deluxe and Japan use distinct recording MBIDs (MB orphans).
+      INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
+        (1, 'rec-deluxe-kyn', 'Know You Now', 184000, '["GBAAN0300470"]'),
+        (2, 'rec-japan-kyn', 'Know You Now', 183000, NULL),
+        (3, 'rec-mylo', 'Fuck Me Pumps - Mylo Remix', 292000, NULL);
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't-d1', 1, 1, 1, 1, 'Know You Now', 184000),
+        (2, 't-j1', 2, 2, 1, 1, 'Know You Now', 183000),
+        (3, 't-j2', 2, 3, 1, 2, 'Fuck Me Pumps - Mylo Remix', 292000);
+    `);
+
+    new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "frank-digital",
+        title: "Frank",
+        upc: "602445489220",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "p-kyn", title: "Know You Now",
+          mediumPosition: 1, position: 1, durationMs: 184000, isrc: "GBAAN0300470",
+        }),
+      ],
+    });
+
+    const editionIds = (db.prepare(`
+      SELECT edition_id FROM ProviderEditionMatches
+      WHERE match_state = 'accepted' ORDER BY edition_id
+    `).all() as Array<{ edition_id: number }>).map((row) => row.edition_id);
+    assert.deepEqual(
+      editionIds,
+      [1],
+      "UPC deluxe only — Japan orphan MBIDs must not soft-match the digital product",
+    );
+  });
+});
+
+// Two MB editions share the same barcode → both keep UPC matches.
+test("UPC identity keeps every edition that shares the provider barcode", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, barcode) VALUES
+        (1, 'rel-a', 1, 'Digital A', '602445489220'),
+        (2, 'rel-b', 1, 'Digital B', '00602445489220'),
+        (3, 'rel-c', 1, 'CD', '9999999999999');
+      INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
+        (1, 'rec-a', 'Song', 180000, '["ISRC00000001"]'),
+        (2, 'rec-cd-only', 'Song', 181000, NULL);
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't1', 1, 1, 1, 1, 'Song', 180000),
+        (2, 't2', 2, 1, 1, 1, 'Song', 180000),
+        (3, 't3', 3, 2, 1, 1, 'Song', 181000);
+    `);
+
+    new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "rel-p",
+        title: "Album",
+        upc: "602445489220",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "p-song", title: "Song",
+          mediumPosition: 1, position: 1, durationMs: 180000, isrc: "ISRC00000001",
+        }),
+      ],
+    });
+
+    const editionIds = (db.prepare(`
+      SELECT edition_id FROM ProviderEditionMatches
+      WHERE match_state = 'accepted' ORDER BY edition_id
+    `).all() as Array<{ edition_id: number }>).map((row) => row.edition_id);
+    assert.deepEqual(editionIds, [1, 2], "both UPC-tied editions; CD orphan excluded");
+  });
+});
+
+// ISRC locks a provider track: soft title match must not also attach it to a
+// different recording on the same edition.
+test("ISRC identity blocks soft title match to a different recording", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'rel-a', 1, 'Album');
+      INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
+        (1, 'rec-commentary', 'The Spirit (commentary)', 47000, '["ISRCCOMMENT01"]'),
+        (2, 'rec-song', 'The Spirit', 136000, '["ISRCSONG00001"]');
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't1', 1, 1, 1, 1, 'The Spirit (commentary)', 47000),
+        (2, 't2', 1, 2, 1, 2, 'The Spirit', 136000);
+    `);
+
+    new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "rel-spirit",
+        title: "The Spirit",
+        availability: "available",
+      },
+      members: [
+        // Provider song with ISRC of the song recording — must not soft-match
+        // position 1 commentary even if titles are similar and slots tempt.
+        trackMember({
+          providerId: "p-song", title: "The Spirit",
+          mediumPosition: 1, position: 1, durationMs: 136000, isrc: "ISRCSONG00001",
+        }),
+      ],
+    });
+
+    const matches = db.prepare(`
+      SELECT track_id, recording_id, method, match_state
+      FROM ProviderTrackMatches
+      WHERE match_state = 'accepted'
+    `).all() as Array<{ track_id: number; recording_id: number; method: string }>;
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].recording_id, 2, "ISRC claims the song recording");
+    assert.equal(matches[0].track_id, 2);
+    assert.equal(matches[0].method, "external_id");
   });
 });
 
