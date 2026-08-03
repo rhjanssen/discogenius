@@ -5,7 +5,7 @@ import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { resolveTrackListTabs, type TrackListTab } from "./track-list-tabs.js";
 import {
-  buildRecordingCoverageUnitMap,
+  loadAcquisitionUnitMapFromDb,
   editionExplicitLabelScore,
 } from "./recording-coverage-units.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
@@ -523,23 +523,9 @@ export class LibraryReleaseSelectionService {
     // MB editions (e.g. Dreams stereo vs Dreams Atmos). Per-library resolution
     // then unioned on the page produced three tabs for two musical products.
     //
-    // Coverage units collapse clean/explicit recording twins so those editions
-    // look equal/nested the same way curation sees them — otherwise two tabs
-    // appear for the same musical product with different MBIDs.
-    const coverageUnitByRecording = buildRecordingCoverageUnitMap(
-      (this.db.prepare(`
-        SELECT recording_id AS recordingId, title, length_ms AS lengthMs
-        FROM Tracks
-        WHERE recording_id IS NOT NULL
-          AND album_edition_id IN (
-            SELECT id FROM AlbumEditions WHERE release_group_id = ?
-          )
-      `).all(releaseGroup.id) as Array<{
-        recordingId: number;
-        title: string;
-        lengthMs: number | null;
-      }>),
-    );
+    // Same acquisition-unit map as curation (title+duration, ISRC, shared
+    // provider track) so track-list tabs collapse Japan/deluxe studio twins.
+    const coverageUnitByRecording = loadAcquisitionUnitMapFromDb(this.db);
     const recordingIdsByEdition = new Map<number, Set<number>>();
     for (const row of this.db.prepare(`
       SELECT track.album_edition_id, track.recording_id

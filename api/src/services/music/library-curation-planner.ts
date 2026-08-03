@@ -62,13 +62,16 @@ function compareAnchorCandidates(
 }
 
 /**
- * Within one release group: collapse coverage-unit-equal peers (clean/explicit
- * twins after pairing) to the single best edition, then keep any edition that
- * still contributes unique units (true deluxe exclusives, region bonuses).
+ * Within one release group: pick **one primary** edition (best score among
+ * unit-equal peers), then only add further editions that contribute **new
+ * attainable acquisition units** the primary does not already cover.
  *
- * Multi-edition is only sound when clean/explicit recordings share coverage
- * units — otherwise two "explicit" MB releases with distinct recording ids look
- * like unique material and both stay. Pairing lives in recording-coverage-units.
+ * Unattainable exclusives (e.g. Japan remixes with no provider match) never
+ * enter `attainableRecordingIds`, so they cannot justify a secondary. Units
+ * come from recording-coverage-units (title+duration, ISRC, shared provider
+ * track) — not raw MBIDs alone.
+ *
+ * Manual/locked editions stay even when they add no new units.
  */
 export function selectEditionsWithinReleaseGroup(
   group: readonly CurationReleaseCandidate[],
@@ -91,9 +94,9 @@ export function selectEditionsWithinReleaseGroup(
       bestByUnits.set(key, candidate);
     }
   }
+  // Primary first, then only peers that still add attainable units.
   const peers = [...bestByUnits.values()].sort(compareAnchorCandidates);
 
-  // Anchor + any remaining peer that still adds unique units (not a subset).
   const selected: CurationReleaseCandidate[] = [];
   const covered = new Set<number>();
   for (const candidate of peers) {

@@ -47,6 +47,59 @@ test("near-equal durations (clean/explicit twin drift) still pair", () => {
   assert.notEqual(unitByRecording.get(10), unitByRecording.get(20));
 });
 
+test("shared ISRC collapses two recording MBIDs into one unit", () => {
+  const unitByRecording = buildRecordingCoverageUnitMap([
+    { recordingId: 10, title: "Know You Now", lengthMs: 183000, isrcs: ["GBAAN0300470"] },
+    { recordingId: 11, title: "Know You Now (Japan)", lengthMs: 183053, isrcs: ["GBAAN0300470"] },
+  ]);
+  assert.equal(unitByRecording.get(10), unitByRecording.get(11));
+});
+
+test("shared provider track collapses Japan studio MBID onto deluxe MBID", () => {
+  // Frank-shaped: different titles/lengths fail soft pairing, but both accepted
+  // matches point at the same provider track item.
+  const unitByRecording = buildRecordingCoverageUnitMap(
+    [
+      { recordingId: 100, title: "Know You Now", lengthMs: 184253 },
+      { recordingId: 200, title: "Know You Now", lengthMs: 183053 },
+      { recordingId: 300, title: "Mylo Remix", lengthMs: 292080 },
+    ],
+    [
+      { recordingIds: [100, 200] }, // same TIDAL track matched to both
+    ],
+  );
+  assert.equal(unitByRecording.get(100), unitByRecording.get(200));
+  assert.notEqual(unitByRecording.get(100), unitByRecording.get(300));
+});
+
+test("within-RG curation drops Japan when units already covered by deluxe", () => {
+  // Deluxe has studio units 1,2,3 + demos 10,11. Japan has studio 1,2,3 (same
+  // units after provider-track collapse) + unattainable remix unit 99 that is
+  // NOT in attainable sets — so Japan adds nothing and is not selected.
+  const deluxe = {
+    releaseGroupId: 1,
+    editionId: 180,
+    attainableRecordingIds: new Set([1, 2, 3, 10, 11]),
+    official: true,
+    medium: "digital" as const,
+    preferredCountry: true,
+    mediaCount: 1,
+    releaseDate: "2008-01-01",
+  };
+  const japan = {
+    releaseGroupId: 1,
+    editionId: 200,
+    attainableRecordingIds: new Set([1, 2, 3]), // remixes never attainable
+    official: true,
+    medium: "cd" as const,
+    preferredCountry: false,
+    mediaCount: 1,
+    releaseDate: "0001-01-01",
+  };
+  const result = curateLibraryReleases([japan, deluxe], true);
+  assert.deepEqual(result.selectedReleaseIds, [180]);
+});
+
 test("editionExplicitPreferenceRank prefers explicit when configured", () => {
   assert.equal(editionExplicitLabelScore("Album", "explicit"), 1);
   assert.equal(editionExplicitLabelScore("Album", "clean"), -1);

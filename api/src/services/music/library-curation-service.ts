@@ -19,9 +19,9 @@ import {
   type ManualEditionChoiceAlbum,
 } from "./artist-coverage-optimizer.js";
 import {
-  buildRecordingCoverageUnitMap,
   editionExplicitLabelScore,
   editionExplicitPreferenceRank,
+  loadAcquisitionUnitMapFromDb,
   mapRecordingsToCoverageUnits,
 } from "./recording-coverage-units.js";
 import { planExplicitPreferenceRank } from "./acquisition-plan-optimizer.js";
@@ -175,16 +175,12 @@ export class LibraryCurationService {
       JOIN Albums release_group ON release_group.id = release.release_group_id
       ORDER BY release.release_group_id, release.id
     `).all() as ReleaseRow[];
-    // Clean/explicit counterparts are distinct MusicBrainz recordings. Collapse
-    // them to one coverage unit so prefer_explicit can keep one edition instead
-    // of both twins for "full discography" coverage.
-    const coverageUnitByRecording = buildRecordingCoverageUnitMap(
-      (this.db.prepare(`
-        SELECT recording_id AS recordingId, title, length_ms AS lengthMs
-        FROM Tracks
-        WHERE recording_id IS NOT NULL
-      `).all() as Array<{ recordingId: number; title: string; lengthMs: number | null }>),
-    );
+    // Acquisition units: title+duration, shared ISRC, and shared provider-track
+    // matches. Catalog MBIDs stay distinct; monitoring set-cover uses units so
+    // Japan studio orphans that already match the deluxe's TIDAL tracks do not
+    // count as new discography. Plans are still computed for every edition
+    // below so the user can manually switch without empty offers.
+    const coverageUnitByRecording = loadAcquisitionUnitMapFromDb(this.db);
     const preferExplicit = filtering.prefer_explicit !== false;
     const allowedQualities = parseStringArray(library.allowed_source_formats);
     const qualityPlaceholders = allowedQualities.map(() => "?").join(",");
@@ -366,9 +362,10 @@ export class LibraryCurationService {
       releaseIncluded(release)
       && (candidateScopes.get(release.edition_id) || []).length > 0);
 
-    // Plan BEFORE curating. Curation needs to weigh what a provider can actually
-    // deliver, and the Album page needs offers under Editions curation passes
-    // over, so plans cannot wait for the monitoring decision that follows them.
+    // Plan BEFORE curating for EVERY evaluated edition — not only those that
+    // will be monitored. Curation needs delivery evidence, and the Album page
+    // needs offers under unmonitored alternatives so the user can manually
+    // switch editions without empty acquisition plans.
     for (const release of evaluatedEditions) {
       this.acquisitionPlanning.compute({
         libraryId: input.libraryId,
