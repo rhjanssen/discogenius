@@ -36,6 +36,12 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
     repository.replaceAutomaticCuration({
       libraryId: libraries.stereoId,
       result: {
+        representativeEditionIdByReleaseGroup: new Map([[1, 1]]),
+        supplementalEditionIds: [],
+        selectedEditionIds: [1],
+        selectedReleaseGroupIds: [1],
+        attainableUnitIds: new Set(),
+        decisions: [],
         baselineReleaseIds: [1],
         selectedReleaseIds: [1],
         attainableRecordingIds: new Set(),
@@ -54,6 +60,12 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
     repository.replaceAutomaticCuration({
       libraryId: libraries.stereoId,
       result: {
+        representativeEditionIdByReleaseGroup: new Map(),
+        supplementalEditionIds: [],
+        selectedEditionIds: [],
+        selectedReleaseGroupIds: [],
+        attainableUnitIds: new Set(),
+        decisions: [],
         baselineReleaseIds: [],
         selectedReleaseIds: [],
         attainableRecordingIds: new Set(),

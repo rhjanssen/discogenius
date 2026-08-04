@@ -164,6 +164,7 @@ export class LibraryCurationRepository {
      * every other album's manual choice is untouched.
      */
     reasonByReleaseGroupId?: ReadonlyMap<number, string>;
+    reasonByEditionId?: ReadonlyMap<number, string>;
   }): void {
     this.db.transaction(() => {
       const overruledReleaseGroupIds = [...(input.reasonByReleaseGroupId?.keys() ?? [])];
@@ -243,55 +244,56 @@ export class LibraryCurationRepository {
         INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, representative, reason,
           curation_version, selected_at, updated_at
-        ) VALUES (?, ?, 'auto', 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, 'auto', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, edition_id) DO UPDATE SET
+          representative = excluded.representative,
           curation_version = excluded.curation_version,
           updated_at = CURRENT_TIMESTAMP
         RETURNING id
       `);
+      const repMap = new Map<number, number>(input.result.representativeEditionIdByReleaseGroup ?? []);
+      if (repMap.size === 0) {
+        for (const editionId of selectedReleaseIds) {
+          const releaseGroupId = input.releaseGroupIdByReleaseId.get(editionId);
+          if (releaseGroupId != null && !repMap.has(releaseGroupId)) {
+            repMap.set(releaseGroupId, editionId);
+          }
+        }
+      }
+
       const libraryReleaseIdByReleaseId = new Map<number, number>();
       for (const editionId of [...selectedReleaseIds].sort((a, b) => a - b)) {
+        const releaseGroupId = input.releaseGroupIdByReleaseId.get(editionId);
+        const isRep = releaseGroupId != null && repMap.get(releaseGroupId) === editionId ? 1 : 0;
+        const editionReason = input.reasonByEditionId?.get(editionId)
+          ?? (releaseGroupId != null ? input.reasonByReleaseGroupId?.get(releaseGroupId) : null)
+          ?? (isRep ? "curation_primary" : "curation_gap_fill");
         const row = insertRelease.get(
           input.libraryId,
           editionId,
-          input.reasonByReleaseGroupId?.get(
-            input.releaseGroupIdByReleaseId.get(editionId) ?? -1,
-          ) ?? "curation",
+          isRep,
+          editionReason,
           input.curationVersion,
         ) as { id: number };
         libraryReleaseIdByReleaseId.set(editionId, row.id);
       }
 
-      // Exactly one Primary Edition per monitored Album. Curation only fills the
-      // role when it is vacant — deleting a redundant Edition can leave an Album
-      // with none, but a representative the user chose is never demoted here.
-      this.db.prepare(`
+      // Explicit update of representative flag for every selected release group
+      const updateRepresentative = this.db.prepare(`
         UPDATE LibraryEditions
-        SET representative = 1, updated_at = CURRENT_TIMESTAMP
-        WHERE id IN (
-          SELECT best.id FROM (
-            SELECT
-              monitored_edition.id,
-              ROW_NUMBER() OVER (
-                PARTITION BY edition.release_group_id
-                ORDER BY edition.track_count DESC,
-                         COALESCE(edition.date, '9999-99-99'), edition.id
-              ) AS position
-            FROM LibraryEditions monitored_edition
-            JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-            WHERE monitored_edition.library_id = ?
-              AND NOT EXISTS (
-                SELECT 1
-                FROM LibraryEditions peer
-                JOIN AlbumEditions peer_edition ON peer_edition.id = peer.edition_id
-                WHERE peer.library_id = monitored_edition.library_id
-                  AND peer_edition.release_group_id = edition.release_group_id
-                  AND peer.representative = 1
-              )
-          ) best
-          WHERE best.position = 1
-        )
-      `).run(input.libraryId);
+        SET
+          representative = CASE WHEN edition_id = ? THEN 1 ELSE 0 END,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE library_id = ?
+          AND edition_id IN (
+            SELECT id
+            FROM AlbumEditions
+            WHERE release_group_id = ?
+          )
+      `);
+      for (const [releaseGroupId, repEditionId] of repMap) {
+        updateRepresentative.run(repEditionId, input.libraryId, releaseGroupId);
+      }
 
       const insertScope = this.db.prepare(`
         INSERT OR IGNORE INTO LibraryEditionScopes (
@@ -309,6 +311,64 @@ export class LibraryCurationRepository {
           scope.libraryArtistId,
           scope.scopeType,
           scope.reason ?? null,
+        );
+      }
+
+      // Repository Invariant Checks before completing transaction
+      // 1. Every selected release group has exactly one representative
+      const repCounts = this.db.prepare(`
+        SELECT
+          monitored_edition.library_id,
+          edition.release_group_id,
+          COUNT(*) AS monitored_editions,
+          SUM(CASE WHEN monitored_edition.representative = 1 THEN 1 ELSE 0 END) AS representatives
+        FROM LibraryEditions monitored_edition
+        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+        WHERE monitored_edition.library_id = ?
+        GROUP BY monitored_edition.library_id, edition.release_group_id
+        HAVING representatives != 1
+      `).all(input.libraryId) as Array<{ release_group_id: number; representatives: number }>;
+
+      if (repCounts.length > 0) {
+        throw new Error(
+          `Library curation invariant failure: release group(s) ${repCounts.map((r) => r.release_group_id).join(", ")} do not have exactly 1 representative`,
+        );
+      }
+
+      // 3. Every selected edition has a corresponding LibraryAlbums row
+      const missingAlbums = this.db.prepare(`
+        SELECT monitored_edition.edition_id, edition.release_group_id
+        FROM LibraryEditions monitored_edition
+        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+        LEFT JOIN LibraryAlbums monitored_album
+          ON monitored_album.library_id = monitored_edition.library_id
+         AND monitored_album.release_group_id = edition.release_group_id
+        WHERE monitored_edition.library_id = ? AND monitored_album.id IS NULL
+      `).all(input.libraryId) as Array<{ edition_id: number }>;
+
+      if (missingAlbums.length > 0) {
+        throw new Error(
+          `Library curation invariant failure: monitored edition(s) ${missingAlbums.map((m) => m.edition_id).join(", ")} have no corresponding LibraryAlbums row`,
+        );
+      }
+
+      // 4. No automatically managed LibraryAlbums row has zero LibraryEditions rows
+      const emptyAutoAlbums = this.db.prepare(`
+        SELECT monitored_album.release_group_id
+        FROM LibraryAlbums monitored_album
+        LEFT JOIN LibraryEditions monitored_edition
+          ON monitored_edition.library_id = monitored_album.library_id
+         AND monitored_edition.edition_id IN (
+           SELECT id FROM AlbumEditions WHERE release_group_id = monitored_album.release_group_id
+         )
+        WHERE monitored_album.library_id = ? AND monitored_album.selection_mode = 'auto'
+        GROUP BY monitored_album.id
+        HAVING COUNT(monitored_edition.id) = 0
+      `).all(input.libraryId) as Array<{ release_group_id: number }>;
+
+      if (emptyAutoAlbums.length > 0) {
+        throw new Error(
+          `Library curation invariant failure: auto LibraryAlbums row(s) ${emptyAutoAlbums.map((a) => a.release_group_id).join(", ")} have zero monitored editions`,
         );
       }
     })();

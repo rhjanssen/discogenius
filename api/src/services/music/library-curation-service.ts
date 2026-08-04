@@ -2,9 +2,14 @@ import type Database from "better-sqlite3";
 import { emitLibraryUpdated } from "../commands/app-events.js";
 import { getConfigSection } from "../config/config.js";
 import {
+  comparePrimaryEditionCandidates,
   curateLibraryReleases,
   type CanonicalMediumKind,
+  type CurationEditionCandidate,
+  type CurationEditionDecision,
+  type CurationEditionRole,
   type CurationReleaseCandidate,
+  type CurationSelectionReason,
   type LibraryCurationResult,
 } from "./library-curation-planner.js";
 import {
@@ -47,7 +52,7 @@ interface LibraryArtistRow {
 interface ReleaseRow {
   edition_id: number;
   release_group_id: number;
-  primary_artist_id: number | null;
+  primary_artist_id: number;
   primary_type: string | null;
   secondary_types: string | null;
   status: string | null;
@@ -55,100 +60,68 @@ interface ReleaseRow {
   date: string | null;
   media_count: number | null;
   media: string | null;
-  title: string | null;
+  title: string;
   disambiguation: string | null;
 }
 
-function parseStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((item) => String(item).trim().toLowerCase()).filter(Boolean);
-  try {
-    const parsed = JSON.parse(String(value || "[]"));
-    return Array.isArray(parsed)
-      ? parsed.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
-      : [];
-  } catch {
-    return [];
+interface ScopedCurationSelection {
+  libraryArtistId: number;
+  editionId: number;
+  releaseGroupId: number;
+  role: CurationEditionRole;
+  reason: CurationSelectionReason;
+  contributedUnitIds: number[];
+  scopeTypes: LibraryScopeType[];
+}
+
+function releaseTypeRankFor(primaryType: string | null): number {
+  switch (String(primaryType || "").trim().toLowerCase()) {
+    case "album":
+      return 0;
+    case "ep":
+      return 1;
+    case "single":
+      return 2;
+    case "broadcast":
+      return 3;
+    default:
+      return 4;
   }
-}
-
-/**
- * Settings → Filters is the single authority for which release types enter
- * curation. MetadataProfiles.release_type_policy is not a second user-facing
- * config — libraries point at a profile for schema/FK reasons, but type toggles
- * live only under settings.filtering (same pattern as quality: Settings write
- * the profile row, users never edit two disconnected knobs).
- */
-function releaseIncluded(release: ReleaseRow): boolean {
-  return getMusicBrainzReleaseGroupIncludeDecision({
-    primary_type: release.primary_type,
-    secondary_types: release.secondary_types,
-  }, getConfigSection("filtering")).include;
-}
-
-/**
- * Compilations / remix dumps / DJ mixes sort after normal albums so set-cover
- * prefers the studio products that already own the recordings.
- */
-function secondaryTypeRankFor(secondaryTypes: string | null): number {
-  const secondary = parseMusicBrainzSecondaryTypes(secondaryTypes);
-  let rank = 0;
-  if (secondary.includes("compilation")) rank = Math.max(rank, 3);
-  if (secondary.includes("dj-mix") || secondary.includes("mixtape/street")) rank = Math.max(rank, 3);
-  if (secondary.includes("remix")) rank = Math.max(rank, 2);
-  if (secondary.includes("live") || secondary.includes("soundtrack")) rank = Math.max(rank, 1);
-  return rank;
-}
-
-function mediumKind(value: string | null): CanonicalMediumKind {
-  const media = String(value || "").toLowerCase();
-  if (/digital|download|stream/.test(media)) return "digital";
-  if (/\bcd\b|compact disc/.test(media)) return "cd";
-  if (/vinyl|12"|10"|7"/.test(media)) return "vinyl";
-  return "other";
-}
-
-/** True when the edition targets a preferred market (world / US / GB). */
-function isPreferredCountry(country: string | null): boolean {
-  const raw = String(country || "").trim();
-  if (!raw) return true;
-  let tokens: string[] = [];
-  try {
-    const parsed = JSON.parse(raw);
-    tokens = Array.isArray(parsed) ? parsed.map(String) : [raw];
-  } catch {
-    tokens = raw.split(/[;,]/);
-  }
-  const preferred = new Set(["xw", "xe", "us", "gb", "uk"]);
-  return tokens.some((token) => preferred.has(token.trim().toLowerCase()));
 }
 
 export class LibraryCurationService {
   private readonly repository: LibraryCurationRepository;
-  private readonly acquisitionPlanning: AcquisitionPlanningService;
 
-  constructor(private readonly db: Database.Database) {
+  constructor(
+    private readonly db: Database.Database,
+    private readonly acquisitionPlanning: AcquisitionPlanningService = new AcquisitionPlanningService(db),
+  ) {
     this.repository = new LibraryCurationRepository(db);
-    this.acquisitionPlanning = new AcquisitionPlanningService(db);
   }
 
   curateLibrary(input: {
     libraryId: number;
-    curationVersion: number;
+    providerPriority: string[];
     acquisitionPlannerVersion: number;
-    providerPriority: readonly string[];
+    curationVersion: number;
   }): LibraryCurationResult {
     const library = this.db.prepare(`
-      SELECT
-        library.id,
-        quality.allowed_source_formats
+      SELECT library.id, quality.allowed_source_formats
       FROM Libraries library
-      JOIN quality_profiles quality ON quality.id = library.quality_profile_id
-      WHERE library.id = ? AND library.enabled = 1
+      LEFT JOIN quality_profiles quality ON quality.id = library.quality_profile_id
+      WHERE library.id = ?
     `).get(input.libraryId) as LibraryPolicyRow | undefined;
-    if (!library) throw new Error(`Enabled library ${input.libraryId} was not found`);
-    // Settings → Filters owns these toggles (not MetadataProfiles columns).
+    if (!library) throw new Error(`Library ${input.libraryId} does not exist`);
+
     const filtering = getConfigSection("filtering");
-    const requireProviderAvailability = filtering.require_provider_availability === true;
+    const requireProviderAvailability = filtering.require_provider_availability !== false;
+    const releaseIncluded = (release: ReleaseRow): boolean => {
+      const decision = getMusicBrainzReleaseGroupIncludeDecision(
+        { primary_type: release.primary_type, secondary_types: release.secondary_types },
+        filtering,
+      );
+      return decision.include;
+    };
 
     const libraryArtists = this.db.prepare(`
       SELECT
@@ -160,6 +133,7 @@ export class LibraryCurationService {
       WHERE library_artist.library_id = ? AND library_artist.monitored = 1
       ORDER BY library_artist.id
     `).all(input.libraryId) as LibraryArtistRow[];
+
     const releases = this.db.prepare(`
       SELECT
         release.id AS edition_id,
@@ -178,29 +152,19 @@ export class LibraryCurationService {
       JOIN Albums release_group ON release_group.id = release.release_group_id
       ORDER BY release.release_group_id, release.id
     `).all() as ReleaseRow[];
-    // Acquisition units: title+duration, shared ISRC, and shared provider-track
-    // matches. Catalog MBIDs stay distinct; monitoring set-cover uses units so
-    // Japan studio orphans that already match the deluxe's TIDAL tracks do not
-    // count as new discography. Plans are still computed for every edition
-    // below so the user can manually switch without empty offers.
+
     const coverageUnitByRecording = loadAcquisitionUnitMapFromDb(this.db);
     const preferExplicit = filtering.prefer_explicit !== false;
     const allowedQualities = parseStringArray(library.allowed_source_formats);
     const qualityPlaceholders = allowedQualities.map(() => "?").join(",");
-    // Editions automation may not drop: the user picked them, or their Album is
-    // locked. The lock is read from LibraryAlbums — the one place it lives.
-    //
-    // The two reasons are kept apart because they are not equally absolute. A
-    // lock is unconditional. A manual edition choice is a preference, and it is
-    // withdrawn in exactly one case: when honouring it would lose canonical
-    // recordings the rest of the discography cannot supply (see
-    // findUnreachableManualEditionChoices below).
+
     const protectionRows = this.db.prepare(`
       SELECT
         monitored_edition.edition_id,
         edition.release_group_id,
         COALESCE(library_album.locked, 0) AS locked,
-        monitored_edition.selection_mode
+        monitored_edition.selection_mode,
+        monitored_edition.representative
       FROM LibraryEditions monitored_edition
       JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
       LEFT JOIN LibraryAlbums library_album
@@ -214,19 +178,25 @@ export class LibraryCurationService {
       release_group_id: number;
       locked: number;
       selection_mode: string;
+      representative: number;
     }>;
-    const protectedReleaseIds = new Set(protectionRows.map((row) => row.edition_id));
-    // Manual choices that a lock is NOT already protecting — the only ones
-    // coverage may overrule.
+
+    const lockedEditionIds = new Set(
+      protectionRows.filter((row) => row.locked === 1).map((row) => row.edition_id),
+    );
+    const manualEditionIds = new Set(
+      protectionRows.filter((row) => row.locked === 0 && row.selection_mode === "manual").map((row) => row.edition_id),
+    );
+    const existingRepresentativeEditionIdByReleaseGroup = new Map<number, number>();
+    for (const row of protectionRows) {
+      if (row.representative === 1) {
+        existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
+      }
+    }
+
     const overrulableManualEditions = protectionRows.filter(
       (row) => row.locked === 0 && row.selection_mode === "manual",
     );
-    const manualEditionIdsByAlbum = new Map<number, Set<number>>();
-    for (const row of overrulableManualEditions) {
-      const editionIds = manualEditionIdsByAlbum.get(row.release_group_id) || new Set<number>();
-      editionIds.add(row.edition_id);
-      manualEditionIdsByAlbum.set(row.release_group_id, editionIds);
-    }
 
     const candidateScopes = new Map<number, LibraryReleaseScopeInput[]>();
     if (libraryArtists.length > 0) {
@@ -304,12 +274,6 @@ export class LibraryCurationService {
 
     const attainableByRelease = new Map<number, Set<number>>();
     if (allowedQualities.length > 0) {
-      // Per-track quality only. A release-level spatial (Atmos) flag must not
-      // make every member attainable — e.g. a stereo-only remix on a deluxe
-      // that also has Atmos for the main tracks. That wrongly kept the deluxe
-      // monitored in the Spatial library for a remix Atmos cannot deliver.
-      // Release-level quality is used only when the track has no variants of its
-      // own (providers that only declare quality on the album resource).
       const attainableRows = this.db.prepare(`
         SELECT DISTINCT release_match.edition_id, track_match.recording_id
         FROM ProviderEditionMatches release_match
@@ -357,18 +321,10 @@ export class LibraryCurationService {
       }
     }
 
-    // Every canonical Edition this library could conceivably monitor: in an
-    // artist scope and allowed by Settings → Filters. Provider coverage is
-    // deliberately NOT a filter here — an Edition with no offer still has to be
-    // evaluated, planned and offered, it just will not be picked automatically.
     const evaluatedEditions = releases.filter((release) =>
       releaseIncluded(release)
       && (candidateScopes.get(release.edition_id) || []).length > 0);
 
-    // Plan BEFORE curating for EVERY evaluated edition — not only those that
-    // will be monitored. Curation needs delivery evidence, and the Album page
-    // needs offers under unmonitored alternatives so the user can manually
-    // switch editions without empty acquisition plans.
     for (const release of evaluatedEditions) {
       this.acquisitionPlanning.compute({
         libraryId: input.libraryId,
@@ -379,9 +335,6 @@ export class LibraryCurationService {
     }
 
     const viableEditionIds = this.viablePlanEditionIds(input.libraryId);
-    // Best plan already computed above — use its explicitness so two equal-size
-    // "explicit" editions (GMTF #348 vs #350) prefer the one whose provider
-    // product is actually explicit rather than a full clean Atmos stream.
     const bestPlanByEdition = new Map<number, {
       explicit_content: string;
       coverage: number;
@@ -399,28 +352,25 @@ export class LibraryCurationService {
     }>) {
       bestPlanByEdition.set(row.edition_id, row);
     }
-    // The set curation is trying to cover. With provider availability required
-    // it is what a provider can actually deliver; without it the canonical
-    // Recording set is the target, because an Edition with no offer at all is
-    // still a legitimate thing to monitor — it simply has nothing to execute.
+
     const canonicalByRelease = requireProviderAvailability
       ? null
       : this.canonicalRecordingIdsByEdition();
-    const candidates: CurationReleaseCandidate[] = [];
+
+    const allCandidates: CurationEditionCandidate[] = [];
     for (const release of evaluatedEditions) {
       const rawAttainable = (canonicalByRelease ?? attainableByRelease)
         .get(release.edition_id) || new Set<number>();
-      const attainableRecordingIds = mapRecordingsToCoverageUnits(
+      const attainableUnitIds = mapRecordingsToCoverageUnits(
         rawAttainable,
         coverageUnitByRecording,
       );
-      // With provider availability required, only an Edition a provider can
-      // actually deliver is eligible for automatic monitoring. Without it, any
-      // canonical Edition may be monitored and simply has no plan to execute.
       const eligible = requireProviderAvailability
         ? viableEditionIds.has(release.edition_id)
         : true;
-      if (!eligible && !protectedReleaseIds.has(release.edition_id)) continue;
+      const isProtected = lockedEditionIds.has(release.edition_id) || manualEditionIds.has(release.edition_id);
+      if (!eligible && !isProtected) continue;
+
       const labelScore = editionExplicitLabelScore(release.title, release.disambiguation);
       const editionPreferenceRank = editionExplicitPreferenceRank(labelScore, preferExplicit);
       const bestPlan = bestPlanByEdition.get(release.edition_id);
@@ -431,87 +381,279 @@ export class LibraryCurationService {
             preferExplicit,
           )
         : 0;
-      candidates.push({
+
+      const isExistingRep = existingRepresentativeEditionIdByReleaseGroup.get(release.release_group_id) === release.edition_id;
+      let protectedReason: "manual_selection" | "locked_selection" | undefined;
+      if (lockedEditionIds.has(release.edition_id)) {
+        protectedReason = "locked_selection";
+      } else if (manualEditionIds.has(release.edition_id)) {
+        protectedReason = "manual_selection";
+      }
+
+      allCandidates.push({
         releaseGroupId: release.release_group_id,
         editionId: release.edition_id,
-        attainableRecordingIds,
+        attainableUnitIds,
         official: !release.status || release.status.toLowerCase() === "official",
         medium: mediumKind(release.media),
         preferredCountry: isPreferredCountry(release.country),
         mediaCount: Math.max(1, Number(release.media_count || 1)),
         releaseDate: release.date,
+        releaseTypeRank: releaseTypeRankFor(release.primary_type),
+        secondaryTypeRank: secondaryTypeRankFor(release.secondary_types),
         hasUsablePlan,
         planExplicitPreferenceRank: planPreferenceRank,
         editionExplicitPreferenceRank: editionPreferenceRank,
-        secondaryTypeRank: secondaryTypeRankFor(release.secondary_types),
-        protected: protectedReleaseIds.has(release.edition_id),
+        protected: isProtected,
+        existingRepresentative: isExistingRep,
+        protectedReason,
       });
     }
 
-    // A locked Album's edition set is the user's, so automation may not add to it
-    // either: only its already-monitored editions stay in the running.
-    const lockedAlbumIds = new Set(
-      protectionRows.filter((row) => row.locked === 1).map((row) => row.release_group_id),
-    );
-    const monitoredEditionIds = new Set(protectionRows.map((row) => row.edition_id));
-    const eligibleCandidates = candidates.filter((candidate) =>
-      !lockedAlbumIds.has(candidate.releaseGroupId)
-      || monitoredEditionIds.has(candidate.editionId));
+    const allScopedSelections: ScopedCurationSelection[] = [];
+    const proposedRepresentativesByReleaseGroup = new Map<number, Map<number, CurationEditionCandidate>>();
+    const overruledReleaseGroupIds = new Set<number>();
+    const redundancyEnabled = filtering.enable_redundancy_filter !== false;
 
-    // A manual edition choice survives unless it costs the discography canonical
-    // recordings nothing else supplies.
-    const overruledReleaseGroupIds = this.overruledManualEditionAlbums({
-      overrulableManualEditions,
-      candidates: eligibleCandidates,
-      coverageUnitByRecording,
-    });
-    // Where the choice stands, the editions the user declined leave the running
-    // entirely. Otherwise the fewest-releases optimizer would reach for the
-    // deluxe as a cheap cover and monitor it alongside the standard, which is
-    // the outcome the preference exists to avoid — the point is that curation
-    // goes and monitors the singles instead.
-    const curatedCandidates = eligibleCandidates.filter((candidate) => {
-      const manualEditionIds = manualEditionIdsByAlbum.get(candidate.releaseGroupId);
-      if (!manualEditionIds) return true;
-      if (overruledReleaseGroupIds.has(candidate.releaseGroupId)) return true;
-      return manualEditionIds.has(candidate.editionId);
-    });
-    for (const candidate of curatedCandidates) {
-      if (!overruledReleaseGroupIds.has(candidate.releaseGroupId)) continue;
-      candidate.protected = false;
+    for (const libraryArtist of libraryArtists) {
+      const scopedCandidates = allCandidates
+        .filter((candidate) =>
+          (candidateScopes.get(candidate.editionId) || [])
+            .some((scope) => scope.libraryArtistId === libraryArtist.library_artist_id),
+        )
+        .map((candidate) => ({ ...candidate }));
+
+      if (scopedCandidates.length === 0) continue;
+
+      const lockedAlbumIdsInScope = new Set(
+        protectionRows.filter((row) => row.locked === 1).map((row) => row.release_group_id),
+      );
+      const monitoredEditionIdsInScope = new Set(protectionRows.map((row) => row.edition_id));
+      const eligibleCandidatesInScope = scopedCandidates.filter((candidate) =>
+        !lockedAlbumIdsInScope.has(candidate.releaseGroupId)
+        || monitoredEditionIdsInScope.has(candidate.editionId));
+
+      const scopeOverrulableManual = overrulableManualEditions.filter((row) =>
+        eligibleCandidatesInScope.some((c) => c.editionId === row.edition_id));
+
+      const scopeOverruledRgs = this.overruledManualEditionAlbums({
+        overrulableManualEditions: scopeOverrulableManual,
+        candidates: eligibleCandidatesInScope,
+        coverageUnitByRecording,
+      });
+      for (const rgId of scopeOverruledRgs) {
+        overruledReleaseGroupIds.add(rgId);
+      }
+
+      const scopeManualIdsByAlbum = new Map<number, Set<number>>();
+      for (const row of scopeOverrulableManual) {
+        const editionIds = scopeManualIdsByAlbum.get(row.release_group_id) || new Set<number>();
+        editionIds.add(row.edition_id);
+        scopeManualIdsByAlbum.set(row.release_group_id, editionIds);
+      }
+
+      const curatedCandidatesInScope = eligibleCandidatesInScope.filter((candidate) => {
+        const manualIds = scopeManualIdsByAlbum.get(candidate.releaseGroupId);
+        if (!manualIds) return true;
+        if (scopeOverruledRgs.has(candidate.releaseGroupId)) return true;
+        return manualIds.has(candidate.editionId);
+      });
+      for (const candidate of curatedCandidatesInScope) {
+        if (scopeOverruledRgs.has(candidate.releaseGroupId)) {
+          candidate.protected = false;
+          candidate.protectedReason = undefined;
+        }
+      }
+
+      const scopedResult = curateLibraryReleases(curatedCandidatesInScope, redundancyEnabled);
+
+      for (const [rgId, repEditionId] of scopedResult.representativeEditionIdByReleaseGroup) {
+        const repCand = curatedCandidatesInScope.find((c) => c.editionId === repEditionId);
+        if (repCand) {
+          const mapForRg = proposedRepresentativesByReleaseGroup.get(rgId) || new Map<number, CurationEditionCandidate>();
+          mapForRg.set(libraryArtist.library_artist_id, repCand);
+          proposedRepresentativesByReleaseGroup.set(rgId, mapForRg);
+        }
+      }
+
+      for (const decision of scopedResult.decisions) {
+        const artistScopes = (candidateScopes.get(decision.editionId) || [])
+          .filter((scope) => scope.libraryArtistId === libraryArtist.library_artist_id)
+          .map((scope) => scope.scopeType);
+
+        allScopedSelections.push({
+          libraryArtistId: libraryArtist.library_artist_id,
+          editionId: decision.editionId,
+          releaseGroupId: decision.releaseGroupId,
+          role: decision.role,
+          reason: decision.reason,
+          contributedUnitIds: decision.contributedUnitIds,
+          scopeTypes: artistScopes,
+        });
+      }
     }
 
-    // Settings → "Hide redundant singles" is the only redundancy switch.
-    const redundancyEnabled = filtering.enable_redundancy_filter !== false;
-    const result = curateLibraryReleases(
-      curatedCandidates,
-      redundancyEnabled,
+    const selectedEditionIdsSet = new Set(allScopedSelections.map((s) => s.editionId));
+    const selectedReleaseGroupIdsSet = new Set(allScopedSelections.map((s) => s.releaseGroupId));
+
+    const reconciledRepresentativeMap = new Map<number, number>();
+    for (const rgId of selectedReleaseGroupIdsSet) {
+      const proposedMap = proposedRepresentativesByReleaseGroup.get(rgId) || new Map<number, CurationEditionCandidate>();
+      const proposedCandidates = [...proposedMap.values()].filter((c) => selectedEditionIdsSet.has(c.editionId));
+
+      let chosenRep: CurationEditionCandidate | undefined;
+
+      chosenRep = proposedCandidates.find(
+        (c) => c.protected && c.protectedReason === "locked_selection" && c.existingRepresentative,
+      );
+
+      if (!chosenRep) {
+        chosenRep = proposedCandidates.find(
+          (c) => c.protected && c.protectedReason === "manual_selection" && c.existingRepresentative,
+        );
+      }
+
+      if (!chosenRep && proposedCandidates.length > 0) {
+        const firstId = proposedCandidates[0].editionId;
+        const unanimous = proposedCandidates.every((c) => c.editionId === firstId);
+        if (unanimous) {
+          chosenRep = proposedCandidates[0];
+        }
+      }
+
+      if (!chosenRep && proposedCandidates.length > 0) {
+        const sorted = [...proposedCandidates].sort((left, right) =>
+          comparePrimaryEditionCandidates(left, right) || left.editionId - right.editionId);
+        chosenRep = sorted[0];
+      }
+
+      if (!chosenRep) {
+        const candidatesInRg = allCandidates.filter(
+          (c) => c.releaseGroupId === rgId && selectedEditionIdsSet.has(c.editionId),
+        ).sort((left, right) =>
+          comparePrimaryEditionCandidates(left, right) || left.editionId - right.editionId);
+        chosenRep = candidatesInRg[0];
+      }
+
+      if (chosenRep) {
+        reconciledRepresentativeMap.set(rgId, chosenRep.editionId);
+      }
+    }
+
+    const selectedEditionIds = [...selectedEditionIdsSet].sort((a, b) => a - b);
+    const selectedReleaseGroupIds = [...selectedReleaseGroupIdsSet].sort((a, b) => a - b);
+    const supplementalEditionIds = selectedEditionIds.filter(
+      (id) => !new Set(reconciledRepresentativeMap.values()).has(id),
     );
 
+    const mergedDecisions: CurationEditionDecision[] = [];
+    const reasonByEditionId = new Map<number, string>();
+
+    const reasonStrength: Record<CurationSelectionReason, number> = {
+      locked_selection: 4,
+      manual_selection: 3,
+      discography_gap_fill: 2,
+      release_group_primary: 1,
+    };
+
+    for (const editionId of selectedEditionIds) {
+      const selections = allScopedSelections.filter((s) => s.editionId === editionId);
+      const rgId = selections[0]?.releaseGroupId ?? allCandidates.find((c) => c.editionId === editionId)!.releaseGroupId;
+      const isRep = reconciledRepresentativeMap.get(rgId) === editionId;
+      const role: CurationEditionRole = isRep ? "representative" : "supplemental";
+
+      const contributedUnitsSet = new Set<number>();
+      for (const s of selections) {
+        for (const u of s.contributedUnitIds) contributedUnitsSet.add(u);
+      }
+
+      let strongestReason: CurationSelectionReason = isRep ? "release_group_primary" : "discography_gap_fill";
+      for (const s of selections) {
+        if (reasonStrength[s.reason] > reasonStrength[strongestReason]) {
+          strongestReason = s.reason;
+        }
+      }
+
+      if (overruledReleaseGroupIds.has(rgId) && strongestReason === "manual_selection") {
+        strongestReason = isRep ? "release_group_primary" : "discography_gap_fill";
+      }
+
+      mergedDecisions.push({
+        editionId,
+        releaseGroupId: rgId,
+        role,
+        reason: strongestReason,
+        contributedUnitIds: [...contributedUnitsSet].sort((a, b) => a - b),
+      });
+
+      const repoReason = overruledReleaseGroupIds.has(rgId)
+        ? "curation_override_unreachable_recordings"
+        : (strongestReason === "locked_selection"
+            ? "locked_selection"
+            : strongestReason === "manual_selection"
+              ? "manual_selection"
+              : isRep
+                ? "curation_primary"
+                : "curation_gap_fill");
+      reasonByEditionId.set(editionId, repoReason);
+    }
+
+    const attainableUnitIdsSet = new Set<number>();
+    for (const candidate of allCandidates) {
+      if (selectedEditionIdsSet.has(candidate.editionId)) {
+        for (const u of candidate.attainableUnitIds) attainableUnitIdsSet.add(u);
+      }
+    }
+
+    const combinedResult: LibraryCurationResult = {
+      representativeEditionIdByReleaseGroup: reconciledRepresentativeMap,
+      supplementalEditionIds,
+      selectedEditionIds,
+      selectedReleaseGroupIds,
+      attainableUnitIds: attainableUnitIdsSet,
+      decisions: mergedDecisions,
+      selectedReleaseIds: selectedEditionIds,
+      baselineReleaseIds: selectedEditionIds,
+      attainableRecordingIds: attainableUnitIdsSet,
+    };
+
+    const selectedScopes: LibraryReleaseScopeInput[] = [];
+    const scopeKeySet = new Set<string>();
+
+    for (const s of allScopedSelections) {
+      if (!selectedEditionIdsSet.has(s.editionId)) continue;
+      for (const st of s.scopeTypes) {
+        const key = `${s.editionId}:${s.libraryArtistId}:${st}`;
+        if (!scopeKeySet.has(key)) {
+          scopeKeySet.add(key);
+          selectedScopes.push({
+            editionId: s.editionId,
+            libraryArtistId: s.libraryArtistId,
+            scopeType: st,
+            reason: s.reason,
+          });
+        }
+      }
+    }
+
     const releaseGroupIdByReleaseId = new Map(
-      curatedCandidates.map((candidate) => [candidate.editionId, candidate.releaseGroupId]),
+      allCandidates.map((candidate) => [candidate.editionId, candidate.releaseGroupId]),
     );
-    const selectedScopes = result.selectedReleaseIds.flatMap((editionId) =>
-      candidateScopes.get(editionId) || []);
-    // Curation is the only step that writes monitoring. Everything above it —
-    // metadata refresh, provider matching, plan generation — left the Library
-    // tables alone.
+
     this.repository.replaceAutomaticCuration({
       libraryId: input.libraryId,
-      result,
+      result: combinedResult,
       releaseGroupIdByReleaseId,
       scopes: selectedScopes,
       curationVersion: input.curationVersion,
-      // Overruling a deliberate choice is never silent; the row says so.
       reasonByReleaseGroupId: new Map(
         [...overruledReleaseGroupIds].map((releaseGroupId) =>
           [releaseGroupId, "curation_override_unreachable_recordings"] as const),
       ),
+      reasonByEditionId,
     });
 
-    // Newly monitored Editions had no row when they were planned, so nothing
-    // recorded which plan they execute. Re-resolve the selection for those.
-    for (const editionId of result.selectedReleaseIds) {
+    for (const editionId of combinedResult.selectedEditionIds) {
       this.acquisitionPlanning.compute({
         libraryId: input.libraryId,
         editionId,
@@ -519,29 +661,18 @@ export class LibraryCurationService {
         plannerVersion: input.acquisitionPlannerVersion,
       });
     }
+
     emitLibraryUpdated({
       reason: "library-curated",
       libraryIds: [input.libraryId],
     });
-    return result;
+
+    return combinedResult;
   }
 
-  /**
-   * Albums whose manual edition choice automation may overrule.
-   *
-   * The question is *reachability*, not what a previous pass happened to pick:
-   * could the rest of this artist's discography supply the recordings the
-   * declined edition carries? Every eligible edition of every other album counts,
-   * because curation is free to monitor those instead — and where it can, the
-   * user's choice stands and curation goes and does exactly that.
-   *
-   * Comparison is by canonical Recording identity across the discography. Track
-   * counts are never compared: two twelve-track editions carrying different
-   * recordings are not interchangeable, and a numeric test would call them equal.
-   */
   private overruledManualEditionAlbums(input: {
     overrulableManualEditions: ReadonlyArray<{ edition_id: number; release_group_id: number }>;
-    candidates: readonly CurationReleaseCandidate[];
+    candidates: readonly CurationEditionCandidate[];
     coverageUnitByRecording: ReadonlyMap<number, number>;
   }): Set<number> {
     if (input.overrulableManualEditions.length === 0) return new Set();
@@ -559,7 +690,7 @@ export class LibraryCurationService {
       manualEditionIdsByAlbum.set(row.release_group_id, editionIds);
     }
 
-    const candidatesByAlbum = new Map<number, CurationReleaseCandidate[]>();
+    const candidatesByAlbum = new Map<number, CurationEditionCandidate[]>();
     for (const candidate of input.candidates) {
       const list = candidatesByAlbum.get(candidate.releaseGroupId) || [];
       list.push(candidate);
@@ -568,50 +699,45 @@ export class LibraryCurationService {
 
     const overruled = new Set<number>();
     for (const [releaseGroupId, manualEditionIds] of manualEditionIdsByAlbum) {
-      const chosenRecordingIds = new Set<number>();
+      const chosenUnitIds = new Set<number>();
       for (const editionId of manualEditionIds) {
         for (const unitId of unitsForEdition(editionId)) {
-          chosenRecordingIds.add(unitId);
+          chosenUnitIds.add(unitId);
         }
       }
-      // Only editions curation considers eligible count as alternatives. One no
-      // provider can deliver was never a choice that was passed over.
-      const alternativeRecordingIds = new Set<number>();
+      const alternativeUnitIds = new Set<number>();
       for (const candidate of candidatesByAlbum.get(releaseGroupId) || []) {
         if (manualEditionIds.has(candidate.editionId)) continue;
         for (const unitId of unitsForEdition(candidate.editionId)) {
-          alternativeRecordingIds.add(unitId);
+          alternativeUnitIds.add(unitId);
         }
       }
-      // Everything the rest of the discography could supply. An album cannot
-      // supply its own missing recordings, so it is excluded from its own test.
-      const reachableRecordingIds = new Set<number>();
+      const reachableUnitIds = new Set<number>();
       for (const [otherAlbumId, otherCandidates] of candidatesByAlbum) {
         if (otherAlbumId === releaseGroupId) continue;
         for (const candidate of otherCandidates) {
           for (const unitId of unitsForEdition(candidate.editionId)) {
-            reachableRecordingIds.add(unitId);
+            reachableUnitIds.add(unitId);
           }
         }
       }
 
       const [overrule] = findUnreachableManualEditionChoices({
-        albums: [{ releaseGroupId, chosenRecordingIds, alternativeRecordingIds }],
-        reachableRecordingIds,
+        albums: [{ releaseGroupId, chosenUnitIds, alternativeUnitIds }],
+        reachableUnitIds,
       });
       if (!overrule) continue;
       overruled.add(overrule.releaseGroupId);
       console.warn(
         `[LibraryCuration] Overruling the manual edition choice for release group `
-        + `${overrule.releaseGroupId}: ${overrule.unreachableRecordingIds.length} canonical `
+        + `${overrule.releaseGroupId}: ${overrule.unreachableUnitIds.length} canonical `
         + `recording(s) are reachable through no other release in this discography `
-        + `(${overrule.unreachableRecordingIds.slice(0, 10).join(", ")})`,
+        + `(${overrule.unreachableUnitIds.slice(0, 10).join(", ")})`,
       );
     }
     return overruled;
   }
 
-  /** The complete canonical Recording set of every Edition. */
   private canonicalRecordingIdsByEdition(): Map<number, Set<number>> {
     const byEdition = new Map<number, Set<number>>();
     for (const row of this.db.prepare(`
@@ -624,14 +750,6 @@ export class LibraryCurationService {
     return byEdition;
   }
 
-  /**
-   * Editions with at least one plan that delivers something.
-   *
-   * A single matched track is not a useful offer; requiring full coverage would
-   * reject an otherwise perfect 19-of-20 deluxe. The line is drawn at a plan
-   * that covers the whole canonical Edition, or is the best any provider can do
-   * while still covering a majority of it.
-   */
   private viablePlanEditionIds(libraryId: number): Set<number> {
     return new Set(
       (this.db.prepare(`
@@ -649,4 +767,36 @@ export class LibraryCurationService {
 function normalizePlanExplicitContent(content: string): PlanExplicitContent {
   if (content === "explicit" || content === "clean") return content;
   return "unknown";
+}
+
+function mediumKind(raw: string | null): CanonicalMediumKind {
+  const value = String(raw || "").toLowerCase();
+  if (value.includes("digital") || value.includes("download") || value.includes("stream")) return "digital";
+  if (value.includes("cd")) return "cd";
+  if (value.includes("vinyl") || value.includes("12\"") || value.includes("7\"") || value.includes("lp")) return "vinyl";
+  return "other";
+}
+
+function isPreferredCountry(country: string | null): boolean {
+  if (!country) return false;
+  const upper = country.toUpperCase();
+  return upper === "US" || upper === "GB" || upper === "XW";
+}
+
+function secondaryTypeRankFor(raw: string | null): number {
+  const types = parseMusicBrainzSecondaryTypes(raw);
+  if (types.includes("compilation") || types.includes("mixtape/streetware") || types.includes("dj-mix")) return 3;
+  if (types.includes("remix")) return 2;
+  if (types.includes("live") || types.includes("soundtrack")) return 1;
+  return 0;
+}
+
+function parseStringArray(json: string | null | undefined): string[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
+  } catch {
+    return [];
+  }
 }
