@@ -63,7 +63,10 @@ import {
   ProviderQualityRow,
   type ProviderQualityOffer,
 } from "@/components/ui/ProviderQualityPill";
-import { formatAcquisitionPlanCoverageSummary } from "@/utils/acquisitionPlanCoverage";
+import {
+  acquisitionPlanDisplayQuality,
+  formatAcquisitionPlanCoverageSummary,
+} from "@/utils/acquisitionPlanCoverage";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -818,19 +821,16 @@ const AlbumPage = () => {
         const primary = sourceOffers.find(
           (offer) => offer.providerEditionMatchId === plan.primaryProviderEditionMatchId,
         ) ?? sourceOffers[0];
-        const tier = String(plan.qualityTier || "").toLowerCase();
-        const quality = tier === "hires-lossless"
-          ? "HIRES_LOSSLESS"
-          : tier === "spatial"
-            ? (sourceOffers.some((offer) =>
-              offer.variants.some((v) => v.qualityClass === "spatial" && v.spatialFormat === "atmos"))
-              ? "DOLBY_ATMOS"
-              : "SPATIAL")
-            : tier === "lossless"
-              ? "LOSSLESS"
-              : tier === "lossy"
-                ? "HIGH"
-                : (fallback.quality || "LOSSLESS");
+        // The badge names what this plan will acquire, so it reads the plan's
+        // own display quality (resolved from the variant each planned track
+        // selected). Scanning every variant published on the source offers
+        // would badge a stereo plan as Atmos whenever the provider also sells
+        // an Atmos stream of the same album.
+        const quality = acquisitionPlanDisplayQuality({
+          qualityTier: plan.qualityTier,
+          displayQuality: plan.displayQuality,
+          provider: plan.provider,
+        }) || fallback.quality || "LOSSLESS";
         const isComposite = plan.composition === "composite" || albumIds.length > 1;
         offers.push({
           slot,

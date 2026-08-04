@@ -139,6 +139,12 @@ export type LibraryAcquisitionPlanContract = {
   coverage: number;
   targetTrackCount: number;
   qualityTier: string;
+  /**
+   * Badge text for the plan, resolved from the variant each planned track
+   * actually selected — the only thing that distinguishes Dolby Atmos from
+   * Sony 360RA, both of which are the `spatial` tier.
+   */
+  displayQuality: string | null;
   explicitContent: "explicit" | "clean" | "unknown";
 };
 
@@ -575,6 +581,7 @@ export function parseLibraryReleaseGroupAvailabilityContract(
                 coverage: expectNumber(plan.coverage, `${planLabel}.coverage`),
                 targetTrackCount: expectNumber(plan.targetTrackCount, `${planLabel}.targetTrackCount`),
                 qualityTier: expectString(plan.qualityTier, `${planLabel}.qualityTier`),
+                displayQuality: expectNullableString(plan.displayQuality, `${planLabel}.displayQuality`) ?? null,
                 explicitContent: expectString(plan.explicitContent, `${planLabel}.explicitContent`) as "explicit" | "clean" | "unknown",
               };
             };
