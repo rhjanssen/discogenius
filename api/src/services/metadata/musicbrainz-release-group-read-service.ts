@@ -15,6 +15,7 @@ import { resolveHydratedReleaseGroupArtwork } from "./release-group-artwork-serv
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
+import { AlbumTrackListNavigationService } from "../music/album-track-list-navigation-service.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -170,6 +171,7 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
           ON quality_profile.id = library.quality_profile_id
         WHERE release_group.mbid = ?
         ORDER BY
+          COALESCE(library_release.representative, 0) DESC,
           CASE WHEN EXISTS (
             SELECT 1
             FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
@@ -1129,6 +1131,9 @@ export class MusicBrainzReleaseGroupReadService {
             album.review_last_updated = providerReview.updatedAt;
         }
 
+        const navService = new AlbumTrackListNavigationService(db);
+        const navInfo = navService.getNavigationInfo(releaseGroupMbid);
+
         return {
             album,
             tracks: release
@@ -1137,6 +1142,8 @@ export class MusicBrainzReleaseGroupReadService {
             otherVersions: listMusicBrainzReleaseVersions(releaseGroup, album.cover_id || coverUrl),
             artistPicture: album.album_artists?.[0]?.picture || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
             artistCoverImageUrl: album.album_artists?.[0]?.cover_image_url || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_cover_image_url),
+            trackListTabs: navInfo.tabs,
+            initialTrackListEditionId: release ? Number(release.id) : (navInfo.initialTrackListEditionId ?? undefined),
         };
     }
 

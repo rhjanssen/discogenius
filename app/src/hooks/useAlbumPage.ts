@@ -12,6 +12,7 @@ import type {
     AlbumVersionContract as AlbumVersion,
     LibraryReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
 } from '@contracts/media';
+import type { TrackListTabContract } from '@contracts/pages';
 
 export type {
     AlbumAssociatedVideoContract as AlbumAssociatedVideo,
@@ -27,6 +28,8 @@ export interface AlbumPageData {
     associatedVideos: AlbumAssociatedVideo[];
     releaseAvailability: ReleaseGroupAvailability | null;
     artistImage: string | null;
+    trackListTabs?: TrackListTabContract[];
+    initialTrackListEditionId?: number;
 }
 
 export const albumPageQueryKey = (albumId: string | undefined) => ['albumPage', albumId] as const;
@@ -36,20 +39,11 @@ export const albumReleaseAvailabilityQueryKey = (albumId: string | undefined) =>
 export function useAlbumPage(albumId: string | undefined) {
     useDebouncedQueryInvalidation({
         queryKeys: [albumPageQueryKey(albumId), albumReleaseAvailabilityQueryKey(albumId)],
-        // Queue/activity changes are owned by the queue cache and its live SSE
-        // projection. Refetching the complete album page for every unrelated
-        // queued/started/completed job caused a request storm during initial
-        // library establishment. The page only needs durable library or
-        // monitor-state changes; local queue controls already update their own
-        // state optimistically.
         windowEvents: [LIBRARY_UPDATED_EVENT, MONITOR_STATE_CHANGED_EVENT],
         enabled: Boolean(albumId),
         debounceMs: 400,
     });
 
-    // Header + tracks paint as soon as /page returns. Release availability
-    // (switcher) is a separate lean query — same deferred-section pattern as
-    // Jellyfin's post-paint rails and Lidarr's staged album→tracks fetch.
     const pageQuery = useQuery({
         queryKey: albumPageQueryKey(albumId),
         queryFn: async ({ signal }): Promise<Omit<AlbumPageData, 'releaseAvailability'>> => {
@@ -70,6 +64,8 @@ export function useAlbumPage(albumId: string | undefined) {
                 otherVersions: response.otherVersions,
                 associatedVideos: response.associatedVideos ?? [],
                 artistImage,
+                trackListTabs: response.trackListTabs,
+                initialTrackListEditionId: response.initialTrackListEditionId,
             };
         },
         enabled: !!albumId,
@@ -89,7 +85,7 @@ export function useAlbumPage(albumId: string | undefined) {
                 timeoutMs: 15_000,
             });
         },
-        enabled: !!albumId && pageQuery.isSuccess,
+        enabled: !!albumId,
         refetchOnWindowFocus: false,
         staleTime: 30_000,
         retry: 1,
@@ -105,6 +101,8 @@ export function useAlbumPage(albumId: string | undefined) {
     return {
         ...pageQuery,
         data,
+        isPageLoading: pageQuery.isLoading,
+        isAvailabilityLoading: availabilityQuery.isLoading,
         isFetching: pageQuery.isFetching || availabilityQuery.isFetching,
         refetch: async () => {
             const [page] = await Promise.all([

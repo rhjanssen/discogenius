@@ -712,10 +712,11 @@ const AlbumPage = () => {
     `album:${albumId || "unknown"}:associated-videos`,
   );
 
-  const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
+  const { data: pageData, isLoading: loading, isAvailabilityLoading, error, refetch } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
   const tracks = pageData?.tracks ?? EMPTY_ALBUM_TRACKS;
   const associatedVideos = pageData?.associatedVideos ?? EMPTY_ASSOCIATED_VIDEOS;
+  const initialTrackListEditionId = pageData?.initialTrackListEditionId ?? null;
   const { data: activity } = useQuery({
     queryKey: ['artist-activity', album?.artist_id],
     queryFn: ({ signal }) => album?.artist_id
@@ -785,14 +786,14 @@ const AlbumPage = () => {
     ? selectedTabEditionId
     : defaultTabEditionId;
 
-  // Only fetched when the strip is actually drawn; with no tabs the page keeps
-  // the single list it already has.
+  // Only fetched when switching to a non-initial edition tab; the initial tab
+  // uses the tracks array directly from the /page payload.
   const editionTracksQuery = useQuery({
     queryKey: ['albumPage', albumId, 'editionTracks', activeTabEditionId],
     queryFn: ({ signal }) => albumId && activeTabEditionId != null
       ? api.getAlbumEditionTracks(albumId, activeTabEditionId, { signal, timeoutMs: 15_000 })
       : Promise.resolve(EMPTY_ALBUM_TRACKS),
-    enabled: Boolean(albumId) && activeTabEditionId != null,
+    enabled: Boolean(albumId) && activeTabEditionId != null && activeTabEditionId !== initialTrackListEditionId,
     refetchOnWindowFocus: false,
     staleTime: 30_000,
     retry: 1,
@@ -800,17 +801,19 @@ const AlbumPage = () => {
 
   const activeTabLabel = trackListTabs
     .find((tab) => tab.editionId === activeTabEditionId)?.label ?? "selected edition";
-  const isEditionTrackListLoading = activeTabEditionId != null && editionTracksQuery.isPending;
-  const editionTrackListError = activeTabEditionId != null && editionTracksQuery.error
-    ? editionTracksQuery.error instanceof Error
-      ? editionTracksQuery.error
-      : new Error("The selected edition's tracks could not be loaded.")
-    : null;
+  const isEditionTrackListLoading = activeTabEditionId != null
+    && activeTabEditionId !== initialTrackListEditionId
+    && editionTracksQuery.isPending;
+  const editionTrackListError = activeTabEditionId != null
+    && activeTabEditionId !== initialTrackListEditionId
+    && editionTracksQuery.error
+      ? editionTracksQuery.error instanceof Error
+        ? editionTracksQuery.error
+        : new Error("The selected edition's tracks could not be loaded.")
+      : null;
 
-  // A selected Edition owns this section completely. Never show the page's
-  // representative track list under another Edition's selected tab while its
-  // request is loading or has failed.
-  const visibleTracks = activeTabEditionId != null
+  // A selected Edition owns this section completely.
+  const visibleTracks = activeTabEditionId != null && activeTabEditionId !== initialTrackListEditionId
     ? (editionTracksQuery.data ?? EMPTY_ALBUM_TRACKS)
     : tracks;
 
@@ -2054,7 +2057,16 @@ const AlbumPage = () => {
         })()}
 
         {/* Release Group Releases Section */}
-        {releaseAvailability && releaseAvailability.releases.length > 0 ? (
+        {isAvailabilityLoading ? (
+          <div className={styles.sectionSpacing}>
+            <div className={styles.sectionHeader}>
+              <Title2>Editions</Title2>
+            </div>
+            <div style={{ padding: "1rem 0", display: "flex", alignItems: "center", gap: "0.5rem", opacity: 0.7 }}>
+              <Spinner size="small" label="Loading available editions..." />
+            </div>
+          </div>
+        ) : releaseAvailability && releaseAvailability.releases.length > 0 ? (
           <div className={styles.sectionSpacing}>
             <div className={styles.sectionHeader}>
               <Title2>Editions</Title2>

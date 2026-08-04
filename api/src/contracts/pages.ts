@@ -12,6 +12,13 @@ import {
   parseAlbumVersionsContract,
 } from "./media.js";
 
+export interface TrackListTabContract {
+  id: number;
+  title: string;
+  isRepresentative: boolean;
+  isMonitored: boolean;
+}
+
 export interface AlbumPageContract {
   album: AlbumContract;
   tracks: AlbumTrackContract[];
@@ -20,6 +27,18 @@ export interface AlbumPageContract {
   associatedVideos?: AlbumAssociatedVideoContract[];
   artistPicture: string | null;
   artistCoverImageUrl: string | null;
+  trackListTabs?: TrackListTabContract[];
+  initialTrackListEditionId?: number;
+}
+
+export function parseTrackListTabContract(value: unknown): TrackListTabContract {
+  const record = expectRecord(value, "Track list tab");
+  return {
+    id: Number(record.id),
+    title: String(record.title || ""),
+    isRepresentative: Boolean(record.isRepresentative),
+    isMonitored: Boolean(record.isMonitored),
+  };
 }
 
 export function parseAlbumPageContract(value: unknown): AlbumPageContract {
@@ -34,5 +53,9 @@ export function parseAlbumPageContract(value: unknown): AlbumPageContract {
       : parseAlbumAssociatedVideosContract(record.associatedVideos),
     artistPicture: expectNullableString(record.artistPicture, "albumPage.artistPicture") ?? null,
     artistCoverImageUrl: expectNullableString(record.artistCoverImageUrl, "albumPage.artistCoverImageUrl") ?? null,
+    trackListTabs: record.trackListTabs === undefined
+      ? undefined
+      : (Array.isArray(record.trackListTabs) ? record.trackListTabs.map(parseTrackListTabContract) : []),
+    initialTrackListEditionId: record.initialTrackListEditionId != null ? Number(record.initialTrackListEditionId) : undefined,
   };
 }
