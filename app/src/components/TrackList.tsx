@@ -35,6 +35,8 @@ import { mediaCoverSrc } from "@/utils/artwork";
 import { formatTrackPositionFrom, isMultiVolumeTrackList } from "@/utils/trackPosition";
 import type { TrackListItem } from "@/types/track-list";
 
+import { acquisitionPlanDisplayQuality } from "@/utils/acquisitionPlanDisplayQuality";
+
 const CheckmarkCircle16 = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16Regular);
 const Stop24 = bundleIcon(Stop24Filled, Stop24Regular);
 const Video24 = bundleIcon(Video24Filled, Video24Regular);
@@ -370,9 +372,16 @@ const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOf
   }) => {
     if (bySlot.has(input.slot)) return;
     const albumId = String(input.providerAlbumId || "").trim();
+    const displayQuality = input.quality
+      ? acquisitionPlanDisplayQuality({
+          displayQuality: input.quality,
+          qualityTier: input.slot === "spatial" ? "spatial" : undefined,
+          provider: input.provider,
+        })
+      : null;
     bySlot.set(input.slot, {
       slot: input.slot,
-      quality: input.quality ?? null,
+      quality: displayQuality,
       provider: input.provider,
       providerAlbumId: albumId || null,
       providerAlbumIds: albumId ? [albumId] : [],

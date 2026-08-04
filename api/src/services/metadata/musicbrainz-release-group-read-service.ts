@@ -283,10 +283,7 @@ function listMusicBrainzReleaseVersions(
             AND allowed.value = 'spatial'
         ) THEN 'spatial' ELSE 'stereo' END AS library_class,
         (
-          SELECT COALESCE(
-            NULLIF(variant.provider_quality_label, ''),
-            variant.quality_class
-          )
+          SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
           FROM AcquisitionPlanSources source
           JOIN SelectedAcquisitionPlans plan
             ON plan.id = source.plan_id

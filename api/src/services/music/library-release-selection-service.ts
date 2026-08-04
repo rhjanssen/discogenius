@@ -11,6 +11,7 @@ import {
   editionExplicitLabelScore,
 } from "./recording-coverage-units.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
+import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
 
 export interface LibraryAcquisitionPlanView {
   id: number;
@@ -429,15 +430,17 @@ export class LibraryReleaseSelectionService {
           plan.quality_tier,
           plan.explicit_content,
           (
-            SELECT COALESCE(
-              NULLIF(audio_variant.provider_quality_label, ''),
-              audio_variant.quality_class
-            )
+            SELECT ${planTrackDisplayQualitySql("plan_track", "audio_variant")}
             FROM AcquisitionPlanTracks plan_track
             JOIN ProviderItemAudioVariants audio_variant ON audio_variant.id = plan_track.provider_audio_variant_id
             WHERE plan_track.plan_id = plan.id
             ORDER BY
-              CASE WHEN LOWER(audio_variant.quality_class) IN ('dolby-atmos', 'atmos', 'spatial', 'dolby_atmos') THEN 0 ELSE 1 END,
+              CASE WHEN LOWER(audio_variant.quality_class) = 'spatial' THEN 0
+                   WHEN LOWER(audio_variant.quality_class) IN ('hires_lossless', 'hires') THEN 1
+                   WHEN LOWER(audio_variant.quality_class) = 'lossless' THEN 2
+                   WHEN LOWER(audio_variant.quality_class) = 'lossy' THEN 3
+                   ELSE 4 END,
+              plan_track.id ASC,
               audio_variant.id ASC
             LIMIT 1
           ) AS display_quality,

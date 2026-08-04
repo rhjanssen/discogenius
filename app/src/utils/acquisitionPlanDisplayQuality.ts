@@ -26,6 +26,7 @@ export function acquisitionPlanDisplayQuality(input: {
 
   const provider = normalizeProvider(input.provider);
   const normalizedDisplay = normalizeDisplayQuality(input.displayQuality);
+  const normalizedTier = String(input.qualityTier || "").trim().toLowerCase().replace(/_/g, "-");
 
   if (normalizedDisplay === "DOLBY_ATMOS") {
     return "DOLBY_ATMOS";
@@ -35,13 +36,11 @@ export function acquisitionPlanDisplayQuality(input: {
     return "SONY_360RA";
   }
 
-  if (normalizedDisplay === "SPATIAL") {
-    return "SPATIAL";
-  }
+  const spatial =
+    normalizedDisplay === "SPATIAL" ||
+    normalizedTier === "spatial";
 
-  const tier = String(input.qualityTier || "").trim().toLowerCase().replace(/_/g, "-");
-
-  if (tier === "spatial") {
+  if (spatial) {
     if (
       provider === "tidal" ||
       provider === "apple" ||
@@ -53,15 +52,15 @@ export function acquisitionPlanDisplayQuality(input: {
     return "SPATIAL";
   }
 
-  if (tier === "hires-lossless") {
+  if (normalizedTier === "hires-lossless") {
     return "HIRES_LOSSLESS";
   }
 
-  if (tier === "lossless") {
+  if (normalizedTier === "lossless") {
     return "LOSSLESS";
   }
 
-  if (tier === "lossy") {
+  if (normalizedTier === "lossy") {
     return "HIGH";
   }
 

@@ -488,3 +488,94 @@ test("a locked album takes an exclusive selection from its owner and stays locke
     resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
+
+test("getAvailability returns authoritative displayQuality for Atmos selected variant", () => {
+  const artistMbid = "eeeeeeee-1111-4111-8111-111111111111";
+  const albumMbid = "eeeeeeee-2222-4222-8222-222222222222";
+  const editionMbid = "eeeeeeee-3333-4333-8333-333333333333";
+  const recordingMbid = "eeeeeeee-4444-4444-8444-444444444444";
+  resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  try {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, '${artistMbid}', 'Spatial Artist');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title) VALUES (1, '${albumMbid}', 1, '${artistMbid}', 'Spatial Album');
+      INSERT INTO AlbumEditions (
+        id, mbid, release_group_id, release_group_mbid, artist_metadata_id, artist_mbid, title, status, country, date, media_count, track_count
+      ) VALUES (
+        1, '${editionMbid}', 1, '${albumMbid}', 1, '${artistMbid}', 'Spatial Album', 'Official', 'US', '2024-01-01', 1, 1
+      );
+      INSERT INTO Recordings (id, mbid, artist_metadata_id, artist_mbid, title, length_ms, isrcs)
+      VALUES (1, '${recordingMbid}', 1, '${artistMbid}', 'Track 1', 180000, '["US1111111111"]');
+      INSERT INTO Tracks (
+        id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid, medium_position, position, title, length_ms
+      ) VALUES (1, 'tr-1', 1, '${editionMbid}', 1, '${recordingMbid}', 1, 1, 'Track 1', 180000);
+      INSERT INTO MetadataProfiles (
+        id, name, release_type_policy, explicit_policy, require_provider_availability, redundancy_enabled
+      ) VALUES (1, 'Default', '{}', 'allow', 1, 0);
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        continue_upgrades, fallback_policy, output_format, transcode_policy
+      ) VALUES (
+        1, 'Spatial Profile', '["spatial","lossless"]',
+        '["spatial","lossless"]', 'lossless', 0, 'best_allowed', '{"codec":"flac"}', 'preserve'
+      );
+      INSERT INTO Libraries (
+        id, name, root_path, metadata_profile_id, quality_profile_id, enabled
+      ) VALUES (1, 'Spatial Library', '/music/spatial', 1, 1, 1);
+      INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, reason, curation_version)
+      VALUES (1, 1, 'auto', 0, 'curated', 1);
+      INSERT INTO LibraryEditions (id, library_id, edition_id, selection_mode, representative, reason, curation_version)
+      VALUES (1, 1, 1, 'auto', 1, 'curated', 1);
+    `);
+
+    new ProviderReleaseIngestionService(db).ingest({
+      release: {
+        provider: "apple",
+        entityType: "release",
+        providerId: "app-alb-1",
+        title: "Spatial Album",
+        availability: "available",
+      },
+      canonicalReleaseId: 1,
+      matcherVersion: 1,
+      releaseAudioVariants: [{
+        variantKey: "atmos-key",
+        qualityClass: "spatial",
+        spatialFormat: "atmos",
+        providerQualityLabel: "Dolby Atmos",
+        availability: "available",
+      }],
+      members: [{
+        item: {
+          provider: "apple",
+          entityType: "track",
+          providerId: "app-tr-1",
+          title: "Track 1",
+          isrc: "US1111111111",
+          durationMs: 180000,
+          availability: "available",
+        },
+        mediumPosition: 1,
+        position: 1,
+      }],
+    });
+
+    db.prepare("UPDATE ProviderEditionMatches SET match_state = 'accepted' WHERE edition_id = 1").run();
+    db.prepare("UPDATE ProviderTrackMatches SET match_state = 'accepted', track_id = 1 WHERE recording_id = 1").run();
+
+    const planId = new AcquisitionPlanningService(db).compute({
+      libraryId: 1,
+      editionId: 1,
+      providerPriority: ["apple"],
+      plannerVersion: 1,
+    });
+    assert.ok(planId != null, "planning must create a plan");
+
+    const service = new LibraryReleaseSelectionService(db);
+    const availability = service.getAvailability(albumMbid);
+    const plans = availability.libraries[0]?.selections[0]?.plans || [];
+    assert.equal(plans[0]?.displayQuality, "DOLBY_ATMOS");
+  } finally {
+    resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});

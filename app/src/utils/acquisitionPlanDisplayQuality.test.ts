@@ -33,9 +33,24 @@ describe("acquisitionPlanDisplayQuality", () => {
     ).toBe("DOLBY_ATMOS");
   });
 
-  it("maps synthetic future provider plus spatial tier to SPATIAL", () => {
+  it("maps Apple plus displayQuality SPATIAL or SPATIAL_AUDIO to DOLBY_ATMOS", () => {
     expect(
-      acquisitionPlanDisplayQuality({ qualityTier: "spatial", provider: "future-dsp" }),
+      acquisitionPlanDisplayQuality({ displayQuality: "SPATIAL", provider: "apple" }),
+    ).toBe("DOLBY_ATMOS");
+    expect(
+      acquisitionPlanDisplayQuality({ displayQuality: "SPATIAL_AUDIO", provider: "apple-music" }),
+    ).toBe("DOLBY_ATMOS");
+  });
+
+  it("maps TIDAL plus generic Spatial displayQuality to DOLBY_ATMOS", () => {
+    expect(
+      acquisitionPlanDisplayQuality({ displayQuality: "SPATIAL", provider: "tidal" }),
+    ).toBe("DOLBY_ATMOS");
+  });
+
+  it("maps future provider plus generic Spatial displayQuality to SPATIAL", () => {
+    expect(
+      acquisitionPlanDisplayQuality({ displayQuality: "SPATIAL", provider: "future-dsp" }),
     ).toBe("SPATIAL");
   });
 
