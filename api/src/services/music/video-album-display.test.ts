@@ -21,10 +21,11 @@ import {
   resetActiveSchemaRows,
   selectVideoInVideoLibraries,
 } from "../../test-support/active-schema-fixture.js";
-import { getAlbumAssociatedVideos } from "./video-query-service.js";
-import { selectLibraryVideo, resolveVideoLibraryIds } from "./library-video-monitoring.js";
-
 const { tempDir } = prepareActiveSchemaEnv("video-album-display");
+
+const { getAlbumAssociatedVideos } = await import("./video-query-service.js");
+const { selectLibraryVideo, resolveVideoLibraryIds } = await import("./library-video-monitoring.js");
+
 const { db, dbModule } = await openActiveSchemaDb();
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));

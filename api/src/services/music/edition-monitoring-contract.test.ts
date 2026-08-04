@@ -23,13 +23,15 @@ import {
   prepareActiveSchemaEnv,
   resetActiveSchemaRows,
 } from "../../test-support/active-schema-fixture.js";
-import { ProviderReleaseIngestionService } from "../providers/provider-release-ingestion-service.js";
-import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
-import { AlbumCommandService } from "./album-command-service.js";
-import { LibraryCurationService } from "./library-curation-service.js";
-import { LibraryReleaseSelectionService } from "./library-release-selection-service.js";
 
 const { tempDir } = prepareActiveSchemaEnv("edition-monitoring-contract");
+
+const { ProviderReleaseIngestionService } = await import("../providers/provider-release-ingestion-service.js");
+const { AcquisitionPlanningService } = await import("./acquisition-planning-service.js");
+const { AlbumCommandService } = await import("./album-command-service.js");
+const { LibraryCurationService } = await import("./library-curation-service.js");
+const { LibraryReleaseSelectionService } = await import("./library-release-selection-service.js");
+
 const { db, dbModule } = await openActiveSchemaDb();
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));

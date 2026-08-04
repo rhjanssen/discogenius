@@ -432,8 +432,7 @@ export class LibraryReleaseSelectionService {
               audio_variant.quality_class
             )
             FROM AcquisitionPlanTracks plan_track
-            JOIN ProviderEditionMembers member ON member.id = plan_track.provider_edition_member_id
-            JOIN ProviderItemAudioVariants audio_variant ON audio_variant.provider_item_id = member.member_item_id
+            JOIN ProviderItemAudioVariants audio_variant ON audio_variant.id = plan_track.provider_audio_variant_id
             WHERE plan_track.plan_id = plan.id
             ORDER BY
               CASE WHEN LOWER(audio_variant.quality_class) IN ('dolby-atmos', 'atmos', 'spatial', 'dolby_atmos') THEN 0 ELSE 1 END,

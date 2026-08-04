@@ -16,12 +16,12 @@ import {
   prepareActiveSchemaEnv,
   resetActiveSchemaRows,
 } from "../../test-support/active-schema-fixture.js";
-import { curateArtistVideos } from "./video-curation-service.js";
-import { resolveVideoLibraryIds } from "./library-video-monitoring.js";
-
 const { tempDir } = prepareActiveSchemaEnv("video-curation-service");
-const { db, dbModule } = await openActiveSchemaDb();
+
+const { curateArtistVideos } = await import("./video-curation-service.js");
+const { resolveVideoLibraryIds } = await import("./library-video-monitoring.js");
 const configModule = await import("../config/config.js");
+const { db, dbModule } = await openActiveSchemaDb();
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));
 
@@ -35,6 +35,7 @@ const STUDIO_TRACK = 1000;
 
 function setLayout(layout: "separated" | "inline" | "inline_only"): void {
   configModule.updateConfig("path", { video_folder_layout: layout });
+  configModule.updateConfig("filtering", { include_video_lyric: true });
 }
 
 /**

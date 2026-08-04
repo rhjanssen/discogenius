@@ -23,9 +23,10 @@ import {
   resetActiveSchemaRows,
   selectVideoInVideoLibraries,
 } from "../../test-support/active-schema-fixture.js";
-import { getAlbumAssociatedVideos } from "./video-query-service.js";
-
 const { tempDir } = prepareActiveSchemaEnv("video-recording-relations");
+
+const { getAlbumAssociatedVideos } = await import("./video-query-service.js");
+
 const { db, dbModule } = await openActiveSchemaDb();
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));
@@ -183,7 +184,9 @@ test("a video that is itself a canonical track of an edition is associated direc
   assert.deepEqual(getAlbumAssociatedVideos(LIVE_ALBUM_MBID).map((video) => video.id), ["200"]);
 });
 
-test("several videos may link to one audio recording", () => {
+test("several videos may link to one audio recording", async () => {
+  const configModule = await import("../config/config.js");
+  configModule.updateConfig("filtering", { include_video_lyric: true });
   seed();
   db.exec(`
     INSERT INTO Recordings (id, mbid, title, artist_mbid, is_video, video_variant, length_ms)

@@ -25,10 +25,11 @@ import {
   prepareActiveSchemaEnv,
   resetActiveSchemaRows,
 } from "../../test-support/active-schema-fixture.js";
-import { findUnreachableManualEditionChoices } from "./artist-coverage-optimizer.js";
-import { LibraryCurationService } from "./library-curation-service.js";
-
 const { tempDir } = prepareActiveSchemaEnv("manual-edition-coverage");
+
+const { findUnreachableManualEditionChoices } = await import("./artist-coverage-optimizer.js");
+const { LibraryCurationService } = await import("./library-curation-service.js");
+
 const { db, dbModule } = await openActiveSchemaDb();
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));
@@ -223,7 +224,7 @@ test("recording identity decides, never track counts", () => {
     reachableRecordingIds: new Set(),
   });
   assert.deepEqual(overrules, [
-    { releaseGroupId: 1, unreachableRecordingIds: [3, 4] },
+    { releaseGroupId: 1, unreachableRecordingIds: [3, 4], unreachableUnitIds: [3, 4] },
   ]);
 });
 

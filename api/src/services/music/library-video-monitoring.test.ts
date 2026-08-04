@@ -18,20 +18,22 @@ import {
   prepareActiveSchemaEnv,
   resetActiveSchemaRows,
 } from "../../test-support/active-schema-fixture.js";
-import {
+
+const { tempDir } = prepareActiveSchemaEnv("library-video-monitoring");
+
+const {
   canonicalVideoType,
   inlineVideoSlot,
   videoTypeSuffix,
-} from "./canonical-video-type.js";
-import {
+} = await import("./canonical-video-type.js");
+const {
   isVideoMonitored,
   resolveVideoLibraryIds,
   selectLibraryVideo,
   unselectLibraryVideo,
   videoPlacement,
-} from "./library-video-monitoring.js";
+} = await import("./library-video-monitoring.js");
 
-const { tempDir } = prepareActiveSchemaEnv("library-video-monitoring");
 const { db, dbModule } = await openActiveSchemaDb();
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));
