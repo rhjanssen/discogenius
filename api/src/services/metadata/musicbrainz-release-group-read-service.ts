@@ -16,6 +16,7 @@ import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-select
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
 import { AlbumTrackListNavigationService } from "../music/album-track-list-navigation-service.js";
+import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -45,32 +46,21 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
             WHEN release_match.match_state = 'accepted' THEN 'verified'
             ELSE release_match.match_state
           END AS match_status,
-          COALESCE(
-            (
-              SELECT NULLIF(variant.provider_quality_label, '')
-              FROM AcquisitionPlanTracks plan_track
-              JOIN ProviderItemAudioVariants variant
-                ON variant.id = plan_track.provider_audio_variant_id
-              WHERE plan_track.plan_id = plan.id
-              ORDER BY
-                CASE variant.quality_class
-                  WHEN 'spatial' THEN 0
-                  WHEN 'hires-lossless' THEN 1
-                  WHEN 'lossless' THEN 2
-                  ELSE 3
-                END,
-                plan_track.id
-              LIMIT 1
-            ),
-            (
-              SELECT variant.quality_class
-              FROM AcquisitionPlanTracks plan_track
-              JOIN ProviderItemAudioVariants variant
-                ON variant.id = plan_track.provider_audio_variant_id
-              WHERE plan_track.plan_id = plan.id
-              ORDER BY plan_track.id
-              LIMIT 1
-            )
+          (
+            SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
+            FROM AcquisitionPlanTracks plan_track
+            JOIN ProviderItemAudioVariants variant
+              ON variant.id = plan_track.provider_audio_variant_id
+            WHERE plan_track.plan_id = plan.id
+            ORDER BY
+              CASE variant.quality_class
+                WHEN 'spatial' THEN 0
+                WHEN 'hires-lossless' THEN 1
+                WHEN 'lossless' THEN 2
+                ELSE 3
+              END,
+              plan_track.id
+            LIMIT 1
           ) AS quality,
           ROW_NUMBER() OVER (
             PARTITION BY CASE WHEN EXISTS (
@@ -839,10 +829,7 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
           provider_release.provider_url AS provider_album_url,
           provider_track.provider_id AS provider_track_id,
           provider_track.provider_url AS provider_track_url,
-          COALESCE(
-            NULLIF(audio_variant.provider_quality_label, ''),
-            audio_variant.quality_class
-          ) AS quality,
+          ${planTrackDisplayQualitySql("plan_track", "audio_variant")} AS quality,
           release.mbid AS selected_release_mbid,
           release_match.match_state AS match_status,
           ROW_NUMBER() OVER (

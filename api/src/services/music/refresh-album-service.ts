@@ -51,6 +51,7 @@ export function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): a
                 || (raw as any).videoCover
                 || (raw as any).video_cover
                 || null,
+            explicit: providerAlbum.explicit ?? (raw as any).explicit ?? null,
             qualityTags: Array.isArray(providerAlbum.qualityTags)
                 ? providerAlbum.qualityTags
                 : (Array.isArray((raw as any).qualityTags) ? (raw as any).qualityTags : (raw as any).quality_tags),
@@ -76,7 +77,7 @@ export function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): a
         duration: providerAlbum.duration || 0,
         type: providerAlbum.type || "ALBUM",
         version: providerAlbum.version || null,
-        explicit: providerAlbum.explicit || false,
+        explicit: providerAlbum.explicit ?? null,
         quality: providerAlbum.quality || "LOSSLESS",
         qualityTags: Array.isArray(providerAlbum.qualityTags) ? providerAlbum.qualityTags : undefined,
         url: providerAlbum.url,

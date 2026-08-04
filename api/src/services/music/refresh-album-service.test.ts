@@ -133,6 +133,40 @@ test("providerAlbumToAlbumMetadataRow keeps animated videoCover for catalog supp
   assert.equal(mapped.videoCover, "https://example.test/editorial-motion.m3u8");
 });
 
+test("providerAlbumToAlbumMetadataRow preserves tri-state explicitness and qualityTags", () => {
+  const dummyArtist = { providerId: "artist-1", name: "Test Artist" };
+
+  const nullExplicit = refreshServiceModule.providerAlbumToAlbumMetadataRow({
+    providerId: "1", title: "Null Explicit Album", artist: dummyArtist, explicit: null,
+  });
+  assert.equal(nullExplicit.explicit, null);
+
+  const undefinedExplicitNoRaw = refreshServiceModule.providerAlbumToAlbumMetadataRow({
+    providerId: "2", title: "Undefined Explicit Album", artist: dummyArtist,
+  });
+  assert.equal(undefinedExplicitNoRaw.explicit, null);
+
+  const undefinedExplicitWithRawFalse = refreshServiceModule.providerAlbumToAlbumMetadataRow({
+    providerId: "3", title: "Raw Clean Album", artist: dummyArtist, raw: { provider_id: "3", explicit: false },
+  });
+  assert.equal(undefinedExplicitWithRawFalse.explicit, false);
+
+  const falseExplicit = refreshServiceModule.providerAlbumToAlbumMetadataRow({
+    providerId: "4", title: "Clean Album", artist: dummyArtist, explicit: false,
+  });
+  assert.equal(falseExplicit.explicit, false);
+
+  const trueExplicit = refreshServiceModule.providerAlbumToAlbumMetadataRow({
+    providerId: "5", title: "Explicit Album", artist: dummyArtist, explicit: true,
+  });
+  assert.equal(trueExplicit.explicit, true);
+
+  const appleQualityTags = refreshServiceModule.providerAlbumToAlbumMetadataRow({
+    providerId: "6", title: "Apple Album", artist: dummyArtist, qualityTags: ["LOSSLESS", "DOLBY_ATMOS"],
+  });
+  assert.deepEqual(appleQualityTags.qualityTags, ["LOSSLESS", "DOLBY_ATMOS"]);
+});
+
 test("album track scan stores provider track offers linked to the selected canonical release tracks", async () => {
   const { streamingProviderManager } = await import("../providers/index.js");
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";

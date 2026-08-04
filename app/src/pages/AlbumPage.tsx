@@ -90,7 +90,7 @@ import { formatMetadataAttribution } from "@/utils/date";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
-import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
+import { getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { formatDescriptiveTrackPosition } from "@/utils/trackPosition";
 import { readArtistViewMode, type ArtistViewMode } from "@/utils/artistViewMode";

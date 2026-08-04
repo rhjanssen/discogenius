@@ -1,5 +1,4 @@
-import { isSpatialAudioQuality } from "./spatialAudio";
-import { stereoQualityTier } from "./qualityTier";
+export { acquisitionPlanDisplayQuality } from "./acquisitionPlanDisplayQuality";
 
 /**
  * Album-level acquisition plan tooltip headline.
@@ -22,17 +21,4 @@ export function formatAcquisitionPlanCoverageSummary(input: {
     return "Complete match";
   }
   return `Single source · ${coverageLabel}`;
-}
-
-export function acquisitionPlanDisplayQuality(plan: {
-  qualityTier?: string | null;
-  displayQuality?: string | null;
-} | null | undefined): string | null {
-  if (!plan) return null;
-  const raw = plan.displayQuality || plan.qualityTier;
-  if (!raw) return null;
-  if (isSpatialAudioQuality(raw)) {
-    return "DOLBY_ATMOS";
-  }
-  return stereoQualityTier(raw);
 }

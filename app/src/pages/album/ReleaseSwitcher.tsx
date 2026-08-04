@@ -16,8 +16,10 @@ import {
   ProviderQualityRow,
   type ProviderQualityOffer,
 } from "@/components/ui/ProviderQualityPill";
-import { formatAcquisitionPlanCoverageSummary } from "@/utils/acquisitionPlanCoverage";
-import { isSpatialAudioQuality } from "@/utils/spatialAudio";
+import {
+  acquisitionPlanDisplayQuality,
+  formatAcquisitionPlanCoverageSummary,
+} from "@/utils/acquisitionPlanCoverage";
 import type { ReleaseGroupAvailability } from "@/hooks/useAlbumPage";
 
 type Release = ReleaseGroupAvailability["releases"][number];
@@ -231,24 +233,8 @@ function providerLabel(provider: string): string {
 }
 
 /** Map a plan's normalized quality_tier onto the badge vocabulary. */
-function planQualityTag(plan: AcquisitionPlan, release: Release): string {
-  if (plan.displayQuality) {
-    if (isSpatialAudioQuality(plan.displayQuality)) return "DOLBY_ATMOS";
-    return plan.displayQuality;
-  }
-  const tier = String(plan.qualityTier || "").toLowerCase();
-  if (tier === "hires-lossless") return "HIRES_LOSSLESS";
-  if (tier === "lossless") return "LOSSLESS";
-  if (tier === "lossy") return "HIGH";
-  if (tier === "spatial") {
-    const atmos = plan.providerEditionMatchIds.some((matchId) => {
-      const offer = release.offers.find((candidate) => candidate.providerEditionMatchId === matchId);
-      return offer?.variants.some((variant) =>
-        variant.qualityClass === "spatial" || variant.spatialFormat === "atmos");
-    });
-    return atmos ? "DOLBY_ATMOS" : "SPATIAL";
-  }
-  return plan.qualityTier || "LOSSLESS";
+function planQualityTag(plan: AcquisitionPlan): string {
+  return acquisitionPlanDisplayQuality(plan);
 }
 
 const QUALITY_TIER_LABEL: Record<string, string> = {
@@ -334,7 +320,7 @@ function planToQualityOffer(
   const isComposite = plan.composition === "composite" || albumIds.length > 1;
   return {
     slot,
-    quality: planQualityTag(plan, release),
+    quality: planQualityTag(plan),
     provider: plan.provider,
     matchStatus: "verified",
     matchKind: isComposite ? "composite" : "direct",
