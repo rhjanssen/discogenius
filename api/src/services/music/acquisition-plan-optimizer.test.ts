@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   enumerateAcquisitionPlans,
+  explicitStatusFromPlanContent,
+  matchesExplicitPreference,
   optimizeAcquisitionPlan,
+  planExplicitPreferenceRank,
   type AcquisitionQualityProfile,
   type AcquisitionSourceCandidate,
   type NormalizedAudioQuality,
@@ -1190,4 +1193,99 @@ test("explicit album plus clean fill for one track composes an explicit plan", (
   assert.ok(best.sourceIds.includes(11) && best.sourceIds.includes(10),
     "composite draws from both products");
   assert.equal(best.composition, "composite");
+});
+
+test("tri-state explicitness preference helper semantics", () => {
+  assert.equal(explicitStatusFromPlanContent("explicit"), true);
+  assert.equal(explicitStatusFromPlanContent("clean"), false);
+  assert.equal(explicitStatusFromPlanContent("unknown"), null);
+
+  // prefer_explicit: true > false == null
+  assert.equal(matchesExplicitPreference(true, true), true);
+  assert.equal(matchesExplicitPreference(false, true), false);
+  assert.equal(matchesExplicitPreference(null, true), false);
+  assert.equal(planExplicitPreferenceRank("explicit", true), 1);
+  assert.equal(planExplicitPreferenceRank("clean", true), 0);
+  assert.equal(planExplicitPreferenceRank("unknown", true), 0);
+
+  // prefer_clean (prefer_explicit = false): false == null > true
+  assert.equal(matchesExplicitPreference(true, false), false);
+  assert.equal(matchesExplicitPreference(false, false), true);
+  assert.equal(matchesExplicitPreference(null, false), true);
+  assert.equal(planExplicitPreferenceRank("explicit", false), 0);
+  assert.equal(planExplicitPreferenceRank("clean", false), 1);
+  assert.equal(planExplicitPreferenceRank("unknown", false), 1);
+});
+
+test("clean vs unknown plan explicitness ranks tie and keep provider priority", () => {
+  // Complete clean TIDAL vs complete unknown Apple Music
+  const cleanSource: AcquisitionSourceCandidate = {
+    provider: "tidal",
+    providerEditionMatchId: 100,
+    relation: "exact",
+    sourceTrackCount: 2,
+    albumDownloadSafe: true,
+    releaseExplicit: false,
+    trackMatches: [
+      {
+        providerTrackMatchId: 1001,
+        providerEditionMemberId: 10001,
+        trackId: 1,
+        explicit: false,
+        variants: [{ id: 100001, quality: "lossless", available: true }],
+      },
+      {
+        providerTrackMatchId: 1002,
+        providerEditionMemberId: 10002,
+        trackId: 2,
+        explicit: false,
+        variants: [{ id: 100002, quality: "lossless", available: true }],
+      },
+    ],
+  };
+
+  const unknownSource: AcquisitionSourceCandidate = {
+    provider: "apple-music",
+    providerEditionMatchId: 200,
+    relation: "exact",
+    sourceTrackCount: 2,
+    albumDownloadSafe: true,
+    releaseExplicit: null,
+    trackMatches: [
+      {
+        providerTrackMatchId: 2001,
+        providerEditionMemberId: 20001,
+        trackId: 1,
+        explicit: null,
+        variants: [{ id: 200001, quality: "lossless", available: true }],
+      },
+      {
+        providerTrackMatchId: 2002,
+        providerEditionMemberId: 20002,
+        trackId: 2,
+        explicit: null,
+        variants: [{ id: 200002, quality: "lossless", available: true }],
+      },
+    ],
+  };
+
+  // TIDAL preferred -> TIDAL wins
+  const plansTidalFirst = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal", "apple-music"],
+    preferExplicit: true,
+    sources: [cleanSource, unknownSource],
+  });
+  assert.equal(plansTidalFirst[0].provider, "tidal");
+
+  // Apple preferred -> Apple wins
+  const plansAppleFirst = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["apple-music", "tidal"],
+    preferExplicit: true,
+    sources: [cleanSource, unknownSource],
+  });
+  assert.equal(plansAppleFirst[0].provider, "apple-music");
 });

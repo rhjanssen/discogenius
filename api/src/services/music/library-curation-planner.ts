@@ -14,13 +14,9 @@ export interface CurationReleaseCandidate {
   preferredCountry: boolean;
   mediaCount: number;
   releaseDate: string | null;
-  /**
-   * Higher is better under the library's prefer_explicit setting
-   * (see editionExplicitPreferenceRank). Defaults to neutral.
-   * Combines edition label (clean/explicit in disambiguation) with the best
-   * acquisition plan's explicitContent when plans have already been computed.
-   */
-  explicitPreferenceRank?: number;
+  hasUsablePlan?: boolean;
+  planExplicitPreferenceRank?: 0 | 1;
+  editionExplicitPreferenceRank?: number;
   /**
    * Lower is better. Compilations / remix dumps are last-resort coverage only —
    * they must not outrank the studio albums that already carry the same songs.
@@ -51,9 +47,9 @@ function compareAnchorCandidates(
   return (left.secondaryTypeRank ?? 0) - (right.secondaryTypeRank ?? 0)
     || right.attainableRecordingIds.size - left.attainableRecordingIds.size
     || Number(right.official) - Number(left.official)
-    // Prefer the user's clean/explicit setting when coverage ties (clean twin
-    // must not beat the explicit twin solely by lower edition id).
-    || (right.explicitPreferenceRank ?? 1) - (left.explicitPreferenceRank ?? 1)
+    || Number(Boolean(right.hasUsablePlan)) - Number(Boolean(left.hasUsablePlan))
+    || (right.planExplicitPreferenceRank ?? 0) - (left.planExplicitPreferenceRank ?? 0)
+    || (right.editionExplicitPreferenceRank ?? 0) - (left.editionExplicitPreferenceRank ?? 0)
     || mediumRank[left.medium] - mediumRank[right.medium]
     || Number(right.preferredCountry) - Number(left.preferredCountry)
     || left.mediaCount - right.mediaCount

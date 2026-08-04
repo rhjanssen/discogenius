@@ -24,7 +24,10 @@ import {
   loadAcquisitionUnitMapFromDb,
   mapRecordingsToCoverageUnits,
 } from "./recording-coverage-units.js";
-import { planExplicitPreferenceRank } from "./acquisition-plan-optimizer.js";
+import {
+  planExplicitPreferenceRank,
+  type PlanExplicitContent,
+} from "./acquisition-plan-optimizer.js";
 import {
   getMusicBrainzReleaseGroupIncludeDecision,
   parseMusicBrainzSecondaryTypes,
@@ -419,20 +422,15 @@ export class LibraryCurationService {
         : true;
       if (!eligible && !protectedReleaseIds.has(release.edition_id)) continue;
       const labelScore = editionExplicitLabelScore(release.title, release.disambiguation);
-      const labelRank = editionExplicitPreferenceRank(labelScore, preferExplicit);
+      const editionPreferenceRank = editionExplicitPreferenceRank(labelScore, preferExplicit);
       const bestPlan = bestPlanByEdition.get(release.edition_id);
-      const planRank = bestPlan
+      const hasUsablePlan = bestPlan != null;
+      const planPreferenceRank = bestPlan
         ? planExplicitPreferenceRank(
-          bestPlan.explicit_content === "explicit" || bestPlan.explicit_content === "clean"
-            || bestPlan.explicit_content === "unknown"
-            ? bestPlan.explicit_content
-            : "unknown",
-          preferExplicit,
-        )
-        : 1;
-      // Plan explicitness outranks the MusicBrainz disambiguation label when
-      // both editions claim "explicit" but only one has an explicit provider plan.
-      const explicitPreferenceRank = planRank * 3 + labelRank;
+            normalizePlanExplicitContent(bestPlan.explicit_content),
+            preferExplicit,
+          )
+        : 0;
       candidates.push({
         releaseGroupId: release.release_group_id,
         editionId: release.edition_id,
@@ -442,7 +440,9 @@ export class LibraryCurationService {
         preferredCountry: isPreferredCountry(release.country),
         mediaCount: Math.max(1, Number(release.media_count || 1)),
         releaseDate: release.date,
-        explicitPreferenceRank,
+        hasUsablePlan,
+        planExplicitPreferenceRank: planPreferenceRank,
+        editionExplicitPreferenceRank: editionPreferenceRank,
         secondaryTypeRank: secondaryTypeRankFor(release.secondary_types),
         protected: protectedReleaseIds.has(release.edition_id),
       });
@@ -644,4 +644,9 @@ export class LibraryCurationService {
       `).all(libraryId) as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id),
     );
   }
+}
+
+function normalizePlanExplicitContent(content: string): PlanExplicitContent {
+  if (content === "explicit" || content === "clean") return content;
+  return "unknown";
 }

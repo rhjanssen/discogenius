@@ -70,15 +70,15 @@ test("manual or locked releases survive final irredundancy", () => {
 });
 
 test("explicit preference rank breaks ties when coverage units are equal", () => {
-  const clean = candidate(1, 20, [1, 2, 3], { explicitPreferenceRank: 0 });
-  const explicit = candidate(1, 21, [1, 2, 3], { explicitPreferenceRank: 2 });
+  const clean = candidate(1, 20, [1, 2, 3], { hasUsablePlan: true, planExplicitPreferenceRank: 0 });
+  const explicit = candidate(1, 21, [1, 2, 3], { hasUsablePlan: true, planExplicitPreferenceRank: 1 });
   const result = curateLibraryReleases([clean, explicit], true);
   assert.deepEqual(result.selectedReleaseIds, [21]);
 });
 
 test("unit-equal clean/explicit peers collapse to the preferred edition", () => {
-  const clean = candidate(1, 20, [1, 2, 3], { explicitPreferenceRank: 0 });
-  const explicit = candidate(1, 21, [1, 2, 3], { explicitPreferenceRank: 2 });
+  const clean = candidate(1, 20, [1, 2, 3], { hasUsablePlan: true, planExplicitPreferenceRank: 0 });
+  const explicit = candidate(1, 21, [1, 2, 3], { hasUsablePlan: true, planExplicitPreferenceRank: 1 });
   const result = curateLibraryReleases([clean, explicit], true);
   assert.deepEqual(result.selectedReleaseIds, [21]);
 });

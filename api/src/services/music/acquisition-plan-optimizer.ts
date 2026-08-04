@@ -144,15 +144,13 @@ function effectiveQualityScore(
 function trackExplicitPreferenceRank(
   explicit: boolean | null | undefined,
   preferExplicit: boolean,
-): number {
-  if (preferExplicit) {
-    if (explicit === true) return 2;
-    if (explicit == null) return 1;
-    return 0;
-  }
-  if (explicit === false) return 2;
-  if (explicit == null) return 1;
-  return 0;
+): 0 | 1 {
+  return matchesExplicitPreference(
+    explicit === undefined ? null : explicit,
+    preferExplicit,
+  )
+    ? 1
+    : 0;
 }
 
 function compareOptions(
@@ -262,6 +260,25 @@ function rankingQualityRankTotal(
   return total;
 }
 
+export type ExplicitStatus = boolean | null;
+
+export function explicitStatusFromPlanContent(
+  content: PlanExplicitContent,
+): ExplicitStatus {
+  if (content === "explicit") return true;
+  if (content === "clean") return false;
+  return null;
+}
+
+export function matchesExplicitPreference(
+  status: ExplicitStatus,
+  preferExplicit: boolean,
+): boolean {
+  return preferExplicit
+    ? status === true
+    : status !== true;
+}
+
 /**
  * Rank plan-level explicitness under Settings → prefer_explicit.
  * Higher is better.
@@ -269,15 +286,13 @@ function rankingQualityRankTotal(
 export function planExplicitPreferenceRank(
   explicitContent: PlanExplicitContent,
   preferExplicit: boolean,
-): number {
-  if (preferExplicit) {
-    if (explicitContent === "explicit") return 2;
-    if (explicitContent === "unknown") return 1;
-    return 0;
-  }
-  if (explicitContent === "clean") return 2;
-  if (explicitContent === "unknown") return 1;
-  return 0;
+): 0 | 1 {
+  return matchesExplicitPreference(
+    explicitStatusFromPlanContent(explicitContent),
+    preferExplicit,
+  )
+    ? 1
+    : 0;
 }
 
 /**
@@ -337,21 +352,20 @@ function compareCandidatePlans(
   // a one-track soft floor for small albums). A full clean Atmos product must
   // not beat a 26/27 explicit composite that only lacks a non-explicit reprise.
   const explicitCoverageFloor = Math.max(1, Math.ceil(bestCoverage * 0.9));
-  const leftExplicitOk = planExplicitPreferenceRank(left.explicitContent, preferExplicit) >= 2
+  const leftPreferenceOk =
+    matchesExplicitPreference(
+      explicitStatusFromPlanContent(left.explicitContent),
+      preferExplicit,
+    )
     && left.coverage >= explicitCoverageFloor;
-  const rightExplicitOk = planExplicitPreferenceRank(right.explicitContent, preferExplicit) >= 2
+  const rightPreferenceOk =
+    matchesExplicitPreference(
+      explicitStatusFromPlanContent(right.explicitContent),
+      preferExplicit,
+    )
     && right.coverage >= explicitCoverageFloor;
-  if (preferExplicit && leftExplicitOk !== rightExplicitOk) {
-    return Number(rightExplicitOk) - Number(leftExplicitOk);
-  }
-  if (!preferExplicit) {
-    const leftCleanOk = planExplicitPreferenceRank(left.explicitContent, false) >= 2
-      && left.coverage >= explicitCoverageFloor;
-    const rightCleanOk = planExplicitPreferenceRank(right.explicitContent, false) >= 2
-      && right.coverage >= explicitCoverageFloor;
-    if (leftCleanOk !== rightCleanOk) {
-      return Number(rightCleanOk) - Number(leftCleanOk);
-    }
+  if (leftPreferenceOk !== rightPreferenceOk) {
+    return Number(rightPreferenceOk) - Number(leftPreferenceOk);
   }
 
   // Coverage before fidelity: a full High/Normal/Low plan outranks a partial
