@@ -560,7 +560,9 @@ function lockAlbum(locked: boolean): void {
   );
 }
 
-function deluxeSelection(service: LibraryReleaseSelectionService) {
+function deluxeSelection(
+  service: InstanceType<typeof LibraryReleaseSelectionService>,
+) {
   return service.getAvailability(ALBUM_MBID).libraries[0].selections
     .find((selection) => selection.editionId === DELUXE_EDITION_ID)!;
 }
