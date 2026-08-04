@@ -76,28 +76,42 @@ test("within-RG curation drops Japan when units already covered by deluxe", () =
   // Deluxe has studio units 1,2,3 + demos 10,11. Japan has studio 1,2,3 (same
   // units after provider-track collapse) + unattainable remix unit 99 that is
   // NOT in attainable sets — so Japan adds nothing and is not selected.
-  const deluxe = {
+  const deluxe: CurationReleaseCandidate = {
     releaseGroupId: 1,
     editionId: 180,
-    attainableRecordingIds: new Set([1, 2, 3, 10, 11]),
+    attainableUnitIds: new Set([1, 2, 3, 10, 11]),
     official: true,
     medium: "digital" as const,
     preferredCountry: true,
     mediaCount: 1,
     releaseDate: "2008-01-01",
+    releaseTypeRank: 0,
+    secondaryTypeRank: 0,
+    hasUsablePlan: true,
+    planExplicitPreferenceRank: 1,
+    editionExplicitPreferenceRank: 1,
+    protected: false,
+    existingRepresentative: false,
   };
-  const japan = {
+  const japan: CurationReleaseCandidate = {
     releaseGroupId: 1,
     editionId: 200,
-    attainableRecordingIds: new Set([1, 2, 3]), // remixes never attainable
+    attainableUnitIds: new Set([1, 2, 3]), // remixes never attainable
     official: true,
     medium: "cd" as const,
     preferredCountry: false,
     mediaCount: 1,
     releaseDate: "0001-01-01",
+    releaseTypeRank: 0,
+    secondaryTypeRank: 0,
+    hasUsablePlan: true,
+    planExplicitPreferenceRank: 1,
+    editionExplicitPreferenceRank: 1,
+    protected: false,
+    existingRepresentative: false,
   };
   const result = curateLibraryReleases([japan, deluxe], true);
-  assert.deepEqual(result.selectedReleaseIds, [180]);
+  assert.deepEqual(result.selectedEditionIds, [180]);
 });
 
 test("editionExplicitPreferenceRank prefers explicit when configured", () => {
@@ -126,33 +140,38 @@ test("clean twin is dropped when coverage units match and prefer_explicit ranks 
     releaseGroupId: number,
     editionId: number,
     recordings: number[],
-    explicitRank: number,
+    planExplicitRank: 0 | 1,
   ): CurationReleaseCandidate => ({
     releaseGroupId,
     editionId,
-    attainableRecordingIds: units(recordings),
+    attainableUnitIds: units(recordings),
     official: true,
     medium: "digital",
     preferredCountry: true,
     mediaCount: 1,
     releaseDate: "2022-01-01",
-    explicitPreferenceRank: explicitRank,
+    releaseTypeRank: 0,
+    secondaryTypeRank: 0,
+    hasUsablePlan: true,
+    planExplicitPreferenceRank: planExplicitRank,
+    editionExplicitPreferenceRank: 1,
+    protected: false,
+    existingRepresentative: false,
   });
 
   // Same RG: explicit 27-track (101-103), clean twin (201-203), deluxe with remix (101-103 + 301).
   const result = curateLibraryReleases([
-    candidate(1, 10, [101, 102, 103], 2), // explicit dreams
+    candidate(1, 10, [101, 102, 103], 1), // explicit dreams
     candidate(1, 11, [201, 202, 203], 0), // clean dreams
-    candidate(1, 12, [101, 102, 103, 301], 2), // deluxe + remix
+    candidate(1, 12, [101, 102, 103, 301], 1), // deluxe + remix
   ], true);
 
-  assert.ok(!result.selectedReleaseIds.includes(11), "clean twin must not be monitored");
-  assert.ok(result.selectedReleaseIds.includes(10) || result.selectedReleaseIds.includes(12));
-  // With redundancy, fewest editions covering units: deluxe alone covers remix+core,
-  // so only one (or deluxe alone) — clean is never required.
-  assert.ok(result.selectedReleaseIds.length <= 2);
+  const selectedIds = result.selectedEditionIds ?? result.selectedReleaseIds ?? [];
+  assert.ok(!selectedIds.includes(11), "clean twin must not be monitored");
+  assert.ok(selectedIds.includes(10) || selectedIds.includes(12));
+  assert.ok(selectedIds.length <= 2);
   assert.deepEqual(
-    result.selectedReleaseIds.filter((id) => id === 11),
+    selectedIds.filter((id) => id === 11),
     [],
   );
 });
@@ -170,26 +189,39 @@ test("when only clean and explicit twins exist, prefer_explicit keeps the explic
     {
       releaseGroupId: 1,
       editionId: 50,
-      attainableRecordingIds: units([1, 3]),
+      attainableUnitIds: units([1, 3]),
       official: true,
       medium: "digital",
       preferredCountry: true,
       mediaCount: 1,
       releaseDate: "2022-01-01",
-      explicitPreferenceRank: 2,
+      releaseTypeRank: 0,
+      secondaryTypeRank: 0,
+      hasUsablePlan: true,
+      planExplicitPreferenceRank: 1,
+      editionExplicitPreferenceRank: 1,
+      protected: false,
+      existingRepresentative: false,
     },
     {
       releaseGroupId: 1,
       editionId: 51,
-      attainableRecordingIds: units([2, 4]),
+      attainableUnitIds: units([2, 4]),
       official: true,
       medium: "digital",
       preferredCountry: true,
       mediaCount: 1,
       releaseDate: "2022-01-01",
-      explicitPreferenceRank: 0,
+      releaseTypeRank: 0,
+      secondaryTypeRank: 0,
+      hasUsablePlan: true,
+      planExplicitPreferenceRank: 0,
+      editionExplicitPreferenceRank: 1,
+      protected: false,
+      existingRepresentative: false,
     },
   ], true);
 
-  assert.deepEqual(result.selectedReleaseIds, [50]);
+  const selectedIds = result.selectedEditionIds ?? result.selectedReleaseIds ?? [];
+  assert.deepEqual(selectedIds, [50]);
 });
