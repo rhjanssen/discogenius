@@ -169,7 +169,7 @@ export class LibraryCurationRepository {
     this.db.transaction(() => {
       const overruledReleaseGroupIds = [...(input.reasonByReleaseGroupId?.keys() ?? [])];
       const overruledPlaceholders = overruledReleaseGroupIds.map(() => "?").join(",");
-      const selectedReleaseIds = new Set(input.result.selectedReleaseIds);
+      const selectedReleaseIds = new Set(input.result.selectedEditionIds);
       const selectedReleaseGroupIds = new Set<number>();
       for (const editionId of selectedReleaseIds) {
         const releaseGroupId = input.releaseGroupIdByReleaseId.get(editionId);

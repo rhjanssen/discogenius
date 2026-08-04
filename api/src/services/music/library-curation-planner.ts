@@ -4,9 +4,8 @@ export interface CurationEditionCandidate {
   releaseGroupId: number;
   editionId: number;
 
+  /** Acquisition units this Edition can actually deliver from a usable plan. */
   attainableUnitIds: ReadonlySet<number>;
-  /** Backward compatibility alias */
-  attainableRecordingIds?: ReadonlySet<number>;
 
   official: boolean;
   medium: CanonicalMediumKind;
@@ -33,9 +32,6 @@ export interface CurationEditionCandidate {
   protectedReason?: "manual_selection" | "locked_selection";
 }
 
-/** Backward compatibility alias */
-export type CurationReleaseCandidate = CurationEditionCandidate;
-
 export type CurationEditionRole =
   | "representative"
   | "supplemental";
@@ -61,11 +57,6 @@ export interface LibraryCurationResult {
   selectedReleaseGroupIds: number[];
   attainableUnitIds: Set<number>;
   decisions: CurationEditionDecision[];
-
-  /** Backward compatibility aliases */
-  selectedReleaseIds?: number[];
-  baselineReleaseIds?: number[];
-  attainableRecordingIds?: Set<number>;
 }
 
 const mediumRank: Record<CanonicalMediumKind, number> = {
@@ -75,16 +66,12 @@ const mediumRank: Record<CanonicalMediumKind, number> = {
   other: 3,
 };
 
-function getCandidateUnits(c: CurationEditionCandidate): ReadonlySet<number> {
-  return c.attainableUnitIds ?? c.attainableRecordingIds ?? new Set<number>();
-}
-
 export function comparePrimaryEditionCandidates(
   left: CurationEditionCandidate,
   right: CurationEditionCandidate,
 ): number {
-  const leftUnits = getCandidateUnits(left);
-  const rightUnits = getCandidateUnits(right);
+  const leftUnits = left.attainableUnitIds;
+  const rightUnits = right.attainableUnitIds;
   return (left.secondaryTypeRank ?? 0) - (right.secondaryTypeRank ?? 0)
     || rightUnits.size - leftUnits.size
     || Number(right.official) - Number(left.official)
@@ -119,7 +106,7 @@ export function selectRepresentativeEdition(
   if (optional.length === 0) return null;
 
   const unitKey = (candidate: CurationEditionCandidate): string =>
-    [...getCandidateUnits(candidate)].sort((a, b) => a - b).join(",");
+    [...candidate.attainableUnitIds].sort((a, b) => a - b).join(",");
 
   const bestByUnits = new Map<string, CurationEditionCandidate>();
   for (const candidate of optional) {
@@ -139,7 +126,7 @@ function unionUnits(
 ): Set<number> {
   const result = new Set<number>();
   for (const candidate of candidates) {
-    for (const unitId of getCandidateUnits(candidate)) {
+    for (const unitId of candidate.attainableUnitIds) {
       result.add(unitId);
     }
   }
@@ -229,7 +216,7 @@ function exactMinimumCover(
 
     const remainingCoverage = new Set(covered);
     for (let i = index; i < pool.length; i += 1) {
-      for (const u of getCandidateUnits(pool[i])) {
+      for (const u of pool[i].attainableUnitIds) {
         remainingCoverage.add(u);
       }
     }
@@ -239,7 +226,7 @@ function exactMinimumCover(
 
     const candidate = pool[index];
     const withCandidateCoverage = new Set(covered);
-    for (const u of getCandidateUnits(candidate)) withCandidateCoverage.add(u);
+    for (const u of candidate.attainableUnitIds) withCandidateCoverage.add(u);
 
     visit(index + 1, [...chosen, candidate], withCandidateCoverage);
     visit(index + 1, chosen, covered);
@@ -262,7 +249,7 @@ function deterministicGreedyCover(
       .filter((candidate) => !selectedIds.has(candidate.editionId))
       .map((candidate) => ({
         candidate,
-        gain: [...getCandidateUnits(candidate)]
+        gain: [...candidate.attainableUnitIds]
           .filter((unitId) => wanted.has(unitId) && !covered.has(unitId)).length,
       }))
       .filter(({ gain }) => gain > 0)
@@ -278,7 +265,7 @@ function deterministicGreedyCover(
 
     selected.push(next.candidate);
     selectedIds.add(next.candidate.editionId);
-    for (const unitId of getCandidateUnits(next.candidate)) {
+    for (const unitId of next.candidate.attainableUnitIds) {
       covered.add(unitId);
     }
   }
@@ -337,13 +324,13 @@ function pruneRedundantEditions(
     for (const candidate of removableCandidates) {
       const otherSelected = current.filter((c) => c.editionId !== candidate.editionId);
       const coveredByOthers = unionUnits(otherSelected);
-      const candUnits = getCandidateUnits(candidate);
+      const candUnits = candidate.attainableUnitIds;
       const allUnitsCovered = [...candUnits].every((u) => coveredByOthers.has(u));
 
       if (!allUnitsCovered) continue;
 
       const priorityOk = [...candUnits].every((unitId) => {
-        const coveringOther = otherSelected.filter((other) => getCandidateUnits(other).has(unitId));
+        const coveringOther = otherSelected.filter((other) => other.attainableUnitIds.has(unitId));
         return coveringOther.some((other) => compareProductPriority(other, candidate) <= 0);
       });
 
@@ -368,7 +355,7 @@ export function curateLibraryReleases(
   redundancyEnabled: boolean,
 ): LibraryCurationResult {
   const candidates = inputCandidates
-    .filter((candidate) => getCandidateUnits(candidate).size > 0 || candidate.protected)
+    .filter((candidate) => candidate.attainableUnitIds.size > 0 || candidate.protected)
     .sort((left, right) =>
       left.releaseGroupId - right.releaseGroupId || comparePrimaryEditionCandidates(left, right));
 
@@ -411,7 +398,7 @@ export function curateLibraryReleases(
       (c) =>
         !representativeSet.has(c.editionId)
         && !c.protected
-        && [...getCandidateUnits(c)].some((u) => novelSupplementalUnits.has(u)),
+        && [...c.attainableUnitIds].some((u) => novelSupplementalUnits.has(u)),
     );
 
     const supplementalCover = selectSupplementalCover(
@@ -477,7 +464,7 @@ export function curateLibraryReleases(
 
     const otherSelected = selected.filter((c) => c.editionId !== candidate.editionId);
     const coveredByOthers = unionUnits(otherSelected);
-    const contributedUnitIds = [...getCandidateUnits(candidate)]
+    const contributedUnitIds = [...candidate.attainableUnitIds]
       .filter((u) => !coveredByOthers.has(u))
       .sort((a, b) => a - b);
 
@@ -501,8 +488,5 @@ export function curateLibraryReleases(
     selectedReleaseGroupIds,
     attainableUnitIds,
     decisions,
-    selectedReleaseIds: finalSelectedIds,
-    baselineReleaseIds: finalSelectedIds,
-    attainableRecordingIds: attainableUnitIds,
   };
 }

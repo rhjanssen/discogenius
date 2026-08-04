@@ -8,7 +8,6 @@ import {
   type CurationEditionCandidate,
   type CurationEditionDecision,
   type CurationEditionRole,
-  type CurationReleaseCandidate,
   type CurationSelectionReason,
   type LibraryCurationResult,
 } from "./library-curation-planner.js";
@@ -612,9 +611,6 @@ export class LibraryCurationService {
       selectedReleaseGroupIds,
       attainableUnitIds: attainableUnitIdsSet,
       decisions: mergedDecisions,
-      selectedReleaseIds: selectedEditionIds,
-      baselineReleaseIds: selectedEditionIds,
-      attainableRecordingIds: attainableUnitIdsSet,
     };
 
     const selectedScopes: LibraryReleaseScopeInput[] = [];

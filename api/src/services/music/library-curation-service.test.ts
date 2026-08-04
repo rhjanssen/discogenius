@@ -140,7 +140,7 @@ test("library curation uses canonical scope and recording coverage without chang
       acquisitionPlannerVersion: 1,
       providerPriority: ["tidal"],
     });
-    assert.deepEqual(curated.selectedReleaseIds, [101, 301]);
+    assert.deepEqual(curated.selectedEditionIds, [101, 301]);
     assert.deepEqual(
       db.prepare(`
         SELECT release.edition_id, scope.scope_type

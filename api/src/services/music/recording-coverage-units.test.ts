@@ -7,7 +7,7 @@ import {
   mapRecordingsToCoverageUnits,
   normalizeCoverageTitle,
 } from "./recording-coverage-units.js";
-import { curateLibraryReleases, type CurationReleaseCandidate } from "./library-curation-planner.js";
+import { curateLibraryReleases, type CurationEditionCandidate } from "./library-curation-planner.js";
 
 test("normalizeCoverageTitle collapses punctuation and case", () => {
   assert.equal(normalizeCoverageTitle("Plug In…"), "plug in");
@@ -76,7 +76,7 @@ test("within-RG curation drops Japan when units already covered by deluxe", () =
   // Deluxe has studio units 1,2,3 + demos 10,11. Japan has studio 1,2,3 (same
   // units after provider-track collapse) + unattainable remix unit 99 that is
   // NOT in attainable sets — so Japan adds nothing and is not selected.
-  const deluxe: CurationReleaseCandidate = {
+  const deluxe: CurationEditionCandidate = {
     releaseGroupId: 1,
     editionId: 180,
     attainableUnitIds: new Set([1, 2, 3, 10, 11]),
@@ -93,7 +93,7 @@ test("within-RG curation drops Japan when units already covered by deluxe", () =
     protected: false,
     existingRepresentative: false,
   };
-  const japan: CurationReleaseCandidate = {
+  const japan: CurationEditionCandidate = {
     releaseGroupId: 1,
     editionId: 200,
     attainableUnitIds: new Set([1, 2, 3]), // remixes never attainable
@@ -141,7 +141,7 @@ test("clean twin is dropped when coverage units match and prefer_explicit ranks 
     editionId: number,
     recordings: number[],
     planExplicitRank: 0 | 1,
-  ): CurationReleaseCandidate => ({
+  ): CurationEditionCandidate => ({
     releaseGroupId,
     editionId,
     attainableUnitIds: units(recordings),
@@ -166,7 +166,7 @@ test("clean twin is dropped when coverage units match and prefer_explicit ranks 
     candidate(1, 12, [101, 102, 103, 301], 1), // deluxe + remix
   ], true);
 
-  const selectedIds = result.selectedEditionIds ?? result.selectedReleaseIds ?? [];
+  const selectedIds = result.selectedEditionIds ?? result.selectedEditionIds ?? [];
   assert.ok(!selectedIds.includes(11), "clean twin must not be monitored");
   assert.ok(selectedIds.includes(10) || selectedIds.includes(12));
   assert.ok(selectedIds.length <= 2);
@@ -222,6 +222,6 @@ test("when only clean and explicit twins exist, prefer_explicit keeps the explic
     },
   ], true);
 
-  const selectedIds = result.selectedEditionIds ?? result.selectedReleaseIds ?? [];
+  const selectedIds = result.selectedEditionIds ?? result.selectedEditionIds ?? [];
   assert.deepEqual(selectedIds, [50]);
 });
