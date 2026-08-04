@@ -27,6 +27,7 @@ export interface LibraryAcquisitionPlanView {
   targetTrackCount: number;
   qualityTier: string;
   explicitContent: "explicit" | "clean" | "unknown";
+  displayQuality: string | null;
 }
 
 export interface LibraryReleaseSelectionView {
@@ -425,6 +426,20 @@ export class LibraryReleaseSelectionService {
           plan.target_track_count,
           plan.quality_tier,
           plan.explicit_content,
+          (
+            SELECT COALESCE(
+              NULLIF(audio_variant.provider_quality_label, ''),
+              audio_variant.quality_class
+            )
+            FROM AcquisitionPlanTracks plan_track
+            JOIN ProviderEditionMembers member ON member.id = plan_track.provider_edition_member_id
+            JOIN ProviderItemAudioVariants audio_variant ON audio_variant.provider_item_id = member.member_item_id
+            WHERE plan_track.plan_id = plan.id
+            ORDER BY
+              CASE WHEN LOWER(audio_variant.quality_class) IN ('dolby-atmos', 'atmos', 'spatial', 'dolby_atmos') THEN 0 ELSE 1 END,
+              audio_variant.id ASC
+            LIMIT 1
+          ) AS display_quality,
           source.provider_edition_match_id,
           source.role
         FROM AcquisitionPlans plan
@@ -447,6 +462,7 @@ export class LibraryReleaseSelectionService {
         target_track_count: number;
         quality_tier: string;
         explicit_content: "explicit" | "clean" | "unknown";
+        display_quality: string | null;
         provider_edition_match_id: number | null;
         role: "primary" | "supplement" | null;
       }>;
@@ -474,6 +490,7 @@ export class LibraryReleaseSelectionService {
             targetTrackCount: planRow.target_track_count,
             qualityTier: planRow.quality_tier,
             explicitContent: planRow.explicit_content,
+            displayQuality: planRow.display_quality || null,
           };
           planViewById.set(planRow.id, view);
           const list = plansByEdition.get(scopeKey) || [];

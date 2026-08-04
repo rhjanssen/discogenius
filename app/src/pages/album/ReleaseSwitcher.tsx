@@ -17,6 +17,7 @@ import {
   type ProviderQualityOffer,
 } from "@/components/ui/ProviderQualityPill";
 import { formatAcquisitionPlanCoverageSummary } from "@/utils/acquisitionPlanCoverage";
+import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 import type { ReleaseGroupAvailability } from "@/hooks/useAlbumPage";
 
 type Release = ReleaseGroupAvailability["releases"][number];
@@ -231,6 +232,10 @@ function providerLabel(provider: string): string {
 
 /** Map a plan's normalized quality_tier onto the badge vocabulary. */
 function planQualityTag(plan: AcquisitionPlan, release: Release): string {
+  if (plan.displayQuality) {
+    if (isSpatialAudioQuality(plan.displayQuality)) return "DOLBY_ATMOS";
+    return plan.displayQuality;
+  }
   const tier = String(plan.qualityTier || "").toLowerCase();
   if (tier === "hires-lossless") return "HIRES_LOSSLESS";
   if (tier === "lossless") return "LOSSLESS";
@@ -239,7 +244,7 @@ function planQualityTag(plan: AcquisitionPlan, release: Release): string {
     const atmos = plan.providerEditionMatchIds.some((matchId) => {
       const offer = release.offers.find((candidate) => candidate.providerEditionMatchId === matchId);
       return offer?.variants.some((variant) =>
-        variant.qualityClass === "spatial" && variant.spatialFormat === "atmos");
+        variant.qualityClass === "spatial" || variant.spatialFormat === "atmos");
     });
     return atmos ? "DOLBY_ATMOS" : "SPATIAL";
   }

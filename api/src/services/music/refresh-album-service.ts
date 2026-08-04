@@ -51,6 +51,9 @@ export function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): a
                 || (raw as any).videoCover
                 || (raw as any).video_cover
                 || null,
+            qualityTags: Array.isArray(providerAlbum.qualityTags)
+                ? providerAlbum.qualityTags
+                : (Array.isArray((raw as any).qualityTags) ? (raw as any).qualityTags : (raw as any).quality_tags),
         };
     }
 
@@ -75,6 +78,7 @@ export function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): a
         version: providerAlbum.version || null,
         explicit: providerAlbum.explicit || false,
         quality: providerAlbum.quality || "LOSSLESS",
+        qualityTags: Array.isArray(providerAlbum.qualityTags) ? providerAlbum.qualityTags : undefined,
         url: providerAlbum.url,
         popularity: providerAlbum.popularity ?? 0,
         copyright: providerAlbum.copyright || null,
