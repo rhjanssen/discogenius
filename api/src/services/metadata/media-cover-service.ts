@@ -2242,7 +2242,7 @@ export function loadAlbumProviderArtworkCandidates(
       ORDER BY
         CASE WHEN EXISTS (
           SELECT 1
-          FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+          FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
           WHERE allowed.value = 'spatial'
         ) THEN 1 ELSE 0 END,
         source.sort_order,

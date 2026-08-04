@@ -3,7 +3,9 @@ import { emitLibraryUpdated } from "../commands/app-events.js";
 import { getConfigSection } from "../config/config.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
+import type { TrackListTabContract } from "../../contracts/pages.js";
 import { resolveTrackListTabs, type TrackListTab } from "./track-list-tabs.js";
+import { AlbumTrackListNavigationService } from "./album-track-list-navigation-service.js";
 import {
   loadAcquisitionUnitMapFromDb,
   editionExplicitLabelScore,
@@ -60,7 +62,7 @@ export interface LibrarySelectionView {
    * Track-list tabs this Album needs in this Library. Empty when one list
    * suffices — equivalent or nested monitored Editions do not earn tabs.
    */
-  trackListTabs: TrackListTab[];
+  trackListTabs: TrackListTabContract[];
 }
 
 export interface ProviderReleaseOfferView {
@@ -533,41 +535,10 @@ export class LibraryReleaseSelectionService {
       }
     }
 
-    // Tabs are a canonical-Recording question, so they are answered here rather
-    // than left to the page to infer from track counts. Compute once for the
-    // whole album: Stereo and Spatial often monitor the same tracklist as two
-    // MB editions (e.g. Dreams stereo vs Dreams Atmos). Per-library resolution
-    // then unioned on the page produced three tabs for two musical products.
-    //
-    // Same acquisition-unit map as curation (title+duration, ISRC, shared
-    // provider track) so track-list tabs collapse Japan/deluxe studio twins.
-    const coverageUnitByRecording = loadAcquisitionUnitMapFromDb(this.db);
-    const recordingIdsByEdition = new Map<number, Set<number>>();
-    for (const row of this.db.prepare(`
-      SELECT track.album_edition_id, track.recording_id
-      FROM Tracks track
-      JOIN AlbumEditions edition ON edition.id = track.album_edition_id
-      WHERE edition.release_group_id = ?
-        AND track.recording_id IS NOT NULL
-    `).all(releaseGroup.id) as Array<{ album_edition_id: number; recording_id: number }>) {
-      const recordingIds = recordingIdsByEdition.get(row.album_edition_id) || new Set<number>();
-      recordingIds.add(
-        coverageUnitByRecording.get(row.recording_id) ?? row.recording_id,
-      );
-      recordingIdsByEdition.set(row.album_edition_id, recordingIds);
-    }
-    const albumTrackListTabs = resolveTrackListTabs(
-      libraries.flatMap((library) =>
-        library.selections
-          .filter((selection) => selection.monitored)
-          .map((selection) => ({
-            editionId: selection.editionId,
-            recordingIds: recordingIdsByEdition.get(selection.editionId) || new Set<number>(),
-            representative: selection.representative,
-          }))),
-    );
+    const navService = new AlbumTrackListNavigationService(this.db);
+    const navInfo = navService.getNavigationInfo(releaseGroup.mbid);
     for (const library of libraries) {
-      library.trackListTabs = albumTrackListTabs;
+      library.trackListTabs = navInfo.tabs;
     }
 
     return {

@@ -31,7 +31,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         SELECT
           CASE WHEN EXISTS (
             SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END AS library_class,
           release.mbid AS release_mbid,
@@ -65,7 +65,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
           ROW_NUMBER() OVER (
             PARTITION BY CASE WHEN EXISTS (
               SELECT 1
-              FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+              FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
               WHERE allowed.value = 'spatial'
             ) THEN 'spatial' ELSE 'stereo' END
             ORDER BY library_release.updated_at DESC, library_release.id DESC
@@ -164,7 +164,7 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
           COALESCE(library_release.representative, 0) DESC,
           CASE WHEN EXISTS (
             SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
             WHERE allowed.value = 'spatial'
           ) THEN 1 ELSE 0 END,
           library_release.updated_at DESC,
@@ -237,10 +237,11 @@ function listMusicBrainzReleaseVersions(
         CASE
           WHEN EXISTS (
             SELECT 1
-            FROM json_each(r.media) m
+            FROM json_each(CASE WHEN json_valid(r.media) THEN r.media ELSE '[]' END) m
             WHERE LOWER(COALESCE(
-              json_extract(m.value, '$.Format'),
-              json_extract(m.value, '$.format'),
+              CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.Format') END,
+              CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.format') END,
+              m.value,
               ''
             )) LIKE '%digital%'
           ) THEN 1 ELSE 0
@@ -277,7 +278,7 @@ function listMusicBrainzReleaseVersions(
             ON library.id = library_release.library_id
           JOIN quality_profiles quality_profile
             ON quality_profile.id = library.quality_profile_id
-          JOIN json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+          JOIN json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
           WHERE source.provider_edition_match_id = release_match.id
             AND allowed.value = 'spatial'
         ) THEN 'spatial' ELSE 'stereo' END AS library_class,
@@ -821,7 +822,7 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
           recording.mbid AS recording_mbid,
           CASE WHEN EXISTS (
             SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END AS library_class,
           provider_release.provider AS provider,
@@ -837,7 +838,7 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
               COALESCE(track.recording_id, track.id),
               CASE WHEN EXISTS (
                 SELECT 1
-                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
                 WHERE allowed.value = 'spatial'
               ) THEN 'spatial' ELSE 'stereo' END
             ORDER BY library_release.updated_at DESC, plan_track.id DESC

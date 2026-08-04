@@ -13,10 +13,14 @@ import {
 } from "./media.js";
 
 export interface TrackListTabContract {
-  id: number;
+  editionId: number;
+  releaseMbid: string;
   title: string;
-  isRepresentative: boolean;
-  isMonitored: boolean;
+  disambiguation: string | null;
+  country: string | null;
+  mediaFormats: string[];
+  trackCount: number | null;
+  default: boolean;
 }
 
 export interface AlbumPageContract {
@@ -34,10 +38,14 @@ export interface AlbumPageContract {
 export function parseTrackListTabContract(value: unknown): TrackListTabContract {
   const record = expectRecord(value, "Track list tab");
   return {
-    id: Number(record.id),
+    editionId: Number(record.editionId ?? record.id),
+    releaseMbid: String(record.releaseMbid || ""),
     title: String(record.title || ""),
-    isRepresentative: Boolean(record.isRepresentative),
-    isMonitored: Boolean(record.isMonitored),
+    disambiguation: expectNullableString(record.disambiguation, "trackListTab.disambiguation") ?? null,
+    country: expectNullableString(record.country, "trackListTab.country") ?? null,
+    mediaFormats: Array.isArray(record.mediaFormats) ? record.mediaFormats.map(String) : [],
+    trackCount: record.trackCount != null ? Number(record.trackCount) : null,
+    default: Boolean(record.default),
   };
 }
 

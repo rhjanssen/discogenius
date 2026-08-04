@@ -56,10 +56,11 @@ export class MusicBrainzReleaseSelectionService {
                 CASE WHEN LOWER(COALESCE(r.status, '')) = 'official' THEN 1 ELSE 0 END DESC,
                 CASE WHEN EXISTS (
                     SELECT 1
-                    FROM json_each(r.media) medium
+                    FROM json_each(CASE WHEN json_valid(r.media) THEN r.media ELSE '[]' END) medium
                     WHERE LOWER(COALESCE(
-                        json_extract(medium.value, '$.Format'),
-                        json_extract(medium.value, '$.format'),
+                        CASE WHEN json_valid(medium.value) THEN json_extract(medium.value, '$.Format') END,
+                        CASE WHEN json_valid(medium.value) THEN json_extract(medium.value, '$.format') END,
+                        medium.value,
                         ''
                     )) IN ('digital media', 'digital')
                 ) THEN 1 ELSE 0 END DESC,
