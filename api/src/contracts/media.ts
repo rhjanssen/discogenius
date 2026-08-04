@@ -162,7 +162,6 @@ export interface LibraryReleaseGroupAvailabilityContract {
       plan: LibraryAcquisitionPlanContract | null;
       plans: LibraryAcquisitionPlanContract[];
     }>;
-    trackListTabs: Array<{ editionId: number; default: boolean }>;
   }>;
   releases: Array<{
     id: number;
@@ -596,18 +595,6 @@ export function parseLibraryReleaseGroupAvailabilityContract(
               plan: selection.plan == null ? null : parsePlan(selection.plan, `${label}.plan`),
               plans: expectArray(selection.plans, `${label}.plans`, (planItem, planIndex) =>
                 parsePlan(planItem, `${label}.plans[${planIndex}]`)),
-            };
-          },
-        ),
-        trackListTabs: expectArray(
-          library.trackListTabs,
-          `${libraryLabel}.trackListTabs`,
-          (tabItem, tabIndex) => {
-            const tabLabel = `${libraryLabel}.trackListTabs[${tabIndex}]`;
-            const tab = expectRecord(tabItem, tabLabel);
-            return {
-              editionId: expectNumber(tab.editionId, `${tabLabel}.editionId`),
-              default: expectBoolean(tab.default, `${tabLabel}.default`),
             };
           },
         ),

@@ -3,9 +3,7 @@ import { emitLibraryUpdated } from "../commands/app-events.js";
 import { getConfigSection } from "../config/config.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
-import type { TrackListTabContract } from "../../contracts/pages.js";
-import { resolveTrackListTabs, type TrackListTab } from "./track-list-tabs.js";
-import { AlbumTrackListNavigationService } from "./album-track-list-navigation-service.js";
+import { parseMediaFormats } from "./media-formats.js";
 import {
   loadAcquisitionUnitMapFromDb,
   editionExplicitLabelScore,
@@ -59,11 +57,6 @@ export interface LibrarySelectionView {
   qualityProfile: string;
   allowedSourceFormats: string[];
   selections: LibraryReleaseSelectionView[];
-  /**
-   * Track-list tabs this Album needs in this Library. Empty when one list
-   * suffices — equivalent or nested monitored Editions do not earn tabs.
-   */
-  trackListTabs: TrackListTabContract[];
 }
 
 export interface ProviderReleaseOfferView {
@@ -119,25 +112,6 @@ interface ReleaseRow {
   media_count: number | null;
   track_count: number | null;
   media: string | null;
-}
-
-/** Distinct formats from AlbumEditions.media JSON (Lidarr-style Format fields). */
-function parseMediaFormats(mediaJson: string | null | undefined): string[] {
-  if (!mediaJson) return [];
-  try {
-    const parsed = JSON.parse(mediaJson);
-    if (!Array.isArray(parsed)) return [];
-    const formats: string[] = [];
-    for (const entry of parsed) {
-      if (!entry || typeof entry !== "object") continue;
-      const record = entry as Record<string, unknown>;
-      const format = String(record.Format ?? record.format ?? "").trim();
-      if (format && !formats.includes(format)) formats.push(format);
-    }
-    return formats;
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -387,7 +361,6 @@ export class LibraryReleaseSelectionService {
             }
           })(),
           selections: [],
-          trackListTabs: [],
         };
         libraryById.set(row.library_id, library);
       }
@@ -538,12 +511,9 @@ export class LibraryReleaseSelectionService {
       }
     }
 
-    const navService = new AlbumTrackListNavigationService(this.db);
-    const navInfo = navService.getNavigationInfo(releaseGroup.mbid);
-    for (const library of libraries) {
-      library.trackListTabs = navInfo.tabs;
-    }
-
+    // Track-list navigation is an Album-wide question answered by
+    // AlbumTrackListNavigationService on `/page`. Availability enriches that
+    // page with offers and plans; it must not also decide which lists exist.
     return {
       releaseGroupId: releaseGroup.id,
       releaseGroupMbid: releaseGroup.mbid,

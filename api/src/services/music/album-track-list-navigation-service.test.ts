@@ -152,7 +152,7 @@ test("partial overlap editions produce separate tabs with exactly one default ta
   assert.equal(defaultTab?.editionId, 20, "Persisted representative becomes default tab");
 });
 
-test("/page and /library-availability return the same navigation tabs", async () => {
+test("/page owns navigation tabs and availability carries none", async () => {
   seedEditionsFixture();
   db.prepare(`
     INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
@@ -160,23 +160,75 @@ test("/page and /library-availability return the same navigation tabs", async ()
   `).run();
 
   const page = await MusicBrainzReleaseGroupReadService.getPage("rg-nav-test");
-  const availService = new LibraryReleaseSelectionService(db);
-  const avail = availService.getAvailability("rg-nav-test");
+  const avail = new LibraryReleaseSelectionService(db).getAvailability("rg-nav-test");
 
   assert.ok(page);
-  assert.deepEqual(
-    page.trackListTabs?.map((t) => t.editionId),
-    avail.libraries[0].trackListTabs.map((t) => t.editionId),
-  );
+  assert.deepEqual(page.trackListTabs?.map((tab) => tab.editionId), [20]);
   assert.equal(page.initialTrackListEditionId, 20);
+  // Availability enriches the page; it must not be a second source of truth for
+  // which track lists exist, or a slow/failed enrichment call can hide an
+  // Edition the Library actually monitors.
+  for (const library of avail.libraries) {
+    assert.equal(
+      "trackListTabs" in library,
+      false,
+      "availability libraries must not carry track-list tabs",
+    );
+  }
 });
 
-test("parseMediaFormats handles scalar strings, string arrays, and object arrays", async () => {
-  const { parseMediaFormats } = await import("./album-track-list-navigation-service.js");
-  assert.deepEqual(parseMediaFormats("CD"), ["CD"]);
-  assert.deepEqual(parseMediaFormats('["CD", "Digital Media"]'), ["CD", "Digital Media"]);
-  assert.deepEqual(parseMediaFormats('[{"Format": "Digital Media"}, {"format": "CD"}]'), ["Digital Media", "CD"]);
-  assert.deepEqual(parseMediaFormats(null), []);
+test("initial tracks belong to the default tab's edition", async () => {
+  seedEditionsFixture();
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+    VALUES (1, 10, 'auto', 0, 'test', 1), (1, 20, 'auto', 1, 'test', 1)
+  `).run();
+
+  const page = await MusicBrainzReleaseGroupReadService.getPage("rg-nav-test");
+  assert.ok(page);
+  const defaultTabs = page.trackListTabs?.filter((tab) => tab.default) ?? [];
+  assert.equal(defaultTabs.length, 1);
+  assert.equal(defaultTabs[0].editionId, page.initialTrackListEditionId);
+
+  const editionTracks = await MusicBrainzReleaseGroupReadService.getEditionTracks(
+    "rg-nav-test",
+    page.initialTrackListEditionId!,
+  );
+  assert.deepEqual(
+    page.tracks.map((track) => track.musicbrainz_track_id),
+    editionTracks.map((track) => track.musicbrainz_track_id),
+  );
+});
+
+test("tab resolution is stable across LibraryEditions insertion order", () => {
+  const tabsFor = (insertions: string[]) => {
+    seedEditionsFixture();
+    db.exec(`
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, release_group_mbid, artist_mbid, title, country, media, track_count)
+      VALUES (40, 'rel-partial', 1, 'rg-nav-test', 'artist-1', 'Live Edition', 'US', '["Vinyl"]', 2);
+      INSERT INTO Tracks (id, album_edition_id, release_mbid, recording_id, recording_mbid, medium_position, position, title)
+      VALUES (4001, 40, 'rel-partial', 101, 'rec-101', 1, 1, 'Track 1'), (4002, 40, 'rel-partial', 104, 'rec-104', 1, 2, 'Track 4');
+    `);
+    for (const insertion of insertions) db.exec(insertion);
+    const navInfo = new AlbumTrackListNavigationService(db).getNavigationInfo("rg-nav-test");
+    return {
+      editionIds: navInfo.tabs.map((tab) => tab.editionId).sort((a, b) => a - b),
+      initial: navInfo.initialTrackListEditionId,
+    };
+  };
+
+  const deluxeFirst = tabsFor([
+    "INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version) VALUES (1, 20, 'auto', 1, 'test', 1)",
+    "INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version) VALUES (1, 40, 'auto', 0, 'test', 1)",
+  ]);
+  const liveFirst = tabsFor([
+    "INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version) VALUES (1, 40, 'auto', 0, 'test', 1)",
+    "INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version) VALUES (1, 20, 'auto', 1, 'test', 1)",
+  ]);
+
+  assert.deepEqual(deluxeFirst, liveFirst);
+  assert.deepEqual(deluxeFirst.editionIds, [20, 40]);
+  assert.equal(deluxeFirst.initial, 20);
 });
 
 test("media formats stored as object arrays are parsed correctly in navigation tabs", () => {

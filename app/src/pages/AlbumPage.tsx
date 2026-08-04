@@ -110,6 +110,10 @@ import {
 import {
   ReleaseSwitcher,
 } from "@/pages/album/ReleaseSwitcher";
+import {
+  defaultTrackListEditionId,
+  resolveTrackListTabPresentation,
+} from "@/pages/album/trackListTabPresentation";
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
@@ -590,91 +594,6 @@ const useStyles = makeStyles({
 
 /* ── Album overflow helpers ─────────────────────────────────── */
 
-type AvailabilityRelease = NonNullable<AlbumPageData["releaseAvailability"]>["releases"][number];
-
-/** Parse MB country JSON (`["Japan"]`, `[]`, `[""]`, `["[Worldwide]"]`) into a short label. */
-function editionRegionLabel(country: string | null | undefined): string | null {
-  const text = String(country || "").trim();
-  // Empty / blank MB payloads: [], [""], null, whitespace-only.
-  if (!text || text === "[]" || text === "[\"\"]" || text === "['']" || text === "null") {
-    return null;
-  }
-  let values: string[];
-  try {
-    const parsed = JSON.parse(text);
-    values = Array.isArray(parsed) ? parsed.map(String) : [text];
-  } catch {
-    values = text.split(/[,;|]/);
-  }
-  const cleaned = [...new Set(
-    values
-      .map((value) => value.replace(/^\[+|\]+$/g, "").trim())
-      .filter((value) => value && value.toLowerCase() !== "unknown"),
-  )];
-  if (cleaned.length === 0) return null;
-  const display = (name: string) => {
-    const upper = name.toUpperCase();
-    if (upper === "XW" || /^worldwide$/i.test(name)) return "Worldwide";
-    if (upper === "XE" || /^europe$/i.test(name)) return "Europe";
-    return name;
-  };
-  if (cleaned.length <= 2) return cleaned.map(display).join(", ");
-  return `${cleaned.length} regions`;
-}
-
-/** Digital / CD / Vinyl from MediaBrainz medium format list. */
-function editionMediaLabel(formats: readonly string[] | undefined | null): string | null {
-  if (!formats || formats.length === 0) return null;
-  const short = (format: string) => {
-    const normalized = format.trim();
-    if (!normalized) return null;
-    if (/^digital(\s+media)?$/i.test(normalized)) return "Digital";
-    if (/^cd$/i.test(normalized)) return "CD";
-    if (/vinyl|12"|7"|lp/i.test(normalized)) return "Vinyl";
-    if (/cassette/i.test(normalized)) return "Cassette";
-    return normalized;
-  };
-  const unique = [...new Set(formats.map(short).filter(Boolean) as string[])];
-  return unique.length > 0 ? unique.join(" + ") : null;
-}
-
-/**
- * Track-list tab label for one edition of the same album.
- *
- * Prefer product identity over date noise:
- *   [Edition title if ≠ album title] [disambiguation] · Media · Region · N tracks
- * Empty country JSON (`[]`) and years are never used.
- */
-function editionTabLabel(
-  edition: AvailabilityRelease | undefined,
-  albumTitle?: string | null,
-): string {
-  if (!edition) return "Edition";
-  const album = String(albumTitle || "").trim().toLowerCase();
-  const editionTitle = String(edition.title || "").trim();
-  const disambiguation = String(edition.disambiguation || "").trim();
-  const titlePart = (() => {
-    if (!editionTitle) return disambiguation || null;
-    const titleDiffers = !album || editionTitle.toLowerCase() !== album;
-    if (titleDiffers && disambiguation
-      && !editionTitle.toLowerCase().includes(disambiguation.toLowerCase())) {
-      return `${editionTitle} (${disambiguation})`;
-    }
-    if (titleDiffers) return editionTitle;
-    if (disambiguation) return disambiguation;
-    return null;
-  })();
-  const meta = [
-    editionMediaLabel(edition.mediaFormats),
-    editionRegionLabel(edition.country),
-    edition.trackCount != null && edition.trackCount > 0
-      ? `${edition.trackCount} track${edition.trackCount === 1 ? "" : "s"}`
-      : null,
-  ].filter(Boolean);
-  const parts = [titlePart, ...meta].filter(Boolean) as string[];
-  return parts.length > 0 ? parts.join(" · ") : (editionTitle || "Edition");
-}
-
 const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
 const EMPTY_ASSOCIATED_VIDEOS: AlbumAssociatedVideo[] = [];
 
@@ -731,56 +650,23 @@ const AlbumPage = () => {
   const artistImage = pageData?.artistImage ?? undefined;
 
   /**
-   * The track-list tabs, decided by the API from canonical recording sets.
+   * The track-list tabs, resolved by `/page` from canonical acquisition units.
    *
-   * The API resolves tabs once for the whole album (all libraries): equivalent
-   * sets and nested subsets collapse to one product (strip hidden when ≤1).
-   * Only partial-overlap products (unique tracks on each side) get a strip.
+   * The API collapses equivalent sets and nested subsets to one product (strip
+   * hidden when ≤1) and marks exactly one tab as the list that opens first;
+   * this page only labels and orders them. Availability may enrich the page
+   * with offers and plans, but it must never decide which lists exist — an
+   * Album stays fully navigable while availability is still loading, and it
+   * survives availability failing outright.
+   *
    * Track rows still attach stereo + spatial plan badges via recording identity.
    */
-  const trackListTabs = useMemo(() => {
-    const byEditionId = new Map<number, {
-      editionId: number;
-      label: string;
-      default: boolean;
-      mediaRank: number;
-      trackCount: number;
-    }>();
-    const mediaRankOf = (formats: readonly string[] | undefined | null): number => {
-      const text = (formats || []).join(" ").toLowerCase();
-      if (/digital/.test(text)) return 0;
-      if (/\bcd\b/.test(text)) return 1;
-      if (/vinyl|12"|7"|lp/.test(text)) return 2;
-      if (/cassette/.test(text)) return 3;
-      if (!text.trim()) return 5;
-      return 4;
-    };
-    for (const library of releaseAvailability?.libraries ?? []) {
-      for (const tab of library.trackListTabs) {
-        if (byEditionId.has(tab.editionId)) continue;
-        const edition = releaseAvailability?.releases
-          .find((release) => release.id === tab.editionId);
-        byEditionId.set(tab.editionId, {
-          editionId: tab.editionId,
-          label: editionTabLabel(edition, album?.title),
-          default: tab.default,
-          mediaRank: mediaRankOf(edition?.mediaFormats),
-          trackCount: Number(edition?.trackCount || 0),
-        });
-      }
-    }
-    // Digital (large→small) → CD → Vinyl… Default tab still comes from curation.
-    const tabs = [...byEditionId.values()].sort((left, right) =>
-      left.mediaRank - right.mediaRank
-      || right.trackCount - left.trackCount
-      || left.editionId - right.editionId);
-    return tabs.some((tab) => tab.default) ? tabs : tabs.map((tab, index) => ({
-      ...tab,
-      default: index === 0,
-    }));
-  }, [album?.title, releaseAvailability]);
+  const trackListTabs = useMemo(
+    () => resolveTrackListTabPresentation(pageData?.trackListTabs, album?.title),
+    [album?.title, pageData?.trackListTabs],
+  );
 
-  const defaultTabEditionId = trackListTabs.find((tab) => tab.default)?.editionId ?? null;
+  const defaultTabEditionId = defaultTrackListEditionId(trackListTabs);
   const [selectedTabEditionId, setSelectedTabEditionId] = useState<number | null>(null);
   const activeTabEditionId = trackListTabs.some((tab) => tab.editionId === selectedTabEditionId)
     ? selectedTabEditionId

@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { TrackListTabContract } from "../../contracts/pages.js";
+import { parseMediaFormats } from "./media-formats.js";
 import { loadAcquisitionUnitMapFromDb } from "./recording-coverage-units.js";
 import { resolveTrackListTabs, type TrackListEditionInput } from "./track-list-tabs.js";
 
@@ -8,29 +9,21 @@ export interface AlbumTrackListNavigationInfo {
   initialTrackListEditionId: number | null;
 }
 
-export function parseMediaFormats(mediaRaw: string | null | undefined): string[] {
-  if (!mediaRaw) return [];
-  try {
-    const parsed = JSON.parse(mediaRaw);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .map((item) => {
-          if (typeof item === "string") return item;
-          if (typeof item === "object" && item !== null) {
-            return String((item as any).Format || (item as any).format || (item as any).name || "");
-          }
-          return String(item || "");
-        })
-        .filter(Boolean);
-    }
-    if (typeof parsed === "object" && parsed !== null) {
-      const fmt = String((parsed as any).Format || (parsed as any).format || (parsed as any).name || "");
-      return fmt ? [fmt] : [];
-    }
-    return [String(parsed)];
-  } catch {
-    return [String(mediaRaw)];
-  }
+/** One monitored Edition of the Album, joined across every enabled Library. */
+interface MonitoredEditionRow {
+  edition_id: number;
+  release_mbid: string;
+  title: string;
+  disambiguation: string | null;
+  country: string | null;
+  media: string | null;
+  track_count: number | null;
+  is_representative: number;
+}
+
+interface EditionRecordingRow {
+  album_edition_id: number;
+  recording_id: number;
 }
 
 export class AlbumTrackListNavigationService {
@@ -61,23 +54,16 @@ export class AlbumTrackListNavigationService {
       WHERE edition.release_group_id = ?
       GROUP BY edition.id
       ORDER BY edition.id ASC
-    `).all(releaseGroup.id) as Array<{
-      edition_id: number;
-      release_mbid: string;
-      title: string;
-      disambiguation: string | null;
-      country: string | null;
-      media: string | null;
-      track_count: number | null;
-      is_representative: number;
-    }>;
+    `).all(releaseGroup.id) as MonitoredEditionRow[];
 
     if (monitoredEditions.length === 0) {
       return { tabs: [], initialTrackListEditionId: null };
     }
 
+    // Clean and explicit twins of the same song share one acquisition unit, so
+    // mapping through the unit map is what makes them collapse to one tab.
     const coverageUnitByRecording = loadAcquisitionUnitMapFromDb(this.db);
-    const recordingIdsByEdition = new Map<number, Set<number>>();
+    const acquisitionUnitIdsByEdition = new Map<number, Set<number>>();
 
     for (const row of this.db.prepare(`
       SELECT track.album_edition_id, track.recording_id
@@ -85,44 +71,44 @@ export class AlbumTrackListNavigationService {
       JOIN AlbumEditions edition ON edition.id = track.album_edition_id
       WHERE edition.release_group_id = ?
         AND track.recording_id IS NOT NULL
-    `).all(releaseGroup.id) as Array<{ album_edition_id: number; recording_id: number }>) {
-      const recordingIds = recordingIdsByEdition.get(row.album_edition_id) || new Set<number>();
-      recordingIds.add(
-        coverageUnitByRecording.get(row.recording_id) ?? row.recording_id,
-      );
-      recordingIdsByEdition.set(row.album_edition_id, recordingIds);
+    `).all(releaseGroup.id) as EditionRecordingRow[]) {
+      const unitIds = acquisitionUnitIdsByEdition.get(row.album_edition_id) ?? new Set<number>();
+      unitIds.add(coverageUnitByRecording.get(row.recording_id) ?? row.recording_id);
+      acquisitionUnitIdsByEdition.set(row.album_edition_id, unitIds);
     }
 
-    const inputs: TrackListEditionInput[] = monitoredEditions.map((ed) => ({
-      editionId: ed.edition_id,
-      recordingIds: recordingIdsByEdition.get(ed.edition_id) || new Set<number>(),
-      representative: Boolean(ed.is_representative),
+    const inputs: TrackListEditionInput[] = monitoredEditions.map((edition) => ({
+      editionId: edition.edition_id,
+      recordingIds: acquisitionUnitIdsByEdition.get(edition.edition_id) ?? new Set<number>(),
+      representative: Boolean(edition.is_representative),
     }));
 
-    const resolvedTabs = resolveTrackListTabs(inputs);
-    const monitoredEditionsMap = new Map(monitoredEditions.map((ed) => [ed.edition_id, ed]));
-
-    const tabs: TrackListTabContract[] = resolvedTabs.map((tab) => {
-      const ed = monitoredEditionsMap.get(tab.editionId)!;
-      const mediaFormats = parseMediaFormats(ed.media);
+    const editionById = new Map(monitoredEditions.map((edition) => [edition.edition_id, edition]));
+    const tabs: TrackListTabContract[] = resolveTrackListTabs(inputs).map((tab) => {
+      const edition = editionById.get(tab.editionId);
+      if (!edition) {
+        // resolveTrackListTabs only ever returns ids it was given; a miss means
+        // the two collections have drifted and the page would silently show the
+        // wrong Edition's metadata.
+        throw new Error(
+          `Track-list tab resolved to edition ${tab.editionId}, which is not a monitored edition of ${releaseGroupMbid}`,
+        );
+      }
       return {
-        editionId: ed.edition_id,
-        releaseMbid: ed.release_mbid,
-        title: ed.title,
-        disambiguation: ed.disambiguation ?? null,
-        country: ed.country ?? null,
-        mediaFormats,
-        trackCount: ed.track_count ?? null,
+        editionId: edition.edition_id,
+        releaseMbid: edition.release_mbid,
+        title: edition.title,
+        disambiguation: edition.disambiguation ?? null,
+        country: edition.country ?? null,
+        mediaFormats: parseMediaFormats(edition.media),
+        trackCount: edition.track_count ?? null,
         default: tab.default,
       };
     });
 
-    const defaultTab = tabs.find((t) => t.default) ?? tabs[0] ?? null;
-    const initialTrackListEditionId = defaultTab ? defaultTab.editionId : null;
-
     return {
       tabs,
-      initialTrackListEditionId,
+      initialTrackListEditionId: tabs.find((tab) => tab.default)?.editionId ?? null,
     };
   }
 }
