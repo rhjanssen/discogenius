@@ -368,7 +368,7 @@ function listMusicBrainzReleaseVersions(
             release_date: release.date || releaseGroup.first_release_date || null,
             popularity: undefined,
             quality: null,
-            explicit: false,
+            // Unknown, not clean — see the track contract above.
             is_monitored: Boolean(releaseGroup.wanted),
             version: formatReleaseVersionLabel(release),
             stereo_provider_id: isStereoSelected
@@ -581,7 +581,10 @@ function getReleaseTrackContracts(
             is_downloaded: false,
             is_monitored: isMonitored,
             monitored_lock: false,
-            explicit: false,
+            // MusicBrainz does not record explicitness. Omitting it keeps the
+            // field unknown; asserting false would describe every canonical
+            // track as affirmatively clean. Providers supply the real value on
+            // the plan, which is tri-state.
             album_id: releaseGroupMbid,
             files: [],
         };
