@@ -41,7 +41,6 @@ import {
   Tag24Regular,
   MusicNote224Regular,
   ChevronDown16Regular,
-  CheckmarkCircle16Filled,
   FolderSync24Regular,
   Play24Regular,
   Play24Filled,
@@ -504,20 +503,6 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
-  /** Other-release album cards (square grid, not the video carousel). */
-  carousel: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: tokens.spacingHorizontalS,
-    width: "100%",
-    "@media (min-width: 640px)": {
-      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-      gap: tokens.spacingHorizontalM,
-    },
-    "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-    },
-  },
   videoCardAnchor: {
     minWidth: 0,
     scrollMarginTop: "96px",
@@ -526,16 +511,6 @@ const useStyles = makeStyles({
     width: "32px",
     height: "32px",
     color: tokens.colorNeutralForeground3,
-  },
-  // Edition cards in the "Other releases" grid use the shared card surface
-  // from useCardStyles (components/cards/cardStyles.ts) via MediaCard. This
-  // page-specific key only highlights the edition currently being viewed.
-  currentEdition: {
-    outlineWidth: tokens.strokeWidthThick,
-    outlineStyle: "solid",
-    outlineColor: tokens.colorBrandStroke1,
-    outlineOffset: `calc(-1 * ${tokens.strokeWidthThick})`,
-    borderRadius: tokens.borderRadiusMedium,
   },
   sectionSpacing: {
     marginTop: tokens.spacingVerticalXXL,
@@ -751,7 +726,6 @@ const AlbumPage = () => {
     staleTime: 10_000,
     retry: 1,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
-  const otherVersions = pageData?.otherVersions ?? [];
   const releaseAvailability = pageData?.releaseAvailability ?? null;
   const artistImage = pageData?.artistImage ?? undefined;
 
@@ -1620,65 +1594,6 @@ const AlbumPage = () => {
   }
 
 
-  const renderMiniAlbumCard = (
-    item: {
-      id: string;
-      title: string;
-      cover_id?: string | null;
-      cover?: string | null;
-      quality?: string | null;
-      explicit?: boolean;
-      stereo_provider_id?: string | null;
-      stereo_quality?: string | null;
-      spatial_provider_id?: string | null;
-      spatial_quality?: string | null;
-      provider_cover_id?: string | null;
-      cover_art_url?: string | null;
-    },
-    subtitle: string,
-    itemProgress?: any,
-    options?: { to?: string | null }
-  ) => {
-    const isCurrent = item.id === album?.id;
-    const target = options?.to === undefined ? getAlbumPath(item.id) : options.to ?? undefined;
-    const hasStereoOffer = Boolean(item.stereo_provider_id);
-    const hasSpatialOffer = Boolean(item.spatial_provider_id);
-    const isMatched = hasStereoOffer || hasSpatialOffer;
-
-    const statusBadge = isMatched ? (
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: tokens.colorPaletteGreenBackground3,
-        color: tokens.colorPaletteGreenForeground3,
-        borderRadius: tokens.borderRadiusCircular,
-        padding: tokens.spacingHorizontalXXS,
-        boxShadow: tokens.shadow4,
-      }}>
-        <CheckmarkCircle16Filled style={{ width: "12px", height: "12px" }} />
-      </div>
-    ) : undefined;
-
-    // Quality is surfaced in the library list/table view, not on the card
-    // overlay — keeping it off the card avoids colliding with the monitor button.
-    return (
-      <MediaCard
-        key={item.id}
-        className={isCurrent ? styles.currentEdition : undefined}
-        to={target}
-        imageUrl={mediaCoverSrc(item)}
-        alt={item.title}
-        title={item.title}
-        subtitle={subtitle}
-        explicit={item.explicit}
-        statusBadge={statusBadge}
-        downloadStatus={itemProgress?.state}
-        downloadProgress={itemProgress?.progress}
-        downloadError={itemProgress?.statusMessage}
-      />
-    );
-  };
   return (
     <DynamicBrandProvider keyColor={albumBrandColor}>
       <div className={styles.container}>
@@ -2153,26 +2068,6 @@ const AlbumPage = () => {
               onRevertPlan={handleRevertPlanForLibrary}
               onRemoveEdition={handleRemoveEditionForLibrary}
             />
-          </div>
-        ) : otherVersions.length > 0 ? (
-          <div className={styles.sectionSpacing}>
-            <div className={styles.sectionHeader}>
-              <Title2>Other releases</Title2>
-            </div>
-            <div className={styles.carousel}>
-              {otherVersions.map((version) => {
-                const year = version.release_date ? new Date(version.release_date).getFullYear() : '';
-                const isSelectedEdition = Boolean(version.id) && [
-                  album.stereo_release_mbid,
-                  album.spatial_release_mbid,
-                  album.selected_release_mbid,
-                ].includes(version.id);
-                const subtitle = [isSelectedEdition ? 'Selected edition' : null, version.version, year]
-                  .filter(Boolean)
-                  .join(' · ');
-                return renderMiniAlbumCard(version, subtitle, undefined, { to: null });
-              })}
-            </div>
           </div>
         ) : null}
       </div >
