@@ -13,6 +13,12 @@ import {
 } from "@fluentui/react-components";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import {
+  editionCountLabel,
+  editionMediaLabel,
+  editionMediaRank,
+  editionRegionLabel,
+} from "@/pages/album/editionDisplay";
+import {
   ProviderQualityRow,
   type ProviderQualityOffer,
 } from "@/components/ui/ProviderQualityPill";
@@ -58,111 +64,17 @@ function releaseYear(date?: string | null): string | null {
   return Number.isFinite(year) ? String(year) : date.slice(0, 4) || null;
 }
 
-/** MusicBrainz-style worldwide / non-country pseudo-codes we always surface. */
-const WORLDWIDE_CODES = new Set(["XW", "XE", "XU"]);
-
-function countryDisplayName(code: string): string {
-  const upper = code.trim().toUpperCase();
-  if (!upper) return code;
-  if (upper === "XW") return "Worldwide";
-  if (upper === "XE") return "Europe";
-  if (upper === "XU") return "Unknown / special";
-  try {
-    const names = new Intl.DisplayNames(["en"], { type: "region" });
-    return names.of(upper) || upper;
-  } catch {
-    return upper;
-  }
-}
-
-/**
- * Compact region label for edition meta.
- *
- * - ≤3 codes → full English names (Worldwide / Europe / country names)
- * - more, with a worldwide code → "XW & N regions" (N = non-worldwide count)
- * - more, without worldwide → "N regions"
- */
-function releaseCountryLabel(country?: string | null): string | null {
-  const text = String(country || "").trim();
-  // Empty / blank MB payloads: [], [""], null.
-  if (!text || text === "[]" || text === "[\"\"]" || text === "['']" || text === "null") {
-    return null;
-  }
-  let countries: string[];
-  try {
-    const parsed = JSON.parse(text);
-    countries = Array.isArray(parsed) ? parsed.map(String) : [text];
-  } catch {
-    countries = text.split(/[,;|]/);
-  }
-  const normalized = [...new Set(
-    countries
-      .map((value) => value.replace(/^\[+|\]+$/g, "").trim().toUpperCase())
-      .filter((value) => value && value !== "UNKNOWN"),
-  )];
-  if (normalized.length === 0) return null;
-
-  if (normalized.length <= 3) {
-    return normalized.map(countryDisplayName).join(", ");
-  }
-
-  const worldwide = normalized.filter((code) => WORLDWIDE_CODES.has(code) || code === "XW");
-  const others = normalized.filter((code) => !WORLDWIDE_CODES.has(code) && code !== "XW");
-  if (worldwide.length > 0) {
-    // Prefer the canonical XW token when present; otherwise the first world code.
-    const worldToken = normalized.includes("XW") ? "XW" : worldwide[0];
-    if (others.length === 0) return worldToken === "XW" ? "Worldwide" : countryDisplayName(worldToken);
-    return `${worldToken} & ${others.length} region${others.length === 1 ? "" : "s"}`;
-  }
-  return `${normalized.length} regions`;
-}
-
-function countLabel(count: number | null, singular: string, plural: string): string | null {
-  if (count == null || count <= 0) return null;
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
-/** Short display label for MusicBrainz medium formats. */
-function mediaTypeLabel(formats: readonly string[] | undefined | null): string | null {
-  if (!formats || formats.length === 0) return null;
-  const short = (format: string) => {
-    const normalized = format.trim();
-    if (!normalized) return null;
-    if (/^digital(\s+media)?$/i.test(normalized)) return "Digital";
-    if (/^cd$/i.test(normalized)) return "CD";
-    if (/vinyl|12"|7"|lp/i.test(normalized)) return "Vinyl";
-    if (/cassette/i.test(normalized)) return "Cassette";
-    if (/dvd|blu-?ray/i.test(normalized)) return normalized;
-    return normalized;
-  };
-  const unique = [...new Set(formats.map(short).filter(Boolean) as string[])];
-  if (unique.length === 0) return null;
-  return unique.join(" + ");
-}
-
-/** Lower is better: Digital → CD → Vinyl → Cassette → other. */
-function mediaTypeRank(formats: readonly string[] | undefined | null): number {
-  const label = (mediaTypeLabel(formats) || "").toLowerCase();
-  if (label.includes("digital")) return 0;
-  if (label.includes("cd")) return 1;
-  if (label.includes("vinyl")) return 2;
-  if (label.includes("cassette")) return 3;
-  if (!label) return 5;
-  return 4;
-}
-
 /** Media type · year · disc/track counts · region (status when not Official). */
 function releaseMeta(release: Release): string {
-  const formats = (release as Release & { mediaFormats?: string[] }).mediaFormats;
   const counts = [
-    countLabel(release.mediumCount, "medium", "media"),
-    countLabel(release.trackCount, "track", "tracks"),
+    editionCountLabel(release.mediumCount, "medium", "media"),
+    editionCountLabel(release.trackCount, "track", "tracks"),
   ].filter(Boolean).join(" · ");
   return [
-    mediaTypeLabel(formats),
+    editionMediaLabel(release.mediaFormats),
     releaseYear(release.date),
     counts || null,
-    releaseCountryLabel(release.country),
+    editionRegionLabel(release.country),
     release.status?.toLowerCase() === "official" ? null : release.status,
   ].filter(Boolean).join(" · ");
 }
@@ -668,7 +580,7 @@ export function ReleaseSwitcher({
   const sorted = [...availability.releases].sort((left, right) =>
     Number(selectedReleaseIds.has(right.id)) - Number(selectedReleaseIds.has(left.id))
     || Number(selectableOffers(right).length > 0) - Number(selectableOffers(left).length > 0)
-    || mediaTypeRank(left.mediaFormats) - mediaTypeRank(right.mediaFormats)
+    || editionMediaRank(left.mediaFormats) - editionMediaRank(right.mediaFormats)
     || (right.trackCount || 0) - (left.trackCount || 0)
     || bestQualityRank(right) - bestQualityRank(left)
     || Math.max(0, ...right.offers.map((offer) => offer.confidence))
