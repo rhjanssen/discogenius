@@ -1118,17 +1118,20 @@ export class MusicBrainzReleaseGroupReadService {
 
         const navService = new AlbumTrackListNavigationService(db);
         const navInfo = navService.getNavigationInfo(releaseGroupMbid);
+        const initialRelease = navInfo.initialTrackListEditionId != null
+            ? (db.prepare("SELECT * FROM AlbumEditions WHERE id = ?").get(navInfo.initialTrackListEditionId) as any || release)
+            : release;
 
         return {
             album,
-            tracks: release
-                ? await buildReleaseGroupTrackContracts(releaseGroup, release, album)
+            tracks: initialRelease
+                ? await buildReleaseGroupTrackContracts(releaseGroup, initialRelease, album)
                 : [],
             otherVersions: listMusicBrainzReleaseVersions(releaseGroup, album.cover_id || coverUrl),
             artistPicture: album.album_artists?.[0]?.picture || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
             artistCoverImageUrl: album.album_artists?.[0]?.cover_image_url || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_cover_image_url),
             trackListTabs: navInfo.tabs,
-            initialTrackListEditionId: release ? Number(release.id) : (navInfo.initialTrackListEditionId ?? undefined),
+            initialTrackListEditionId: initialRelease ? Number(initialRelease.id) : undefined,
         };
     }
 

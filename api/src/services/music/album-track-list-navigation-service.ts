@@ -8,6 +8,31 @@ export interface AlbumTrackListNavigationInfo {
   initialTrackListEditionId: number | null;
 }
 
+export function parseMediaFormats(mediaRaw: string | null | undefined): string[] {
+  if (!mediaRaw) return [];
+  try {
+    const parsed = JSON.parse(mediaRaw);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (typeof item === "object" && item !== null) {
+            return String((item as any).Format || (item as any).format || (item as any).name || "");
+          }
+          return String(item || "");
+        })
+        .filter(Boolean);
+    }
+    if (typeof parsed === "object" && parsed !== null) {
+      const fmt = String((parsed as any).Format || (parsed as any).format || (parsed as any).name || "");
+      return fmt ? [fmt] : [];
+    }
+    return [String(parsed)];
+  } catch {
+    return [String(mediaRaw)];
+  }
+}
+
 export class AlbumTrackListNavigationService {
   constructor(private readonly db: Database.Database) {}
 
@@ -79,16 +104,7 @@ export class AlbumTrackListNavigationService {
 
     const tabs: TrackListTabContract[] = resolvedTabs.map((tab) => {
       const ed = monitoredEditionsMap.get(tab.editionId)!;
-      let mediaFormats: string[] = [];
-      if (ed.media) {
-        try {
-          const parsed = JSON.parse(ed.media);
-          if (Array.isArray(parsed)) mediaFormats = parsed.map(String);
-          else mediaFormats = [String(ed.media)];
-        } catch {
-          mediaFormats = [String(ed.media)];
-        }
-      }
+      const mediaFormats = parseMediaFormats(ed.media);
       return {
         editionId: ed.edition_id,
         releaseMbid: ed.release_mbid,

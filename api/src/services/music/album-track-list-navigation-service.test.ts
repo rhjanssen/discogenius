@@ -170,3 +170,30 @@ test("/page and /library-availability return the same navigation tabs", async ()
   );
   assert.equal(page.initialTrackListEditionId, 20);
 });
+
+test("parseMediaFormats handles scalar strings, string arrays, and object arrays", async () => {
+  const { parseMediaFormats } = await import("./album-track-list-navigation-service.js");
+  assert.deepEqual(parseMediaFormats("CD"), ["CD"]);
+  assert.deepEqual(parseMediaFormats('["CD", "Digital Media"]'), ["CD", "Digital Media"]);
+  assert.deepEqual(parseMediaFormats('[{"Format": "Digital Media"}, {"format": "CD"}]'), ["Digital Media", "CD"]);
+  assert.deepEqual(parseMediaFormats(null), []);
+});
+
+test("media formats stored as object arrays are parsed correctly in navigation tabs", () => {
+  seedEditionsFixture();
+  db.prepare(`
+    UPDATE AlbumEditions
+    SET media = '[{"Format": "Digital Media"}]'
+    WHERE id = 10
+  `).run();
+
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+    VALUES (1, 10, 'auto', 1, 'test', 1)
+  `).run();
+
+  const service = new AlbumTrackListNavigationService(db);
+  const navInfo = service.getNavigationInfo("rg-nav-test");
+  assert.equal(navInfo.tabs.length, 1);
+  assert.deepEqual(navInfo.tabs[0].mediaFormats, ["Digital Media"]);
+});
