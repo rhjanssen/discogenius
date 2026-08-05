@@ -186,19 +186,6 @@ async function stubAlbumPageFixtures(page: Page) {
                         monitored_tracks_count: 0,
                     },
                     tracks: trackLists[currentAlbumId as keyof typeof trackLists],
-                        ? [
-                            {
-                                id: relatedAlbumId,
-                                title: relatedAlbumTitle,
-                                artist_name: artistName,
-                                cover_id: null,
-                                release_date: '2024-02-02',
-                                quality: 'LOSSLESS',
-                                explicit: false,
-                                popularity: 80,
-                            },
-                        ]
-                        : [],
                     otherVersions: [],
                     artistPicture: null,
                     artistCoverImageUrl: null,
