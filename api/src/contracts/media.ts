@@ -145,6 +145,11 @@ export type LibraryAcquisitionPlanContract = {
    * Sony 360RA, both of which are the `spatial` tier.
    */
   displayQuality: string | null;
+  /**
+   * Selected-variant counts per canonical tier. The headline is a maximum, so
+   * "1 Max + 9 High" and "10 Max" share it; only this distinguishes them.
+   */
+  qualityHistogram: Record<string, number>;
   explicitContent: "explicit" | "clean" | "unknown";
 };
 
@@ -582,6 +587,16 @@ export function parseLibraryReleaseGroupAvailabilityContract(
                 targetTrackCount: expectNumber(plan.targetTrackCount, `${planLabel}.targetTrackCount`),
                 qualityTier: expectString(plan.qualityTier, `${planLabel}.qualityTier`),
                 displayQuality: expectNullableString(plan.displayQuality, `${planLabel}.displayQuality`) ?? null,
+                qualityHistogram: (() => {
+                  const raw = plan.qualityHistogram;
+                  if (!raw || typeof raw !== "object") return {};
+                  const counts: Record<string, number> = {};
+                  for (const [tier, value] of Object.entries(raw as Record<string, unknown>)) {
+                    const count = Number(value);
+                    if (Number.isFinite(count) && count > 0) counts[tier] = count;
+                  }
+                  return counts;
+                })(),
                 explicitContent: expectString(plan.explicitContent, `${planLabel}.explicitContent`) as "explicit" | "clean" | "unknown",
               };
             };

@@ -8,7 +8,10 @@ import {
   editionExplicitLabelScore,
 } from "./recording-coverage-units.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
-import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
+import {
+  planHeadlineQualitySql,
+  planQualityHistogramSql,
+} from "../../utils/display-quality-sql.js";
 
 export interface LibraryAcquisitionPlanView {
   id: number;
@@ -28,6 +31,28 @@ export interface LibraryAcquisitionPlanView {
   qualityTier: string;
   explicitContent: "explicit" | "clean" | "unknown";
   displayQuality: string | null;
+  /**
+   * Selected-variant counts per canonical tier. The headline is a maximum, so
+   * only this tells "1 Max + 9 High" apart from "10 Max".
+   */
+  qualityHistogram: Record<string, number>;
+}
+
+/** `{"lossless": 9, "hires-lossless": 1}` from the plan-histogram SQL. */
+function parseQualityHistogram(raw: string | null): Record<string, number> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const counts: Record<string, number> = {};
+    for (const [tier, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const count = Number(value);
+      if (Number.isFinite(count) && count > 0) counts[tier] = count;
+    }
+    return counts;
+  } catch {
+    return {};
+  }
 }
 
 export interface LibraryReleaseSelectionView {
@@ -401,21 +426,8 @@ export class LibraryReleaseSelectionService {
           plan.target_track_count,
           plan.quality_tier,
           plan.explicit_content,
-          (
-            SELECT ${planTrackDisplayQualitySql("plan_track", "audio_variant")}
-            FROM AcquisitionPlanTracks plan_track
-            JOIN ProviderItemAudioVariants audio_variant ON audio_variant.id = plan_track.provider_audio_variant_id
-            WHERE plan_track.plan_id = plan.id
-            ORDER BY
-              CASE WHEN LOWER(audio_variant.quality_class) = 'spatial' THEN 0
-                   WHEN LOWER(audio_variant.quality_class) IN ('hires_lossless', 'hires') THEN 1
-                   WHEN LOWER(audio_variant.quality_class) = 'lossless' THEN 2
-                   WHEN LOWER(audio_variant.quality_class) = 'lossy' THEN 3
-                   ELSE 4 END,
-              plan_track.id ASC,
-              audio_variant.id ASC
-            LIMIT 1
-          ) AS display_quality,
+          ${planHeadlineQualitySql("plan.id")} AS display_quality,
+          ${planQualityHistogramSql("plan.id")} AS quality_histogram,
           source.provider_edition_match_id,
           source.role
         FROM AcquisitionPlans plan
@@ -439,6 +451,7 @@ export class LibraryReleaseSelectionService {
         quality_tier: string;
         explicit_content: "explicit" | "clean" | "unknown";
         display_quality: string | null;
+        quality_histogram: string | null;
         provider_edition_match_id: number | null;
         role: "primary" | "supplement" | null;
       }>;
@@ -467,6 +480,7 @@ export class LibraryReleaseSelectionService {
             qualityTier: planRow.quality_tier,
             explicitContent: planRow.explicit_content,
             displayQuality: planRow.display_quality || null,
+            qualityHistogram: parseQualityHistogram(planRow.quality_histogram),
           };
           planViewById.set(planRow.id, view);
           const list = plansByEdition.get(scopeKey) || [];

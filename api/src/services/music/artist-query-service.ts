@@ -22,7 +22,7 @@ import {
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
-import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
+import { planHeadlineQualitySql } from "../../utils/display-quality-sql.js";
 import { ARTIST_TOP_TRACK_LIMIT, ArtistTopTrackService } from "./artist-top-track-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 
@@ -524,15 +524,7 @@ const artistReleaseGroupLibraryStateCte = `
       COALESCE(provider_item.provider, plan.provider) AS selected_provider,
       provider_item.provider_id AS selected_provider_id,
       provider_item.provider_url,
-      (
-          SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
-          FROM AcquisitionPlanTracks plan_track
-          JOIN ProviderItemAudioVariants variant
-            ON variant.id = plan_track.provider_audio_variant_id
-          WHERE plan_track.plan_id = plan.id
-          ORDER BY plan_track.id
-          LIMIT 1
-      ) AS quality,
+      ${planHeadlineQualitySql("plan.id")} AS quality,
       release_match.match_state AS match_status,
       release_match.method AS match_method,
       COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,

@@ -44,3 +44,70 @@ export function planTrackDisplayQualitySql(
     )
   END`;
 }
+
+/**
+ * Rank of one selected variant's tier. Lower is better.
+ *
+ * Written once because it was written four times before, and one of those
+ * copies matched `hires_lossless` while the column stores `hires-lossless`.
+ * That copy sorted every hi-res variant last, so a plan that genuinely
+ * delivered hi-res advertised itself as Lossless.
+ */
+export function variantTierRankSql(variantAlias = "variant"): string {
+  return `CASE LOWER(COALESCE(${variantAlias}.quality_class, ''))
+    WHEN 'spatial' THEN 0
+    WHEN 'hires-lossless' THEN 1
+    WHEN 'hires_lossless' THEN 1
+    WHEN 'hires' THEN 1
+    WHEN 'lossless' THEN 2
+    WHEN 'lossy' THEN 3
+    ELSE 4
+  END`;
+}
+
+/**
+ * The headline quality of one acquisition plan: the best tier any of its
+ * planned tracks actually selected.
+ *
+ * The product rule is "one Max track makes the plan Max", so the headline is a
+ * maximum, not the first row. Album cards used to take `ORDER BY plan_track.id
+ * LIMIT 1` — the *first* track's variant — so the same plan read as Max on the
+ * Album page and High on the Artist page whenever the best track was not
+ * track one.
+ *
+ * The distribution behind this headline is not discarded; see
+ * {@link planQualityHistogramSql}, which ranking uses.
+ */
+export function planHeadlineQualitySql(planIdExpression: string): string {
+  return `(
+    SELECT ${planTrackDisplayQualitySql("headline_track", "headline_variant")}
+    FROM AcquisitionPlanTracks headline_track
+    JOIN ProviderItemAudioVariants headline_variant
+      ON headline_variant.id = headline_track.provider_audio_variant_id
+    WHERE headline_track.plan_id = ${planIdExpression}
+    ORDER BY
+      ${variantTierRankSql("headline_variant")},
+      headline_track.id
+    LIMIT 1
+  )`;
+}
+
+/**
+ * Per-tier counts for one plan, as a JSON object keyed by canonical tier.
+ *
+ * "1 Max + 9 High" and "10 Max" share a headline; only the distribution tells
+ * them apart, and the curation solver ranks on it.
+ */
+export function planQualityHistogramSql(planIdExpression: string): string {
+  return `(
+    SELECT json_group_object(tier, tier_count) FROM (
+      SELECT LOWER(COALESCE(histogram_variant.quality_class, 'unknown')) AS tier,
+             COUNT(*) AS tier_count
+      FROM AcquisitionPlanTracks histogram_track
+      JOIN ProviderItemAudioVariants histogram_variant
+        ON histogram_variant.id = histogram_track.provider_audio_variant_id
+      WHERE histogram_track.plan_id = ${planIdExpression}
+      GROUP BY tier
+    )
+  )`;
+}

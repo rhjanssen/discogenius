@@ -13,7 +13,7 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { AlbumLibraryIndexService } from "./album-library-index-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "../metadata/musicbrainz-artist-credit-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
-import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
+import { planHeadlineQualitySql } from "../../utils/display-quality-sql.js";
 
 const releaseGroupLibraryStateCte = `
   WITH ranked_library_state AS MATERIALIZED (
@@ -40,15 +40,7 @@ const releaseGroupLibraryStateCte = `
       provider_item.id AS selected_provider_item_id,
       provider_item.provider_id AS selected_provider_id,
       provider_item.provider_url,
-      (
-          SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
-          FROM AcquisitionPlanTracks plan_track
-          JOIN ProviderItemAudioVariants variant
-            ON variant.id = plan_track.provider_audio_variant_id
-          WHERE plan_track.plan_id = plan.id
-          ORDER BY plan_track.id
-          LIMIT 1
-      ) AS quality,
+      ${planHeadlineQualitySql("plan.id")} AS quality,
       release_match.match_state AS match_status,
       COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
       COALESCE(CAST(provider_item.popularity AS REAL), 0) AS popularity,
