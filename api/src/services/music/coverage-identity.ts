@@ -111,16 +111,65 @@ export interface RecordingVersion {
   qualifiers: Set<string>;
 }
 
+/**
+ * Catalogues mask profanity inconsistently — "Fuck Me Pumps", "F--- Me Pumps"
+ * and "F*** Me Pumps" are one song written three ways. Masking runs are kept as
+ * a `#` per hidden character so a masked token can still be matched against its
+ * unmasked spelling by length and visible letters, instead of collapsing to a
+ * bare "f" that looks like a different word.
+ */
 function normalizeText(value: string): string {
   return String(value || "")
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
-    .replace(/['’`´]/g, "")
+    .replace(/[\p{Quotation_Mark}\p{Sk}'`]/gu, "")
     .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
+    // A mask only counts inside a word: "f***" and "f---" mask letters, while a
+    // leading or standalone dash is ordinary punctuation.
+    .replace(/([a-z0-9])([*_-]+)(?=[a-z0-9\s]|$)/g, (_m, head: string, mask: string) =>
+      `${head}${"#".repeat(mask.length)}`)
+    .replace(/[^a-z0-9#]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+/** A masked token matches its unmasked spelling: same length, visible letters agree. */
+function tokensMatch(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  let sawMask = false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === b) continue;
+    if (a === "#" || b === "#") { sawMask = true; continue; }
+    return false;
+  }
+  return sawMask;
+}
+
+/** Two normalized titles naming the same work, tolerating masked profanity. */
+export function titlesMatch(left: string, right: string): boolean {
+  if (left === right) return true;
+  const leftTokens = left.split(" ");
+  const rightTokens = right.split(" ");
+  if (leftTokens.length !== rightTokens.length) return false;
+  return leftTokens.every((token, index) => tokensMatch(token, rightTokens[index]));
+}
+
+/**
+ * Candidate-pairing key: the shape of the title, not its letters.
+ *
+ * Masking preserves length by construction, so "fuck me pumps" and
+ * "f### me pumps" share the shape `3:4,2,5` and meet as candidates. Keying on
+ * the letters would put them in different buckets and they would never be
+ * compared. The bucket only proposes pairs — `factsCompatible` still decides,
+ * so a same-shape but unrelated title is rejected there.
+ */
+function titleBucketKey(title: string): string {
+  const tokens = title.split(" ");
+  return `${tokens.length}:${tokens.map((token) => token.length).join(",")}`;
 }
 
 /** Qualifier tokens present in one already-normalized fragment. */
@@ -228,7 +277,7 @@ function recordingFacts(recording: CoverageRecording): RecordingFacts {
 }
 
 function factsCompatible(left: RecordingFacts, right: RecordingFacts): CompatibilityVerdict {
-  if (left.baseTitle !== right.baseTitle) {
+  if (!titlesMatch(left.baseTitle, right.baseTitle)) {
     return { compatible: false, reason: "title_mismatch" };
   }
   if (left.versionKey !== right.versionKey) {
@@ -338,14 +387,22 @@ export function resolveCoverageUnits(
   // Title + duration — the weakest rule, and the reason duration is mandatory
   // here: title alone cannot tell a re-recording from its original.
   const byTitle = new Map<string, number[]>();
+  // Masked titles are rare, so they get their own narrow fan-out rather than
+  // making every candidate pair go through the looser shape key.
+  const byShape = new Map<string, number[]>();
+  const maskedIds: number[] = [];
   for (const recording of byId.values()) {
     if (recording.lengthMs == null || !Number.isFinite(Number(recording.lengthMs))) continue;
     const version = classifyRecordingVersion(recording.title, recording.disambiguation);
     if (!version.baseTitle) continue;
-    const key = `${version.baseTitle} ${[...performanceQualifiers(version)].sort().join(",")}`;
-    const list = byTitle.get(key) || [];
-    list.push(recording.recordingId);
-    byTitle.set(key, list);
+    const qualifierKey = [...performanceQualifiers(version)].sort().join(",");
+
+    const exactKey = `${version.baseTitle} ${qualifierKey}`;
+    byTitle.set(exactKey, [...(byTitle.get(exactKey) ?? []), recording.recordingId]);
+
+    const shapeKey = `${titleBucketKey(version.baseTitle)} ${qualifierKey}`;
+    byShape.set(shapeKey, [...(byShape.get(shapeKey) ?? []), recording.recordingId]);
+    if (version.baseTitle.includes("#")) maskedIds.push(recording.recordingId);
   }
   for (const list of byTitle.values()) {
     const unique = [...new Set(list)].sort((a, b) => a - b);
@@ -353,6 +410,15 @@ export function resolveCoverageUnits(
       for (let j = i + 1; j < unique.length; j += 1) {
         addEdge(unique[i], unique[j], "title_duration");
       }
+    }
+  }
+  // A masked spelling reaches its unmasked twin only through the shape bucket.
+  for (const maskedId of maskedIds) {
+    const recording = byId.get(maskedId)!;
+    const version = classifyRecordingVersion(recording.title, recording.disambiguation);
+    const shapeKey = `${titleBucketKey(version.baseTitle)} ${[...performanceQualifiers(version)].sort().join(",")}`;
+    for (const candidateId of byShape.get(shapeKey) ?? []) {
+      addEdge(maskedId, candidateId, "title_duration");
     }
   }
 

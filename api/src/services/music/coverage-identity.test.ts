@@ -108,6 +108,25 @@ test("compatibility vetoes are title, version and duration", () => {
       compatible: true,
     },
     {
+      name: "masked profanity is the same title, not a different song",
+      left: rec(1, "Fuck Me Pumps", 200000),
+      right: rec(2, "F*** Me Pumps", 200400),
+      compatible: true,
+    },
+    {
+      name: "a dash-masked spelling matches too",
+      left: rec(1, "Fuck Me Pumps", 200000),
+      right: rec(2, "F--- Me Pumps", 200400),
+      compatible: true,
+    },
+    {
+      name: "masking does not make unrelated words equal",
+      left: rec(1, "Bass", 200000),
+      right: rec(2, "B--b", 200400),
+      compatible: false,
+      reason: "title_mismatch",
+    },
+    {
       name: "a title that merely contains a qualifier word keeps its meaning",
       left: rec(1, "Live and Let Die", 200000),
       right: rec(2, "Live and Let Die", 200500),
@@ -137,6 +156,17 @@ test("version classification separates the work from its markers", () => {
     classifyRecordingVersion("Pompeii", "explicit"),
     { baseTitle: "pompeii", qualifiers: new Set(["explicit"]) },
   );
+});
+
+test("masked and unmasked spellings resolve to one coverage unit", () => {
+  // Catalogues censor inconsistently; three spellings of one song must not
+  // become three wanted units the library then tries to acquire separately.
+  const { unitByRecording } = resolveCoverageUnits([
+    rec(1, "Fuck Me Pumps", 200000),
+    rec(2, "F*** Me Pumps", 200400),
+    rec(3, "F--- Me Pumps", 200200),
+  ]);
+  assert.equal(new Set(unitByRecording.values()).size, 1);
 });
 
 test("strongly evidenced duplicate Recordings do collapse", () => {
