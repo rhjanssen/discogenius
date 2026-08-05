@@ -5,7 +5,6 @@ import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { parseMediaFormats } from "./media-formats.js";
 import {
-  loadAcquisitionUnitMapFromDb,
   editionExplicitLabelScore,
 } from "./recording-coverage-units.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";

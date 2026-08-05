@@ -22,10 +22,11 @@ import {
   findUnreachableManualEditionChoices,
   type ManualEditionChoiceAlbum,
 } from "./artist-coverage-optimizer.js";
+import { loadCoverageUnitsForRecordings } from "./coverage-identity-repository.js";
+import type { QuarantinedProviderLink } from "./coverage-identity.js";
 import {
   editionExplicitLabelScore,
   editionExplicitPreferenceRank,
-  loadAcquisitionUnitMapFromDb,
   mapRecordingsToCoverageUnits,
 } from "./recording-coverage-units.js";
 import {
@@ -152,7 +153,6 @@ export class LibraryCurationService {
       ORDER BY release.release_group_id, release.id
     `).all() as ReleaseRow[];
 
-    const coverageUnitByRecording = loadAcquisitionUnitMapFromDb(this.db);
     const preferExplicit = filtering.prefer_explicit !== false;
     const allowedQualities = parseStringArray(library.allowed_source_formats);
     const qualityPlaceholders = allowedQualities.map(() => "?").join(",");
@@ -355,6 +355,31 @@ export class LibraryCurationService {
     const canonicalByRelease = requireProviderAvailability
       ? null
       : this.canonicalRecordingIdsByEdition();
+
+    // Coverage identity is resolved over the Recordings this scope actually
+    // evaluates — the LibraryArtist candidate scope — not the whole catalogue.
+    // Recordings belonging to artists this pass never considers cannot change
+    // which Editions it selects.
+    const scopeRecordingIds = new Set<number>();
+    for (const release of evaluatedEditions) {
+      const recordingIds = (canonicalByRelease ?? attainableByRelease)
+        .get(release.edition_id);
+      for (const recordingId of recordingIds ?? []) scopeRecordingIds.add(recordingId);
+    }
+    const { unitByRecording: coverageUnitByRecording, quarantinedProviderLinks } =
+      loadCoverageUnitsForRecordings(this.db, scopeRecordingIds);
+    if (quarantinedProviderLinks.length > 0) {
+      // Ambiguous provider matches are a matching-data defect, not evidence.
+      // They are excluded from equivalence and named so they can be fixed.
+      console.warn(
+        `[LibraryCuration] ${quarantinedProviderLinks.length} provider track item(s) ` +
+        "matched incompatible recordings and were excluded from coverage equivalence: " +
+        quarantinedProviderLinks
+          .slice(0, 5)
+          .map((link: QuarantinedProviderLink) => `${link.provider}:${link.providerTrackItemId}`)
+          .join(", "),
+      );
+    }
 
     const allCandidates: CurationEditionCandidate[] = [];
     for (const release of evaluatedEditions) {

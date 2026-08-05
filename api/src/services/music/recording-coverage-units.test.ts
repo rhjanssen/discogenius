@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolveCoverageUnits, type CoverageRecording } from "./coverage-identity.js";
 import {
-  buildRecordingCoverageUnitMap,
   editionExplicitLabelScore,
   editionExplicitPreferenceRank,
   mapRecordingsToCoverageUnits,
@@ -9,12 +9,31 @@ import {
 } from "./recording-coverage-units.js";
 import { curateLibraryReleases, type CurationEditionCandidate } from "./library-curation-planner.js";
 
+/**
+ * The old whole-database union-find is gone; these cases now exercise the
+ * scoped, conservative resolver that replaced it. Signature-compatible shim so
+ * each case keeps stating what it always stated.
+ */
+function buildRecordingCoverageUnitMap(
+  recordings: readonly CoverageRecording[],
+  providerLinks: ReadonlyArray<{ recordingIds: readonly number[] }> = [],
+): Map<number, number> {
+  return resolveCoverageUnits(
+    recordings,
+    providerLinks.map((link, index) => ({
+      provider: "test",
+      providerTrackItemId: index + 1,
+      recordingIds: link.recordingIds,
+    })),
+  ).unitByRecording;
+}
+
 test("normalizeCoverageTitle collapses punctuation and case", () => {
   assert.equal(normalizeCoverageTitle("Plug In…"), "plug in");
   assert.equal(normalizeCoverageTitle("No Bad Days"), "no bad days");
 });
 
-test("buildRecordingCoverageUnitMap pairs clean/explicit twins by title+near duration", () => {
+test("coverage units pair clean/explicit twins by title+near duration", () => {
   const unitByRecording = buildRecordingCoverageUnitMap([
     { recordingId: 10, title: "No Bad Days", lengthMs: 185379 },
     { recordingId: 11, title: "No Bad Days", lengthMs: 185379 },
@@ -55,9 +74,11 @@ test("shared ISRC collapses two recording MBIDs into one unit", () => {
   assert.equal(unitByRecording.get(10), unitByRecording.get(11));
 });
 
-test("shared provider track collapses Japan studio MBID onto deluxe MBID", () => {
-  // Frank-shaped: different titles/lengths fail soft pairing, but both accepted
-  // matches point at the same provider track item.
+test("a corroborating provider track does not change a catalogue-proven merge", () => {
+  // Frank-shaped: the two region MBIDs are the same work at the same length, so
+  // catalogue evidence already proves the pair. The shared provider track item
+  // agrees with that conclusion; it is not what reaches it, and the unrelated
+  // remix stays out however the provider matched.
   const unitByRecording = buildRecordingCoverageUnitMap(
     [
       { recordingId: 100, title: "Know You Now", lengthMs: 184253 },

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import type { TrackListTabContract } from "../../contracts/pages.js";
 import { parseMediaFormats } from "./media-formats.js";
-import { loadAcquisitionUnitMapFromDb } from "./recording-coverage-units.js";
+import { loadCoverageUnitsForRecordings } from "./coverage-identity-repository.js";
 import { resolveTrackListTabs, type TrackListEditionInput } from "./track-list-tabs.js";
 
 export interface AlbumTrackListNavigationInfo {
@@ -60,20 +60,25 @@ export class AlbumTrackListNavigationService {
       return { tabs: [], initialTrackListEditionId: null };
     }
 
-    // Clean and explicit twins of the same song share one acquisition unit, so
-    // mapping through the unit map is what makes them collapse to one tab.
-    const coverageUnitByRecording = loadAcquisitionUnitMapFromDb(this.db);
-    const acquisitionUnitIdsByEdition = new Map<number, Set<number>>();
-
-    for (const row of this.db.prepare(`
+    const editionRecordingRows = this.db.prepare(`
       SELECT track.album_edition_id, track.recording_id
       FROM Tracks track
       JOIN AlbumEditions edition ON edition.id = track.album_edition_id
       WHERE edition.release_group_id = ?
         AND track.recording_id IS NOT NULL
-    `).all(releaseGroup.id) as EditionRecordingRow[]) {
+    `).all(releaseGroup.id) as EditionRecordingRow[];
+
+    // Coverage identity is resolved over this Album's Recordings only. Clean and
+    // explicit twins of one performance still collapse to a single tab; nothing
+    // outside the Album can change that, and nothing outside it is loaded.
+    const { unitByRecording } = loadCoverageUnitsForRecordings(
+      this.db,
+      editionRecordingRows.map((row) => row.recording_id),
+    );
+    const acquisitionUnitIdsByEdition = new Map<number, Set<number>>();
+    for (const row of editionRecordingRows) {
       const unitIds = acquisitionUnitIdsByEdition.get(row.album_edition_id) ?? new Set<number>();
-      unitIds.add(coverageUnitByRecording.get(row.recording_id) ?? row.recording_id);
+      unitIds.add(unitByRecording.get(row.recording_id) ?? row.recording_id);
       acquisitionUnitIdsByEdition.set(row.album_edition_id, unitIds);
     }
 
