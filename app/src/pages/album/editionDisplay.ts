@@ -13,9 +13,23 @@
 /** MusicBrainz-style worldwide / non-country pseudo-codes we always surface. */
 const WORLDWIDE_CODES = new Set(["XW", "XE", "XU"]);
 
-export function countryDisplayName(code: string): string {
-  const upper = code.trim().toUpperCase();
-  if (!upper) return code;
+/** ISO-shaped tokens ("DE", "XW") vs values already stored as names ("Germany"). */
+const COUNTRY_CODE_PATTERN = /^[A-Za-z]{2,3}$/;
+
+/**
+ * The `country` column holds ISO codes from the Servarr metadata mirror but
+ * full English names from a local MusicBrainz mirror, so both have to survive
+ * this. Uppercasing a name to look up a code turns "Germany" into "GERMANY".
+ */
+export function countryDisplayName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!COUNTRY_CODE_PATTERN.test(trimmed)) {
+    if (/^worldwide$/i.test(trimmed)) return "Worldwide";
+    if (/^europe$/i.test(trimmed)) return "Europe";
+    return trimmed;
+  }
+  const upper = trimmed.toUpperCase();
   if (upper === "XW") return "Worldwide";
   if (upper === "XE") return "Europe";
   if (upper === "XU") return "Unknown / special";
@@ -25,6 +39,13 @@ export function countryDisplayName(code: string): string {
   } catch {
     return upper;
   }
+}
+
+/** Worldwide pseudo-code, whether stored as `XW` or spelled out. */
+function isWorldwide(value: string): boolean {
+  const trimmed = value.trim();
+  return WORLDWIDE_CODES.has(trimmed.toUpperCase())
+    || /^(worldwide|europe)$/i.test(trimmed);
 }
 
 /**
@@ -49,24 +70,30 @@ export function editionRegionLabel(country?: string | null): string | null {
   } catch {
     countries = text.split(/[,;|]/);
   }
-  const normalized = [...new Set(
-    countries
-      .map((value) => value.replace(/^\[+|\]+$/g, "").trim().toUpperCase())
-      .filter((value) => value && value !== "UNKNOWN"),
-  )];
+  // Deduplicate case-insensitively without destroying the casing of values that
+  // are already display names.
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const raw of countries) {
+    const value = raw.replace(/^\[+|\]+$/g, "").trim();
+    if (!value || /^unknown$/i.test(value)) continue;
+    const key = value.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(value);
+  }
   if (normalized.length === 0) return null;
 
   if (normalized.length <= 3) {
     return normalized.map(countryDisplayName).join(", ");
   }
 
-  const worldwide = normalized.filter((code) => WORLDWIDE_CODES.has(code));
-  const others = normalized.filter((code) => !WORLDWIDE_CODES.has(code));
+  const worldwide = normalized.filter(isWorldwide);
+  const others = normalized.filter((value) => !isWorldwide(value));
   if (worldwide.length > 0) {
-    // Prefer the canonical XW token when present; otherwise the first world code.
-    const worldToken = normalized.includes("XW") ? "XW" : worldwide[0];
-    if (others.length === 0) return worldToken === "XW" ? "Worldwide" : countryDisplayName(worldToken);
-    return `${worldToken} & ${others.length} region${others.length === 1 ? "" : "s"}`;
+    const worldLabel = countryDisplayName(worldwide[0]);
+    if (others.length === 0) return worldLabel;
+    return `${worldLabel} & ${others.length} region${others.length === 1 ? "" : "s"}`;
   }
   return `${normalized.length} regions`;
 }
