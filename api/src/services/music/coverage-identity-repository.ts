@@ -9,6 +9,7 @@
  * a caller states which Recordings the question is about, and adding unrelated
  * Recordings to the database cannot change either the answer or the cost.
  */
+import type Database from "better-sqlite3";
 import {
   resolveCoverageUnits,
   type CoverageRecording,
@@ -16,12 +17,6 @@ import {
   type ProviderTrackLink,
 } from "./coverage-identity.js";
 import { parseRecordingIsrcs } from "./recording-coverage-units.js";
-
-/** Minimal better-sqlite3 surface. */
-type SqliteLike = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  prepare: (sql: string) => { all: (...args: any[]) => any[] };
-};
 
 interface RecordingRow {
   id: number;
@@ -61,7 +56,7 @@ function chunked<T>(values: readonly T[], size = CHUNK): T[][] {
  * accepted matches disagree — they never create equivalence.
  */
 export function loadCoverageUnitsForRecordings(
-  db: SqliteLike,
+  db: Database.Database,
   recordingIds: Iterable<number>,
 ): CoverageUnitResolution {
   const ids = [...new Set(
