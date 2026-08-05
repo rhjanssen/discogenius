@@ -261,69 +261,103 @@ function listMusicBrainzReleaseVersions(
     const imageUrl = coverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
     const providerCoverUrl = chooseReleaseGroupProviderArtwork(releaseGroup);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
+    // Both the slot and the badge used to be correlated subqueries evaluated once
+    // per accepted match — each one walking AcquisitionPlanSources →
+    // SelectedAcquisitionPlans → plan tracks/libraries for a single row, and the
+    // ORDER BY then re-read the correlated result. On a library with ~1300
+    // artists that cost 28s inside a single album page load, on the one thread
+    // better-sqlite3 shares with every other request.
+    //
+    // Anchoring on this release group's matches first and folding each fact in
+    // one pass keeps the same answers and the same ordering.
     const providerOffers = db.prepare(`
+      WITH release_group_matches AS (
+        SELECT
+          release_match.id AS match_id,
+          release_match.match_state,
+          release_match.confidence,
+          provider_item.provider,
+          provider_item.provider_id,
+          release.mbid AS release_mbid
+        FROM Albums release_group
+        JOIN AlbumEditions release
+          ON release.release_group_id = release_group.id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.edition_id = release.id
+         AND release_match.match_state = 'accepted'
+        JOIN ProviderItems provider_item
+          ON provider_item.id = release_match.provider_edition_item_id
+        WHERE release_group.mbid = ?
+      ),
+      -- Matches acquired by a library whose profile allows spatial sources.
+      spatial_matches AS (
+        SELECT DISTINCT source.provider_edition_match_id AS match_id
+        FROM release_group_matches
+        JOIN AcquisitionPlanSources source
+          ON source.provider_edition_match_id = release_group_matches.match_id
+        JOIN SelectedAcquisitionPlans plan
+          ON plan.id = source.plan_id
+         AND plan.state = 'current'
+        JOIN LibraryEditions library_release
+          ON library_release.id = plan.library_edition_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        JOIN json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
+          ON allowed.value = 'spatial'
+      ),
+      -- Best display quality per match, from the variant each planned track selected.
+      ranked_match_quality AS (
+        SELECT
+          source.provider_edition_match_id AS match_id,
+          ${planTrackDisplayQualitySql("plan_track", "variant")} AS quality,
+          ROW_NUMBER() OVER (
+            PARTITION BY source.provider_edition_match_id
+            ORDER BY
+              CASE variant.quality_class
+                WHEN 'spatial' THEN 0
+                WHEN 'hires-lossless' THEN 1
+                WHEN 'lossless' THEN 2
+                ELSE 3
+              END,
+              plan_track.id
+          ) AS quality_rank
+        FROM release_group_matches
+        JOIN AcquisitionPlanSources source
+          ON source.provider_edition_match_id = release_group_matches.match_id
+        JOIN SelectedAcquisitionPlans plan
+          ON plan.id = source.plan_id
+         AND plan.state = 'current'
+        JOIN AcquisitionPlanTracks plan_track
+          ON plan_track.plan_id = plan.id
+        JOIN ProviderItemAudioVariants variant
+          ON variant.id = plan_track.provider_audio_variant_id
+      )
       SELECT
-        provider_item.provider,
-        provider_item.provider_id,
-        release.mbid AS release_mbid,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM AcquisitionPlanSources source
-          JOIN SelectedAcquisitionPlans plan
-            ON plan.id = source.plan_id
-           AND plan.state = 'current'
-          JOIN LibraryEditions library_release
-            ON library_release.id = plan.library_edition_id
-          JOIN Libraries library
-            ON library.id = library_release.library_id
-          JOIN quality_profiles quality_profile
-            ON quality_profile.id = library.quality_profile_id
-          JOIN json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
-          WHERE source.provider_edition_match_id = release_match.id
-            AND allowed.value = 'spatial'
-        ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-        (
-          SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
-          FROM AcquisitionPlanSources source
-          JOIN SelectedAcquisitionPlans plan
-            ON plan.id = source.plan_id
-           AND plan.state = 'current'
-          JOIN AcquisitionPlanTracks plan_track
-            ON plan_track.plan_id = plan.id
-          JOIN ProviderItemAudioVariants variant
-            ON variant.id = plan_track.provider_audio_variant_id
-          WHERE source.provider_edition_match_id = release_match.id
-          ORDER BY
-            CASE variant.quality_class
-              WHEN 'spatial' THEN 0
-              WHEN 'hires-lossless' THEN 1
-              WHEN 'lossless' THEN 2
-              ELSE 3
-            END,
-            plan_track.id
-          LIMIT 1
-        ) AS quality,
-        release_match.match_state AS match_status,
-        release_match.confidence AS match_confidence
-      FROM ProviderEditionMatches release_match
-      JOIN ProviderItems provider_item
-        ON provider_item.id = release_match.provider_edition_item_id
-      JOIN AlbumEditions release
-        ON release.id = release_match.edition_id
-      JOIN Albums release_group
-        ON release_group.id = release.release_group_id
-      WHERE release_group.mbid = ?
-        AND release_match.match_state = 'accepted'
+        release_group_matches.provider,
+        release_group_matches.provider_id,
+        release_group_matches.release_mbid,
+        CASE WHEN spatial_matches.match_id IS NOT NULL THEN 'spatial' ELSE 'stereo' END AS library_class,
+        match_quality.quality AS quality,
+        release_group_matches.match_state AS match_status,
+        release_group_matches.confidence AS match_confidence
+      FROM release_group_matches
+      LEFT JOIN spatial_matches
+        ON spatial_matches.match_id = release_group_matches.match_id
+      LEFT JOIN ranked_match_quality match_quality
+        ON match_quality.match_id = release_group_matches.match_id
+       AND match_quality.quality_rank = 1
       ORDER BY
-        release_match.confidence DESC,
-        CASE UPPER(COALESCE(quality, ''))
+        release_group_matches.confidence DESC,
+        CASE UPPER(COALESCE(match_quality.quality, ''))
           WHEN 'HIRES_LOSSLESS' THEN 0
           WHEN 'HI_RES_LOSSLESS' THEN 0
           WHEN 'DOLBY_ATMOS' THEN 0
           WHEN 'LOSSLESS' THEN 1
           ELSE 2
         END ASC,
-        provider_item.provider_id ASC
+        release_group_matches.provider_id ASC
     `).all(releaseGroup.mbid) as Array<{
         provider: string | null;
         provider_id: string | number | null;
