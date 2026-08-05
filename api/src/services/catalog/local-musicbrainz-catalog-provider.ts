@@ -42,6 +42,11 @@ import {
   type MbRelease,
   type MbRecording,
 } from "./musicbrainz-ws-mapping.js";
+import {
+  MbHttpError,
+  withBoundedMbRetry,
+  type BoundedRetryOptions,
+} from "./mb-transient-retry.js";
 
 /** Minimal HTTP transport so tests can inject a fixture fetcher (no live net). */
 export type JsonFetcher = <T>(path: string) => Promise<T>;
@@ -53,9 +58,23 @@ export interface LocalMusicBrainzCatalogProviderOptions {
   fetcher?: JsonFetcher;
   /** Per-request timeout in ms. */
   timeoutMs?: number;
+  /**
+   * Bounded retry for a momentarily busy mirror. Applies to whatever fetcher is
+   * configured, so tests can drive it with an injected failing transport.
+   */
+  retry?: BoundedRetryOptions;
 }
 
 const DEFAULT_BASE_URL = "http://localhost:5000/ws/2";
+
+/** `Retry-After` is seconds or an HTTP date; anything else means "no advice". */
+function parseRetryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header.trim());
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const at = Date.parse(header);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
 
 export class LocalMusicBrainzCatalogProvider implements CatalogProvider {
   readonly id = "musicbrainz-local";
@@ -68,7 +87,23 @@ export class LocalMusicBrainzCatalogProvider implements CatalogProvider {
   constructor(options: LocalMusicBrainzCatalogProviderOptions = {}) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
     this.timeoutMs = options.timeoutMs ?? 15_000;
-    this.fetchJson = options.fetcher ?? ((path) => this.defaultFetchJson(path));
+    const transport: JsonFetcher = options.fetcher ?? ((path) => this.defaultFetchJson(path));
+    // Every read goes through the same bounded retry: a mirror that is busy for
+    // a moment must not fail an artist intake, and one that is actually down
+    // must still fail it — see mb-transient-retry.ts.
+    this.fetchJson = <T>(path: string) => withBoundedMbRetry<T>(
+      () => transport<T>(path),
+      `MB-local ${path}`,
+      {
+        onRetry: ({ attempt, attempts, delayMs, error }) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          console.warn(
+            `[MB-local] ${path} attempt ${attempt}/${attempts} failed (${reason}); retrying in ${delayMs}ms`,
+          );
+        },
+        ...options.retry,
+      },
+    );
   }
 
   private async defaultFetchJson<T>(path: string): Promise<T> {
@@ -80,7 +115,12 @@ export class LocalMusicBrainzCatalogProvider implements CatalogProvider {
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) {
-      throw new Error(`MB-local API ${path} failed: ${res.status} ${res.statusText}`);
+      throw new MbHttpError(
+        `MB-local API ${path} failed: ${res.status} ${res.statusText}`,
+        res.status,
+        path,
+        parseRetryAfterMs(res.headers.get("retry-after")),
+      );
     }
     return res.json() as Promise<T>;
   }
