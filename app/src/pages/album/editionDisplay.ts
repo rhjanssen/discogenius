@@ -51,8 +51,8 @@ function isWorldwide(value: string): boolean {
 /**
  * Compact region label for edition meta.
  *
- * - ≤3 codes → full English names (Worldwide / Europe / country names)
- * - more, with a worldwide code → "XW & N regions" (N = non-worldwide count)
+ * - ≤3 regions → full English names (Worldwide / Europe / country names)
+ * - more, with a worldwide region → "Worldwide & N regions" (N = the rest)
  * - more, without worldwide → "N regions"
  *
  * `country` arrives as the raw MusicBrainz column, which is JSON (`["BE"]`) far
