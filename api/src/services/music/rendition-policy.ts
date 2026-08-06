@@ -30,6 +30,16 @@ export type ProviderExplicitness = "explicit" | "clean" | "unknown";
 export type EditionRendition = "explicit" | "clean" | "unlabelled";
 
 /**
+ * The channel format an Edition is mixed for.
+ *
+ * Coverage identity treats a Dolby Atmos mix and its stereo counterpart as one
+ * *wanted* song — two libraries, one song. Acquisition must still not fill a
+ * "Dolby Atmos mix" Edition from a stereo source, exactly as it must not fill a
+ * clean Edition from an explicit one.
+ */
+export type EditionMixFormat = "spatial" | "unlabelled";
+
+/**
  * How automatic acquisition treats an explicitness fact.
  *
  * This is a *policy projection*, not a newly established fact: `null` may mean
@@ -85,6 +95,31 @@ function attributeSegments(text: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Channel-format markers as the corpus writes them.
+ *
+ * Same mining, same shape: these occupy a whole attribute segment, and they
+ * combine with rendition markers in one comment — `dolby atmos mix, explicit`
+ * (280 releases). Observed frequencies across MusicBrainz recordings:
+ * `dolby atmos mix` 11806, `5.1 mix` 2737, `360 reality audio mix` 1411,
+ * `dolby atmos` 395, `quadraphonic` 361, `5.1 surround mix` 229,
+ * `quadraphonic mix` 193, `5.1 surround sound` 172, `5.1 audio` 137.
+ *
+ * A trailing-word allowance covers the medium variants — `quadraphonic vinyl
+ * lp` (41) and `quadraphonic 8-track` (32) are still quadraphonic.
+ */
+const SPATIAL_SEGMENT = new RegExp(
+  [
+    "^(?:dolby\\s+)?atmos(?:\\s+mix)?$",
+    "^360\\s+reality\\s+audio(?:\\s+mix)?$",
+    "^[57][.\\s]1(?:\\s+(?:mix|audio|surround(?:\\s+(?:mix|sound))?))?$",
+    "^quadraphonic(?:\\s+\\S.*)?$",
+    "^(?:spatial(?:\\s+audio)?|surround)(?:\\s+(?:mix|sound|audio))?$",
+    "^(?:binaural|ambisonic|auro\\s*3d)(?:\\s+mix)?$",
+  ].join("|"),
+  "i",
+);
+
 /** Bracketed segments of a title: `Song (Clean Bandit remix) [Explicit]`. */
 function bracketedSegments(title: string): string[] {
   const segments: string[] = [];
@@ -121,6 +156,43 @@ export function editionRendition(
     if (CLEAN_SEGMENT.test(segment)) return "clean";
   }
   return "unlabelled";
+}
+
+/**
+ * Which channel format the catalogue says this Edition is mixed for.
+ *
+ * Unlabelled means stereo in practice — the overwhelming default — but it is
+ * reported as unlabelled so the caller decides, and so a library whose profile
+ * allows spatial is not blocked from an unlabelled Edition that happens to
+ * carry a spatial offer.
+ */
+export function editionMixFormat(
+  title: string | null | undefined,
+  disambiguation: string | null | undefined,
+): EditionMixFormat {
+  for (const segment of attributeSegments(disambiguation ?? "")) {
+    if (SPATIAL_SEGMENT.test(segment)) return "spatial";
+  }
+  for (const segment of bracketedSegments(title ?? "")) {
+    if (SPATIAL_SEGMENT.test(segment)) return "spatial";
+  }
+  return "unlabelled";
+}
+
+/**
+ * May a plan of this quality tier fill an Edition of this channel format?
+ *
+ * A spatial-labelled Edition takes only a spatial plan. An unlabelled Edition
+ * takes either — the library's own quality profile already decides which
+ * source formats it accepts, and duplicating that here would stop a
+ * spatial-capable library from using an unlabelled Edition.
+ */
+export function planEligibleForMixFormat(
+  planQualityTier: string | null | undefined,
+  mixFormat: EditionMixFormat,
+): boolean {
+  if (mixFormat === "unlabelled") return true;
+  return String(planQualityTier || "").toLowerCase() === "spatial";
 }
 
 /**

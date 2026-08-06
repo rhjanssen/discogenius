@@ -9,8 +9,10 @@ import {
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import {
+  editionMixFormat,
   editionRendition,
   planEligibleForEdition,
+  planEligibleForMixFormat,
 } from "./rendition-policy.js";
 
 const QUALITY_VALUES = new Set<NormalizedAudioQuality>([
@@ -94,15 +96,21 @@ interface CandidateRow {
  * outcome when nothing compatible exists is no plan at all.
  */
 export function eligiblePlansForEdition<
-  T extends { explicitContent: "explicit" | "clean" | "unknown" },
+  T extends {
+    explicitContent: "explicit" | "clean" | "unknown";
+    qualityTier?: string | null;
+  },
 >(
   plans: readonly T[],
   editionTitle: string | null | undefined,
   editionDisambiguation: string | null | undefined,
 ): T[] {
   const rendition = editionRendition(editionTitle, editionDisambiguation);
-  if (rendition === "unlabelled") return [...plans];
-  return plans.filter((plan) => planEligibleForEdition(plan.explicitContent, rendition));
+  const mixFormat = editionMixFormat(editionTitle, editionDisambiguation);
+  if (rendition === "unlabelled" && mixFormat === "unlabelled") return [...plans];
+  return plans.filter((plan) =>
+    planEligibleForEdition(plan.explicitContent, rendition)
+    && planEligibleForMixFormat(plan.qualityTier, mixFormat));
 }
 
 export class AcquisitionPlanningService {

@@ -98,6 +98,27 @@ const PERFORMANCE_QUALIFIERS = [
 ] as const;
 
 /**
+ * Channel/mix formats: the same performance rendered for different speakers.
+ *
+ * A Dolby Atmos mix of a song is that song, so the Library wants it once — the
+ * Stereo and Spatial libraries are two places to put one wanted song, not two
+ * songs. Acquisition still keeps them apart, because sourcing is anchored on
+ * exact Recording identity and a spatial-labelled Edition will not accept a
+ * stereo plan (see rendition-policy.ts).
+ *
+ * Normalised spellings, so "5.1 mix" appears here as "5 1 mix". Frequencies are
+ * from the full MusicBrainz corpus.
+ */
+const MIX_FORMAT_QUALIFIERS = [
+  "dolby atmos mix", "dolby atmos", "atmos mix", "atmos",   // 11806 / 395 / 9
+  "360 reality audio mix", "360 reality audio",             // 1411
+  "5 1 mix", "5 1 surround mix", "5 1 surround sound", "5 1 audio", // 2737 / 229
+  "7 1 mix", "quadraphonic mix", "quadraphonic",            // 193 / 361
+  "surround mix", "surround sound", "surround",
+  "binaural", "ambisonic", "auro 3d",
+] as const;
+
+/**
  * Qualifiers that describe packaging or mastering rather than the performance.
  * Two Recordings may still be one performance across these — clean/explicit
  * twins are the case this exists for.
@@ -106,6 +127,7 @@ const NEUTRAL_QUALIFIERS = new Set([
   "remaster", "remastered", "remasterd", "mono", "stereo", "explicit", "clean",
   "album version", "original", "original version", "original mix", "bonus track",
   "deluxe", "digital", "single", "edit version",
+  ...MIX_FORMAT_QUALIFIERS,
 ]);
 
 /** `Title (live at X) [remix]` → base `title`, qualifiers `live`, `remix`. */
@@ -181,6 +203,12 @@ function titleBucketKey(title: string): string {
 /** Qualifier tokens present in one already-normalized fragment. */
 function qualifiersIn(fragment: string): string[] {
   const found: string[] = [];
+  // Longest first: "dolby atmos mix" must win over the bare "mix" inside it,
+  // or a format difference would read as a different performance.
+  for (const qualifier of MIX_FORMAT_QUALIFIERS) {
+    const pattern = new RegExp(`(^| )${qualifier}( |$)`);
+    if (pattern.test(fragment)) return [qualifier];
+  }
   for (const qualifier of PERFORMANCE_QUALIFIERS) {
     // Word-boundary match so "edit" does not fire inside "editorial".
     const pattern = new RegExp(`(^| )${qualifier.replace(/ /g, " ")}( |$)`);
