@@ -32,6 +32,7 @@ import {
 } from "./acquisition-plan-optimizer.js";
 import {
   getMusicBrainzReleaseGroupIncludeDecision,
+  isReleaseStatusIncluded,
   parseMusicBrainzSecondaryTypes,
 } from "../metadata/musicbrainz-release-group-filter.js";
 
@@ -386,9 +387,15 @@ export class LibraryCurationService {
         rawAttainable,
         coverageUnitByRecording,
       );
-      const eligible = requireProviderAvailability
+      // Release status is Edition eligibility for *automatic* curation only.
+      // An excluded Edition is skipped as a candidate here and nowhere else: it
+      // stays in the database, stays on the Album page, and stays usable as
+      // matching evidence — and `isProtected` below lets a manual or locked
+      // selection keep it, exactly as it already overrides availability.
+      const statusEligible = isReleaseStatusIncluded(release.status, filtering);
+      const eligible = statusEligible && (requireProviderAvailability
         ? viableEditionIds.has(release.edition_id)
-        : true;
+        : true);
       const isProtected = lockedEditionIds.has(release.edition_id) || manualEditionIds.has(release.edition_id);
       if (!eligible && !isProtected) continue;
 

@@ -59,7 +59,12 @@ const primaryReleaseTypeRows = [
     { key: "include_ep", title: "EPs" },
     { key: "include_single", title: "Singles" },
     { key: "include_broadcast", title: "Broadcasts" },
-    { key: "include_other", title: "Other primary types" },
+    // MusicBrainz's own "Other" type, not a catch-all — an editor chose it.
+    { key: "include_other", title: "Other" },
+    // Release Groups MusicBrainz has not typed, or typed with something this
+    // build does not know. Kept apart from "Other" because they are different
+    // questions: one is a classification, the other is its absence.
+    { key: "include_unknown_type", title: "Untyped or unrecognised" },
 ] as const;
 
 const secondaryReleaseTypeRows = [
@@ -70,6 +75,32 @@ const secondaryReleaseTypeRows = [
     { key: "include_dj_mix", title: "DJ-mix" },
     { key: "include_mixtape_street", title: "Mixtape/Street" },
     { key: "include_demo", title: "Demo" },
+    // The rest of MusicBrainz's taxonomy. These were previously excluded with
+    // no way to see or change it; they stay off by default because they are
+    // not music, but the choice is now the user's.
+    { key: "include_spokenword", title: "Spokenword" },
+    { key: "include_audiobook", title: "Audiobook" },
+    { key: "include_audio_drama", title: "Audio drama" },
+    { key: "include_interview", title: "Interview" },
+    { key: "include_field_recording", title: "Field recording" },
+] as const;
+
+/**
+ * MusicBrainz release statuses. Unlike the type rows above, these decide which
+ * *Editions* automatic curation may pick — a Release Group stays in the
+ * discography while it has one eligible Edition, and an excluded Edition is
+ * still listed, still usable as matching evidence, and still monitorable by
+ * hand.
+ */
+const releaseStatusRows = [
+    { key: "include_status_official", title: "Official" },
+    { key: "include_status_promotion", title: "Promotion" },
+    { key: "include_status_bootleg", title: "Bootleg" },
+    { key: "include_status_pseudo_release", title: "Pseudo-release" },
+    { key: "include_status_withdrawn", title: "Withdrawn" },
+    { key: "include_status_cancelled", title: "Cancelled" },
+    { key: "include_status_expunged", title: "Expunged" },
+    { key: "include_status_unknown", title: "No status set" },
 ] as const;
 
 const musicVideoTypeRows = [
@@ -243,6 +274,21 @@ export const CurationSettingsSection = ({
                 </div>
                 <div className={styles.checkboxList}>
                     {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({
+                        rowKey: row.key,
+                        title: row.title,
+                        checked: curationConfig?.[row.key] === true,
+                        onChange: (checked) => void onUpdate({ [row.key]: checked }),
+                    }))}
+                </div>
+                <div className={styles.subsectionHeader}>
+                    <Text weight="semibold">Release status</Text>
+                    <Text size={200} className={styles.mutedText}>
+                        Which editions Curate Library may choose. Excluded editions stay listed and
+                        can still be monitored manually.
+                    </Text>
+                </div>
+                <div className={styles.checkboxList}>
+                    {releaseStatusRows.map((row) => renderCheckboxRow({
                         rowKey: row.key,
                         title: row.title,
                         checked: curationConfig?.[row.key] === true,

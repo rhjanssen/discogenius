@@ -21,7 +21,13 @@ export interface FilteringConfig {
   include_single: boolean;             // Primary type: Single
   include_ep: boolean;                 // Primary type: EP
   include_broadcast: boolean;          // Primary type: Broadcast
-  include_other: boolean;              // Primary type: Other or unknown
+  include_other: boolean;              // Primary type: Other (MusicBrainz's own type)
+  /**
+   * Release Groups whose primary type MusicBrainz has not set (99,535 of them),
+   * or whose type this build does not recognise. Not the same question as
+   * `include_other`: `Other` is a type an editor chose.
+   */
+  include_unknown_type: boolean;
 
   // MusicBrainz release-group secondary types
   include_compilation: boolean;        // Secondary type: Compilation
@@ -31,6 +37,29 @@ export interface FilteringConfig {
   include_dj_mix: boolean;             // Secondary type: DJ-mix
   include_mixtape_street: boolean;     // Secondary type: Mixtape/Street
   include_demo: boolean;               // Secondary type: Demo
+  // The rest of MusicBrainz's secondary taxonomy. These had no config key, so
+  // they were rejected with a reason nobody could see or change; the switch is
+  // what is new, not the outcome.
+  include_spokenword: boolean;         // Secondary type: Spokenword
+  include_interview: boolean;          // Secondary type: Interview
+  include_audiobook: boolean;          // Secondary type: Audiobook
+  include_audio_drama: boolean;        // Secondary type: Audio drama
+  include_field_recording: boolean;    // Secondary type: Field recording
+
+  /**
+   * MusicBrainz release statuses. Edition eligibility for *automatic* curation
+   * only — an excluded Edition stays stored, visible, usable as matching
+   * evidence, and monitorable by hand.
+   */
+  include_status_official: boolean;
+  include_status_promotion: boolean;
+  include_status_bootleg: boolean;
+  include_status_pseudo_release: boolean;
+  include_status_withdrawn: boolean;
+  include_status_cancelled: boolean;
+  include_status_expunged: boolean;
+  /** Releases MusicBrainz gives no status (275,102 of them). */
+  include_status_unknown: boolean;
 
   include_spatial: boolean;            // Include spatial/surround release-group slots
   include_videos: boolean;             // Monitor music videos
@@ -170,7 +199,14 @@ export interface DiscoGeniusConfig {
   account?: AccountConfig;
 }
 
-const DEFAULT_CONFIG: DiscoGeniusConfig = {
+/**
+ * Factory configuration.
+ *
+ * Exported so the taxonomy contract can assert the shipped defaults rather
+ * than restate them — a default that drifts from its stated intent is the
+ * kind of change nobody notices until a library curates differently.
+ */
+export const DEFAULT_CONFIG: DiscoGeniusConfig = {
   app: {
     admin_password: "",
   },
@@ -196,6 +232,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_single: true,
     include_broadcast: true,
     include_other: true,
+    include_unknown_type: true,
     include_compilation: true,
     include_soundtrack: true,
     include_live: true,
@@ -203,6 +240,23 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_dj_mix: true,
     include_mixtape_street: true,
     include_demo: true,
+    // Off preserves today's outcome exactly; these were already rejected, just
+    // invisibly. They are also not music.
+    include_spokenword: false,
+    include_interview: false,
+    include_audiobook: false,
+    include_audio_drama: false,
+    include_field_recording: false,
+    // Official plus unset. A bootleg or pseudo-release is a worse copy of a
+    // record the user already gets, not additional coverage.
+    include_status_official: true,
+    include_status_promotion: false,
+    include_status_bootleg: false,
+    include_status_pseudo_release: false,
+    include_status_withdrawn: false,
+    include_status_cancelled: false,
+    include_status_expunged: false,
+    include_status_unknown: true,
     include_spatial: false,
     include_videos: false,
     include_video_official: true,
@@ -293,6 +347,20 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
     include_single: raw?.include_single ?? DEFAULT_CONFIG.filtering.include_single,
     include_broadcast: raw?.include_broadcast ?? DEFAULT_CONFIG.filtering.include_broadcast,
     include_other: raw?.include_other ?? DEFAULT_CONFIG.filtering.include_other,
+    include_unknown_type: raw?.include_unknown_type ?? DEFAULT_CONFIG.filtering.include_unknown_type,
+    include_spokenword: raw?.include_spokenword ?? DEFAULT_CONFIG.filtering.include_spokenword,
+    include_interview: raw?.include_interview ?? DEFAULT_CONFIG.filtering.include_interview,
+    include_audiobook: raw?.include_audiobook ?? DEFAULT_CONFIG.filtering.include_audiobook,
+    include_audio_drama: raw?.include_audio_drama ?? DEFAULT_CONFIG.filtering.include_audio_drama,
+    include_field_recording: raw?.include_field_recording ?? DEFAULT_CONFIG.filtering.include_field_recording,
+    include_status_official: raw?.include_status_official ?? DEFAULT_CONFIG.filtering.include_status_official,
+    include_status_promotion: raw?.include_status_promotion ?? DEFAULT_CONFIG.filtering.include_status_promotion,
+    include_status_bootleg: raw?.include_status_bootleg ?? DEFAULT_CONFIG.filtering.include_status_bootleg,
+    include_status_pseudo_release: raw?.include_status_pseudo_release ?? DEFAULT_CONFIG.filtering.include_status_pseudo_release,
+    include_status_withdrawn: raw?.include_status_withdrawn ?? DEFAULT_CONFIG.filtering.include_status_withdrawn,
+    include_status_cancelled: raw?.include_status_cancelled ?? DEFAULT_CONFIG.filtering.include_status_cancelled,
+    include_status_expunged: raw?.include_status_expunged ?? DEFAULT_CONFIG.filtering.include_status_expunged,
+    include_status_unknown: raw?.include_status_unknown ?? DEFAULT_CONFIG.filtering.include_status_unknown,
     include_compilation: raw?.include_compilation ?? DEFAULT_CONFIG.filtering.include_compilation,
     include_soundtrack: raw?.include_soundtrack ?? DEFAULT_CONFIG.filtering.include_soundtrack,
     include_live: raw?.include_live ?? DEFAULT_CONFIG.filtering.include_live,

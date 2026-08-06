@@ -124,6 +124,20 @@ export interface FilteringConfigContract {
   include_dj_mix: boolean;
   include_mixtape_street: boolean;
   include_demo: boolean;
+  include_unknown_type: boolean;
+  include_spokenword: boolean;
+  include_interview: boolean;
+  include_audiobook: boolean;
+  include_audio_drama: boolean;
+  include_field_recording: boolean;
+  include_status_official: boolean;
+  include_status_promotion: boolean;
+  include_status_bootleg: boolean;
+  include_status_pseudo_release: boolean;
+  include_status_withdrawn: boolean;
+  include_status_cancelled: boolean;
+  include_status_expunged: boolean;
+  include_status_unknown: boolean;
   include_spatial: boolean;
   include_videos: boolean;
   include_video_official: boolean;
@@ -285,6 +299,20 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_dj_mix: expectBoolean(record.include_dj_mix, "curation.include_dj_mix"),
     include_mixtape_street: expectBoolean(record.include_mixtape_street, "curation.include_mixtape_street"),
     include_demo: expectBoolean(record.include_demo, "curation.include_demo"),
+    include_unknown_type: expectBoolean(record.include_unknown_type, "curation.include_unknown_type"),
+    include_spokenword: expectBoolean(record.include_spokenword, "curation.include_spokenword"),
+    include_interview: expectBoolean(record.include_interview, "curation.include_interview"),
+    include_audiobook: expectBoolean(record.include_audiobook, "curation.include_audiobook"),
+    include_audio_drama: expectBoolean(record.include_audio_drama, "curation.include_audio_drama"),
+    include_field_recording: expectBoolean(record.include_field_recording, "curation.include_field_recording"),
+    include_status_official: expectBoolean(record.include_status_official, "curation.include_status_official"),
+    include_status_promotion: expectBoolean(record.include_status_promotion, "curation.include_status_promotion"),
+    include_status_bootleg: expectBoolean(record.include_status_bootleg, "curation.include_status_bootleg"),
+    include_status_pseudo_release: expectBoolean(record.include_status_pseudo_release, "curation.include_status_pseudo_release"),
+    include_status_withdrawn: expectBoolean(record.include_status_withdrawn, "curation.include_status_withdrawn"),
+    include_status_cancelled: expectBoolean(record.include_status_cancelled, "curation.include_status_cancelled"),
+    include_status_expunged: expectBoolean(record.include_status_expunged, "curation.include_status_expunged"),
+    include_status_unknown: expectBoolean(record.include_status_unknown, "curation.include_status_unknown"),
     include_spatial: expectBoolean(record.include_spatial, "curation.include_spatial"),
     include_videos: expectBoolean(record.include_videos, "curation.include_videos"),
     include_video_official: expectBoolean(record.include_video_official, "curation.include_video_official"),
