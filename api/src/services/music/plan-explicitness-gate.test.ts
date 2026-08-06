@@ -19,7 +19,7 @@ import test from "node:test";
 import { eligiblePlansForEdition } from "./acquisition-planning-service.js";
 import {
   editionRendition,
-  effectiveExplicitness,
+  explicitnessForAutomaticAcquisition,
   planEligibleForEdition,
   providerExplicitnessFromFlag,
 } from "./rendition-policy.js";
@@ -47,6 +47,44 @@ test("a band's name in a title is not a content rating", () => {
   assert.equal(editionRendition("Cleanse", null), "unlabelled");
 });
 
+test("real MusicBrainz comment forms are recognised", () => {
+  // Every form below is an actual release comment, with its corpus frequency.
+  for (const comment of [
+    "explicit",                              // 6859
+    "dolby atmos mix, explicit",             // 280
+    "deluxe, explicit",                      // 176
+    "explicit version",                      // 90
+    "deluxe edition, explicit",              // 41
+    "360 reality audio mix, explicit",       // 31
+    "explicit lyrics",                       // 16
+    "explicit, hi-res",                      // 23
+  ]) assert.equal(editionRendition(null, comment), "explicit", comment);
+
+  for (const comment of [
+    "clean",                                 // 5010
+    "clean version",                         // 363
+    "dolby atmos mix, clean",                // 224
+    "deluxe, clean",                         // 163
+    "clean lyrics",                          // 151
+    "cleaned",                               // 95
+    "mastered for iTunes, clean lyrics",     // 73
+    "clean edit",                            // 18
+    "censored",                              // 16
+  ]) assert.equal(editionRendition(null, comment), "clean", comment);
+});
+
+test("a rendition word inside a name does not label the Edition", () => {
+  // The one contaminating comment in 5.6M MusicBrainz releases.
+  assert.equal(editionRendition(null, "whitney houston x clean bandit remix"), "unlabelled");
+  // And the shapes that would trip a word scan.
+  for (const comment of [
+    "remixed by Clean Bandit",
+    "features Mr. Clean",
+    "explicit content warning sticker variant",
+    "clean-up crew edition",
+  ]) assert.equal(editionRendition(null, comment), "unlabelled", comment);
+});
+
 test("a title labels the Edition only when the marker stands alone", () => {
   assert.equal(editionRendition("Give Me the Future (Explicit)", null), "explicit");
   assert.equal(editionRendition("Give Me the Future [Clean Version]", null), "clean");
@@ -63,9 +101,9 @@ test("an unmarked track is a track the provider is not calling explicit", () => 
   assert.equal(providerExplicitnessFromFlag(true), "explicit");
 
   // The fact stays tri-state; only policy collapses it.
-  assert.equal(effectiveExplicitness("unknown"), "clean");
-  assert.equal(effectiveExplicitness("clean"), "clean");
-  assert.equal(effectiveExplicitness("explicit"), "explicit");
+  assert.equal(explicitnessForAutomaticAcquisition("unknown"), "clean");
+  assert.equal(explicitnessForAutomaticAcquisition("clean"), "clean");
+  assert.equal(explicitnessForAutomaticAcquisition("explicit"), "explicit");
 });
 
 test("eligibility follows the collapsed value", () => {

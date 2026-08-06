@@ -30,13 +30,17 @@ export type ProviderExplicitness = "explicit" | "clean" | "unknown";
 export type EditionRendition = "explicit" | "clean" | "unlabelled";
 
 /**
- * Policy value of an explicitness fact.
+ * How automatic acquisition treats an explicitness fact.
  *
- * `unknown` resolves to `clean` — see rule 1. This is the only place that
- * collapse happens, so changing the assumption is a one-line change here rather
- * than an audit of every caller.
+ * This is a *policy projection*, not a newly established fact: `null` may mean
+ * the provider said "not explicit", or it may mean we never fetched the field.
+ * The product rule is that neither is grounds for putting the item on an
+ * explicit Edition, and both are acceptable on a clean one — so unknown resolves
+ * to `clean` here and nowhere else. Callers that need the truth read the fact.
  */
-export function effectiveExplicitness(fact: ProviderExplicitness): "explicit" | "clean" {
+export function explicitnessForAutomaticAcquisition(
+  fact: ProviderExplicitness,
+): "explicit" | "clean" {
   return fact === "explicit" ? "explicit" : "clean";
 }
 
@@ -48,8 +52,38 @@ export function providerExplicitnessFromFlag(
   return Number(flag) === 1 ? "explicit" : "clean";
 }
 
-const EXPLICIT_WORD = /\bexplicit\b/i;
-const CLEAN_WORD = /\b(?:clean|censored)\b/i;
+/**
+ * Rendition markers as MusicBrainz actually writes them.
+ *
+ * Mined from the full corpus (5.6M releases, 39M recordings): comments are
+ * comma-separated attribute lists, and a rendition marker occupies one whole
+ * segment. The observed forms, by frequency, are `explicit` (6859),
+ * `clean` (5010), `clean version` (363), `clean lyrics` (151), `cleaned` (95),
+ * `explicit version` (90), `clean edit` (18), `explicit lyrics` (16) and
+ * `censored` (16) — combined as `dolby atmos mix, explicit` or
+ * `mastered for iTunes, clean lyrics`.
+ *
+ * Matching whole segments rather than scanning for the words is what keeps
+ * "whitney houston x clean bandit remix" — the single contaminating comment in
+ * 5.6M releases — from reading as a clean edition.
+ */
+const EXPLICIT_SEGMENT = /^explicit(?:\s+(?:version|edit|edition|mix|lyrics))?$/i;
+const CLEAN_SEGMENT = /^(?:clean|cleaned|censored)(?:\s+(?:version|edit|edition|mix|lyrics))?$/i;
+
+/**
+ * `a, b, c` and `a - b` → the segments MusicBrainz treats as separate
+ * attributes. Commas dominate the corpus, but the spaced dash is common too
+ * ("deluxe edition - clean").
+ *
+ * Only a *spaced* dash separates: "clean-up crew edition" is one attribute, and
+ * splitting it would leave a bare "clean".
+ */
+function attributeSegments(text: string): string[] {
+  return String(text || "")
+    .split(/[,;]|\s[-–—]\s/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
 
 /** Bracketed segments of a title: `Song (Clean Bandit remix) [Explicit]`. */
 function bracketedSegments(title: string): string[] {
@@ -67,23 +101,24 @@ function bracketedSegments(title: string): string[] {
  * separate a clean issue from an explicit one, and 165 editions in the measured
  * library are labelled there.
  *
- * A title only labels the Edition when a bracketed segment is *exactly* the
- * marker. Scanning titles for the words themselves reads
- * "Drink About (Clean Bandit remix)" as a clean edition — the band's name is
- * not a content rating.
+ * Both fields are read as whole markers, never as words in prose. Scanning for
+ * the words reads "Drink About (Clean Bandit remix)" as a clean edition — a
+ * band's name is not a content rating.
  */
 export function editionRendition(
   title: string | null | undefined,
   disambiguation: string | null | undefined,
 ): EditionRendition {
-  const disambiguationText = String(disambiguation || "");
-  if (EXPLICIT_WORD.test(disambiguationText)) return "explicit";
-  if (CLEAN_WORD.test(disambiguationText)) return "clean";
+  for (const segment of attributeSegments(disambiguation ?? "")) {
+    if (EXPLICIT_SEGMENT.test(segment)) return "explicit";
+    if (CLEAN_SEGMENT.test(segment)) return "clean";
+  }
 
+  // A title labels the Edition only when a bracketed segment is the marker on
+  // its own — "(Explicit)", never "(Clean Bandit remix)".
   for (const segment of bracketedSegments(title ?? "")) {
-    const normalized = segment.toLowerCase().replace(/\s+version$/, "").trim();
-    if (normalized === "explicit") return "explicit";
-    if (normalized === "clean" || normalized === "censored") return "clean";
+    if (EXPLICIT_SEGMENT.test(segment)) return "explicit";
+    if (CLEAN_SEGMENT.test(segment)) return "clean";
   }
   return "unlabelled";
 }
@@ -100,7 +135,7 @@ export function planEligibleForEdition(
   rendition: EditionRendition,
 ): boolean {
   if (rendition === "unlabelled") return true;
-  return effectiveExplicitness(planExplicitness) === rendition;
+  return explicitnessForAutomaticAcquisition(planExplicitness) === rendition;
 }
 
 /**

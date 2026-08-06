@@ -92,6 +92,9 @@ const PERFORMANCE_QUALIFIERS = [
   "session", "sessions", "reprise", "a cappella", "acapella", "karaoke", "dub",
   "edit", "mix", "orchestral", "symphonic", "piano version", "single version",
   "workout mix", "commentary", "interlude", "intro", "outro", "cover",
+  // Corpus-frequency additions (MusicBrainz recording comments): a video of a
+  // song is not the song, and a re-recording is a new performance entirely.
+  "music video", "official music video", "video", "pv", "full length",
 ] as const;
 
 /**
@@ -125,9 +128,12 @@ function normalizeText(value: string): string {
     .toLowerCase()
     .replace(/[\p{Quotation_Mark}\p{Sk}'`]/gu, "")
     .replace(/&/g, " and ")
-    // A mask only counts inside a word: "f***" and "f---" mask letters, while a
-    // leading or standalone dash is ordinary punctuation.
-    .replace(/([a-z0-9])([*_-]+)(?=[a-z0-9\s]|$)/g, (_m, head: string, mask: string) =>
+    // Masking, not ordinary punctuation. `*` and `_` never occur inside a real
+    // word, so one is enough; a hyphen does, so it only counts as masking in a
+    // run. Treating a single hyphen as a mask turned "re-recording" into
+    // "re#recording" and stopped it being recognised as a distinct performance
+    // — and would have done the same to every hyphenated title.
+    .replace(/([a-z0-9])([*_]+|-{2,})(?=[a-z0-9\s]|$)/g, (_m, head: string, mask: string) =>
       `${head}${"#".repeat(mask.length)}`)
     .replace(/[^a-z0-9#]+/g, " ")
     .trim()
