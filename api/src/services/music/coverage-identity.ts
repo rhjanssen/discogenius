@@ -203,20 +203,28 @@ function titleBucketKey(title: string): string {
 /** Qualifier tokens present in one already-normalized fragment. */
 function qualifiersIn(fragment: string): string[] {
   const found: string[] = [];
-  // Longest first: "dolby atmos mix" must win over the bare "mix" inside it,
-  // or a format difference would read as a different performance.
+  // Channel formats are consumed first and longest-first, so "dolby atmos mix"
+  // wins over the bare "mix" inside it — a format difference must not read as a
+  // remix. Each match is then *removed* from the fragment rather than returned,
+  // because a comment carries independent attributes and the format is only one
+  // of them: "live, 5.1 mix" is a live performance in surround, and returning
+  // early on the format loses the `live` that makes it a different performance.
+  // 1,261 corpus recordings carry both.
+  let rest = fragment;
   for (const qualifier of MIX_FORMAT_QUALIFIERS) {
-    const pattern = new RegExp(`(^| )${qualifier}( |$)`);
-    if (pattern.test(fragment)) return [qualifier];
+    const pattern = new RegExp(`(^| )${qualifier}( |$)`, "g");
+    if (!pattern.test(rest)) continue;
+    found.push(qualifier);
+    rest = rest.replace(new RegExp(`(^| )${qualifier}( |$)`, "g"), " ").trim();
   }
   for (const qualifier of PERFORMANCE_QUALIFIERS) {
     // Word-boundary match so "edit" does not fire inside "editorial".
     const pattern = new RegExp(`(^| )${qualifier.replace(/ /g, " ")}( |$)`);
-    if (pattern.test(fragment)) found.push(qualifier);
+    if (pattern.test(rest)) found.push(qualifier);
   }
   for (const qualifier of NEUTRAL_QUALIFIERS) {
     const pattern = new RegExp(`(^| )${qualifier.replace(/ /g, " ")}( |$)`);
-    if (pattern.test(fragment)) found.push(qualifier);
+    if (pattern.test(rest)) found.push(qualifier);
   }
   return found;
 }

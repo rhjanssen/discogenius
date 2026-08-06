@@ -213,3 +213,53 @@ test("a qualifier that lives only in the comment reaches the resolver", async ()
     db.close();
   }
 });
+
+/* ── A comment carries independent attributes ───────────────────────── */
+
+test("a channel format does not swallow the performance qualifier beside it", () => {
+  // `live, 5.1 mix` (93 recordings) and its kin: 1,261 corpus recordings carry
+  // both a channel format and a performance qualifier in one comment. Consuming
+  // the format and stopping loses the `live`, and a live take then merges into
+  // the studio recording — the failure that costs wanted content, not a
+  // duplicate download.
+  const { unitByRecording } = resolveCoverageUnits([
+    pompeii(1),                                   // stereo studio
+    pompeii(2, "dolby atmos mix", 214000),        // Atmos studio  -> same
+    pompeii(3, "live, 5.1 mix", 215000),          // live surround -> different
+    pompeii(4, "instrumental, 5.1 mix", 214100),  // instrumental  -> different
+    pompeii(5, "remix, dolby atmos mix", 214050), // remix         -> different
+    pompeii(6, "radio edit, 360 reality audio mix", 214090),
+  ]);
+  assert.equal(unitByRecording.get(1), unitByRecording.get(2), "Atmos studio is the same song");
+  for (const recordingId of [3, 4, 5, 6]) {
+    assert.notEqual(
+      unitByRecording.get(1), unitByRecording.get(recordingId),
+      `recording ${recordingId} is a different performance`,
+    );
+  }
+});
+
+test("two surround recordings of the same performance still merge", () => {
+  // The format is neutral on both sides, so removing it must not make them
+  // differ from each other either.
+  const { unitByRecording } = resolveCoverageUnits([
+    pompeii(1, "live, 5.1 mix", 215000),
+    pompeii(2, "live, dolby atmos mix", 215100),
+    pompeii(3, "live", 215050),
+  ]);
+  assert.equal(unitByRecording.get(1), unitByRecording.get(2));
+  assert.equal(unitByRecording.get(1), unitByRecording.get(3));
+});
+
+test("rendition markers beside a format stay neutral", () => {
+  // `dolby atmos mix, explicit` (1108) and `dolby atmos mix, clean` (890) are
+  // one performance; the rendition split is acquisition's business, not
+  // curation's.
+  const { unitByRecording } = resolveCoverageUnits([
+    pompeii(1, "explicit"),
+    pompeii(2, "dolby atmos mix, explicit", 214000),
+    pompeii(3, "clean, dolby atmos mix", 214100),
+  ]);
+  assert.equal(unitByRecording.get(1), unitByRecording.get(2));
+  assert.equal(unitByRecording.get(1), unitByRecording.get(3));
+});
