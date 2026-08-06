@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveCoverageUnits, type CoverageRecording } from "./coverage-identity.js";
 import {
-  editionExplicitLabelScore,
-  editionExplicitPreferenceRank,
   mapRecordingsToCoverageUnits,
   normalizeCoverageTitle,
 } from "./recording-coverage-units.js";
+import { editionRendition, renditionPreferenceRank } from "./rendition-policy.js";
 import { curateLibraryReleases, type CurationEditionCandidate } from "./library-curation-planner.js";
 
 /**
@@ -135,12 +134,14 @@ test("within-RG curation drops Japan when units already covered by deluxe", () =
   assert.deepEqual(result.selectedEditionIds, [180]);
 });
 
-test("editionExplicitPreferenceRank prefers explicit when configured", () => {
-  assert.equal(editionExplicitLabelScore("Album", "explicit"), 1);
-  assert.equal(editionExplicitLabelScore("Album", "clean"), -1);
-  assert.equal(editionExplicitPreferenceRank(1, true), 2);
-  assert.equal(editionExplicitPreferenceRank(-1, true), 0);
-  assert.equal(editionExplicitPreferenceRank(-1, false), 2);
+test("rendition preference ranks the wanted side higher", () => {
+  assert.equal(editionRendition("Album", "explicit"), "explicit");
+  assert.equal(editionRendition("Album", "clean"), "clean");
+  assert.equal(renditionPreferenceRank("explicit", true), 2);
+  assert.equal(renditionPreferenceRank("clean", true), 0);
+  assert.equal(renditionPreferenceRank("clean", false), 2);
+  // An unlabelled edition sits between the two so it never beats a match.
+  assert.equal(renditionPreferenceRank("unlabelled", true), 1);
 });
 
 test("clean twin is dropped when coverage units match and prefer_explicit ranks the other higher", () => {

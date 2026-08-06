@@ -8,7 +8,10 @@ import {
   type NormalizedAudioQuality,
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
-import { editionExplicitLabelScore } from "./recording-coverage-units.js";
+import {
+  editionRendition,
+  planEligibleForEdition,
+} from "./rendition-policy.js";
 
 const QUALITY_VALUES = new Set<NormalizedAudioQuality>([
   "lossy",
@@ -82,26 +85,24 @@ interface CandidateRow {
 }
 
 /**
- * Stable-partition plans so none that contradicts the Edition's own
- * explicitness label can be rank 0.
+ * Drop plans whose rendition contradicts the Edition's own label.
  *
- * Unknown explicitness never conflicts — an unlabelled provider offer is not
- * evidence of the opposite, and treating it as such would strand Editions whose
- * providers simply do not report the flag.
+ * Demoting them was not enough: with only a conflicting plan available it would
+ * still be rank 0, and rank 0 is what curation and the download path execute.
+ * A specifically clean Edition filled with explicit audio is the wrong product,
+ * and the explicit Edition exists to be monitored instead — so the honest
+ * outcome when nothing compatible exists is no plan at all.
  */
-export function demoteExplicitnessConflicts<
+export function eligiblePlansForEdition<
   T extends { explicitContent: "explicit" | "clean" | "unknown" },
 >(
   plans: readonly T[],
   editionTitle: string | null | undefined,
   editionDisambiguation: string | null | undefined,
 ): T[] {
-  const label = editionExplicitLabelScore(editionTitle, editionDisambiguation);
-  if (label === 0) return [...plans];
-  const conflicts = (plan: T): boolean =>
-    (label === 1 && plan.explicitContent === "clean")
-    || (label === -1 && plan.explicitContent === "explicit");
-  return [...plans.filter((plan) => !conflicts(plan)), ...plans.filter(conflicts)];
+  const rendition = editionRendition(editionTitle, editionDisambiguation);
+  if (rendition === "unlabelled") return [...plans];
+  return plans.filter((plan) => planEligibleForEdition(plan.explicitContent, rendition));
 }
 
 export class AcquisitionPlanningService {
@@ -343,17 +344,20 @@ export class AcquisitionPlanningService {
       this.repository.clear(input.libraryId, input.editionId);
       return null;
     }
-    // When MusicBrainz labels the Edition clean or explicit, a plan of the
-    // opposite explicitness must not be the one that runs. The availability
-    // view already hid those plans, but curation and acquisition read rank 0
-    // straight from AcquisitionPlans, so a clean Edition could be downloaded
-    // with explicit audio. Demote rather than drop: the plan stays available as
-    // an alternative the user can choose deliberately.
-    const rankedPlans = demoteExplicitnessConflicts(
+    // A specifically clean or explicit Edition takes only its own rendition.
+    // Curation and the download path read rank 0 straight from
+    // AcquisitionPlans, so this has to happen before ranking is persisted.
+    const rankedPlans = eligiblePlansForEdition(
       plans,
       context.edition_title,
       context.edition_disambiguation,
     );
+    if (rankedPlans.length === 0) {
+      // Every offer contradicts the Edition's rendition. Saying so is the
+      // honest answer; the opposite-rendition Edition is the one to monitor.
+      this.repository.clear(input.libraryId, input.editionId);
+      return null;
+    }
     // The library's standing plan choice outranks the planner's own ordering,
     // and survives replanning because it is keyed by plan shape, not row id.
     const result = this.repository.replacePlans({

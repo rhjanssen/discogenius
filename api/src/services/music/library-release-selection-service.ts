@@ -4,9 +4,7 @@ import { getConfigSection } from "../config/config.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { parseMediaFormats } from "./media-formats.js";
-import {
-  editionExplicitLabelScore,
-} from "./recording-coverage-units.js";
+import { editionRendition, planEligibleForEdition } from "./rendition-policy.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
 import {
   planHeadlineQualitySql,
@@ -139,20 +137,18 @@ interface ReleaseRow {
 }
 
 /**
- * When MusicBrainz clearly labels an edition clean or explicit, hide provider
- * plans of the opposite explicitness. Unknown plans always stay.
+ * A specifically clean or explicit Edition shows only its own rendition.
+ *
+ * The planner already drops these before they are stored; this keeps the view
+ * consistent for plans persisted before the gate existed, and both read the
+ * same policy so they cannot drift apart again.
  */
 export function planAllowedForEditionLabel(
   plan: Pick<LibraryAcquisitionPlanView, "explicitContent">,
   title: string | null | undefined,
   disambiguation: string | null | undefined,
 ): boolean {
-  const label = editionExplicitLabelScore(title, disambiguation);
-  if (label === 0) return true;
-  if (plan.explicitContent === "unknown") return true;
-  if (label === 1 && plan.explicitContent === "clean") return false;
-  if (label === -1 && plan.explicitContent === "explicit") return false;
-  return true;
+  return planEligibleForEdition(plan.explicitContent, editionRendition(title, disambiguation));
 }
 
 /**

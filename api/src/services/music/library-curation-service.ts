@@ -24,11 +24,8 @@ import {
 } from "./artist-coverage-optimizer.js";
 import { loadCoverageUnitsForRecordings } from "./coverage-identity-repository.js";
 import type { QuarantinedProviderLink } from "./coverage-identity.js";
-import {
-  editionExplicitLabelScore,
-  editionExplicitPreferenceRank,
-  mapRecordingsToCoverageUnits,
-} from "./recording-coverage-units.js";
+import { editionRendition, renditionPreferenceRank } from "./rendition-policy.js";
+import { mapRecordingsToCoverageUnits } from "./recording-coverage-units.js";
 import {
   planExplicitPreferenceRank,
   type PlanExplicitContent,
@@ -395,8 +392,10 @@ export class LibraryCurationService {
       const isProtected = lockedEditionIds.has(release.edition_id) || manualEditionIds.has(release.edition_id);
       if (!eligible && !isProtected) continue;
 
-      const labelScore = editionExplicitLabelScore(release.title, release.disambiguation);
-      const editionPreferenceRank = editionExplicitPreferenceRank(labelScore, preferExplicit);
+      const editionPreferenceRank = renditionPreferenceRank(
+        editionRendition(release.title, release.disambiguation),
+        preferExplicit,
+      );
       const bestPlan = bestPlanByEdition.get(release.edition_id);
       const hasUsablePlan = bestPlan != null;
       const planPreferenceRank = bestPlan

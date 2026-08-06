@@ -1,6 +1,9 @@
 /**
- * Shared vocabulary for coverage decisions: edition explicitness labels, ISRC
- * normalisation, and rewriting recording ids through a resolved unit map.
+ * Shared vocabulary for coverage decisions: title/ISRC normalisation and
+ * rewriting recording ids through a resolved unit map.
+ *
+ * Clean/explicit labelling is a rendition question, not a coverage one — it
+ * lives in `rendition-policy.ts`.
  *
  * Deciding *which* recordings share a coverage unit lives in
  * `coverage-identity.ts`; the union-find that used to live here merged whole
@@ -22,30 +25,6 @@ export type TrackRecordingEvidence = {
 export type SharedProviderTrackLink = {
   recordingIds: readonly number[];
 };
-
-/** Edition label signal used only for ranking, not for pairing. */
-export function editionExplicitLabelScore(
-  title: string | null | undefined,
-  disambiguation: string | null | undefined,
-): number {
-  const text = `${title || ""} ${disambiguation || ""}`.toLowerCase();
-  if (/\bexplicit\b/.test(text)) return 1;
-  if (/\bclean\b|\bcensored\b/.test(text)) return -1;
-  return 0;
-}
-
-/**
- * Rank for compare-sort: higher is better under the user's preference.
- * Unknown editions sit in the middle so they don't beat a matching preference.
- */
-export function editionExplicitPreferenceRank(
-  score: number,
-  preferExplicit: boolean,
-): number {
-  if (score === 0) return 1;
-  const wantsPositive = preferExplicit ? 1 : -1;
-  return score === wantsPositive ? 2 : 0;
-}
 
 export function normalizeCoverageTitle(title: string): string {
   return String(title || "")
