@@ -3,20 +3,32 @@ set -euo pipefail
 
 TARGET_USER="node"
 TARGET_GROUP="node"
+
+# The database does not have to live under /config. Keeping SQLite on a named
+# volume rather than a Docker Desktop bind mount is what stops the host
+# filesystem from breaking its locking guarantees, so every check below follows
+# DB_PATH instead of assuming a location.
+DB_PATH="${DB_PATH:-/config/discogenius.db}"
+DB_DIR="$(dirname "$DB_PATH")"
+export DB_PATH DB_DIR
+
 CONFIG_WRITE_PROBE='
 set -euo pipefail
-db_path="/config/discogenius.db"
-probe="/config/.discogenius-write-check.$$"
+db_path="${DB_PATH:-/config/discogenius.db}"
+db_dir="$(dirname "$db_path")"
+probe="$db_dir/.discogenius-write-check.$$"
 
-if [[ ! -d /config ]]; then
-  echo "[ENTRYPOINT] Missing /config mount." >&2
-  exit 1
-fi
+for required in /config "$db_dir"; do
+  if [[ ! -d "$required" ]]; then
+    echo "[ENTRYPOINT] Missing $required mount." >&2
+    exit 1
+  fi
 
-if [[ ! -w /config ]]; then
-  echo "[ENTRYPOINT] /config is not writable." >&2
-  exit 1
-fi
+  if [[ ! -w "$required" ]]; then
+    echo "[ENTRYPOINT] $required is not writable." >&2
+    exit 1
+  fi
+done
 
 if [[ -e "$db_path" && ! -w "$db_path" ]]; then
   echo "[ENTRYPOINT] $db_path is not writable." >&2
@@ -80,7 +92,7 @@ prepare_writable_dirs() {
   # as TARGET_USER) cannot mkdir the per-artist subdirs inside them (EACCES). This
   # is O(1) and independent of the deep-recursion decision below.
   local managed_dir
-  for managed_dir in /config /downloads /library \
+  for managed_dir in /config "$DB_DIR" /downloads /library \
       /library/stereo-music /library/spatial-music /library/music-videos; do
     ensure_dir "$managed_dir"
     chown "$TARGET_USER:$TARGET_GROUP" "$managed_dir" 2>/dev/null || true
@@ -123,6 +135,7 @@ prepare_writable_dirs() {
   }
 
   normalize_tree /config
+  normalize_tree "$DB_DIR"
   normalize_tree /downloads
   normalize_tree /library
 }
@@ -130,9 +143,10 @@ prepare_writable_dirs() {
 print_config_diagnostics() {
   echo "[ENTRYPOINT] Runtime user: $(id -u):$(id -g)" >&2
   ls -ld /config >&2 || true
+  ls -ld "$DB_DIR" >&2 || true
   ls -ld /downloads >&2 || true
   ls -ld /library >&2 || true
-  ls -l /config/discogenius.db* >&2 || true
+  ls -l "$DB_PATH"* >&2 || true
 }
 
 verify_target_config_writable() {
@@ -146,7 +160,7 @@ verify_current_config_writable() {
 fail_with_config_help() {
   local mode="$1"
 
-  echo "[ENTRYPOINT] Discogenius requires writable /config, /downloads, and /library directories for SQLite, downloads, imports, and organized media." >&2
+  echo "[ENTRYPOINT] Discogenius requires writable /config, $DB_DIR, /downloads, and /library directories for settings, SQLite, downloads, imports, and organized media." >&2
   if [[ "$mode" == "root-managed" ]]; then
     echo "[ENTRYPOINT] If you are using TrueNAS, leave Custom User unset when relying on PUID/PGID so the entrypoint can normalize ownership." >&2
   else
@@ -162,7 +176,7 @@ if [[ "$(id -u)" == "0" ]]; then
 
   if ! verify_target_config_writable; then
     fail_with_config_help "root-managed"
-    gosu "$TARGET_USER:$TARGET_GROUP" sh -lc 'id; ls -ld /config; ls -l /config/discogenius.db* 2>/dev/null || true' >&2 || true
+    gosu "$TARGET_USER:$TARGET_GROUP" sh -lc 'id; ls -ld /config "$DB_DIR"; ls -l "$DB_PATH"* 2>/dev/null || true' >&2 || true
     exit 70
   fi
 
