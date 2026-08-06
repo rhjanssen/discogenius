@@ -8,6 +8,7 @@ import {
   type NormalizedAudioQuality,
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
+import { editionExplicitLabelScore } from "./recording-coverage-units.js";
 
 const QUALITY_VALUES = new Set<NormalizedAudioQuality>([
   "lossy",
@@ -57,6 +58,9 @@ interface PlanningContextRow {
   preferred_plan_key: string | null;
   plan_selection_mode: "auto" | "manual" | null;
   current_primary_provider_edition_match_id: number | null;
+  /** MusicBrainz labels some editions clean or explicit; both feed the gate. */
+  edition_title: string | null;
+  edition_disambiguation: string | null;
 }
 
 interface CandidateRow {
@@ -75,6 +79,29 @@ interface CandidateRow {
   release_variant_id: number | null;
   release_quality: string | null;
   release_availability: string | null;
+}
+
+/**
+ * Stable-partition plans so none that contradicts the Edition's own
+ * explicitness label can be rank 0.
+ *
+ * Unknown explicitness never conflicts — an unlabelled provider offer is not
+ * evidence of the opposite, and treating it as such would strand Editions whose
+ * providers simply do not report the flag.
+ */
+export function demoteExplicitnessConflicts<
+  T extends { explicitContent: "explicit" | "clean" | "unknown" },
+>(
+  plans: readonly T[],
+  editionTitle: string | null | undefined,
+  editionDisambiguation: string | null | undefined,
+): T[] {
+  const label = editionExplicitLabelScore(editionTitle, editionDisambiguation);
+  if (label === 0) return [...plans];
+  const conflicts = (plan: T): boolean =>
+    (label === 1 && plan.explicitContent === "clean")
+    || (label === -1 && plan.explicitContent === "explicit");
+  return [...plans.filter((plan) => !conflicts(plan)), ...plans.filter(conflicts)];
 }
 
 export class AcquisitionPlanningService {
@@ -117,7 +144,9 @@ export class AcquisitionPlanningService {
         profile.continue_upgrades,
         monitored_edition.preferred_plan_key,
         monitored_edition.plan_selection_mode,
-        primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id
+        primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id,
+        edition.title AS edition_title,
+        edition.disambiguation AS edition_disambiguation
       FROM Libraries library
       JOIN AlbumEditions edition ON edition.id = ?
       JOIN quality_profiles profile ON profile.id = library.quality_profile_id
@@ -314,12 +343,23 @@ export class AcquisitionPlanningService {
       this.repository.clear(input.libraryId, input.editionId);
       return null;
     }
+    // When MusicBrainz labels the Edition clean or explicit, a plan of the
+    // opposite explicitness must not be the one that runs. The availability
+    // view already hid those plans, but curation and acquisition read rank 0
+    // straight from AcquisitionPlans, so a clean Edition could be downloaded
+    // with explicit audio. Demote rather than drop: the plan stays available as
+    // an alternative the user can choose deliberately.
+    const rankedPlans = demoteExplicitnessConflicts(
+      plans,
+      context.edition_title,
+      context.edition_disambiguation,
+    );
     // The library's standing plan choice outranks the planner's own ordering,
     // and survives replanning because it is keyed by plan shape, not row id.
     const result = this.repository.replacePlans({
       libraryId: input.libraryId,
       editionId: input.editionId,
-      plans,
+      plans: rankedPlans,
       targetTrackCount: orderedTrackIds.length,
       preferredPlanKey: context.plan_selection_mode === "manual"
         ? context.preferred_plan_key
