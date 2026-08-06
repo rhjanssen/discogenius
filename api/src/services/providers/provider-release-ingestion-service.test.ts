@@ -680,7 +680,12 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
 
 // Soft path (no UPC): siblings that share the tracklist still get fan-out so
 // region/layout variants without barcodes can plan.
-test("soft fan-out matches sibling editions that share the tracklist when UPC is absent", () => {
+// One provider release is one canonical Edition. The matcher used to fan a
+// match out to every sibling that shared the tracklist, which persisted an
+// availability statement ("this release can supply those tracks") as an
+// identity one ("this release *is* that Edition"). Composites still work,
+// because acquisition anchors on Recordings — proven by the case below.
+test("a provider release matches the one Edition it is, not its siblings", () => {
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
@@ -724,7 +729,7 @@ test("soft fan-out matches sibling editions that share the tracklist when UPC is
       ],
     });
 
-    assert.equal(result.acceptedTrackCount, 2, "primary edition still reports its coverage");
+    assert.equal(result.acceptedTrackCount, 2, "the matched edition reports its coverage");
     const editionMatches = db.prepare(`
       SELECT edition_id, relation, matched_track_count, match_state
       FROM ProviderEditionMatches
@@ -735,12 +740,23 @@ test("soft fan-out matches sibling editions that share the tracklist when UPC is
     }>;
     assert.deepEqual(
       editionMatches.map((row) => [row.edition_id, row.relation, row.matched_track_count]),
-      [
-        [1, "exact", 2],
-        [2, "exact", 2],
-        [3, "exact", 2],
-      ],
-      "without UPC, soft fan-out still covers siblings",
+      [[1, "exact", 2]],
+      "the AF, DZ and CD issues are three Editions; this release is one of them",
+    );
+    // The siblings are still reachable: they carry the same Recordings, which
+    // is what acquisition sources on.
+    const reachable = db.prepare(`
+      SELECT DISTINCT target_track.album_edition_id AS edition_id
+      FROM ProviderTrackMatches track_match
+      JOIN Tracks source_track ON source_track.id = track_match.track_id
+      JOIN Tracks target_track ON target_track.recording_id = source_track.recording_id
+      WHERE track_match.match_state = 'accepted'
+      ORDER BY edition_id
+    `).all() as Array<{ edition_id: number }>;
+    assert.deepEqual(
+      reachable.map((row) => row.edition_id),
+      [1, 2, 3],
+      "every sibling is still sourceable through its Recordings",
     );
   });
 });
@@ -892,10 +908,12 @@ test("ISRC identity blocks soft title match to a different recording", () => {
   });
 });
 
-// A one-track provider single must also become a source_subset of a larger
-// edition of the same artist that contains the same recording — that is how a
-// three-track single gets a composite plan from two provider singles.
-test("fan-out matches a provider single as a subset of a larger same-artist edition", () => {
+// The composite case, and the reason fan-out could be deleted safely. A
+// three-track Edition is sourced from two provider singles that each match a
+// *different* Edition — one in another Release Group. No edition match points
+// at the three-track Edition at all; MusicBrainz reuses one Recording across
+// releases, so the planner reaches its tracks through `recording_id`.
+test("a composite target is reachable through Recordings, not through edition matches", () => {
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
@@ -961,34 +979,39 @@ test("fan-out matches a provider single as a subset of a larger same-artist edit
       ],
     });
 
-    const threeTrackMatches = db.prepare(`
-      SELECT pi.provider_id, pem.relation, pem.matched_track_count, pem.target_track_count
-      FROM ProviderEditionMatches pem
-      JOIN ProviderItems pi ON pi.id = pem.provider_edition_item_id
-      WHERE pem.edition_id = 2 AND pem.match_state = 'accepted'
-      ORDER BY pi.provider_id
-    `).all() as Array<{
-      provider_id: string; relation: string;
-      matched_track_count: number; target_track_count: number;
-    }>;
-
+    // Each provider single is its own Edition and nothing else.
     assert.deepEqual(
-      threeTrackMatches,
+      (db.prepare(`
+        SELECT pi.provider_id, pem.edition_id, pem.relation
+        FROM ProviderEditionMatches pem
+        JOIN ProviderItems pi ON pi.id = pem.provider_edition_item_id
+        WHERE pem.match_state = 'accepted'
+        ORDER BY pi.provider_id
+      `).all() as Array<{ provider_id: string; edition_id: number; relation: string }>),
       [
-        {
-          provider_id: "287367980",
-          relation: "source_subset",
-          matched_track_count: 2,
-          target_track_count: 3,
-        },
-        {
-          provider_id: "290132977",
-          relation: "source_subset",
-          matched_track_count: 1,
-          target_track_count: 3,
-        },
+        { provider_id: "287367980", edition_id: 3, relation: "exact" },
+        { provider_id: "290132977", edition_id: 1, relation: "exact" },
       ],
-      "the 3-track edition must see both provider singles as subset sources",
+      "no edition match points at the 3-track Edition",
+    );
+
+    // Yet all three of its tracks are sourceable, from two providers in two
+    // Release Groups. This is what makes the fan-out redundant.
+    assert.deepEqual(
+      (db.prepare(`
+        SELECT DISTINCT target_track.position, pi.provider_id
+        FROM Tracks target_track
+        JOIN Tracks source_track ON source_track.recording_id = target_track.recording_id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.track_id = source_track.id AND track_match.match_state = 'accepted'
+        JOIN ProviderItems pi ON pi.id = track_match.provider_track_item_id
+        JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
+        JOIN ProviderItems album ON album.id = member.provider_edition_item_id
+        WHERE target_track.album_edition_id = 2
+        ORDER BY target_track.position
+      `).all() as Array<{ position: number; provider_id: string }>).length,
+      3,
+      "every track of the composite target has a source",
     );
   });
 });

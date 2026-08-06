@@ -298,30 +298,6 @@ export class ProviderReleaseIngestionService {
       if (identityMode) {
         // UPC claims the product: match every barcode-tied edition only.
         for (const editionId of upcEditionIds) runMatch(editionId);
-        // Composite hosts that carry the same ISRC-linked recordings (not soft).
-        const subsetHosts = this.findFanOutEditionIds({
-          primaryEditionId: upcEditionIds[0] ?? input.canonicalReleaseId,
-          acceptedRecordingIds: [...identityRecordings],
-          providerMemberCount: audioSources.length,
-          providerIsrcs: [],
-          softSiblingFanOut: false,
-        });
-        const primaryGroupId = this.releaseGroupIdOf(upcEditionIds[0] ?? input.canonicalReleaseId);
-        for (const editionId of subsetHosts) {
-          if (matchedEditionIds.has(editionId)) continue;
-          runMatch(editionId);
-          const row = this.db.prepare(`
-            SELECT relation FROM ProviderEditionMatches
-            WHERE provider_edition_item_id = ? AND edition_id = ?
-          `).get(providerEditionItemId, editionId) as { relation: string } | undefined;
-          if (
-            row?.relation === "source_superset"
-            && primaryGroupId != null
-            && this.releaseGroupIdOf(editionId) !== primaryGroupId
-          ) {
-            this.clearEditionMatch(providerEditionItemId, editionId);
-          }
-        }
         // Caller stats: if preferred edition was not UPC-tied, leave counts at 0
         // (no soft match to non-UPC primary).
         if (!matchedEditionIds.has(input.canonicalReleaseId) && upcEditionIds.length > 0) {
@@ -336,32 +312,8 @@ export class ProviderReleaseIngestionService {
           }
         }
       } else {
-        // Soft / Servarr path: primary then sibling + recording fan-out.
+        // Soft / Servarr path: the one edition this provider release is.
         runMatch(input.canonicalReleaseId);
-        const primaryGroupId = this.releaseGroupIdOf(input.canonicalReleaseId);
-        const fanOutEditionIds = this.findFanOutEditionIds({
-          primaryEditionId: input.canonicalReleaseId,
-          acceptedRecordingIds: primaryStats.acceptedRecordingIds,
-          providerMemberCount: audioSources.length,
-          providerIsrcs: audioSources
-            .map(({ member }) => normalizeProviderIsrc(member.item.isrc))
-            .filter(Boolean),
-          softSiblingFanOut: true,
-        });
-        for (const editionId of fanOutEditionIds) {
-          runMatch(editionId);
-          const row = this.db.prepare(`
-            SELECT relation FROM ProviderEditionMatches
-            WHERE provider_edition_item_id = ? AND edition_id = ?
-          `).get(providerEditionItemId, editionId) as { relation: string } | undefined;
-          if (
-            row?.relation === "source_superset"
-            && primaryGroupId != null
-            && this.releaseGroupIdOf(editionId) !== primaryGroupId
-          ) {
-            this.clearEditionMatch(providerEditionItemId, editionId);
-          }
-        }
       }
 
       return {
@@ -442,120 +394,6 @@ export class ProviderReleaseIngestionService {
         durationSec: track.length_ms == null ? null : track.length_ms / 1000,
       },
     }));
-  }
-
-  /**
-   * Other editions this provider release should also be matched against.
-   *
-   * 1. Every sibling edition in the same release group (layout / region /
-   *    barcode variants of the same content).
-   * 2. When the primary match accepted any recordings, every other edition of
-   *    the same artist that carries one of those recordings — so a one-track
-   *    single can also be a source_subset of a three-track single that needs
-   *    a composite plan.
-   * 3. When provider ISRCs are present, editions of the same artist whose
-   *    recordings list those ISRCs (covers the case where the primary match
-   *    failed but the codes still identify shared content).
-   */
-  private findFanOutEditionIds(input: {
-    primaryEditionId: number;
-    acceptedRecordingIds: readonly number[];
-    providerMemberCount: number;
-    providerIsrcs: readonly string[];
-    /**
-     * When false (UPC identity mode), skip soft sibling fan-out — only
-     * recording/ISRC-based hosts for composites. Soft path keeps true.
-     */
-    softSiblingFanOut?: boolean;
-  }): number[] {
-    const primary = this.db.prepare(`
-      SELECT edition.release_group_id, album.artist_metadata_id
-      FROM AlbumEditions edition
-      JOIN Albums album ON album.id = edition.release_group_id
-      WHERE edition.id = ?
-    `).get(input.primaryEditionId) as
-      { release_group_id: number; artist_metadata_id: number | null } | undefined;
-    if (!primary) return [];
-
-    const ids = new Set<number>();
-    const softSiblings = input.softSiblingFanOut !== false;
-
-    // Soft path only: same-group siblings (layout / region variants). Identity
-    // (UPC) mode already matched every barcode-tied edition and must not soft-
-    // attach the product to Japan/CD siblings with different barcodes.
-    if (softSiblings) {
-      const siblings = this.db.prepare(`
-        SELECT id FROM AlbumEditions
-        WHERE release_group_id = ? AND id != ?
-      `).all(primary.release_group_id, input.primaryEditionId) as Array<{ id: number }>;
-      for (const row of siblings) ids.add(row.id);
-    }
-
-    // Cross-group candidates must be large enough that this provider release
-    // can act as a subset or equal source, not a superset dump onto a single.
-    const crossGroupEligible = (editionId: number, releaseGroupId: number): boolean => {
-      if (releaseGroupId === primary.release_group_id) return true;
-      const trackCount = this.db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM Tracks track
-        JOIN Recordings recording ON recording.id = track.recording_id
-        WHERE track.album_edition_id = ? AND recording.is_video = 0
-      `).get(editionId) as { count: number };
-      return trackCount.count >= input.providerMemberCount;
-    };
-
-    if (primary.artist_metadata_id != null && input.acceptedRecordingIds.length > 0) {
-      const placeholders = input.acceptedRecordingIds.map(() => "?").join(",");
-      const byRecording = this.db.prepare(`
-        SELECT DISTINCT track.album_edition_id AS id, edition.release_group_id
-        FROM Tracks track
-        JOIN AlbumEditions edition ON edition.id = track.album_edition_id
-        JOIN Albums album ON album.id = edition.release_group_id
-        WHERE album.artist_metadata_id = ?
-          AND track.album_edition_id != ?
-          AND track.recording_id IN (${placeholders})
-      `).all(
-        primary.artist_metadata_id,
-        input.primaryEditionId,
-        ...input.acceptedRecordingIds,
-      ) as Array<{ id: number; release_group_id: number }>;
-      for (const row of byRecording) {
-        if (crossGroupEligible(row.id, row.release_group_id)) ids.add(row.id);
-      }
-    }
-
-    if (primary.artist_metadata_id != null && input.providerIsrcs.length > 0) {
-      // Recordings.isrcs is a JSON array of strings. Match any element.
-      const isrcRows = this.db.prepare(`
-        SELECT DISTINCT track.album_edition_id AS id, edition.release_group_id, recording.isrcs
-        FROM Tracks track
-        JOIN Recordings recording ON recording.id = track.recording_id
-        JOIN AlbumEditions edition ON edition.id = track.album_edition_id
-        JOIN Albums album ON album.id = edition.release_group_id
-        WHERE album.artist_metadata_id = ?
-          AND track.album_edition_id != ?
-          AND recording.is_video = 0
-          AND recording.isrcs IS NOT NULL
-          AND recording.isrcs != '[]'
-      `).all(primary.artist_metadata_id, input.primaryEditionId) as Array<{
-        id: number;
-        release_group_id: number;
-        isrcs: string;
-      }>;
-      const wanted = new Set(input.providerIsrcs);
-      for (const row of isrcRows) {
-        if (!crossGroupEligible(row.id, row.release_group_id)) continue;
-        const present = normalizeIsrcs(row.isrcs);
-        for (const isrc of present) {
-          if (wanted.has(isrc)) {
-            ids.add(row.id);
-            break;
-          }
-        }
-      }
-    }
-
-    return [...ids];
   }
 
   private matchAgainstEdition(input: {
