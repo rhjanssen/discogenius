@@ -174,7 +174,7 @@ export class AcquisitionPlanningService {
         release_item.explicit AS release_explicit,
         member.id AS provider_edition_member_id,
         track_match.id AS provider_track_match_id,
-        track_match.track_id,
+        target_track.id AS track_id,
         member_item.explicit AS track_explicit,
         track_variant.id AS track_variant_id,
         track_variant.quality_class AS track_quality,
@@ -182,13 +182,26 @@ export class AcquisitionPlanningService {
         release_variant.id AS release_variant_id,
         release_variant.quality_class AS release_quality,
         release_variant.availability AS release_availability
-      FROM ProviderEditionMatches release_match
+      -- Anchored on the target Edition's Recordings, not on provider albums
+      -- matched *to* this Edition. A provider album is one product with one
+      -- canonical identity; whether it can supply a Track here is a question
+      -- about Recordings, and asking it this way is what lets a Hi-Res standard
+      -- edition source the first eleven Tracks of a deluxe one, or two provider
+      -- albums jointly cover a canonical Edition neither of them matches.
+      FROM Tracks target_track
+      JOIN Recordings target_recording
+        ON target_recording.id = target_track.recording_id
+       AND target_recording.is_video = 0
+      JOIN Tracks source_track
+        ON source_track.recording_id = target_track.recording_id
+      JOIN ProviderTrackMatches track_match
+        ON track_match.track_id = source_track.id
+       AND track_match.match_state = 'accepted'
+      JOIN ProviderEditionMatches release_match
+        ON release_match.id = track_match.provider_edition_match_id
+       AND release_match.match_state = 'accepted'
       JOIN ProviderItems release_item
         ON release_item.id = release_match.provider_edition_item_id
-      JOIN ProviderTrackMatches track_match
-        ON track_match.provider_edition_match_id = release_match.id
-       AND track_match.match_state = 'accepted'
-       AND track_match.track_id IS NOT NULL
       JOIN ProviderEditionMembers member
         ON member.id = track_match.provider_edition_member_id
       JOIN ProviderItems member_item
@@ -197,17 +210,17 @@ export class AcquisitionPlanningService {
         ON track_variant.provider_item_id = member.member_item_id
       LEFT JOIN ProviderItemAudioVariants release_variant
         ON release_variant.provider_item_id = release_match.provider_edition_item_id
-      WHERE release_match.edition_id = ?
-        AND release_match.match_state = 'accepted'
+      WHERE target_track.album_edition_id = ?
+        AND target_track.recording_id IS NOT NULL
         AND release_item.availability NOT IN (
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
-      ORDER BY release_match.id, track_match.id, track_variant.id, release_variant.id
+      ORDER BY release_match.id, target_track.id, track_match.id, track_variant.id, release_variant.id
     `).all(input.editionId) as CandidateRow[];
 
     const sourceById = new Map<number, AcquisitionSourceCandidate>();
-    const matchById = new Map<number, AcquisitionSourceCandidate["trackMatches"][number]>();
+    const matchById = new Map<string, AcquisitionSourceCandidate["trackMatches"][number]>();
     for (const row of rows) {
       let source = sourceById.get(row.provider_edition_match_id);
       if (!source) {
@@ -222,7 +235,8 @@ export class AcquisitionPlanningService {
         };
         sourceById.set(row.provider_edition_match_id, source);
       }
-      let trackMatch = matchById.get(row.provider_track_match_id);
+      const trackMatchKey = `${row.provider_track_match_id}:${row.track_id}`;
+      let trackMatch = matchById.get(trackMatchKey);
       if (!trackMatch) {
         trackMatch = {
           providerTrackMatchId: row.provider_track_match_id,
@@ -232,7 +246,7 @@ export class AcquisitionPlanningService {
           variants: [],
         };
         (source.trackMatches as Array<typeof trackMatch>).push(trackMatch);
-        matchById.set(row.provider_track_match_id, trackMatch);
+        matchById.set(trackMatchKey, trackMatch);
       }
       const trackQuality = parseQuality(row.track_quality);
       const releaseQuality = parseQuality(row.release_quality);
