@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
+import { BASE_SCHEMA_VERSION } from "../../src/database/schema/version.js";
 import {
   SYNTHETIC_RUN_FORMAT,
   appendNdjson,
@@ -75,7 +76,8 @@ interface CreditedEdge {
 }
 
 const HELP = `
-Generate a deterministic, disposable schema-42 release-hardening fixture.
+Generate a deterministic, disposable release-hardening fixture at the
+ * current baseline schema.
 
 Usage:
   yarn --cwd api tsx scripts/release-hardening/generate-synthetic-load.ts [options]
@@ -1536,7 +1538,7 @@ async function generate(): Promise<void> {
   const schemaVersion = Number(db.pragma("user_version", { simple: true }));
   const quickCheck = String(db.pragma("quick_check", { simple: true }));
   const foreignKeyErrors = db.pragma("foreign_key_check") as unknown[];
-  if (schemaVersion !== 42 || quickCheck !== "ok" || foreignKeyErrors.length > 0) {
+  if (schemaVersion !== BASE_SCHEMA_VERSION || quickCheck !== "ok" || foreignKeyErrors.length > 0) {
     throw new Error(
       `Generated database integrity failed: schema=${schemaVersion}, quick_check=${quickCheck}, `
       + `foreign_key_errors=${foreignKeyErrors.length}`,

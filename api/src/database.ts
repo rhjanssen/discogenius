@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { BASE_SCHEMA_VERSION } from "./database/schema/version.js";
 import { isMainThread } from "node:worker_threads";
 import { DB_PATH } from "./services/config/bootstrap.js";
 
@@ -424,7 +425,10 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 42;
+// Re-exported so existing importers of database.js keep working; the value
+// lives in its own module because two release-hardening scripts open the
+// database file directly and must agree without importing this one.
+export { BASE_SCHEMA_VERSION };
 
 function getUserTableCount(): number {
   const row = db.prepare(`

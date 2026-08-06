@@ -110,6 +110,13 @@ export interface LidarrTrack {
   DurationMs: number;
   Isrcs?: string[];
   isrcs?: string[];
+  /**
+   * MusicBrainz's `recording.comment` — "live", "dolby atmos mix", "explicit".
+   * Present in MB-local mode only; the Servarr Metadata Server does not expose
+   * it, which is why the upsert below must never overwrite a stored value with
+   * null.
+   */
+  RecordingDisambiguation?: string | null;
   /** True when the MusicBrainz recording is flagged as video. */
   IsVideo?: boolean;
 }
@@ -847,11 +854,14 @@ export class ServarrMetadataService {
     `);
 
     const insertRecording = db.prepare(`
-      INSERT INTO Recordings (mbid, title, length_ms, isrcs, is_video, artist_mbid, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Recordings (mbid, title, length_ms, disambiguation, isrcs, is_video, artist_mbid, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         length_ms = excluded.length_ms,
+        -- Servarr omits the comment; a refresh in that mode must not erase what
+        -- MB-local stored, exactly as with isrcs and barcode above.
+        disambiguation = COALESCE(excluded.disambiguation, Recordings.disambiguation),
         isrcs = COALESCE(excluded.isrcs, Recordings.isrcs),
         is_video = CASE WHEN excluded.is_video = 1 THEN 1 ELSE Recordings.is_video END,
         artist_mbid = COALESCE(Recordings.artist_mbid, excluded.artist_mbid),
@@ -936,10 +946,15 @@ export class ServarrMetadataService {
           : [];
       const isrcJson = isrcs.length > 0 ? JSON.stringify(isrcs.map(String).filter(Boolean)) : null;
       const isVideo = track.IsVideo === true || track.isVideo === true || track.video === true ? 1 : 0;
+      const disambiguation = typeof track.RecordingDisambiguation === "string"
+        && track.RecordingDisambiguation.trim() !== ""
+        ? track.RecordingDisambiguation.trim()
+        : null;
       insertRecording.run(
         track.RecordingId,
         track.TrackName,
         track.DurationMs,
+        disambiguation,
         isrcJson,
         isVideo,
         ownerArtistMbid || null,

@@ -47,6 +47,11 @@ export interface CatalogRecording {
   /** Recording length in milliseconds, when known. */
   lengthMs?: number | null;
   isVideo?: boolean;
+  /**
+   * MusicBrainz's recording comment — "live", "dolby atmos mix", "explicit".
+   * MB-local / `:5000` only; the Servarr Metadata Server omits it.
+   */
+  disambiguation?: string | null;
   /** ISRCs attached to the recording (MB-local / `:5000` only — Servarr Metadata Server omits these). */
   isrcs?: string[];
   /** Flattened artist-credit display string ("A feat. B"). */

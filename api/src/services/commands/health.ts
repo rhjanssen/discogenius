@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isMainThread } from "node:worker_threads";
 import { db } from "../../database.js";
+import { BASE_SCHEMA_VERSION } from "../../database/schema/version.js";
 import { Config, CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { DB_PATH } from "../config/bootstrap.js";
 import { getRuntimeDiagnosticsSnapshot } from "./runtime-diagnostics.js";
@@ -21,7 +22,8 @@ import {
 import { getDownloadQueueControlState } from "../download/download-queue-control.js";
 import { CommandNames } from "./command-names.js";
 
-const EXPECTED_SCHEMA_VERSION = 42;
+// Single source of truth; see the note on the constant.
+const EXPECTED_SCHEMA_VERSION = BASE_SCHEMA_VERSION;
 const LAST_DEEP_HEALTH_CONTROL_KEY = "last_deep_health_result";
 const CAPABILITY_CACHE_TTL_MS = 60_000;
 const GIB = 1024 ** 3;

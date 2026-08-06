@@ -290,6 +290,14 @@ export function createCatalogSchema(db: Database.Database): void {
       title TEXT NOT NULL,
       artist_credit TEXT,
       length_ms INT,
+      -- MusicBrainz's recording.comment: the field that says "live",
+      -- "dolby atmos mix", "explicit". Only 4.6% of recordings carry one, but
+      -- those are exactly the ones where the title alone is ambiguous — 34,154
+      -- corpus recordings are qualified here and nowhere else while sharing a
+      -- title and near-identical duration with an unqualified sibling. Without
+      -- it, coverage identity merges a live take into the studio one.
+      -- Populated in MB-local mode; the Servarr Metadata Server omits it.
+      disambiguation TEXT,
       is_video BOOLEAN NOT NULL DEFAULT 0,
       -- Catalog video class for import/naming (lyric/live/audio/visualizer/video).
       -- Provider titles are evidence; marketing wrappers are stripped for display,

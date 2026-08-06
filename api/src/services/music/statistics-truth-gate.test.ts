@@ -700,7 +700,7 @@ test("release statistics stay equal across service, API, cache, projection, and 
   artistStatsModule.ArtistStatisticsService.refresh([fixture.artistId]);
 
   // A fresh process has no in-memory snapshot. Its first read must reconstruct
-  // exactly the same truth from the persisted schema-42 database.
+  // exactly the same truth from the persisted schema-43 database.
   const childCode = `
     import { LibraryStatsQueryService } from "./src/services/music/library-stats-query-service.ts";
     console.log("STAT_RESTART=" + JSON.stringify(LibraryStatsQueryService.getSnapshot()));

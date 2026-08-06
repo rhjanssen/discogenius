@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
+import { BASE_SCHEMA_VERSION } from "../../src/database/schema/version.js";
 import {
   SYNTHETIC_RUN_FORMAT,
   appendNdjson,
@@ -407,8 +408,8 @@ async function run(): Promise<void> {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   const schemaVersion = Number(db.pragma("user_version", { simple: true }));
-  if (schemaVersion !== 42) {
-    throw new Error(`Synthetic runner requires schema 42, found ${schemaVersion}`);
+  if (schemaVersion !== BASE_SCHEMA_VERSION) {
+    throw new Error(`Synthetic runner requires schema ${BASE_SCHEMA_VERSION}, found ${schemaVersion}`);
   }
   const requiredLeaseColumns = [
     "attempt",
@@ -1187,7 +1188,7 @@ async function run(): Promise<void> {
       severity,
     });
   };
-  assertEqual("schema version", schemaVersion, 42);
+  assertEqual("schema version", schemaVersion, BASE_SCHEMA_VERSION);
   assertEqual("PRAGMA quick_check", quickCheck, "ok");
   assertEqual("foreign_key_check rows", foreignKeyErrors.length, 0);
   assertEqual("canonical Artist count", finalCounts.artistsCanonical, expected.artists.canonical);

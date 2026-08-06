@@ -63,6 +63,7 @@ export interface MbTrack {
     title?: string;
     length?: number | null;
     video?: boolean;
+    disambiguation?: string | null;
     isrcs?: string[];
     "artist-credit"?: MbArtistCreditName[];
   };
@@ -110,6 +111,8 @@ export interface MbRecording {
   title?: string;
   length?: number | null;
   video?: boolean;
+  /** MusicBrainz's `recording.comment`. */
+  disambiguation?: string | null;
   isrcs?: string[];
   "artist-credit"?: MbArtistCreditName[];
 }
@@ -176,6 +179,7 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
     MediumNumber: mediumNumber,
     DurationMs: Number(lengthMs || 0),
     Isrcs: Array.isArray(recording?.isrcs) ? recording.isrcs.filter(Boolean) : [],
+    RecordingDisambiguation: recording?.disambiguation || null,
     IsVideo: recording?.video === true,
   };
 }
@@ -283,6 +287,7 @@ export function mapMbRecordingToCatalog(recording: MbRecording): CatalogRecordin
     title: recording.title ?? "",
     lengthMs: typeof recording.length === "number" ? recording.length : null,
     isVideo: recording.video === true,
+    disambiguation: recording.disambiguation ?? null,
     isrcs: Array.isArray(recording.isrcs) ? recording.isrcs.filter(Boolean) : [],
     artistCredit: flattenArtistCredit(recording["artist-credit"]),
     raw: recording,

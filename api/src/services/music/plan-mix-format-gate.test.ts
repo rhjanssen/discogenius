@@ -179,3 +179,37 @@ test("an unlabelled Edition keeps every plan and the planner's own ordering", ()
   const plans = [plan("a", "spatial"), plan("b", "hires-lossless"), plan("c", "lossless")];
   assert.deepEqual(keys(eligiblePlansForEdition(plans, "Back to Black", "deluxe")), ["a", "b", "c"]);
 });
+
+/* ── The comment has to survive the round trip ──────────────────────── */
+
+test("a qualifier that lives only in the comment reaches the resolver", async () => {
+  // This is the case the schema was blind to. MusicBrainz keeps titles clean
+  // and puts the qualifier in `recording.comment`: 34,154 corpus recordings are
+  // qualified there and nowhere else *and* have a same-title sibling within two
+  // seconds, so a resolver that cannot see the comment merges a live take into
+  // the studio one — a false merge, which silently drops wanted content.
+  const { default: Database } = await import("better-sqlite3");
+  const { loadCoverageUnitsForRecordings } = await import("./coverage-identity-repository.js");
+  const db = new Database(":memory:");
+  try {
+    db.exec(`
+      CREATE TABLE Recordings (
+        id INTEGER PRIMARY KEY, title TEXT, length_ms INT,
+        disambiguation TEXT, isrcs TEXT, is_video INT DEFAULT 0);
+      CREATE TABLE ProviderTrackMatches (
+        provider_track_item_id INT, recording_id INT, match_state TEXT);
+      CREATE TABLE ProviderItems (id INTEGER PRIMARY KEY, provider TEXT, isrc TEXT);
+    `);
+    const insert = db.prepare(
+      "INSERT INTO Recordings (id, title, length_ms, disambiguation) VALUES (?, ?, ?, ?)");
+    insert.run(1, "Pompeii", 214148, null);
+    insert.run(2, "Pompeii", 214148, "live");
+    insert.run(3, "Pompeii", 214148, "dolby atmos mix");
+
+    const { unitByRecording } = loadCoverageUnitsForRecordings(db, [1, 2, 3]);
+    assert.notEqual(unitByRecording.get(1), unitByRecording.get(2), "live must not merge");
+    assert.equal(unitByRecording.get(1), unitByRecording.get(3), "atmos must merge");
+  } finally {
+    db.close();
+  }
+});

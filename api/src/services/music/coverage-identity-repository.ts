@@ -22,6 +22,7 @@ interface RecordingRow {
   id: number;
   title: string | null;
   length_ms: number | null;
+  disambiguation: string | null;
   isrcs: string | null;
 }
 
@@ -75,7 +76,7 @@ export function loadCoverageUnitsForRecordings(
     const placeholders = chunk.map(() => "?").join(",");
 
     recordingRows.push(...db.prepare(`
-      SELECT id, title, length_ms, isrcs
+      SELECT id, title, length_ms, disambiguation, isrcs
       FROM Recordings
       WHERE id IN (${placeholders})
     `).all(...chunk) as RecordingRow[]);
@@ -127,6 +128,10 @@ export function loadCoverageUnitsForRecordings(
     recordingId: row.id,
     title: row.title ?? "",
     lengthMs: row.length_ms,
+    // MusicBrainz keeps titles clean and puts "live" / "dolby atmos mix" in the
+    // comment, so without this a live take and the studio one are one title at
+    // one length — a false merge, which silently drops wanted content.
+    disambiguation: row.disambiguation,
     isrcs: [...(isrcsByRecording.get(row.id) ?? [])],
   }));
 

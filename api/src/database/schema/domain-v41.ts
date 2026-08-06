@@ -104,6 +104,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
       foreign_recording_id TEXT UNIQUE,
       title TEXT NOT NULL,
       length_ms INTEGER,
+      -- MusicBrainz's recording.comment ("live", "dolby atmos mix"); see the
+      -- note on the same column in catalog.ts.
+      disambiguation TEXT,
       is_video INTEGER NOT NULL DEFAULT 0 CHECK (is_video IN (0, 1)),
       video_variant TEXT,
       metadata_status TEXT NOT NULL DEFAULT 'musicbrainz',

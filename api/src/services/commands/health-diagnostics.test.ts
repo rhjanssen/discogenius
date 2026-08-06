@@ -73,7 +73,7 @@ test("lightweight diagnostics tolerate collection before schema initialization",
 test("lightweight diagnostics expose schema, WAL, storage, queue, and configured connectivity", () => {
   const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
 
-  assert.equal(snapshot.subsystems.database.schema.details?.userVersion, 42);
+  assert.equal(snapshot.subsystems.database.schema.details?.userVersion, 43);
   assert.equal(snapshot.subsystems.database.schema.details?.journalMode, "wal");
   assert.equal(snapshot.subsystems.database.wal.status, "ok");
   assert.equal(snapshot.subsystems.database.storage.status, "ok");

@@ -315,7 +315,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       edition_id: number; release_gid: string; release_name: string; status: string | null; barcode: string | null; release_comment: string | null;
       medium_pos: number; format: string | null; medium_name: string | null;
       track_gid: string; track_pos: number; track_number: string | null; track_name: string; track_length: number | null;
-      recording_gid: string; recording_name: string; recording_length: number | null; video: boolean; isrcs: string | null;
+      recording_gid: string; recording_name: string; recording_length: number | null; video: boolean;
+      recording_comment: string | null; isrcs: string | null;
     }>(
       `SELECT
           r.release_group AS rg_id,
@@ -324,6 +325,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           m.position AS medium_pos, mf.name AS format, m.name AS medium_name,
           t.gid AS track_gid, t.position AS track_pos, t.number AS track_number, t.name AS track_name, t.length AS track_length,
           rec.gid AS recording_gid, rec.name AS recording_name, rec.length AS recording_length, rec.video,
+          rec.comment AS recording_comment,
           (SELECT string_agg(i.isrc::text, ',') FROM isrc i WHERE i.recording = rec.id) AS isrcs
        FROM release r
        LEFT JOIN release_status rst ON rst.id = r.status
@@ -449,6 +451,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           title: row.recording_name,
           length: row.recording_length,
           video: row.video,
+          disambiguation: row.recording_comment || null,
           isrcs: row.isrcs ? row.isrcs.split(",").filter(Boolean) : [],
         },
       };
@@ -564,8 +567,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
   // ---- recording / ISRC / UPC ----
 
   async getRecording(recordingMbid: string): Promise<CatalogRecording | null> {
-    const [row] = await this.query<{ gid: string; name: string; length: number | null; video: boolean; isrcs: string | null; artist_credit: string | null }>(
-      `SELECT rec.gid, rec.name, rec.length, rec.video,
+    const [row] = await this.query<{ gid: string; name: string; length: number | null; video: boolean; comment: string | null; isrcs: string | null; artist_credit: string | null }>(
+      `SELECT rec.gid, rec.name, rec.length, rec.video, rec.comment,
           (SELECT string_agg(i.isrc::text, ',') FROM isrc i WHERE i.recording = rec.id) AS isrcs,
           (SELECT string_agg(acn.name || COALESCE(acn.join_phrase, ''), '' ORDER BY acn.position)
              FROM artist_credit_name acn WHERE acn.artist_credit = rec.artist_credit) AS artist_credit
@@ -578,6 +581,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       title: row.name,
       length: row.length,
       video: row.video,
+      disambiguation: row.comment || null,
       isrcs: row.isrcs ? row.isrcs.split(",").filter(Boolean) : [],
       "artist-credit": row.artist_credit ? [{ name: row.artist_credit }] : [],
     };

@@ -46,6 +46,8 @@ export interface CanonicalRecordingInput {
   title: string;
   lengthMs?: number | null;
   isVideo?: boolean;
+  /** MusicBrainz's recording comment; null when the source does not supply one. */
+  disambiguation?: string | null;
   isrcs?: readonly string[];
 }
 
@@ -163,11 +165,14 @@ export class CanonicalCatalogRepository {
   upsertRecording(input: CanonicalRecordingInput): number {
     const row = this.db.prepare(`
       INSERT INTO Recordings (
-        mbid, title, length_ms, is_video, isrcs, updated_at
-      ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        mbid, title, length_ms, disambiguation, is_video, isrcs, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         length_ms = excluded.length_ms,
+        -- A mode that cannot supply the comment must not erase one another
+        -- mode already stored.
+        disambiguation = COALESCE(excluded.disambiguation, Recordings.disambiguation),
         is_video = excluded.is_video,
         isrcs = excluded.isrcs,
         updated_at = CURRENT_TIMESTAMP
@@ -176,6 +181,7 @@ export class CanonicalCatalogRepository {
       required(input.mbid, "Recording MBID"),
       required(input.title, "Recording title"),
       input.lengthMs ?? null,
+      optional(input.disambiguation),
       Number(Boolean(input.isVideo)),
       JSON.stringify(input.isrcs || []),
     ) as { id: number };
