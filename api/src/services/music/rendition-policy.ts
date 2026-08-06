@@ -180,6 +180,33 @@ export function editionMixFormat(
 }
 
 /**
+ * The Edition's channel format, falling back to what its Recordings say.
+ *
+ * MusicBrainz labels the release comment on 3,286 of the releases that contain
+ * a channel-format-labelled recording, and those need no inference. On the
+ * other 956 the release says nothing — but only 155 of them are *entirely*
+ * spatial. The remaining 801 are ordinary editions carrying a bonus Atmos cut
+ * or a compilation track, and calling those spatial would deny them every
+ * stereo plan.
+ *
+ * So the Recordings only decide when they are unanimous. Inferring from "any"
+ * would break 801 editions to fix 155.
+ */
+export function editionMixFormatWithRecordings(
+  title: string | null | undefined,
+  disambiguation: string | null | undefined,
+  recordingComments: ReadonlyArray<string | null | undefined>,
+): EditionMixFormat {
+  const labelled = editionMixFormat(title, disambiguation);
+  if (labelled === "spatial") return "spatial";
+  if (recordingComments.length === 0) return "unlabelled";
+  const everyRecordingIsSpatial = recordingComments.every(
+    (comment) => editionMixFormat(null, comment) === "spatial",
+  );
+  return everyRecordingIsSpatial ? "spatial" : "unlabelled";
+}
+
+/**
  * May a plan of this quality tier fill an Edition of this channel format?
  *
  * A spatial-labelled Edition takes only a spatial plan. An unlabelled Edition

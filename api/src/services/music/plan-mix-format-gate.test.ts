@@ -19,6 +19,7 @@ import { eligiblePlansForEdition } from "./acquisition-planning-service.js";
 import { resolveCoverageUnits } from "./coverage-identity.js";
 import {
   editionMixFormat,
+  editionMixFormatWithRecordings,
   editionRendition,
   planEligibleForMixFormat,
 } from "./rendition-policy.js";
@@ -262,4 +263,51 @@ test("rendition markers beside a format stay neutral", () => {
   ]);
   assert.equal(unitByRecording.get(1), unitByRecording.get(2));
   assert.equal(unitByRecording.get(1), unitByRecording.get(3));
+});
+
+/* ── When only the Recordings carry the marker ──────────────────────── */
+
+test("an Edition whose Recordings unanimously say spatial is spatial", () => {
+  // 155 corpus releases label every recording and nothing on the release.
+  assert.equal(
+    editionMixFormatWithRecordings("Back to Black", null,
+      ["dolby atmos mix", "dolby atmos mix", "dolby atmos mix"]),
+    "spatial",
+  );
+  assert.deepEqual(
+    keys(eligiblePlansForEdition(
+      [plan("stereo", "lossless"), plan("atmos", "spatial")],
+      "Back to Black", null, ["dolby atmos mix", "dolby atmos mix"],
+    )),
+    ["atmos"],
+  );
+});
+
+test("one bonus Atmos cut does not make the whole Edition spatial", () => {
+  // The 801 corpus releases that carry *a* spatial recording without being a
+  // spatial issue. Inferring from "any" would deny all of them every stereo
+  // plan — breaking 801 editions to fix 155.
+  assert.equal(
+    editionMixFormatWithRecordings("Back to Black", null,
+      [null, null, "dolby atmos mix", null]),
+    "unlabelled",
+  );
+  assert.deepEqual(
+    keys(eligiblePlansForEdition(
+      [plan("stereo", "lossless"), plan("atmos", "spatial")],
+      "Back to Black", null, [null, null, "dolby atmos mix"],
+    )),
+    ["stereo", "atmos"],
+  );
+});
+
+test("an Edition labelled spatial stays spatial whatever its Recordings say", () => {
+  assert.equal(
+    editionMixFormatWithRecordings("Back to Black", "dolby atmos mix", [null, null]),
+    "spatial",
+  );
+});
+
+test("no Recordings means no inference", () => {
+  assert.equal(editionMixFormatWithRecordings("Back to Black", null, []), "unlabelled");
 });

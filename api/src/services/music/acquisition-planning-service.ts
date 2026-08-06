@@ -9,7 +9,7 @@ import {
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import {
-  editionMixFormat,
+  editionMixFormatWithRecordings,
   editionRendition,
   planEligibleForEdition,
   planEligibleForMixFormat,
@@ -104,9 +104,16 @@ export function eligiblePlansForEdition<
   plans: readonly T[],
   editionTitle: string | null | undefined,
   editionDisambiguation: string | null | undefined,
+  /**
+   * Comments of the Edition's own Recordings. They settle the channel format
+   * only when unanimous — see `editionMixFormatWithRecordings`.
+   */
+  recordingComments: ReadonlyArray<string | null | undefined> = [],
 ): T[] {
   const rendition = editionRendition(editionTitle, editionDisambiguation);
-  const mixFormat = editionMixFormat(editionTitle, editionDisambiguation);
+  const mixFormat = editionMixFormatWithRecordings(
+    editionTitle, editionDisambiguation, recordingComments,
+  );
   if (rendition === "unlabelled" && mixFormat === "unlabelled") return [...plans];
   return plans.filter((plan) =>
     planEligibleForEdition(plan.explicitContent, rendition)
@@ -355,10 +362,20 @@ export class AcquisitionPlanningService {
     // A specifically clean or explicit Edition takes only its own rendition.
     // Curation and the download path read rank 0 straight from
     // AcquisitionPlans, so this has to happen before ranking is persisted.
+    // Some entirely-spatial Editions carry the marker only on their Recordings
+    // (155 in the corpus); the comments settle it when unanimous.
+    const recordingComments = (this.db.prepare(`
+      SELECT recording.disambiguation
+      FROM Tracks track
+      JOIN Recordings recording ON recording.id = track.recording_id
+      WHERE track.album_edition_id = ?
+    `).all(input.editionId) as Array<{ disambiguation: string | null }>)
+      .map(({ disambiguation }) => disambiguation);
     const rankedPlans = eligiblePlansForEdition(
       plans,
       context.edition_title,
       context.edition_disambiguation,
+      recordingComments,
     );
     if (rankedPlans.length === 0) {
       // Every offer contradicts the Edition's rendition. Saying so is the
