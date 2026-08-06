@@ -31,12 +31,25 @@ services:
       # many ms (0 = off). Set e.g. DISCOGENIUS_READ_PROFILE_MS=50 to find the
       # queries that make the UI sluggish under heavy refresh/import load.
       - DISCOGENIUS_READ_PROFILE_MS=${DISCOGENIUS_READ_PROFILE_MS:-0}
+      # Keep the SQLite file off the host bind mount. On Docker Desktop the
+      # /config mount is a Windows/macOS filesystem reached over gRPC-FUSE or
+      # virtiofs, which does not give SQLite the locking and write-ordering it
+      # needs; a long import against it produced B-tree corruption ("2nd
+      # reference to page N") on 2026-08-05. The `db` volume below is ordinary
+      # ext4 inside the VM. Settings, provider tokens and Backups stay under
+      # /config where you can read them from the host.
+      - DB_PATH=${DB_PATH:-/data/discogenius.db}
     ports:
       # Defaults to 3737. Change PORT in .env to publish Discogenius on a different port.
       - "${PORT:-3737}:${PORT:-3737}"
     volumes:
-      # Persistent config directory (database, settings, provider tokens)
+      # Persistent config directory (settings, provider tokens, backups)
       - ./config:/config
+      # The SQLite database — a named volume, never a host bind mount. See
+      # DB_PATH above for why. `docker compose down -v` deletes it; the
+      # database is rebuildable from the catalog and providers, everything you
+      # would miss lives in ./config and ./library.
+      - db:/data
       # Temporary download/import workspace
       - ./downloads:/downloads
       # Library directory (organized music)
@@ -78,3 +91,8 @@ services:
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data
     restart: unless-stopped
+
+volumes:
+  # SQLite lives here rather than on ./config so it sits on ext4 inside the
+  # Docker VM. See the DB_PATH comment on the discogenius service.
+  db:
