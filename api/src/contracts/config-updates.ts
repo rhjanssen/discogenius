@@ -103,7 +103,7 @@ const FILTERING_UPDATE_KEYS = [
   "include_dj_mix",
   "include_mixtape_street",
   "include_demo",
-  "include_unknown_type",
+  "include_studio",
   "include_spokenword",
   "include_interview",
   "include_audiobook",

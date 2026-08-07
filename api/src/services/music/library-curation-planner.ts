@@ -7,7 +7,16 @@ export interface CurationEditionCandidate {
   /** Acquisition units this Edition can actually deliver from a usable plan. */
   attainableUnitIds: ReadonlySet<number>;
 
-  official: boolean;
+  /**
+   * Rank by release status, higher is better: 2 Official, 1 any other enabled
+   * status, 0 none set.
+   *
+   * A boolean here used to read `!status || status === 'official'`, which
+   * ranked a Release with no status *identically* to a genuine Official issue.
+   * They are not the same claim, and with status filtering in place the tie
+   * between them is now the common one.
+   */
+  statusRank: number;
   medium: CanonicalMediumKind;
   preferredCountry: boolean;
   mediaCount: number;
@@ -74,7 +83,7 @@ export function comparePrimaryEditionCandidates(
   const rightUnits = right.attainableUnitIds;
   return (left.secondaryTypeRank ?? 0) - (right.secondaryTypeRank ?? 0)
     || rightUnits.size - leftUnits.size
-    || Number(right.official) - Number(left.official)
+    || (right.statusRank ?? 0) - (left.statusRank ?? 0)
     || Number(Boolean(right.hasUsablePlan)) - Number(Boolean(left.hasUsablePlan))
     || (right.planExplicitPreferenceRank ?? 0) - (left.planExplicitPreferenceRank ?? 0)
     || (right.editionExplicitPreferenceRank ?? 0) - (left.editionExplicitPreferenceRank ?? 0)

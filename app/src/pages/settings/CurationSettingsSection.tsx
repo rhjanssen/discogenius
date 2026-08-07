@@ -59,15 +59,13 @@ const primaryReleaseTypeRows = [
     { key: "include_ep", title: "EPs" },
     { key: "include_single", title: "Singles" },
     { key: "include_broadcast", title: "Broadcasts" },
-    // MusicBrainz's own "Other" type, not a catch-all — an editor chose it.
-    { key: "include_other", title: "Other" },
-    // Release Groups MusicBrainz has not typed, or typed with something this
-    // build does not know. Kept apart from "Other" because they are different
-    // questions: one is a classification, the other is its absence.
-    { key: "include_unknown_type", title: "Untyped or unrecognised" },
+    // Also covers Release Groups MusicBrainz has not typed at all.
+    { key: "include_other", title: "Other or untyped" },
 ] as const;
 
 const secondaryReleaseTypeRows = [
+    // Lidarr's name for "no secondary type": a plain studio record.
+    { key: "include_studio", title: "Studio" },
     { key: "include_compilation", title: "Compilations" },
     { key: "include_soundtrack", title: "Soundtracks" },
     { key: "include_live", title: "Live" },
@@ -75,14 +73,12 @@ const secondaryReleaseTypeRows = [
     { key: "include_dj_mix", title: "DJ-mix" },
     { key: "include_mixtape_street", title: "Mixtape/Street" },
     { key: "include_demo", title: "Demo" },
-    // The rest of MusicBrainz's taxonomy. These were previously excluded with
-    // no way to see or change it; they stay off by default because they are
-    // not music, but the choice is now the user's.
-    { key: "include_spokenword", title: "Spokenword" },
     { key: "include_audiobook", title: "Audiobook" },
-    { key: "include_audio_drama", title: "Audio drama" },
-    { key: "include_interview", title: "Interview" },
     { key: "include_field_recording", title: "Field recording" },
+    // Speech rather than music; off by default.
+    { key: "include_spokenword", title: "Spokenword" },
+    { key: "include_interview", title: "Interview" },
+    { key: "include_audio_drama", title: "Audio drama" },
 ] as const;
 
 /**
@@ -271,6 +267,10 @@ export const CurationSettingsSection = ({
                 </div>
                 <div className={styles.subsectionHeader}>
                     <Text weight="semibold">Secondary release types</Text>
+                    <Text size={200} className={styles.mutedText}>
+                        One enabled type is enough — a release tagged both Live and Spokenword is
+                        included if either is on.
+                    </Text>
                 </div>
                 <div className={styles.checkboxList}>
                     {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({

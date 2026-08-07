@@ -16,12 +16,30 @@
  * transcribed: 5 primary types, 12 secondary types, 7 statuses. Counts in the
  * comments below are corpus-wide Release Group / Release counts.
  *
- * Defaults are permissive where Lidarr's are restrictive, and that is
- * deliberate. Lidarr's stock profile allows Album + Studio + Official only —
- * an opt-in discography. Discogenius aims at full coverage of an artist's work
- * filtered *down* by preference, so the type toggles ship on. Status is the one
- * place we fail closed, because a bootleg or a pseudo-release is a worse copy
- * of a record the user already gets, not additional coverage.
+ * Secondary types follow Lidarr's semantics exactly:
+ *
+ *     albums.Where(album => primaryTypes.Contains(album.Type) &&
+ *         ((!album.SecondaryTypes.Any() && secondaryTypes.Contains("Studio")) ||
+ *          album.SecondaryTypes.Any(x => secondaryTypes.Contains(x))))
+ *
+ * — one enabled secondary type is enough. MusicBrainz asks editors to assign
+ * every applicable type, so a secondary type is a facet, not a category: a
+ * "Live + Spokenword" record is a live record that also has speech, and
+ * enabling Live means wanting it. Rejecting on any disabled facet instead would
+ * lose 2,322 `Live + Spokenword` and 464 `Compilation + Spokenword` groups to
+ * spare ~700 `Audio drama + …` ones. Only 0.9% of Release Groups carry more
+ * than one secondary type at all, so this is a narrow question either way.
+ *
+ * `Studio` is that rule's representation of the empty set — the reason Lidarr
+ * has it, and why it is a filter-side concept only. It is never a MusicBrainz
+ * value, is never stored, and never reaches a written tag.
+ *
+ * Defaults are permissive where Lidarr's are restrictive. Lidarr's stock
+ * profile allows Album + Studio + Official only — an opt-in discography.
+ * Discogenius aims at full coverage of an artist's work filtered *down* by
+ * preference. Status is the one place we fail closed, because a bootleg or a
+ * pseudo-release is a worse copy of a record the user already gets, not
+ * additional coverage.
  */
 import type { FilteringConfig } from "../config/config.js";
 
@@ -38,9 +56,13 @@ type IncludeDecision = {
 };
 
 /**
- * MusicBrainz's five primary types. There is no sixth, and a Release Group may
- * also have none at all — 99,535 of them do, which is why "unknown" is its own
- * classification below rather than being folded into `other`.
+ * MusicBrainz's five primary types. There is no sixth.
+ *
+ * 99,535 Release Groups have no primary type, and a future MusicBrainz addition
+ * would be a value this build does not know. Both read as `Other` — "not one of
+ * the four named kinds" — rather than getting a category of their own. An
+ * untyped Release Group is one MusicBrainz cannot describe, and with `Other`
+ * shipping off, not curating it automatically is the honest default.
  */
 const PRIMARY_TYPE_CONFIG_KEYS: Record<string, keyof FilteringConfig> = {
     album: "include_album",          // 2,278,381
@@ -50,14 +72,7 @@ const PRIMARY_TYPE_CONFIG_KEYS: Record<string, keyof FilteringConfig> = {
     broadcast: "include_broadcast",  //    26,573
 };
 
-/**
- * MusicBrainz's twelve secondary types, complete.
- *
- * The five at the bottom had no config key at all, so every Release Group
- * carrying one was rejected with an `_unsupported` reason the user could not
- * see or change. They keep that outcome by default — the switch is what is new,
- * not the behaviour — because an audiobook or an interview is not music.
- */
+/** MusicBrainz's twelve secondary types, complete. */
 const SECONDARY_TYPE_CONFIG_KEYS: Record<string, keyof FilteringConfig> = {
     compilation: "include_compilation",            // 486,796
     live: "include_live",                          // 154,884
@@ -148,62 +163,53 @@ export function parseMusicBrainzSecondaryTypes(value: unknown): string[] {
  * The primary type as MusicBrainz states it, or `""` when it states none.
  *
  * Deliberately does not fall back to `album`. A Release Group with no type is
- * not an album we happen not to have labelled; it is a Release Group whose type
- * nobody has set, and calling it an album both admits it under a toggle the
- * user pointed at albums and hides that the metadata is incomplete.
+ * not an album we happen not to have labelled; calling it one admits it under a
+ * toggle the user pointed at albums.
  */
 function getPrimaryType(input: ReleaseGroupFilterInput): string {
     return normalizeMusicBrainzType(input.primary_type ?? input.album_type);
-}
-
-/**
- * One switch for "MusicBrainz did not say, or said something this build does
- * not know". Both are the same question for the user — do I want things whose
- * classification is unsettled — and neither is MusicBrainz's `Other`, which is
- * a type an editor chose on purpose.
- */
-function unknownTypeDecision(reason: string, filteringConfig: FilteringConfig): IncludeDecision {
-    const include = filteringConfig.include_unknown_type !== false;
-    return { include, reason: include ? null : reason };
 }
 
 function getPrimaryIncludeDecision(
     primaryType: string,
     filteringConfig: FilteringConfig,
 ): IncludeDecision {
-    if (!primaryType) {
-        return unknownTypeDecision("unset_primary_type_excluded", filteringConfig);
-    }
-
-    const configKey = PRIMARY_TYPE_CONFIG_KEYS[primaryType];
-    if (!configKey) {
-        return unknownTypeDecision(
-            `${primaryType.replace(/\W+/g, "_")}_unrecognized_excluded`,
-            filteringConfig,
-        );
-    }
-
-    const include = filteringConfig[configKey] !== false;
-    return { include, reason: include ? null : `${primaryType}_excluded` };
+    // Untyped and unrecognized alike read as `Other`; see the note on the key map.
+    const configKey = PRIMARY_TYPE_CONFIG_KEYS[primaryType] ?? "include_other";
+    const include = filteringConfig[configKey] === true;
+    if (include) return { include: true, reason: null };
+    const label = primaryType ? primaryType.replace(/\W+/g, "_") : "untyped";
+    return { include: false, reason: `${label}_excluded` };
 }
 
+/**
+ * Lidarr's rule: no secondary types means `Studio`, otherwise one enabled type
+ * is enough.
+ *
+ * A type this build does not recognise counts as enabled. It cannot veto under
+ * these semantics anyway, and letting it stand alone would mean a future
+ * MusicBrainz addition silently deleting Release Groups nobody chose to
+ * exclude. MusicBrainz has added twelve secondary types in twenty years, so the
+ * permissive side of that trade costs approximately nothing.
+ */
 function getSecondaryIncludeDecision(
-    secondaryType: string,
+    secondaryTypes: readonly string[],
     filteringConfig: FilteringConfig,
 ): IncludeDecision {
-    const configKey = SECONDARY_TYPE_CONFIG_KEYS[secondaryType];
-    if (!configKey) {
-        // A type MusicBrainz has added since this build. Silently rejecting it
-        // deletes content the user never chose to exclude, so it rides the same
-        // switch as an unset type.
-        return unknownTypeDecision(
-            `${secondaryType.replace(/\W+/g, "_") || "secondary_type"}_unrecognized_excluded`,
-            filteringConfig,
-        );
+    if (secondaryTypes.length === 0) {
+        const include = filteringConfig.include_studio !== false;
+        return { include, reason: include ? null : "studio_excluded" };
     }
 
-    const include = filteringConfig[configKey] === true;
-    return { include, reason: include ? null : `${secondaryType.replace(/\W+/g, "_")}_excluded` };
+    const enabled = secondaryTypes.some((secondaryType) => {
+        const configKey = SECONDARY_TYPE_CONFIG_KEYS[secondaryType];
+        return configKey ? filteringConfig[configKey] === true : true;
+    });
+    if (enabled) return { include: true, reason: null };
+    return {
+        include: false,
+        reason: `${secondaryTypes[0].replace(/\W+/g, "_")}_excluded`,
+    };
 }
 
 /**
@@ -238,6 +244,19 @@ export function getReleaseStatusIncludeDecision(
     return { include, reason: include ? null : `status_${normalized.replace(/\W+/g, "_")}_excluded` };
 }
 
+/**
+ * Preference rank for an Edition's release status; higher wins a tie.
+ *
+ * Only meaningful among statuses that are already eligible. Official outranks
+ * every other enabled status, and an unset status ranks below both — it is the
+ * absence of a claim, not a claim of officialness.
+ */
+export function releaseStatusPreferenceRank(status: string | null | undefined): number {
+    const normalized = normalizeMusicBrainzType(status);
+    if (!normalized) return 0;
+    return normalized === "official" ? 2 : 1;
+}
+
 export function isReleaseStatusIncluded(
     status: string | null | undefined,
     filteringConfig: FilteringConfig,
@@ -258,19 +277,10 @@ export function getMusicBrainzReleaseGroupIncludeDecision(
         return primaryDecision;
     }
 
-    // No "studio" / "no secondary type" toggle. When MusicBrainz records no
-    // secondary type, the primary type has already answered the question, and a
-    // separate switch would let "Album on, Studio off" silently exclude every
-    // plain studio album — a state with no legible meaning. Lidarr models it;
-    // we deliberately do not.
-    for (const secondaryType of parseMusicBrainzSecondaryTypes(input.secondary_types)) {
-        const secondaryDecision = getSecondaryIncludeDecision(secondaryType, filteringConfig);
-        if (!secondaryDecision.include) {
-            return secondaryDecision;
-        }
-    }
-
-    return { include: true, reason: null };
+    return getSecondaryIncludeDecision(
+        parseMusicBrainzSecondaryTypes(input.secondary_types),
+        filteringConfig,
+    );
 }
 
 export function isMusicBrainzReleaseGroupIncluded(

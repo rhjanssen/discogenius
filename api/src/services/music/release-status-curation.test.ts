@@ -19,6 +19,7 @@ import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { releaseStatusPreferenceRank } from "../metadata/musicbrainz-release-group-filter.js";
 import { LibraryCurationService } from "./library-curation-service.js";
 
 /**
@@ -226,5 +227,31 @@ test("sparse Servarr status data does not misclassify richer MB-local data", () 
       curate(service).selectedEditionIds.includes(101),
       "an unknown status stays eligible rather than failing closed",
     );
+  });
+});
+
+/* ── Unset is not a claim of officialness ───────────────────────────── */
+
+test("an Official Edition outranks one with no status set", () => {
+  // The old boolean read `!status || status === 'official'`, ranking a Release
+  // with no status identically to a genuine Official issue. With both eligible
+  // by default, that tie is now the common one.
+  assert.equal(releaseStatusPreferenceRank("Official"), 2);
+  assert.equal(releaseStatusPreferenceRank(null), 0);
+  assert.equal(releaseStatusPreferenceRank(""), 0);
+  // Every other enabled status sits between them: better than no claim,
+  // worse than an official issue.
+  for (const status of ["Promotion", "Bootleg", "Withdrawn", "Pseudo-Release"]) {
+    assert.equal(releaseStatusPreferenceRank(status), 1, status);
+  }
+});
+
+test("curation prefers the Official Edition over the untyped one", () => {
+  withLibrary((db, service) => {
+    // Both are eligible under the factory defaults and carry the same coverage.
+    db.prepare("UPDATE AlbumEditions SET status = NULL WHERE id = 102").run();
+    const selected = curate(service).selectedEditionIds;
+    assert.ok(selected.includes(101), "the Official issue wins the tie");
+    assert.ok(!selected.includes(102), "the unset one does not");
   });
 });

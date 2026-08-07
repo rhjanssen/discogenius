@@ -17,7 +17,7 @@ function candidate(
     releaseGroupId,
     editionId,
     attainableUnitIds: new Set(units),
-    official: true,
+    statusRank: 2,
     medium: "digital",
     preferredCountry: true,
     mediaCount: 1,
@@ -42,8 +42,8 @@ test("1. Exactly one representative per release group before gap fill", () => {
 });
 
 test("2. Unit-equal peers collapse deterministically", () => {
-  const worse = candidate(1, 10, [1, 2], { official: false });
-  const better = candidate(1, 11, [1, 2], { official: true });
+  const worse = candidate(1, 10, [1, 2], { statusRank: 1 });
+  const better = candidate(1, 11, [1, 2], { statusRank: 2 });
   const rep = selectRepresentativeEdition([worse, better]);
   assert.equal(rep?.editionId, 11);
 });

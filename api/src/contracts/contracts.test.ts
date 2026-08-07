@@ -76,7 +76,7 @@ test("config contract parsers normalize expected public settings shapes", () => 
     include_dj_mix: false,
     include_mixtape_street: false,
     include_demo: false,
-    include_unknown_type: true,
+    include_studio: true,
     include_spokenword: false,
     include_interview: false,
     include_audiobook: false,

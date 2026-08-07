@@ -21,15 +21,20 @@ export interface FilteringConfig {
   include_single: boolean;             // Primary type: Single
   include_ep: boolean;                 // Primary type: EP
   include_broadcast: boolean;          // Primary type: Broadcast
-  include_other: boolean;              // Primary type: Other (MusicBrainz's own type)
   /**
-   * Release Groups whose primary type MusicBrainz has not set (99,535 of them),
-   * or whose type this build does not recognise. Not the same question as
-   * `include_other`: `Other` is a type an editor chose.
+   * Primary type: MusicBrainz's own `Other`, and also the 99,535 Release Groups
+   * it has not typed at all plus any value this build does not recognise —
+   * all of them "not one of the four named kinds".
    */
-  include_unknown_type: boolean;
+  include_other: boolean;
 
-  // MusicBrainz release-group secondary types
+  // MusicBrainz release-group secondary types.
+  /**
+   * Not a MusicBrainz value: Lidarr's name for "no secondary type at all", and
+   * the empty-set case of the one-enabled-type-is-enough rule. Filter-side
+   * only — never stored, never written to a tag.
+   */
+  include_studio: boolean;
   include_compilation: boolean;        // Secondary type: Compilation
   include_soundtrack: boolean;         // Secondary type: Soundtrack
   include_live: boolean;               // Secondary type: Live
@@ -37,9 +42,7 @@ export interface FilteringConfig {
   include_dj_mix: boolean;             // Secondary type: DJ-mix
   include_mixtape_street: boolean;     // Secondary type: Mixtape/Street
   include_demo: boolean;               // Secondary type: Demo
-  // The rest of MusicBrainz's secondary taxonomy. These had no config key, so
-  // they were rejected with a reason nobody could see or change; the switch is
-  // what is new, not the outcome.
+  // The rest of MusicBrainz's secondary taxonomy.
   include_spokenword: boolean;         // Secondary type: Spokenword
   include_interview: boolean;          // Secondary type: Interview
   include_audiobook: boolean;          // Secondary type: Audiobook
@@ -230,9 +233,14 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_album: true,
     include_ep: true,
     include_single: true,
-    include_broadcast: true,
-    include_other: true,
-    include_unknown_type: true,
+    // A broadcast is a radio session, and `Other` also carries the untyped and
+    // the unrecognised. Both are off: a discography is albums, EPs and singles
+    // until the user says otherwise.
+    include_broadcast: false,
+    include_other: false,
+    // "No secondary type" — a plain studio record. Off would exclude nearly
+    // every album ever made.
+    include_studio: true,
     include_compilation: true,
     include_soundtrack: true,
     include_live: true,
@@ -240,13 +248,12 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_dj_mix: true,
     include_mixtape_street: true,
     include_demo: true,
-    // Off preserves today's outcome exactly; these were already rejected, just
-    // invisibly. They are also not music.
+    include_audiobook: true,
+    include_field_recording: true,
+    // The three that are speech rather than music.
     include_spokenword: false,
     include_interview: false,
-    include_audiobook: false,
     include_audio_drama: false,
-    include_field_recording: false,
     // Official plus unset. A bootleg or pseudo-release is a worse copy of a
     // record the user already gets, not additional coverage.
     include_status_official: true,
@@ -347,7 +354,7 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
     include_single: raw?.include_single ?? DEFAULT_CONFIG.filtering.include_single,
     include_broadcast: raw?.include_broadcast ?? DEFAULT_CONFIG.filtering.include_broadcast,
     include_other: raw?.include_other ?? DEFAULT_CONFIG.filtering.include_other,
-    include_unknown_type: raw?.include_unknown_type ?? DEFAULT_CONFIG.filtering.include_unknown_type,
+    include_studio: raw?.include_studio ?? DEFAULT_CONFIG.filtering.include_studio,
     include_spokenword: raw?.include_spokenword ?? DEFAULT_CONFIG.filtering.include_spokenword,
     include_interview: raw?.include_interview ?? DEFAULT_CONFIG.filtering.include_interview,
     include_audiobook: raw?.include_audiobook ?? DEFAULT_CONFIG.filtering.include_audiobook,

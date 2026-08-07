@@ -124,7 +124,7 @@ export interface FilteringConfigContract {
   include_dj_mix: boolean;
   include_mixtape_street: boolean;
   include_demo: boolean;
-  include_unknown_type: boolean;
+  include_studio: boolean;
   include_spokenword: boolean;
   include_interview: boolean;
   include_audiobook: boolean;
@@ -299,7 +299,7 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_dj_mix: expectBoolean(record.include_dj_mix, "curation.include_dj_mix"),
     include_mixtape_street: expectBoolean(record.include_mixtape_street, "curation.include_mixtape_street"),
     include_demo: expectBoolean(record.include_demo, "curation.include_demo"),
-    include_unknown_type: expectBoolean(record.include_unknown_type, "curation.include_unknown_type"),
+    include_studio: expectBoolean(record.include_studio, "curation.include_studio"),
     include_spokenword: expectBoolean(record.include_spokenword, "curation.include_spokenword"),
     include_interview: expectBoolean(record.include_interview, "curation.include_interview"),
     include_audiobook: expectBoolean(record.include_audiobook, "curation.include_audiobook"),

@@ -34,6 +34,7 @@ import {
   getMusicBrainzReleaseGroupIncludeDecision,
   isReleaseStatusIncluded,
   parseMusicBrainzSecondaryTypes,
+  releaseStatusPreferenceRank,
 } from "../metadata/musicbrainz-release-group-filter.js";
 
 interface LibraryPolicyRow {
@@ -424,7 +425,7 @@ export class LibraryCurationService {
         releaseGroupId: release.release_group_id,
         editionId: release.edition_id,
         attainableUnitIds,
-        official: !release.status || release.status.toLowerCase() === "official",
+        statusRank: releaseStatusPreferenceRank(release.status),
         medium: mediumKind(release.media),
         preferredCountry: isPreferredCountry(release.country),
         mediaCount: Math.max(1, Number(release.media_count || 1)),
