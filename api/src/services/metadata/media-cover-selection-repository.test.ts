@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import {
   MediaCoverSelectionRepository,
   mediaCoverSelectionRevision,
@@ -15,7 +15,7 @@ test("media-cover provenance preserves manual authority and rejects supplemental
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
     db.prepare(`
       INSERT INTO Albums (id, mbid, artist_metadata_id, title)

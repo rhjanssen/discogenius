@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "./database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "./database/schema/domain-baseline.js";
 
 function withSchema(run: (db: Database.Database) => void): void {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-schema-v41-"));
@@ -12,7 +12,7 @@ function withSchema(run: (db: Database.Database) => void): void {
   const db = new Database(file);
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     run(db);
   } finally {
     db.close();

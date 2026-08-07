@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 
 test("plan replacement is atomic and partial completion counts only imported assigned tracks", () => {
@@ -12,7 +12,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
       INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
@@ -122,7 +122,7 @@ test("a manual plan choice is compared by exact track set, not by count", () => 
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
       INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);

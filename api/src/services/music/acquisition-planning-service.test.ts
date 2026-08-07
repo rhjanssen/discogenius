@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { buildAcquisitionDownloadCommand } from "./acquisition-plan-executor.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 
@@ -132,7 +132,7 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     seedStandardDeluxeFixture(db);
     const service = new AcquisitionPlanningService(db);
 

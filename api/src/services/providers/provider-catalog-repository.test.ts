@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { ProviderCatalogRepository } from "./provider-catalog-repository.js";
 
 function fixture(run: (db: Database.Database, repository: ProviderCatalogRepository) => void): void {
@@ -12,7 +12,7 @@ function fixture(run: (db: Database.Database, repository: ProviderCatalogReposit
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     run(db, new ProviderCatalogRepository(db));
   } finally {
     db.close();

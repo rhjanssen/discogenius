@@ -21,20 +21,10 @@ export interface FilteringConfig {
   include_single: boolean;             // Primary type: Single
   include_ep: boolean;                 // Primary type: EP
   include_broadcast: boolean;          // Primary type: Broadcast
-  /**
-   * Primary type: MusicBrainz's own `Other`, and also the 99,535 Release Groups
-   * it has not typed at all plus any value this build does not recognise —
-   * all of them "not one of the four named kinds".
-   */
-  include_other: boolean;
+  include_other: boolean;              // Primary type: Other (MusicBrainz's own)
 
-  // MusicBrainz release-group secondary types.
-  /**
-   * Not a MusicBrainz value: Lidarr's name for "no secondary type at all", and
-   * the empty-set case of the one-enabled-type-is-enough rule. Filter-side
-   * only — never stored, never written to a tag.
-   */
-  include_studio: boolean;
+  // MusicBrainz release-group secondary types. A Release Group with none at all
+  // passes on its primary type alone, so there is no synthetic "Studio" key.
   include_compilation: boolean;        // Secondary type: Compilation
   include_soundtrack: boolean;         // Secondary type: Soundtrack
   include_live: boolean;               // Secondary type: Live
@@ -61,8 +51,6 @@ export interface FilteringConfig {
   include_status_withdrawn: boolean;
   include_status_cancelled: boolean;
   include_status_expunged: boolean;
-  /** Releases MusicBrainz gives no status (275,102 of them). */
-  include_status_unknown: boolean;
 
   include_spatial: boolean;            // Include spatial/surround release-group slots
   include_videos: boolean;             // Monitor music videos
@@ -238,9 +226,6 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     // until the user says otherwise.
     include_broadcast: false,
     include_other: false,
-    // "No secondary type" — a plain studio record. Off would exclude nearly
-    // every album ever made.
-    include_studio: true,
     include_compilation: true,
     include_soundtrack: true,
     include_live: true,
@@ -254,8 +239,9 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_spokenword: false,
     include_interview: false,
     include_audio_drama: false,
-    // Official plus unset. A bootleg or pseudo-release is a worse copy of a
-    // record the user already gets, not additional coverage.
+    // Only Official. A bootleg or pseudo-release is a worse copy of a record
+    // the user already gets, not additional coverage; a Release with no status
+    // at all is not a statement that it is official.
     include_status_official: true,
     include_status_promotion: false,
     include_status_bootleg: false,
@@ -263,7 +249,6 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_status_withdrawn: false,
     include_status_cancelled: false,
     include_status_expunged: false,
-    include_status_unknown: true,
     include_spatial: false,
     include_videos: false,
     include_video_official: true,
@@ -354,7 +339,6 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
     include_single: raw?.include_single ?? DEFAULT_CONFIG.filtering.include_single,
     include_broadcast: raw?.include_broadcast ?? DEFAULT_CONFIG.filtering.include_broadcast,
     include_other: raw?.include_other ?? DEFAULT_CONFIG.filtering.include_other,
-    include_studio: raw?.include_studio ?? DEFAULT_CONFIG.filtering.include_studio,
     include_spokenword: raw?.include_spokenword ?? DEFAULT_CONFIG.filtering.include_spokenword,
     include_interview: raw?.include_interview ?? DEFAULT_CONFIG.filtering.include_interview,
     include_audiobook: raw?.include_audiobook ?? DEFAULT_CONFIG.filtering.include_audiobook,
@@ -367,7 +351,6 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
     include_status_withdrawn: raw?.include_status_withdrawn ?? DEFAULT_CONFIG.filtering.include_status_withdrawn,
     include_status_cancelled: raw?.include_status_cancelled ?? DEFAULT_CONFIG.filtering.include_status_cancelled,
     include_status_expunged: raw?.include_status_expunged ?? DEFAULT_CONFIG.filtering.include_status_expunged,
-    include_status_unknown: raw?.include_status_unknown ?? DEFAULT_CONFIG.filtering.include_status_unknown,
     include_compilation: raw?.include_compilation ?? DEFAULT_CONFIG.filtering.include_compilation,
     include_soundtrack: raw?.include_soundtrack ?? DEFAULT_CONFIG.filtering.include_soundtrack,
     include_live: raw?.include_live ?? DEFAULT_CONFIG.filtering.include_live,

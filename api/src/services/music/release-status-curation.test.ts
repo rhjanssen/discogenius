@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { releaseStatusPreferenceRank } from "../metadata/musicbrainz-release-group-filter.js";
 import { LibraryCurationService } from "./library-curation-service.js";
 
@@ -90,7 +90,7 @@ function seedProviderExactMatch(
  */
 function seedMixedStatusLibrary(db: Database.Database): void {
   db.pragma("foreign_keys = ON");
-  createDomainSchemaV41(db);
+  createCurrentDomainSchema(db);
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'bastille', 'Bastille');
     INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
@@ -215,18 +215,20 @@ test("a manual selection survives an excluded status", () => {
 // wiring: that curation consults the gate, that the Release Group survives it,
 // and that a manual selection outranks it.
 
-/* ── Mode asymmetry ─────────────────────────────────────────────────── */
+/* ── Absent status is absent metadata, not a claim ──────────────────── */
 
-test("sparse Servarr status data does not misclassify richer MB-local data", () => {
-  // Servarr supplies fewer statuses than MusicBrainz. An Edition whose status
-  // we never learned must not be treated as a bootleg — it is unset, which is
-  // its own case and eligible by default.
+test("an Edition with no status is not curated automatically", () => {
+  // Both catalogue modes supply release status — Servarr's `LidarrRelease.Status`
+  // is non-optional, and the measured 563-artist library is only 2.47% unset.
+  // So an unset status is a genuine metadata gap rather than a mode asymmetry,
+  // and "only official releases" means what it says. Cost on that library: 129
+  // Release Groups of 5,322 become manual-only.
   withLibrary((db, service) => {
     db.prepare("UPDATE AlbumEditions SET status = NULL WHERE id = 101").run();
-    assert.ok(
-      curate(service).selectedEditionIds.includes(101),
-      "an unknown status stays eligible rather than failing closed",
-    );
+    const selected = curate(service).selectedEditionIds;
+    assert.ok(!selected.includes(101), "an unset status is not eligible");
+    // And the Edition is still there to monitor by hand.
+    assert.ok(db.prepare("SELECT 1 FROM AlbumEditions WHERE id = 101").get());
   });
 });
 
@@ -246,12 +248,12 @@ test("an Official Edition outranks one with no status set", () => {
   }
 });
 
-test("curation prefers the Official Edition over the untyped one", () => {
+test("the rank still orders Official above other enabled statuses", () => {
+  // Only reachable when the user enables a second status; the rank exists so
+  // that Official then wins an equivalent-coverage tie rather than losing it to
+  // a promo that happens to sort first.
   withLibrary((db, service) => {
-    // Both are eligible under the factory defaults and carry the same coverage.
-    db.prepare("UPDATE AlbumEditions SET status = NULL WHERE id = 102").run();
     const selected = curate(service).selectedEditionIds;
-    assert.ok(selected.includes(101), "the Official issue wins the tie");
-    assert.ok(!selected.includes(102), "the unset one does not");
+    assert.ok(selected.includes(101));
   });
 });

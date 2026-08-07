@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { LibraryCurationService } from "./library-curation-service.js";
 
 function seedProviderExactMatch(
@@ -69,7 +69,7 @@ test("library curation uses canonical scope and recording coverage without chang
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name)
         VALUES (1, 'bastille', 'Bastille'), (2, 'collaborator', 'Collaborator');

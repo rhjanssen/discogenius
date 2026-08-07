@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { CanonicalCatalogRepository } from "./canonical-catalog-repository.js";
 
 test("canonical catalogue writes resolve boundaries once and persist integer relations", () => {
@@ -12,7 +12,7 @@ test("canonical catalogue writes resolve boundaries once and persist integer rel
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     const repository = new CanonicalCatalogRepository(db);
     const bastilleId = repository.upsertArtist({ mbid: "artist-bastille", name: "Bastille" });
     const collaboratorId = repository.upsertArtist({ mbid: "artist-collab", name: "Collaborator" });

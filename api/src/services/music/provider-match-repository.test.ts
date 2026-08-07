@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { ProviderMatchRepository } from "./provider-match-repository.js";
 
@@ -13,7 +13,7 @@ test("Laura Palmer provider release persists one safe assignment and no position
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Bastille')").run();
     db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Laura Palmer EP')").run();
     db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Laura Palmer EP')").run();
@@ -108,7 +108,7 @@ test("an accepted video match supersedes the provider video's previous accepted 
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.prepare("INSERT INTO Recordings (id, mbid, title, is_video) VALUES (1, 'video-1', 'Pompeii', 1)").run();
     db.prepare("INSERT INTO Recordings (id, mbid, title, is_video) VALUES (2, 'video-2', 'Pompeii', 1)").run();
     const itemId = new ProviderCatalogRepository(db).upsertItem({
@@ -147,7 +147,7 @@ test("automatic video matching cannot supersede a manual accepted identity", () 
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.prepare(`
       INSERT INTO Recordings (id, mbid, title, is_video)
       VALUES (1, 'video-1', 'Pompeii', 1), (2, 'video-2', 'Pompeii', 1)
@@ -211,7 +211,7 @@ test("video matches reject missing or non-video canonical targets", () => {
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createDomainSchemaV41(db);
+    createCurrentDomainSchema(db);
     db.prepare(`
       INSERT INTO Recordings (id, mbid, title, is_video, metadata_status)
       VALUES (2, 'audio-recording', 'Audio recording', 0, 'musicbrainz')

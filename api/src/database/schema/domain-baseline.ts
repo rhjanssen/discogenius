@@ -1,13 +1,17 @@
 import type Database from "better-sqlite3";
 
 /**
- * Clean schema-41 domain baseline.
+ * The clean domain baseline, at whatever the current schema version is.
  *
- * This function deliberately contains no compatibility tables or migrations.
- * It is executable in isolation so the target model can be contract-tested
- * before database.ts switches the production baseline to it.
+ * Deliberately contains no compatibility tables or migrations, so the target
+ * model can be contract-tested in isolation before `database.ts` switches the
+ * production baseline to it.
+ *
+ * Not pinned to a version: it was written at 41 and has since gained schema-43
+ * fields such as the Recording comment, so a `V41` name now names something
+ * that is not true. The version lives in `schema/version.ts` alone.
  */
-export function createDomainSchemaV41(db: Database.Database): void {
+export function createCurrentDomainSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE ArtistMetadata (
       id INTEGER PRIMARY KEY,

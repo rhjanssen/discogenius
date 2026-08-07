@@ -9,7 +9,7 @@ import {
 } from "../../test-support/active-schema-fixture.js";
 
 /**
- * This suite used to build its database from `domain-v41.ts`. That is the
+ * This suite used to build its database from `domain-baseline.ts`. That is the
  * aspirational core schema (32 tables) — production never creates it — and the
  * divergence hid a real bug: the boundary wrote TrackFiles.provider_item_id
  * against an active schema that had no such column, and every test still passed.

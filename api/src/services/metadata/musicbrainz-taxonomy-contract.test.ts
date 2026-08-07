@@ -58,8 +58,8 @@ const RELEASE_STATUSES = [
 
 /** The secondary types that are music, and so ship on. */
 const MUSIC_SECONDARY_KEYS = new Set([
-  "include_studio", "include_compilation", "include_live", "include_soundtrack",
-  "include_remix", "include_demo", "include_dj_mix", "include_mixtape_street",
+  "include_compilation", "include_live", "include_soundtrack", "include_remix",
+  "include_demo", "include_dj_mix", "include_mixtape_street",
   "include_audiobook", "include_field_recording",
 ]);
 
@@ -132,38 +132,43 @@ test("no secondary type is rejected for having no config key", () => {
   }
 });
 
-/* ── Untyped folds into Other ───────────────────────────────────────── */
+/* ── Absent metadata is not a preference ────────────────────────────── */
 
-test("an untyped Release Group is judged as Other, not as an Album", () => {
-  // 99,535 Release Groups have no primary type. Calling them Albums admitted
-  // them under a switch pointed at albums.
+test("an untyped Release Group is not curated, and gets no switch", () => {
+  // 99,535 Release Groups have no primary type. It is not `Other` — that is an
+  // affirmative classification an editor chose — and it is not an Album.
   for (const missing of [null, undefined, "", "   "]) {
-    assert.equal(
-      isMusicBrainzReleaseGroupIncluded({ primary_type: missing }, configWith({ include_other: false })),
-      false, String(missing),
-    );
-    assert.equal(
-      isMusicBrainzReleaseGroupIncluded({ primary_type: missing }, configWith({ include_album: false })),
-      true, String(missing),
-    );
+    const decision = getMusicBrainzReleaseGroupIncludeDecision({ primary_type: missing }, ALL_ON);
+    assert.equal(decision.include, false, String(missing));
+    assert.equal(decision.reason, "unclassified_primary_type");
   }
+  // No toggle reaches it: turning everything on does not admit it, and turning
+  // Other or Album off is a different question entirely.
   assert.equal(
-    getMusicBrainzReleaseGroupIncludeDecision(
-      { primary_type: null }, configWith({ include_other: false }),
-    ).reason,
-    "untyped_excluded",
-    "the reason still distinguishes untyped from a real Other",
+    isMusicBrainzReleaseGroupIncluded({ primary_type: "Other" }, ALL_ON), true,
+    "Other is a real MusicBrainz type and stays reachable",
   );
 });
 
-test("a primary type this build does not recognise is also Other", () => {
+test("a primary type this build does not know follows the unclassified policy", () => {
+  // It must not masquerade as `Other`; the distinct reason is the signal that
+  // MusicBrainz's vocabulary has moved on.
+  const decision = getMusicBrainzReleaseGroupIncludeDecision({ primary_type: "Hologram" }, ALL_ON);
+  assert.equal(decision.include, false);
+  assert.equal(decision.reason, "unrecognized_primary_type_hologram");
+});
+
+test("an Edition with no release status is not curated automatically", () => {
+  // 275,102 Releases carry no status. "Only official releases" means what it
+  // says; those Editions stay stored and monitorable by hand.
+  for (const missing of [null, undefined, ""]) {
+    const decision = getReleaseStatusIncludeDecision(missing, ALL_ON);
+    assert.equal(decision.include, false, String(missing));
+    assert.equal(decision.reason, "unclassified_release_status");
+  }
   assert.equal(
-    isMusicBrainzReleaseGroupIncluded({ primary_type: "Hologram" }, configWith({ include_other: true })),
-    true,
-  );
-  assert.equal(
-    isMusicBrainzReleaseGroupIncluded({ primary_type: "Hologram" }, configWith({ include_other: false })),
-    false,
+    getReleaseStatusIncludeDecision("Hologram", ALL_ON).reason,
+    "unrecognized_release_status_hologram",
   );
 });
 
@@ -222,9 +227,13 @@ test("an unrecognised secondary type never vetoes, and never stands alone as a v
   );
 });
 
-/* ── Studio is the empty set, and only that ─────────────────────────── */
+/* ── An empty secondary set is a statement, not a gap ───────────────── */
 
-test("Studio decides Release Groups with no secondary type at all", () => {
+test("a Release Group with no secondary type is judged on its primary type alone", () => {
+  // Unlike a missing primary type, this is not absent metadata: it says the
+  // release is a plain studio record. Lidarr needs a synthetic `Studio` facet
+  // because its profile exposes the empty set as a category; we handle it
+  // directly and expose no such switch.
   for (const empty of [null, undefined, "", "[]", []]) {
     assert.equal(
       isMusicBrainzReleaseGroupIncluded({ primary_type: "Album", secondary_types: empty }, ALL_ON),
@@ -232,26 +241,21 @@ test("Studio decides Release Groups with no secondary type at all", () => {
     );
     assert.equal(
       isMusicBrainzReleaseGroupIncluded(
-        { primary_type: "Album", secondary_types: empty }, configWith({ include_studio: false }),
+        { primary_type: "Album", secondary_types: empty }, configWith({ include_album: false }),
       ),
       false, String(empty),
     );
   }
 });
 
-test("Studio does not touch a Release Group that has a secondary type", () => {
-  // It is the empty-set case only — never a facet a release can carry, which is
-  // also why it is never stored and never written to a tag.
+test("Studio is not part of the vocabulary at all", () => {
+  assert.equal(SECONDARY_TYPE_NAMES.includes("Studio"), false);
+  // And it is not silently accepted as a secondary type either.
   assert.equal(
     isMusicBrainzReleaseGroupIncluded(
-      { primary_type: "Album", secondary_types: ["Live"] }, configWith({ include_studio: false }),
+      { primary_type: "Album", secondary_types: ["Live"] }, configWith({ include_live: false }),
     ),
-    true,
-  );
-  assert.equal(normalizeMusicBrainzType("Studio"), "studio");
-  assert.equal(
-    SECONDARY_TYPE_NAMES.includes("Studio"), false,
-    "Studio is not one of MusicBrainz's twelve",
+    false,
   );
 });
 
@@ -316,18 +320,6 @@ test("mode spelling differences normalize to one vocabulary", () => {
 
 /* ── Status: unset and unrecognized ─────────────────────────────────── */
 
-test("a release with no status is its own case, defaulting to eligible", () => {
-  // 275,102 releases carry no status; dropping them is a silent coverage hole.
-  for (const missing of [null, undefined, ""]) {
-    assert.equal(isReleaseStatusIncluded(missing, ALL_ON), true, String(missing));
-    assert.equal(
-      isReleaseStatusIncluded(missing, configWith({ include_status_unknown: false })),
-      false, String(missing),
-    );
-  }
-  // Turning Official off must not take unset with it.
-  assert.equal(isReleaseStatusIncluded(null, configWith({ include_status_official: false })), true);
-});
 
 /* ── The shipped defaults, asserted rather than restated ────────────── */
 
@@ -365,18 +357,15 @@ test("the factory defaults keep Bastille's Other People's Heartache", () => {
   );
 });
 
-test("factory status defaults keep Official and unset, and drop the rest", () => {
-  // The one place we fail closed: a bootleg or pseudo-release is a worse copy
-  // of a record the user already gets, not additional coverage. 5.08M of 5.6M
-  // releases are Official, so coverage barely moves.
+test("factory status defaults are Official and nothing else", () => {
   const factory = DEFAULT_CONFIG.filtering;
   assert.equal(factory.include_status_official, true);
-  assert.equal(factory.include_status_unknown, true);
   for (const [status, key] of RELEASE_STATUSES.filter(([s]) => s !== "Official")) {
     assert.equal(factory[key], false, status);
   }
   assert.equal(isReleaseStatusIncluded("Official", factory), true);
-  assert.equal(isReleaseStatusIncluded(null, factory), true);
   assert.equal(isReleaseStatusIncluded("Bootleg", factory), false);
-  assert.equal(isReleaseStatusIncluded("Pseudo-Release", factory), false);
+  // 233,267 Release Groups (5.32%) have no Official Edition but do have an
+  // unset one; those become manual-only, which is the accepted cost.
+  assert.equal(isReleaseStatusIncluded(null, factory), false);
 });

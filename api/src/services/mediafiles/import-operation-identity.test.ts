@@ -9,7 +9,7 @@ import {
   resetActiveSchemaRows,
 } from "../../test-support/active-schema-fixture.js";
 
-// Production-service test → ACTIVE schema, never domain-v41.
+// Production-service test → ACTIVE schema, never domain-baseline.
 const { tempDir } = prepareActiveSchemaEnv("import-operation-identity");
 const { db, dbModule } = await openActiveSchemaDb();
 const {

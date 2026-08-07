@@ -124,7 +124,6 @@ export interface FilteringConfigContract {
   include_dj_mix: boolean;
   include_mixtape_street: boolean;
   include_demo: boolean;
-  include_studio: boolean;
   include_spokenword: boolean;
   include_interview: boolean;
   include_audiobook: boolean;
@@ -137,7 +136,6 @@ export interface FilteringConfigContract {
   include_status_withdrawn: boolean;
   include_status_cancelled: boolean;
   include_status_expunged: boolean;
-  include_status_unknown: boolean;
   include_spatial: boolean;
   include_videos: boolean;
   include_video_official: boolean;
@@ -299,7 +297,6 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_dj_mix: expectBoolean(record.include_dj_mix, "curation.include_dj_mix"),
     include_mixtape_street: expectBoolean(record.include_mixtape_street, "curation.include_mixtape_street"),
     include_demo: expectBoolean(record.include_demo, "curation.include_demo"),
-    include_studio: expectBoolean(record.include_studio, "curation.include_studio"),
     include_spokenword: expectBoolean(record.include_spokenword, "curation.include_spokenword"),
     include_interview: expectBoolean(record.include_interview, "curation.include_interview"),
     include_audiobook: expectBoolean(record.include_audiobook, "curation.include_audiobook"),
@@ -312,7 +309,6 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_status_withdrawn: expectBoolean(record.include_status_withdrawn, "curation.include_status_withdrawn"),
     include_status_cancelled: expectBoolean(record.include_status_cancelled, "curation.include_status_cancelled"),
     include_status_expunged: expectBoolean(record.include_status_expunged, "curation.include_status_expunged"),
-    include_status_unknown: expectBoolean(record.include_status_unknown, "curation.include_status_unknown"),
     include_spatial: expectBoolean(record.include_spatial, "curation.include_spatial"),
     include_videos: expectBoolean(record.include_videos, "curation.include_videos"),
     include_video_official: expectBoolean(record.include_video_official, "curation.include_video_official"),

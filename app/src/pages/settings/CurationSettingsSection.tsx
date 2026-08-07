@@ -59,13 +59,10 @@ const primaryReleaseTypeRows = [
     { key: "include_ep", title: "EPs" },
     { key: "include_single", title: "Singles" },
     { key: "include_broadcast", title: "Broadcasts" },
-    // Also covers Release Groups MusicBrainz has not typed at all.
-    { key: "include_other", title: "Other or untyped" },
+    { key: "include_other", title: "Other" },
 ] as const;
 
 const secondaryReleaseTypeRows = [
-    // Lidarr's name for "no secondary type": a plain studio record.
-    { key: "include_studio", title: "Studio" },
     { key: "include_compilation", title: "Compilations" },
     { key: "include_soundtrack", title: "Soundtracks" },
     { key: "include_live", title: "Live" },
@@ -96,7 +93,6 @@ const releaseStatusRows = [
     { key: "include_status_withdrawn", title: "Withdrawn" },
     { key: "include_status_cancelled", title: "Cancelled" },
     { key: "include_status_expunged", title: "Expunged" },
-    { key: "include_status_unknown", title: "No status set" },
 ] as const;
 
 const musicVideoTypeRows = [
@@ -269,7 +265,8 @@ export const CurationSettingsSection = ({
                     <Text weight="semibold">Secondary release types</Text>
                     <Text size={200} className={styles.mutedText}>
                         One enabled type is enough — a release tagged both Live and Spokenword is
-                        included if either is on.
+                        included if either is on. Releases with no secondary type are judged on
+                        their primary type alone.
                     </Text>
                 </div>
                 <div className={styles.checkboxList}>
@@ -283,8 +280,9 @@ export const CurationSettingsSection = ({
                 <div className={styles.subsectionHeader}>
                     <Text weight="semibold">Release status</Text>
                     <Text size={200} className={styles.mutedText}>
-                        Which editions Curate Library may choose. Excluded editions stay listed and
-                        can still be monitored manually.
+                        Which editions Curate Library may choose. Editions whose status is
+                        unchecked — or that MusicBrainz gives no status at all — stay listed and can
+                        still be monitored manually.
                     </Text>
                 </div>
                 <div className={styles.checkboxList}>

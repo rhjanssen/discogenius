@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { ProviderReleaseIngestionService } from "../providers/provider-release-ingestion-service.js";
 
@@ -93,7 +93,7 @@ function ingestOffer(
 
 function seedLibrary(db: Database.Database): void {
   db.pragma("foreign_keys = ON");
-  createDomainSchemaV41(db);
+  createCurrentDomainSchema(db);
   db.exec(`
     INSERT INTO MetadataProfiles (id, name, release_type_policy, redundancy_enabled)
       VALUES (1, 'Default', '{}', 0);

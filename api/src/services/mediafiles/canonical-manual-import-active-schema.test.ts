@@ -7,7 +7,7 @@ import { test } from "node:test";
 /**
  * This test runs against the ACTIVE baseline schema and prepares the writes the
  * canonical manual-import boundary performs, so a production column dependency
- * cannot disappear behind the aspirational domain-v41 fixture.
+ * cannot disappear behind the aspirational domain-baseline fixture.
  */
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-active-schema-"));
