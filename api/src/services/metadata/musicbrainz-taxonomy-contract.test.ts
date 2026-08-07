@@ -60,7 +60,7 @@ const RELEASE_STATUSES = [
 const MUSIC_SECONDARY_KEYS = new Set([
   "include_compilation", "include_live", "include_soundtrack", "include_remix",
   "include_demo", "include_dj_mix", "include_mixtape_street",
-  "include_audiobook", "include_field_recording",
+  "include_field_recording",
 ]);
 
 /** MusicBrainz's own names, used to prove Studio is not one of them. */
@@ -341,7 +341,11 @@ test("factory secondary defaults keep every kind of music and drop speech", () =
   for (const key of MUSIC_SECONDARY_KEYS) {
     assert.equal(factory[key as keyof typeof factory], true, `${key} ships on`);
   }
-  for (const key of ["include_spokenword", "include_interview", "include_audio_drama"] as const) {
+  // Audiobook is MusicBrainz secondary type 5 and Lidarr's id 5 — they mirror
+  // each other — and it is speech, not music.
+  for (const key of [
+    "include_spokenword", "include_interview", "include_audiobook", "include_audio_drama",
+  ] as const) {
     assert.equal(factory[key], false, `${key} ships off`);
   }
 });

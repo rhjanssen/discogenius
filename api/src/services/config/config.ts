@@ -233,11 +233,13 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_dj_mix: true,
     include_mixtape_street: true,
     include_demo: true,
-    include_audiobook: true,
+    // Field recording is environmental sound released as music; MusicBrainz
+    // added it after Lidarr's list and Lidarr still does not model it.
     include_field_recording: true,
-    // The three that are speech rather than music.
+    // Speech rather than music.
     include_spokenword: false,
     include_interview: false,
+    include_audiobook: false,
     include_audio_drama: false,
     // Only Official. A bootleg or pseudo-release is a worse copy of a record
     // the user already gets, not additional coverage; a Release with no status
