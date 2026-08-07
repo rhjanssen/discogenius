@@ -8,6 +8,7 @@ import {
     isImportDownloadCancellationRequested,
 } from "../../mediafiles/downloaded-tracks-import-service.js";
 import { clearConfigCache } from "../../config/config.js";
+import { withSqliteWriteGate } from "../../../database.js";
 import { initCurationListeners } from "../../music/curation.listener.js";
 import {
     forwardImportProgress,
@@ -54,11 +55,19 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
     const physicalWorkerId = getCommandWorkerId();
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-    const heartbeat = () => {
+    // The heartbeat is the only thing standing between a slow command and the
+    // watchdog, and it is a DB write. Ungated it entered SQLite's synchronous
+    // busy handler like any other writer — 30s per attempt on a worker — so the
+    // one write whose whole job is to prove the thread is alive was the write
+    // most able to freeze it. Under the gate it waits on a promise instead, and
+    // the timer keeps firing.
+    const heartbeat = async () => {
         if (!job.worker_id) return;
         let renewed = false;
         try {
-            renewed = CommandQueueManager.renewLease(job.id, job.worker_id, leaseMs);
+            renewed = await withSqliteWriteGate(
+                () => CommandQueueManager.renewLease(job.id, job.worker_id!, leaseMs),
+            );
         } catch (error) {
             console.error(`[CommandWorker] Could not renew lease for command #${job.id}:`, error);
         }
@@ -73,8 +82,8 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
     };
 
     if (job.worker_id) {
-        heartbeat();
-        heartbeatTimer = setInterval(heartbeat, heartbeatMs);
+        void heartbeat();
+        heartbeatTimer = setInterval(() => { void heartbeat(); }, heartbeatMs);
         heartbeatTimer.unref?.();
     }
 

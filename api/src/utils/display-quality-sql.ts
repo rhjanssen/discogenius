@@ -32,8 +32,23 @@ export function variantDisplayQualitySql(variantAlias = "variant"): string {
   return displayQualitySql(variantAlias, "NULL");
 }
 
+/**
+ * The last comma-separated segment of `expr` (the whole value when there is no
+ * comma), using SQLite's `replace(x, rtrim(x, replace(x, ',', '')), '')` idiom.
+ *
+ * A quality tag is one token. Providers advertise a release's *capabilities* as
+ * a list, and ingestion used to persist the whole joined list as one variant's
+ * label — and then a plan snapshot copied it. So the database still holds
+ * values like "dolby-atmos,lossless,lossy-stereo,LOSSLESS", tens of thousands
+ * of them, which no badge can render. The canonical token is last, so take it
+ * and let the badge work without waiting for a re-ingest.
+ */
+function lastQualityTokenSql(expr: string): string {
+  return `TRIM(REPLACE(${expr}, RTRIM(${expr}, REPLACE(${expr}, ',', '')), ''))`;
+}
+
 function displayQualitySql(variantAlias: string, snapshotQuality: string): string {
-  return `CASE
+  return lastQualityTokenSql(`CASE
     WHEN LOWER(COALESCE(${variantAlias}.spatial_format, '')) IN (
       'atmos', 'dolby_atmos', 'dolby-atmos'
     ) THEN 'DOLBY_ATMOS'
@@ -57,7 +72,7 @@ function displayQualitySql(variantAlias: string, snapshotQuality: string): strin
       NULLIF(TRIM(${variantAlias}.provider_quality_label), ''),
       ${variantAlias}.quality_class
     )
-  END`;
+  END`);
 }
 
 /**

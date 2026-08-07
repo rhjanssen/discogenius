@@ -21,6 +21,7 @@ import {
 } from "../../test-support/active-schema-fixture.js";
 import {
   planHeadlineQualitySql,
+  variantDisplayQualitySql,
   planQualityHistogramSql,
 } from "../../utils/display-quality-sql.js";
 
@@ -201,4 +202,28 @@ test("an empty plan has no headline rather than a fabricated one", () => {
   `);
   assert.equal(headline(7), null);
   assert.deepEqual(histogram(7), {});
+});
+
+test("a provider trait list collapses to one badge-able token", () => {
+  // Providers advertise a release's capabilities as a list, and ingestion once
+  // persisted the whole joined list as the variant's label — 30k rows in a real
+  // library carry values like this. The badge layer takes one token, and the
+  // canonical one is last.
+  db.exec(`
+    INSERT OR IGNORE INTO ProviderItems (id, provider, entity_type, provider_id, title)
+      VALUES (7700, 'apple-music', 'track', 'am-7700', 'Trait List');
+    INSERT INTO ProviderItemAudioVariants (
+      id, provider_item_id, variant_key, quality_class, provider_quality_label, availability
+    ) VALUES (
+      7700, 7700, 'stereo:lossless', 'lossless',
+      'dolby-atmos,lossless,lossy-stereo,LOSSLESS', 'available'
+    );
+  `);
+
+  const rendered = (db.prepare(`
+    SELECT ${variantDisplayQualitySql("variant")} AS q
+    FROM ProviderItemAudioVariants variant WHERE variant.id = 7700
+  `).get() as { q: string | null }).q;
+
+  assert.equal(rendered, "LOSSLESS");
 });
