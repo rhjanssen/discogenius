@@ -32,6 +32,11 @@ import { YouTubeMusicCatalog } from "./youtube-music-catalog.js";
 import { youtubeMusicQualityMapping } from "./youtube-music-quality.js";
 import { getYtMusicBridgeScript, getYtMusicPythonBinary } from "./ytmusicapi-bridge.js";
 import { getYtDlpBinary, YtDlpBackend } from "./yt-dlp-backend.js";
+import { publishProviderSessionCapabilities } from "../provider-session-capabilities.js";
+import {
+  getYouTubeSessionCapabilities,
+  youtubePremiumForExpectations,
+} from "./youtube-premium-probe.js";
 
 export interface YouTubeMusicCapabilitySnapshot {
   pythonBinary: string;
@@ -355,6 +360,21 @@ export class YouTubeMusicProvider implements StreamingProvider {
 
   async getAuthStatus(): Promise<ProviderAuthStatus> {
     const connected = this.isAuthenticated();
+    // Premium is what decides whether a YouTube offer is expected at ~128 or
+    // ~256 kbps. It is probed once per session and published for the variant
+    // writers, which hold only a provider id.
+    try {
+      const capabilities = await getYouTubeSessionCapabilities({
+        authenticated: connected,
+        binary: getYtDlpBinary(),
+      });
+      publishProviderSessionCapabilities(this.id, {
+        youtubePremium: youtubePremiumForExpectations(capabilities),
+      });
+    } catch {
+      // A failed probe must never fail an auth check; the base expectation
+      // stands, which under-promises rather than over-promises.
+    }
     return {
       connected,
       tokenExpired: false,

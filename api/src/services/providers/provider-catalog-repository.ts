@@ -4,6 +4,7 @@ import {
   expectedFactsForProviderTier,
   type ProviderSessionCapabilities,
 } from "./audio-facts.js";
+import { getProviderSessionCapabilities } from "./provider-session-capabilities.js";
 
 export type ProviderEntityType = "artist" | "release" | "track" | "video";
 
@@ -282,7 +283,11 @@ export class ProviderCatalogRepository {
         .run(providerItemId);
       return variants.map((variant) => {
         const expectedFacts = expectedFactsForProviderTier(
-          context?.provider, variant.variantKey, context?.capabilities ?? {},
+          context?.provider,
+          variant.variantKey,
+          // The entitlement is a session property published by the provider, so
+          // callers holding only a provider id still get the right expectation.
+          context?.capabilities ?? getProviderSessionCapabilities(context?.provider),
         );
         return (insert.get(
         providerItemId,

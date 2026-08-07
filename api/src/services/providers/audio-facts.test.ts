@@ -205,15 +205,38 @@ test("a probed file is read into the same vocabulary as an offer", async () => {
   assert.equal(observedFactsFromFile({ codec: "invented" }).lossless, null);
 });
 
-test("a multichannel E-AC-3 file reads as immersive", async () => {
+test("plain E-AC-3 5.1 is multichannel, not immersive", async () => {
+  // The distinction this whole model rests on: Dolby Digital Plus surround is
+  // exactly E-AC-3 at 5.1. Inferring Atmos from the channel count would
+  // relabel every ordinary multichannel file as immersive.
   const { observedFactsFromFile } = await import("./audio-facts.js");
-  const atmos = observedFactsFromFile({
-    codec: "eac3", channel_count: 6, channel_layout: "5.1", sample_rate: 48000, bitrate: 768,
+  const surround = observedFactsFromFile({
+    codec: "eac3", channel_count: 6, channel_layout: "5.1", sample_rate: 48000, bitrate: 640,
   });
-  assert.equal(atmos.immersiveFormat, "dolby-atmos");
-  assert.equal(presentationClassOf(atmos), "immersive");
-  assert.equal(fidelityClassOf(atmos), "lossy");
-  // Stereo E-AC-3 is not Atmos.
+  assert.equal(surround.immersiveFormat, null);
+  assert.equal(presentationClassOf(surround), "multichannel");
+});
+
+test("immersive needs the file to say so", async () => {
+  const { observedFactsFromFile } = await import("./audio-facts.js");
+  // Either the declared spatial format...
+  const declared = observedFactsFromFile({
+    codec: "eac3", channel_count: 6, channel_layout: "5.1", spatial_format: "atmos",
+  });
+  assert.equal(declared.immersiveFormat, "dolby-atmos");
+  assert.equal(declared.objectAudio, true);
+  assert.equal(presentationClassOf(declared), "immersive");
+
+  // ...or the JOC profile, which is the Atmos-bearing extension.
+  assert.equal(
+    observedFactsFromFile({ codec: "eac3", channel_count: 6, codec_profile: "JOC" }).immersiveFormat,
+    "dolby-atmos",
+  );
+  assert.equal(
+    observedFactsFromFile({ codec: "mpegh", spatial_format: "360ra" }).immersiveFormat,
+    "sony-360ra",
+  );
+  // And stereo E-AC-3 remains stereo.
   assert.equal(observedFactsFromFile({ codec: "eac3", channel_count: 2 }).immersiveFormat, null);
 });
 

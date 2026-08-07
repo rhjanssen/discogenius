@@ -436,12 +436,15 @@ export function compareAudioFidelity(left: AudioFacts, right: AudioFacts): numbe
 /** The audio columns a `TrackFiles` row carries, as ffprobe filled them. */
 export interface ProbedFileRow {
   codec?: string | null;
+  codec_profile?: string | null;
   container?: string | null;
   bitrate?: number | null;
   sample_rate?: number | null;
   bit_depth?: number | null;
   channel_count?: number | null;
   channel_layout?: string | null;
+  /** What the file itself declares, e.g. `atmos` or `360ra`. */
+  spatial_format?: string | null;
 }
 
 const CODEC_ALIASES: Record<string, AudioCodec> = {
@@ -476,7 +479,7 @@ export function observedFactsFromFile(row: ProbedFileRow): AudioFacts {
     evidenceSource: "file-probe",
     confidence: "observed",
     codec,
-    codecProfile: null,
+    codecProfile: row.codec_profile ?? null,
     container: row.container ?? null,
     lossless: codec == null ? null : LOSSLESS_CODECS.has(codec),
     bitDepth: row.bit_depth ?? null,
@@ -484,12 +487,24 @@ export function observedFactsFromFile(row: ProbedFileRow): AudioFacts {
     bitrateKbps: row.bitrate ?? null,
     channelCount,
     channelLayout: row.channel_layout ?? null,
-    // E-AC-3 beyond stereo is how both TIDAL and Apple deliver Atmos; a probe
-    // cannot see the object metadata, so the codec and channel count are the
-    // evidence available.
-    immersiveFormat: codec === "eac3" && (channelCount ?? 0) > 2 ? "dolby-atmos" : null,
-    objectAudio: null,
+    // Only real evidence. E-AC-3 at 5.1 is *not* Atmos — plain Dolby Digital
+    // Plus surround is exactly that shape — so inferring it from the channel
+    // count would relabel ordinary multichannel audio as immersive. The file
+    // has to say so, through its declared spatial format or a JOC profile.
+    immersiveFormat: declaredImmersiveFormat(row),
+    objectAudio: declaredImmersiveFormat(row) == null ? null : true,
   };
+}
+
+/** JOC is the Atmos-bearing extension; without it E-AC-3 is just E-AC-3. */
+function declaredImmersiveFormat(row: ProbedFileRow): ImmersiveFormat | null {
+  const declared = String(row.spatial_format || "").trim().toLowerCase();
+  if (declared.includes("atmos") || declared === "joc") return "dolby-atmos";
+  if (declared.includes("360")) return "sony-360ra";
+  if (String(row.codec_profile || "").trim().toLowerCase().includes("joc")) {
+    return "dolby-atmos";
+  }
+  return null;
 }
 
 /**
