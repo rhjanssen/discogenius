@@ -156,6 +156,9 @@ test("four concurrent command workers never overlap a write", async () => {
   const iterations = 25;
   const betterSqlitePath = createRequire(import.meta.url).resolve("better-sqlite3");
 
+  // Terminations are awaited before cleanup: on Windows a worker still holding
+  // the SQLite handle makes rmSync fail with EBUSY.
+  const terminations: Array<Promise<unknown>> = [];
   try {
     const results = await Promise.all(names.map((name) => new Promise<{
       name: string; errors: string[];
@@ -176,7 +179,7 @@ test("four concurrent command workers never overlap a write", async () => {
         }
         if (message.kind === "finished") {
           resolve({ name: message.name!, errors: message.errors! });
-          void worker.terminate();
+          terminations.push(worker.terminate());
         }
       });
       worker.on("error", (error) => { ownerReleaseAllFor(name); reject(error); });
@@ -198,7 +201,8 @@ test("four concurrent command workers never overlap a write", async () => {
     // test proved nothing about serialization.
     assert.equal(diagnostics.maxQueueDepth > 1, true, "the workers genuinely contended");
   } finally {
+    await Promise.allSettled(terminations);
     db.close();
-    rmSync(folder, { recursive: true, force: true });
+    rmSync(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });

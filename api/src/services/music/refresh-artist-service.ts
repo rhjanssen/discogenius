@@ -70,6 +70,7 @@ import {
     soundCloudOfferHasDownloadableMatch,
 } from "../providers/soundcloud/soundcloud-downloadability.js";
 import { syncVideoRelationsFromEditionMembership } from "./video-edition-relation-sync.js";
+import { yieldToEventLoop } from "../commands/command-context.js";
 
 function isWidePlaylistSearchReleaseGroup(
     primaryType?: string | null,
@@ -86,6 +87,20 @@ export {
     isMusicBrainzMbid,
     providerAlbumToOfferRow,
 } from "./refresh-artist-support.js";
+
+/**
+ * Albums processed between cooperative yields inside provider matching.
+ *
+ * MatchArtistProviders lost its lease and poison-failed under load. The
+ * heartbeat is a timer in the worker entry, so it only misses when the handler
+ * holds the event loop — which long synchronous stretches over a large
+ * discography do. Yielding periodically is the structural fix; lengthening the
+ * lease would only postpone the same failure.
+ *
+ * Chosen so a yield lands several times a second on a big catalogue without
+ * making the loop itself measurably slower.
+ */
+const MATCHING_YIELD_INTERVAL = 25;
 
 export class RefreshArtistService {
     private static getArtistMusicBrainzId(artistId: string): string | null {
@@ -1482,7 +1497,18 @@ export class RefreshArtistService {
                       AND release_item.provider_id = ?
                     ORDER BY member.medium_position, member.position
                 `);
+                let sinceYield = 0;
                 for (const album of albums) {
+                    // The command heartbeat is a timer, so a lease expires only when
+                    // the handler starves the event loop — which a few thousand
+                    // synchronous SQLite reads in a row will do. Yielding costs
+                    // nothing and issues no provider request; the fetch pattern below
+                    // (bulk tracklists, non-candidates skipped) is deliberately
+                    // untouched, because chunking *fetching* would mean more calls.
+                    if ((sinceYield += 1) >= MATCHING_YIELD_INTERVAL) {
+                        sinceYield = 0;
+                        await yieldToEventLoop();
+                    }
                     const numTracks = Number(album.num_tracks);
                     if (!Number.isFinite(numTracks) || numTracks <= 0) {
                         continue;
@@ -1613,7 +1639,12 @@ export class RefreshArtistService {
                 const { RefreshAlbumService: RefreshAlbumSvc, providerTrackToTrackMetadataRow: toTrackRow } =
                     await import("./refresh-album-service.js");
                 let rematchedReleases = 0;
+                let ingestSinceYield = 0;
                 for (const album of albums) {
+                    if ((ingestSinceYield += 1) >= MATCHING_YIELD_INTERVAL) {
+                        ingestSinceYield = 0;
+                        await yieldToEventLoop();
+                    }
                     const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
                         providerReleaseGroupMatches.get(String(album.provider_id)) || null,
                     );
@@ -1654,7 +1685,12 @@ export class RefreshArtistService {
                     console.log(`[RefreshArtistService] Re-matched ${rematchedReleases} already-materialized ${provider.name} release(s) from stored rows`);
                 }
 
+                let decideSinceYield = 0;
                 for (const album of albums) {
+                    if ((decideSinceYield += 1) >= MATCHING_YIELD_INTERVAL) {
+                        decideSinceYield = 0;
+                        await yieldToEventLoop();
+                    }
                     const providerAlbumId = String(album.provider_id);
                     const match = providerReleaseGroupMatches.get(providerAlbumId);
                     if (!match) {
