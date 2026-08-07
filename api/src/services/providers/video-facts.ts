@@ -142,14 +142,19 @@ export function compareVideoQuality(left: VideoFacts, right: VideoFacts): number
   const height = (left.heightPx ?? 0) - (right.heightPx ?? 0);
   if (height !== 0) return height;
 
-  // Bitrate scaled by codec efficiency when *both* sides have one. When only
-  // one does, comparing them would read the missing value as zero and invent a
-  // gap, so fall through to the codec heuristic instead.
+  // Bitrate scaled by codec efficiency, but only when *both* sides have a
+  // bitrate. Comparing a known bitrate against a missing one would read the
+  // missing side as zero and invent a gap.
+  //
+  // When only one side knows its bitrate the codec cannot stand in either: an
+  // unknown-bitrate AV1 stream beating a measured 10 Mbps H.264 one is the
+  // same error in the other direction. So neither is used, and the comparison
+  // falls through to evidence both sides actually have.
   if (left.bitrateKbps != null && right.bitrateKbps != null) {
     const scaled = left.bitrateKbps * videoCodecEfficiency(left.codec ?? "h264")
       - right.bitrateKbps * videoCodecEfficiency(right.codec ?? "h264");
     if (scaled !== 0) return scaled;
-  } else {
+  } else if (left.bitrateKbps == null && right.bitrateKbps == null) {
     const codec = videoCodecEfficiency(left.codec) - videoCodecEfficiency(right.codec);
     if (codec !== 0) return codec;
   }

@@ -217,7 +217,8 @@ export class ProviderReleaseIngestionService {
       const providerEditionItemId = this.catalog.upsertItem(input.release);
       this.clearDependentAcquisitionPlans(providerEditionItemId);
       if (input.releaseAudioVariants) {
-        this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants);
+        this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants,
+          { provider: input.release.provider });
       }
       if (input.releaseCredits) {
         this.catalog.replaceCredits(

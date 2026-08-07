@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { CONFIG_DIR } from "../../config/config.js";
+import { invalidateYouTubeSessionCapabilities } from "./youtube-premium-probe.js";
 
 export interface YouTubeMusicCredentialsInput {
   /** ytmusicapi browser headers: flat JSON, headers object, or a Copy as fetch / Copy as Node.js fetch paste. */
@@ -300,6 +301,9 @@ function atomicWrite(target: string, content: string): void {
 }
 
 export function saveYouTubeMusicCredentials(input: YouTubeMusicCredentialsInput): void {
+  // The Premium entitlement is a property of the login, so a new login has to
+  // re-probe it. Without this the cache would answer for the previous account.
+  invalidateYouTubeSessionCapabilities();
   const headerInputProvided = input.headers != null && String(input.headers).trim() !== "";
   const headers = parseHeaders(input.headers);
   const normalizedCookies = normalizeYouTubeMusicCookies(input.cookies);
@@ -383,6 +387,7 @@ export function getYouTubeMusicCredentialState(): YouTubeMusicCredentialState {
 }
 
 export function clearYouTubeMusicCredentials(): void {
+  invalidateYouTubeSessionCapabilities();
   fs.rmSync(YOUTUBE_MUSIC_HEADERS_FILE, { force: true });
   fs.rmSync(YOUTUBE_MUSIC_COOKIES_FILE, { force: true });
 }

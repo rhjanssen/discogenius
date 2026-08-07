@@ -1099,7 +1099,7 @@ export class RefreshArtistService {
                     album.quality,
                 ]);
                 if (variants.length > 0) {
-                    normalizedCatalog.replaceAudioVariants(itemId, variants);
+                    normalizedCatalog.replaceAudioVariants(itemId, variants, { provider: providerId });
                 }
         });
         // Acquire artwork after slot selection in precacheArtistMediaCovers().

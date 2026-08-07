@@ -80,9 +80,17 @@ interface CandidateRow {
   track_explicit: number | null;
   track_variant_id: number | null;
   track_quality: string | null;
+  track_codec: string | null;
+  track_bitrate: number | null;
+  track_bit_depth: number | null;
+  track_sample_rate: number | null;
   track_availability: string | null;
   release_variant_id: number | null;
   release_quality: string | null;
+  release_codec: string | null;
+  release_bitrate: number | null;
+  release_bit_depth: number | null;
+  release_sample_rate: number | null;
   release_availability: string | null;
 }
 
@@ -223,9 +231,17 @@ export class AcquisitionPlanningService {
         member_item.explicit AS track_explicit,
         track_variant.id AS track_variant_id,
         track_variant.quality_class AS track_quality,
+        track_variant.codec AS track_codec,
+        track_variant.bitrate AS track_bitrate,
+        track_variant.bit_depth AS track_bit_depth,
+        track_variant.sample_rate AS track_sample_rate,
         track_variant.availability AS track_availability,
         release_variant.id AS release_variant_id,
         release_variant.quality_class AS release_quality,
+        release_variant.codec AS release_codec,
+        release_variant.bitrate AS release_bitrate,
+        release_variant.bit_depth AS release_bit_depth,
+        release_variant.sample_rate AS release_sample_rate,
         release_variant.availability AS release_availability
       -- Anchored on the target Edition's Recordings, not on provider albums
       -- matched *to* this Edition. A provider album is one product with one
@@ -295,17 +311,27 @@ export class AcquisitionPlanningService {
       }
       const trackQuality = parseQuality(row.track_quality);
       const releaseQuality = parseQuality(row.release_quality);
+      // The delivered properties travel with the variant so the optimizer can
+      // separate two offers of the same class — a provider tier alone cannot.
       const variant = trackQuality && row.track_variant_id != null
         ? {
           id: row.track_variant_id,
           quality: trackQuality,
           available: isAvailable(row.track_availability),
+          codec: row.track_codec,
+          bitrateKbps: row.track_bitrate,
+          bitDepth: row.track_bit_depth,
+          sampleRateHz: row.track_sample_rate,
         }
         : releaseQuality && row.release_variant_id != null
           ? {
             id: row.release_variant_id,
             quality: releaseQuality,
             available: isAvailable(row.release_availability),
+            codec: row.release_codec,
+            bitrateKbps: row.release_bitrate,
+            bitDepth: row.release_bit_depth,
+            sampleRateHz: row.release_sample_rate,
           }
           : null;
       if (

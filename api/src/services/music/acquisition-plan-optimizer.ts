@@ -1,4 +1,9 @@
 import type { ProviderReleaseRelation } from "./provider-release-relation.js";
+import {
+  compareAudioFidelity,
+  lossyQualityScore,
+  type AudioFacts,
+} from "../providers/audio-facts.js";
 
 export type NormalizedAudioQuality =
   | "lossy"
@@ -18,6 +23,15 @@ export interface AcquisitionAudioVariant {
   id: number;
   quality: NormalizedAudioQuality;
   available: boolean;
+  /**
+   * What this variant is expected to deliver, filled from the provider tier
+   * when the row was written. The profile ranks by class, so these are what
+   * separate two offers that tie there.
+   */
+  codec?: string | null;
+  bitrateKbps?: number | null;
+  bitDepth?: number | null;
+  sampleRateHz?: number | null;
 }
 
 export interface AcquisitionTrackMatch {
@@ -61,6 +75,18 @@ export interface OptimizedAcquisitionTrack {
   providerEditionMemberId: number;
   providerAudioVariantId: number;
   sourceQuality: NormalizedAudioQuality;
+  /**
+   * What the selected variant is expected to deliver.
+   *
+   * The profile ranks by *class*, so two lossy tracks tie there however far
+   * apart they are — TIDAL's AAC 320 and a 128 kbps stream are both `lossy`.
+   * These are what separate them, and they travel with the chosen track so the
+   * plan can be compared and displayed on what it will actually fetch.
+   */
+  deliveredCodec?: string | null;
+  deliveredBitrateKbps?: number | null;
+  deliveredBitDepth?: number | null;
+  deliveredSampleRateHz?: number | null;
 }
 
 export interface OptimizedAcquisitionPlan {
@@ -116,6 +142,59 @@ const relationRank: Record<ProviderReleaseRelation, number> = {
   overlap: 1,
 };
 
+/**
+ * Order two options by the properties their variant rows carry.
+ *
+ * Returns >0 when `left` is worse, matching the ascending comparator it is
+ * used in. Missing properties compare equal rather than as zero, so an offer
+ * we know nothing about never loses to one we do merely for being unmeasured.
+ */
+function deliveredFacts(option: OptimizedAcquisitionTrack): AudioFacts | null {
+  if (option.deliveredBitrateKbps == null && option.deliveredBitDepth == null
+    && option.deliveredSampleRateHz == null) return null;
+  return {
+    evidenceSource: "provider-catalog", confidence: "expected",
+    codec: (option.deliveredCodec ?? null) as AudioFacts["codec"],
+    codecProfile: null, container: null,
+    lossless: option.sourceQuality !== "lossy",
+    bitDepth: option.deliveredBitDepth ?? null,
+    sampleRateHz: option.deliveredSampleRateHz ?? null,
+    bitrateKbps: option.deliveredBitrateKbps ?? null,
+    channelCount: null, channelLayout: null,
+    immersiveFormat: null, objectAudio: null,
+  };
+}
+
+function compareDeliveredQuality(left: TrackOption, right: TrackOption): number {
+  const leftFacts = deliveredFacts(left);
+  const rightFacts = deliveredFacts(right);
+  if (!leftFacts || !rightFacts) return 0;
+  return compareAudioFidelity(leftFacts, rightFacts);
+}
+
+/**
+ * A plan's delivered quality, summed over its tracks. Higher is better.
+ *
+ * Lossy tracks contribute their codec-corrected score; lossless tracks
+ * contribute depth and sample rate, scaled so they cannot be outvoted by a
+ * large lossy bitrate. Tracks with no delivered properties contribute nothing,
+ * so a plan is never punished for a sparse variant row.
+ */
+function deliveredQualityTotal(tracks: readonly OptimizedAcquisitionTrack[]): number {
+  let total = 0;
+  for (const track of tracks) {
+    if (track.sourceQuality === "lossy") {
+      const facts = deliveredFacts(track);
+      total += facts ? (lossyQualityScore(facts) ?? 0) : 0;
+      continue;
+    }
+    const depth = track.deliveredBitDepth ?? 0;
+    const sampleRate = track.deliveredSampleRateHz ?? 0;
+    total += depth * 1000 + Math.round(sampleRate / 1000);
+  }
+  return total;
+}
+
 function qualityRank(
   profile: AcquisitionQualityProfile,
   quality: NormalizedAudioQuality,
@@ -166,6 +245,12 @@ function compareOptions(
     // out of row-id order. The cutoff governs whether we keep upgrading files;
     // it must not make a fresh choice between offers arbitrary.
     || left.qualityRank - right.qualityRank
+    // Same class: order by what the offers actually deliver. Lossy compares on
+    // a codec-corrected score, so 128 kbps Opus beats 128 kbps MP3; lossless
+    // compares on depth then sample rate. Presentation is deliberately not
+    // consulted — whether immersive beats hi-res stereo is a profile
+    // preference, and the profile has already spoken by this point.
+    || compareDeliveredQuality(right, left)
     // Same quality: prefer the explicit stream when Settings says so.
     || trackExplicitPreferenceRank(right.explicit, preferExplicit)
       - trackExplicitPreferenceRank(left.explicit, preferExplicit)
@@ -379,6 +464,11 @@ function compareCandidatePlans(
     || right.qualityScore - left.qualityScore
     || rankingQualityRankTotal(profile, left.tracks)
       - rankingQualityRankTotal(profile, right.tracks)
+    // Every score above reads the quality *class*, so two lossy plans tie
+    // there however far apart they are — TIDAL's AAC 320 and a 128 kbps stream
+    // are both `lossy`. What the offers actually deliver breaks it, before
+    // source count or provider priority get a say.
+    || deliveredQualityTotal(right.tracks) - deliveredQualityTotal(left.tracks)
     || left.sourceIds.length - right.sourceIds.length
     || left.fragmentation - right.fragmentation
     || right.relationScore - left.relationScore
@@ -799,6 +889,10 @@ function buildProviderPlans(
           providerEditionMemberId: match.providerEditionMemberId,
           providerAudioVariantId: variant.id,
           sourceQuality: variant.quality,
+          deliveredCodec: variant.codec ?? null,
+          deliveredBitrateKbps: variant.bitrateKbps ?? null,
+          deliveredBitDepth: variant.bitDepth ?? null,
+          deliveredSampleRateHz: variant.sampleRateHz ?? null,
           qualityRank: qualityRank(profile, variant.quality),
           cutoffSatisfied: cutoffSatisfied(profile, variant.quality),
           relationRank: relationRank[source.relation],

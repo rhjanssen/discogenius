@@ -1,5 +1,9 @@
 import type Database from "better-sqlite3";
 import type { NormalizedAudioQuality } from "../music/acquisition-plan-optimizer.js";
+import {
+  expectedFactsForProviderTier,
+  type ProviderSessionCapabilities,
+} from "./audio-facts.js";
 
 export type ProviderEntityType = "artist" | "release" | "track" | "video";
 
@@ -245,9 +249,24 @@ export class ProviderCatalogRepository {
     })();
   }
 
+  /**
+   * Persist a provider item's audio variants, filling in the technical
+   * properties its tier is expected to deliver.
+   *
+   * A provider hands us a tier and nothing finer, so a variant row would
+   * otherwise carry only `quality_class` — and ranking two lossy offers on
+   * that is impossible. Filling each row from
+   * `expectedFactsForProviderTier` gives the planner a codec and a bitrate to
+   * compare, without a per-track request anywhere.
+   *
+   * Anything the provider actually told us wins over the expectation: a real
+   * value is always better evidence than a representative one.
+   */
   replaceAudioVariants(
     providerItemId: number,
     variants: readonly ProviderAudioVariantInput[],
+    /** Provider id and session capabilities, so the expectation can be looked up. */
+    context?: { provider?: string | null; capabilities?: ProviderSessionCapabilities },
   ): number[] {
     const insert = this.db.prepare(`
       INSERT INTO ProviderItemAudioVariants (
@@ -261,24 +280,31 @@ export class ProviderCatalogRepository {
     return this.db.transaction(() => {
       this.db.prepare("DELETE FROM ProviderItemAudioVariants WHERE provider_item_id = ?")
         .run(providerItemId);
-      return variants.map((variant) => (insert.get(
+      return variants.map((variant) => {
+        const expectedFacts = expectedFactsForProviderTier(
+          context?.provider, variant.variantKey, context?.capabilities ?? {},
+        );
+        return (insert.get(
         providerItemId,
         variant.variantKey,
         variant.qualityClass,
-        text(variant.codec),
-        text(variant.container),
-        variant.lossless == null ? null : Number(variant.lossless),
-        variant.bitDepth ?? null,
-        variant.sampleRate ?? null,
-        variant.bitrate ?? null,
-        variant.channelCount ?? null,
-        text(variant.channelLayout),
-        text(variant.spatialFormat),
+        text(variant.codec) || expectedFacts?.codec || null,
+        text(variant.container) || expectedFacts?.container || null,
+        variant.lossless == null
+          ? (expectedFacts?.lossless == null ? null : Number(expectedFacts.lossless))
+          : Number(variant.lossless),
+        variant.bitDepth ?? expectedFacts?.bitDepth ?? null,
+        variant.sampleRate ?? expectedFacts?.sampleRateHz ?? null,
+        variant.bitrate ?? expectedFacts?.bitrateKbps ?? null,
+        variant.channelCount ?? expectedFacts?.channelCount ?? null,
+        text(variant.channelLayout) || expectedFacts?.channelLayout || null,
+        text(variant.spatialFormat) || expectedFacts?.immersiveFormat || null,
         text(variant.providerQualityLabel),
         text(variant.availability) || "unknown",
         text(variant.availabilityReason),
         text(variant.verifiedAt),
-      ) as { id: number }).id);
+        ) as { id: number }).id;
+      });
     })();
   }
 }

@@ -1194,7 +1194,7 @@ export class RefreshAlbumService {
                 const itemId = catalog.upsertItem(member.item);
                 materializeCredits(itemId, member.credits);
                 if (member.audioVariants) {
-                    catalog.replaceAudioVariants(itemId, member.audioVariants);
+                    catalog.replaceAudioVariants(itemId, member.audioVariants, { provider: providerId });
                 }
                 return {
                     memberItemId: itemId,
@@ -1275,7 +1275,7 @@ export class RefreshAlbumService {
             album.quality,
         ]);
         if (releaseVariants.length > 0) {
-            normalizedCatalog.replaceAudioVariants(normalizedReleaseItemId, releaseVariants);
+            normalizedCatalog.replaceAudioVariants(normalizedReleaseItemId, releaseVariants, { provider: providerId });
         }
         const releaseCredits = providerCredits(
             Array.isArray(album.artists) && album.artists.length > 0
