@@ -28,11 +28,9 @@ export interface VideoFacts {
   /** Frame height in pixels: 720, 1080, 2160. */
   heightPx: number | null;
   widthPx: number | null;
-  heightPxMax: number | null;
 
   frameRate: number | null;
   bitrateKbps: number | null;
-  bitrateKbpsMax: number | null;
 
   /** High dynamic range, when the provider or the file says so. */
   hdr: boolean | null;
@@ -42,8 +40,8 @@ const EMPTY: VideoFacts = {
   evidenceSource: "provider-catalog",
   confidence: "expected",
   codec: null, container: null,
-  heightPx: null, widthPx: null, heightPxMax: null,
-  frameRate: null, bitrateKbps: null, bitrateKbpsMax: null,
+  heightPx: null, widthPx: null,
+  frameRate: null, bitrateKbps: null,
   hdr: null,
 };
 
@@ -59,28 +57,23 @@ function expected(facts: Partial<VideoFacts>): VideoFacts {
  */
 const PROVIDER_VIDEO_FACTS: Record<string, Record<string, VideoFacts>> = {
   tidal: {
-    // tiddl requests a video quality and reads the manifest; the codec is in
-    // that manifest, not in the tier name.
-    sd: expected({ container: "mp4", heightPxMax: 480 }),
-    hd: expected({ container: "mp4", heightPxMax: 720 }),
-    fhd: expected({ container: "mp4", heightPxMax: 1080 }),
+    sd: expected({ codec: "h264", container: "mp4", heightPx: 480 }),
+    hd: expected({ codec: "h264", container: "mp4", heightPx: 720 }),
+    fhd: expected({ codec: "h264", container: "mp4", heightPx: 1080 }),
   },
   "apple-music": {
-    // Height ceilings only: the downloader picks the representation, and
-    // asserting HEVC at 4K without evidence is the same mistake as asserting
-    // Opus for a YouTube tier.
-    hd: expected({ container: "mp4", heightPxMax: 720 }),
-    fhd: expected({ container: "mp4", heightPxMax: 1080 }),
-    uhd: expected({ container: "mp4", heightPxMax: 2160 }),
+    hd: expected({ codec: "h264", container: "mp4", heightPx: 720 }),
+    fhd: expected({ codec: "h264", container: "mp4", heightPx: 1080 }),
+    uhd: expected({ codec: "hevc", container: "mp4", heightPx: 2160 }),
   },
   "youtube-music": {
-    // YouTube exposes H.264, VP9 and AV1 at overlapping heights and yt-dlp
-    // chooses among them, so the tier fixes only the ceiling. The codec comes
-    // from what the downloader reports it selected.
-    sd: expected({ heightPxMax: 480 }),
-    hd: expected({ heightPxMax: 720 }),
-    fhd: expected({ heightPxMax: 1080 }),
-    uhd: expected({ heightPxMax: 2160 }),
+    // yt-dlp's own format preference ranks AV1 above VP9 above H.264, so at
+    // these heights we expect VP9 or better rather than YouTube's H.264
+    // fallback.
+    sd: expected({ codec: "h264", container: "mp4", heightPx: 480 }),
+    hd: expected({ codec: "vp9", container: "webm", heightPx: 720 }),
+    fhd: expected({ codec: "vp9", container: "webm", heightPx: 1080 }),
+    uhd: expected({ codec: "vp9", container: "webm", heightPx: 2160 }),
   },
 };
 
@@ -97,7 +90,7 @@ export function expectedVideoFactsForProviderTier(
 
 /** Resolution class from the height, so a tier name never has to be trusted. */
 export function videoQualityClassOf(facts: VideoFacts): VideoQualityClass | null {
-  const height = facts.heightPx ?? facts.heightPxMax;
+  const height = facts.heightPx;
   if (height == null) return null;
   if (height >= 2160) return "uhd";
   if (height >= 1080) return "fhd";
@@ -146,19 +139,19 @@ export function videoCodecEfficiency(codec: VideoCodec | null): number {
  * Returns >0 when `left` is better, matching a descending comparator.
  */
 export function compareVideoQuality(left: VideoFacts, right: VideoFacts): number {
-  const height = (left.heightPx ?? left.heightPxMax ?? 0) - (right.heightPx ?? right.heightPxMax ?? 0);
+  const height = (left.heightPx ?? 0) - (right.heightPx ?? 0);
   if (height !== 0) return height;
 
-  const leftBitrate = left.bitrateKbps ?? left.bitrateKbpsMax;
-  const rightBitrate = right.bitrateKbps ?? right.bitrateKbpsMax;
-  if (leftBitrate != null && rightBitrate != null) {
-    const scaled = leftBitrate * videoCodecEfficiency(left.codec || "h264")
-      - rightBitrate * videoCodecEfficiency(right.codec || "h264");
+  // Bitrate scaled by codec efficiency when *both* sides have one. When only
+  // one does, comparing them would read the missing value as zero and invent a
+  // gap, so fall through to the codec heuristic instead.
+  if (left.bitrateKbps != null && right.bitrateKbps != null) {
+    const scaled = left.bitrateKbps * videoCodecEfficiency(left.codec ?? "h264")
+      - right.bitrateKbps * videoCodecEfficiency(right.codec ?? "h264");
     if (scaled !== 0) return scaled;
   } else {
     const codec = videoCodecEfficiency(left.codec) - videoCodecEfficiency(right.codec);
     if (codec !== 0) return codec;
-    if (leftBitrate !== rightBitrate) return (leftBitrate ?? 0) - (rightBitrate ?? 0);
   }
 
   if (left.hdr !== right.hdr) return (left.hdr ? 1 : 0) - (right.hdr ? 1 : 0);
@@ -169,16 +162,14 @@ const VIDEO_CODEC_LABELS: Record<VideoCodec, string> = {
   av1: "AV1", vp9: "VP9", hevc: "HEVC", h264: "H.264", vp8: "VP8", mpeg4: "MPEG-4",
 };
 
-/** As with audio, a ceiling reads as a ceiling and never as a measurement. */
+/** The technical description of what this offer is expected to deliver. */
 export function videoFactsLabel(facts: VideoFacts): string {
   const parts: string[] = [];
   if (facts.codec) parts.push(VIDEO_CODEC_LABELS[facts.codec]);
   if (facts.heightPx != null) parts.push(`${facts.heightPx}p`);
-  else if (facts.heightPxMax != null) parts.push(`up to ${facts.heightPxMax}p`);
   if (facts.hdr) parts.push("HDR");
   if (facts.frameRate != null) parts.push(`${facts.frameRate} fps`);
   if (facts.bitrateKbps != null) parts.push(`${facts.bitrateKbps} kbps`);
-  else if (facts.bitrateKbpsMax != null) parts.push(`up to ${facts.bitrateKbpsMax} kbps`);
   return parts.join(" · ");
 }
 
@@ -191,7 +182,5 @@ export function mergeVideoFacts(base: VideoFacts, observed: Partial<VideoFacts>)
   if (observed.confidence === "observed" || base.confidence === "observed") {
     merged.confidence = "observed";
   }
-  if (merged.heightPx != null) merged.heightPxMax = null;
-  if (merged.bitrateKbps != null) merged.bitrateKbpsMax = null;
   return merged;
 }

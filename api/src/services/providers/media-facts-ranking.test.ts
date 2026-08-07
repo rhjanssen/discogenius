@@ -35,7 +35,7 @@ const video = (provider: string, tier: string): VideoFacts => {
 /* ── Lossy offers compare perceptually, not by raw bitrate ──────────── */
 
 const lossy = (codec: AudioFacts["codec"], bitrateKbps: number): AudioFacts => ({
-  ...audio("soundcloud", "standard"), codec, bitrateKbps, bitrateKbpsMax: null,
+  ...audio("soundcloud", "standard"), codec, bitrateKbps,
 });
 
 test("a codec advantage survives where bits are scarce", () => {
@@ -72,12 +72,19 @@ test("Apple's AAC 256 still outranks a 128 kbps stream of any codec", () => {
   assert.equal(compareAudioFidelity(apple, audio("soundcloud", "high")), 0);
 });
 
-test("an unknown codec scores at parity rather than being guessed", () => {
-  // YouTube's tiers say "AAC or Opus". Assuming Opus would hand it an
-  // efficiency bonus it has not earned; assuming MP3 would penalise it.
-  const youtube = audio("youtube-music", "high");
-  assert.equal(youtube.codec, null, "the tier does not name a codec");
-  assert.equal(lossyQualityScore(youtube), lossyQualityScore(lossy("aac", 256)));
+test("YouTube Premium is worth roughly a doubling, and the model says so", () => {
+  // Free expects Opus 128, Premium Opus 256 — the entitlement is the only
+  // thing that decides it, and it is probed once per session.
+  const free = audio("youtube-music", "stereo:lossy");
+  const premium = expectedFactsForProviderTier(
+    "youtube-music", "stereo:lossy", { youtubePremium: true },
+  )!;
+  assert.ok(compareAudioFidelity(premium, free) > 0);
+  // Premium Opus 256 lands in the same neighbourhood as Apple AAC 256, because
+  // the codec advantage has largely tapered by then.
+  const apple = audio("apple-music", "stereo:lossy");
+  const ratio = lossyQualityScore(premium)! / lossyQualityScore(apple)!;
+  assert.ok(ratio > 1 && ratio < 1.2, `expected a small edge, got ${ratio}`);
 });
 
 test("lossless outranks any lossy offer regardless of bitrate", () => {
@@ -110,7 +117,7 @@ test("presentation is deliberately absent from the fidelity comparison", () => {
 const shot = (
   codec: VideoFacts["codec"], heightPx: number, bitrateKbps: number | null = null,
 ): VideoFacts => ({
-  ...video("tidal", "fhd"), codec, heightPx, heightPxMax: null, bitrateKbps,
+  ...video("tidal", "fhd"), codec, heightPx, bitrateKbps,
 });
 
 test("resolution dominates the codec", () => {
@@ -149,15 +156,15 @@ test("HDR ranks below what the picture actually carries", () => {
   );
 });
 
-test("video tiers claim a ceiling and not a codec", () => {
-  // yt-dlp chooses among H.264, VP9 and AV1 at overlapping heights, so the tier
-  // fixes only the ceiling — the same mistake as asserting Opus for YouTube.
-  for (const [provider, tier] of [
-    ["youtube-music", "fhd"], ["apple-music", "uhd"], ["tidal", "fhd"],
-  ]) {
-    assert.equal(video(provider, tier).codec, null, `${provider}/${tier}`);
-  }
-  assert.equal(videoFactsLabel(video("youtube-music", "fhd")), "up to 1080p");
+test("video tiers name the codec our downloader actually gets", () => {
+  // yt-dlp's own format preference ranks AV1 above VP9 above H.264, so on
+  // YouTube we expect VP9 or better; TIDAL and Apple serve H.264 at 1080p.
+  assert.equal(video("youtube-music", "fhd").codec, "vp9");
+  assert.equal(video("tidal", "fhd").codec, "h264");
+  assert.equal(video("apple-music", "uhd").codec, "hevc");
+  assert.equal(videoFactsLabel(video("youtube-music", "fhd")), "VP9 · 1080p");
+  // And that is exactly the 1080p VP9 over 1080p H.264 case.
+  assert.ok(compareVideoQuality(video("youtube-music", "fhd"), video("tidal", "fhd")) > 0);
 });
 
 test("an unmapped video provider or tier resolves to nothing", () => {

@@ -1,31 +1,32 @@
 /**
- * Provider-neutral audio facts, and what each provider's tier claims.
+ * Provider-neutral audio facts: one representative expectation per tier.
  *
  * The old model stored a library-shaped answer — `lossless`, `spatial` — as the
- * fundamental identity of an offer. Two things are wrong with that. Spatial is
- * not a fidelity tier, so a profile can never say "Atmos above 24-bit stereo"
- * while `spatial` sits inside the same ladder as `hires-lossless`. And a
- * provider badge is not a measurement: "Hi-Res Lossless" means *up to* 24/192,
- * not 24/192.
+ * fundamental identity of an offer. Spatial is not a fidelity tier, so a
+ * profile could never say "Atmos above 24-bit stereo" while `spatial` sat
+ * inside the same ladder as `hires-lossless`. Fidelity and presentation are
+ * separate axes here for that reason.
  *
- * So facts are stored with two dimensions the old model conflated —
- * **fidelity** (how much of the signal survived) and **presentation** (how many
- * channels, and whether objects) — plus the provenance of how we learned them.
+ * What a tier tells us is a *category*, not a measurement — a provider tags an
+ * album `lossless` and nothing finer. So each tier maps to the quality we
+ * expect to actually receive, taking into account how our downloader for that
+ * provider behaves. Two examples of why that beats modelling the theoretical
+ * ceiling:
  *
- *     expected   what the provider's tier implies — all we have when planning
- *     observed   what ffprobe read off the imported file
+ *  - Apple Lossless can technically reach 24-bit/48 kHz, but the overwhelming
+ *    majority of it is CD. Recording the ceiling would file nearly all Apple
+ *    lossless material as hi-res and push it into MAX profiles it does not
+ *    belong in.
+ *  - YouTube publishes every tier as "AAC or Opus", but yt-dlp prefers Opus
+ *    when it is offered, so Opus is what we expect — and Premium is what
+ *    decides whether that is ~128 or ~256 kbps.
  *
- * An expectation may state a ceiling (`sampleRateHzMax`) where a measurement
- * states a value (`sampleRateHz`). Nothing renders a ceiling as if it were
- * measured: TIDAL Hi-Res shows "FLAC 24-bit up to 192 kHz", never
- * "FLAC 24-bit 192 kHz".
- *
- * Dolby Atmos is deliberately not given a channel layout until one is observed.
- * The delivery codec is E-AC-3 with Joint Object Coding — "Dolby Digital Plus
- * with Dolby Atmos" commercially — and JOC codes objects over a bed. Calling a
- * provider claim "5.1" states a layout the claim does not make; Apple's own HLS
- * signalling is `ec-3` with `CHANNELS="16/JOC"`, which is an object count, not
- * a speaker count.
+ * These are approximations, deliberately. The file that lands is measured by
+ * ffprobe and stored exactly; when it differs slightly from the expectation
+ * that is fine and expected, and the offer is *not* rewritten from it. One
+ * album arriving at 24/48 does not make a provider's whole lossless tier
+ * hi-res, and letting a single download redefine a tier would make planning
+ * depend on acquisition order.
  */
 
 /**
@@ -73,13 +74,7 @@ export interface AudioFacts {
   sampleRateHz: number | null;
   bitrateKbps: number | null;
 
-  /** Ceilings, meaningful only for expectations. Never rendered as a value. */
-  bitDepthMax: number | null;
-  sampleRateHzMax: number | null;
-  bitrateKbpsMax: number | null;
-
   channelCount: number | null;
-  /** `2.0`, `5.1` — only ever set from a measurement. */
   channelLayout: string | null;
 
   immersiveFormat: ImmersiveFormat | null;
@@ -91,7 +86,6 @@ const EMPTY: AudioFacts = {
   confidence: "expected",
   codec: null, codecProfile: null, container: null,
   lossless: null, bitDepth: null, sampleRateHz: null, bitrateKbps: null,
-  bitDepthMax: null, sampleRateHzMax: null, bitrateKbpsMax: null,
   channelCount: null, channelLayout: null,
   immersiveFormat: null, objectAudio: null,
 };
@@ -100,114 +94,96 @@ function expected(facts: Partial<AudioFacts>): AudioFacts {
   return { ...EMPTY, ...facts, confidence: "expected", evidenceSource: "provider-catalog" };
 }
 
-/* ── What each provider's tier claims ───────────────────────────────── */
+/* ── What each provider's tier is expected to deliver ───────────────── */
+
+/** A stereo pair, which every non-immersive tier is. */
+const STEREO = { channelCount: 2, channelLayout: "2.0" };
 
 /**
- * Keys are the provider's own tier vocabulary, lower-cased. Values are what
- * that tier *implies*, never what a given track is — that is what `observed`
- * facts are for.
+ * Dolby Atmos as both TIDAL and Apple actually deliver it.
  *
- * Sources are each provider's published specification. Where a provider
- * publishes a range ("up to 24-bit/192 kHz") it is stored as a ceiling.
+ * E-AC-3 with Joint Object Coding — "Dolby Digital Plus with Dolby Atmos"
+ * commercially — over a 5.1 bed at 48 kHz. Observed from real downloads from
+ * both services rather than assumed from the badge.
+ */
+const DOLBY_ATMOS = {
+  codec: "eac3" as const, codecProfile: "joc", container: "m4a",
+  lossless: false, sampleRateHz: 48000, bitrateKbps: 768,
+  channelCount: 6, channelLayout: "5.1",
+  immersiveFormat: "dolby-atmos" as const, objectAudio: true,
+};
+
+/** CD, and the hi-res rate most commonly served where a range is offered. */
+const CD = { lossless: true, bitDepth: 16, sampleRateHz: 44100 };
+const HI_RES = { lossless: true, bitDepth: 24, sampleRateHz: 96000 };
+
+/**
+ * Keyed by our own `presentation:fidelity` variant vocabulary, plus each
+ * provider's own tier names where a backend uses them.
+ *
+ * Values are what we expect to *receive*, which is the provider's tier read
+ * through our downloader for it. See the note at the top of the file on why
+ * that beats recording each tier's theoretical maximum.
  */
 const PROVIDER_TIER_FACTS: Record<string, Record<string, AudioFacts>> = {
   tidal: {
-    // AAC, and the two historic ceilings.
-    low: expected({ codec: "aac", lossless: false, bitrateKbpsMax: 96, channelCount: 2 }),
-    high: expected({ codec: "aac", lossless: false, bitrateKbpsMax: 320, channelCount: 2 }),
-    lossless: expected({
-      codec: "flac", container: "flac", lossless: true,
-      bitDepth: 16, sampleRateHz: 44100, channelCount: 2,
-    }),
-    hi_res_lossless: expected({
-      codec: "flac", container: "flac", lossless: true,
-      bitDepth: 24, sampleRateHzMax: 192000, channelCount: 2,
-    }),
-    dolby_atmos: expected({
-      codec: "eac3", codecProfile: "joc", lossless: false,
-      immersiveFormat: "dolby-atmos", objectAudio: true,
-    }),
+    // tiddl asks TIDAL for a playback quality and gets that stream back; it
+    // does not fetch lossless and re-encode. So these are real alternatives.
+    low: expected({ codec: "aac", container: "m4a", lossless: false, bitrateKbps: 96, ...STEREO }),
+    high: expected({ codec: "aac", container: "m4a", lossless: false, bitrateKbps: 320, ...STEREO }),
+    lossless: expected({ codec: "flac", container: "flac", ...CD, ...STEREO }),
+    hi_res_lossless: expected({ codec: "flac", container: "m4a", ...HI_RES, ...STEREO }),
+    dolby_atmos: expected(DOLBY_ATMOS),
   },
   "apple-music": {
-    // Apple publishes AAC 256 for the lossy tier and ALAC for both lossless
-    // tiers; Hi-Res Lossless reaches 24-bit/192 kHz.
-    lossy: expected({ codec: "aac", lossless: false, bitrateKbps: 256, channelCount: 2 }),
-    lossless: expected({
-      codec: "alac", container: "m4a", lossless: true,
-      bitDepth: 16, sampleRateHz: 44100, channelCount: 2,
-    }),
-    "hires-lossless": expected({
-      codec: "alac", container: "m4a", lossless: true,
-      bitDepth: 24, sampleRateHzMax: 192000, channelCount: 2,
-    }),
-    atmos: expected({
-      codec: "eac3", codecProfile: "joc", lossless: false,
-      immersiveFormat: "dolby-atmos", objectAudio: true,
-    }),
+    lossy: expected({ codec: "aac", container: "m4a", lossless: false, bitrateKbps: 256, ...STEREO }),
+    // The backend asks for `--alac-max 48000` here. Apple Lossless can reach
+    // 24/48, but the catalogue is overwhelmingly CD and calling the tier
+    // hi-res would file almost all of it into MAX.
+    lossless: expected({ codec: "alac", container: "m4a", ...CD, ...STEREO }),
+    "hires-lossless": expected({ codec: "alac", container: "m4a", ...HI_RES, ...STEREO }),
+    atmos: expected(DOLBY_ATMOS),
   },
   deezer: {
-    // No hi-res tier and no immersive tier.
-    mp3_128: expected({ codec: "mp3", lossless: false, bitrateKbps: 128, channelCount: 2 }),
-    mp3_320: expected({ codec: "mp3", lossless: false, bitrateKbps: 320, channelCount: 2 }),
-    flac: expected({
-      codec: "flac", container: "flac", lossless: true,
-      bitDepth: 16, sampleRateHz: 44100, channelCount: 2,
-    }),
+    mp3_128: expected({ codec: "mp3", lossless: false, bitrateKbps: 128, ...STEREO }),
+    mp3_320: expected({ codec: "mp3", lossless: false, bitrateKbps: 320, ...STEREO }),
+    flac: expected({ codec: "flac", container: "flac", ...CD, ...STEREO }),
   },
   "amazon-music": {
-    // HD averages ~850 kbps, Ultra HD ~3730 kbps; both FLAC.
-    standard: expected({ codec: "aac", lossless: false, bitrateKbpsMax: 256, channelCount: 2 }),
-    hd: expected({
-      codec: "flac", container: "flac", lossless: true,
-      bitDepth: 16, sampleRateHz: 44100, channelCount: 2,
-    }),
-    ultra_hd: expected({
-      codec: "flac", container: "flac", lossless: true,
-      bitDepth: 24, sampleRateHzMax: 192000, channelCount: 2,
-    }),
-    atmos: expected({
-      codec: "eac3", codecProfile: "joc", lossless: false,
-      immersiveFormat: "dolby-atmos", objectAudio: true,
-    }),
+    standard: expected({ codec: "aac", container: "m4a", lossless: false, bitrateKbps: 256, ...STEREO }),
+    hd: expected({ codec: "flac", container: "flac", ...CD, ...STEREO }),
+    ultra_hd: expected({ codec: "flac", container: "flac", ...HI_RES, ...STEREO }),
+    atmos: expected(DOLBY_ATMOS),
     // 360 Reality Audio is MPEG-H 3D Audio (ISO/IEC 23008-3), purely
     // object-based — not MQA, which is an unrelated lossy-in-lossless scheme.
     "360ra": expected({
-      codec: "mpegh", codecProfile: "3d-audio", lossless: false,
+      codec: "mpegh", codecProfile: "3d-audio", lossless: false, sampleRateHz: 48000,
       immersiveFormat: "sony-360ra", objectAudio: true,
     }),
   },
   spotify: {
-    // Vorbis on the desktop/mobile clients; the web player is AAC, and a
-    // lossless tier now exists. Which one a backend gets depends on the client
-    // it emulates, so only the ceiling is asserted.
-    low: expected({ lossless: false, bitrateKbpsMax: 96, channelCount: 2 }),
-    normal: expected({ lossless: false, bitrateKbpsMax: 160, channelCount: 2 }),
-    high: expected({ lossless: false, bitrateKbpsMax: 320, channelCount: 2 }),
+    // Votify can request Vorbis, AAC or FLAC; Vorbis 320 is the representative
+    // stereo stream, and Spotify's newer lossless tier is FLAC at CD.
+    low: expected({ codec: "vorbis", container: "ogg", lossless: false, bitrateKbps: 96, ...STEREO }),
+    normal: expected({ codec: "vorbis", container: "ogg", lossless: false, bitrateKbps: 160, ...STEREO }),
+    high: expected({ codec: "vorbis", container: "ogg", lossless: false, bitrateKbps: 320, ...STEREO }),
+    lossless: expected({ codec: "flac", container: "flac", ...CD, ...STEREO }),
   },
   "youtube-music": {
-    // Google publishes each tier as "AAC **or** Opus" — the tier fixes the
-    // bitrate ceiling and nothing else. Asserting Opus here would hand YouTube
-    // a coding-efficiency bonus before knowing the stream is Opus, so the codec
-    // stays null until the downloader reports what it selected.
-    low: expected({ lossless: false, bitrateKbpsMax: 48, channelCount: 2 }),
-    normal: expected({ lossless: false, bitrateKbpsMax: 128, channelCount: 2 }),
-    high: expected({ lossless: false, bitrateKbpsMax: 256, channelCount: 2 }),
+    // Google publishes each tier as "AAC or Opus"; yt-dlp prefers Opus wherever
+    // it is offered, so Opus is what we expect. Premium is what decides the
+    // rate — see `expectedFactsForProviderTier`.
+    normal: expected({ codec: "opus", container: "webm", lossless: false, bitrateKbps: 128, ...STEREO }),
+    high: expected({ codec: "opus", container: "webm", lossless: false, bitrateKbps: 256, ...STEREO }),
   },
   soundcloud: {
     // SoundCloud publishes standard as MP3 128 and Go+ as AAC 256, which it
-    // equates to MP3 320. The free HLS Opus representation is a delivery
-    // detail the catalogue does not promise, so it carries no codec.
-    low: expected({ lossless: false, bitrateKbpsMax: 64, channelCount: 2 }),
-    standard: expected({ codec: "mp3", lossless: false, bitrateKbps: 128, channelCount: 2 }),
-    high: expected({ codec: "aac", lossless: false, bitrateKbps: 256, channelCount: 2 }),
+    // equates to MP3 320.
+    standard: expected({ codec: "mp3", lossless: false, bitrateKbps: 128, ...STEREO }),
+    high: expected({ codec: "aac", container: "m4a", lossless: false, bitrateKbps: 256, ...STEREO }),
   },
 };
 
-/**
- * Our own persisted `variant_key` vocabulary — `presentation:fidelity`, e.g.
- * `stereo:hires-lossless` or `spatial:atmos` — mapped onto each provider's
- * tier names, so stored variants resolve without re-reading provider payloads.
- */
 const VARIANT_KEY_TO_TIER: Record<string, Record<string, string>> = {
   tidal: {
     "stereo:lossy": "high",
@@ -221,10 +197,7 @@ const VARIANT_KEY_TO_TIER: Record<string, Record<string, string>> = {
     "stereo:hires-lossless": "hires-lossless",
     "spatial:atmos": "atmos",
   },
-  deezer: {
-    "stereo:lossy": "mp3_320",
-    "stereo:lossless": "flac",
-  },
+  deezer: { "stereo:lossy": "mp3_320", "stereo:lossless": "flac" },
   "amazon-music": {
     "stereo:lossy": "standard",
     "stereo:lossless": "hd",
@@ -232,27 +205,45 @@ const VARIANT_KEY_TO_TIER: Record<string, Record<string, string>> = {
     "spatial:atmos": "atmos",
     "spatial:360ra": "360ra",
   },
-  spotify: { "stereo:lossy": "high" },
-  "youtube-music": { "stereo:lossy": "high" },
+  spotify: { "stereo:lossy": "high", "stereo:lossless": "lossless" },
+  // Resolved against the session's entitlement below, not fixed here.
+  "youtube-music": { "stereo:lossy": "normal" },
   soundcloud: { "stereo:lossy": "standard" },
 };
 
 /**
- * The facts a provider's tier implies, or null when the pairing is unknown.
+ * What the account can reach, where that changes what we expect to receive.
  *
- * Returns a copy, so callers may layer observations on top without mutating
- * the table.
+ * Probed once when a provider session is established, not per track — the
+ * entitlement is a property of the login, and asking per track would be a
+ * request per track for information that does not vary.
+ */
+export interface ProviderSessionCapabilities {
+  /** yt-dlp reports "Detected YouTube Premium subscription" on a Premium login. */
+  youtubePremium?: boolean;
+}
+
+/**
+ * The facts a provider's tier is expected to deliver, or null when the pairing
+ * is unknown. Returns a copy, so callers may layer observations on top.
  */
 export function expectedFactsForProviderTier(
   provider: string | null | undefined,
   tierOrVariantKey: string | null | undefined,
+  capabilities: ProviderSessionCapabilities = {},
 ): AudioFacts | null {
   const providerKey = String(provider || "").trim().toLowerCase();
   const raw = String(tierOrVariantKey || "").trim().toLowerCase();
   if (!providerKey || !raw) return null;
   const tiers = PROVIDER_TIER_FACTS[providerKey];
   if (!tiers) return null;
-  const tier = VARIANT_KEY_TO_TIER[providerKey]?.[raw] ?? raw;
+
+  let tier = VARIANT_KEY_TO_TIER[providerKey]?.[raw] ?? raw;
+  // Premium is the difference between ~128 and ~256 kbps on YouTube Music, and
+  // it is the only thing that decides it.
+  if (providerKey === "youtube-music" && tier === "normal" && capabilities.youtubePremium) {
+    tier = "high";
+  }
   const facts = tiers[tier];
   return facts ? { ...facts } : null;
 }
@@ -269,10 +260,8 @@ export function expectedFactsForProviderTier(
 export function fidelityClassOf(facts: AudioFacts): FidelityClass | null {
   if (facts.lossless == null) return null;
   if (!facts.lossless) return "lossy";
-  const bitDepth = facts.bitDepth ?? facts.bitDepthMax;
-  const sampleRate = facts.sampleRateHz ?? facts.sampleRateHzMax;
-  const betterThanCd = (bitDepth != null && bitDepth > 16)
-    || (sampleRate != null && sampleRate > 44100);
+  const betterThanCd = (facts.bitDepth != null && facts.bitDepth > 16)
+    || (facts.sampleRateHz != null && facts.sampleRateHz > 44100);
   return betterThanCd ? "hires-lossless" : "lossless";
 }
 
@@ -335,13 +324,8 @@ export function audioFactsLabel(facts: AudioFacts): string {
   if (facts.channelLayout) parts.push(facts.channelLayout);
 
   if (facts.bitDepth != null) parts.push(`${facts.bitDepth}-bit`);
-  else if (facts.bitDepthMax != null) parts.push(`up to ${facts.bitDepthMax}-bit`);
-
   if (facts.sampleRateHz != null) parts.push(formatKhz(facts.sampleRateHz));
-  else if (facts.sampleRateHzMax != null) parts.push(`up to ${formatKhz(facts.sampleRateHzMax)}`);
-
   if (facts.bitrateKbps != null) parts.push(`${facts.bitrateKbps} kbps`);
-  else if (facts.bitrateKbpsMax != null) parts.push(`up to ${facts.bitrateKbpsMax} kbps`);
 
   return parts.join(" · ");
 }
@@ -361,9 +345,6 @@ export function mergeAudioFacts(base: AudioFacts, observed: Partial<AudioFacts>)
   if (observed.confidence === "observed" || base.confidence === "observed") {
     merged.confidence = "observed";
   }
-  if (merged.bitDepth != null) merged.bitDepthMax = null;
-  if (merged.sampleRateHz != null) merged.sampleRateHzMax = null;
-  if (merged.bitrateKbps != null) merged.bitrateKbpsMax = null;
   return merged;
 }
 
@@ -404,12 +385,10 @@ const TAPER_CEILING_KBPS = 320;
  * more measurable than it is, and naming it that way invites callers to treat a
  * coarse ranking heuristic as a conversion. It orders offers and nothing else.
  *
- * Uses the ceiling when a tier only publishes one, because that is what the
- * tier offers and what the user is choosing between.
  */
 export function lossyQualityScore(facts: AudioFacts): number | null {
   if (facts.lossless !== false) return null;
-  const bitrate = facts.bitrateKbps ?? facts.bitrateKbpsMax;
+  const bitrate = facts.bitrateKbps;
   if (bitrate == null) return null;
   // An unknown codec is scored at parity rather than penalised: YouTube's tiers
   // genuinely do not say, and guessing either way would be an invention.
@@ -447,8 +426,7 @@ export function compareAudioFidelity(left: AudioFacts, right: AudioFacts): numbe
   if (leftClass === "lossy") {
     return (lossyQualityScore(left) ?? 0) - (lossyQualityScore(right) ?? 0);
   }
-  const depth = (left.bitDepth ?? left.bitDepthMax ?? 0) - (right.bitDepth ?? right.bitDepthMax ?? 0);
+  const depth = (left.bitDepth ?? 0) - (right.bitDepth ?? 0);
   if (depth !== 0) return depth;
-  return (left.sampleRateHz ?? left.sampleRateHzMax ?? 0)
-    - (right.sampleRateHz ?? right.sampleRateHzMax ?? 0);
+  return (left.sampleRateHz ?? 0) - (right.sampleRateHz ?? 0);
 }
