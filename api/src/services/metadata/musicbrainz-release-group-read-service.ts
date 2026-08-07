@@ -68,7 +68,17 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
               FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
               WHERE allowed.value = 'spatial'
             ) THEN 'spatial' ELSE 'stereo' END
-            ORDER BY library_release.updated_at DESC, library_release.id DESC
+            -- A Library may monitor several Editions of one Album; exactly one
+            -- of them is the representative ("Primary"). The header describes
+            -- *that* Edition, so it has to win. Ranking on recency alone let a
+            -- supplemental pick-up Edition (a rarities disc, a Japanese
+            -- bonus-track pressing) supply the album's provider, quality and
+            -- selected release — contradicting the tracklist right below it.
+            ORDER BY
+              CASE WHEN plan.id IS NOT NULL THEN 0 ELSE 1 END,
+              library_release.representative DESC,
+              library_release.updated_at DESC,
+              library_release.id DESC
           ) AS selection_rank
         FROM Albums selected_group
         JOIN LibraryEditions library_release
@@ -904,10 +914,17 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
          AND release_match.match_state = 'accepted'
         JOIN ProviderItems provider_release
           ON provider_release.id = release_match.provider_edition_item_id
+        -- Deliberately NOT "AND track_match.track_id = plan_track.track_id".
+        -- The planner anchors on Recordings, so a provider album matched to
+        -- edition A can legitimately supply a Track of edition B: the match's
+        -- track_id is the *source* Track it was bound to, while the plan's
+        -- track_id is the canonical target. Requiring them to be equal drops
+        -- every cross-edition offer — which is every composite plan and most
+        -- single-source ones — leaving a full-coverage plan looking like a
+        -- tracklist with no offers at all.
         JOIN ProviderTrackMatches track_match
           ON track_match.id = plan_track.provider_track_match_id
          AND track_match.provider_edition_match_id = release_match.id
-         AND track_match.track_id = plan_track.track_id
          AND track_match.match_state = 'accepted'
         JOIN ProviderEditionMembers member
           ON member.id = track_match.provider_edition_member_id

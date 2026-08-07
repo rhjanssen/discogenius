@@ -540,6 +540,10 @@ const artistReleaseGroupLibraryStateCte = `
           ) THEN 'spatial' ELSE 'stereo' END
         ORDER BY
           CASE WHEN plan.state = 'current' AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
+          -- One Library can monitor several Editions of the same Album; only
+          -- the representative one speaks for the card. Without this a
+          -- supplemental Edition's plan (or its absence) decided the badge.
+          library_release.representative DESC,
           library_release.updated_at DESC,
           library_release.id DESC,
           library.id ASC
