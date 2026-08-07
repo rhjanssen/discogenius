@@ -430,3 +430,75 @@ export function compareAudioFidelity(left: AudioFacts, right: AudioFacts): numbe
   if (depth !== 0) return depth;
   return (left.sampleRateHz ?? 0) - (right.sampleRateHz ?? 0);
 }
+
+/* ── Reading an acquired file back as facts ─────────────────────────── */
+
+/** The audio columns a `TrackFiles` row carries, as ffprobe filled them. */
+export interface ProbedFileRow {
+  codec?: string | null;
+  container?: string | null;
+  bitrate?: number | null;
+  sample_rate?: number | null;
+  bit_depth?: number | null;
+  channel_count?: number | null;
+  channel_layout?: string | null;
+}
+
+const CODEC_ALIASES: Record<string, AudioCodec> = {
+  "aac": "aac", "mp4a": "aac", "he-aac": "aac",
+  "mp3": "mp3", "mp3float": "mp3",
+  "vorbis": "vorbis", "opus": "opus",
+  "flac": "flac", "alac": "alac", "pcm_s16le": "pcm", "pcm_s24le": "pcm",
+  "eac3": "eac3", "ec-3": "eac3", "ac3": "ac3",
+  "mpegh": "mpegh", "mhm1": "mpegh",
+};
+
+const LOSSLESS_CODECS = new Set<AudioCodec>(["flac", "alac", "pcm"]);
+
+/**
+ * The facts of a file that exists, read from its stored probe.
+ *
+ * This is the other half of the model, and the only place `observed` comes
+ * from. It exists so the same comparisons that ranked an offer can be applied
+ * to what actually landed — deciding whether a file already satisfies a
+ * profile, or whether a better offer is worth an upgrade — without a second
+ * quality vocabulary for files.
+ *
+ * `lossless` is inferred from the codec rather than trusted from a column: a
+ * probe reports what the stream is, and FLAC is lossless whatever anything else
+ * claims.
+ */
+export function observedFactsFromFile(row: ProbedFileRow): AudioFacts {
+  const rawCodec = String(row.codec || "").trim().toLowerCase();
+  const codec = CODEC_ALIASES[rawCodec] ?? null;
+  const channelCount = row.channel_count ?? null;
+  return {
+    evidenceSource: "file-probe",
+    confidence: "observed",
+    codec,
+    codecProfile: null,
+    container: row.container ?? null,
+    lossless: codec == null ? null : LOSSLESS_CODECS.has(codec),
+    bitDepth: row.bit_depth ?? null,
+    sampleRateHz: row.sample_rate ?? null,
+    bitrateKbps: row.bitrate ?? null,
+    channelCount,
+    channelLayout: row.channel_layout ?? null,
+    // E-AC-3 beyond stereo is how both TIDAL and Apple deliver Atmos; a probe
+    // cannot see the object metadata, so the codec and channel count are the
+    // evidence available.
+    immersiveFormat: codec === "eac3" && (channelCount ?? 0) > 2 ? "dolby-atmos" : null,
+    objectAudio: null,
+  };
+}
+
+/**
+ * Does a file already deliver what an offer would?
+ *
+ * Returns true when the file is at least as good, which is the question an
+ * upgrade decision asks — not whether they are identical, because a file that
+ * arrived better than its tier promised is not a reason to re-download.
+ */
+export function fileSatisfiesOffer(file: AudioFacts, offer: AudioFacts): boolean {
+  return compareAudioFidelity(file, offer) >= 0;
+}

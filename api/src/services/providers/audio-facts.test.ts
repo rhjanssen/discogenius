@@ -185,3 +185,50 @@ test("360 Reality Audio is MPEG-H 3D Audio, not MQA", () => {
   assert.equal(facts360.immersiveFormat, "sony-360ra");
   assert.equal(presentationClassOf(facts360), "immersive");
 });
+
+/* ── Reading an acquired file back as facts ─────────────────────────── */
+
+test("a probed file is read into the same vocabulary as an offer", async () => {
+  const { observedFactsFromFile } = await import("./audio-facts.js");
+  const flac = observedFactsFromFile({
+    codec: "flac", bitrate: 1411, sample_rate: 44100, bit_depth: 16, channel_count: 2,
+  });
+  assert.equal(flac.confidence, "observed");
+  assert.equal(flac.evidenceSource, "file-probe");
+  assert.equal(flac.lossless, true, "inferred from the codec, not trusted from a column");
+  assert.equal(fidelityClassOf(flac), "lossless");
+
+  // ffprobe's names differ from ours and must normalise.
+  assert.equal(observedFactsFromFile({ codec: "mp4a" }).codec, "aac");
+  assert.equal(observedFactsFromFile({ codec: "ec-3" }).codec, "eac3");
+  assert.equal(observedFactsFromFile({ codec: "invented" }).codec, null);
+  assert.equal(observedFactsFromFile({ codec: "invented" }).lossless, null);
+});
+
+test("a multichannel E-AC-3 file reads as immersive", async () => {
+  const { observedFactsFromFile } = await import("./audio-facts.js");
+  const atmos = observedFactsFromFile({
+    codec: "eac3", channel_count: 6, channel_layout: "5.1", sample_rate: 48000, bitrate: 768,
+  });
+  assert.equal(atmos.immersiveFormat, "dolby-atmos");
+  assert.equal(presentationClassOf(atmos), "immersive");
+  assert.equal(fidelityClassOf(atmos), "lossy");
+  // Stereo E-AC-3 is not Atmos.
+  assert.equal(observedFactsFromFile({ codec: "eac3", channel_count: 2 }).immersiveFormat, null);
+});
+
+test("a file that arrived better than promised is not a reason to re-download", async () => {
+  const { fileSatisfiesOffer, observedFactsFromFile } = await import("./audio-facts.js");
+  const offer = facts("apple-music", "stereo:lossless");
+  // Apple Lossless expected at CD; this one landed at 24/48.
+  const better = observedFactsFromFile({
+    codec: "alac", bit_depth: 24, sample_rate: 48000, channel_count: 2,
+  });
+  assert.equal(fileSatisfiesOffer(better, offer), true);
+  assert.equal(fileSatisfiesOffer(observedFactsFromFile({
+    codec: "alac", bit_depth: 16, sample_rate: 44100,
+  }), offer), true, "exactly as promised also satisfies");
+  assert.equal(fileSatisfiesOffer(observedFactsFromFile({
+    codec: "aac", bitrate: 256,
+  }), offer), false, "a lossy file does not satisfy a lossless offer");
+});
