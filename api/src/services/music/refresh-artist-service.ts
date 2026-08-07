@@ -100,7 +100,35 @@ export {
  * Chosen so a yield lands several times a second on a big catalogue without
  * making the loop itself measurably slower.
  */
-const MATCHING_YIELD_INTERVAL = 25;
+export const MATCHING_YIELD_INTERVAL = 25;
+
+/**
+ * Also yield after this much wall-clock in one uninterrupted stretch.
+ *
+ * A count alone assumes albums cost roughly the same. One pathological album —
+ * a 200-track compilation, a provider release matching thousands of candidate
+ * recordings — can exceed the heartbeat interval on its own, and 24 more like
+ * it would still not trip a count of 25.
+ */
+export const MATCHING_YIELD_MS = 150;
+
+/**
+ * Cooperative yield for the matcher's local loops: every N albums, or whenever
+ * one stretch has run long enough to threaten the heartbeat.
+ */
+export function createMatchingYield(): () => Promise<void> {
+  let sinceYield = 0;
+  let lastYieldAt = Date.now();
+  return async () => {
+    sinceYield += 1;
+    if (sinceYield < MATCHING_YIELD_INTERVAL && Date.now() - lastYieldAt < MATCHING_YIELD_MS) {
+      return;
+    }
+    sinceYield = 0;
+    await yieldToEventLoop();
+    lastYieldAt = Date.now();
+  };
+}
 
 export class RefreshArtistService {
     private static getArtistMusicBrainzId(artistId: string): string | null {
@@ -1497,18 +1525,15 @@ export class RefreshArtistService {
                       AND release_item.provider_id = ?
                     ORDER BY member.medium_position, member.position
                 `);
-                let sinceYield = 0;
+                // The command heartbeat is a timer, so a lease expires only when the
+                // handler starves the event loop — which a few thousand synchronous
+                // SQLite reads in a row will do. Yielding costs nothing and issues no
+                // provider request; the fetch pattern below (bulk tracklists,
+                // non-candidates skipped) is deliberately untouched, because chunking
+                // *fetching* would mean more calls.
+                const yieldMaterialize = createMatchingYield();
                 for (const album of albums) {
-                    // The command heartbeat is a timer, so a lease expires only when
-                    // the handler starves the event loop — which a few thousand
-                    // synchronous SQLite reads in a row will do. Yielding costs
-                    // nothing and issues no provider request; the fetch pattern below
-                    // (bulk tracklists, non-candidates skipped) is deliberately
-                    // untouched, because chunking *fetching* would mean more calls.
-                    if ((sinceYield += 1) >= MATCHING_YIELD_INTERVAL) {
-                        sinceYield = 0;
-                        await yieldToEventLoop();
-                    }
+                    await yieldMaterialize();
                     const numTracks = Number(album.num_tracks);
                     if (!Number.isFinite(numTracks) || numTracks <= 0) {
                         continue;
@@ -1639,12 +1664,9 @@ export class RefreshArtistService {
                 const { RefreshAlbumService: RefreshAlbumSvc, providerTrackToTrackMetadataRow: toTrackRow } =
                     await import("./refresh-album-service.js");
                 let rematchedReleases = 0;
-                let ingestSinceYield = 0;
+                const yieldIngest = createMatchingYield();
                 for (const album of albums) {
-                    if ((ingestSinceYield += 1) >= MATCHING_YIELD_INTERVAL) {
-                        ingestSinceYield = 0;
-                        await yieldToEventLoop();
-                    }
+                    await yieldIngest();
                     const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
                         providerReleaseGroupMatches.get(String(album.provider_id)) || null,
                     );
@@ -1685,12 +1707,9 @@ export class RefreshArtistService {
                     console.log(`[RefreshArtistService] Re-matched ${rematchedReleases} already-materialized ${provider.name} release(s) from stored rows`);
                 }
 
-                let decideSinceYield = 0;
+                const yieldDecide = createMatchingYield();
                 for (const album of albums) {
-                    if ((decideSinceYield += 1) >= MATCHING_YIELD_INTERVAL) {
-                        decideSinceYield = 0;
-                        await yieldToEventLoop();
-                    }
+                    await yieldDecide();
                     const providerAlbumId = String(album.provider_id);
                     const match = providerReleaseGroupMatches.get(providerAlbumId);
                     if (!match) {

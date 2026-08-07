@@ -12,8 +12,8 @@
  * **fidelity** (how much of the signal survived) and **presentation** (how many
  * channels, and whether objects) — plus the provenance of how we learned them.
  *
- *     expected   what the provider's tier implies, before any manifest
- *     observed   what a manifest, the download backend, or ffprobe measured
+ *     expected   what the provider's tier implies — all we have when planning
+ *     observed   what ffprobe read off the imported file
  *
  * An expectation may state a ceiling (`sampleRateHzMax`) where a measurement
  * states a value (`sampleRateHz`). Nothing renders a ceiling as if it were
@@ -28,12 +28,18 @@
  * a speaker count.
  */
 
-/** How a fact was learned. Ordered weakest to strongest. */
+/**
+ * How a fact was learned. There are exactly two states, deliberately.
+ *
+ * Before a file exists we have the provider's quality tier and nothing better —
+ * planning and curation run entirely on that. Once a file exists we can read
+ * it. A manifest sits between the two and was modelled at first, but it earns
+ * nothing: it arrives too late to inform planning and is superseded the moment
+ * the file lands. Two states keep every consumer honest about which it has.
+ */
 export type AudioEvidenceSource =
-  | "provider-catalog"    // a tier badge on the catalogue item
-  | "provider-manifest"   // the stream manifest for this specific track
-  | "download-backend"    // what the downloader reported it fetched
-  | "file-probe";         // ffprobe/TagLib on the file on disk
+  | "provider-catalog"    // the tier badge; all acquisition planning uses this
+  | "file-probe";         // ffprobe/TagLib on the imported file
 
 /** Whether the numbers are implied by a tier or measured from the audio. */
 export type AudioConfidence = "expected" | "observed";
@@ -351,4 +357,76 @@ export function mergeAudioFacts(base: AudioFacts, observed: Partial<AudioFacts>)
   if (merged.sampleRateHz != null) merged.sampleRateHzMax = null;
   if (merged.bitrateKbps != null) merged.bitrateKbpsMax = null;
   return merged;
+}
+
+/* ── Comparing offers across providers ──────────────────────────────── */
+
+/**
+ * Rough coding efficiency relative to AAC-LC at 1.0.
+ *
+ * Bitrate alone does not order lossy offers: Apple's AAC 256 and YouTube
+ * Music's Opus 128 are much closer than 256-vs-128 suggests, because Opus
+ * carries substantially more signal per bit. Ranking on the raw number would
+ * overstate Apple's lead and understate Opus everywhere.
+ *
+ * These are ordering heuristics drawn from the broad consensus of public
+ * listening tests, not measurements — the ordering they produce is what is
+ * tested, never the individual numbers. Opus is the most efficient of the four
+ * at these rates and MP3 the least.
+ */
+const CODEC_EFFICIENCY: Partial<Record<AudioCodec, number>> = {
+  opus: 1.4,
+  aac: 1.0,
+  vorbis: 0.95,
+  mp3: 0.75,
+  // Atmos/360RA delivery codecs are compared by presentation, not by bitrate.
+  eac3: 1.0,
+  ac3: 0.7,
+};
+
+/**
+ * A comparable "AAC-equivalent kbps" for lossy offers; null for lossless.
+ *
+ * Uses the ceiling when a tier only publishes one, because that is what the
+ * tier offers and what the user is choosing between.
+ */
+export function perceptualBitrateKbps(facts: AudioFacts): number | null {
+  if (facts.lossless !== false) return null;
+  const bitrate = facts.bitrateKbps ?? facts.bitrateKbpsMax;
+  if (bitrate == null || !facts.codec) return null;
+  const efficiency = CODEC_EFFICIENCY[facts.codec];
+  return efficiency == null ? bitrate : Math.round(bitrate * efficiency);
+}
+
+/** Fidelity order, independent of presentation. Higher is better. */
+const FIDELITY_RANK: Record<FidelityClass, number> = {
+  lossy: 0,
+  lossless: 1,
+  "hires-lossless": 2,
+};
+
+/**
+ * Order two offers by what they actually deliver.
+ *
+ * Fidelity class first, then perceptual bitrate within lossy, then bit depth
+ * and sample rate within lossless. Presentation is deliberately absent: whether
+ * an immersive offer beats a hi-res stereo one is a *profile preference*, not a
+ * property of the audio, and baking it in here is the conflation this model
+ * exists to undo.
+ *
+ * Returns >0 when `left` is better, matching a descending comparator.
+ */
+export function compareAudioFidelity(left: AudioFacts, right: AudioFacts): number {
+  const leftClass = fidelityClassOf(left);
+  const rightClass = fidelityClassOf(right);
+  if (leftClass !== rightClass) {
+    return (leftClass ? FIDELITY_RANK[leftClass] : -1) - (rightClass ? FIDELITY_RANK[rightClass] : -1);
+  }
+  if (leftClass === "lossy") {
+    return (perceptualBitrateKbps(left) ?? 0) - (perceptualBitrateKbps(right) ?? 0);
+  }
+  const depth = (left.bitDepth ?? left.bitDepthMax ?? 0) - (right.bitDepth ?? right.bitDepthMax ?? 0);
+  if (depth !== 0) return depth;
+  return (left.sampleRateHz ?? left.sampleRateHzMax ?? 0)
+    - (right.sampleRateHz ?? right.sampleRateHzMax ?? 0);
 }

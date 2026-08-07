@@ -16,6 +16,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { yieldToEventLoop } from "../commands/command-context.js";
+import {
+  createMatchingYield,
+  MATCHING_YIELD_INTERVAL,
+  MATCHING_YIELD_MS,
+} from "./refresh-artist-service.js";
 
 /** A timer heartbeat, exactly as the worker entry runs one. */
 function startHeartbeat(intervalMs: number): { beats: () => number; stop: () => void } {
@@ -41,18 +46,64 @@ test("a loop that never yields starves the heartbeat", async () => {
   }
 });
 
-test("yielding on an interval lets the heartbeat through", async () => {
+test("the production cadence lets the heartbeat through", async () => {
+  // Exercises the real helper at the real interval, not an illustrative one:
+  // a test that yields more often than production proves nothing about
+  // production.
   const heartbeat = startHeartbeat(10);
+  const shouldYield = createMatchingYield();
   try {
-    // Same total work, yielding every 25 iterations as the matcher now does.
-    for (let album = 0; album < 30; album += 1) {
+    for (let album = 0; album < MATCHING_YIELD_INTERVAL * 2; album += 1) {
+      await shouldYield();
       burnSynchronously(5);
-      if ((album + 1) % 5 === 0) await yieldToEventLoop();
     }
     assert.ok(heartbeat.beats() > 0, "the heartbeat fired, so the lease survives");
   } finally {
     heartbeat.stop();
   }
+});
+
+test("one pathological album cannot outrun the count alone", async () => {
+  // A count assumes albums cost roughly the same. A 200-track compilation, or a
+  // release matching thousands of candidate recordings, can exceed the
+  // heartbeat interval on its own — and 24 more like it would still not reach
+  // an interval of 25. The elapsed-time arm is what covers that.
+  const heartbeat = startHeartbeat(10);
+  const shouldYield = createMatchingYield();
+  try {
+    // Far fewer albums than MATCHING_YIELD_INTERVAL, each expensive.
+    for (let album = 0; album < 4; album += 1) {
+      await shouldYield();
+      burnSynchronously(MATCHING_YIELD_MS);
+    }
+    assert.ok(
+      heartbeat.beats() > 0,
+      "elapsed time forced a yield even though the count never fired",
+    );
+  } finally {
+    heartbeat.stop();
+  }
+});
+
+test("the yield is cheap when the loop is already fast", async () => {
+  // It must not turn a tight loop into one event-loop turn per album.
+  const shouldYield = createMatchingYield();
+  let turns = 0;
+  const originalSetImmediate = globalThis.setImmediate;
+  (globalThis as { setImmediate: typeof setImmediate }).setImmediate = ((
+    callback: () => void, ...args: unknown[]
+  ) => {
+    turns += 1;
+    return originalSetImmediate(callback, ...args as []);
+  }) as typeof setImmediate;
+  try {
+    for (let album = 0; album < MATCHING_YIELD_INTERVAL * 3; album += 1) {
+      await shouldYield();
+    }
+  } finally {
+    (globalThis as { setImmediate: typeof setImmediate }).setImmediate = originalSetImmediate;
+  }
+  assert.ok(turns <= 4, `expected ~3 yields over 75 fast albums, saw ${turns}`);
 });
 
 test("yieldToEventLoop gives up a full event-loop turn, not just a microtask", async () => {
