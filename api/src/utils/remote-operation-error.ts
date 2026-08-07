@@ -23,6 +23,7 @@ export type RemotePhase =
   | "album-artwork"
   | "biography"
   | "provider.search"
+  | "unclassified"
   | "provider.album"
   | "provider.track"
   | "provider.video"
@@ -51,6 +52,7 @@ const PHASE_LABELS: Record<RemotePhase, string> = {
   "album-artwork": "Album artwork",
   biography: "Artist biography",
   "provider.search": "Provider search",
+  unclassified: "Unclassified remote request",
   "provider.album": "Provider album lookup",
   "provider.track": "Provider track lookup",
   "provider.video": "Provider video lookup",
@@ -121,4 +123,81 @@ export async function withRemoteContext<T>(
   } catch (error) {
     throw asRemoteOperationError(error, context);
   }
+}
+
+/* ── Last resort ────────────────────────────────────────────────────── */
+
+/** Axios and undici both produce this exact shape; neither names the service. */
+const BARE_STATUS_MESSAGE = /^Request failed with status code (\d{3})$/i;
+
+/**
+ * Recover whatever provenance an unclassified client error still carries.
+ *
+ * Every call site should wrap its own failures — the service name and phase can
+ * only come from there. But the source of the 503s in the 500-artist run is
+ * still unidentified, so a message that reaches command history naming nothing
+ * is a diagnostic opportunity spent. This is the net under that: it reads the
+ * status, method and host off whatever error object arrived and produces
+ * "Unclassified remote request: api.example.com returned HTTP 503".
+ *
+ * Returns null when there is genuinely nothing remote to report, so callers can
+ * fall through to their own handling rather than mislabelling a local failure.
+ */
+export function normalizeUnclassifiedRemoteError(error: unknown): RemoteOperationError | null {
+  if (error instanceof RemoteOperationError) return error;
+  if (error == null || typeof error !== "object") return null;
+
+  const candidate = error as {
+    message?: unknown;
+    status?: unknown;
+    response?: { status?: unknown };
+    config?: { url?: unknown; method?: unknown; baseURL?: unknown };
+    request?: { host?: unknown; method?: unknown; path?: unknown };
+  };
+
+  const statusFromResponse = Number(candidate.response?.status ?? candidate.status);
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+  const statusFromMessage = Number(BARE_STATUS_MESSAGE.exec(message)?.[1]);
+  const status = Number.isFinite(statusFromResponse) && statusFromResponse > 0
+    ? statusFromResponse
+    : (Number.isFinite(statusFromMessage) ? statusFromMessage : null);
+  if (status == null) return null;
+
+  const rawUrl = typeof candidate.config?.url === "string" ? candidate.config.url : null;
+  const baseUrl = typeof candidate.config?.baseURL === "string" ? candidate.config.baseURL : null;
+  const method = typeof candidate.config?.method === "string"
+    ? candidate.config.method.toUpperCase()
+    : (typeof candidate.request?.method === "string" ? candidate.request.method : null);
+
+  // Host and path only. A query string routinely carries an api key, and this
+  // string is persisted into command history.
+  let host: string | null = typeof candidate.request?.host === "string"
+    ? candidate.request.host
+    : null;
+  let pathname: string | null = null;
+  for (const url of [rawUrl, baseUrl]) {
+    if (!url) continue;
+    try {
+      const parsed = new URL(url, baseUrl ?? undefined);
+      host = host ?? parsed.host;
+      pathname = pathname ?? parsed.pathname;
+      break;
+    } catch {
+      // Relative URL with no base: keep the path, drop any query.
+      if (!pathname && url.startsWith("/")) pathname = url.split("?")[0];
+    }
+  }
+
+  return new RemoteOperationError(
+    {
+      phase: "unclassified",
+      service: host ?? "an unnamed host",
+      host,
+      method,
+      status,
+      retryable: isTransientHttpStatus(status),
+    },
+    pathname ?? undefined,
+    { cause: error },
+  );
 }

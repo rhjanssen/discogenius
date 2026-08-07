@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { db, runChunkedWrite, withSqliteWriteGate } from "../../database.js";
-import { RemoteOperationError } from "../../utils/remote-operation-error.js";
+import {
+  RemoteOperationError,
+  type RemoteOperationContext,
+} from "../../utils/remote-operation-error.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
@@ -188,6 +191,12 @@ class ServarrMetadataRequestError extends Error {
     readonly retryable: boolean,
     readonly retryAfterMs: number | null = null,
     options?: ErrorOptions,
+    /**
+     * The structured provenance behind `message`. Kept alongside the string so
+     * a caller can read the host/status/phase rather than re-parsing prose —
+     * flattening to `.message` was throwing that away.
+     */
+    readonly context?: RemoteOperationContext,
   ) {
     super(message, options);
     this.name = "ServarrMetadataRequestError";
@@ -348,17 +357,20 @@ export class ServarrMetadataService {
         if (!res.ok) {
           // Carry the service, host and status so command history names the
           // dependency instead of reporting a bare status line.
+          const context: RemoteOperationContext = {
+            phase: "canonical.artist",
+            service: "servarr-metadata",
+            host: safeHost(this.baseUrl),
+            method: "GET",
+            status: res.status,
+            retryable: isRetryableServarrStatus(res.status),
+          };
           throw new ServarrMetadataRequestError(
-            new RemoteOperationError({
-              phase: "canonical.artist",
-              service: "servarr-metadata",
-              host: safeHost(this.baseUrl),
-              method: "GET",
-              status: res.status,
-              retryable: isRetryableServarrStatus(res.status),
-            }, `${path} ${res.statusText}`.trim()).message,
+            new RemoteOperationError(context, `${path} ${res.statusText}`.trim()).message,
             isRetryableServarrStatus(res.status),
             retryAfterDelayMs(res),
+            undefined,
+            context,
           );
         }
 

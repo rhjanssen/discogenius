@@ -10,6 +10,7 @@ import test from "node:test";
 import {
   asRemoteOperationError,
   isTransientHttpStatus,
+  normalizeUnclassifiedRemoteError,
   RemoteOperationError,
   withRemoteContext,
 } from "./remote-operation-error.js";
@@ -74,4 +75,61 @@ test("transient means transient, not merely unsuccessful", () => {
   for (const status of [400, 401, 403, 404, 410, 422]) {
     assert.equal(isTransientHttpStatus(status), false, String(status));
   }
+});
+
+/* ── The net under everything else ──────────────────────────────────── */
+
+test("a bare axios message still yields a host and a status", () => {
+  // The exact shape that reached command history in the 500-artist run.
+  const axiosLike = {
+    message: "Request failed with status code 503",
+    response: { status: 503 },
+    config: { method: "get", url: "https://api.example.com/v1/artist/abc?apikey=secret" },
+  };
+  const normalized = normalizeUnclassifiedRemoteError(axiosLike);
+  assert.ok(normalized);
+  assert.equal(normalized.context.status, 503);
+  assert.equal(normalized.context.host, "api.example.com");
+  assert.equal(normalized.context.method, "GET");
+  assert.equal(normalized.retryable, true);
+  assert.equal(
+    normalized.message,
+    "Unclassified remote request: api.example.com returned HTTP 503 (/v1/artist/abc)",
+  );
+});
+
+test("a persisted message never carries a query string", () => {
+  // Base URLs routinely carry an api key, and this string goes into the
+  // commands table and onto the History page.
+  const normalized = normalizeUnclassifiedRemoteError({
+    message: "Request failed with status code 401",
+    config: { url: "https://svc.example.com/lookup?apikey=hunter2&token=abc" },
+  });
+  assert.ok(normalized);
+  assert.equal(normalized.message.includes("hunter2"), false);
+  assert.equal(normalized.message.includes("apikey"), false);
+  assert.equal(normalized.message.includes("?"), false);
+});
+
+test("a status alone is enough, even with no url", () => {
+  const normalized = normalizeUnclassifiedRemoteError({
+    message: "Request failed with status code 429",
+  });
+  assert.ok(normalized);
+  assert.equal(normalized.context.status, 429);
+  assert.equal(normalized.message, "Unclassified remote request: an unnamed host returned HTTP 429");
+});
+
+test("a local failure is left alone rather than mislabelled as remote", () => {
+  assert.equal(normalizeUnclassifiedRemoteError(new Error("no such column: foo")), null);
+  assert.equal(normalizeUnclassifiedRemoteError("a string"), null);
+  assert.equal(normalizeUnclassifiedRemoteError(null), null);
+  assert.equal(normalizeUnclassifiedRemoteError({ message: "SQLITE_BUSY" }), null);
+});
+
+test("a properly wrapped error keeps its own better provenance", () => {
+  const wrapped = new RemoteOperationError({
+    phase: "provider.album", service: "tidal", status: 503, retryable: true,
+  });
+  assert.equal(normalizeUnclassifiedRemoteError(wrapped), wrapped);
 });

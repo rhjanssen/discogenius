@@ -3,6 +3,7 @@ import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js
 import { commandExecutors } from "./executors/registry.js";
 import type { CommandHandlerContext } from "./handlers/handler-context.js";
 import { queueNextMonitoringPass } from "./scheduler.js";
+import { normalizeUnclassifiedRemoteError } from "../../utils/remote-operation-error.js";
 
 /**
  * Shared command-execution helpers.
@@ -147,7 +148,14 @@ export async function executeCommand(job: CommandModel): Promise<void> {
     let outcomePersisted = false;
     try {
         if (handlerError) {
-            const message = handlerError instanceof Error ? handlerError.message : 'Unknown command error';
+            // Last resort before the message is persisted. A call site that
+            // wrapped its own failure already names its service and phase; this
+            // only rescues an unclassified client error, which would otherwise
+            // reach history as a bare "Request failed with status code 503" —
+            // a status with no dependency attached to it.
+            const classified = normalizeUnclassifiedRemoteError(handlerError);
+            const message = classified?.message
+                ?? (handlerError instanceof Error ? handlerError.message : 'Unknown command error');
             outcomePersisted = await runWithAsyncBusyRetry(
                 () => CommandQueueManager.fail(job.id, message, job.worker_id ?? undefined),
             );

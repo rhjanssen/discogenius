@@ -42,6 +42,7 @@ export type AudioCodec =
   | "aac" | "mp3" | "vorbis" | "opus"        // lossy
   | "flac" | "alac" | "pcm"                  // lossless
   | "eac3" | "ac3"                           // lossy, and how Atmos is delivered
+  | "mpegh"                                  // MPEG-H 3D Audio, how 360RA is delivered
   | "mqa";                                   // lossy-in-a-lossless-container
 
 export type ImmersiveFormat = "dolby-atmos" | "sony-360ra";
@@ -162,8 +163,10 @@ const PROVIDER_TIER_FACTS: Record<string, Record<string, AudioFacts>> = {
       codec: "eac3", codecProfile: "joc", lossless: false,
       immersiveFormat: "dolby-atmos", objectAudio: true,
     }),
+    // 360 Reality Audio is MPEG-H 3D Audio (ISO/IEC 23008-3), purely
+    // object-based — not MQA, which is an unrelated lossy-in-lossless scheme.
     "360ra": expected({
-      codec: "mqa", lossless: false,
+      codec: "mpegh", codecProfile: "3d-audio", lossless: false,
       immersiveFormat: "sony-360ra", objectAudio: true,
     }),
   },
@@ -277,7 +280,7 @@ export function presentationClassOf(facts: AudioFacts): PresentationClass {
 const CODEC_LABELS: Record<AudioCodec, string> = {
   aac: "AAC", mp3: "MP3", vorbis: "Vorbis", opus: "Opus",
   flac: "FLAC", alac: "ALAC", pcm: "PCM",
-  eac3: "E-AC-3", ac3: "AC-3", mqa: "MQA",
+  eac3: "E-AC-3", ac3: "AC-3", mpegh: "MPEG-H 3D Audio", mqa: "MQA",
 };
 
 const IMMERSIVE_LABELS: Record<ImmersiveFormat, string> = {

@@ -174,3 +174,15 @@ test("an absent observed field leaves the expectation standing", () => {
   assert.equal(merged.bitDepth, 16);
   assert.equal(merged.confidence, "expected", "a bare number is not an observation");
 });
+
+test("360 Reality Audio is MPEG-H 3D Audio, not MQA", () => {
+  // Object-based MPEG-H (ISO/IEC 23008-3). MQA is an unrelated
+  // lossy-in-a-lossless-container scheme and has nothing to do with 360RA.
+  const facts360 = facts("amazon-music", "360ra");
+  assert.equal(facts360.codec, "mpegh");
+  assert.equal(facts360.codecProfile, "3d-audio");
+  assert.equal(facts360.immersiveFormat, "sony-360ra");
+  assert.equal(facts360.objectAudio, true);
+  assert.equal(presentationClassOf(facts360), "immersive");
+  assert.equal(audioFactsLabel(facts360), "MPEG-H 3D Audio · 360 Reality Audio");
+});
