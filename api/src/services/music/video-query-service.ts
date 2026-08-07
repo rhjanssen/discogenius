@@ -534,6 +534,30 @@ type AssociatedVideoRow = {
 };
 
 /**
+ * An Edition this Album is actually curating, when it curates any.
+ *
+ * MusicBrainz release groups routinely carry an Edition far richer than the one
+ * a Library monitors — ABBA's *Voyage* has a two-disc pressing whose second
+ * disc is a greatest-hits selection. Associating videos through *any* Edition
+ * put "Dancing Queen" on the *Voyage* page and labelled it disc 2 track 1, a
+ * disc the displayed Edition does not have; the same video then linked to a
+ * track of an album the user was not looking at.
+ *
+ * So: prefer the monitored Editions, and fall back to every Edition only when
+ * the Album is monitored nowhere — an unmonitored Album should still show what
+ * exists rather than nothing.
+ */
+const CURATED_EDITION_PREDICATE = `(
+  EXISTS (SELECT 1 FROM LibraryEditions curated WHERE curated.edition_id = ar.id)
+  OR NOT EXISTS (
+    SELECT 1
+    FROM LibraryEditions any_curated
+    JOIN AlbumEditions curated_edition ON curated_edition.id = any_curated.edition_id
+    WHERE curated_edition.release_group_mbid = @releaseGroupMbid
+  )
+)`;
+
+/**
  * One row shape for both association paths.
  *
  * `trackRecordingExpr` is the recording whose Track row supplies the page's
@@ -554,6 +578,7 @@ function associatedVideoSelectSql(input: {
       ON ar.id = t.album_edition_id
       OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
     WHERE ar.release_group_mbid = @releaseGroupMbid
+      AND ${CURATED_EDITION_PREDICATE}
       ${editionFilter}
       AND (
         t.recording_id = ${input.trackRecordingExpr}.id
@@ -561,9 +586,9 @@ function associatedVideoSelectSql(input: {
             AND t.recording_mbid = ${input.trackRecordingExpr}.mbid)
       )
   `;
-  // Within one album the richest medium wins the label, then disc/track order.
-  // This picks WHICH row labels the video on this page; it never decides
-  // whether the video appears at all.
+  // Within the curated Editions the richest medium wins the label, then
+  // disc/track order. This picks WHICH row labels the video on this page; it
+  // never decides whether the video appears at all.
   const trackPickOrder = `
     ORDER BY
       COALESCE(ar.track_count, 0) DESC,
@@ -642,6 +667,13 @@ const PROVIDER_OFFER_JOIN = `
         )
       ORDER BY
         CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+        -- Prefer an offer that actually knows its resolution. MusicBrainz
+        -- streaming-URL relations mint a provider video item from a link alone
+        -- — right identity, no facts — and they carry a 0.98 confidence that
+        -- outranked the provider-catalog offer for the same video. The catalog
+        -- offer is the one that can say FHD, so a video the app could badge
+        -- rendered with no quality at all.
+        CASE WHEN NULLIF(TRIM(COALESCE(candidate.video_quality, '')), '') IS NULL THEN 1 ELSE 0 END,
         candidate_match.confidence DESC,
         candidate_match.updated_at DESC
       LIMIT 1
@@ -702,6 +734,7 @@ export function getAlbumAssociatedVideos(
           ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = @releaseGroupMbid
+          AND ${CURATED_EDITION_PREDICATE}
           ${editionFilter}
           AND (
             t.recording_id = audio.id
@@ -729,6 +762,7 @@ export function getAlbumAssociatedVideos(
           ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = @releaseGroupMbid
+          AND ${CURATED_EDITION_PREDICATE}
           ${editionFilter}
           AND (
             t.recording_id = video.id
