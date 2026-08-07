@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { planHeadlineQualitySql, variantDisplayQualitySql, variantTierRankSql } from "../../utils/display-quality-sql.js";
 import type {
   DownloadProgressContract,
   QueueItemContract,
@@ -401,38 +402,21 @@ function resolveCanonicalAlbumMetadata(input: {
       COALESCE(canonical_credit.credited_name, artist.name) AS artist_name,
       provider_item.provider AS selected_provider,
       provider_item.provider_id AS selected_provider_id,
+      -- The queue badge is the same badge the album page shows, so it has to be
+      -- the same expression. Reading provider_quality_label raw is what put
+      -- "dolby-atmos,lossless,lossy-stereo,LOSSLESS" on a queued Atmos album:
+      -- a provider's advertised trait list is not a quality tag, and the shared
+      -- display SQL is the thing that knows to render Atmos as DOLBY_ATMOS.
       COALESCE(
+        ${planHeadlineQualitySql("?")},
         (
-          SELECT variant.provider_quality_label
-          FROM AcquisitionPlanTracks plan_track
-          JOIN ProviderItemAudioVariants variant
-            ON variant.id = plan_track.provider_audio_variant_id
-          WHERE plan_track.plan_id = ?
-          ORDER BY plan_track.id
-          LIMIT 1
-        ),
-        (
-          SELECT variant.quality_class
-          FROM AcquisitionPlanTracks plan_track
-          JOIN ProviderItemAudioVariants variant
-            ON variant.id = plan_track.provider_audio_variant_id
-          WHERE plan_track.plan_id = ?
-          ORDER BY plan_track.id
-          LIMIT 1
-        ),
-        (
-          SELECT COALESCE(variant.provider_quality_label, variant.quality_class)
+          SELECT ${variantDisplayQualitySql("variant")}
           FROM ProviderItemAudioVariants variant
           WHERE variant.provider_item_id = provider_item.id
             AND LOWER(CAST(variant.availability AS TEXT))
                 NOT IN ('0', 'false', 'unavailable', 'no', '')
           ORDER BY
-            CASE variant.quality_class
-              WHEN 'spatial' THEN 0
-              WHEN 'hires-lossless' THEN 1
-              WHEN 'lossless' THEN 2
-              ELSE 3
-            END,
+            ${variantTierRankSql("variant")},
             variant.id
           LIMIT 1
         )
@@ -479,7 +463,8 @@ function resolveCanonicalAlbumMetadata(input: {
       release_match.id
     LIMIT 1
   `).get(
-    acquisitionPlanId,
+    // 1 = the headline-quality expression, 2 = plan_source.plan_id,
+    // 3 = the "was this row reached through the plan" guard.
     acquisitionPlanId,
     acquisitionPlanId,
     acquisitionPlanId,
@@ -543,8 +528,7 @@ function resolveProviderItemMetadata(input: {
       provider_artist.title AS provider_artist_name,
       COALESCE(
         provider_item.video_quality,
-        provider_variant.provider_quality_label,
-        provider_variant.quality_class
+        ${variantDisplayQualitySql("provider_variant")}
       ) AS quality,
       provider_item.cover_id AS asset_id,
       COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,

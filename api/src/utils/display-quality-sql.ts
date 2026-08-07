@@ -13,11 +13,26 @@ export function planTrackDisplayQualitySql(
   planTrackAlias = "plan_track",
   variantAlias = "variant",
 ): string {
-  const snapshotQuality = `CASE
+  return displayQualitySql(variantAlias, `CASE
     WHEN json_valid(${planTrackAlias}.source_quality_snapshot)
     THEN json_extract(${planTrackAlias}.source_quality_snapshot, '$.quality')
     ELSE ${planTrackAlias}.source_quality_snapshot
-  END`;
+  END`);
+}
+
+/**
+ * The same badge, for a variant with no plan behind it.
+ *
+ * Used where an offer is shown before (or without) a plan — the queue's
+ * provider-item fallback. Reading `provider_quality_label` directly is not a
+ * substitute: a provider's trait list can be several tags long, and only this
+ * expression knows to collapse that to DOLBY_ATMOS or to the neutral class.
+ */
+export function variantDisplayQualitySql(variantAlias = "variant"): string {
+  return displayQualitySql(variantAlias, "NULL");
+}
+
+function displayQualitySql(variantAlias: string, snapshotQuality: string): string {
   return `CASE
     WHEN LOWER(COALESCE(${variantAlias}.spatial_format, '')) IN (
       'atmos', 'dolby_atmos', 'dolby-atmos'
