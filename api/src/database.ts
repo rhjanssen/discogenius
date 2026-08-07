@@ -398,6 +398,40 @@ export function runChunkedWrite<T>(
  * here, which gave every command worker its own private gate — the defect this
  * indirection exists to fix.
  */
+/**
+ * `runChunkedWrite`, taking the gate **per chunk** instead of once for the
+ * whole batch.
+ *
+ * Wrapping a whole chunked write in one gate acquisition defeats the point of
+ * chunking: the lock is bounded inside SQLite but the gate is held for the
+ * entire batch, so peers wait it out anyway. Measured on the live library, one
+ * worker held the gate for 63 seconds with four others queued behind it.
+ *
+ * Per chunk, every writer still sees a single writer at a time, waits are still
+ * promises, and peers interleave between chunks exactly as the chunk size was
+ * chosen to allow. Callers must already satisfy `runChunkedWrite`'s rule that
+ * each chunk is independently consistent.
+ */
+export async function runGatedChunkedWrite<T>(
+  items: readonly T[],
+  perItem: (item: T, index: number) => void,
+  chunkSize: number = 50,
+): Promise<number> {
+  const size = Math.max(1, chunkSize);
+  for (let start = 0; start < items.length; start += size) {
+    const end = Math.min(items.length, start + size);
+    await withSqliteWriteGate(() => {
+      const runChunk = db.transaction(() => {
+        for (let i = start; i < end; i += 1) {
+          perItem(items[i], i);
+        }
+      });
+      runChunk();
+    });
+  }
+  return items.length;
+}
+
 export async function withSqliteWriteGate<T>(work: () => T | Promise<T>): Promise<T> {
   const { withGlobalSqliteWriteLock } = await import(
     "./services/commands/worker/sqlite-write-lock.js"

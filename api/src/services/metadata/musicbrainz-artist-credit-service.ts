@@ -1,4 +1,4 @@
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db, runGatedChunkedWrite } from "../../database.js";
 import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
 import type { CatalogArtistCreditReleaseGroup } from "../catalog/catalog-provider.js";
 
@@ -185,20 +185,23 @@ export class MusicBrainzArtistCreditService {
     const seenArtists = new Set<string>();
     const releaseGroups = await fetchCreditedReleaseGroups(artistMbid);
 
-    // A prolific artist's credited catalogue is hundreds of upserts in one
-    // transaction. Take the process-global gate so concurrent refresh workers
-    // queue asynchronously instead of blocking their threads in SQLite's busy
-    // handler, which stops their lease heartbeats and gets them killed.
-    await withSqliteWriteGate(() => db.transaction(() => {
-      for (const releaseGroup of releaseGroups) {
+    // A prolific artist's credited catalogue is hundreds of release groups and
+    // roughly ten statements each. Chunked, and taking the process-global gate
+    // per chunk: concurrent refresh workers then queue asynchronously (rather
+    // than blocking their threads in SQLite's busy handler, which stops their
+    // lease heartbeats) *and* get to interleave, rather than waiting out one
+    // artist's entire catalogue. Each release group is an idempotent upsert, so
+    // committing between chunks is safe.
+    await runGatedChunkedWrite(releaseGroups, (releaseGroup) => {
+      {
         const releaseGroupMbid = String(releaseGroup.id || "").trim();
         if (!releaseGroupMbid) {
-          continue;
+          return;
         }
 
         const credits = parseArtistCredits(releaseGroup["artist-credit"], artistMbid);
         if (credits.length === 0) {
-          continue;
+          return;
         }
 
         for (const credit of credits) {
@@ -237,7 +240,7 @@ export class MusicBrainzArtistCreditService {
         });
         upsertScope(artistMbid, releaseGroupMbid, "credited");
       }
-    })());
+    });
 
     return {
       releaseGroups: releaseGroups.length,

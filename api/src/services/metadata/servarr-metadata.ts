@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { db, runChunkedWrite, withSqliteWriteGate } from "../../database.js";
+import { db, runChunkedWrite, runGatedChunkedWrite, withSqliteWriteGate } from "../../database.js";
 import {
   RemoteOperationError,
   type RemoteOperationContext,
@@ -650,7 +650,7 @@ export class ServarrMetadataService {
     // Serialize SQLite commits across concurrent RefreshArtist workers so
     // catalog fetches can overlap (local-MB) without write-lock storms.
     // Network artwork resolution stays outside the gate.
-    await withSqliteWriteGate(() => {
+    const { insertRg, albums } = await withSqliteWriteGate(() => {
       db.prepare(`
         INSERT INTO ArtistMetadata (
           mbid, name, sort_name, disambiguation, type, overview, status, popularity,
@@ -711,11 +711,14 @@ export class ServarrMetadataService {
           updated_at = CURRENT_TIMESTAMP
       `);
 
-      // Chunk the per-album upserts: a large artist (hundreds of release groups)
-      // would otherwise hold the write lock for the entire catalog and starve
-      // concurrent refresh workers + the main-thread job claim.
-      const albums = (artist.Albums || []).filter((album) => album.Id);
-      runChunkedWrite(albums, (album) => {
+      return { insertRg, albums: (artist.Albums || []).filter((album) => album.Id) };
+    });
+
+    // Chunk the per-album upserts, taking the gate per chunk: a large artist
+    // (hundreds of release groups) would otherwise hold BOTH the SQLite write
+    // lock and the process-global gate for its entire catalog — measured at 63s
+    // with four workers queued behind it.
+    await runGatedChunkedWrite(albums, (album) => {
         const rawAlbum = album as Record<string, any>;
         const albumImages = mapServarrMetadataImages(album.images || album.Images);
 
@@ -732,11 +735,12 @@ export class ServarrMetadataService {
           JSON.stringify(rawAlbum.OldIds ?? rawAlbum.oldids ?? []),
         );
         MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
-      });
+    });
 
-      // Match Lidarr's refresh invariant: mark the parent current only after its
-      // children have been processed successfully. If an album batch throws, the
-      // previous hash remains and the next refresh retries the whole diff.
+    // Match Lidarr's refresh invariant: mark the parent current only after its
+    // children have been processed successfully. If an album batch throws, the
+    // previous hash remains and the next refresh retries the whole diff.
+    await withSqliteWriteGate(() => {
       db.prepare(`
         UPDATE ArtistMetadata
         SET content_hash = ?, updated_at = CURRENT_TIMESTAMP
