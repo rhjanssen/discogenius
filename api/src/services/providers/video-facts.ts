@@ -59,22 +59,28 @@ function expected(facts: Partial<VideoFacts>): VideoFacts {
  */
 const PROVIDER_VIDEO_FACTS: Record<string, Record<string, VideoFacts>> = {
   tidal: {
-    sd: expected({ codec: "h264", container: "mp4", heightPxMax: 480 }),
-    hd: expected({ codec: "h264", container: "mp4", heightPxMax: 720 }),
-    fhd: expected({ codec: "h264", container: "mp4", heightPxMax: 1080 }),
+    // tiddl requests a video quality and reads the manifest; the codec is in
+    // that manifest, not in the tier name.
+    sd: expected({ container: "mp4", heightPxMax: 480 }),
+    hd: expected({ container: "mp4", heightPxMax: 720 }),
+    fhd: expected({ container: "mp4", heightPxMax: 1080 }),
   },
   "apple-music": {
-    hd: expected({ codec: "h264", container: "mp4", heightPxMax: 720 }),
-    fhd: expected({ codec: "h264", container: "mp4", heightPxMax: 1080 }),
-    uhd: expected({ codec: "hevc", container: "mp4", heightPxMax: 2160 }),
+    // Height ceilings only: the downloader picks the representation, and
+    // asserting HEVC at 4K without evidence is the same mistake as asserting
+    // Opus for a YouTube tier.
+    hd: expected({ container: "mp4", heightPxMax: 720 }),
+    fhd: expected({ container: "mp4", heightPxMax: 1080 }),
+    uhd: expected({ container: "mp4", heightPxMax: 2160 }),
   },
   "youtube-music": {
-    // YouTube serves VP9 (and AV1) above H.264 at the same heights, which is
-    // the case that makes resolution-only ranking wrong.
-    sd: expected({ codec: "h264", container: "mp4", heightPxMax: 480 }),
-    hd: expected({ codec: "vp9", container: "webm", heightPxMax: 720 }),
-    fhd: expected({ codec: "vp9", container: "webm", heightPxMax: 1080 }),
-    uhd: expected({ codec: "vp9", container: "webm", heightPxMax: 2160 }),
+    // YouTube exposes H.264, VP9 and AV1 at overlapping heights and yt-dlp
+    // chooses among them, so the tier fixes only the ceiling. The codec comes
+    // from what the downloader reports it selected.
+    sd: expected({ heightPxMax: 480 }),
+    hd: expected({ heightPxMax: 720 }),
+    fhd: expected({ heightPxMax: 1080 }),
+    uhd: expected({ heightPxMax: 2160 }),
   },
 };
 
@@ -121,22 +127,42 @@ export function videoCodecEfficiency(codec: VideoCodec | null): number {
 }
 
 /**
- * Order two video offers: resolution first, then codec, then bitrate.
+ * Order two video offers.
  *
- * Resolution dominates because it is what a viewer notices first and cannot be
- * recovered by a better encoder. Within one resolution the codec decides —
- * 1080p VP9 over 1080p H.264 — and bitrate only breaks a remaining tie.
+ * Resolution first, because a better encoder cannot recover detail the
+ * resolution never carried. After that, **bitrate scaled by codec efficiency**
+ * — not codec alone. AV1 really is far more efficient than H.264, but that
+ * does not make 1080p AV1 at 500 kbps better than 1080p H.264 at 10 Mbps, and
+ * an ordering that consults the codec before the bitrate says exactly that.
+ *
+ * Codec is only the tie-breaker when no bitrate is known on either side, which
+ * is the normal case at catalogue time: there, "1080p VP9 over 1080p H.264" is
+ * the right guess, because a provider's own encodes at one tier are broadly
+ * comparable in bitrate.
+ *
+ * HDR sits below both. Whether HDR is wanted at all is a profile question —
+ * some libraries and devices cannot use it — exactly as immersive audio is.
  *
  * Returns >0 when `left` is better, matching a descending comparator.
  */
 export function compareVideoQuality(left: VideoFacts, right: VideoFacts): number {
   const height = (left.heightPx ?? left.heightPxMax ?? 0) - (right.heightPx ?? right.heightPxMax ?? 0);
   if (height !== 0) return height;
-  const codec = videoCodecEfficiency(left.codec) - videoCodecEfficiency(right.codec);
-  if (codec !== 0) return codec;
+
+  const leftBitrate = left.bitrateKbps ?? left.bitrateKbpsMax;
+  const rightBitrate = right.bitrateKbps ?? right.bitrateKbpsMax;
+  if (leftBitrate != null && rightBitrate != null) {
+    const scaled = leftBitrate * videoCodecEfficiency(left.codec || "h264")
+      - rightBitrate * videoCodecEfficiency(right.codec || "h264");
+    if (scaled !== 0) return scaled;
+  } else {
+    const codec = videoCodecEfficiency(left.codec) - videoCodecEfficiency(right.codec);
+    if (codec !== 0) return codec;
+    if (leftBitrate !== rightBitrate) return (leftBitrate ?? 0) - (rightBitrate ?? 0);
+  }
+
   if (left.hdr !== right.hdr) return (left.hdr ? 1 : 0) - (right.hdr ? 1 : 0);
-  return (left.bitrateKbps ?? left.bitrateKbpsMax ?? 0)
-    - (right.bitrateKbps ?? right.bitrateKbpsMax ?? 0);
+  return (left.frameRate ?? 0) - (right.frameRate ?? 0);
 }
 
 const VIDEO_CODEC_LABELS: Record<VideoCodec, string> = {

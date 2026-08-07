@@ -65,13 +65,24 @@ test("Amazon Music HD is CD FLAC and Ultra HD is hi-res FLAC", () => {
   assert.equal(fidelityClassOf(ultra), "hires-lossless");
 });
 
-test("the lossy-only providers carry their real codecs, not a generic tag", () => {
-  assert.equal(facts("spotify", "high").codec, "vorbis");
-  assert.equal(facts("youtube-music", "high").codec, "opus");
+test("a tier claims a codec only when the provider publishes one", () => {
+  // SoundCloud publishes MP3 128 and AAC 256 outright, so those are facts.
   assert.equal(facts("soundcloud", "standard").codec, "mp3");
-  for (const [provider, tier] of [["spotify", "high"], ["youtube-music", "high"], ["soundcloud", "standard"]]) {
+  assert.equal(facts("soundcloud", "high").codec, "aac");
+
+  // YouTube Music publishes every tier as "AAC **or** Opus", and Spotify's
+  // codec depends on which client a backend emulates. Asserting one would hand
+  // out a coding-efficiency bonus nothing has earned.
+  assert.equal(facts("youtube-music", "high").codec, null);
+  assert.equal(facts("spotify", "high").codec, null);
+
+  // The tier still fixes the ceiling, so fidelity is known either way.
+  for (const [provider, tier] of [
+    ["spotify", "high"], ["youtube-music", "high"], ["soundcloud", "standard"],
+  ]) {
     assert.equal(fidelityClassOf(facts(provider, tier)), "lossy", provider);
   }
+  assert.equal(facts("youtube-music", "low").bitrateKbpsMax, 48, "Google publishes 48, not 64");
 });
 
 test("an unmapped provider or tier resolves to nothing rather than a guess", () => {

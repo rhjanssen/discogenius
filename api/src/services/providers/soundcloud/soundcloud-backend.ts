@@ -181,8 +181,11 @@ export class SoundCloudBackend implements DownloadBackend {
       request.entityType === "album" ? "--yes-playlist" : "--no-playlist",
       "--format", "bestaudio/best",
       "--extract-audio",
-      "--audio-format", "mp3",
-      "--audio-quality", "0",
+      // Same reasoning as the YouTube backend, and it mattered more here: Go+
+      // serves AAC 256, which SoundCloud itself equates to MP3 320, and this
+      // re-encoded it to MP3 — downgrading the better codec into the weaker
+      // one on every Go+ download.
+      "--audio-format", "best",
     ];
     const credentials = loadSoundCloudCredentials();
     if (credentials?.oauthToken) {

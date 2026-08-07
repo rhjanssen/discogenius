@@ -177,21 +177,29 @@ const PROVIDER_TIER_FACTS: Record<string, Record<string, AudioFacts>> = {
     }),
   },
   spotify: {
-    // Ogg Vorbis at the three published ceilings.
-    low: expected({ codec: "vorbis", container: "ogg", lossless: false, bitrateKbpsMax: 96, channelCount: 2 }),
-    normal: expected({ codec: "vorbis", container: "ogg", lossless: false, bitrateKbpsMax: 160, channelCount: 2 }),
-    high: expected({ codec: "vorbis", container: "ogg", lossless: false, bitrateKbpsMax: 320, channelCount: 2 }),
+    // Vorbis on the desktop/mobile clients; the web player is AAC, and a
+    // lossless tier now exists. Which one a backend gets depends on the client
+    // it emulates, so only the ceiling is asserted.
+    low: expected({ lossless: false, bitrateKbpsMax: 96, channelCount: 2 }),
+    normal: expected({ lossless: false, bitrateKbpsMax: 160, channelCount: 2 }),
+    high: expected({ lossless: false, bitrateKbpsMax: 320, channelCount: 2 }),
   },
   "youtube-music": {
-    low: expected({ codec: "opus", container: "webm", lossless: false, bitrateKbpsMax: 64, channelCount: 2 }),
-    normal: expected({ codec: "opus", container: "webm", lossless: false, bitrateKbpsMax: 128, channelCount: 2 }),
-    high: expected({ codec: "opus", container: "webm", lossless: false, bitrateKbpsMax: 256, channelCount: 2 }),
+    // Google publishes each tier as "AAC **or** Opus" — the tier fixes the
+    // bitrate ceiling and nothing else. Asserting Opus here would hand YouTube
+    // a coding-efficiency bonus before knowing the stream is Opus, so the codec
+    // stays null until the downloader reports what it selected.
+    low: expected({ lossless: false, bitrateKbpsMax: 48, channelCount: 2 }),
+    normal: expected({ lossless: false, bitrateKbpsMax: 128, channelCount: 2 }),
+    high: expected({ lossless: false, bitrateKbpsMax: 256, channelCount: 2 }),
   },
   soundcloud: {
-    // Free streams are Opus/MP3; Go+ adds AAC 256.
-    low: expected({ codec: "opus", container: "ogg", lossless: false, bitrateKbpsMax: 64, channelCount: 2 }),
-    standard: expected({ codec: "mp3", lossless: false, bitrateKbpsMax: 128, channelCount: 2 }),
-    high: expected({ codec: "aac", lossless: false, bitrateKbpsMax: 256, channelCount: 2 }),
+    // SoundCloud publishes standard as MP3 128 and Go+ as AAC 256, which it
+    // equates to MP3 320. The free HLS Opus representation is a delivery
+    // detail the catalogue does not promise, so it carries no codec.
+    low: expected({ lossless: false, bitrateKbpsMax: 64, channelCount: 2 }),
+    standard: expected({ codec: "mp3", lossless: false, bitrateKbps: 128, channelCount: 2 }),
+    high: expected({ codec: "aac", lossless: false, bitrateKbps: 256, channelCount: 2 }),
   },
 };
 
@@ -362,40 +370,54 @@ export function mergeAudioFacts(base: AudioFacts, observed: Partial<AudioFacts>)
 /* ── Comparing offers across providers ──────────────────────────────── */
 
 /**
- * Rough coding efficiency relative to AAC-LC at 1.0.
+ * Coding efficiency relative to AAC-LC, and how much it still matters.
  *
- * Bitrate alone does not order lossy offers: Apple's AAC 256 and YouTube
- * Music's Opus 128 are much closer than 256-vs-128 suggests, because Opus
- * carries substantially more signal per bit. Ranking on the raw number would
- * overstate Apple's lead and understate Opus everywhere.
+ * Bitrate alone does not order lossy offers: 128 kbps Opus is not 128 kbps MP3.
+ * The evidence for the ordering is solid — Hydrogenaudio's 96 kbps multiformat
+ * listening test put Opus ahead of Apple AAC ahead of MP3 and Vorbis, with the
+ * MP3 entry consuming roughly 30 kbps more than its nominal rate — but the
+ * Opus project itself warns against reading precise bitrate equivalences off
+ * those curves.
  *
- * These are ordering heuristics drawn from the broad consensus of public
- * listening tests, not measurements — the ordering they produce is what is
- * tested, never the individual numbers. Opus is the most efficient of the four
- * at these rates and MP3 the least.
+ * So the advantage tapers. Codec efficiency is decisive where bits are scarce
+ * and much less so approaching transparency, where the differences are
+ * listener-, material- and encoder-dependent. These factors encode the observed
+ * *ordering*; the tests assert that ordering and never the numbers.
  */
-const CODEC_EFFICIENCY: Partial<Record<AudioCodec, number>> = {
-  opus: 1.4,
+const CODEC_EFFICIENCY_AT_LOW_BITRATE: Partial<Record<AudioCodec, number>> = {
+  opus: 1.25,
   aac: 1.0,
   vorbis: 0.95,
-  mp3: 0.75,
-  // Atmos/360RA delivery codecs are compared by presentation, not by bitrate.
+  mp3: 0.8,
   eac3: 1.0,
   ac3: 0.7,
 };
 
+/** Where the advantage has largely tapered out. */
+const TAPER_FLOOR_KBPS = 96;
+const TAPER_CEILING_KBPS = 320;
+
 /**
- * A comparable "AAC-equivalent kbps" for lossy offers; null for lossless.
+ * A comparable score for lossy offers; null for lossless.
+ *
+ * Deliberately *not* called a bitrate. "196 AAC-equivalent kbps" sounds far
+ * more measurable than it is, and naming it that way invites callers to treat a
+ * coarse ranking heuristic as a conversion. It orders offers and nothing else.
  *
  * Uses the ceiling when a tier only publishes one, because that is what the
  * tier offers and what the user is choosing between.
  */
-export function perceptualBitrateKbps(facts: AudioFacts): number | null {
+export function lossyQualityScore(facts: AudioFacts): number | null {
   if (facts.lossless !== false) return null;
   const bitrate = facts.bitrateKbps ?? facts.bitrateKbpsMax;
-  if (bitrate == null || !facts.codec) return null;
-  const efficiency = CODEC_EFFICIENCY[facts.codec];
-  return efficiency == null ? bitrate : Math.round(bitrate * efficiency);
+  if (bitrate == null) return null;
+  // An unknown codec is scored at parity rather than penalised: YouTube's tiers
+  // genuinely do not say, and guessing either way would be an invention.
+  const lowRateFactor = facts.codec ? CODEC_EFFICIENCY_AT_LOW_BITRATE[facts.codec] ?? 1 : 1;
+  const taper = Math.min(1, Math.max(0,
+    (bitrate - TAPER_FLOOR_KBPS) / (TAPER_CEILING_KBPS - TAPER_FLOOR_KBPS)));
+  const factor = lowRateFactor + (1 - lowRateFactor) * taper;
+  return Math.round(bitrate * factor);
 }
 
 /** Fidelity order, independent of presentation. Higher is better. */
@@ -423,7 +445,7 @@ export function compareAudioFidelity(left: AudioFacts, right: AudioFacts): numbe
     return (leftClass ? FIDELITY_RANK[leftClass] : -1) - (rightClass ? FIDELITY_RANK[rightClass] : -1);
   }
   if (leftClass === "lossy") {
-    return (perceptualBitrateKbps(left) ?? 0) - (perceptualBitrateKbps(right) ?? 0);
+    return (lossyQualityScore(left) ?? 0) - (lossyQualityScore(right) ?? 0);
   }
   const depth = (left.bitDepth ?? left.bitDepthMax ?? 0) - (right.bitDepth ?? right.bitDepthMax ?? 0);
   if (depth !== 0) return depth;

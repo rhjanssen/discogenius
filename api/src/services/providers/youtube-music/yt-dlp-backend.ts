@@ -251,8 +251,13 @@ export class YtDlpBackend implements DownloadBackend {
         request.entityType === "album" ? "--yes-playlist" : "--no-playlist",
         "--format", "bestaudio/best",
         "--extract-audio",
-        "--audio-format", "opus",
-        "--audio-quality", "0",
+        // `best` means "do not re-encode". YouTube serves AAC *or* Opus and the
+        // quality tier does not decide which; forcing Opus meant decoding an
+        // AAC stream and re-encoding it, a second lossy generation that can
+        // only lose signal. Whatever arrives is kept, and ffprobe records what
+        // it actually is at import. Converting to a library's preferred codec
+        // is an output policy, not something to hide inside acquisition.
+        "--audio-format", "best",
       );
     }
     args.push(...urls);

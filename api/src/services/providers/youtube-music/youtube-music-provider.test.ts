@@ -630,7 +630,11 @@ test("yt-dlp arguments use provider-ID filenames and select audio/video formats 
   const audioArgs = backend.buildArgs(audioRequest);
   assert.equal(audioArgs[audioArgs.indexOf("--js-runtimes") + 1], "node");
   assert.ok(audioArgs.includes("--extract-audio"));
-  assert.ok(audioArgs.includes("opus"));
+  // `best` means "do not re-encode". YouTube serves AAC *or* Opus and the tier
+  // does not decide which, so forcing Opus decoded AAC and re-encoded it — a
+  // second lossy generation that could only lose signal.
+  assert.equal(audioArgs[audioArgs.indexOf("--audio-format") + 1], "best");
+  assert.ok(!audioArgs.includes("--audio-quality"), "no re-encode quality to set");
   assert.ok(audioArgs.includes("--no-playlist"));
   assert.equal(audioArgs.at(-1), `https://music.youtube.com/watch?v=${TRACK_ID}`);
   assert.ok(audioArgs.some((arg) => arg.endsWith("%(id)s.%(ext)s")));
