@@ -5,6 +5,7 @@ import { Worker } from "node:worker_threads";
 
 import { readIntEnv } from "../../../utils/env.js";
 import { appEvents, type AppEvent } from "../app-events.js";
+import { ownerAcquire, ownerRelease, ownerReleaseAllFor } from "./sqlite-write-lock.js";
 import type {CommandModel} from "../command-model.js";
 import {
     invalidateAlbumDownloadStatus,
@@ -286,6 +287,26 @@ export class CommandWorkerPool {
         switch (message.kind) {
             case "ready":
                 break;
+            // The process-global SQLite write lock is owned here; workers ask
+            // for it over the bridge so they wait asynchronously and keep
+            // heartbeating. See sqlite-write-lock.ts.
+            case "writeLockAcquire":
+                ownerAcquire(message.requestId, entry.workerId, () => {
+                    if (entry.exited) {
+                        // Granted to a worker that died while queued — hand it
+                        // straight back rather than wedging every other writer.
+                        ownerRelease(message.requestId);
+                        return;
+                    }
+                    entry.worker.postMessage({
+                        kind: "writeLockGranted",
+                        requestId: message.requestId,
+                    } satisfies MainToWorkerMessage);
+                });
+                break;
+            case "writeLockRelease":
+                ownerRelease(message.requestId);
+                break;
             case "heartbeat":
                 // The worker itself renewed the durable DB lease. This message
                 // provides independent worker last-seen/current-command
@@ -360,6 +381,9 @@ export class CommandWorkerPool {
     private static handleWorkerExit(entry: PoolWorker, error: Error): void {
         if (entry.exited) return;
         entry.exited = true;
+        // A worker that dies holding the write lock would otherwise stop the
+        // whole process writing, forever.
+        ownerReleaseAllFor(entry.workerId);
         // Reject the in-flight job (if any) and replace the dead worker so the
         // pool stays at full size. When the pool is stopping (deploy/restart),
         // the worker exit is expected — report it as a shutdown interruption so

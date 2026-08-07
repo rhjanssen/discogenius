@@ -55,6 +55,8 @@ port.on("message", (message: MainToWorkerMessage) => {
         port.close();
         return;
     }
+    // The write-lock grant is handled by sqlite-write-lock.ts's own listener.
+    if (message.kind !== "run") return;
 
     clearTimers();
     const behavior = String(

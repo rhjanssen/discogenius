@@ -385,28 +385,24 @@ export function runChunkedWrite<T>(
 }
 
 /**
- * Single-flight async gate for catalog SQLite writers.
+ * Serialize a SQLite write section against every other writer in the process.
  *
  * Local-MB can fetch many artists' Postgres payloads concurrently, but
- * better-sqlite3 still serialises writers on one connection. Wrap each
- * writer's commit section (including `runChunkedWrite`) so overlapping
- * RefreshArtist commands wait their turn instead of fighting the busy timeout.
- * Fetches and network work must stay *outside* the gate.
+ * better-sqlite3 still serialises writers on one connection. Wrap each writer's
+ * commit section (including `runChunkedWrite`) so overlapping commands wait
+ * their turn instead of fighting the busy timeout. Fetches and network work
+ * must stay *outside* the gate.
+ *
+ * The queue itself lives in `services/commands/worker/sqlite-write-lock.ts` and
+ * is owned by the main thread. It used to be a module-scope promise tail right
+ * here, which gave every command worker its own private gate — the defect this
+ * indirection exists to fix.
  */
-let sqliteWriteGateTail: Promise<void> = Promise.resolve();
-
 export async function withSqliteWriteGate<T>(work: () => T | Promise<T>): Promise<T> {
-  let release!: () => void;
-  const previous = sqliteWriteGateTail;
-  sqliteWriteGateTail = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous;
-  try {
-    return await work();
-  } finally {
-    release();
-  }
+  const { withGlobalSqliteWriteLock } = await import(
+    "./services/commands/worker/sqlite-write-lock.js"
+  );
+  return withGlobalSqliteWriteLock(work);
 }
 
 /**

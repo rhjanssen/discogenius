@@ -4,6 +4,7 @@ import { NON_DOWNLOAD_COMMAND_NAMES } from "./command-names.js";
 import { resolveCommandNoProgressTimeoutMs } from "./command-liveness-policy.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
 import { CommandWorkerPool } from "./worker/command-worker-pool.js";
+import { writeLockDiagnostics } from "./worker/sqlite-write-lock.js";
 
 interface SlowRequestSnapshot {
   method: string;
@@ -164,6 +165,12 @@ export function getRuntimeDiagnosticsSnapshot() {
   let commandRuntime: {
     leases: ReturnType<typeof CommandQueueManager.getLeaseMetrics>;
     workerPool: ReturnType<typeof CommandWorkerPool.getSnapshot>;
+    /**
+     * Contention on the process-global SQLite write lock. Sustained queue depth
+     * or a large `maxWaitMs` is the signal that a write phase is too long — the
+     * shape that used to surface only as SQLITE_BUSY and expired leases.
+     */
+    sqliteWriteLock: ReturnType<typeof writeLockDiagnostics>;
   } | null = null;
   try {
     const noProgressOverrideMs = readIntEnv("DISCOGENIUS_COMMAND_NO_PROGRESS_MS", 0, 0);
@@ -174,6 +181,7 @@ export function getRuntimeDiagnosticsSnapshot() {
         resolveNoProgressMs: resolveCommandNoProgressTimeoutMs,
       }),
       workerPool: CommandWorkerPool.getSnapshot(),
+      sqliteWriteLock: writeLockDiagnostics(),
     };
   } catch {
     // Diagnostics can be read during early bootstrap before the active schema
