@@ -776,15 +776,21 @@ export class ServarrMetadataService {
     const provider = catalogProviderRegistry.getActive();
     if (typeof provider.getReleaseGroupDetails === "function") {
       const details = await provider.getReleaseGroupDetails(mbids);
-      await withSqliteWriteGate(() => {
-        for (const entry of details) {
-          try {
+      // One gate acquisition per release group, not one for the whole artist.
+      // Holding it across a prolific artist's entire catalogue was measured at
+      // 59s on the live library, with peers waiting up to 14s and a queue five
+      // deep — the gate then undoes the interleaving that chunked writes exist
+      // to provide. Each release group is independently consistent, so
+      // releasing between them costs nothing and lets other workers write.
+      for (const entry of details) {
+        try {
+          await withSqliteWriteGate(() => {
             this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
-          } catch (error) {
-            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
-          }
+          });
+        } catch (error) {
+          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
         }
-      });
+      }
     } else {
       // Hosted Servarr exposes one album-detail endpoint per release group, as
       // Lidarr itself uses. Fetch a small bounded group concurrently, then run
@@ -799,16 +805,16 @@ export class ServarrMetadataService {
           return null;
         }
       })));
-      await withSqliteWriteGate(() => {
-        for (const entry of details) {
-          if (!entry) continue;
-          try {
+      for (const entry of details) {
+        if (!entry) continue;
+        try {
+          await withSqliteWriteGate(() => {
             this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
-          } catch (error) {
-            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
-          }
+          });
+        } catch (error) {
+          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
         }
-      });
+      }
     }
   }
 
