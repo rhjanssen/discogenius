@@ -10,7 +10,7 @@ import {
     resolveInfrastructureMaxAttempts,
 } from "./command-liveness-policy.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
-import { runWithAsyncBusyRetry } from "../../database.js";
+import { runWithAsyncBusyRetry, withSqliteWriteGate } from "../../database.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
@@ -176,25 +176,31 @@ export class CommandExecutor {
         }
     }
 
-    private static maybeRecoverStaleJobs() {
+    private static async maybeRecoverStaleJobs() {
         const now = Date.now();
         if (now - this.lastWatchdogAt < COMMAND_WATCHDOG_INTERVAL_MS) {
             return;
         }
         this.lastWatchdogAt = now;
 
-        recoverStaleNonDownloadCommands({
+        // Under the process-global gate. Without it these queue writes raced
+        // three refresh workers for SQLite's single writer lock and lost:
+        // better-sqlite3 is synchronous, so each lost race froze the event loop
+        // for a full busy_timeout — measured at a 1.0s median and 5s worst case,
+        // which is the server "hanging" under refresh load. Waiting for the gate
+        // is a promise, so the loop keeps serving while it waits.
+        await withSqliteWriteGate(() => recoverStaleNonDownloadCommands({
             noProgressMs: COMMAND_NO_PROGRESS_MS,
             maxAttempts: COMMAND_MAX_ATTEMPTS,
             retryBaseMs: COMMAND_RETRY_BASE_MS,
             retryMaxMs: COMMAND_RETRY_MAX_MS,
-        });
+        }));
     }
 
     private static async loop() {
         while (this.isRunning) {
             try {
-                this.maybeRecoverStaleJobs();
+                await this.maybeRecoverStaleJobs();
 
                 // Try to fill all available slots
                 const executorSlots = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
@@ -228,7 +234,7 @@ export class CommandExecutor {
                             { excludeRunningTypes: DOWNLOAD_OR_IMPORT_COMMAND_NAMES },
                         );
                         if (canStart) {
-                            this.startJob(candidate);
+                            await this.startJob(candidate);
                             started++;
                         } else {
                             this.logBlocked(candidate.name, reason);
@@ -245,20 +251,23 @@ export class CommandExecutor {
         }
     }
 
-    private static startJob(job: CommandModel) {
-        // Claim the command synchronously on the main thread so the very next
-        // candidate's canStartCommand sees it as `started` — this keeps
-        // exclusivity (per-ref / type / library-wide) race-free. It's the only
-        // command-table write left on the main thread, and it's low-frequency
-        // (once per command *start*, bounded by worker throughput). The heavy,
-        // high-frequency writes (complete/fail/next-pass/curation) run on the
-        // worker connection inside executeCommand.
+    private static async startJob(job: CommandModel) {
+        // The claim must still complete before the next candidate is evaluated,
+        // so exclusivity (per-ref / type / library-wide) stays race-free — the
+        // caller awaits this, and the candidate loop is the only thing claiming.
+        //
+        // It runs under the process-global write gate. This is the write the
+        // profiler caught blocking the event loop hardest (a 1.0s median wait,
+        // 5s worst case) because it competed with three refresh workers for
+        // SQLite's single writer lock and had a deliberately short busy timeout.
+        // Inside the gate there is exactly one writer, so the wait is a promise
+        // rather than a frozen server.
         const workerId = `command-attempt:${process.pid}:${job.id}:${randomUUID()}`;
-        const claimedJob = CommandQueueManager.claimForExecution(
+        const claimedJob = await withSqliteWriteGate(() => CommandQueueManager.claimForExecution(
             job.id,
             workerId,
             COMMAND_LEASE_MS,
-        );
+        ));
         if (!claimedJob) {
             return;
         }

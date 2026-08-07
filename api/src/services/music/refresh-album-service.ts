@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { AlbumRefreshLevel, type RefreshOptions } from "./scan-types.js";
 import { shouldRefreshAlbum as shouldRefreshAlbumPolicy, shouldRefreshTrackSet } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
@@ -192,14 +192,34 @@ export function providerAudioVariants(
         return [];
     }
     const neutral = mapping?.toNeutral(tags);
-    if (!neutral) return [];
+    if (!mapping || !neutral) return [];
+
+    // `provider_quality_label` is the provider's own word for THIS variant, and
+    // badges render it directly. Joining every tag a release advertises turned
+    // one Apple album into the label "dolby-atmos,lossless,lossy-stereo,LOSSLESS"
+    // — which is not a quality anything can display, so the queue fell back to a
+    // generic chip on exactly the Atmos downloads that most needed the badge.
+    // Attribute each variant to the single tag that produced it; when no tag
+    // can be attributed, say nothing and let the neutral class speak.
+    //
+    // Searched last-first: callers pass the provider's own tag array followed by
+    // its canonical quality string, so the last match is the badge-worthy token
+    // ("YOUTUBE_LOSSY", "FLAC", "LOSSLESS") rather than an internal trait like
+    // "opus" or "lossy-stereo" that happens to appear first.
+    const labelFor = (matches: (tag: string) => boolean): string | null => {
+        for (let index = tags.length - 1; index >= 0; index -= 1) {
+            if (matches(tags[index])) return tags[index];
+        }
+        return null;
+    };
+
     const variants: ProviderAudioVariantInput[] = [];
     if (neutral.audio) {
         variants.push({
             variantKey: `stereo:${neutral.audio}`,
             qualityClass: neutral.audio,
             lossless: neutral.audio !== "lossy",
-            providerQualityLabel: tags.join(","),
+            providerQualityLabel: labelFor((tag) => mapping.toNeutralAudio(tag) === neutral.audio),
             availability: "available",
         });
     }
@@ -208,7 +228,7 @@ export function providerAudioVariants(
             variantKey: `spatial:${spatial}`,
             qualityClass: "spatial",
             spatialFormat: spatial,
-            providerQualityLabel: tags.join(","),
+            providerQualityLabel: labelFor((tag) => (mapping.toNeutral([tag]).spatial || []).includes(spatial)),
             availability: "available",
         });
     }
@@ -1099,6 +1119,14 @@ export class RefreshAlbumService {
             `).get(providerId, albumId) as { id: number; mbid: string; release_group_mbid: string } | undefined;
 
         if (canonicalRelease) {
+            // Ingestion and its counterpart-video follow-up are one write
+            // section. Ungated, three refresh workers enter SQLite's *synchronous*
+            // busy handler at once: the loser blocks its whole thread for up to
+            // 30s per attempt, its lease heartbeat is a timer that cannot fire
+            // while blocked, and the watchdog then kills a worker that was only
+            // waiting its turn. Taking the process-global gate makes that wait
+            // asynchronous, so the worker stays alive while another writes.
+            await withSqliteWriteGate(() => {
             const ingested = new ProviderReleaseIngestionService(db).ingest({
                 canonicalReleaseId: canonicalRelease.id,
                 matcherVersion: 1,
@@ -1165,10 +1193,11 @@ export class RefreshAlbumService {
                     });
                 }
             }
+            });
             return;
         }
 
-        db.transaction(() => {
+        await withSqliteWriteGate(() => db.transaction(() => {
             const releaseItemId = catalog.upsertItem(release);
             const materializeCredits = (
                 itemId: number,
@@ -1206,7 +1235,7 @@ export class RefreshAlbumService {
                 };
             });
             catalog.replaceReleaseMembers(releaseItemId, memberRows);
-        })();
+        })());
     }
 
     static async upsertArtistAlbum(

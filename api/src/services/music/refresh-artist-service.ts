@@ -1,5 +1,5 @@
 import pLimit from "p-limit";
-import { db, runChunkedWrite } from "../../database.js";
+import { db, runChunkedWrite, withSqliteWriteGate } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import {
     resolveArtistFolderForIdentityUpdate,
@@ -1068,8 +1068,11 @@ export class RefreshArtistService {
         const normalizedCatalog = new ProviderCatalogRepository(db);
 
         // Chunk the per-album upserts so a prolific artist's provider catalog
-        // doesn't hold the write lock for the whole batch and starve peers.
-        runChunkedWrite(albums, (album) => {
+        // doesn't hold the write lock for the whole batch and starve peers, and
+        // take the process-global gate so peers *wait asynchronously* rather
+        // than blocking their thread inside SQLite's busy handler — a blocked
+        // worker cannot heartbeat, and the watchdog kills it for that.
+        await withSqliteWriteGate(() => runChunkedWrite(albums, (album) => {
                 const providerAlbumId = String(album.provider_id);
                 const match = matches.get(providerAlbumId);
                 const durationSeconds = Number(album.duration);
@@ -1101,7 +1104,7 @@ export class RefreshArtistService {
                 if (variants.length > 0) {
                     normalizedCatalog.replaceAudioVariants(itemId, variants, { provider: providerId });
                 }
-        });
+        }));
         // Acquire artwork after slot selection in precacheArtistMediaCovers().
         // Provisional matches can point several provider albums at one canonical
         // release group; warming them here raced unrelated covers into one cache.

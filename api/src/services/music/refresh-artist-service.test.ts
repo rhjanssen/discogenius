@@ -320,7 +320,7 @@ test("required scoped release hydration failure rejects before provider matching
   assert.equal(providerMatchCalls, 0);
 });
 
-test("unmatched provider offers persist native facts without claiming canonical ownership", () => {
+test("unmatched provider offers persist native facts without claiming canonical ownership", async () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
     provider_id: "314738795",
@@ -329,7 +329,7 @@ test("unmatched provider offers persist native facts without claiming canonical 
     quality: "LOSSLESS",
   };
 
-  (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
+  await (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
     "tidal",
     artistMbid,
     [album],
@@ -358,7 +358,7 @@ test("unmatched provider offers persist native facts without claiming canonical 
   assert.equal(directMatchCount.count, 0);
 });
 
-test("hybrid candidates do not publish canonical ownership without a typed edition edge", () => {
+test("hybrid candidates do not publish canonical ownership without a typed edition edge", async () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
     provider_id: "candidate-album-1",
@@ -367,7 +367,7 @@ test("hybrid candidates do not publish canonical ownership without a typed editi
     quality: "LOSSLESS",
   };
 
-  (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
+  await (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
     "tidal",
     artistMbid,
     [album],
@@ -693,7 +693,7 @@ test("provider release-group matching passes spatial quality and release disambi
   assert.equal(match?.releaseMbid, "dolby-atmos-release");
 });
 
-test("matched provider release discovery stores normalized facts without publishing a trackless typed edge", () => {
+test("matched provider release discovery stores normalized facts without publishing a trackless typed edge", async () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
     provider_id: "provider-album-1",
@@ -702,7 +702,7 @@ test("matched provider release discovery stores normalized facts without publish
     quality: "LOSSLESS",
   };
 
-  (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
+  await (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
     "tidal",
     artistMbid,
     [album],
@@ -746,7 +746,7 @@ test("matched provider release discovery stores normalized facts without publish
   assert.equal(typedMatchCount.count, 0);
 });
 
-test("release-group-only provider evidence does not leak a guessed MusicBrainz edition onto native facts", () => {
+test("release-group-only provider evidence does not leak a guessed MusicBrainz edition onto native facts", async () => {
   const artistMbid = "artist-mbid-bastille";
   const releaseGroupMbid = "release-group-gmtf";
   const standardReleaseMbid = "release-gmtf-standard";
@@ -793,7 +793,7 @@ test("release-group-only provider evidence does not leak a guessed MusicBrainz e
     27,
   );
 
-  (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
+  await (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
     "tidal",
     artistMbid,
     [album],

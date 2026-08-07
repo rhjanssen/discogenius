@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
 import type { CatalogArtistCreditReleaseGroup } from "../catalog/catalog-provider.js";
 
@@ -185,7 +185,11 @@ export class MusicBrainzArtistCreditService {
     const seenArtists = new Set<string>();
     const releaseGroups = await fetchCreditedReleaseGroups(artistMbid);
 
-    db.transaction(() => {
+    // A prolific artist's credited catalogue is hundreds of upserts in one
+    // transaction. Take the process-global gate so concurrent refresh workers
+    // queue asynchronously instead of blocking their threads in SQLite's busy
+    // handler, which stops their lease heartbeats and gets them killed.
+    await withSqliteWriteGate(() => db.transaction(() => {
       for (const releaseGroup of releaseGroups) {
         const releaseGroupMbid = String(releaseGroup.id || "").trim();
         if (!releaseGroupMbid) {
@@ -233,7 +237,7 @@ export class MusicBrainzArtistCreditService {
         });
         upsertScope(artistMbid, releaseGroupMbid, "credited");
       }
-    })();
+    })());
 
     return {
       releaseGroups: releaseGroups.length,
