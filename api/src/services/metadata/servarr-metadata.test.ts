@@ -196,7 +196,9 @@ test("Servarr metadata does not retry permanent or malformed responses", async (
   });
   await assert.rejects(
     permanent.getArtistInfo("missing"),
-    /failed: 404 Not Found/,
+    // Names the dependency, not just the status: command history has to say
+    // which remote service broke, or the next import is undiagnosable.
+    /Artist metadata: servarr-metadata returned HTTP 404 \(\/artist\/missing Not Found\)/,
   );
   assert.equal(permanentCalls, 1);
 

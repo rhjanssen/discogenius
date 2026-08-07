@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { db, runChunkedWrite, withSqliteWriteGate } from "../../database.js";
+import { RemoteOperationError } from "../../utils/remote-operation-error.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
@@ -160,6 +161,15 @@ function retryAfterDelayMs(response: Response): number | null {
   const date = Date.parse(raw);
   if (!Number.isFinite(date)) return null;
   return Math.min(MAX_SERVARR_RETRY_DELAY_MS, Math.max(0, date - Date.now()));
+}
+
+/** Host only — a base URL may carry a key in its query string. */
+function safeHost(baseUrl: string): string | null {
+  try {
+    return new URL(baseUrl).host || null;
+  } catch {
+    return null;
+  }
 }
 
 function isRetryableServarrStatus(status: number): boolean {
@@ -336,8 +346,17 @@ export class ServarrMetadataService {
           })
         ));
         if (!res.ok) {
+          // Carry the service, host and status so command history names the
+          // dependency instead of reporting a bare status line.
           throw new ServarrMetadataRequestError(
-            `Servarr metadata API ${path} failed: ${res.status} ${res.statusText}`,
+            new RemoteOperationError({
+              phase: "canonical.artist",
+              service: "servarr-metadata",
+              host: safeHost(this.baseUrl),
+              method: "GET",
+              status: res.status,
+              retryable: isRetryableServarrStatus(res.status),
+            }, `${path} ${res.statusText}`.trim()).message,
             isRetryableServarrStatus(res.status),
             retryAfterDelayMs(res),
           );
