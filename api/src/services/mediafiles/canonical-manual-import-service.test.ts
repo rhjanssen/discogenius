@@ -528,3 +528,55 @@ test("an operation identity for an unsubmitted mapping fails closed", async () =
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
+
+test("a retry finishes the mappings an interrupted attempt left behind", async () => {
+  fixture();
+  try {
+    // Import is a sequence of file moves and the command queue retries. The
+    // first attempt consumed unmapped file 1 (moved the file, deleted the row)
+    // and then died; the retry arrives with the original two-file payload. It
+    // must import what is left instead of refusing the whole batch, which is
+    // what stranded four of eleven files with the user seeing no error at all.
+    db.prepare(`
+      INSERT INTO UnmappedFiles (id, file_path, relative_path, library_root, filename, extension)
+      VALUES (2, '/incoming/b.flac', 'b.flac', '/incoming', 'b.flac', 'flac')
+    `).run();
+    db.prepare(`
+      INSERT INTO Tracks (
+        id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+        medium_position, position, title
+      ) VALUES (1001, 'track-a2', 10, 'release-a', 200, 'recording-b', 1, 2, 'Track A2')
+    `).run();
+    db.prepare("DELETE FROM UnmappedFiles WHERE id = 1").run();
+
+    const submitted: number[] = [];
+    const service = new CanonicalManualImportService(db, async (items) => {
+      submitted.push(...items.map((item) => item.id));
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          file_path, relative_path, filename, extension, file_class,
+          source_quality, imported_quality
+        ) VALUES (
+          9001, 'artist', 'music', 'audio', 1, 10, 1001, 200,
+          '/library/stereo/b.flac', 'b.flac', 'b.flac', 'flac', 'audio', 'LOSSLESS', 'LOSSLESS'
+        )
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 2: 9001 } };
+    });
+
+    const summary = await service.import({
+      libraryId: 1,
+      editionId: 10,
+      mappings: [
+        { unmappedFileId: 1, trackId: 1000 },
+        { unmappedFileId: 2, trackId: 1001 },
+      ],
+    });
+
+    assert.deepEqual(submitted, [2], "only the mapping still pending is submitted");
+    assert.equal(summary.imported, 1);
+  } finally {
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles", "TrackFiles"]);
+  }
+});

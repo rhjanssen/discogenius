@@ -347,8 +347,13 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                 }
             }
 
+            // Never fall back to `selectedReleaseMbid`. Selecting a match is
+            // either an explicit version switch (which passes the override) or a
+            // *new* album, and the reset effect's setState has not applied yet
+            // when it calls this in the same tick — so reading state here handed
+            // the new album the previous one's release, and the mapper showed
+            // Pt. 2's tracklist while the header said Pt. 1.
             const activeReleaseMbid = releaseMbidOverride
-                || selectedReleaseMbid
                 || String(versions[0]?.mbid || versions[0]?.id || '');
             if (!activeReleaseMbid) {
                 throw new Error('Choose a canonical MusicBrainz release before mapping files.');

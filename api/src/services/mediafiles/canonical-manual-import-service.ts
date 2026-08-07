@@ -130,9 +130,19 @@ export class CanonicalManualImportService {
         AND recording.is_video = 0
     `);
     const trackById = new Map<number, CanonicalTrackRow>();
+    // An import is a sequence of file moves, not one atomic act, and the command
+    // queue retries. A mapping whose UnmappedFiles row is gone is one this run
+    // (or an interrupted earlier attempt) already consumed — the file was moved
+    // and the row deleted. Aborting the batch there made the retry permanently
+    // unable to finish what the first attempt started: seven files imported,
+    // four left behind, and an error the user reads as "nothing happened".
+    // Skip what is already done and import the rest.
+    const pending: CanonicalManualImportMapping[] = [];
+    let alreadyImported = 0;
     for (const mapping of request.mappings) {
       if (!getUnmapped.get(mapping.unmappedFileId)) {
-        throw new Error(`Unmapped file ${mapping.unmappedFileId} no longer exists`);
+        alreadyImported += 1;
+        continue;
       }
       const track = getTrack.get(mapping.trackId, request.editionId) as CanonicalTrackRow | undefined;
       if (!track) {
@@ -141,10 +151,21 @@ export class CanonicalManualImportService {
         );
       }
       trackById.set(mapping.trackId, track);
+      pending.push(mapping);
+    }
+
+    if (pending.length === 0) {
+      return {
+        requested: request.mappings.length,
+        imported: 0,
+        duplicates: 0,
+        skipped: alreadyImported,
+        importedFileIds: {},
+      };
     }
 
     const summary = await this.importFiles(
-      request.mappings.map((mapping) => ({
+      pending.map((mapping) => ({
         id: mapping.unmappedFileId,
         providerId: trackById.get(mapping.trackId)!.mbid,
       })),
@@ -171,7 +192,7 @@ export class CanonicalManualImportService {
     // import it cannot identify would otherwise fall through the per-mapping
     // "nothing imported for this mapping" branch below and silently leave the
     // file without canonical authority.
-    const submittedUnmappedIds = new Set(request.mappings.map((mapping) => mapping.unmappedFileId));
+    const submittedUnmappedIds = new Set(pending.map((mapping) => mapping.unmappedFileId));
     for (const unmappedId of importedFileIdByUnmappedId.keys()) {
       if (!submittedUnmappedIds.has(unmappedId)) {
         throw new Error(
@@ -257,7 +278,7 @@ export class CanonicalManualImportService {
         request.libraryId,
         release.release_group_id,
       );
-      for (const mapping of request.mappings) {
+      for (const mapping of pending) {
         const track = trackById.get(mapping.trackId)!;
         const exactFileId = importedFileIdByUnmappedId.get(mapping.unmappedFileId);
         if (exactFileId == null) {
