@@ -94,29 +94,63 @@ function updateArtistIdentityColumns(artistId: string, result: MetadataIdentityR
     `).run(mbid || null, result.status, result.method, artistId);
 }
 
-async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtistCandidate[]> {
+/**
+ * Candidates for an artist name, from the **configured catalog source**.
+ *
+ * This runs once per unmapped-file artist during import. Asking
+ * musicbrainz.org meant a global 1-request-per-second queue and, at library
+ * scale, a run of 503s — so importing a folder of files for artists not yet in
+ * the database resolved nothing, which is exactly what a local MusicBrainz
+ * mirror exists to prevent. The registry's active provider answers this
+ * offline; public MB stays as the fallback for deployments that have no local
+ * source.
+ */
+async function searchCatalogArtists(name: string): Promise<MusicBrainzArtistCandidate[]> {
     const normalizedName = String(name || "").trim();
     if (!normalizedName) return [];
+
+    const score = (candidateName: string, apiScore: unknown): number => {
+        const parsed = Number(apiScore);
+        const textScore = stringSimilarity(normalizeText(name), normalizeText(candidateName));
+        return clampConfidence((Number.isFinite(parsed) ? parsed / 100 : 0) * 0.55 + textScore * 0.45);
+    };
+    const rank = (candidates: MusicBrainzArtistCandidate[]): MusicBrainzArtistCandidate[] => candidates
+        .filter((artist) => Boolean(artist.id && artist.name))
+        .sort((left, right) => right.score - left.score);
+
+    try {
+        const { catalogProviderRegistry } = await import("../catalog/index.js");
+        const results = await catalogProviderRegistry.getActive().search(normalizedName, { limit: 10 });
+        const candidates = (results.artists || []).map((artist) => {
+            const candidateName = String(artist?.artistname || "").trim();
+            return {
+                id: String(artist?.id || "").trim(),
+                name: candidateName,
+                disambiguation: String(artist?.disambiguation || "").trim() || null,
+                // A local source returns no relevance score; text similarity alone
+                // then decides, which is the honest signal we actually have.
+                score: score(candidateName, undefined),
+            } satisfies MusicBrainzArtistCandidate;
+        });
+        if (candidates.length > 0) return rank(candidates);
+    } catch (error) {
+        console.warn(`[MetadataIdentity] Catalog artist search failed for "${normalizedName}"; falling back to public MusicBrainz:`, error);
+    }
 
     const query = `artist:"${normalizedName.replace(/"/g, "")}"`;
     const url = `https://musicbrainz.org/ws/2/artist?fmt=json&limit=10&query=${encodeURIComponent(query)}`;
     const data = await requestMusicBrainzJson<any>(url);
     const artists = Array.isArray(data?.artists) ? data.artists : [];
 
-    return artists
-        .map((artist: any) => {
-            const candidateName = String(artist?.name || "").trim();
-            const apiScore = Number(artist?.score);
-            const textScore = stringSimilarity(normalizeText(name), normalizeText(candidateName));
-            return {
-                id: String(artist?.id || "").trim(),
-                name: candidateName,
-                disambiguation: String(artist?.disambiguation || "").trim() || null,
-                score: clampConfidence((Number.isFinite(apiScore) ? apiScore / 100 : 0) * 0.55 + textScore * 0.45),
-            } satisfies MusicBrainzArtistCandidate;
-        })
-        .filter((artist: MusicBrainzArtistCandidate) => Boolean(artist.id && artist.name))
-        .sort((left: MusicBrainzArtistCandidate, right: MusicBrainzArtistCandidate) => right.score - left.score);
+    return rank(artists.map((artist: any) => {
+        const candidateName = String(artist?.name || "").trim();
+        return {
+            id: String(artist?.id || "").trim(),
+            name: candidateName,
+            disambiguation: String(artist?.disambiguation || "").trim() || null,
+            score: score(candidateName, artist?.score),
+        } satisfies MusicBrainzArtistCandidate;
+    }));
 }
 
 /**
@@ -175,7 +209,7 @@ export class MetadataIdentityService {
         }
 
         try {
-            const candidates = await searchMusicBrainzArtists(artist.name);
+            const candidates = await searchCatalogArtists(artist.name);
             const best = candidates[0];
             if (!best) {
                 const result = this.result("artist", artistId, "unmatched", 0, "artist-search", "No MusicBrainz artist candidate found");

@@ -482,9 +482,52 @@ export async function lookupAcoustId(fingerprint: string, duration: number): Pro
     return Array.from(mbids);
 }
 
+/**
+ * The configured catalog source, when it is present and can answer directly.
+ *
+ * Every lookup below is a per-file question asked during import and retag. Sent
+ * to musicbrainz.org they queue behind one global 1-request-per-second lock and,
+ * across a real library, come back 503 — which is why importing files for
+ * artists not already in the database resolved nothing. A local MusicBrainz
+ * mirror answers all three from Postgres, so ask it first and keep the public
+ * service as the fallback for deployments that have no local source.
+ */
+async function activeCatalogSource(): Promise<import("../catalog/catalog-provider.js").CatalogProvider | null> {
+    try {
+        const { catalogProviderRegistry } = await import("../catalog/index.js");
+        return catalogProviderRegistry.getActive();
+    } catch {
+        return null;
+    }
+}
+
 export async function lookupMusicBrainzRecording(recordingId: string): Promise<MusicBrainzRecording | null> {
     if (!recordingId) {
         return null;
+    }
+
+    const source = await activeCatalogSource();
+    if (typeof source?.getRecording === "function") {
+        try {
+            const recording = await source.getRecording(recordingId);
+            if (recording) {
+                const credits = recording.artistCredit
+                    ? [{ id: "", name: recording.artistCredit, joinPhrase: "" }]
+                    : [];
+                return {
+                    id: recording.mbid || recordingId,
+                    title: recording.title || "",
+                    artists: credits.map((credit) => credit.name),
+                    artistCredits: credits,
+                    isrcs: recording.isrcs || [],
+                    releaseTitles: [],
+                    firstReleaseDate: null,
+                    durationSeconds: recording.lengthMs == null ? null : Math.round(recording.lengthMs / 1000),
+                };
+            }
+        } catch (error: any) {
+            console.warn(`[Fingerprint] Catalog recording lookup failed for ${recordingId}; falling back to public MusicBrainz:`, error?.message || error);
+        }
     }
 
     const url = `https://musicbrainz.org/ws/2/recording/${encodeURIComponent(recordingId)}?fmt=json&inc=artist-credits+isrcs+releases`;
@@ -529,6 +572,31 @@ export async function lookupMusicBrainzRecordingsByIsrc(isrc: string): Promise<M
         return [];
     }
 
+    const source = await activeCatalogSource();
+    if (typeof source?.lookupByISRC === "function") {
+        try {
+            const local = await source.lookupByISRC(normalized);
+            const recordings = (local.recordings || []).map((recording) => {
+                const credits = recording.artistCredit
+                    ? [{ id: "", name: recording.artistCredit, joinPhrase: "" }]
+                    : [];
+                return {
+                    id: String(recording.mbid || "").trim(),
+                    title: String(recording.title || "").trim(),
+                    artists: credits.map((credit) => credit.name),
+                    artistCredits: credits,
+                    isrcs: [normalized],
+                    releaseTitles: [],
+                    firstReleaseDate: null,
+                    durationSeconds: recording.lengthMs == null ? null : Math.round(recording.lengthMs / 1000),
+                } satisfies MusicBrainzRecording;
+            }).filter((recording) => Boolean(recording.id && recording.title));
+            if (recordings.length > 0) return recordings;
+        } catch (error: any) {
+            console.warn(`[Fingerprint] Catalog ISRC lookup failed for ${normalized}; falling back to public MusicBrainz:`, error?.message || error);
+        }
+    }
+
     const url = `https://musicbrainz.org/ws/2/recording?fmt=json&limit=10&query=${encodeURIComponent(`isrc:${normalized}`)}`;
 
     try {
@@ -564,6 +632,36 @@ export async function lookupMusicBrainzReleasesByBarcode(barcode: string): Promi
     const normalized = String(barcode || "").trim().replace(/[^0-9]/g, "");
     if (!normalized) {
         return [];
+    }
+
+    const source = await activeCatalogSource();
+    if (typeof source?.lookupByUPC === "function") {
+        try {
+            const local = await source.lookupByUPC(normalized);
+            const hits = local.releases || [];
+            // The barcode index gives identity; the release detail gives the
+            // fields the match scorer weighs (date, country, status).
+            const releases = (await Promise.all(hits.map(async (hit) => {
+                const detail = typeof source.getReleaseWithTracks === "function"
+                    ? await source.getReleaseWithTracks(hit.releaseMbid).catch(() => null)
+                    : null;
+                return {
+                    id: String(hit.releaseMbid || "").trim(),
+                    title: String(detail?.Title || hit.title || "").trim(),
+                    barcode: normalized,
+                    date: String(detail?.ReleaseDate || "").trim() || null,
+                    country: (detail?.Country || []).map((value) => String(value || "").trim()).filter(Boolean)[0] || null,
+                    status: String(detail?.Status || "").trim() || null,
+                    releaseGroupId: String(hit.releaseGroupMbid || "").trim() || null,
+                    releaseGroupPrimaryType: null,
+                    releaseGroupSecondaryTypes: [],
+                    artistCredits: [],
+                } satisfies MusicBrainzRelease;
+            }))).filter((release) => Boolean(release.id && release.title));
+            if (releases.length > 0) return releases;
+        } catch (error: any) {
+            console.warn(`[Fingerprint] Catalog barcode lookup failed for ${normalized}; falling back to public MusicBrainz:`, error?.message || error);
+        }
     }
 
     const url = `https://musicbrainz.org/ws/2/release?fmt=json&limit=10&query=${encodeURIComponent(`barcode:${normalized}`)}`;
