@@ -229,3 +229,53 @@ test("distinct live venues are different recordings", () => {
   );
   assert.ok(s < TRACK_MATCH_THRESHOLD, `different venues must not match, got ${s}`);
 });
+
+test("a dash-suffixed live qualifier matches its provider track on structure", () => {
+  // MusicBrainz writes live/session performances two ways and only the
+  // parenthesised form was understood, so the whole " - ARTE Live at …" suffix
+  // stayed in the base title and could never compare equal to the provider's
+  // plain title. On "&" (Ampersand), Part Four three tracks went unmatched
+  // despite agreeing with the provider on position AND duration to the second,
+  // while a fourth scraped in on raw string similarity purely because its title
+  // was longer - the outcome was decided by title length.
+  for (const [canonical, provided, seconds, position] of [
+    ["Good Grief - ARTE Live at Turner Contemporary", "Good Grief", 261, 5],
+    ["Eve & Paradise Lost - ARTE Live at Turner Contemporary", "Eve & Paradise Lost", 269, 6],
+    ["Leonard & Marianne - ARTE Live at Turner Contemporary", "Leonard & Marianne", 233, 7],
+  ] as const) {
+    const score = scoreTrackMatch(
+      target({ title: canonical, trackNumber: position, durationSec: seconds }),
+      provider({ title: provided, trackNumber: position, durationSec: seconds }),
+    );
+    assert.ok(score >= TRACK_MATCH_THRESHOLD, `${canonical} should match its provider track, got ${score}`);
+  }
+});
+
+test("an ordinary dash in a title is not read as a version qualifier", () => {
+  assert.ok(isTrackMatch(
+    target({ title: "Mother - Daughter", trackNumber: 3, durationSec: 200 }),
+    provider({ title: "Mother - Daughter", trackNumber: 3, durationSec: 200 }),
+  ));
+});
+
+test("a title-similar track with a grossly different runtime is not a match", () => {
+  // The Japanese Frank release lists "Amy Amy Amy" (4:15) at position 13 where
+  // the canonical edition has the combined "Amy Amy Amy / Outro" (13:17). Every
+  // other path requires the runtimes to agree; the title-dominant fallback only
+  // gave duration a bonus, so a near-identical title outvoted nine minutes of
+  // missing content and the wrong provider track was assigned.
+  const score = scoreTrackMatch(
+    target({ title: "Amy Amy Amy / Outro", trackNumber: 13, durationSec: 797 }),
+    provider({ title: "Amy Amy Amy", trackNumber: 13, durationSec: 255 }),
+  );
+  assert.ok(score < TRACK_MATCH_THRESHOLD, `a 9-minute gap must not match, got ${score}`);
+});
+
+test("the combined track still matches the provider track that actually contains it", () => {
+  // The UK deluxe release does have the combined 13:17 track; that is the one
+  // the canonical edition should source from.
+  assert.ok(isTrackMatch(
+    target({ title: "Amy Amy Amy / Outro", trackNumber: 13, durationSec: 797 }),
+    provider({ title: "Amy Amy Amy / Outro", trackNumber: 13, durationSec: 797 }),
+  ));
+});

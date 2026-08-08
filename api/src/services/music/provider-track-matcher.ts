@@ -220,6 +220,24 @@ export function assignRankedTrackMatches<TEdge extends RankedTrackMatchEdge<unkn
 /** Lidarr uses a 10-second grace before penalizing a duration difference. */
 const DURATION_GRACE_SEC = 10;
 
+/**
+ * Beyond this, two runtimes describe different content and no amount of title
+ * similarity may say otherwise.
+ *
+ * The grace above is the tolerance for the *same* recording measured twice. This
+ * is a far looser bar with a different job: vetoing the weak title-dominant
+ * fallback, which scores on title and only awards duration a bonus, so a
+ * disagreement of any size could be outvoted by a similar title. On Amy
+ * Winehouse's Frank that assigned the Japanese release's "Amy Amy Amy" (4:15) to
+ * the canonical "Amy Amy Amy / Outro" (13:17) — position 13 on both sides and
+ * the titles nearly identical, nine minutes of content apart.
+ *
+ * A minute is deliberately generous: radio edits, fade differences and CD index
+ * shifts all land well inside it (Frank's own Moody's Mood/Take the Box index
+ * shift is 38s), while a track that swallowed a second song does not.
+ */
+const GROSS_DURATION_MISMATCH_SEC = 60;
+
 /** Provider tracks scoring at or above this are treated as the same recording. */
 export const TRACK_MATCH_THRESHOLD = 0.55;
 
@@ -336,6 +354,12 @@ export function describeTrackMatch(
     //    cannot carry a match when the titles actively contradict — that avoids
     //    false coverage when two different songs share a slot and a coincidental
     //    runtime. A strong title with structural agreement still clears the bar.
+    // Duration gets a veto here, not just a bonus. Every path above requires
+    // runtimes to agree; this one scores on title and lets structure top it up,
+    // so without a veto a near-identical title outvotes any disagreement at all.
+    if (durationKnown && durationDiff > GROSS_DURATION_MISMATCH_SEC) {
+        return { score: 0, method: "none" };
+    }
     const structuralBonus = versionsOk ? (positionAligned ? 0.15 : 0) + (durationClose ? 0.1 : 0) : 0;
     const blended = Math.min(1, titleSim * 0.75 + structuralBonus);
     // Conflicting significant versions can still share enough base-title text to

@@ -153,15 +153,46 @@ export function normalizeComparableText(input?: string | null): string {
 }
 
 /**
- * Comparable title with trailing parenthetical/bracketed qualifiers removed.
+ * A trailing " - …" qualifier, as MusicBrainz writes live and session
+ * performances: "Good Grief - ARTE Live at Turner Contemporary".
+ *
+ * Only the significant forms count, and only as a *suffix*. Titles legitimately
+ * contain dashes ("Jump - Rerecorded" is a version; "Ohio - Live" is; but
+ * "Mother - Daughter" is just a title), so the tail must name a recording
+ * variant before it is treated as one. Requiring `SIGNIFICANT_VERSION_RE` to
+ * match the tail is what keeps this from eating ordinary titles.
+ *
+ * Without it the whole suffix stayed in the base title, which had two costs on
+ * the same release: three tracks of "&" (Ampersand), Part Four went unmatched
+ * despite agreeing with the provider on position AND duration to the second,
+ * because their base titles could never compare equal — while a fourth track
+ * scraped in on raw string similarity purely because its title was longer. And
+ * in the other direction the live/studio veto never fired for dash-form titles
+ * at all, since neither side reported a version qualifier.
+ */
+const DASH_VERSION_SUFFIX_RE = /\s+[-–—]\s+([^-–—]+)$/u;
+
+function significantDashSuffix(text: string): string | null {
+    const match = DASH_VERSION_SUFFIX_RE.exec(text);
+    if (!match) return null;
+    const normalized = normalizeComparableText(match[1]);
+    return normalized && SIGNIFICANT_VERSION_RE.test(normalized) ? normalized : null;
+}
+
+/**
+ * Comparable title with trailing qualifiers removed.
  * MusicBrainz disambiguates bonus and live tracks with suffixes like
- * "Haunt (demo)" or "Bad Blood (piano version // live from Unit 24)" that
- * providers usually omit; stripping them exposes the shared base title.
+ * "Haunt (demo)", "Bad Blood (piano version // live from Unit 24)" or
+ * "Good Grief - ARTE Live at Turner Contemporary" that providers usually omit;
+ * stripping them exposes the shared base title.
  */
 export function baseComparableTitle(input?: string | null): string {
     let text = String(input || "").trim();
     for (;;) {
-        const next = text.replace(/\s*[([][^()[\]]*[)\]]\s*$/u, "");
+        let next = text.replace(/\s*[([][^()[\]]*[)\]]\s*$/u, "");
+        if (next === text && significantDashSuffix(text)) {
+            next = text.replace(DASH_VERSION_SUFFIX_RE, "");
+        }
         if (next === text) {
             break;
         }
@@ -185,11 +216,18 @@ const SIGNIFICANT_VERSION_RE =
  * Returns "" when the title carries no significant version.
  */
 export function versionQualifierSignature(title?: string | null): string {
+    const raw = String(title || "");
     const qualifiers: string[] = [];
     const pattern = /[([]([^()[\]]*)[)\]]/g;
     let match: RegExpExecArray | null;
-    while ((match = pattern.exec(String(title || ""))) !== null) {
+    while ((match = pattern.exec(raw)) !== null) {
         qualifiers.push(match[1]);
+    }
+    // MusicBrainz writes the same qualifier both ways; "Ohio - Live" has to be
+    // as incompatible with plain "Ohio" as "Ohio (live)" is.
+    const dashSuffix = significantDashSuffix(raw.replace(/\s*[([][^()[\]]*[)\]]\s*$/u, "").trim());
+    if (dashSuffix) {
+        qualifiers.push(dashSuffix);
     }
     const normalized = normalizeComparableText(qualifiers.join(" "));
     return normalized && SIGNIFICANT_VERSION_RE.test(normalized) ? normalized : "";
