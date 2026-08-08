@@ -905,6 +905,31 @@ const AlbumPage = () => {
   const hasSpatialOffer = headerPlanOffers.some((offer) => offer.slot === "spatial")
     || Boolean(album?.spatial_provider_id);
   const hasAnyProviderOffer = headerPlanOffers.length > 0 || hasStereoOffer || hasSpatialOffer;
+  /**
+   * Every monitored edition the download action will queue a plan for.
+   *
+   * The header describes one edition per library — the representative — but the
+   * download queues every monitored edition's plan across every enabled
+   * library. On an album monitored as two editions that reads as "I pressed
+   * download and got one version", because the header only ever described one
+   * of them. The action is not tab-sensitive and never was; naming the count is
+   * what makes it honest.
+   */
+  const queuedEditions = useMemo(() => {
+    const byEdition = new Map<number, string>();
+    for (const library of releaseAvailability?.libraries ?? []) {
+      for (const selection of library.selections) {
+        if (!selection.monitored || !selection.plan) continue;
+        const release = releaseAvailability?.releases.find(
+          (candidate) => candidate.id === selection.editionId,
+        );
+        if (release && !byEdition.has(selection.editionId)) {
+          byEdition.set(selection.editionId, release.title || "Edition");
+        }
+      }
+    }
+    return [...byEdition.values()];
+  }, [releaseAvailability]);
   const headerQualityBadges = useMemo(() => {
     const badges: Array<{ key: string; quality: string }> = [];
     for (const offer of headerPlanOffers) {
@@ -1253,9 +1278,14 @@ const AlbumPage = () => {
     try {
       await api.addAlbum(album.id, slot ? { slot } : undefined);
       const slotLabel = slot === 'spatial' ? 'spatial audio' : slot === 'stereo' ? 'stereo' : hasStereoOffer && hasSpatialOffer ? 'stereo and spatial audio' : 'selected';
+      // Name the editions rather than only the album: the queue covers every
+      // monitored edition, which is not obvious from a header that describes one.
+      const editionLabel = queuedEditions.length > 1
+        ? ` — ${queuedEditions.length} editions: ${queuedEditions.join(', ')}`
+        : '';
       toast({
         title: "Album added to queue",
-        description: `${album.title} (${slotLabel}) will be downloaded shortly`,
+        description: `${album.title} (${slotLabel})${editionLabel} will be downloaded shortly`,
       });
       await Promise.allSettled([
         queryClient.invalidateQueries({ queryKey: ["queue"] }),
@@ -1422,7 +1452,17 @@ const AlbumPage = () => {
   const albumActions: OverflowAction[] = [
     { key: 'monitor', label: monitorAction.label, disabled: monitorAction.disabled, onClick: handleToggleMonitor },
     { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
-    { key: 'download', label: downloadingAlbum ? 'Adding...' : 'Download selected', disabled: downloadingAlbum || !hasAnyProviderOffer, onClick: handleDownloadPrimary },
+    {
+      key: 'download',
+      // Say how many editions this queues. It is not the selected tab.
+      label: downloadingAlbum
+        ? 'Adding...'
+        : queuedEditions.length > 1
+          ? `Download all ${queuedEditions.length} editions`
+          : 'Download selected',
+      disabled: downloadingAlbum || !hasAnyProviderOffer,
+      onClick: handleDownloadPrimary,
+    },
     ...(album?.stereo_provider_id ? [{ key: 'download-stereo', label: 'Download stereo', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('stereo') }] : []),
     ...(album?.spatial_provider_id ? [{ key: 'download-spatial', label: 'Download spatial', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('spatial') }] : []),
     { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },

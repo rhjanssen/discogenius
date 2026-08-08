@@ -758,3 +758,119 @@ test("a planned offer surfaces when the provider match was bound to another edit
   assert.equal(tracks[0].remoteOffers?.[0].providerTrackId, "556");
   assert.equal(tracks[0].quality, "LOSSLESS");
 });
+
+test("an edition's tracklist shows its own plan's offers, not a sibling edition's", async () => {
+  // Editions of one album share most of their recordings. Planned offers used
+  // to be loaded for the whole release group and then attached by recording, so
+  // every edition tab displayed every edition's offers - a standard edition
+  // showing the deluxe edition's provider track, and an edition with no plan at
+  // all showing offers it cannot acquire.
+  const artistMbid = "artist-mbid-edition-scope";
+  const releaseGroupMbid = "rg-edition-scope";
+  const editionA = "release-scope-a";
+  const editionB = "release-scope-b";
+  const recordingMbid = "recording-edition-scope";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Edition Scope");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Edition Scope", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Edition Scope", "Album", "2020-01-01");
+  for (const [mbid, title] of [[editionA, "Edition Scope"], [editionB, "Edition Scope (deluxe)"]]) {
+    dbModule.db.prepare(`
+      INSERT INTO AlbumEditions (
+        mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+      ) VALUES (?, ?, ?, ?, 'Official', '2020-01-01', 1, 1)
+    `).run(mbid, releaseGroupMbid, artistMbid, title);
+  }
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, length_ms) VALUES (?, ?, ?)")
+    .run(recordingMbid, "Shared Recording", 200000);
+  for (const [trackMbid, editionMbid] of [["track-scope-a", editionA], ["track-scope-b", editionB]]) {
+    dbModule.db.prepare(`
+      INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+      VALUES (?, ?, ?, 1, 1, '1', 'Shared Recording', 200000)
+    `).run(trackMbid, editionMbid, recordingMbid);
+  }
+  hydrateCanonicalForeignKeys(releaseGroupMbid);
+
+  // Only the DELUXE edition is monitored and planned.
+  const deluxeLibraryEditionId = selectLibraryRelease(releaseGroupMbid, editionB);
+  const releaseMatch = insertAcceptedReleaseMatch(
+    editionB,
+    "tidal",
+    "9001",
+    "Edition Scope (deluxe)",
+    "https://tidal.com/browse/album/9001",
+  );
+  const providerTrack = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, duration_ms)
+    VALUES ('tidal', 'track', '9002', 'Shared Recording', 200)
+    RETURNING id
+  `).get() as { id: number };
+  const member = dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
+    VALUES (?, ?, 1, 1)
+    RETURNING id
+  `).get(releaseMatch.providerItemId, providerTrack.id) as { id: number };
+  const deluxeTrack = dbModule.db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = 'track-scope-b'")
+    .get() as { id: number; recording_id: number };
+  const trackMatch = dbModule.db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
+      recording_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(
+    providerTrack.id,
+    member.id,
+    releaseMatch.releaseMatchId,
+    deluxeTrack.id,
+    deluxeTrack.recording_id,
+  ) as { id: number };
+  const variant = dbModule.db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label, availability
+    ) VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
+  const plan = seedSelectedAcquisitionPlan(dbModule.db, {
+    libraryEditionId: deluxeLibraryEditionId,
+    provider: "tidal",
+    downloadMode: "tracks",
+  }) as { id: number };
+  const source = dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanSources (plan_id, provider_edition_match_id, role, sort_order)
+    VALUES (?, ?, 'primary', 0)
+    RETURNING id
+  `).get(plan.id, releaseMatch.releaseMatchId) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanTracks (
+      plan_id, track_id, source_id, provider_track_match_id, provider_audio_variant_id
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(plan.id, deluxeTrack.id, source.id, trackMatch.id, variant.id);
+
+  const editionRow = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?");
+  const deluxeEditionId = (editionRow.get(editionB) as { id: number }).id;
+  const standardEditionId = (editionRow.get(editionA) as { id: number }).id;
+
+  const deluxeTracks = await readServiceModule.MusicBrainzReleaseGroupReadService
+    .getEditionTracks(releaseGroupMbid, deluxeEditionId);
+  assert.equal(deluxeTracks.length, 1);
+  assert.equal(
+    deluxeTracks[0].remoteOffers?.[0]?.providerTrackId,
+    "9002",
+    "the planned edition still shows its own offer",
+  );
+
+  const standardTracks = await readServiceModule.MusicBrainzReleaseGroupReadService
+    .getEditionTracks(releaseGroupMbid, standardEditionId);
+  assert.equal(standardTracks.length, 1);
+  assert.deepEqual(
+    standardTracks[0].remoteOffers,
+    [],
+    "an edition with no plan of its own must not borrow a sibling edition's offers",
+  );
+});

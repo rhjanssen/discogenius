@@ -95,10 +95,17 @@ function planSelectionMode(
   return "exclusive";
 }
 
-function isSamePlanOffer(
+export function isSamePlanOffer(
   view: ProviderQualityOffer,
   picked: ProviderQualityOffer,
 ): boolean {
+  // Plan identity when both sides are plans. Provider + quality + album ids can
+  // all coincide across two genuinely different plans of one edition, which is
+  // how a click could resolve to the wrong plan and several pills could light
+  // up as selected at once.
+  if (view.planKey || picked.planKey) {
+    return Boolean(view.planKey) && view.planKey === picked.planKey;
+  }
   return view.provider === picked.provider
     && view.quality === picked.quality
     && (
@@ -232,6 +239,9 @@ function planToQualityOffer(
   const isComposite = plan.composition === "composite" || albumIds.length > 1;
   return {
     slot,
+    // A plan is what the user selects, and provider + album id does not
+    // identify one: two plans on the same edition can share both.
+    planKey: plan.planKey,
     quality: planQualityTag(plan),
     provider: plan.provider,
     matchStatus: "verified",
@@ -666,6 +676,7 @@ export function ReleaseSwitcher({
                 size="small"
                 selectedOfferAlbumId={chosenView?.providerAlbumId ?? null}
                 selectedOfferProvider={chosenPlan?.provider ?? null}
+                selectedOfferPlanKey={chosenPlan?.planKey ?? null}
                 onSelectOffer={pendingSelectionKey || !onSelectPlan
                   ? undefined
                   : (picked, event) => {

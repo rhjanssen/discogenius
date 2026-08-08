@@ -22,6 +22,16 @@ type BadgeSize = DiscogeniusBadgeSize;
 export interface ProviderQualityOffer {
     /** Library slot this offer fills. */
     slot: SlotName;
+    /**
+     * Identity of the acquisition plan this badge stands for, when it stands for
+     * one at all. Plans are the unit the user selects, and two distinct plans on
+     * the same edition routinely share a provider and even a provider album id —
+     * a lossless and a hi-res plan built from the same TIDAL release differ only
+     * in the variant they chose. Comparing provider + album id therefore marked
+     * several pills selected at once. Raw (non-plan) offers leave this unset and
+     * keep the provider/album comparison.
+     */
+    planKey?: string | null;
     /** Audio quality tag (LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS, …). */
     quality?: string | null;
     provider?: string | null;
@@ -74,6 +84,32 @@ interface ProviderQualityRowProps {
     selectedOfferAlbumId?: string | null;
     /** Owning provider for selectedOfferAlbumId; provider ids are not globally unique. */
     selectedOfferProvider?: string | null;
+    /**
+     * Plan currently filling the slot. Takes precedence over the provider/album
+     * pair whenever the offers carry a `planKey`, because that pair does not
+     * identify a plan — see `ProviderQualityOffer.planKey`.
+     */
+    selectedOfferPlanKey?: string | null;
+}
+
+/**
+ * Whether this badge is the selected one.
+ *
+ * Plan identity wins when both sides have it. Only when the badge is not a plan
+ * (raw provider offers on the video page and the pre-plan fallback row) does
+ * this fall back to provider + provider album id.
+ */
+export function isOfferSelected(
+    offer: ProviderQualityOffer,
+    selected: { planKey?: string | null; provider?: string | null; albumId?: string | null },
+): boolean {
+    const offerPlanKey = String(offer.planKey || "").trim();
+    const selectedPlanKey = String(selected.planKey || "").trim();
+    if (offerPlanKey || selectedPlanKey) {
+        return offerPlanKey.length > 0 && offerPlanKey === selectedPlanKey;
+    }
+    return providerKey(selected.provider) === providerKey(offer.provider)
+        && sameProviderAlbumIdSet(selected.albumId, offer.providerAlbumId);
 }
 
 // Provider circular marks share BADGE_HEIGHT_PX with QualityBadge chips.
@@ -310,8 +346,14 @@ function mergeOffersByRelease(offers: ProviderQualityOffer[]): MergedOffer[] {
     for (const offer of offers) {
         const albumId = String(offer.providerAlbumId || "").trim();
         const quality = String(offer.quality || "").trim().toUpperCase();
-        // Only merge when both slots reference the SAME concrete release.
-        const key = albumId ? `${providerKey(offer.provider)}|${albumId}|${quality}` : "";
+        // Only merge when both slots reference the SAME concrete release — and,
+        // for plan badges, the same plan. Two plans can share a provider release
+        // and quality tier while being separately selectable, so merging on the
+        // release alone would collapse them into one pill.
+        const planKey = String(offer.planKey || "").trim();
+        const key = planKey
+            ? `plan|${planKey}`
+            : albumId ? `${providerKey(offer.provider)}|${albumId}|${quality}` : "";
         const existing = key ? indexByKey.get(key) : undefined;
         if (existing != null) {
             merged[existing].slots.push(offer.slot);
@@ -496,6 +538,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     onSelectOffer,
     selectedOfferAlbumId,
     selectedOfferProvider,
+    selectedOfferPlanKey,
 }) => {
     const styles = useStyles();
     const { isDarkMode } = useTheme();
@@ -595,9 +638,12 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             ? offer.providerAlbumIds
             : splitProviderAlbumIds(offer.providerAlbumId);
         const isSelectedOffer = Boolean(onSelectOffer)
-            && providerAlbumIds.length > 0
-            && providerKey(selectedOfferProvider) === providerKey(offer.provider)
-            && sameProviderAlbumIdSet(selectedOfferAlbumId, offer.providerAlbumId);
+            && (providerAlbumIds.length > 0 || Boolean(offer.planKey))
+            && isOfferSelected(offer, {
+                planKey: selectedOfferPlanKey,
+                provider: selectedOfferProvider,
+                albumId: selectedOfferAlbumId,
+            });
         const { content: tooltipContent, ariaLabel } = buildQualityOfferTooltip(offer, {
             styles,
             isSelectedOffer,

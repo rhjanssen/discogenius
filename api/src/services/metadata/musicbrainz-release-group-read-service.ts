@@ -673,6 +673,7 @@ function normalizeLibraryFileFromRow(row: any) {
 function attachCanonicalFilesToTracks(
     tracks: AlbumTrackContract[],
     releaseGroupMbid: string,
+    targetReleaseMbid: string,
 ): AlbumTrackContract[] {
     const trackMbids = Array.from(new Set(
         tracks
@@ -744,6 +745,16 @@ function attachCanonicalFilesToTracks(
     }
 
     const trackMbidsSet = new Set(trackMbids);
+    // Editions of this release group that the album page renders as their own
+    // tab — i.e. the ones a file could be shown under instead of here.
+    const editionsWithTabs = new Set(
+        (db.prepare(`
+          SELECT DISTINCT edition.mbid
+          FROM LibraryEditions monitored
+          JOIN AlbumEditions edition ON edition.id = monitored.edition_id
+          WHERE edition.release_group_mbid = ?
+        `).all(releaseGroupMbid) as Array<{ mbid: string }>).map((row) => String(row.mbid)),
+    );
     const filesByTrackMbid = new Map<string, ReturnType<typeof normalizeLibraryFileFromRow>[]>();
     const filesByRecordingMbid = new Map<string, ReturnType<typeof normalizeLibraryFileFromRow>[]>();
     for (const row of rows) {
@@ -785,6 +796,31 @@ function attachCanonicalFilesToTracks(
                     ? null
                     : String(file.canonical_release_group_mbid).trim();
                 if (fileReleaseGroupMbid !== releaseGroupMbid) {
+                    continue;
+                }
+                // A file was acquired for ONE edition. Attaching it by recording
+                // to every edition of the group put another tab's file — and its
+                // provider — on this tracklist, the same leak the planned offers
+                // had.
+                //
+                // But "belongs to a different edition" is not by itself the
+                // test, because the stereo and spatial libraries routinely
+                // monitor *different* editions of one album: an Atmos file
+                // carries the spatial edition's MBID and still belongs beside
+                // the stereo tracklist, which is the only place it can be shown.
+                //
+                // The distinction that matters is whether the file's edition has
+                // a tab of its own. If it does, that is where it belongs; if it
+                // does not — an unmonitored edition, or none recorded — this
+                // tracklist is the only place it can appear.
+                const fileReleaseMbid = file.canonical_release_mbid == null
+                    ? ""
+                    : String(file.canonical_release_mbid).trim();
+                if (
+                    fileReleaseMbid
+                    && fileReleaseMbid !== targetReleaseMbid
+                    && editionsWithTabs.has(fileReleaseMbid)
+                ) {
                     continue;
                 }
                 const fileTrackMbid = file.canonical_track_mbid == null
@@ -858,7 +894,25 @@ function normalizePlannedQuality(value: string | null, libraryClass: "stereo" | 
     return quality;
 }
 
-function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
+/**
+ * Planned offers for ONE edition's tracklist.
+ *
+ * Two different scopes meet here and only one of them is the release group:
+ *
+ *  - the **target** is a single edition. An acquisition plan belongs to a
+ *    LibraryEdition, so the tracklist under an edition tab must show that
+ *    edition's plan and no other. Loading every plan in the release group and
+ *    then attaching by recording made sibling editions bleed into each other -
+ *    editions of one album share most of their recordings, so a track on the
+ *    standard edition would display the deluxe edition's offer, and an edition
+ *    with no plan at all would display offers it cannot acquire.
+ *  - the **source** is deliberately unrestricted. The planner anchors on
+ *    Recordings, so a provider album matched to a sibling edition can and
+ *    should supply this edition's tracks; that is what every composite plan is
+ *    made of. Scoping the source too is what produced "full coverage but no
+ *    offers".
+ */
+function loadPlannedTrackOffers(releaseGroupMbid: string, targetReleaseMbid: string): PlannedTrackOffer[] {
     return db.prepare(`
       WITH ranked_offers AS (
         SELECT
@@ -935,6 +989,8 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
           ON audio_variant.id = plan_track.provider_audio_variant_id
          AND audio_variant.provider_item_id = provider_track.id
         WHERE release_group.mbid = ?
+          -- The plan being rendered is this edition's, not a sibling's.
+          AND release.mbid = ?
       )
       SELECT
         track_mbid,
@@ -953,16 +1009,17 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
       ORDER BY
         CASE library_class WHEN 'stereo' THEN 0 ELSE 1 END,
         track_mbid
-    `).all(releaseGroupMbid) as PlannedTrackOffer[];
+    `).all(releaseGroupMbid, targetReleaseMbid) as PlannedTrackOffer[];
 }
 
 function attachProviderPreviewTracks(
     tracks: AlbumTrackContract[],
     releaseGroup: any,
+    targetReleaseMbid: string,
 ): AlbumTrackContract[] {
     if (tracks.length === 0) return tracks;
 
-    const offers = loadPlannedTrackOffers(String(releaseGroup.mbid));
+    const offers = loadPlannedTrackOffers(String(releaseGroup.mbid), targetReleaseMbid);
     if (offers.length === 0) {
         return tracks.map((track) => ({
             ...track,
@@ -1040,8 +1097,8 @@ async function buildReleaseGroupTrackContracts(
         album.artist_id,
         Boolean(releaseGroup.wanted),
     );
-    const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks, releaseGroup.mbid);
-    return attachProviderPreviewTracks(withCanonicalFiles, releaseGroup);
+    const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks, releaseGroup.mbid, String(release.mbid));
+    return attachProviderPreviewTracks(withCanonicalFiles, releaseGroup, String(release.mbid));
 }
 
 export class MusicBrainzReleaseGroupReadService {
