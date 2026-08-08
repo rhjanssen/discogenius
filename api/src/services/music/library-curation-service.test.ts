@@ -178,3 +178,127 @@ test("library curation uses canonical scope and recording coverage without chang
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+/**
+ * A Release Group with a 1-track Edition and a 3-track Edition, where the
+ * 3-track Edition can only be filled by a *composite* plan: no single provider
+ * release covers it, but two of them together do.
+ *
+ * This is the Killing Me Softly With His Song (MTV Unplugged) case. Curation
+ * used to measure attainability from the provider releases matched directly to
+ * an Edition, which reports zero for a composite target — so the richer Edition
+ * looked like it could deliver nothing and the 1-track sibling was picked as
+ * the representative. Attainability now comes from the acquisition plans, which
+ * is what acquisition will actually deliver.
+ */
+function seedCompositeOnlyEdition(db: Database.Database): void {
+  db.exec(`
+    INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
+    INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
+    INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
+      VALUES (1, 'group-a', 1, 'Unplugged Single', 'Single');
+    INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count)
+      VALUES
+        (101, 'one-track', 1, 'Unplugged Single', 'Official', 1),
+        (103, 'three-track', 1, 'Unplugged Single', 'Official', 1);
+    INSERT INTO Recordings (id, mbid, title) VALUES
+      (1, 'recording-1', 'Killing Me Softly'),
+      (2, 'recording-2', 'Second'),
+      (3, 'recording-3', 'Third');
+    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
+      VALUES
+        (1, 'one-track-1', 101, 1, 1, 1, 'Killing Me Softly'),
+        (11, 'three-track-1', 103, 1, 1, 1, 'Killing Me Softly'),
+        (12, 'three-track-2', 103, 2, 1, 2, 'Second'),
+        (13, 'three-track-3', 103, 3, 1, 3, 'Third');
+    INSERT INTO MetadataProfiles (id, name, release_type_policy, redundancy_enabled)
+      VALUES (1, 'Default', '{}', 0);
+    INSERT INTO quality_profiles (
+      id, name, allowed_source_formats, preference_order, cutoff,
+      continue_upgrades, fallback_policy, output_format, transcode_policy
+    ) VALUES (
+      1, 'High', '["lossless","hires-lossless"]',
+      '["hires-lossless","lossless","lossy","spatial"]',
+      'lossless', 0, 'best_allowed', '{"codec":"flac"}', 'preserve'
+    );
+    INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
+      VALUES (1, 'Stereo', '/library/stereo', 1, 1);
+    INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored)
+      VALUES (1, 1, 1, 1);
+  `);
+
+  // The only provider release matched to the 1-track edition covers recording 1.
+  seedProviderExactMatch(db, 101, [1]);
+  // Recordings 2 and 3 exist only on a provider release matched elsewhere in
+  // the release group, so the 3-track edition is reachable by composite only.
+  db.prepare(`
+    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, availability)
+    VALUES (11000, 'tidal', 'release', 'other-two-track', 'available')
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      id, provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version,
+      matched_track_count, source_track_count, target_track_count, source_coverage, target_coverage
+    ) VALUES (21000, 11000, 101, 'source_superset', 'accepted', 'automatic', 0.9, 'fixture', 1, 2, 2, 1, 1, 1)
+  `).run();
+  [2, 3].forEach((recordingId, index) => {
+    const itemId = 31000 + index;
+    const memberId = 41000 + index;
+    db.prepare(`
+      INSERT INTO ProviderItems (id, provider, entity_type, provider_id, availability)
+      VALUES (?, 'tidal', 'track', ?, 'available')
+    `).run(itemId, `other-track-${recordingId}`);
+    db.prepare(`
+      INSERT INTO ProviderEditionMembers (id, provider_edition_item_id, member_item_id, medium_position, position)
+      VALUES (?, 11000, ?, 1, ?)
+    `).run(memberId, itemId, index + 1);
+    db.prepare(`
+      INSERT INTO ProviderItemAudioVariants (id, provider_item_id, variant_key, quality_class, availability)
+      VALUES (?, ?, 'lossless', 'lossless', 'available')
+    `).run(61000 + index, itemId);
+    db.prepare(`
+      INSERT INTO ProviderTrackMatches (
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+        track_id, recording_id, match_state, decision_source, confidence, method, matcher_version
+      ) VALUES (?, ?, ?, 21000, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+    `).run(51000 + index, itemId, memberId, 11 + index + 1, recordingId);
+  });
+}
+
+test("a composite-only edition is preferred over a sibling it strictly covers", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-composite-representative-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createCurrentDomainSchema(db);
+    seedCompositeOnlyEdition(db);
+
+    const curated = new LibraryCurationService(db).curateLibrary({
+      libraryId: 1,
+      curationVersion: 1,
+      acquisitionPlannerVersion: 1,
+      providerPriority: ["tidal"],
+    });
+
+    assert.equal(
+      (db.prepare("SELECT coverage FROM AcquisitionPlans WHERE edition_id = 103 AND rank = 0")
+        .get() as { coverage: number } | undefined)?.coverage,
+      3,
+      "the 3-track edition must have a full composite plan for the case to mean anything",
+    );
+    assert.deepEqual(
+      curated.selectedEditionIds,
+      [103],
+      "the edition that covers all three recordings is the one to monitor",
+    );
+    assert.equal(
+      curated.representativeEditionIdByReleaseGroup.get(1),
+      103,
+      "attainability must reflect what the acquisition plan delivers, not just directly matched provider releases",
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

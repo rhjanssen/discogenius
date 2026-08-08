@@ -31,6 +31,10 @@ services:
       # many ms (0 = off). Set e.g. DISCOGENIUS_READ_PROFILE_MS=50 to find the
       # queries that make the UI sluggish under heavy refresh/import load.
       - DISCOGENIUS_READ_PROFILE_MS=${DISCOGENIUS_READ_PROFILE_MS:-0}
+      # Log a per-phase breakdown of any curation pass slower than this many ms
+      # (0 = off). Curation is the last mostly-synchronous stretch of a command,
+      # so when a command dies without a stack this says which phase held it.
+      - DISCOGENIUS_CURATION_PROFILE_MS=${DISCOGENIUS_CURATION_PROFILE_MS:-0}
       # Keep the SQLite file off the host bind mount. On Docker Desktop the
       # /config mount is a Windows/macOS filesystem reached over gRPC-FUSE or
       # virtiofs, which does not give SQLite the locking and write-ordering it

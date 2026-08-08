@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import { getConfigSection } from "../config/config.js";
+import { createCurationPhaseTimer } from "./curation-profile.js";
 import {
   enumerateAcquisitionPlans,
   type AcquisitionQualityProfile,
@@ -218,7 +219,122 @@ export class AcquisitionPlanningService {
       continueUpgradesAfterCutoff: Boolean(context.continue_upgrades),
     };
 
-    const rows = this.db.prepare(`
+    const planTimer = createCurationPhaseTimer();
+    const rows = planTimer.phase(`plan:candidate-sql[ed${input.editionId}]`, () => this.db.prepare(`
+      -- Which provider tracks may source this Edition's Tracks.
+      --
+      -- Anchored on the target Edition's Recordings, not on provider albums
+      -- matched *to* this Edition. A provider album is one product with one
+      -- canonical identity; whether it can supply a Track here is a question
+      -- about the underlying performance, and asking it this way is what lets a
+      -- Hi-Res standard edition source the first eleven Tracks of a deluxe one,
+      -- or two provider albums jointly cover a canonical Edition neither of
+      -- them matches.
+      --
+      -- Two tiers of positive evidence, deliberately no more. Anything weaker
+      -- (bare title, title+duration) is NOT evidence of the same performance,
+      -- and this decides what audio gets written to the user's library, so it
+      -- fails closed.
+      -- Every CTE below is MATERIALIZED and every join is a rowid or indexed
+      -- lookup, both on purpose. Written the obvious way, SQLite drives the ISRC
+      -- tier from the (provider, isrc) index and full-scans 76k provider items
+      -- per edition: measured at 7.4s for this one release group versus 22ms
+      -- without the tier. Shaped as below it is 10ms. Re-check EXPLAIN QUERY PLAN
+      -- after editing — a stray SCAN here is a curation-wide regression.
+      WITH target_track AS MATERIALIZED (
+        SELECT track.id, track.recording_id
+        FROM Tracks track
+        JOIN Recordings recording
+          ON recording.id = track.recording_id
+         AND recording.is_video = 0
+        WHERE track.album_edition_id = ?
+          AND track.recording_id IS NOT NULL
+      ),
+      -- Tier 1: the same canonical Recording. Strongest and cheapest.
+      source_by_recording AS MATERIALIZED (
+        SELECT target.id AS track_id, track_match.id AS provider_track_match_id
+        FROM target_track target
+        JOIN Tracks source_track
+          ON source_track.recording_id = target.recording_id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.track_id = source_track.id
+         AND track_match.match_state = 'accepted'
+      ),
+      -- Tier 2: two provider tracks carrying the SAME ISRC.
+      --
+      -- An ISRC identifies a recording, so this is a genuine identity claim, not
+      -- a resemblance. It matters because MusicBrainz frequently splits one
+      -- album programme into separate Recording rows per edition while the
+      -- provider keeps one ISRC throughout — measured on Amy Winehouse's Frank,
+      -- where the Japanese and UK Super Deluxe editions share zero Recordings
+      -- and the Japanese Recordings carry zero canonical ISRCs, yet 12 of their
+      -- 13 core tracks share a TIDAL ISRC with the UK edition and agree on
+      -- duration to the second. (The two MusicBrainz durations that *do* differ,
+      -- by ±38s across an adjacent pair, are a CD index-point difference: the
+      -- provider durations for both are identical.) Without this tier the UK
+      -- edition is stuck at LOSSLESS while the same audio sits in a Hi-Res
+      -- sibling that the planner cannot see.
+      --
+      -- Two deliberate limits keep it honest and cheap:
+      --   * same provider — two providers' ISRC metadata for one release can
+      --     disagree, and this is the identity claim, so take the stricter read;
+      --   * same release group — a compilation appearance of the same recording
+      --     is a different product decision, not this Edition's material. Lift
+      --     this only when a measured case needs it.
+      --
+      -- It establishes the musical slot, nothing else: explicitness, presentation
+      -- and quality are gated downstream exactly as for tier 1.
+      target_isrc AS MATERIALIZED (
+        SELECT DISTINCT
+          anchored.track_id AS track_id,
+          anchor_item.provider AS provider,
+          anchor_item.isrc AS isrc
+        FROM source_by_recording anchored
+        JOIN ProviderTrackMatches anchor_match
+          ON anchor_match.id = anchored.provider_track_match_id
+        -- NOT INDEXED: this is a primary-key lookup, but leaving the partial
+        -- (provider, isrc) index eligible is exactly what tempts SQLite into
+        -- scanning it instead.
+        JOIN ProviderItems anchor_item NOT INDEXED
+          ON anchor_item.id = anchor_match.provider_track_item_id
+        WHERE anchor_item.isrc IS NOT NULL
+          AND anchor_item.isrc <> ''
+      ),
+      -- Scope first, then compare: the provider tracks of every provider release
+      -- matched to any edition of THIS release group. Bounded by the release
+      -- group, so the ISRC comparison never sees the whole catalogue.
+      sibling_track AS MATERIALIZED (
+        SELECT DISTINCT
+          sibling_item.provider AS provider,
+          sibling_item.isrc AS isrc,
+          sibling_match.id AS provider_track_match_id
+        FROM AlbumEditions sibling_edition
+        JOIN ProviderEditionMatches sibling_release_match
+          ON sibling_release_match.edition_id = sibling_edition.id
+         AND sibling_release_match.match_state = 'accepted'
+        JOIN ProviderEditionMembers sibling_member
+          ON sibling_member.provider_edition_item_id = sibling_release_match.provider_edition_item_id
+        JOIN ProviderItems sibling_item NOT INDEXED
+          ON sibling_item.id = sibling_member.member_item_id
+        JOIN ProviderTrackMatches sibling_match
+          ON sibling_match.provider_edition_member_id = sibling_member.id
+         AND sibling_match.match_state = 'accepted'
+        WHERE sibling_edition.release_group_id = (
+          SELECT release_group_id FROM AlbumEditions WHERE id = ?
+        )
+          AND sibling_item.isrc IS NOT NULL
+          AND sibling_item.isrc <> ''
+      ),
+      -- UNION, not UNION ALL: a source reached by both tiers is one candidate.
+      candidate_source AS MATERIALIZED (
+        SELECT track_id, provider_track_match_id FROM source_by_recording
+        UNION
+        SELECT anchor.track_id, sibling.provider_track_match_id
+        FROM target_isrc anchor
+        JOIN sibling_track sibling
+          ON sibling.provider = anchor.provider
+         AND sibling.isrc = anchor.isrc
+      )
       SELECT
         release_item.provider,
         release_match.id AS provider_edition_match_id,
@@ -243,21 +359,11 @@ export class AcquisitionPlanningService {
         release_variant.bit_depth AS release_bit_depth,
         release_variant.sample_rate AS release_sample_rate,
         release_variant.availability AS release_availability
-      -- Anchored on the target Edition's Recordings, not on provider albums
-      -- matched *to* this Edition. A provider album is one product with one
-      -- canonical identity; whether it can supply a Track here is a question
-      -- about Recordings, and asking it this way is what lets a Hi-Res standard
-      -- edition source the first eleven Tracks of a deluxe one, or two provider
-      -- albums jointly cover a canonical Edition neither of them matches.
-      FROM Tracks target_track
-      JOIN Recordings target_recording
-        ON target_recording.id = target_track.recording_id
-       AND target_recording.is_video = 0
-      JOIN Tracks source_track
-        ON source_track.recording_id = target_track.recording_id
+      FROM candidate_source source_link
+      JOIN Tracks target_track
+        ON target_track.id = source_link.track_id
       JOIN ProviderTrackMatches track_match
-        ON track_match.track_id = source_track.id
-       AND track_match.match_state = 'accepted'
+        ON track_match.id = source_link.provider_track_match_id
       JOIN ProviderEditionMatches release_match
         ON release_match.id = track_match.provider_edition_match_id
        AND release_match.match_state = 'accepted'
@@ -271,14 +377,12 @@ export class AcquisitionPlanningService {
         ON track_variant.provider_item_id = member.member_item_id
       LEFT JOIN ProviderItemAudioVariants release_variant
         ON release_variant.provider_item_id = release_match.provider_edition_item_id
-      WHERE target_track.album_edition_id = ?
-        AND target_track.recording_id IS NOT NULL
-        AND release_item.availability NOT IN (
+      WHERE release_item.availability NOT IN (
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
       ORDER BY release_match.id, target_track.id, track_match.id, track_variant.id, release_variant.id
-    `).all(input.editionId) as CandidateRow[];
+    `).all(input.editionId, input.editionId) as CandidateRow[]);
 
     const sourceById = new Map<number, AcquisitionSourceCandidate>();
     const matchById = new Map<string, AcquisitionSourceCandidate["trackMatches"][number]>();
@@ -372,7 +476,7 @@ export class AcquisitionPlanningService {
     // The preferred offer is the primary source, not an exclusive lock: the
     // optimizer may still cover missing canonical tracks from another accepted
     // Provider Edition of the same provider unless exclusivity was requested.
-    const plans = enumerateAcquisitionPlans({
+    const plans = planTimer.phase(`plan:enumerate[ed${input.editionId}]`, () => enumerateAcquisitionPlans({
       orderedTrackIds,
       profile,
       sources,
@@ -380,7 +484,7 @@ export class AcquisitionPlanningService {
       preferredProviderEditionMatchId,
       exclusive: input.exclusiveSource === true,
       preferExplicit: getConfigSection("filtering").prefer_explicit !== false,
-    });
+    }));
     if (plans.length === 0) {
       this.repository.clear(input.libraryId, input.editionId);
       return null;
@@ -411,7 +515,7 @@ export class AcquisitionPlanningService {
     }
     // The library's standing plan choice outranks the planner's own ordering,
     // and survives replanning because it is keyed by plan shape, not row id.
-    const result = this.repository.replacePlans({
+    const result = planTimer.phase("plan:persist", () => this.repository.replacePlans({
       libraryId: input.libraryId,
       editionId: input.editionId,
       plans: rankedPlans,
@@ -424,7 +528,8 @@ export class AcquisitionPlanningService {
       lockPreference: Boolean(context.locked),
       plannerVersion: input.plannerVersion,
       policyHash,
-    });
+    }));
+    planTimer.report(`edition ${input.editionId} (${sources.length} source(s), ${orderedTrackIds.length} track(s))`);
     if (!result) {
       this.repository.clear(input.libraryId, input.editionId);
       return null;

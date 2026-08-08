@@ -23,6 +23,7 @@ import {
   type ManualEditionChoiceAlbum,
 } from "./artist-coverage-optimizer.js";
 import { loadCoverageUnitsForRecordings } from "./coverage-identity-repository.js";
+import { createCurationPhaseTimer } from "./curation-profile.js";
 import type { QuarantinedProviderLink } from "./coverage-identity.js";
 import { editionRendition, renditionPreferenceRank } from "./rendition-policy.js";
 import { mapRecordingsToCoverageUnits } from "./recording-coverage-units.js";
@@ -111,6 +112,7 @@ export class LibraryCurationService {
       WHERE library.id = ?
     `).get(input.libraryId) as LibraryPolicyRow | undefined;
     if (!library) throw new Error(`Library ${input.libraryId} does not exist`);
+    const timer = createCurationPhaseTimer();
 
     const filtering = getConfigSection("filtering");
     const requireProviderAvailability = filtering.require_provider_availability !== false;
@@ -153,8 +155,6 @@ export class LibraryCurationService {
     `).all() as ReleaseRow[];
 
     const preferExplicit = filtering.prefer_explicit !== false;
-    const allowedQualities = parseStringArray(library.allowed_source_formats);
-    const qualityPlaceholders = allowedQualities.map(() => "?").join(",");
 
     const protectionRows = this.db.prepare(`
       SELECT
@@ -270,69 +270,20 @@ export class LibraryCurationService {
       }
     }
 
-    const attainableByRelease = new Map<number, Set<number>>();
-    if (allowedQualities.length > 0) {
-      const attainableRows = this.db.prepare(`
-        SELECT DISTINCT release_match.edition_id, track_match.recording_id
-        FROM ProviderEditionMatches release_match
-        JOIN ProviderTrackMatches track_match
-          ON track_match.provider_edition_match_id = release_match.id
-         AND track_match.match_state = 'accepted'
-         AND track_match.track_id IS NOT NULL
-        JOIN ProviderEditionMembers member
-          ON member.id = track_match.provider_edition_member_id
-        WHERE release_match.match_state = 'accepted'
-          AND (
-            EXISTS (
-              SELECT 1 FROM ProviderItemAudioVariants variant
-              WHERE variant.provider_item_id = member.member_item_id
-                AND variant.quality_class IN (${qualityPlaceholders})
-                AND variant.availability NOT IN (
-                  'unavailable', 'no_longer_available', 'geography_restricted',
-                  'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
-                )
-            )
-            OR (
-              NOT EXISTS (
-                SELECT 1 FROM ProviderItemAudioVariants any_track
-                WHERE any_track.provider_item_id = member.member_item_id
-              )
-              AND EXISTS (
-                SELECT 1 FROM ProviderItemAudioVariants variant
-                WHERE variant.provider_item_id = release_match.provider_edition_item_id
-                  AND variant.quality_class IN (${qualityPlaceholders})
-                  AND variant.availability NOT IN (
-                    'unavailable', 'no_longer_available', 'geography_restricted',
-                    'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
-                  )
-              )
-            )
-          )
-      `).all(...allowedQualities, ...allowedQualities) as Array<{
-        edition_id: number;
-        recording_id: number;
-      }>;
-      for (const row of attainableRows) {
-        const recordingIds = attainableByRelease.get(row.edition_id) || new Set<number>();
-        recordingIds.add(row.recording_id);
-        attainableByRelease.set(row.edition_id, recordingIds);
-      }
-    }
-
     const evaluatedEditions = releases.filter((release) =>
       releaseIncluded(release)
       && (candidateScopes.get(release.edition_id) || []).length > 0);
 
     for (const release of evaluatedEditions) {
-      this.acquisitionPlanning.compute({
+      timer.phase(`acquisition-plan[lib${input.libraryId}/ed${release.edition_id}]`, () => this.acquisitionPlanning.compute({
         libraryId: input.libraryId,
         editionId: release.edition_id,
         providerPriority: input.providerPriority,
         plannerVersion: input.acquisitionPlannerVersion,
-      });
+      }));
     }
 
-    const viableEditionIds = this.viablePlanEditionIds(input.libraryId);
+    const viableEditionIds = timer.phase("viable-plans", () => this.viablePlanEditionIds(input.libraryId));
     const bestPlanByEdition = new Map<number, {
       explicit_content: string;
       coverage: number;
@@ -351,6 +302,46 @@ export class LibraryCurationService {
       bestPlanByEdition.set(row.edition_id, row);
     }
 
+    /**
+     * What each Edition can actually be acquired — read off the acquisition
+     * plans just computed above, which is why this runs after that loop and not
+     * with the other candidate inputs.
+     *
+     * It used to be derived from provider releases matched *to* the Edition,
+     * and that disagreed with the planner in both directions. It undercounted,
+     * because a composite plan sources tracks from provider albums matched to
+     * sibling Editions: the 3-track Killing Me Softly (MTV Unplugged) Edition
+     * has a full 3/3 hi-res composite plan and measured **zero** attainable
+     * recordings, so curation preferred its 1-track sibling — the richer
+     * Edition looked like it could deliver nothing. And it overcounted, because
+     * a superset provider album contributed the recordings of tracks this
+     * Edition does not contain at all.
+     *
+     * Reading the plans removes both. Coverage now means what acquisition will
+     * actually deliver, which is the only definition under which curation and
+     * acquisition can agree. Measured on the live library: 9,463 of 12,342
+     * planned Editions gain attainable recordings and none lose any.
+     *
+     * Quality is not re-filtered here: a plan only exists for qualities the
+     * profile allows, so the gate is already applied upstream.
+     */
+    const attainableByRelease = new Map<number, Set<number>>();
+    for (const row of this.db.prepare(`
+      SELECT DISTINCT plan.edition_id, track.recording_id
+      FROM AcquisitionPlans plan
+      JOIN AcquisitionPlanTracks plan_track
+        ON plan_track.plan_id = plan.id
+      JOIN Tracks track
+        ON track.id = plan_track.track_id
+      WHERE plan.library_id = ?
+        AND plan.state = 'current'
+        AND track.recording_id IS NOT NULL
+    `).all(input.libraryId) as Array<{ edition_id: number; recording_id: number }>) {
+      const recordingIds = attainableByRelease.get(row.edition_id) || new Set<number>();
+      recordingIds.add(row.recording_id);
+      attainableByRelease.set(row.edition_id, recordingIds);
+    }
+
     const canonicalByRelease = requireProviderAvailability
       ? null
       : this.canonicalRecordingIdsByEdition();
@@ -366,7 +357,7 @@ export class LibraryCurationService {
       for (const recordingId of recordingIds ?? []) scopeRecordingIds.add(recordingId);
     }
     const { unitByRecording: coverageUnitByRecording, quarantinedProviderLinks } =
-      loadCoverageUnitsForRecordings(this.db, scopeRecordingIds);
+      timer.phase("coverage-identity", () => loadCoverageUnitsForRecordings(this.db, scopeRecordingIds));
     if (quarantinedProviderLinks.length > 0) {
       // Ambiguous provider matches are a matching-data defect, not evidence.
       // They are excluded from equivalence and named so they can be fixed.
@@ -496,7 +487,8 @@ export class LibraryCurationService {
         }
       }
 
-      const scopedResult = curateLibraryReleases(curatedCandidatesInScope, redundancyEnabled);
+      const scopedResult = timer.phase("cover-optimisation",
+        () => curateLibraryReleases(curatedCandidatesInScope, redundancyEnabled));
 
       for (const [rgId, repEditionId] of scopedResult.representativeEditionIdByReleaseGroup) {
         const repCand = curatedCandidatesInScope.find((c) => c.editionId === repEditionId);
@@ -668,7 +660,7 @@ export class LibraryCurationService {
       allCandidates.map((candidate) => [candidate.editionId, candidate.releaseGroupId]),
     );
 
-    this.repository.replaceAutomaticCuration({
+    timer.phase("persist", () => this.repository.replaceAutomaticCuration({
       libraryId: input.libraryId,
       result: combinedResult,
       releaseGroupIdByReleaseId,
@@ -679,16 +671,17 @@ export class LibraryCurationService {
           [releaseGroupId, "curation_override_unreachable_recordings"] as const),
       ),
       reasonByEditionId,
-    });
+    }));
 
     for (const editionId of combinedResult.selectedEditionIds) {
-      this.acquisitionPlanning.compute({
+      timer.phase("replan-selected", () => this.acquisitionPlanning.compute({
         libraryId: input.libraryId,
         editionId,
         providerPriority: input.providerPriority,
         plannerVersion: input.acquisitionPlannerVersion,
-      });
+      }));
     }
+    timer.report(`library ${input.libraryId}: ${evaluatedEditions.length} edition(s)`);
 
     emitLibraryUpdated({
       reason: "library-curated",
