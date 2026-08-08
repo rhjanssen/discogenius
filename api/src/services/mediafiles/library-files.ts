@@ -1913,17 +1913,33 @@ export class LibraryFilesService {
     `).all() as Array<{ id: number; root_path: string }>).filter((library) =>
       normalizeComparablePath(library.root_path) === targetRoot
     );
-    const explicitLibraryId = params.libraryId == null ? null : Number(params.libraryId);
-    if (
-      explicitLibraryId != null
-      && !matchingLibraries.some((library) => library.id === explicitLibraryId)
-    ) {
-      throw new Error(
-        `Library ${explicitLibraryId} does not own root ${params.libraryRoot}`,
+    const requestedLibraryId = params.libraryId == null ? null : Number(params.libraryId);
+    /**
+     * The library that owns the root the file is actually in wins.
+     *
+     * A Library is a root plus a quality profile, so "which library" and "which
+     * directory" are one fact. The organizer decides the destination root from
+     * the resolved audio slot (spatial audio goes to the spatial root) while the
+     * library id travels separately on the download job, and the two disagree
+     * whenever a plan queued against the stereo library delivers spatial audio.
+     * That threw "Library 1 does not own root /library/spatial-music" and failed
+     * the import outright.
+     *
+     * Deferring to the requested id instead would be worse: the file is on disk
+     * under a root, and a row claiming it belongs to a library whose root it is
+     * not under is simply wrong. Where no library owns the root at all there is
+     * nothing to defer to, and the id is left unset rather than invented.
+     */
+    const ownerOfRoot = matchingLibraries.length === 1 ? matchingLibraries[0].id : null;
+    const requestedOwnsRoot = requestedLibraryId != null
+      && matchingLibraries.some((library) => library.id === requestedLibraryId);
+    if (requestedLibraryId != null && !requestedOwnsRoot && ownerOfRoot != null) {
+      console.warn(
+        `[LibraryFiles] ${params.filePath} is under ${params.libraryRoot}, which belongs to library `
+        + `${ownerOfRoot}, not the requested library ${requestedLibraryId}; recording it under ${ownerOfRoot}.`,
       );
     }
-    const libraryId = explicitLibraryId
-      ?? (matchingLibraries.length === 1 ? matchingLibraries[0].id : null);
+    const libraryId = requestedOwnsRoot ? requestedLibraryId : ownerOfRoot;
     const fileClass = params.fileClass
       ?? (params.fileType === "track" ? "audio" : params.fileType === "video" ? "video" : null);
 

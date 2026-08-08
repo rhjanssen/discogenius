@@ -278,3 +278,66 @@ test("finalizeImportedDirectories relocates linked separated videos inline after
   assert.equal(fs.existsSync(separatedVideoPath), false);
   assert.equal(fs.existsSync(inlineVideoPath), true);
 });
+
+test("a file is owned by the library whose root it is actually under", () => {
+  // A Library is a root plus a quality profile, so "which library" and "which
+  // directory" are one fact. The organizer picks the destination root from the
+  // resolved audio slot - spatial audio goes to the spatial root - while the
+  // library id travels separately on the download job, and the two disagree
+  // whenever a plan queued against the stereo library delivers spatial audio.
+  // That used to throw "Library N does not own root /library/spatial-music" and
+  // fail the whole import.
+  const { db } = dbModule;
+  seedImportedTrack("owner-probe.flac");
+  const stereoRoot = path.join(tempDir, "own-stereo");
+  const spatialRoot = path.join(tempDir, "own-spatial");
+  fs.mkdirSync(stereoRoot, { recursive: true });
+  fs.mkdirSync(spatialRoot, { recursive: true });
+  const stereoLibraryId = seedTestLibrary(db, { name: "Owner Stereo", rootPath: stereoRoot });
+  const spatialLibraryId = seedTestLibrary(db, { name: "Owner Spatial", rootPath: spatialRoot });
+
+  const spatialFile = path.join(spatialRoot, "Artist One", "Atmos", "track-atmos.m4a");
+  fs.mkdirSync(path.dirname(spatialFile), { recursive: true });
+  fs.writeFileSync(spatialFile, "test-audio");
+
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "900",
+    filePath: spatialFile,
+    libraryRoot: spatialRoot,
+    // The contradiction: the job says stereo, the file is in the spatial root.
+    libraryId: stereoLibraryId,
+    librarySlot: "spatial",
+    fileType: "track",
+    quality: "DOLBY_ATMOS",
+  });
+
+  assert.equal(
+    (db.prepare("SELECT library_id FROM TrackFiles WHERE file_path = ?")
+      .get(spatialFile) as { library_id: number } | undefined)?.library_id,
+    spatialLibraryId,
+    "the library that owns the root the file is in wins over the requested id",
+  );
+
+  // A requested library that does own its root is still honoured.
+  const stereoFile = path.join(stereoRoot, "Artist One", "Album One", "track-stereo.flac");
+  fs.mkdirSync(path.dirname(stereoFile), { recursive: true });
+  fs.writeFileSync(stereoFile, "test-audio");
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "901",
+    filePath: stereoFile,
+    libraryRoot: stereoRoot,
+    libraryId: stereoLibraryId,
+    librarySlot: "stereo",
+    fileType: "track",
+    quality: "LOSSLESS",
+  });
+  assert.equal(
+    (db.prepare("SELECT library_id FROM TrackFiles WHERE file_path = ?")
+      .get(stereoFile) as { library_id: number }).library_id,
+    stereoLibraryId,
+  );
+});
