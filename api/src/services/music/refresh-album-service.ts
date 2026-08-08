@@ -901,6 +901,20 @@ export class RefreshAlbumService {
                 contextualDurationMs: positiveNumberOrNull(row.contextual_duration_ms),
             })),
         });
+        // A provider release can be matched to several canonical Editions, and
+        // this replay re-derives the best one — so anything still carrying an
+        // older verdict is a decision the current matcher declined to make.
+        // Retiring it is what makes the replay converge; otherwise a re-target
+        // silently leaves the old Edition match behind, still asserting a match
+        // the matcher would now refuse.
+        const retired = new ProviderReleaseIngestionService(db)
+            .retireStaleTrackMatches(releaseRow.id, PROVIDER_TRACK_MATCHER_VERSION);
+        if (retired > 0) {
+            console.log(
+                `[RefreshAlbumService] Retired ${retired} track match(es) for ${providerId}:${albumId} `
+                + `that matcher version ${PROVIDER_TRACK_MATCHER_VERSION} did not reproduce`,
+            );
+        }
         return {
             acceptedTrackCount: ingested.acceptedTrackCount,
             ambiguousTrackCount: ingested.ambiguousTrackCount,

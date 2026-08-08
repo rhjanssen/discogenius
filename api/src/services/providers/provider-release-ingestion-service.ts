@@ -592,6 +592,55 @@ export class ProviderReleaseIngestionService {
    * LibraryEditions, not by plan row id. Composites are caught too: a composite
    * that draws on this release records it as one of its sources.
    */
+  /**
+   * Retire automatic track matches for this provider release that the current
+   * matcher did not reproduce.
+   *
+   * A provider release can be matched to several canonical Editions, and a
+   * replay re-derives the best one — so re-ingesting TIDAL's Frank pointed it
+   * at the 16-track Germany/US Edition and left its old match to the Japanese
+   * Edition behind, still asserting that a 4:15 "Amy Amy Amy" was the canonical
+   * 13:17 "Amy Amy Amy / Outro". Those leftovers are decisions the current
+   * matcher declined to make, so a stale version stamp is exactly the right
+   * test for them: anything the replay believed was rewritten at the current
+   * version moments ago.
+   *
+   * An Edition match with no surviving track matches goes too. It asserts a
+   * relationship that nothing supports and would otherwise keep offering an
+   * Edition the provider cannot actually fill.
+   */
+  retireStaleTrackMatches(providerEditionItemId: number, matcherVersion: number): number {
+    return this.db.transaction(() => {
+      const staleIds = (this.db.prepare(`
+        SELECT track_match.id
+        FROM ProviderTrackMatches track_match
+        JOIN ProviderEditionMatches edition_match
+          ON edition_match.id = track_match.provider_edition_match_id
+        WHERE edition_match.provider_edition_item_id = ?
+          AND track_match.decision_source = 'automatic'
+          AND track_match.matcher_version < ?
+      `).all(providerEditionItemId, matcherVersion) as Array<{ id: number }>).map(({ id }) => id);
+      if (staleIds.length === 0) return 0;
+
+      // Same reference to release as the delete path above: a plan built on a
+      // match being retired is stale, and the FK will not let it dangle.
+      this.clearDependentAcquisitionPlans(providerEditionItemId);
+
+      const placeholders = staleIds.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM ProviderTrackMatches WHERE id IN (${placeholders})`).run(...staleIds);
+      this.db.prepare(`
+        DELETE FROM ProviderEditionMatches
+        WHERE provider_edition_item_id = ?
+          AND decision_source = 'automatic'
+          AND NOT EXISTS (
+            SELECT 1 FROM ProviderTrackMatches surviving
+            WHERE surviving.provider_edition_match_id = ProviderEditionMatches.id
+          )
+      `).run(providerEditionItemId);
+      return staleIds.length;
+    })();
+  }
+
   private clearDependentAcquisitionPlans(providerEditionItemId: number): void {
     // Plans reference this release three ways, and none of the track-level
     // foreign keys cascade: sources point at the edition match, plan tracks
@@ -601,40 +650,60 @@ export class ProviderReleaseIngestionService {
     // which is how a rematch of Bastille's MAX release (and many siblings)
     // failed with "FOREIGN KEY constraint failed" after fan-out had already
     // created plans against the new matches.
+    const dependentPlanIds = `
+      SELECT source.plan_id
+      FROM AcquisitionPlanSources source
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.id = source.provider_edition_match_id
+      WHERE edition_match.provider_edition_item_id = ?
+      UNION
+      SELECT plan_track.plan_id
+      FROM AcquisitionPlanTracks plan_track
+      JOIN ProviderTrackMatches track_match
+        ON track_match.id = plan_track.provider_track_match_id
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.id = track_match.provider_edition_match_id
+      WHERE edition_match.provider_edition_item_id = ?
+      UNION
+      SELECT plan_track.plan_id
+      FROM AcquisitionPlanTracks plan_track
+      JOIN ProviderItemAudioVariants variant
+        ON variant.id = plan_track.provider_audio_variant_id
+      WHERE variant.provider_item_id = ?
+         OR variant.provider_item_id IN (
+           SELECT member.member_item_id
+           FROM ProviderEditionMembers member
+           WHERE member.provider_edition_item_id = ?
+         )
+    `;
+    const args = [
+      providerEditionItemId,
+      providerEditionItemId,
+      providerEditionItemId,
+      providerEditionItemId,
+    ];
+
+    // A plan the operator picked is still pointed at by
+    // `LibraryEditions.preferred_plan_key`, and that reference is a real
+    // foreign key. Deleting the plan under it aborts the whole re-ingest with
+    // "FOREIGN KEY constraint failed" — measured on 36 of Amy Winehouse's 102
+    // provider releases, and always the ones that had plans, so a matcher fix
+    // could never reach the albums anyone had acted on. Release the reference
+    // first, exactly as AcquisitionPlanRepository.replacePlans does before its
+    // own delete; the planner re-points it when it rebuilds.
     this.db.prepare(`
-      DELETE FROM AcquisitionPlans
-      WHERE id IN (
-        SELECT source.plan_id
-        FROM AcquisitionPlanSources source
-        JOIN ProviderEditionMatches edition_match
-          ON edition_match.id = source.provider_edition_match_id
-        WHERE edition_match.provider_edition_item_id = ?
-        UNION
-        SELECT plan_track.plan_id
-        FROM AcquisitionPlanTracks plan_track
-        JOIN ProviderTrackMatches track_match
-          ON track_match.id = plan_track.provider_track_match_id
-        JOIN ProviderEditionMatches edition_match
-          ON edition_match.id = track_match.provider_edition_match_id
-        WHERE edition_match.provider_edition_item_id = ?
-        UNION
-        SELECT plan_track.plan_id
-        FROM AcquisitionPlanTracks plan_track
-        JOIN ProviderItemAudioVariants variant
-          ON variant.id = plan_track.provider_audio_variant_id
-        WHERE variant.provider_item_id = ?
-           OR variant.provider_item_id IN (
-             SELECT member.member_item_id
-             FROM ProviderEditionMembers member
-             WHERE member.provider_edition_item_id = ?
-           )
+      UPDATE LibraryEditions
+      SET preferred_plan_key = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE (library_id, edition_id, preferred_plan_key) IN (
+        SELECT plan.library_id, plan.edition_id, plan.plan_key
+        FROM AcquisitionPlans plan
+        WHERE plan.id IN (${dependentPlanIds})
       )
-    `).run(
-      providerEditionItemId,
-      providerEditionItemId,
-      providerEditionItemId,
-      providerEditionItemId,
-    );
+    `).run(...args);
+
+    this.db.prepare(`
+      DELETE FROM AcquisitionPlans WHERE id IN (${dependentPlanIds})
+    `).run(...args);
   }
 
   private materializeCredits(
