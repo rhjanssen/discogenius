@@ -177,7 +177,10 @@ async function prepareWorkspaceForLibraryProfile(
     if (!library) throw new Error(`Import library ${libraryId} is unavailable`);
     const profile = new QualityProfileRepository(db).get(library.quality_profile_id);
     const outcomes = new Map<string, PreparedImportQuality>();
-    for (const filePath of listWorkspaceAudioFiles(downloadPath)) {
+
+    const files = listWorkspaceAudioFiles(downloadPath);
+    const assessed: Array<{ filePath: string; decision: ImportQualityDecision }> = [];
+    for (const filePath of files) {
         if (isCancelled?.()) throw new ImportDownloadCancelledError("quality-profile conversion");
         const metrics = await parseAudioFile(filePath);
         const legacyQuality = deriveQuality(path.extname(filePath), metrics);
@@ -186,16 +189,49 @@ async function prepareWorkspaceForLibraryProfile(
             : classifyNeutralAudio(legacyQuality)
                 || classifyNeutralAudio(metrics.codec)
                 || (path.extname(filePath).toLowerCase() === ".flac" ? "lossless" : "lossy");
-        const decision: ImportQualityDecision = decideImportedQuality(profile, {
-            quality: normalizedQuality,
-            codec: metrics.codec,
-            bitDepth: metrics.bitDepth,
-            sampleRate: metrics.sampleRate,
-            bitrate: metrics.bitrate,
-            spatialFormat: normalizedQuality === "spatial" ? legacyQuality : null,
+        assessed.push({
+            filePath,
+            decision: decideImportedQuality(profile, {
+                quality: normalizedQuality,
+                codec: metrics.codec,
+                bitDepth: metrics.bitDepth,
+                sampleRate: metrics.sampleRate,
+                bitrate: metrics.bitrate,
+                spatialFormat: normalizedQuality === "spatial" ? legacyQuality : null,
+            }),
         });
+    }
+
+    /**
+     * An album is one product, and a provider that has Atmos for fourteen of
+     * fifteen tracks is normal. Rejecting the odd stereo track file-by-file
+     * failed the entire album import, which leaves the spatial library with
+     * nothing at all rather than with one track at a lower tier — and a gap in
+     * an album nobody asked for is worse than an honest tier badge on one
+     * track. Such a track belongs in this library by virtue of being on this
+     * album; its real quality is still what gets recorded.
+     *
+     * The gate itself stays. If *nothing* here satisfies the profile then the
+     * download was wrong for this library, and that is a failure worth having.
+     */
+    const satisfying = assessed.filter(({ decision }) => decision.accepted && decision.importedQuality);
+    if (satisfying.length === 0) {
+        const first = assessed[0];
+        throw new Error(
+            first
+                ? `Source ${path.basename(first.filePath)} does not satisfy ${profile.name}: ${first.decision.reason}`
+                : `No audio files to import for ${profile.name}`,
+        );
+    }
+    for (const { filePath, decision } of assessed) {
+        if (isCancelled?.()) throw new ImportDownloadCancelledError("quality-profile conversion");
         if (!decision.accepted || !decision.importedQuality) {
-            throw new Error(`Source ${path.basename(filePath)} does not satisfy ${profile.name}: ${decision.reason}`);
+            console.warn(
+                `[ImportDownload] ${path.basename(filePath)} does not satisfy ${profile.name} `
+                + `(${decision.reason}); importing it anyway because the rest of the album does, `
+                + "rather than leaving a hole in the album",
+            );
+            continue;
         }
         const result = await transcodeForQualityProfile(filePath, decision, { isCancelled });
         const providerKey = path.basename(result.outputPath, path.extname(result.outputPath));
