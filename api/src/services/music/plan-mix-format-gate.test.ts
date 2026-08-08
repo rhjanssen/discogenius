@@ -200,6 +200,10 @@ test("a qualifier that lives only in the comment reaches the resolver", async ()
       CREATE TABLE ProviderTrackMatches (
         provider_track_item_id INT, recording_id INT, match_state TEXT);
       CREATE TABLE ProviderItems (id INTEGER PRIMARY KEY, provider TEXT, isrc TEXT);
+      -- The resolver also reads the lengths each Recording appears at on real
+      -- Tracks, because a Recording's stamped length can describe a different
+      -- release than the one being curated.
+      CREATE TABLE Tracks (id INTEGER PRIMARY KEY, recording_id INT, length_ms INT);
     `);
     const insert = db.prepare(
       "INSERT INTO Recordings (id, title, length_ms, disambiguation) VALUES (?, ?, ?, ?)");
@@ -310,4 +314,115 @@ test("an Edition labelled spatial stays spatial whatever its Recordings say", ()
 
 test("no Recordings means no inference", () => {
   assert.equal(editionMixFormatWithRecordings("Back to Black", null, []), "unlabelled");
+});
+
+/* ── One performance, described twice ───────────────────────────────── */
+
+test("a Dolby Atmos mix of a live set is that live set, however the title words it", () => {
+  // Bastille's MTV Unplugged shipped as two Editions: the album, and a "Dolby
+  // Atmos mix" Edition of the same 15 performances. Fourteen merged; the first
+  // did not, because its title says "MTV Unplugged" where the other's comment
+  // says "live" - and one unmerged track was enough to keep the whole duplicate
+  // Edition monitored, so the spatial library would have downloaded fifteen
+  // Atmos files it already had.
+  //
+  // Both comments name the identical occasion, which is what settles it. Title
+  // wording cannot outvote that.
+  //
+  // The edge itself comes from the shared ISRC, which is how the live catalogue
+  // proposes it: one Apple Music track is accepted against both Recordings, so
+  // its ISRC is folded into both. What changed is that the veto no longer fires.
+  const occasion = "live, 2021-11-16: Porchester Hall, London, UK";
+  const { unitByRecording } = resolveCoverageUnits([
+    {
+      recordingId: 1,
+      title: "Survivin’ – MTV Unplugged 2021",
+      lengthMs: 247259,
+      disambiguation: occasion,
+      isrcs: ["GBUM72300557"],
+    },
+    {
+      recordingId: 2,
+      title: "survivin’",
+      lengthMs: 247259,
+      disambiguation: `Dolby Atmos mix, ${occasion}`,
+      isrcs: ["GBUM72300557"],
+    },
+  ]);
+  assert.equal(unitByRecording.get(1), unitByRecording.get(2));
+});
+
+test("a shared occasion does not merge a different rendition of it", () => {
+  // The occasion says when it was captured, not what was done to the audio. An
+  // instrumental of one live take is still a different deliverable.
+  const occasion = "live, 2021-11-16: Porchester Hall, London, UK";
+  const { unitByRecording } = resolveCoverageUnits([
+    { recordingId: 1, title: "Pompeii", lengthMs: 300000, disambiguation: occasion, isrcs: ["GBUM70000001"] },
+    {
+      recordingId: 2,
+      title: "Pompeii",
+      lengthMs: 300000,
+      disambiguation: `instrumental, ${occasion}`,
+      isrcs: ["GBUM70000001"],
+    },
+  ]);
+  assert.notEqual(unitByRecording.get(1), unitByRecording.get(2));
+});
+
+test("a bare live comment is not an occasion, so two live takes stay apart", () => {
+  // "live" alone is what every live track says. Without a date or venue it
+  // identifies nothing, and two unrelated live takes must not collapse.
+  const { unitByRecording } = resolveCoverageUnits([
+    { recordingId: 1, title: "Pompeii", lengthMs: 300000, disambiguation: "live" },
+    { recordingId: 2, title: "Pompeii", lengthMs: 300000, disambiguation: "unplugged" },
+  ]);
+  assert.notEqual(unitByRecording.get(1), unitByRecording.get(2));
+});
+
+test("a length stamped from another release does not split a performance", () => {
+  // MusicBrainz reuses one Recording across releases that run to different
+  // lengths, and the stamped length then describes only one of them. Bastille's
+  // "Survivin'" is stamped 3:10 - its studio single - while every Track of it on
+  // MTV Unplugged is 4:07, and all four providers agree on 4:07.
+  const occasion = "live, 2021-11-16: Porchester Hall, London, UK";
+  const { unitByRecording } = resolveCoverageUnits([
+    {
+      recordingId: 1,
+      title: "Survivin’",
+      lengthMs: 190000,
+      observedLengthsMs: [190000, 247000],
+      disambiguation: occasion,
+      isrcs: ["GBUM70000002"],
+    },
+    {
+      recordingId: 2,
+      title: "Survivin’",
+      lengthMs: 247259,
+      observedLengthsMs: [247259],
+      disambiguation: occasion,
+      isrcs: ["GBUM70000002"],
+    },
+  ]);
+  assert.equal(unitByRecording.get(1), unitByRecording.get(2));
+
+  // With no Track observing a compatible length, the stamped disagreement stands.
+  const apart = resolveCoverageUnits([
+    {
+      recordingId: 1,
+      title: "Survivin’",
+      lengthMs: 190000,
+      observedLengthsMs: [190000],
+      disambiguation: occasion,
+      isrcs: ["GBUM70000002"],
+    },
+    {
+      recordingId: 2,
+      title: "Survivin’",
+      lengthMs: 247259,
+      observedLengthsMs: [247259],
+      disambiguation: occasion,
+      isrcs: ["GBUM70000002"],
+    },
+  ]);
+  assert.notEqual(apart.unitByRecording.get(1), apart.unitByRecording.get(2));
 });

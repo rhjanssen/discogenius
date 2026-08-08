@@ -31,6 +31,11 @@ interface ProviderIsrcRow {
   isrc: string | null;
 }
 
+interface TrackLengthRow {
+  recording_id: number;
+  length_ms: number | null;
+}
+
 interface ProviderLinkRow {
   provider: string;
   provider_track_item_id: number;
@@ -71,6 +76,7 @@ export function loadCoverageUnitsForRecordings(
   const recordingRows: RecordingRow[] = [];
   const providerIsrcRows: ProviderIsrcRow[] = [];
   const providerLinkRows: ProviderLinkRow[] = [];
+  const trackLengthRows: TrackLengthRow[] = [];
 
   for (const chunk of chunked(ids)) {
     const placeholders = chunk.map(() => "?").join(",");
@@ -91,6 +97,18 @@ export function loadCoverageUnitsForRecordings(
         AND provider_item.isrc IS NOT NULL
         AND TRIM(provider_item.isrc) != ''
     `).all(...chunk) as ProviderIsrcRow[]);
+
+    // The lengths each Recording actually appears at on Tracks. A Recording
+    // carries one stamped length and MusicBrainz reuses it across releases that
+    // run to different lengths, so the stamped number can describe a release
+    // other than the one being curated. See CoverageRecording.observedLengthsMs.
+    trackLengthRows.push(...db.prepare(`
+      SELECT DISTINCT recording_id, length_ms
+      FROM Tracks
+      WHERE recording_id IN (${placeholders})
+        AND length_ms IS NOT NULL
+        AND length_ms > 0
+    `).all(...chunk) as TrackLengthRow[]);
 
     // Only links that touch the scope; a link's members outside the scope are
     // irrelevant to this question and are filtered by the resolver anyway.
@@ -124,10 +142,19 @@ export function loadCoverageUnitsForRecordings(
   for (const row of recordingRows) addIsrc(row.id, row.isrcs);
   for (const row of providerIsrcRows) addIsrc(row.recording_id, row.isrc);
 
+  const observedLengths = new Map<number, number[]>();
+  for (const row of trackLengthRows) {
+    if (row.length_ms == null) continue;
+    const lengths = observedLengths.get(row.recording_id) ?? [];
+    lengths.push(Number(row.length_ms));
+    observedLengths.set(row.recording_id, lengths);
+  }
+
   const recordings: CoverageRecording[] = recordingRows.map((row) => ({
     recordingId: row.id,
     title: row.title ?? "",
     lengthMs: row.length_ms,
+    observedLengthsMs: observedLengths.get(row.id) ?? [],
     // MusicBrainz keeps titles clean and puts "live" / "dolby atmos mix" in the
     // comment, so without this a live take and the studio one are one title at
     // one length — a false merge, which silently drops wanted content.

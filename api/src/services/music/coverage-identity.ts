@@ -35,6 +35,21 @@ export interface CoverageRecording {
   /** MusicBrainz disambiguation — carries version markers titles sometimes omit. */
   disambiguation?: string | null;
   /**
+   * Lengths this Recording actually appears at on the Tracks being curated.
+   *
+   * A Recording carries one `length`, but MusicBrainz reuses a Recording across
+   * releases where it runs to different lengths, and that single number then
+   * describes only one of them. Bastille's "Survivin'" is stamped 3:10 — its
+   * studio single — while every Track of it on MTV Unplugged is 4:07 and all
+   * four providers agree on 4:07. Comparing the stamped length alone therefore
+   * read the album's own track as a different performance.
+   *
+   * Coverage is a question about the Tracks being curated, so the lengths those
+   * Tracks are actually at are the evidence. Empty means "no observation", and
+   * the stamped length stands alone.
+   */
+  observedLengthsMs?: readonly number[];
+  /**
    * Recording ids this row is *known* to be the same catalogue entity as —
    * MusicBrainz merges, or Servarr's `oldRecordingIds`. Exact identity, not a
    * similarity judgement.
@@ -80,6 +95,20 @@ export interface CoverageUnitResolution {
   /** Provider Track items whose accepted matches disagree with each other. */
   quarantinedProviderLinks: QuarantinedProviderLink[];
 }
+
+/**
+ * Occasion markers: *when and where* a performance happened, as opposed to what
+ * was done to the audio. Two names for one event, and MusicBrainz uses both —
+ * an MTV Unplugged set is a live set, so the title "Survivin' – MTV Unplugged
+ * 2021" and the comment "live, 2021-11-16: Porchester Hall, London, UK"
+ * describe the same occasion twice.
+ *
+ * They still veto a merge normally. They only stop vetoing when the two
+ * Recordings' comments name the *identical* occasion, which is when the
+ * disagreement is provably about wording rather than about the recording — see
+ * `sameStatedOccasion`.
+ */
+const OCCASION_QUALIFIERS = new Set(["live", "unplugged", "session", "sessions"]);
 
 /**
  * Qualifiers that change the performance. Two Recordings that disagree on any
@@ -318,17 +347,95 @@ function recordingFacts(recording: CoverageRecording): RecordingFacts {
   };
 }
 
+/**
+ * The performance a Recording's comment names, with mix formats removed.
+ *
+ * MusicBrainz comments state the occasion precisely — "live, 2021-11-16:
+ * Porchester Hall, London, UK" — and an Atmos remix of that performance repeats
+ * it verbatim with the format prepended. Two identical non-empty statements are
+ * two statements about one performance.
+ */
+function statedOccasion(recording: CoverageRecording): string {
+  let text = normalizeText(String(recording.disambiguation || ""));
+  if (!text) return "";
+  for (const qualifier of MIX_FORMAT_QUALIFIERS) {
+    text = text.replace(new RegExp(`(^| )${qualifier}( |$)`, "g"), " ");
+  }
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Do both Recordings name the same occasion, specifically enough to be
+ * evidence? A bare "live" is not: every live track says that. A comment
+ * carrying a date or venue identifies one performance.
+ */
+function sameStatedOccasion(left: CoverageRecording, right: CoverageRecording): boolean {
+  const leftOccasion = statedOccasion(left);
+  if (!leftOccasion || leftOccasion !== statedOccasion(right)) return false;
+  // Require more than a lone qualifier word, so "live" alone cannot merge two
+  // unrelated live takes. A date or venue is what makes it identifying.
+  return leftOccasion.split(" ").length >= 3;
+}
+
+/**
+ * Every length a Recording is known to run to: the one stamped on it, plus the
+ * ones its curated Tracks actually are.
+ */
+function candidateLengths(recording: CoverageRecording): number[] {
+  const lengths: number[] = [];
+  if (recording.lengthMs != null) lengths.push(Number(recording.lengthMs));
+  for (const observed of recording.observedLengthsMs ?? []) {
+    if (observed != null) lengths.push(Number(observed));
+  }
+  return lengths.filter((value) => Number.isFinite(value) && value > 0);
+}
+
+/**
+ * Two Recordings agree on length when *some* pair of the lengths they are known
+ * to run to agrees. One release stamping a different runtime does not make the
+ * release in hand a different performance.
+ */
+function anyDurationCompatible(left: CoverageRecording, right: CoverageRecording): boolean {
+  const leftLengths = candidateLengths(left);
+  const rightLengths = candidateLengths(right);
+  // Unknown on either side is not a conflict, exactly as before.
+  if (leftLengths.length === 0 || rightLengths.length === 0) return true;
+  return leftLengths.some((leftMs) =>
+    rightLengths.some((rightMs) => durationsCompatible(leftMs, rightMs)));
+}
+
 function factsCompatible(left: RecordingFacts, right: RecordingFacts): CompatibilityVerdict {
   if (!titlesMatch(left.baseTitle, right.baseTitle)) {
     return { compatible: false, reason: "title_mismatch" };
   }
-  if (left.versionKey !== right.versionKey) {
+  if (left.versionKey !== right.versionKey && !occasionWordingOnly(left, right)) {
     return { compatible: false, reason: "version_mismatch" };
   }
-  if (!durationsCompatible(left.recording.lengthMs, right.recording.lengthMs)) {
+  if (!anyDurationCompatible(left.recording, right.recording)) {
     return { compatible: false, reason: "duration_mismatch" };
   }
   return { compatible: true };
+}
+
+/**
+ * Whether the two version keys differ only in how they word the same occasion.
+ *
+ * Both comments must name one identifying occasion, and every qualifier the two
+ * sides disagree about must be an occasion marker. A content difference —
+ * instrumental, a cappella, a remix, an edit — still vetoes, because that
+ * changes the audio rather than describing when it was captured.
+ */
+function occasionWordingOnly(left: RecordingFacts, right: RecordingFacts): boolean {
+  if (!sameStatedOccasion(left.recording, right.recording)) return false;
+  const leftQualifiers = new Set(left.versionKey ? left.versionKey.split(",") : []);
+  const rightQualifiers = new Set(right.versionKey ? right.versionKey.split(",") : []);
+  for (const qualifier of leftQualifiers) {
+    if (!rightQualifiers.has(qualifier) && !OCCASION_QUALIFIERS.has(qualifier)) return false;
+  }
+  for (const qualifier of rightQualifiers) {
+    if (!leftQualifiers.has(qualifier) && !OCCASION_QUALIFIERS.has(qualifier)) return false;
+  }
+  return true;
 }
 
 /**
