@@ -123,16 +123,30 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
 ### Open defects (found during 2.8 hardening, not yet fixed)
 
-- **`0 exact offer contexts` after a *successful* album import.** The spatial
-  download of `345875dc-147f-4122-83dd-18c7364cb93d` placed all 8 Atmos files
-  correctly and then failed with `[ImportDownload] Downloaded track 453015789
-  has 0 exact offer contexts; refusing ambiguous provenance`. The work
-  succeeded; the command is marked failed. Track `453015789` is
-  `tidal:"Good Grief"` with exactly one accepted `ProviderTrackMatch`, so the
-  provenance lookup is not finding something that exists — most likely because
-  the command's `providerId` is an Apple album (`1827278264`) while the track
-  came from a TIDAL source in a cross-provider composite plan. Reproduce by
-  re-queueing that album's spatial slot.
+- **Mid-album provider fallback still fails the import, one layer deeper.**
+  Two layers are fixed — the offer is now the authority on provenance rather
+  than the file's stamped provider (`downloaded-tracks-import-service`), and a
+  fallback now re-resolves the item/edition/variant ids under the provider that
+  actually supplied the track (`resolveFallbackProvenance`). Verified: the
+  8-track Aerosmith spatial album now imports all 8 files with the correct
+  TIDAL provider ids after falling back from Apple Music.
+
+  What remains: the command is still marked failed, now with
+  `[ImportDownload] Reported TrackFiles row 487 belongs to provider tidal, not
+  apple-music`. So for at least one track the organizer's `processedTrackIds`
+  still carries the *pre-fallback* Apple id while the file it produced is
+  stamped TIDAL — i.e. the workspace/organizer identity and the rewritten offer
+  identity disagree when a fallback happens part-way through an album.
+  `flattenTrackOfferWorkspace` is renaming to the new id, so the divergence is
+  most likely in what `processedTrackIds` reports back. **Reproduce:** delete
+  the `TrackFiles` rows for `8a58cc1a-be0d-3b1b-8d0d-aa8f467a59da` and
+  re-request its spatial slot; the Apple Atmos download fails per-track and
+  falls back to TIDAL.
+
+  Note the files themselves are correct on disk and in the database; only the
+  command outcome is wrong. That still matters — a failed command is retried
+  and shows as an error to the user.
+
 - **Apple Music video download fails** with `apple-music-downloader exited with
   code 1: Decrypt failed: exit status 1`. Recreating the wrapper container did
   not clear it; not yet retested after recreation.
@@ -142,7 +156,9 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 Covered so far: metadata refresh, provider matching, curation, and TIDAL +
 Apple Music stereo *and* spatial download → import → organize (verified 8/8
 FLAC 24/96 into the stereo library and 8/8 Atmos E-AC-3 into the spatial one,
-with correct per-library routing).
+with correct per-library routing). Also verified: re-requesting a fully
+downloaded album queues nothing, and a cross-provider fallback now files its
+tracks under the provider that supplied them.
 
 Not yet covered:
 
