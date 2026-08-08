@@ -1104,7 +1104,7 @@ export class RefreshArtistService {
                 if (variants.length > 0) {
                     normalizedCatalog.replaceAudioVariants(itemId, variants, { provider: providerId });
                 }
-        });
+        }, 50, `provider-album-offers:${providerId}`);
         // Acquire artwork after slot selection in precacheArtistMediaCovers().
         // Provisional matches can point several provider albums at one canonical
         // release group; warming them here raced unrelated covers into one cache.

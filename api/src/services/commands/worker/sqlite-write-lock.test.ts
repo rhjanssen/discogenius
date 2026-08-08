@@ -206,3 +206,26 @@ test("four concurrent command workers never overlap a write", async () => {
     rmSync(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
+
+test("diagnostics name the section that holds the lock, and the longest holder", () => {
+  // A worker id answers "who is stuck" but not "doing what". Three rounds of
+  // narrowing gate scope by reading stack traces after the fact is why this
+  // exists: one reading should name the call site.
+  resetWriteLockForTests();
+
+  ownerAcquire("slow", "worker-1", () => {}, "servarr:artist-albums");
+  ownerAcquire("queued", "worker-2", () => {}, "provider-album-offers:tidal");
+
+  const whileHeld = writeLockDiagnostics();
+  assert.equal(whileHeld.heldByLabel, "servarr:artist-albums");
+  assert.deepEqual(whileHeld.waitingLabels, ["provider-album-offers:tidal"]);
+
+  ownerRelease("slow");
+  const afterRelease = writeLockDiagnostics();
+  assert.equal(afterRelease.heldByLabel, "provider-album-offers:tidal");
+  assert.equal(
+    afterRelease.longestHoldLabel,
+    "servarr:artist-albums",
+    "the longest hold keeps naming its section after it releases",
+  );
+});

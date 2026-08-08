@@ -194,7 +194,7 @@ export class CommandExecutor {
             maxAttempts: COMMAND_MAX_ATTEMPTS,
             retryBaseMs: COMMAND_RETRY_BASE_MS,
             retryMaxMs: COMMAND_RETRY_MAX_MS,
-        }));
+        }), "commands:recover-stale");
     }
 
     private static async loop() {
@@ -267,7 +267,7 @@ export class CommandExecutor {
             job.id,
             workerId,
             COMMAND_LEASE_MS,
-        ));
+        ), "commands:claim");
         if (!claimedJob) {
             return;
         }

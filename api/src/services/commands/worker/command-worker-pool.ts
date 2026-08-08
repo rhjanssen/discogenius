@@ -302,7 +302,7 @@ export class CommandWorkerPool {
                         kind: "writeLockGranted",
                         requestId: message.requestId,
                     } satisfies MainToWorkerMessage);
-                });
+                }, message.label);
                 break;
             case "writeLockRelease":
                 ownerRelease(message.requestId);

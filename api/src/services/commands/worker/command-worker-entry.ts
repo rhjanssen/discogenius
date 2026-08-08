@@ -67,6 +67,7 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
         try {
             renewed = await withSqliteWriteGate(
                 () => CommandQueueManager.renewLease(job.id, job.worker_id!, leaseMs),
+                "commands:heartbeat",
             );
         } catch (error) {
             console.error(`[CommandWorker] Could not renew lease for command #${job.id}:`, error);

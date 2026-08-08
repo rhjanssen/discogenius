@@ -1193,7 +1193,7 @@ export class RefreshAlbumService {
                     });
                 }
             }
-            });
+            }, `provider-release-ingest:${providerId}`);
             return;
         }
 
@@ -1235,7 +1235,7 @@ export class RefreshAlbumService {
                 };
             });
             catalog.replaceReleaseMembers(releaseItemId, memberRows);
-        })());
+        })(), `provider-release-unmatched:${providerId}`);
     }
 
     static async upsertArtistAlbum(

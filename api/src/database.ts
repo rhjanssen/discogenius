@@ -416,6 +416,7 @@ export async function runGatedChunkedWrite<T>(
   items: readonly T[],
   perItem: (item: T, index: number) => void,
   chunkSize: number = 50,
+  label = "unlabelled-chunked",
 ): Promise<number> {
   const size = Math.max(1, chunkSize);
   for (let start = 0; start < items.length; start += size) {
@@ -427,16 +428,20 @@ export async function runGatedChunkedWrite<T>(
         }
       });
       runChunk();
-    });
+    }, label);
   }
   return items.length;
 }
 
-export async function withSqliteWriteGate<T>(work: () => T | Promise<T>): Promise<T> {
+export async function withSqliteWriteGate<T>(
+  work: () => T | Promise<T>,
+  /** Names this write section in the write-lock diagnostics. Always pass one. */
+  label = "unlabelled",
+): Promise<T> {
   const { withGlobalSqliteWriteLock } = await import(
     "./services/commands/worker/sqlite-write-lock.js"
   );
-  return withGlobalSqliteWriteLock(work);
+  return withGlobalSqliteWriteLock(work, undefined, label);
 }
 
 /**

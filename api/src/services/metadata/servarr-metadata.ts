@@ -712,7 +712,7 @@ export class ServarrMetadataService {
       `);
 
       return { insertRg, albums: (artist.Albums || []).filter((album) => album.Id) };
-    });
+    }, "servarr:artist-metadata");
 
     // Chunk the per-album upserts, taking the gate per chunk: a large artist
     // (hundreds of release groups) would otherwise hold BOTH the SQLite write
@@ -735,7 +735,7 @@ export class ServarrMetadataService {
           JSON.stringify(rawAlbum.OldIds ?? rawAlbum.oldids ?? []),
         );
         MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
-    });
+    }, 50, "servarr:artist-albums");
 
     // Match Lidarr's refresh invariant: mark the parent current only after its
     // children have been processed successfully. If an album batch throws, the
@@ -746,7 +746,7 @@ export class ServarrMetadataService {
         SET content_hash = ?, updated_at = CURRENT_TIMESTAMP
         WHERE mbid = ?
       `).run(contentHash, artist.id);
-    });
+    }, "servarr:artist-content-hash");
 
     await MediaCoverService.resolveArtistArtwork({
       artistMbid: artist.id,
@@ -762,7 +762,7 @@ export class ServarrMetadataService {
     const detail = await catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid);
     await withSqliteWriteGate(() => {
       this.reconcileReleaseGroupDetail(releaseGroupMbid, artistMbid, detail);
-    });
+    }, "servarr:release-group");
   }
 
   /**
@@ -790,7 +790,7 @@ export class ServarrMetadataService {
         try {
           await withSqliteWriteGate(() => {
             this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
-          });
+          }, "servarr:release-group-bulk");
         } catch (error) {
           console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
         }
@@ -814,7 +814,7 @@ export class ServarrMetadataService {
         try {
           await withSqliteWriteGate(() => {
             this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
-          });
+          }, "servarr:release-group-each");
         } catch (error) {
           console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
         }

@@ -240,7 +240,7 @@ export class MusicBrainzArtistCreditService {
         });
         upsertScope(artistMbid, releaseGroupMbid, "credited");
       }
-    });
+    }, 50, "credited-release-groups");
 
     return {
       releaseGroups: releaseGroups.length,

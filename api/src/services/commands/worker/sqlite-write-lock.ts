@@ -39,6 +39,8 @@ export interface WriteLockWaitStats {
 type Waiter = {
   requestId: string;
   ownerId: string;
+  /** Which write section asked. Diagnostics name this, not the worker id. */
+  label: string;
   grant: () => void;
   queuedAt: number;
 };
@@ -46,15 +48,24 @@ type Waiter = {
 /* ── Owner side: the main thread ────────────────────────────────────── */
 
 const waiters: Waiter[] = [];
-let heldBy: { requestId: string; ownerId: string; since: number } | null = null;
+let heldBy: { requestId: string; ownerId: string; label: string; since: number } | null = null;
 
 /** Cumulative contention, surfaced by runtime diagnostics. */
 const stats = { grants: 0, totalWaitMs: 0, maxWaitMs: 0, maxQueueDepth: 0 };
 
+/**
+ * The longest single hold seen, and which section held it.
+ *
+ * A worker id answers "who is stuck" but not "doing what", and three rounds of
+ * narrowing gate scope by reading stack traces after the fact is two rounds too
+ * many. Every acquisition carries a label so one reading names the call site.
+ */
+const longestHold = { label: "", ownerId: "", heldMs: 0 };
+
 function pump(): void {
   if (heldBy || waiters.length === 0) return;
   const next = waiters.shift()!;
-  heldBy = { requestId: next.requestId, ownerId: next.ownerId, since: Date.now() };
+  heldBy = { requestId: next.requestId, ownerId: next.ownerId, label: next.label, since: Date.now() };
   const waited = Date.now() - next.queuedAt;
   stats.grants += 1;
   stats.totalWaitMs += waited;
@@ -68,8 +79,13 @@ function pump(): void {
  * `ownerId` identifies the requesting worker (or `"main"`) so the lock can be
  * reclaimed if that worker dies holding it.
  */
-export function ownerAcquire(requestId: string, ownerId: string, grant: () => void): void {
-  waiters.push({ requestId, ownerId, grant, queuedAt: Date.now() });
+export function ownerAcquire(
+  requestId: string,
+  ownerId: string,
+  grant: () => void,
+  label = "unlabelled",
+): void {
+  waiters.push({ requestId, ownerId, label, grant, queuedAt: Date.now() });
   // Measured at enqueue: how many writers wanted the lock at once. Measuring at
   // grant time instead reports 1 forever, because the queue has already been
   // drained by one by then.
@@ -79,6 +95,14 @@ export function ownerAcquire(requestId: string, ownerId: string, grant: () => vo
 
 export function ownerRelease(requestId: string): void {
   if (heldBy?.requestId === requestId) {
+    const heldMs = Date.now() - heldBy.since;
+    // `>=` so a sub-millisecond hold still names a section: reporting null
+    // because nothing yet exceeded zero is worse than naming the last holder.
+    if (heldMs >= longestHold.heldMs) {
+      longestHold.heldMs = heldMs;
+      longestHold.label = heldBy.label;
+      longestHold.ownerId = heldBy.ownerId;
+    }
     heldBy = null;
     pump();
     return;
@@ -107,7 +131,14 @@ export function ownerReleaseAllFor(ownerId: string): void {
 export function writeLockDiagnostics(): {
   held: boolean;
   heldByOwner: string | null;
+  /** Which write section holds it right now. */
+  heldByLabel: string | null;
   heldForMs: number;
+  /** The longest single hold since boot, and the section responsible. */
+  longestHoldMs: number;
+  longestHoldLabel: string | null;
+  /** Sections currently queued, so a stall names its victims too. */
+  waitingLabels: string[];
   queueDepth: number;
   grants: number;
   averageWaitMs: number;
@@ -117,7 +148,11 @@ export function writeLockDiagnostics(): {
   return {
     held: heldBy != null,
     heldByOwner: heldBy?.ownerId ?? null,
+    heldByLabel: heldBy?.label ?? null,
     heldForMs: heldBy ? Date.now() - heldBy.since : 0,
+    longestHoldMs: longestHold.heldMs,
+    longestHoldLabel: longestHold.label || null,
+    waitingLabels: waiters.map((waiter) => waiter.label),
     queueDepth: waiters.length,
     grants: stats.grants,
     averageWaitMs: stats.grants === 0 ? 0 : Math.round(stats.totalWaitMs / stats.grants),
@@ -130,6 +165,9 @@ export function writeLockDiagnostics(): {
 export function resetWriteLockForTests(): void {
   waiters.length = 0;
   heldBy = null;
+  longestHold.heldMs = 0;
+  longestHold.label = "";
+  longestHold.ownerId = "";
   stats.grants = 0;
   stats.totalWaitMs = 0;
   stats.maxWaitMs = 0;
@@ -163,6 +201,7 @@ function attachWorkerListener(): void {
 export async function withGlobalSqliteWriteLock<T>(
   work: () => T | Promise<T>,
   onStats?: (stats: WriteLockWaitStats) => void,
+  label = "unlabelled",
 ): Promise<T> {
   const requestId = randomUUID();
   const queuedAt = Date.now();
@@ -172,12 +211,12 @@ export async function withGlobalSqliteWriteLock<T>(
     attachWorkerListener();
     await new Promise<void>((resolve) => {
       pendingGrants.set(requestId, resolve);
-      parentPort!.postMessage({ kind: "writeLockAcquire", requestId });
+      parentPort!.postMessage({ kind: "writeLockAcquire", requestId, label });
     });
   } else {
     await new Promise<void>((resolve) => {
       queueDepthAtGrant = waiters.length;
-      ownerAcquire(requestId, "main", resolve);
+      ownerAcquire(requestId, "main", resolve, label);
     });
   }
 
