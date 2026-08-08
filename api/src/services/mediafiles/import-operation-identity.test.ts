@@ -402,3 +402,32 @@ test("job context wins over provider matches for the reconciled group", () => {
     "the plan's own group beats anything re-derived",
   );
 });
+
+test("a composite plan's cross-provider track keeps its own provenance", () => {
+  // A composite plan draws tracks from several provider releases, so a download
+  // queued against an Apple Music album can legitimately carry a TIDAL-sourced
+  // track. The organizer stamps such a file with the *command's* provider, and
+  // filtering offers by that excluded the one real candidate: a spatial import
+  // that had already placed all eight files correctly then failed with
+  // "0 exact offer contexts".
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({ provider: "apple-music", provider_id: "453015789" });
+  const tidalItem = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'track', '453015789', 'Good Grief', 'available')
+    RETURNING id
+  `).get() as { id: number };
+
+  persistDownloadedProviderProvenance(
+    libraryId,
+    organizeResult(["453015789"], { "453015789": fileId }),
+    [{ provider: "tidal", providerTrackId: "453015789", providerTrackItemId: tidalItem.id }],
+    99,
+  );
+
+  const row = db.prepare(
+    "SELECT provider, provider_item_id FROM TrackFiles WHERE id = ?",
+  ).get(fileId) as { provider: string; provider_item_id: number };
+  assert.equal(row.provider_item_id, tidalItem.id, "the offer is the authority on where the track came from");
+  assert.equal(row.provider, "tidal", "and the file's provider is corrected to match it");
+});

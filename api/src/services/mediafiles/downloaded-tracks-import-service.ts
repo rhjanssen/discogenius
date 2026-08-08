@@ -446,10 +446,24 @@ export function persistDownloadedProviderProvenance(
                 );
             }
 
-            const candidates = trackOffers.filter((offer) =>
-                String(offer.providerTrackId) === String(providerTrackId)
-                && (!file.provider || offer.provider === file.provider)
-            );
+            /**
+             * The offer is the authority on where a track came from; the file's
+             * stamped provider is only a tie-breaker.
+             *
+             * A composite plan draws its tracks from several provider releases,
+             * so a download queued against an Apple Music album can legitimately
+             * carry a TIDAL-sourced track. The organizer stamps such a file with
+             * the *command's* provider, and using that to filter offers then
+             * excluded the one real candidate and failed an import whose files
+             * were already correctly placed. Provider narrows a genuine
+             * ambiguity; it never removes the only answer.
+             */
+            const byTrackId = trackOffers.filter((offer) =>
+                String(offer.providerTrackId) === String(providerTrackId));
+            const narrowed = byTrackId.length > 1 && file.provider
+                ? byTrackId.filter((offer) => offer.provider === file.provider)
+                : byTrackId;
+            const candidates = narrowed.length > 0 ? narrowed : byTrackId;
             if (candidates.length !== 1) {
                 throw new Error(
                     `[ImportDownload] Downloaded track ${providerTrackId} has ${candidates.length} exact offer contexts; refusing ambiguous provenance`,
@@ -477,7 +491,12 @@ export function persistDownloadedProviderProvenance(
                     `[ImportDownload] Provider item ${offer.providerTrackItemId} does not identify ${offer.provider}:track:${offer.providerTrackId}`,
                 );
             }
-            if (file.provider && file.provider !== providerItem.provider) {
+            // The file's stamped provider is the command's, which for a
+            // composite plan is not necessarily the track's. Once the offer is
+            // unambiguous it is the authority, and the update below rewrites
+            // the stamp to match. Only a *contested* track id could redirect
+            // provenance, and the narrowing above already settles that.
+            if (file.provider && file.provider !== providerItem.provider && byTrackId.length > 1) {
                 throw new Error(
                     `[ImportDownload] Reported TrackFiles row ${fileId} belongs to provider ${file.provider}, not ${providerItem.provider}`,
                 );
@@ -487,7 +506,10 @@ export function persistDownloadedProviderProvenance(
                     `[ImportDownload] Reported TrackFiles row ${fileId} has provider entity type ${file.provider_entity_type}, not track`,
                 );
             }
-            if (file.provider_id && String(file.provider_id) !== String(providerItem.provider_id)) {
+            // Same reasoning: the id the organizer stamped can be the album's.
+            if (file.provider_id
+                && String(file.provider_id) !== String(providerItem.provider_id)
+                && byTrackId.length > 1) {
                 throw new Error(
                     `[ImportDownload] Reported TrackFiles row ${fileId} identifies provider track ${file.provider_id}, not ${providerItem.provider_id}`,
                 );
