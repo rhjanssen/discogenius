@@ -181,6 +181,50 @@ export class AcquisitionPlanRepository {
    * Returns false when no such plan exists for exactly this Library and Edition —
    * a plan key alone is not authority to select it.
    */
+  /**
+   * The plans on record for this Edition, when they were built from exactly
+   * these inputs by exactly this planner.
+   *
+   * `policy_hash` covers the policy *and* a digest of the provider evidence the
+   * planner reasons over (see AcquisitionPlanningService), so an unchanged hash
+   * means a rebuild would reproduce what is already stored. Returns null when
+   * anything differs, when no plans exist, or when they are not all current —
+   * a partially-stale set has to be rebuilt rather than trusted.
+   */
+  plansMatchFingerprint(input: {
+    libraryId: number;
+    editionId: number;
+    plannerVersion: number;
+    policyHash: string;
+  }): { selectedPlanId: number | null } | null {
+    const summary = this.db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN planner_version = ? AND policy_hash = ? AND state = 'current' THEN 1 ELSE 0 END) AS matching
+      FROM AcquisitionPlans
+      WHERE library_id = ? AND edition_id = ?
+    `).get(
+      input.plannerVersion,
+      input.policyHash,
+      input.libraryId,
+      input.editionId,
+    ) as { total: number; matching: number | null };
+    if (!summary || summary.total === 0 || Number(summary.matching ?? 0) !== summary.total) {
+      return null;
+    }
+
+    const selected = this.db.prepare(`
+      SELECT plan.id
+      FROM LibraryEditions monitored_edition
+      JOIN AcquisitionPlans plan
+        ON plan.library_id = monitored_edition.library_id
+       AND plan.edition_id = monitored_edition.edition_id
+       AND plan.plan_key = monitored_edition.preferred_plan_key
+      WHERE monitored_edition.library_id = ? AND monitored_edition.edition_id = ?
+    `).get(input.libraryId, input.editionId) as { id: number } | undefined;
+    return { selectedPlanId: selected?.id ?? null };
+  }
+
   selectPlan(input: { libraryId: number; editionId: number; planKey: string }): boolean {
     return this.db.transaction(() => {
       const exists = this.db.prepare(`

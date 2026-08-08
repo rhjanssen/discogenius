@@ -431,3 +431,64 @@ test("a shared ISRC outside the release group is not a source", () => {
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("a plan is rebuilt when its inputs change, and reused when they do not", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-fingerprint-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createCurrentDomainSchema(db);
+    seedStandardDeluxeFixture(db);
+    const service = new AcquisitionPlanningService(db);
+    const args = {
+      libraryId: 1,
+      editionId: 1,
+      providerPriority: ["tidal"],
+      plannerVersion: 1,
+    } as const;
+
+    assert.ok(service.compute({ ...args }));
+    const firstComputedAt = db.prepare(
+      "SELECT computed_at, policy_hash FROM AcquisitionPlans WHERE library_id = 1 AND edition_id = 1 ORDER BY rank LIMIT 1",
+    ).get() as { computed_at: string; policy_hash: string };
+
+    // Nothing changed, so the stored plans are exactly what a rebuild would
+    // produce. They must be reused rather than rewritten.
+    db.prepare("UPDATE AcquisitionPlans SET computed_at = '1999-01-01 00:00:00'").run();
+    service.compute({ ...args });
+    assert.equal(
+      (db.prepare("SELECT computed_at FROM AcquisitionPlans WHERE library_id = 1 AND edition_id = 1 ORDER BY rank LIMIT 1")
+        .get() as { computed_at: string }).computed_at,
+      "1999-01-01 00:00:00",
+      "an unchanged edition must not be replanned",
+    );
+
+    // Provider evidence changes: the deluxe release loses a track's Hi-Res
+    // variant. That is reachable input, so the plan has to be rebuilt.
+    db.prepare("UPDATE ProviderItemAudioVariants SET availability = 'unavailable' WHERE id = 4001").run();
+    service.compute({ ...args });
+    const afterChange = db.prepare(
+      "SELECT computed_at, policy_hash FROM AcquisitionPlans WHERE library_id = 1 AND edition_id = 1 ORDER BY rank LIMIT 1",
+    ).get() as { computed_at: string; policy_hash: string };
+    assert.notEqual(afterChange.computed_at, "1999-01-01 00:00:00", "changed evidence must replan");
+    assert.notEqual(
+      afterChange.policy_hash,
+      firstComputedAt.policy_hash,
+      "the fingerprint must move when the evidence does",
+    );
+
+    // Policy changes are equally reachable.
+    db.prepare("UPDATE AcquisitionPlans SET computed_at = '1999-01-01 00:00:00'").run();
+    db.prepare("UPDATE quality_profiles SET cutoff = 'hires-lossless' WHERE id = 1").run();
+    service.compute({ ...args });
+    assert.notEqual(
+      (db.prepare("SELECT computed_at FROM AcquisitionPlans WHERE library_id = 1 AND edition_id = 1 ORDER BY rank LIMIT 1")
+        .get() as { computed_at: string }).computed_at,
+      "1999-01-01 00:00:00",
+      "a changed quality profile must replan",
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

@@ -447,7 +447,38 @@ export class AcquisitionPlanningService {
       }
     }
 
+    /**
+     * Fingerprint of everything this plan is derived from — the policy *and*
+     * the provider evidence.
+     *
+     * Plans were recomputed for every evaluated Edition on every pass, which is
+     * work proportional to the catalogue rather than to what changed: a refresh
+     * that altered nothing still rebuilt every plan in the library. But they
+     * cannot simply be computed less often either, because curation reads them
+     * to decide what to monitor and a stale plan means a stale decision.
+     *
+     * Hashing the inputs settles both. The candidate rows above are exactly
+     * what the planner reasons over — every accepted match, every audio variant
+     * and their availability — so a digest of them plus the policy is complete
+     * by construction: if the digest is unchanged, no reachable input changed,
+     * and the plans that exist are the plans this pass would produce.
+     */
+    const candidateDigest = crypto.createHash("sha256");
+    for (const row of rows) {
+      candidateDigest.update([
+        row.provider_edition_match_id, row.relation, row.source_track_count,
+        row.release_explicit, row.provider_edition_member_id, row.provider_track_match_id,
+        row.track_id, row.track_explicit,
+        row.track_variant_id, row.track_quality, row.track_codec, row.track_bitrate,
+        row.track_bit_depth, row.track_sample_rate, row.track_availability,
+        row.release_variant_id, row.release_quality, row.release_codec, row.release_bitrate,
+        row.release_bit_depth, row.release_sample_rate, row.release_availability,
+      ].join(""));
+      candidateDigest.update("");
+    }
     const policyHash = crypto.createHash("sha256").update(JSON.stringify({
+      candidates: candidateDigest.digest("hex"),
+      trackIds: orderedTrackIds,
       qualityProfileId: context.quality_profile_id,
       allowedQualities,
       preferenceOrder,
@@ -460,6 +491,28 @@ export class AcquisitionPlanningService {
           : null
       ),
     })).digest("hex");
+
+    // Nothing this plan is derived from has changed, so rebuilding it would
+    // reproduce it exactly. Skipping is what makes a refresh cheap without
+    // letting curation read a stale plan: an input that *did* change lands in
+    // the digest and the plan is rebuilt on the spot.
+    //
+    // A caller steering the outcome (an explicit provider preference, an
+    // exclusive-source lock) is asking for a decision rather than for the
+    // cached one, so those always recompute.
+    if (input.preferredProviderEditionMatchId == null && input.exclusiveSource !== true) {
+      const unchanged = this.repository.plansMatchFingerprint({
+        libraryId: input.libraryId,
+        editionId: input.editionId,
+        plannerVersion: input.plannerVersion,
+        policyHash,
+      });
+      if (unchanged) {
+        planTimer.report(`edition ${input.editionId} (unchanged)`);
+        return unchanged.selectedPlanId;
+      }
+    }
+
     const explicitPreference = input.preferredProviderEditionMatchId;
     const preservedManualPreference = context.selection_mode === "manual" && context.locked
       ? context.current_primary_provider_edition_match_id
