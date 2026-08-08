@@ -477,6 +477,20 @@ test("a plan is rebuilt when its inputs change, and reused when they do not", ()
       "the fingerprint must move when the evidence does",
     );
 
+    // A monitored Edition whose selection was released - which is what
+    // re-ingesting a provider release does before deleting the plans built on
+    // it - must be replanned even when the surviving plans still fingerprint
+    // clean. Reusing them there strands the Edition with no selected plan, and
+    // the album page then shows no provider and no offers at all.
+    db.prepare("UPDATE AcquisitionPlans SET computed_at = '1999-01-01 00:00:00'").run();
+    db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL WHERE library_id = 1 AND edition_id = 1").run();
+    assert.ok(service.compute({ ...args }), "a released selection must be rebuilt");
+    assert.ok(
+      (db.prepare("SELECT preferred_plan_key FROM LibraryEditions WHERE library_id = 1 AND edition_id = 1")
+        .get() as { preferred_plan_key: string | null }).preferred_plan_key,
+      "and the Edition must end up pointing at a plan again",
+    );
+
     // Policy changes are equally reachable.
     db.prepare("UPDATE AcquisitionPlans SET computed_at = '1999-01-01 00:00:00'").run();
     db.prepare("UPDATE quality_profiles SET cutoff = 'hires-lossless' WHERE id = 1").run();

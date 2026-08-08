@@ -213,16 +213,26 @@ export class AcquisitionPlanRepository {
       return null;
     }
 
+    // A monitored Edition must always point at one of its plans. Re-ingesting a
+    // provider release releases that reference before deleting the plans built
+    // on it, and the planner re-points it when it rebuilds — so reusing plans
+    // while the reference is still dangling strands the Edition with no
+    // selection at all, and the album page shows no provider and no offers.
+    // Rebuild instead: the selection is part of what this function attests to.
+    const monitored = this.db.prepare(`
+      SELECT preferred_plan_key
+      FROM LibraryEditions
+      WHERE library_id = ? AND edition_id = ?
+    `).get(input.libraryId, input.editionId) as { preferred_plan_key: string | null } | undefined;
+    if (!monitored) return { selectedPlanId: null };
+    if (!monitored.preferred_plan_key) return null;
+
     const selected = this.db.prepare(`
-      SELECT plan.id
-      FROM LibraryEditions monitored_edition
-      JOIN AcquisitionPlans plan
-        ON plan.library_id = monitored_edition.library_id
-       AND plan.edition_id = monitored_edition.edition_id
-       AND plan.plan_key = monitored_edition.preferred_plan_key
-      WHERE monitored_edition.library_id = ? AND monitored_edition.edition_id = ?
-    `).get(input.libraryId, input.editionId) as { id: number } | undefined;
-    return { selectedPlanId: selected?.id ?? null };
+      SELECT id FROM AcquisitionPlans
+      WHERE library_id = ? AND edition_id = ? AND plan_key = ?
+    `).get(input.libraryId, input.editionId, monitored.preferred_plan_key) as { id: number } | undefined;
+    if (!selected) return null;
+    return { selectedPlanId: selected.id };
   }
 
   selectPlan(input: { libraryId: number; editionId: number; planKey: string }): boolean {
