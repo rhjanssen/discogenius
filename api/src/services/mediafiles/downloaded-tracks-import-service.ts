@@ -231,16 +231,36 @@ export function persistPreparedImportQuality(
     const importedTrackFileIds = organizeResult.importedTrackFileIds ?? {};
     const processed = new Set(organizeResult.processedTrackIds.map(String));
 
-    // Every decision must name a track this operation actually organized.
-    const orphanKeys = [...outcomes.keys()].filter((key) => !processed.has(String(key)));
-    if (orphanKeys.length > 0) {
-        throw new Error(
-            `[ImportDownload] Prepared quality decisions reference ${orphanKeys.length} track(s) that were not organized: ${orphanKeys.join(", ")}`,
+    // Decisions are prepared by scanning the download workspace, which can hold
+    // debris from an earlier download that failed part-way (an Apple decrypt
+    // error leaves its partial files behind). Those files are not ours, so a
+    // decision keyed to one simply has nothing to apply — dropping it is the
+    // whole correction. Failing the import instead let one stale file from a
+    // previous operation abort an otherwise complete one: a real download of 12
+    // tracks died reporting 18 unorganized ids spanning three providers.
+    //
+    // This does NOT relax the check below. What made the old positional
+    // fallback dangerous was *guessing* which row a decision belonged to; a
+    // decision for a track we organized but cannot resolve is still a bug and
+    // still throws.
+    const applicable = new Map<string, PreparedImportQuality>();
+    const foreignKeys: string[] = [];
+    for (const [key, outcome] of outcomes) {
+        if (processed.has(String(key))) {
+            applicable.set(String(key), outcome);
+        } else {
+            foreignKeys.push(String(key));
+        }
+    }
+    if (foreignKeys.length > 0) {
+        console.warn(
+            `[ImportDownload] Ignoring ${foreignKeys.length} prepared quality decision(s) for files this operation did not organize`
+            + ` (stale download workspace content): ${foreignKeys.join(", ")}`,
         );
     }
 
-    // ...and must resolve to exactly one TrackFiles row.
-    const missingRows = [...outcomes.keys()].filter((key) => importedTrackFileIds[String(key)] == null);
+    // Every remaining decision must resolve to exactly one TrackFiles row.
+    const missingRows = [...applicable.keys()].filter((key) => importedTrackFileIds[key] == null);
     if (missingRows.length > 0) {
         throw new Error(
             `[ImportDownload] No imported TrackFiles row reported for ${missingRows.length} track(s) with prepared quality: ${missingRows.join(", ")}`,
@@ -248,11 +268,11 @@ export function persistPreparedImportQuality(
     }
 
     const distinctRowIds = new Set(
-        [...outcomes.keys()].map((key) => importedTrackFileIds[String(key)]),
+        [...applicable.keys()].map((key) => importedTrackFileIds[key]),
     );
-    if (distinctRowIds.size !== outcomes.size) {
+    if (distinctRowIds.size !== applicable.size) {
         throw new Error(
-            `[ImportDownload] ${outcomes.size} prepared quality decision(s) map onto only ${distinctRowIds.size} distinct TrackFiles row(s); refusing to guess`,
+            `[ImportDownload] ${applicable.size} prepared quality decision(s) map onto only ${distinctRowIds.size} distinct TrackFiles row(s); refusing to guess`,
         );
     }
 
@@ -274,8 +294,8 @@ export function persistPreparedImportQuality(
     `);
 
     db.transaction(() => {
-        for (const [providerTrackId, outcome] of outcomes) {
-            const fileId = importedTrackFileIds[String(providerTrackId)];
+        for (const [providerTrackId, outcome] of applicable) {
+            const fileId = importedTrackFileIds[providerTrackId];
             const row = loadRow.get(fileId) as {
                 id: number;
                 provider: string | null;

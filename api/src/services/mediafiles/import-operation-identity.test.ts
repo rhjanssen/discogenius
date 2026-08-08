@@ -175,18 +175,24 @@ test("an unreported track fails closed instead of being position-matched", () =>
   );
 });
 
-test("a decision for a track that was not organized fails closed", () => {
+test("a decision for a file this operation did not organize is ignored, not fatal", () => {
+  // Quality decisions are prepared by scanning the download workspace, which can
+  // hold debris from an earlier download that failed part-way. Such a decision
+  // has nothing to apply, so dropping it is the whole correction — failing the
+  // import instead let one stale file abort an otherwise complete one.
   const libraryId = seedLibrary();
   const fileId = seedTrackFile();
-  assert.throws(
-    () => persistPreparedImportQuality(
-      libraryId,
-      new Map([["never-organized", QUALITY]]),
-      organizeResult(["prov-track-1"], { "prov-track-1": fileId }),
-      "tidal",
-    ),
-    /were not organized/,
+  persistPreparedImportQuality(
+    libraryId,
+    new Map([["prov-track-1", QUALITY], ["stale-from-another-download", QUALITY]]),
+    organizeResult(["prov-track-1"], { "prov-track-1": fileId }),
+    "tidal",
   );
+  const row = db.prepare(
+    "SELECT library_id, source_quality, imported_quality FROM TrackFiles WHERE id = ?",
+  ).get(fileId) as { library_id: number; source_quality: string; imported_quality: string };
+  assert.equal(row.library_id, libraryId, "the real track still imports");
+  assert.equal(row.imported_quality, QUALITY.importedQuality);
 });
 
 test("two decisions collapsing onto one row fails closed", () => {
