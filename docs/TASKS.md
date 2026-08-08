@@ -121,6 +121,61 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
   2.8.1 along with medley/multi-recording video UX and manually selecting
   additional losing candidates under `inline_only`.
 
+### Open defects (found during 2.8 hardening, not yet fixed)
+
+- **`0 exact offer contexts` after a *successful* album import.** The spatial
+  download of `345875dc-147f-4122-83dd-18c7364cb93d` placed all 8 Atmos files
+  correctly and then failed with `[ImportDownload] Downloaded track 453015789
+  has 0 exact offer contexts; refusing ambiguous provenance`. The work
+  succeeded; the command is marked failed. Track `453015789` is
+  `tidal:"Good Grief"` with exactly one accepted `ProviderTrackMatch`, so the
+  provenance lookup is not finding something that exists — most likely because
+  the command's `providerId` is an Apple album (`1827278264`) while the track
+  came from a TIDAL source in a cross-provider composite plan. Reproduce by
+  re-queueing that album's spatial slot.
+- **Apple Music video download fails** with `apple-music-downloader exited with
+  code 1: Decrypt failed: exit status 1`. Recreating the wrapper container did
+  not clear it; not yet retested after recreation.
+
+### Test matrix still to run
+
+Covered so far: metadata refresh, provider matching, curation, and TIDAL +
+Apple Music stereo *and* spatial download → import → organize (verified 8/8
+FLAC 24/96 into the stereo library and 8/8 Atmos E-AC-3 into the spatial one,
+with correct per-library routing).
+
+Not yet covered:
+
+- Video downloads end to end (any provider).
+- Unmapped-file / manual import.
+- Per-provider capability sweep: Deezer, YouTube Music, SoundCloud, Amazon
+  Music — stereo audio, and video where the provider claims it.
+- Restart / idempotence: re-running a completed download+import must be a
+  no-op rather than a duplicate.
+- Fresh-database soak with 500+ artists and no code changes during the run.
+
+### Derived-state invalidation — the shape behind most 2.8 defects
+
+`provider evidence → ProviderTrackMatches → AcquisitionPlans → curation`. Each
+layer is cached and derived from the one before, and every one of them failed to
+invalidate at some point during 2.8. When touching any of them:
+
+- Bump `PROVIDER_TRACK_MATCHER_VERSION` in the *same commit* as any change to
+  `describeTrackMatch` or the title helpers it depends on. Stored matches are
+  cached decisions; without the bump an improved matcher only ever reaches
+  releases the provider happens to return again.
+- A monitored Edition must always point at one of its plans. `plansMatchFingerprint`
+  refuses to reuse plans when `preferred_plan_key` is missing or unresolvable —
+  skipping that check strands Editions with no selection and the album page then
+  shows no provider and no offers.
+- Two foreign keys abort a re-ingest wholesale if their references are not
+  released first: `AcquisitionPlanTracks.provider_track_match_id` (no cascade)
+  and `LibraryEditions.preferred_plan_key → AcquisitionPlans`. Release the
+  LibraryEditions reference *before* deleting plans, as
+  `AcquisitionPlanRepository.replacePlans` documents.
+- Anything that runs after the bytes are on disk is enrichment and must fail
+  soft. A provider 404 during organize used to lose a completed download.
+
 ## Engineering principles (apply to every planned task below)
 
 These tasks describe *symptoms*. Fix the *root* with one well-designed, universal
