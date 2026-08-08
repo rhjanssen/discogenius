@@ -86,6 +86,74 @@ export type QueueTrackRow = {
     providerTrackId?: string;
 };
 
+/**
+ * Re-resolve the exact provider rows an offer names after a fallback.
+ *
+ * A fallback swaps which provider actually supplies a track, so every id that
+ * identified the original provider's row is now wrong: the item, its edition
+ * and the audio variant all belong to the provider we just failed on. Carrying
+ * them made the offer describe two different tracks at once, and the import
+ * refused it — "Provider item 13547 does not identify tidal:track:506688457" —
+ * after the audio had already been fetched and filed.
+ *
+ * Anything that cannot be resolved for the new provider is cleared rather than
+ * inherited. A null is an honest "not known"; a stale id is a false claim, and
+ * the import checks these precisely because provenance decides what the library
+ * believes it holds.
+ */
+export function resolveFallbackProvenance(next: {
+    provider: string;
+    providerId: string;
+    providerAlbumId?: string | null;
+}): {
+    providerTrackItemId?: number;
+    providerEditionItemId?: number | null;
+    providerAudioVariantId?: number | null;
+    acquisitionPlanSourceId?: number | null;
+} {
+    const trackItem = db.prepare(`
+        SELECT id FROM ProviderItems
+        WHERE provider = ? AND entity_type = 'track' AND provider_id = ?
+    `).get(next.provider, String(next.providerId)) as { id: number } | undefined;
+
+    const editionItem = next.providerAlbumId
+        ? db.prepare(`
+            SELECT id FROM ProviderItems
+            WHERE provider = ? AND entity_type = 'release' AND provider_id = ?
+        `).get(next.provider, String(next.providerAlbumId)) as { id: number } | undefined
+        : undefined;
+
+    // The variant the new provider can actually deliver for this track. Best
+    // available rather than the tier the plan chose from the old provider,
+    // which is exactly what a fallback is conceding.
+    const variant = trackItem
+        ? db.prepare(`
+            SELECT id FROM ProviderItemAudioVariants
+            WHERE provider_item_id = ?
+              AND availability NOT IN (
+                'unavailable', 'no_longer_available', 'geography_restricted',
+                'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
+              )
+            ORDER BY CASE quality_class
+                WHEN 'spatial' THEN 0
+                WHEN 'hires-lossless' THEN 1
+                WHEN 'lossless' THEN 2
+                ELSE 3
+              END, id
+            LIMIT 1
+        `).get(trackItem.id) as { id: number } | undefined
+        : undefined;
+
+    return {
+        providerTrackItemId: trackItem?.id,
+        providerEditionItemId: editionItem?.id ?? null,
+        providerAudioVariantId: variant?.id ?? null,
+        // The plan source selected the *original* provider's release; a
+        // fallback is by definition off-plan.
+        acquisitionPlanSourceId: null,
+    };
+}
+
 export function resetTracksForImportState(
     tracks?: DownloadTrackStateEntry[],
 ): DownloadTrackStateEntry[] | undefined {
@@ -2418,6 +2486,13 @@ export class DownloadProcessor {
                             providerTrackId: next.providerId,
                             providerAlbumId: next.providerAlbumId ?? offer.providerAlbumId,
                             quality: next.quality ?? offer.quality,
+                            // Provenance describes the file that was actually
+                            // downloaded, so it moves with the fallback. Carrying
+                            // the original provider's item, edition and variant
+                            // ids made the offer describe two different tracks at
+                            // once, and the import refused it — after the audio
+                            // had already been fetched and filed.
+                            ...resolveFallbackProvenance(next),
                         };
                         emitProgress({
                             state: "downloading",

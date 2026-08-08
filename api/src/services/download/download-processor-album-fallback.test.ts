@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { listProviderAlbumFallbackTracks } = await import("./download-processor.js");
+const { listProviderAlbumFallbackTracks, resolveFallbackProvenance } = await import("./download-processor.js");
 
 beforeEach(() => {
   db.prepare("DELETE FROM ProviderTrackMatches").run();
@@ -210,4 +210,51 @@ test("a rejected typed edge does not supply canonical numbering", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.title, "Provider Title", "a rejected edge must not supply the canonical title");
   assert.equal(rows[0]?.track_number, null);
+});
+
+test("a fallback moves provenance to the provider that actually supplied the track", () => {
+  // A fallback swaps which provider supplies a track, so every id naming the
+  // original provider's row is now wrong. Carrying them made one offer describe
+  // two different tracks, and the import refused it — "Provider item 13547 does
+  // not identify tidal:track:506688457" — after the audio was already filed.
+  const apple = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('apple-music', 'track', '1658644939', 'Make It', 'available') RETURNING id
+  `).get() as { id: number };
+  const tidalRelease = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'release', '506688450', 'Aerosmith', 'available') RETURNING id
+  `).get() as { id: number };
+  const tidalTrack = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'track', '506688457', 'Make It', 'available') RETURNING id
+  `).get() as { id: number };
+  const variant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, availability)
+    VALUES (?, 'lossless', 'lossless', 'available') RETURNING id
+  `).get(tidalTrack.id) as { id: number };
+
+  const moved = resolveFallbackProvenance({
+    provider: "tidal",
+    providerId: "506688457",
+    providerAlbumId: "506688450",
+  });
+  assert.equal(moved.providerTrackItemId, tidalTrack.id, "the item is the one that supplied the file");
+  assert.notEqual(moved.providerTrackItemId, apple.id);
+  assert.equal(moved.providerEditionItemId, tidalRelease.id);
+  assert.equal(moved.providerAudioVariantId, variant.id);
+  assert.equal(moved.acquisitionPlanSourceId, null, "a fallback is by definition off-plan");
+});
+
+test("unresolvable fallback provenance is cleared, not inherited", () => {
+  // A null is an honest "not known"; a stale id is a false claim, and the import
+  // checks these precisely because provenance decides what the library holds.
+  const moved = resolveFallbackProvenance({
+    provider: "deezer",
+    providerId: "no-such-track",
+    providerAlbumId: "no-such-album",
+  });
+  assert.equal(moved.providerTrackItemId, undefined);
+  assert.equal(moved.providerEditionItemId, null);
+  assert.equal(moved.providerAudioVariantId, null);
 });
