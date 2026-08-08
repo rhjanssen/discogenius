@@ -1847,9 +1847,29 @@ export class OrganizerService {
         ...offerAlbumIds,
       ]));
       if (albumIds.length === 0) throw new Error("Missing tidal id");
+      /**
+       * Refresh the provider's album facts, but never let that fail the import.
+       *
+       * The audio is already downloaded and being filed. A catalogue lookup is
+       * enrichment — better titles, artwork, audio variants — and the provider
+       * answering 404 for one album is not a reason to lose the files. A real
+       * Apple Music spatial import died exactly here on
+       * "/v1/catalog/nl/albums/453015784" after the download had succeeded.
+       *
+       * Naming falls back to what is already stored, which is what the rest of
+       * this function reads anyway.
+       */
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       for (const albumIdVal of albumIds) {
-        await RefreshAlbumService.refreshMetadata(albumIdVal, { provider: streamingProviderId });
+        try {
+          await RefreshAlbumService.refreshMetadata(albumIdVal, { provider: streamingProviderId });
+        } catch (error) {
+          console.warn(
+            `[Organizer] Album metadata refresh failed for ${streamingProviderId}:${albumIdVal}; `
+            + "filing the downloaded audio with the metadata already on record:",
+            error,
+          );
+        }
       }
 
       // Provider-native facts for the release, plus the canonical identity its
@@ -2717,8 +2737,18 @@ export class OrganizerService {
       if (!albumId) throw new Error(`Track ${providerId} missing album_id`);
 
       // Ensure album + tracks in DB for naming and to locate track metadata.
+      // Enrichment, not a precondition: the file is downloaded either way, and
+      // a provider 404 must not turn a completed download into a lost one.
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
-      await RefreshAlbumService.refreshMetadata(albumId, { provider: streamingProviderId });
+      try {
+        await RefreshAlbumService.refreshMetadata(albumId, { provider: streamingProviderId });
+      } catch (error) {
+        console.warn(
+          `[Organizer] Album metadata refresh failed for ${streamingProviderId}:${albumId}; `
+          + "filing the downloaded track with the metadata already on record:",
+          error,
+        );
+      }
 
       // Canonical album identity comes from the accepted release match, not from
       // provider-shadow columns; the provider row only contributes its own facts.
