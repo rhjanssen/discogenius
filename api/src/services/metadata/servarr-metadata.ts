@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { db, runChunkedWrite, runGatedChunkedWrite, withSqliteWriteGate } from "../../database.js";
+import { db, runGatedChunkedWrite, withSqliteWriteGate } from "../../database.js";
 import {
   RemoteOperationError,
   type RemoteOperationContext,
@@ -760,9 +760,9 @@ export class ServarrMetadataService {
   async syncReleaseGroup(releaseGroupMbid: string, artistMbid: string): Promise<void> {
     const { catalogProviderRegistry } = await import("../catalog/index.js");
     const detail = await catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid);
-    await withSqliteWriteGate(() => {
-      this.reconcileReleaseGroupDetail(releaseGroupMbid, artistMbid, detail);
-    }, "servarr:release-group");
+    // reconcileReleaseGroupDetail takes the write gate itself, at the smallest
+    // atomic boundary (header transaction, then per-chunk tracks).
+    await this.reconcileReleaseGroupDetail(releaseGroupMbid, artistMbid, detail);
   }
 
   /**
@@ -780,26 +780,21 @@ export class ServarrMetadataService {
     const provider = catalogProviderRegistry.getActive();
     if (typeof provider.getReleaseGroupDetails === "function") {
       const details = await provider.getReleaseGroupDetails(mbids);
-      // One gate acquisition per release group, not one for the whole artist.
-      // Holding it across a prolific artist's entire catalogue was measured at
-      // 59s on the live library, with peers waiting up to 14s and a queue five
-      // deep — the gate then undoes the interleaving that chunked writes exist
-      // to provide. Each release group is independently consistent, so
-      // releasing between them costs nothing and lets other workers write.
+      // Each release group is independently consistent, and reconcile takes the
+      // gate itself per header transaction and per track chunk, so a prolific
+      // artist's catalogue never serialises behind one long acquisition.
       for (const entry of details) {
         try {
-          await withSqliteWriteGate(() => {
-            this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
-          }, "servarr:release-group-bulk");
+          await this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
         } catch (error) {
           console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
         }
       }
     } else {
       // Hosted Servarr exposes one album-detail endpoint per release group, as
-      // Lidarr itself uses. Fetch a small bounded group concurrently, then run
-      // the synchronous SQLite reconciliation under the write gate so network
-      // latency overlaps without multiplying writers across RefreshArtist jobs.
+      // Lidarr itself uses. Fetch a small bounded group concurrently, then
+      // reconcile serially so network latency overlaps without multiplying
+      // writers across RefreshArtist jobs.
       const limit = pLimit(4);
       const details = await Promise.all(mbids.map((mbid) => limit(async () => {
         try {
@@ -812,9 +807,7 @@ export class ServarrMetadataService {
       for (const entry of details) {
         if (!entry) continue;
         try {
-          await withSqliteWriteGate(() => {
-            this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
-          }, "servarr:release-group-each");
+          await this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
         } catch (error) {
           console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
         }
@@ -827,7 +820,7 @@ export class ServarrMetadataService {
    * tracks + recordings). Shared by the single and bulk sync paths so the write
    * behaviour is identical regardless of how the detail was fetched.
    */
-  private reconcileReleaseGroupDetail(releaseGroupMbid: string, artistMbid: string, detail: LidarrReleaseGroupDetail): void {
+  private async reconcileReleaseGroupDetail(releaseGroupMbid: string, artistMbid: string, detail: LidarrReleaseGroupDetail): Promise<void> {
     const ownerArtistMbid = String(detail.artistid || detail.artistId || artistMbid).trim();
 
     // Diff-reconcile: skip rewriting an unchanged release group's entire
@@ -925,61 +918,70 @@ export class ServarrMetadataService {
 
     const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
 
-    // Release group + its release rows are bounded and share one transaction.
-    db.transaction(() => {
-      MusicBrainzArtistCreditService.ensureArtist(ownerArtistMbid);
+    // Release group + its release rows are bounded and share one transaction —
+    // the smallest atomic unit here, since a release row referencing an Albums
+    // row that was never written is not a state any reader should observe.
+    await withSqliteWriteGate(() => {
+      db.transaction(() => {
+        MusicBrainzArtistCreditService.ensureArtist(ownerArtistMbid);
 
-      const rawDetail = detail as Record<string, any>;
-      insertRg.run(
-        releaseGroupMbid,
-        ownerArtistMbid,
-        detail.title || "",
-        detail.type || null,
-        JSON.stringify(detail.secondarytypes || []),
-        detail.releasedate || rawDetail.ReleaseDate || null,
-        detail.disambiguation || null,
-        detail.overview ?? rawDetail.overview ?? null,
-        JSON.stringify(albumImages),
-        JSON.stringify(detail.links ?? rawDetail.links ?? []),
-        JSON.stringify(detail.genres ?? rawDetail.genres ?? []),
-        JSON.stringify(detail.rating ?? rawDetail.rating ?? rawDetail.Rating ?? null),
-        JSON.stringify(detail.aliases ?? rawDetail.aliases ?? []),
-        JSON.stringify(rawDetail.oldids ?? rawDetail.oldIds ?? []),
-        contentHash,
-      );
-      MusicBrainzArtistCreditService.ensurePrimaryScope(releaseGroupMbid, ownerArtistMbid);
-
-      for (const release of releases) {
-        const rawRelease = release as Record<string, any>;
-        insertRelease.run(
-          release.Id,
+        const rawDetail = detail as Record<string, any>;
+        insertRg.run(
           releaseGroupMbid,
           ownerArtistMbid,
-          release.Title,
-          release.Status || null,
-          JSON.stringify(release.Country || []),
-          release.ReleaseDate || null,
-          release.Barcode ?? rawRelease.barcode ?? null,
-          release.Disambiguation || null,
-          release.MediaCount ?? release.MediumCount ?? (release.Media || []).length,
-          release.TrackCount ?? (release.Tracks || []).length,
-          JSON.stringify(release.Label ?? rawRelease.label ?? []),
-          JSON.stringify(release.Media ?? rawRelease.media ?? []),
-          JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
+          detail.title || "",
+          detail.type || null,
+          JSON.stringify(detail.secondarytypes || []),
+          detail.releasedate || rawDetail.ReleaseDate || null,
+          detail.disambiguation || null,
+          detail.overview ?? rawDetail.overview ?? null,
+          JSON.stringify(albumImages),
+          JSON.stringify(detail.links ?? rawDetail.links ?? []),
+          JSON.stringify(detail.genres ?? rawDetail.genres ?? []),
+          JSON.stringify(detail.rating ?? rawDetail.rating ?? rawDetail.Rating ?? null),
+          JSON.stringify(detail.aliases ?? rawDetail.aliases ?? []),
+          JSON.stringify(rawDetail.oldids ?? rawDetail.oldIds ?? []),
+          contentHash,
         );
-      }
-    })();
+        MusicBrainzArtistCreditService.ensurePrimaryScope(releaseGroupMbid, ownerArtistMbid);
+
+        for (const release of releases) {
+          const rawRelease = release as Record<string, any>;
+          insertRelease.run(
+            release.Id,
+            releaseGroupMbid,
+            ownerArtistMbid,
+            release.Title,
+            release.Status || null,
+            JSON.stringify(release.Country || []),
+            release.ReleaseDate || null,
+            release.Barcode ?? rawRelease.barcode ?? null,
+            release.Disambiguation || null,
+            release.MediaCount ?? release.MediumCount ?? (release.Media || []).length,
+            release.TrackCount ?? (release.Tracks || []).length,
+            JSON.stringify(release.Label ?? rawRelease.label ?? []),
+            JSON.stringify(release.Media ?? rawRelease.media ?? []),
+            JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
+          );
+        }
+      })();
+    }, "servarr:release-group-header");
 
     // Tracks/recordings scale with the whole release group (a popular RG can have
     // dozens of editions × many tracks). Chunk them so the write lock isn't held
-    // for the entire tracklist while concurrent workers wait.
+    // for the entire tracklist while concurrent workers wait — and take the gate
+    // per chunk, not around the loop. Reconciling one prolific release group
+    // under a single acquisition was measured at 51.9s on the live library, with
+    // peers waiting 45.2s behind a queue eight deep: the chunking bounded
+    // SQLite's own lock but the gate serialised the whole tracklist anyway.
+    // Each chunk is idempotent upserts, so committing between them is safe.
     const trackRows: Array<{ release: typeof releases[number]; track: any }> = [];
     for (const release of releases) {
       for (const track of release.Tracks || []) {
         trackRows.push({ release, track });
       }
     }
-    runChunkedWrite(trackRows, ({ release, track }) => {
+    await runGatedChunkedWrite(trackRows, ({ release, track }) => {
       const isrcs = Array.isArray(track.Isrcs)
         ? track.Isrcs
         : Array.isArray(track.isrcs)
@@ -1010,7 +1012,7 @@ export class ServarrMetadataService {
         track.TrackName,
         track.DurationMs,
       );
-    });
+    }, 50, "servarr:release-group-tracks");
   }
 }
 

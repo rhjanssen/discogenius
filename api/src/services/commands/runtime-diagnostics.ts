@@ -5,6 +5,7 @@ import { resolveCommandNoProgressTimeoutMs } from "./command-liveness-policy.js"
 import { CommandQueueManager } from "./command-queue-manager.js";
 import { CommandWorkerPool } from "./worker/command-worker-pool.js";
 import { writeLockDiagnostics } from "./worker/sqlite-write-lock.js";
+import { walMaintenanceDiagnostics } from "../database/wal-maintenance.js";
 
 interface SlowRequestSnapshot {
   method: string;
@@ -171,6 +172,12 @@ export function getRuntimeDiagnosticsSnapshot() {
      * shape that used to surface only as SQLITE_BUSY and expired leases.
      */
     sqliteWriteLock: ReturnType<typeof writeLockDiagnostics>;
+    /**
+     * Whether forcing a checkpoint window actually reclaims the WAL. A run of
+     * attempts with `busy=1` and `reclaimedBytes` near zero means the log is
+     * still growing unbounded and the readers were never out of the way.
+     */
+    walMaintenance: ReturnType<typeof walMaintenanceDiagnostics>;
   } | null = null;
   try {
     const noProgressOverrideMs = readIntEnv("DISCOGENIUS_COMMAND_NO_PROGRESS_MS", 0, 0);
@@ -182,6 +189,7 @@ export function getRuntimeDiagnosticsSnapshot() {
       }),
       workerPool: CommandWorkerPool.getSnapshot(),
       sqliteWriteLock: writeLockDiagnostics(),
+      walMaintenance: walMaintenanceDiagnostics(),
     };
   } catch {
     // Diagnostics can be read during early bootstrap before the active schema

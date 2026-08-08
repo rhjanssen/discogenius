@@ -296,31 +296,22 @@ export function flushDatabase(checkpointMode: "PASSIVE" | "FULL" | "RESTART" | "
   }
 }
 
-// A PASSIVE checkpoint advances the WAL but never shrinks the physical file, so
-// under sustained write load the .db-wal stays pinned at its high-water mark
-// (observed at 200+ MB), and every reader then has to scan that bloated WAL —
-// the slow-reads-after-hours cycle. This runs PASSIVE every tick (cheap, never
-// blocks) and, once the WAL has grown past a threshold, attempts a TRUNCATE to
-// physically reclaim the file. The TRUNCATE is made non-blocking (busy_timeout
-// = 0) so a contended attempt bails instantly instead of stalling the
-// synchronous event loop; it simply succeeds on the next write lull.
-const WAL_TRUNCATE_THRESHOLD_PAGES = 8000; // ~32 MB at the default 4 KB page size
-
+/**
+ * The cheap half of WAL upkeep, safe to run on the HTTP event loop.
+ *
+ * PASSIVE copies whatever frames it can and never blocks, so a contended tick
+ * costs nothing. What it cannot do is *reset* the log: that needs a moment when
+ * no reader holds an old snapshot, and under multi-worker load such moments
+ * have to be waited for. This used to escalate to `wal_checkpoint(TRUNCATE)`
+ * with `busy_timeout = 0` — which by construction bails on the first
+ * conflicting reader and so essentially never reclaimed anything (measured: the
+ * WAL still reached 1.75 GB with this running every 15s). That escalation now
+ * lives on the WAL maintenance thread, where it is allowed a finite wait
+ * without stalling every request in the process.
+ */
 export function checkpointWal(): void {
   try {
-    const result = db.pragma("wal_checkpoint(PASSIVE)") as Array<{ log?: number }> | undefined;
-    const walPages = Array.isArray(result) && result[0] ? Number(result[0].log ?? 0) : 0;
-    if (!Number.isFinite(walPages) || walPages <= WAL_TRUNCATE_THRESHOLD_PAGES) {
-      return;
-    }
-
-    const previousBusyTimeout = db.pragma("busy_timeout", { simple: true });
-    try {
-      db.pragma("busy_timeout = 0");
-      db.pragma("wal_checkpoint(TRUNCATE)");
-    } finally {
-      db.pragma(`busy_timeout = ${previousBusyTimeout}`);
-    }
+    db.pragma("wal_checkpoint(PASSIVE)");
   } catch (error) {
     console.warn("⚠️  Failed to checkpoint SQLite WAL:", error);
   }

@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 
 import { checkpointWal, closeDatabase, initDatabase } from "./database.js";
+import { startWalMaintenance, stopWalMaintenance } from "./services/database/wal-maintenance.js";
 import { authMiddleware } from "./middleware/auth.js";
 import albumsRouter from "./routes/v1/album.js";
 import appAuthRouter from "./routes/app-auth.js";
@@ -169,14 +170,15 @@ if (startupHealthSnapshot.status !== "healthy") {
 // from the bridged events.
 
 // Periodically drain the WAL so a write-heavy backlog (worker pool + main)
-// can't grow it into the hundreds of MB and slow every reader. checkpointWal()
-// runs a non-blocking PASSIVE every tick and escalates to a non-blocking
-// TRUNCATE once the WAL is large, physically reclaiming the file during write
-// lulls — neither call ever blocks the event loop.
+// can't grow it into the gigabytes and make every reader pay to search it.
+// checkpointWal() runs a non-blocking PASSIVE here; the escalation that has to
+// *wait* for a reader gap runs on its own thread, because a blocking checkpoint
+// on this one would stall every request and SSE stream.
 const walCheckpointTimer = setInterval(() => {
   checkpointWal();
 }, readIntEnv("DISCOGENIUS_WAL_CHECKPOINT_INTERVAL_MS", 15000, 1000));
 walCheckpointTimer.unref();
+startWalMaintenance();
 
 app.use((req, res, next) => {
   const finishTracking = trackRuntimeRequest(req.method, req.originalUrl || req.path);
@@ -389,6 +391,10 @@ async function shutdown(signal: string) {
   } catch (error) {
     console.warn("[APP] Failed to stop command worker pool during shutdown:", error);
   }
+
+  // After the writers are gone, so the final checkpoint on close has no one to
+  // wait for.
+  await stopWalMaintenance();
 
   const forceExitTimer = setTimeout(() => {
     closeAppLogging();
