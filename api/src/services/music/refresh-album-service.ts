@@ -1,4 +1,5 @@
 import { db, withSqliteWriteGate } from "../../database.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import { AlbumRefreshLevel, type RefreshOptions } from "./scan-types.js";
 import { shouldRefreshAlbum as shouldRefreshAlbumPolicy, shouldRefreshTrackSet } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
@@ -852,7 +853,7 @@ export class RefreshAlbumService {
 
         const ingested = new ProviderReleaseIngestionService(db).ingest({
             canonicalReleaseId: canonicalRelease.id,
-            matcherVersion: 1,
+            matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
             release: {
                 provider: providerId,
                 entityType: "release",
@@ -1129,7 +1130,7 @@ export class RefreshAlbumService {
             await withSqliteWriteGate(() => {
             const ingested = new ProviderReleaseIngestionService(db).ingest({
                 canonicalReleaseId: canonicalRelease.id,
-                matcherVersion: 1,
+                matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
                 release,
                 members,
             });

@@ -329,6 +329,47 @@ export class ProviderMatchRepository {
             match_state: ProviderMatchState;
           }>
         : [];
+      /**
+       * Retire the acquisition plans built on the matches about to be replaced.
+       *
+       * `AcquisitionPlanTracks.provider_track_match_id` references these rows
+       * without ON DELETE CASCADE, so any release that already had a plan could
+       * not be re-matched at all: the delete below failed with FOREIGN KEY
+       * constraint failed and the whole replay was abandoned. Measured on the
+       * live library, that was 36 of Amy Winehouse's 102 provider releases —
+       * and it is precisely the albums with plans, the ones that matter, that
+       * were locked out. It is why an improved matcher never reached Frank.
+       *
+       * A plan is a cached computation over matches, not a peer of them: when
+       * the matches change the plan is stale by definition. Dropping the plan
+       * (rather than orphaning its track rows) keeps that relationship honest,
+       * and curation recomputes plans immediately after matching.
+       */
+      const stalePlanIds = (this.db.prepare(`
+        SELECT DISTINCT plan_track.plan_id
+        FROM AcquisitionPlanTracks plan_track
+        JOIN ProviderTrackMatches track_match
+          ON track_match.id = plan_track.provider_track_match_id
+        WHERE track_match.provider_edition_match_id = ?
+          ${input.decision.decisionSource === "automatic" ? "AND track_match.decision_source != 'manual'" : ""}
+      `).all(releaseMatch.id) as Array<{ plan_id: number }>).map(({ plan_id }) => plan_id);
+      if (stalePlanIds.length > 0) {
+        const placeholders = stalePlanIds.map(() => "?").join(",");
+        // Release the deferred plan reference before the plans go.
+        this.db.prepare(`
+          UPDATE LibraryEditions SET preferred_plan_key = NULL
+          WHERE preferred_plan_key IN (
+            SELECT plan_key FROM AcquisitionPlans WHERE id IN (${placeholders})
+          )
+        `).run(...stalePlanIds);
+        this.db.prepare(`DELETE FROM AcquisitionPlanTracks WHERE plan_id IN (${placeholders})`)
+          .run(...stalePlanIds);
+        this.db.prepare(`DELETE FROM AcquisitionPlanSources WHERE plan_id IN (${placeholders})`)
+          .run(...stalePlanIds);
+        this.db.prepare(`DELETE FROM AcquisitionPlans WHERE id IN (${placeholders})`)
+          .run(...stalePlanIds);
+      }
+
       if (input.decision.decisionSource === "automatic") {
         this.db.prepare(`
           DELETE FROM ProviderTrackMatches

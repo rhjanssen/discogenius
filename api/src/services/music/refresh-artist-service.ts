@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import { db, runGatedChunkedWrite, withSqliteWriteGate } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import {
@@ -1859,11 +1860,77 @@ export class RefreshArtistService {
                 : "no provider releases found",
         });
 
+        await this.replayStaleTrackMatches(artistMbid);
+
         if (curateInline) {
             await CurationService.processAll(artistId, { skipDownloadQueue: true });
         }
         ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
         await this.precacheArtistMediaCovers(artistId, artistMbid);
+    }
+
+    /**
+     * Replay track matching for this artist's provider releases whose stored
+     * verdicts predate the current matcher.
+     *
+     * The loop above already replays a release the provider returned this run,
+     * which covers a matcher fix for anything still in the artist's catalog
+     * listing. It does not cover a release that is matched to one of this
+     * artist's editions but no longer appears in that listing — an overlap match
+     * to a regional pressing, a release the provider stopped attributing to the
+     * artist. Amy Winehouse's Frank kept a match asserting a 4:15 "Amy Amy Amy"
+     * was the canonical 13:17 "Amy Amy Amy / Outro" through a full refresh,
+     * matching and curation cycle for exactly that reason.
+     *
+     * Keying on the stored version rather than on provider traffic is what makes
+     * a matcher improvement reach the whole catalog. No provider calls: this
+     * replays the decision over rows already stored.
+     */
+    private static async replayStaleTrackMatches(artistMbid: string | null): Promise<void> {
+        if (!artistMbid) return;
+        const stale = db.prepare(`
+            SELECT DISTINCT release_item.provider, release_item.provider_id, edition.mbid AS edition_mbid
+            FROM ProviderTrackMatches track_match
+            JOIN ProviderEditionMatches release_match
+              ON release_match.id = track_match.provider_edition_match_id
+            JOIN ProviderItems release_item
+              ON release_item.id = release_match.provider_edition_item_id
+            JOIN AlbumEditions edition ON edition.id = release_match.edition_id
+            JOIN Albums release_group ON release_group.id = edition.release_group_id
+            WHERE release_group.artist_mbid = ?
+              AND track_match.decision_source = 'automatic'
+              AND track_match.matcher_version < ?
+        `).all(artistMbid, PROVIDER_TRACK_MATCHER_VERSION) as Array<{
+            provider: string;
+            provider_id: string;
+            edition_mbid: string;
+        }>;
+        if (stale.length === 0) return;
+
+        const { RefreshAlbumService: RefreshAlbumSvc } = await import("./refresh-album-service.js");
+        const yieldReplay = createMatchingYield();
+        let replayed = 0;
+        for (const release of stale) {
+            await yieldReplay();
+            try {
+                if (RefreshAlbumSvc.rematchStoredProviderRelease(
+                    release.provider,
+                    release.provider_id,
+                    release.edition_mbid,
+                )) {
+                    replayed += 1;
+                }
+            } catch (error) {
+                console.warn(
+                    `[RefreshArtistService] Failed to replay stale match for ${release.provider}:${release.provider_id}:`,
+                    error,
+                );
+            }
+        }
+        console.log(
+            `[RefreshArtistService] Replayed ${replayed}/${stale.length} provider release(s) `
+            + `whose track matches predated matcher version ${PROVIDER_TRACK_MATCHER_VERSION}`,
+        );
     }
 
     private static async refreshProviderVideos(

@@ -241,6 +241,27 @@ const GROSS_DURATION_MISMATCH_SEC = 60;
 /** Provider tracks scoring at or above this are treated as the same recording. */
 export const TRACK_MATCH_THRESHOLD = 0.55;
 
+/**
+ * The version of the track-matching *decision*, bumped whenever this module's
+ * verdicts change.
+ *
+ * A stored ProviderTrackMatch is a cached decision, and refresh reuses stored
+ * tracklists rather than re-fetching them — so without a version to compare
+ * against, an improved matcher only ever reaches releases the provider happened
+ * to return again. Amy Winehouse's Frank kept a match asserting that a 4:15
+ * "Amy Amy Amy" was the canonical 13:17 "Amy Amy Amy / Outro" through a full
+ * refresh, matching and curation cycle, because that release was already
+ * materialised and nothing asked the question again.
+ *
+ * Bump this in the same commit as any change to describeTrackMatch or the title
+ * helpers it depends on. Matching then replays over stored rows for anything
+ * still carrying an older verdict — no provider traffic, just the decision.
+ *
+ * 2: dash-suffixed version qualifiers ("… - ARTE Live at …") are read as
+ *    qualifiers, and a gross duration mismatch vetoes the title-only fallback.
+ */
+export const PROVIDER_TRACK_MATCHER_VERSION = 2;
+
 function normalizeIsrc(value: string | null | undefined): string {
     return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
