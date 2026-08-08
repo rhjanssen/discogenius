@@ -165,6 +165,17 @@ export class LibraryCurationRepository {
      */
     reasonByReleaseGroupId?: ReadonlyMap<number, string>;
     reasonByEditionId?: ReadonlyMap<number, string>;
+    /**
+     * When the pass curated only some LibraryArtists, the rows it may replace
+     * are only the ones those artists put there.
+     *
+     * Automatic curation replaces its own work wholesale, which is correct for
+     * a whole-library pass and catastrophic for a scoped one: it would delete
+     * every other artist's selections and never re-insert them. Scoping the
+     * delete to this pass's artists — and keeping any Edition another artist
+     * still claims — is what makes a per-artist pass safe.
+     */
+    scopedLibraryArtistIds?: readonly number[];
   }): void {
     this.db.transaction(() => {
       const overruledReleaseGroupIds = [...(input.reasonByReleaseGroupId?.keys() ?? [])];
@@ -183,7 +194,19 @@ export class LibraryCurationRepository {
       const overruledScope = overruledReleaseGroupIds.length === 0
         ? ""
         : `OR edition.release_group_id IN (${overruledPlaceholders})`;
-      const automaticEditions = `
+      // A scoped pass owns an automatic Edition row only through the artists it
+      // curated. That set is resolved to ids up front, because the deletes
+      // below remove the very scope rows the predicate reads.
+      const scopedArtistIds = input.scopedLibraryArtistIds ?? null;
+      const artistPlaceholders = scopedArtistIds?.map(() => "?").join(",") ?? "";
+      const ownedByThisPass = scopedArtistIds
+        ? ` AND EXISTS (
+              SELECT 1 FROM LibraryEditionScopes scope
+              WHERE scope.library_edition_id = monitored_edition.id
+                AND scope.library_artist_id IN (${artistPlaceholders})
+            )`
+        : "";
+      const replaceableEditionRowIds = (this.db.prepare(`
         SELECT monitored_edition.id
         FROM LibraryEditions monitored_edition
         JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
@@ -193,31 +216,76 @@ export class LibraryCurationRepository {
         WHERE monitored_edition.library_id = ?
           AND COALESCE(library_album.locked, 0) = 0
           AND (monitored_edition.selection_mode = 'auto' ${overruledScope})
-      `;
-      const automaticEditionParams = [input.libraryId, ...overruledReleaseGroupIds];
-      this.db.prepare(`
-        DELETE FROM LibraryEditionScopes
-        WHERE library_edition_id IN (${automaticEditions})
-      `).run(...automaticEditionParams);
-      // Release the deferred plan reference before the rows go, and note that
-      // the plans themselves survive: an Edition that stops being monitored
-      // keeps its candidate offers so it can still be offered as an alternative.
-      this.db.prepare(`
-        UPDATE LibraryEditions
-        SET preferred_plan_key = NULL
-        WHERE id IN (${automaticEditions})
-      `).run(...automaticEditionParams);
-      this.db.prepare(`
-        DELETE FROM LibraryEditions WHERE id IN (${automaticEditions})
-      `).run(...automaticEditionParams);
-      this.db.prepare(`
-        DELETE FROM LibraryAlbums
-        WHERE library_id = ? AND locked = 0
-          AND (selection_mode = 'auto'
-               ${overruledReleaseGroupIds.length === 0
-                 ? ""
-                 : `OR release_group_id IN (${overruledPlaceholders})`})
-      `).run(input.libraryId, ...overruledReleaseGroupIds);
+          ${ownedByThisPass}
+      `).all(
+        input.libraryId,
+        ...overruledReleaseGroupIds,
+        ...(scopedArtistIds ?? []),
+      ) as Array<{ id: number }>).map(({ id }) => id);
+
+      if (replaceableEditionRowIds.length > 0) {
+        const rowPlaceholders = replaceableEditionRowIds.map(() => "?").join(",");
+        if (scopedArtistIds) {
+          // Drop only this pass's claims. An Edition two artists both want — a
+          // collaboration credited to each — keeps the other's claim, and the
+          // sweep below removes the Edition only once nothing claims it.
+          this.db.prepare(`
+            DELETE FROM LibraryEditionScopes
+            WHERE library_artist_id IN (${artistPlaceholders})
+              AND library_edition_id IN (${rowPlaceholders})
+          `).run(...scopedArtistIds, ...replaceableEditionRowIds);
+        } else {
+          this.db.prepare(`
+            DELETE FROM LibraryEditionScopes
+            WHERE library_edition_id IN (${rowPlaceholders})
+          `).run(...replaceableEditionRowIds);
+        }
+
+        // Release the deferred plan reference before the rows go, and note that
+        // the plans themselves survive: an Edition that stops being monitored
+        // keeps its candidate offers so it can still be offered as an alternative.
+        const unclaimed = scopedArtistIds
+          ? ` AND NOT EXISTS (
+                SELECT 1 FROM LibraryEditionScopes scope
+                WHERE scope.library_edition_id = LibraryEditions.id
+              )`
+          : "";
+        this.db.prepare(`
+          UPDATE LibraryEditions
+          SET preferred_plan_key = NULL
+          WHERE id IN (${rowPlaceholders})${unclaimed}
+        `).run(...replaceableEditionRowIds);
+        this.db.prepare(`
+          DELETE FROM LibraryEditions
+          WHERE id IN (${rowPlaceholders})${unclaimed}
+        `).run(...replaceableEditionRowIds);
+      }
+
+      // An Album row exists because at least one of its Editions is monitored.
+      // A whole-library pass rebuilds them all; a scoped pass may only retire
+      // the ones whose last Edition it just removed.
+      if (scopedArtistIds) {
+        this.db.prepare(`
+          DELETE FROM LibraryAlbums
+          WHERE library_id = ? AND locked = 0 AND selection_mode = 'auto'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM LibraryEditions monitored_edition
+              JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+              WHERE monitored_edition.library_id = LibraryAlbums.library_id
+                AND edition.release_group_id = LibraryAlbums.release_group_id
+            )
+        `).run(input.libraryId);
+      } else {
+        this.db.prepare(`
+          DELETE FROM LibraryAlbums
+          WHERE library_id = ? AND locked = 0
+            AND (selection_mode = 'auto'
+                 ${overruledReleaseGroupIds.length === 0
+                   ? ""
+                   : `OR release_group_id IN (${overruledPlaceholders})`})
+        `).run(input.libraryId, ...overruledReleaseGroupIds);
+      }
 
       const insertGroup = this.db.prepare(`
         INSERT INTO LibraryAlbums (

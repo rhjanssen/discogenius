@@ -74,6 +74,31 @@ interface ScopedCurationSelection {
   scopeTypes: LibraryScopeType[];
 }
 
+/**
+ * Split ids into batches small enough for SQLite's parameter limit (999 by
+ * default). Scoped passes bind their edition set into `IN (…)` lists, and a
+ * library with a few thousand candidate editions would otherwise fail on the
+ * bind rather than on anything meaningful.
+ */
+function chunked<T>(items: readonly T[], size: number): T[][] {
+  const batches: T[][] = [];
+  for (let start = 0; start < items.length; start += size) {
+    batches.push(items.slice(start, start + size));
+  }
+  return batches;
+}
+
+function emptyCurationResult(): LibraryCurationResult {
+  return {
+    representativeEditionIdByReleaseGroup: new Map(),
+    supplementalEditionIds: [],
+    selectedEditionIds: [],
+    selectedReleaseGroupIds: [],
+    attainableUnitIds: new Set(),
+    decisions: [],
+  };
+}
+
 function releaseTypeRankFor(primaryType: string | null): number {
   switch (String(primaryType || "").trim().toLowerCase()) {
     case "album":
@@ -99,11 +124,32 @@ export class LibraryCurationService {
     this.repository = new LibraryCurationRepository(db);
   }
 
+  /**
+   * Curate a library, either whole or for named artists.
+   *
+   * Curation is a *library* decision — selecting one Edition of an album can
+   * make a whole other Release Group redundant — but the optimiser has always
+   * run once per LibraryArtist over that artist's own candidates, so an
+   * artist's decisions never depended on another artist's. Everything before
+   * the optimiser was library-wide anyway: it read every AlbumEdition in the
+   * database and re-planned every one of them.
+   *
+   * That is why "curate this artist" cost the same as curating everything.
+   * Three CurateArtist commands sat at 10% for twenty-five minutes with the
+   * oldest heartbeat 294s into a 300s lease, and one of them was a
+   * single-album artist. The work was never proportional to the artist.
+   *
+   * `scope` narrows the inputs to the same set the optimiser was going to use.
+   * Unscoped is unchanged: every monitored artist in the library, which is what
+   * ApplyCuration and the settings-change rebuild still want.
+   */
   curateLibrary(input: {
     libraryId: number;
     providerPriority: string[];
     acquisitionPlannerVersion: number;
     curationVersion: number;
+    /** Curate only these LibraryArtists. Omit for the whole library. */
+    scope?: { libraryArtistIds: readonly number[] };
   }): LibraryCurationResult {
     const library = this.db.prepare(`
       SELECT library.id, quality.allowed_source_formats
@@ -124,6 +170,17 @@ export class LibraryCurationService {
       return decision.include;
     };
 
+    const scopedArtistIds = input.scope
+      ? [...new Set(input.scope.libraryArtistIds)].sort((a, b) => a - b)
+      : null;
+    if (scopedArtistIds && scopedArtistIds.length === 0) {
+      return emptyCurationResult();
+    }
+    const artistFilterSql = scopedArtistIds
+      ? ` AND library_artist.id IN (${scopedArtistIds.map(() => "?").join(",")})`
+      : "";
+    const artistFilterParams = scopedArtistIds ?? [];
+
     const libraryArtists = this.db.prepare(`
       SELECT
         library_artist.id AS library_artist_id,
@@ -131,28 +188,9 @@ export class LibraryCurationService {
         library_artist.credited_scope
       FROM LibraryArtists library_artist
       JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
-      WHERE library_artist.library_id = ? AND library_artist.monitored = 1
+      WHERE library_artist.library_id = ? AND library_artist.monitored = 1${artistFilterSql}
       ORDER BY library_artist.id
-    `).all(input.libraryId) as LibraryArtistRow[];
-
-    const releases = this.db.prepare(`
-      SELECT
-        release.id AS edition_id,
-        release.release_group_id,
-        release_group.artist_metadata_id AS primary_artist_id,
-        release_group.primary_type,
-        release_group.secondary_types,
-        release.status,
-        release.country,
-        release.date,
-        release.media_count,
-        release.media,
-        release.title,
-        release.disambiguation
-      FROM AlbumEditions release
-      JOIN Albums release_group ON release_group.id = release.release_group_id
-      ORDER BY release.release_group_id, release.id
-    `).all() as ReleaseRow[];
+    `).all(input.libraryId, ...artistFilterParams) as LibraryArtistRow[];
 
     const preferExplicit = filtering.prefer_explicit !== false;
 
@@ -207,7 +245,7 @@ export class LibraryCurationService {
         JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
         JOIN Albums release_group ON release_group.artist_metadata_id = managed.artist_id
         JOIN AlbumEditions release ON release.release_group_id = release_group.id
-        WHERE library_artist.library_id = ? AND library_artist.monitored = 1
+        WHERE library_artist.library_id = ? AND library_artist.monitored = 1${artistFilterSql}
 
         UNION
 
@@ -220,7 +258,7 @@ export class LibraryCurationService {
         JOIN ReleaseGroupArtistCredits credit
           ON credit.artist_id = managed.artist_id AND credit.ordinal = 0
         JOIN AlbumEditions release ON release.release_group_id = credit.release_group_id
-        WHERE library_artist.library_id = ? AND library_artist.monitored = 1
+        WHERE library_artist.library_id = ? AND library_artist.monitored = 1${artistFilterSql}
 
         UNION
 
@@ -233,7 +271,7 @@ export class LibraryCurationService {
         JOIN ReleaseArtistCredits credit ON credit.artist_id = managed.artist_id
         WHERE library_artist.library_id = ?
           AND library_artist.monitored = 1
-          AND library_artist.credited_scope IN ('release_credit', 'release_and_track_credit')
+          AND library_artist.credited_scope IN ('release_credit', 'release_and_track_credit')${artistFilterSql}
 
         UNION
 
@@ -247,12 +285,12 @@ export class LibraryCurationService {
         JOIN Tracks track ON track.id = credit.track_id
         WHERE library_artist.library_id = ?
           AND library_artist.monitored = 1
-          AND library_artist.credited_scope = 'release_and_track_credit'
+          AND library_artist.credited_scope = 'release_and_track_credit'${artistFilterSql}
       `).all(
-        input.libraryId,
-        input.libraryId,
-        input.libraryId,
-        input.libraryId,
+        input.libraryId, ...artistFilterParams,
+        input.libraryId, ...artistFilterParams,
+        input.libraryId, ...artistFilterParams,
+        input.libraryId, ...artistFilterParams,
       ) as Array<{
         edition_id: number;
         library_artist_id: number;
@@ -270,9 +308,34 @@ export class LibraryCurationService {
       }
     }
 
-    const evaluatedEditions = releases.filter((release) =>
-      releaseIncluded(release)
-      && (candidateScopes.get(release.edition_id) || []).length > 0);
+    // Only editions that are somebody's candidate can be selected, so those are
+    // the only ones worth reading. This used to load every AlbumEdition in the
+    // database on every pass, including editions of artists no library monitors.
+    const candidateEditionIds = [...candidateScopes.keys()];
+    const releases = candidateEditionIds.length === 0
+      ? []
+      : (chunked(candidateEditionIds, 800).flatMap((chunk) => this.db.prepare(`
+          SELECT
+            release.id AS edition_id,
+            release.release_group_id,
+            release_group.artist_metadata_id AS primary_artist_id,
+            release_group.primary_type,
+            release_group.secondary_types,
+            release.status,
+            release.country,
+            release.date,
+            release.media_count,
+            release.media,
+            release.title,
+            release.disambiguation
+          FROM AlbumEditions release
+          JOIN Albums release_group ON release_group.id = release.release_group_id
+          WHERE release.id IN (${chunk.map(() => "?").join(",")})
+        `).all(...chunk) as ReleaseRow[]))
+        .sort((left, right) =>
+          left.release_group_id - right.release_group_id || left.edition_id - right.edition_id);
+
+    const evaluatedEditions = releases.filter(releaseIncluded);
 
     for (const release of evaluatedEditions) {
       timer.phase(`acquisition-plan[lib${input.libraryId}/ed${release.edition_id}]`, () => this.acquisitionPlanning.compute({
@@ -283,23 +346,31 @@ export class LibraryCurationService {
       }));
     }
 
-    const viableEditionIds = timer.phase("viable-plans", () => this.viablePlanEditionIds(input.libraryId));
+    // Plan-derived inputs, read for the editions this pass evaluates. Reading
+    // them per library instead made a one-artist pass carry the whole library's
+    // plans, which is the cost this scoping exists to remove.
+    const evaluatedEditionIds = evaluatedEditions.map((release) => release.edition_id);
+    const viableEditionIds = timer.phase("viable-plans",
+      () => this.viablePlanEditionIds(input.libraryId, evaluatedEditionIds));
     const bestPlanByEdition = new Map<number, {
       explicit_content: string;
       coverage: number;
       quality_tier: string;
     }>();
-    for (const row of this.db.prepare(`
-      SELECT edition_id, explicit_content, coverage, quality_tier
-      FROM AcquisitionPlans
-      WHERE library_id = ? AND rank = 0
-    `).all(input.libraryId) as Array<{
-      edition_id: number;
-      explicit_content: string;
-      coverage: number;
-      quality_tier: string;
-    }>) {
-      bestPlanByEdition.set(row.edition_id, row);
+    for (const chunk of chunked(evaluatedEditionIds, 800)) {
+      for (const row of this.db.prepare(`
+        SELECT edition_id, explicit_content, coverage, quality_tier
+        FROM AcquisitionPlans
+        WHERE library_id = ? AND rank = 0
+          AND edition_id IN (${chunk.map(() => "?").join(",")})
+      `).all(input.libraryId, ...chunk) as Array<{
+        edition_id: number;
+        explicit_content: string;
+        coverage: number;
+        quality_tier: string;
+      }>) {
+        bestPlanByEdition.set(row.edition_id, row);
+      }
     }
 
     /**
@@ -326,25 +397,28 @@ export class LibraryCurationService {
      * profile allows, so the gate is already applied upstream.
      */
     const attainableByRelease = new Map<number, Set<number>>();
-    for (const row of this.db.prepare(`
-      SELECT DISTINCT plan.edition_id, track.recording_id
-      FROM AcquisitionPlans plan
-      JOIN AcquisitionPlanTracks plan_track
-        ON plan_track.plan_id = plan.id
-      JOIN Tracks track
-        ON track.id = plan_track.track_id
-      WHERE plan.library_id = ?
-        AND plan.state = 'current'
-        AND track.recording_id IS NOT NULL
-    `).all(input.libraryId) as Array<{ edition_id: number; recording_id: number }>) {
-      const recordingIds = attainableByRelease.get(row.edition_id) || new Set<number>();
-      recordingIds.add(row.recording_id);
-      attainableByRelease.set(row.edition_id, recordingIds);
+    for (const chunk of chunked(evaluatedEditionIds, 800)) {
+      for (const row of this.db.prepare(`
+        SELECT DISTINCT plan.edition_id, track.recording_id
+        FROM AcquisitionPlans plan
+        JOIN AcquisitionPlanTracks plan_track
+          ON plan_track.plan_id = plan.id
+        JOIN Tracks track
+          ON track.id = plan_track.track_id
+        WHERE plan.library_id = ?
+          AND plan.state = 'current'
+          AND track.recording_id IS NOT NULL
+          AND plan.edition_id IN (${chunk.map(() => "?").join(",")})
+      `).all(input.libraryId, ...chunk) as Array<{ edition_id: number; recording_id: number }>) {
+        const recordingIds = attainableByRelease.get(row.edition_id) || new Set<number>();
+        recordingIds.add(row.recording_id);
+        attainableByRelease.set(row.edition_id, recordingIds);
+      }
     }
 
     const canonicalByRelease = requireProviderAvailability
       ? null
-      : this.canonicalRecordingIdsByEdition();
+      : this.canonicalRecordingIdsByEdition(evaluatedEditionIds);
 
     // Coverage identity is resolved over the Recordings this scope actually
     // evaluates — the LibraryArtist candidate scope — not the whole catalogue.
@@ -671,6 +745,7 @@ export class LibraryCurationService {
           [releaseGroupId, "curation_override_unreachable_recordings"] as const),
       ),
       reasonByEditionId,
+      scopedLibraryArtistIds: scopedArtistIds ?? undefined,
     }));
 
     for (const editionId of combinedResult.selectedEditionIds) {
@@ -759,11 +834,16 @@ export class LibraryCurationService {
     return overruled;
   }
 
-  private canonicalRecordingIdsByEdition(): Map<number, Set<number>> {
+  /** Canonical recordings per edition; `editionIds` omitted means every edition. */
+  private canonicalRecordingIdsByEdition(editionIds?: readonly number[]): Map<number, Set<number>> {
     const byEdition = new Map<number, Set<number>>();
-    for (const row of this.db.prepare(`
-      SELECT album_edition_id, recording_id FROM Tracks
-    `).all() as Array<{ album_edition_id: number; recording_id: number }>) {
+    const rows = editionIds === undefined
+      ? this.db.prepare("SELECT album_edition_id, recording_id FROM Tracks").all() as Array<{ album_edition_id: number; recording_id: number }>
+      : chunked(editionIds, 800).flatMap((chunk) => this.db.prepare(`
+          SELECT album_edition_id, recording_id FROM Tracks
+          WHERE album_edition_id IN (${chunk.map(() => "?").join(",")})
+        `).all(...chunk) as Array<{ album_edition_id: number; recording_id: number }>);
+    for (const row of rows) {
       const recordingIds = byEdition.get(row.album_edition_id) || new Set<number>();
       recordingIds.add(row.recording_id);
       byEdition.set(row.album_edition_id, recordingIds);
@@ -771,17 +851,20 @@ export class LibraryCurationService {
     return byEdition;
   }
 
-  private viablePlanEditionIds(libraryId: number): Set<number> {
-    return new Set(
-      (this.db.prepare(`
+  private viablePlanEditionIds(libraryId: number, editionIds?: readonly number[]): Set<number> {
+    const VIABLE = `
         SELECT DISTINCT edition_id
         FROM AcquisitionPlans
         WHERE library_id = ?
           AND state = 'current'
           AND target_track_count > 0
-          AND coverage * 2 > target_track_count
-      `).all(libraryId) as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id),
-    );
+          AND coverage * 2 > target_track_count`;
+    const rows = editionIds === undefined
+      ? this.db.prepare(VIABLE).all(libraryId) as Array<{ edition_id: number }>
+      : chunked(editionIds, 800).flatMap((chunk) => this.db.prepare(
+          `${VIABLE} AND edition_id IN (${chunk.map(() => "?").join(",")})`,
+        ).all(libraryId, ...chunk) as Array<{ edition_id: number }>);
+    return new Set(rows.map(({ edition_id }) => edition_id));
   }
 }
 

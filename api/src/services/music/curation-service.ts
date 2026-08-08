@@ -107,11 +107,21 @@ export class CurationService {
       : [];
     const curation = new LibraryCurationService(db);
     for (const library of libraries) {
+      // Curate this artist, not the whole library. The optimiser has always run
+      // per LibraryArtist, so the decisions are identical either way — but an
+      // unscoped pass re-planned every edition of every monitored artist, which
+      // is why curating a one-album artist cost the same as curating everything.
+      const libraryArtistIds = (db.prepare(`
+        SELECT id FROM LibraryArtists
+        WHERE library_id = ? AND managed_artist_id = ? AND monitored = 1
+      `).all(library.id, managedArtistId) as Array<{ id: number }>).map(({ id }) => id);
+      if (libraryArtistIds.length === 0) continue;
       curation.curateLibrary({
         libraryId: library.id,
         curationVersion: 1,
         acquisitionPlannerVersion: 1,
         providerPriority,
+        scope: { libraryArtistIds },
       });
     }
     // Videos are curated after the audio editions, because inline placement can

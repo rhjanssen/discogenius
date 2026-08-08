@@ -302,3 +302,144 @@ test("a composite-only edition is preferred over a sibling it strictly covers", 
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+/**
+ * Two independent artists in one library, plus one album credited to both.
+ *
+ * Automatic curation replaces its own work wholesale. That is right for a
+ * whole-library pass and catastrophic for a scoped one, which would otherwise
+ * delete every other artist's selections and never re-insert them.
+ */
+function seedTwoArtistLibrary(db: Database.Database): { alpha: number; beta: number } {
+  db.exec(`
+    INSERT INTO ArtistMetadata (id, mbid, name) VALUES
+      (1, 'artist-alpha', 'Alpha'), (2, 'artist-beta', 'Beta');
+    INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1), (2, 2);
+    INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type) VALUES
+      (1, 'alpha-album', 1, 'Alpha Album', 'Album'),
+      (2, 'beta-album', 2, 'Beta Album', 'Album'),
+      (3, 'shared-single', 2, 'Shared Single', 'Single');
+    INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count) VALUES
+      (101, 'alpha-release', 1, 'Alpha Album', 'Official', 1),
+      (201, 'beta-release', 2, 'Beta Album', 'Official', 1),
+      (301, 'shared-release', 3, 'Shared Single', 'Official', 1);
+    INSERT INTO Recordings (id, mbid, title) VALUES
+      (1, 'rec-1', 'Alpha One'), (2, 'rec-2', 'Beta One'), (3, 'rec-3', 'Shared One');
+    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title) VALUES
+      (1, 'alpha-track', 101, 1, 1, 1, 'Alpha One'),
+      (2, 'beta-track', 201, 2, 1, 1, 'Beta One'),
+      (3, 'shared-track', 301, 3, 1, 1, 'Shared One');
+    -- The single is Beta's release group but Alpha is credited on it, so both
+    -- artists legitimately claim the same Edition.
+    INSERT INTO ReleaseArtistCredits (edition_id, artist_id, ordinal, credited_name, join_phrase)
+      VALUES (301, 1, 1, 'Alpha', '');
+    INSERT INTO MetadataProfiles (id, name, release_type_policy, redundancy_enabled)
+      VALUES (1, 'Default', '{}', 0);
+    INSERT INTO quality_profiles (
+      id, name, allowed_source_formats, preference_order, cutoff,
+      continue_upgrades, fallback_policy, output_format, transcode_policy
+    ) VALUES (
+      1, 'High', '["lossless","hires-lossless"]',
+      '["hires-lossless","lossless","lossy","spatial"]',
+      'lossless', 0, 'best_allowed', '{"codec":"flac"}', 'preserve'
+    );
+    INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
+      VALUES (1, 'Stereo', '/library/stereo', 1, 1);
+    INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored, credited_scope) VALUES
+      (1, 1, 1, 1, 'release_and_track_credit'),
+      (2, 1, 2, 1, 'release_and_track_credit');
+  `);
+  seedProviderExactMatch(db, 101, [1]);
+  seedProviderExactMatch(db, 201, [2]);
+  seedProviderExactMatch(db, 301, [3]);
+  return { alpha: 1, beta: 2 };
+}
+
+test("a scoped pass leaves the other artists' selections alone", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-curation-scope-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createCurrentDomainSchema(db);
+    const { alpha, beta } = seedTwoArtistLibrary(db);
+    const service = new LibraryCurationService(db);
+    const base = { libraryId: 1, curationVersion: 1, acquisitionPlannerVersion: 1, providerPriority: ["tidal"] };
+
+    const whole = service.curateLibrary(base);
+    assert.deepEqual(whole.selectedEditionIds, [101, 201, 301], "the whole library curates all three");
+
+    // Curating Alpha alone must not disturb Beta's own album.
+    const scoped = service.curateLibrary({ ...base, scope: { libraryArtistIds: [alpha] } });
+    assert.ok(
+      scoped.selectedEditionIds.includes(101),
+      "the scoped pass still selects the artist it curated",
+    );
+    assert.ok(
+      !scoped.selectedEditionIds.includes(201),
+      "and does not report editions outside its scope",
+    );
+
+    const monitored = (db.prepare(
+      "SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id",
+    ).all() as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id);
+    assert.deepEqual(
+      monitored,
+      [101, 201, 301],
+      "Beta's album and the shared single survive a pass that did not curate them",
+    );
+
+    // The shared single is claimed by both artists; Alpha's pass may drop only
+    // its own claim, and Beta's claim must keep the row alive.
+    const sharedScopes = (db.prepare(`
+      SELECT scope.library_artist_id
+      FROM LibraryEditionScopes scope
+      JOIN LibraryEditions monitored_edition ON monitored_edition.id = scope.library_edition_id
+      WHERE monitored_edition.edition_id = 301
+      ORDER BY scope.library_artist_id
+    `).all() as Array<{ library_artist_id: number }>).map(({ library_artist_id }) => library_artist_id);
+    assert.deepEqual(sharedScopes, [alpha, beta], "both artists still claim the shared single");
+
+    // And curating Beta alone is equally safe in the other direction.
+    service.curateLibrary({ ...base, scope: { libraryArtistIds: [beta] } });
+    assert.deepEqual(
+      (db.prepare(
+        "SELECT edition_id FROM LibraryEditions WHERE library_id = 1 ORDER BY edition_id",
+      ).all() as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id),
+      [101, 201, 301],
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("scoped and whole-library passes reach the same selection", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-curation-scope-parity-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createCurrentDomainSchema(db);
+    seedTwoArtistLibrary(db);
+    const service = new LibraryCurationService(db);
+    const base = { libraryId: 1, curationVersion: 1, acquisitionPlannerVersion: 1, providerPriority: ["tidal"] };
+
+    // Curating each artist in turn must land where one whole-library pass does.
+    service.curateLibrary({ ...base, scope: { libraryArtistIds: [1] } });
+    service.curateLibrary({ ...base, scope: { libraryArtistIds: [2] } });
+    const afterScoped = db.prepare(`
+      SELECT edition_id, representative, reason FROM LibraryEditions
+      WHERE library_id = 1 ORDER BY edition_id
+    `).all();
+
+    service.curateLibrary(base);
+    const afterWhole = db.prepare(`
+      SELECT edition_id, representative, reason FROM LibraryEditions
+      WHERE library_id = 1 ORDER BY edition_id
+    `).all();
+
+    assert.deepEqual(afterScoped, afterWhole);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
