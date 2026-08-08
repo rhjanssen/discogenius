@@ -10,6 +10,7 @@ import {
     nextArtistWorkflowPriority,
     queueArtistWorkflow,
     queueCreditedArtistHydrationBatch,
+    workflowQueuesCuration,
 } from "../../music/artist-workflow.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
@@ -86,6 +87,10 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         job.payload.artistMbid ?? null,
         {
             forceUpdate: job.payload.forceUpdate ?? false,
+            // Skip the inline curation pass only for workflows that chain into
+            // a CurateArtist of their own; otherwise this command is the only
+            // place the artist gets curated. See workflowQueuesCuration.
+            deferCuration: workflowQueuesCuration(job.payload.workflow),
             progress: (event) => {
                 if (event.kind === "albums_total") {
                     ctx.updateCommandDescription(job, {

@@ -1414,9 +1414,18 @@ export class RefreshArtistService {
             (provider) => !connectedProviders.some((connected) => connected.id === provider.id),
         );
 
+        // The queued workflow always ends in a CurateArtist command, so curating
+        // here as well means every artist is curated twice — the second pass on
+        // a prolific artist is what ran past the lease and poison-failed. The
+        // MatchArtistProviders command sets deferCuration; direct callers, which
+        // have no following CurateArtist, do not.
+        const curateInline = options.deferCuration !== true;
+
         if (!shouldHydrateCatalog) {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
-            await CurationService.processAll(artistId, { skipDownloadQueue: true });
+            if (curateInline) {
+                await CurationService.processAll(artistId, { skipDownloadQueue: true });
+            }
 
             const shouldRefreshArtistVideos =
                 options.forceUpdate === true ||
@@ -1850,7 +1859,9 @@ export class RefreshArtistService {
                 : "no provider releases found",
         });
 
-        await CurationService.processAll(artistId, { skipDownloadQueue: true });
+        if (curateInline) {
+            await CurationService.processAll(artistId, { skipDownloadQueue: true });
+        }
         ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
         await this.precacheArtistMediaCovers(artistId, artistMbid);
     }

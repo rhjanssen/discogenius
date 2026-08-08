@@ -168,6 +168,27 @@ export function getArtistWorkflowPhases(workflow: ArtistWorkflow): WorkflowPhase
   return phases;
 }
 
+/**
+ * Whether this workflow will queue a CurateArtist command of its own after
+ * provider matching finishes.
+ *
+ * MatchArtistProviders used to curate the whole artist inline *and* be followed
+ * by CurateArtist, so every monitored workflow curated twice — and on a
+ * prolific artist the redundant second pass is what ran past the command lease
+ * and poison-failed. It can only safely skip the inline pass when a real
+ * CurateArtist is guaranteed to follow, and that guarantee is exactly this
+ * table: the ARTIST_REFRESH_COMPLETE listener only chains at all when
+ * `scanLibrary` is set, and only reaches curation when `curate` is.
+ *
+ * Unknown or absent workflows answer false, so an unrecognised payload curates
+ * inline rather than silently not curating at all.
+ */
+export function workflowQueuesCuration(workflow: unknown): boolean {
+  if (!isArtistWorkflow(workflow)) return false;
+  const phases = getArtistWorkflowPhases(workflow);
+  return phases.scanLibrary && phases.curate;
+}
+
 export function buildRefreshArtistCommand(params: {
   artistId: string;
   artistName: string;

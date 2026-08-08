@@ -265,3 +265,73 @@ test("SeedVideo monitors only the requested provider offer when IDs collide", as
     0,
   );
 });
+
+/**
+ * The queued artist workflow is RefreshArtist -> MatchArtistProviders ->
+ * RescanFolders -> CurateArtist. MatchArtistProviders also curated the whole
+ * artist inline, so every monitored workflow curated twice; on a prolific
+ * artist the redundant second pass is what overran the command lease and
+ * poison-failed. It may only skip the inline pass when a CurateArtist really
+ * does follow, which is a property of the workflow, not of the command.
+ */
+test("MatchArtistProviders defers curation exactly when the workflow queues CurateArtist", async () => {
+  const originalMatch = RefreshArtistService.matchArtistProviders;
+  const originalRefreshStats = ArtistStatisticsService.refresh;
+  (ArtistStatisticsService as any).refresh = () => undefined;
+
+  const seen: Array<{ workflow: string | undefined; deferCuration: unknown }> = [];
+  (RefreshArtistService as any).matchArtistProviders = async (
+    _artistId: string,
+    _artistMbid: string | null,
+    options: { deferCuration?: boolean },
+  ) => {
+    seen.push({ workflow: currentWorkflow, deferCuration: options.deferCuration });
+  };
+
+  let currentWorkflow: string | undefined;
+  const run = async (workflow: string | undefined) => {
+    currentWorkflow = workflow;
+    await handleMatchArtistProviders({
+      id: 70,
+      name: "MatchArtistProviders",
+      status: "started",
+      priority: 0,
+      payload: {
+        artistId: "artist-defer",
+        artistName: "Artist",
+        artistMbid: "artist-defer-mbid",
+        shouldHydrateCatalog: false,
+        ...(workflow ? { workflow } : {}),
+      },
+    } as any, {
+      updateCommandDescription: () => undefined,
+      formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+    } as any);
+  };
+
+  try {
+    // Curating workflows: RescanFolders -> CurateArtist follows, so one pass.
+    await run("monitoring-intake");
+    await run("full-monitoring");
+    // Non-curating workflows: nothing follows, so this command must curate.
+    await run("refresh-scan");
+    await run("metadata-refresh");
+    // An absent or unrecognised workflow must curate rather than silently skip.
+    await run(undefined);
+  } finally {
+    (RefreshArtistService as any).matchArtistProviders = originalMatch;
+    (ArtistStatisticsService as any).refresh = originalRefreshStats;
+    appEvents.removeAllListeners();
+  }
+
+  assert.deepEqual(
+    seen.map((entry) => [entry.workflow ?? "(none)", entry.deferCuration]),
+    [
+      ["monitoring-intake", true],
+      ["full-monitoring", true],
+      ["refresh-scan", false],
+      ["metadata-refresh", false],
+      ["(none)", false],
+    ],
+  );
+});
