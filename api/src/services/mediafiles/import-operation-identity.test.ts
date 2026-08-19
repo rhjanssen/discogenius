@@ -229,6 +229,31 @@ test("a row already owned by another library fails closed", () => {
   );
 });
 
+test("a fallback-stamped file still receives quality when the command provider differs", () => {
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({
+    provider: "tidal",
+    provider_id: "tidal-fallback-1",
+    file_path: "C:/library/stereo/fallback.flac",
+    relative_path: "fallback.flac",
+    filename: "fallback.flac",
+  });
+
+  persistPreparedImportQuality(
+    libraryId,
+    new Map([["tidal-fallback-1", QUALITY]]),
+    organizeResult(["tidal-fallback-1"], { "tidal-fallback-1": fileId }),
+    "apple-music",
+  );
+
+  const row = db.prepare(`
+    SELECT library_id, imported_quality, provider FROM TrackFiles WHERE id = ?
+  `).get(fileId) as { library_id: number; imported_quality: string; provider: string };
+  assert.equal(row.library_id, libraryId);
+  assert.equal(row.imported_quality, "lossless");
+  assert.equal(row.provider, "tidal", "quality persist must not rewrite the supplying provider");
+});
+
 test("a reported row that is not a track file fails closed", () => {
   const libraryId = seedLibrary();
   const coverId = seedTrackFile({

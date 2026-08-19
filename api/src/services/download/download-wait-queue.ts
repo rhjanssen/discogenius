@@ -317,12 +317,21 @@ export class DownloadWaitQueue {
   }
 
   static removeByCommandId(commandId: number): boolean {
-    const result = db.prepare(`DELETE FROM DownloadQueue WHERE command_id = ?`).run(commandId);
-    if (result.changes > 0) {
-      notifyQueueChanged();
-      return true;
-    }
-    return false;
+    return this.finishClaimed(commandId) != null;
+  }
+
+  /**
+   * Drop the wait row for a finished command and return its public queue id.
+   * Capture that id *before* emitting SSE: once the row is gone,
+   * `getIdByCommandId` can no longer map the command onto the wait-row jobId
+   * the Queue page keys on.
+   */
+  static finishClaimed(commandId: number): number | null {
+    const waitId = this.getIdByCommandId(commandId);
+    if (waitId == null) return null;
+    db.prepare(`DELETE FROM DownloadQueue WHERE id = ?`).run(waitId);
+    notifyQueueChanged();
+    return waitId;
   }
 
   static claimNext(excludeProviders: ReadonlySet<string> = new Set()): {

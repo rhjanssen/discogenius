@@ -1,9 +1,10 @@
 import { db } from "../../database.js";
 import { emitLibraryUpdated } from "../commands/app-events.js";
 import { CommandNames } from "../commands/command-names.js";
-import { CommandQueueManager } from "../commands/command-queue-manager.js";
+import { CommandTrigger } from "../commands/command-trigger.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 import {
     monitorAlbumInLibraries,
@@ -197,9 +198,9 @@ export class AlbumCommandService {
                 ? `${title} (${version})`
                 : title;
             const artistName = track.artist_name || "Unknown";
-            commandId = CommandQueueManager.push(CommandNames.DownloadTrack, {
+            const payload = {
                 url: buildStreamingMediaUrl("track", trackProviderId, provider as any),
-                type: 'track',
+                type: "track" as const,
                 provider,
                 providerId: trackProviderId,
                 canonicalTrackId: String(track.local_track_id),
@@ -211,7 +212,23 @@ export class AlbumCommandService {
                 artist: artistName,
                 albumTitle: track.album_title || null,
                 quality: track?.quality || null,
-            }, String(track.local_track_id), 0, 1);
+            };
+            const queued = DownloadWaitQueue.enqueue({
+                refKey: String(track.local_track_id),
+                mediaKind: "track",
+                commandName: CommandNames.DownloadTrack,
+                provider,
+                providerId: trackProviderId,
+                albumId: track.release_group_mbid || null,
+                title: displayTitle,
+                artist: artistName,
+                quality: track?.quality || null,
+                payload,
+                priority: 0,
+                trigger: CommandTrigger.Manual,
+                position: "front",
+            });
+            commandId = queued.id;
         }
 
         return { success: true, monitored_track: track.mbid || trackId, trackId, albumId: String(track.release_group_mbid), commandId };

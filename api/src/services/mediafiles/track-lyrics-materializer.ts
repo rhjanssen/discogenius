@@ -74,6 +74,23 @@ function fallbackLibraryRoot(row: TrackLyricsRow, resolvedFilePath: string): str
     || (row.library_slot === "spatial" ? Config.getSpatialPath() : Config.getMusicPath());
 }
 
+function removeUnsyncedLyricSidecar(
+  existingSidecar: { filePath: string; synchronized: boolean } | null,
+  replacementPath: string,
+): void {
+  if (!existingSidecar || existingSidecar.synchronized) return;
+  const previousPath = path.resolve(existingSidecar.filePath);
+  if (previousPath === path.resolve(replacementPath)) return;
+  try {
+    if (fs.existsSync(previousPath)) {
+      fs.unlinkSync(previousPath);
+    }
+  } catch (error) {
+    console.warn(`[Lyrics] Failed to remove unsynced sidecar ${previousPath}:`, error);
+  }
+  db.prepare("DELETE FROM LyricFiles WHERE file_path = ?").run(existingSidecar.filePath);
+}
+
 function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
   const uniqueIds = Array.from(new Set(fileIds.filter((id) => Number.isInteger(id) && id > 0)));
   if (uniqueIds.length === 0) return [];
@@ -284,6 +301,9 @@ export class TrackLyricsMaterializer {
           fs.mkdirSync(path.dirname(lyricPath), { recursive: true });
           fs.writeFileSync(lyricPath, `${classified.content}\n`, "utf8");
           result.saved++;
+        }
+        if (classified.synchronized) {
+          removeUnsyncedLyricSidecar(existingSidecar, lyricPath);
         }
       }
 

@@ -116,14 +116,14 @@ class DownloadEventEmitter extends EventEmitter {
         this.emit('started', { commandId, jobId: publicJobId(commandId), ...data });
     }
 
-    emitCompleted(commandId: number, data: DownloadCompletedData) {
+    emitCompleted(commandId: number, data: DownloadCompletedData, waitJobId?: number | null) {
         this.clearJob(commandId);
-        this.emit('completed', { commandId, jobId: publicJobId(commandId), ...data });
+        this.emit('completed', { commandId, jobId: waitJobId ?? publicJobId(commandId), ...data });
     }
 
-    emitFailed(commandId: number, data: DownloadFailedData) {
+    emitFailed(commandId: number, data: DownloadFailedData, waitJobId?: number | null) {
         this.clearJob(commandId);
-        this.emit('failed', { commandId, jobId: publicJobId(commandId), ...data });
+        this.emit('failed', { commandId, jobId: waitJobId ?? publicJobId(commandId), ...data });
     }
 
     // ---- Queue status (debounced, 5 s) ---------------------------------

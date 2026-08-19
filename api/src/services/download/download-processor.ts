@@ -759,7 +759,7 @@ export class DownloadProcessor {
                     console.warn(`[DOWNLOAD-PROCESSOR] Ignoring late import completion for retired attempt ${workerId || 'legacy'} on command #${commandId}`);
                     return;
                 }
-                DownloadWaitQueue.removeByCommandId(commandId);
+                const waitJobId = DownloadWaitQueue.finishClaimed(commandId);
                 this.activeImports.delete(commandId);
                 this.clearAttempt(commandId, workerId);
                 downloadEvents.emitCompleted(commandId, {
@@ -769,7 +769,7 @@ export class DownloadProcessor {
                     title: resolved.title,
                     artist: resolved.artist,
                     cover: resolved.cover,
-                });
+                }, waitJobId);
                 console.log(`[DOWNLOAD-PROCESSOR] Completed download+import for ${type} ${providerId} (command #${commandId})`);
             } catch (error: any) {
                 if (error?.name === 'ImportDownloadCancelledError' || error?.constructor?.name === 'ImportDownloadCancelledError') {
@@ -1493,6 +1493,10 @@ export class DownloadProcessor {
         // most one per provider (same-provider downloads stay serialized). ──
         // Waiting work lives in DownloadQueue. Only a free slot claims the next
         // wait row into a short-lived Download* command (Tidarr + qBittorrent).
+        // Pending Download* commands that were not claimed from the wait table
+        // must not jump the wait list; the command-first path is only for
+        // already-claimed rows (and for the empty-table legacy fallback).
+        const waitTableInUse = DownloadWaitQueue.count() > 0;
         while (this.activeDownloads.size < MAX_CONCURRENT_DOWNLOADS) {
             const activeProviders = new Set<string>();
             for (const entry of this.activeDownloads.values()) {
@@ -1500,9 +1504,13 @@ export class DownloadProcessor {
             }
 
             const candidates = CommandQueueManager.getTopPendingJobsByTypes(DOWNLOAD_COMMAND_NAMES, 20);
-            let job = candidates.find((candidate) => (
-                !activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand))
-            ));
+            let job = candidates.find((candidate) => {
+                if (activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand))) {
+                    return false;
+                }
+                if (!waitTableInUse) return true;
+                return DownloadWaitQueue.getByCommandId(candidate.id) != null;
+            });
 
             if (!job) {
                 const claimed = DownloadWaitQueue.claimNext(activeProviders);
@@ -1742,7 +1750,7 @@ export class DownloadProcessor {
                         updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId));
 
                         if (!CommandQueueManager.complete(job.id, workerId)) return;
-                        DownloadWaitQueue.removeByCommandId(job.id);
+                        const waitJobId = DownloadWaitQueue.finishClaimed(job.id);
                         this.clearAttempt(job.id, workerId);
                         await this.cleanupDownloadSourcePath(entry.downloadPath);
 
@@ -1752,7 +1760,7 @@ export class DownloadProcessor {
                             title: resolved.title,
                             artist: resolved.artist,
                             cover: resolved.cover,
-                        });
+                        }, waitJobId);
 
                         return;
                     }
@@ -1762,7 +1770,7 @@ export class DownloadProcessor {
                     if (payload?.reason !== 'upgrade' && alreadyDownloaded) {
                         console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${providerId} is already downloaded — marking job as complete.`);
                         if (!CommandQueueManager.complete(job.id, workerId)) return;
-                        DownloadWaitQueue.removeByCommandId(job.id);
+                        const waitJobId = DownloadWaitQueue.finishClaimed(job.id);
                         this.clearAttempt(job.id, workerId);
                         await this.cleanupDownloadSourcePath(entry.downloadPath);
 
@@ -1772,7 +1780,7 @@ export class DownloadProcessor {
                             title: resolved.title,
                             artist: resolved.artist,
                             cover: resolved.cover,
-                        });
+                        }, waitJobId);
 
                         return;
                     }

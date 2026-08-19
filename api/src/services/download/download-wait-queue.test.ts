@@ -125,3 +125,38 @@ test("removing a wait row does not require a command", () => {
   assert.equal(removed?.id, queued.id);
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
 });
+
+test("finishClaimed returns the wait-row id after the row is gone", () => {
+  const queued = enqueueTrack("fin-1", "Pompeii");
+  const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+  assert.ok(claimed);
+  const waitId = waitQueueModule.DownloadWaitQueue.finishClaimed(claimed.commandId);
+  assert.equal(waitId, queued.id);
+  assert.equal(waitQueueModule.DownloadWaitQueue.getIdByCommandId(claimed.commandId), null);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
+});
+
+test("completed SSE keeps the wait-row jobId after the claim is removed", async () => {
+  const queued = enqueueTrack("sse-1", "Pompeii");
+  const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+  assert.ok(claimed);
+  const eventsModule = await import("./download-events.js");
+  const seen: Array<{ jobId: number; commandId: number }> = [];
+  const onCompleted = (event: { jobId: number; commandId: number }) => {
+    seen.push({ jobId: event.jobId, commandId: event.commandId });
+  };
+  eventsModule.downloadEvents.on("completed", onCompleted);
+  try {
+    const waitId = waitQueueModule.DownloadWaitQueue.finishClaimed(claimed.commandId);
+    eventsModule.downloadEvents.emitCompleted(claimed.commandId, {
+      providerId: "sse-1",
+      type: "track",
+    }, waitId);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]?.jobId, queued.id);
+    assert.equal(seen[0]?.commandId, claimed.commandId);
+    assert.notEqual(seen[0]?.jobId, claimed.commandId);
+  } finally {
+    eventsModule.downloadEvents.off("completed", onCompleted);
+  }
+});

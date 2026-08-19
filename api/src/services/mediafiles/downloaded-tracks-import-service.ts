@@ -357,9 +357,15 @@ export function persistPreparedImportQuality(
                     `[ImportDownload] Reported TrackFiles row ${fileId} for track ${providerTrackId} is a ${row.file_type ?? "null"} file, not a track`,
                 );
             }
+            // Quality is applied by the organizer's TrackFiles.id. A composite
+            // or mid-album fallback stamps the *supplying* provider on the file
+            // while the command still names the album's provider. That mismatch
+            // is not an identity error — provenance rewrites the stamp from the
+            // offer next. Failing here left correctly-filed files with a failed
+            // command (`tidal` vs `apple-music` on Aerosmith spatial).
             if (provider && row.provider && row.provider !== provider) {
-                throw new Error(
-                    `[ImportDownload] Reported TrackFiles row ${fileId} belongs to provider ${row.provider}, not ${provider}`,
+                console.warn(
+                    `[ImportDownload] TrackFiles row ${fileId} is stamped ${row.provider} while the command provider is ${provider}; applying quality by row id`,
                 );
             }
             if (row.library_id != null && row.library_id !== libraryId) {

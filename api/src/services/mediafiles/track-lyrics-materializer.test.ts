@@ -229,6 +229,14 @@ test("an unsynced tiddl sidecar does not hide catalogue timed lyrics", async () 
     assert.equal(result.lyricsByProviderMedia.get(key)?.subtitles, "[00:04.10]Good Grief");
     assert.equal(fs.existsSync(lrcPath), true);
     assert.match(fs.readFileSync(lrcPath, "utf8"), /\[00:04\.10\]Good Grief/);
+    assert.equal(fs.existsSync(textPath), false, "the unsynced tiddl sidecar must be replaced, not left beside the .lrc");
+
+    const lyricRows = dbModule.db.prepare(`
+      SELECT file_path, extension FROM LyricFiles WHERE track_file_id = ?
+    `).all(Number(inserted.lastInsertRowid)) as Array<{ file_path: string; extension: string }>;
+    assert.equal(lyricRows.length, 1);
+    assert.equal(lyricRows[0]?.file_path, lrcPath);
+    assert.equal(lyricRows[0]?.extension, "lrc");
   } finally {
     tidal.getLyrics = originalGetLyrics;
   }

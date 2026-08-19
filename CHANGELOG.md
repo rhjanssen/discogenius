@@ -21,7 +21,12 @@ any other `user_version` and creates a fresh database.
   job; looking the file up by provider id plus the command's provider then
   skipped tagging entirely, leaving downloader tags on the library copy.
   Lyrics no longer treat an unsynced downloader sidecar as the last word —
-  timed catalogue lyrics replace it.
+  timed catalogue lyrics replace it, and the leftover unsynced `.txt` is
+  removed so players cannot keep serving the dump. Prepared import quality
+  is applied by `TrackFiles.id` even when a fallback stamped a different
+  provider than the command. Track monitor-and-download and quality upgrades
+  enqueue wait rows instead of jumping the wait list as commands. Completion
+  SSE keeps the wait-row id after the claim is dropped.
 - **A monitoring row means monitored, at every level.** `LibraryAlbums.monitored`
   and `Recordings.monitored` / `monitored_lock` are gone; `LibraryAlbums`,
   `LibraryEditions` and the new `LibraryVideos` all say the same thing the same
