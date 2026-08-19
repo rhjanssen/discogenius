@@ -41,6 +41,79 @@ function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
     ));
 }
 
+/**
+ * Dest-album artwork must be in the MediaCover cache *before* tag write.
+ * Organizer and embed both read that cache; if it is empty they leave the
+ * downloader's cover (Apple 540px covr, tiddl album art) on the library copy.
+ * Fetch/store via the same resolver the UI uses, then rewrite dest cover.jpg
+ * from that cache so folder sidecar and embed agree.
+ */
+export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[]): Promise<void> {
+    const ids = Array.from(new Set(
+        fileIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
+    ));
+    if (ids.length === 0) return;
+
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db.prepare(`
+        SELECT canonical_release_group_mbid AS mbid, file_path, library_root, relative_path
+        FROM TrackFiles
+        WHERE id IN (${placeholders})
+          AND file_type = 'track'
+    `).all(...ids) as Array<{
+        mbid: string | null;
+        file_path: string;
+        library_root: string | null;
+        relative_path: string | null;
+    }>;
+
+    const {
+        getCachedMediaCoverOriginalFilePath,
+        resolveAlbumArtwork,
+        syncCachedMediaCoverToFile,
+    } = await import("../metadata/media-cover-service.js");
+    const { resolveStoredLibraryPath } = await import("./library-paths.js");
+    const { getConfigSection } = await import("../config/config.js");
+    const coverName = getConfigSection("metadata").album_cover_name || "cover.jpg";
+
+    const mbids = new Set<string>();
+    const sidecars: Array<{ mbid: string; outputPath: string }> = [];
+    for (const row of rows) {
+        const mbid = String(row.mbid || "").trim();
+        if (!mbid) continue;
+        mbids.add(mbid);
+        const resolved = resolveStoredLibraryPath({
+            filePath: row.file_path,
+            libraryRoot: row.library_root,
+            relativePath: row.relative_path,
+        });
+        if (!resolved) continue;
+        sidecars.push({ mbid, outputPath: path.join(path.dirname(resolved), coverName) });
+    }
+
+    for (const mbid of mbids) {
+        if (getCachedMediaCoverOriginalFilePath(mbid, "Album", "cover")) continue;
+        try {
+            await resolveAlbumArtwork({ albumMbid: mbid });
+        } catch (error) {
+            console.warn(`[ImportDownload] Failed to cache dest cover for album ${mbid}:`, error);
+        }
+    }
+
+    for (const { mbid, outputPath } of sidecars) {
+        try {
+            syncCachedMediaCoverToFile({
+                entityId: mbid,
+                coverEntity: "Album",
+                coverTypes: "cover",
+                outputPath,
+            });
+        } catch (error) {
+            console.warn(`[ImportDownload] Failed to refresh dest cover sidecar ${outputPath}:`, error);
+        }
+    }
+}
+
 export class ImportDownloadCancelledError extends Error {
     constructor(phase: string) {
         super(`Import cancelled at safe boundary: ${phase}`);
@@ -1095,9 +1168,16 @@ export class DownloadedTracksImportService {
             }
             cancellationCheckpoint("after refreshing provider tag supplements");
 
+            const importedFileIds = importedLibraryFileIds(organizeResult);
+            cancellationCheckpoint("before caching dest album artwork");
+            try {
+                await ensureDestAlbumArtworkForFileIds(importedFileIds);
+            } catch (error) {
+                console.warn(`[ImportDownload] Failed to cache dest album artwork for ${type} ${providerId}:`, error);
+            }
+
             let lyricResult: TrackLyricsMaterializeResult | null = null;
             cancellationCheckpoint("before materializing lyrics");
-            const importedFileIds = importedLibraryFileIds(organizeResult);
             try {
                 lyricResult = importedFileIds.length > 0
                     ? await TrackLyricsMaterializer.materializeForFileIds(importedFileIds)

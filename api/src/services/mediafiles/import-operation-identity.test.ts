@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { after, beforeEach, test } from "node:test";
 
 import {
@@ -17,6 +20,7 @@ const {
   persistDownloadedProviderProvenance,
   reconcileImportedDownload,
   releaseGroupMbidFromJobContext,
+  ensureDestAlbumArtworkForFileIds,
 } = await import("./downloaded-tracks-import-service.js");
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));
@@ -252,6 +256,43 @@ test("a fallback-stamped file still receives quality when the command provider d
   assert.equal(row.library_id, libraryId);
   assert.equal(row.imported_quality, "lossless");
   assert.equal(row.provider, "tidal", "quality persist must not rewrite the supplying provider");
+});
+
+test("dest album cover cache overwrites a leftover downloader cover.jpg", async () => {
+  const destCover = Buffer.from("DEST-ALBUM-COVER");
+  const leftoverCover = Buffer.from("DOWNLOADER-COVER");
+  const albumMbid = "c0bd9b69-9ff9-42a4-8a9b-722943a0743f";
+  const albumDir = path.join(tempDir, "library", "Afterlife", "Living At The Speed Of Light");
+  fs.mkdirSync(albumDir, { recursive: true });
+  const trackPath = path.join(albumDir, "01 - Living At The Speed Of Light.m4a");
+  const destSidecar = path.join(albumDir, "cover.jpg");
+  fs.writeFileSync(trackPath, "fixture audio");
+  fs.writeFileSync(destSidecar, leftoverCover);
+
+  seedLibrary();
+  const fileId = seedTrackFile({
+    file_path: trackPath,
+    library_root: path.join(tempDir, "library"),
+    relative_path: path.join("Afterlife", "Living At The Speed Of Light", "01 - Living At The Speed Of Light.m4a"),
+    filename: "01 - Living At The Speed Of Light.m4a",
+    extension: "m4a",
+  });
+  db.prepare(`
+    UPDATE TrackFiles SET canonical_release_group_mbid = ? WHERE id = ?
+  `).run(albumMbid, fileId);
+
+  const { getMediaCoverPath } = await import("../metadata/media-cover-service.js");
+  const cachePath = getMediaCoverPath(albumMbid, "Album", "cover", ".jpg");
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+  fs.writeFileSync(cachePath, destCover);
+
+  await ensureDestAlbumArtworkForFileIds([fileId]);
+
+  assert.equal(
+    crypto.createHash("sha256").update(fs.readFileSync(destSidecar)).digest("hex"),
+    crypto.createHash("sha256").update(destCover).digest("hex"),
+    "dest cover.jpg must be the album MediaCover, not leftover downloader art",
+  );
 });
 
 test("a reported row that is not a track file fails closed", () => {

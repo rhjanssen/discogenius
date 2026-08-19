@@ -26,7 +26,9 @@ any other `user_version` and creates a fresh database.
   is applied by `TrackFiles.id` even when a fallback stamped a different
   provider than the command. Track monitor-and-download and quality upgrades
   enqueue wait rows instead of jumping the wait list as commands. Completion
-  SSE keeps the wait-row id after the claim is dropped.
+  SSE keeps the wait-row id after the claim is dropped. Import caches dest
+  album MediaCover and rewrites `cover.jpg` before tag write so leftover
+  Apple/tiddl artwork cannot stay on the library copy.
 - **A monitoring row means monitored, at every level.** `LibraryAlbums.monitored`
   and `Recordings.monitored` / `monitored_lock` are gone; `LibraryAlbums`,
   `LibraryEditions` and the new `LibraryVideos` all say the same thing the same
