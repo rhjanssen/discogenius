@@ -33,6 +33,14 @@ import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
+function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
+    return Array.from(new Set(
+        Object.values(organizeResult.importedTrackFileIds || {})
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0),
+    ));
+}
+
 export class ImportDownloadCancelledError extends Error {
     constructor(phase: string) {
         super(`Import cancelled at safe boundary: ${phase}`);
@@ -1083,11 +1091,14 @@ export class DownloadedTracksImportService {
 
             let lyricResult: TrackLyricsMaterializeResult | null = null;
             cancellationCheckpoint("before materializing lyrics");
+            const importedFileIds = importedLibraryFileIds(organizeResult);
             try {
-                lyricResult = await TrackLyricsMaterializer.materializeForMediaIds(
-                    organizeResult.processedTrackIds,
-                    provider,
-                );
+                lyricResult = importedFileIds.length > 0
+                    ? await TrackLyricsMaterializer.materializeForFileIds(importedFileIds)
+                    : await TrackLyricsMaterializer.materializeForMediaIds(
+                        organizeResult.processedTrackIds,
+                        provider,
+                    );
                 if (lyricResult.discovered > 0) {
                     console.log(
                         `[ImportDownload] Lyrics resolved for ${lyricResult.discovered} track(s); ` +
@@ -1112,14 +1123,19 @@ export class DownloadedTracksImportService {
 
             cancellationCheckpoint("before applying audio tag rules");
             try {
-                const retagResult = await AudioTagService.applyForMediaIds(
-                    organizeResult.processedTrackIds,
-                    {
-                        provider,
+                const retagResult = importedFileIds.length > 0
+                    ? await AudioTagService.apply(importedFileIds, {
                         includeExternalLyrics: lyricResult !== null,
                         lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
-                    },
-                );
+                    })
+                    : await AudioTagService.applyForMediaIds(
+                        organizeResult.processedTrackIds,
+                        {
+                            provider,
+                            includeExternalLyrics: lyricResult !== null,
+                            lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
+                        },
+                    );
                 if (retagResult.errors.length > 0) {
                     console.warn(
                         `[ImportDownload] Audio tag rules completed with ${retagResult.errors.length} error(s) for ${type} ${providerId}:`,

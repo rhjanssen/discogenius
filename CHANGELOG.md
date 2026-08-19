@@ -16,6 +16,12 @@ any other `user_version` and creates a fresh database.
   wait-row id. Existing schema-43 catalogs keep their data; leftover queued
   download commands are wiped once on open. There is no Wanted page: monitored
   acquisition plans *are* wanted, and Download Missing puts them in this queue.
+- **Import retag and lyrics use the file row the organizer produced.** A
+  fallback can stamp a different provider than the command that queued the
+  job; looking the file up by provider id plus the command's provider then
+  skipped tagging entirely, leaving downloader tags on the library copy.
+  Lyrics no longer treat an unsynced downloader sidecar as the last word —
+  timed catalogue lyrics replace it.
 - **A monitoring row means monitored, at every level.** `LibraryAlbums.monitored`
   and `Recordings.monitored` / `monitored_lock` are gone; `LibraryAlbums`,
   `LibraryEditions` and the new `LibraryVideos` all say the same thing the same

@@ -116,12 +116,10 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
 - **Download wait queue (in progress on `wait-download-queue`).** Waiting
   albums/videos are skinny `DownloadQueue` rows; only an in-flight download is
-  a `Download*` command. Download Missing fills that list from monitored
-  acquisition plans. No Wanted page — streaming sources are queueable as soon
-  as they are monitored. Queue UI: active on top, waiting below, qBittorrent
-  reorder. Existing schema-43 catalogs stay; leftover queued download commands
-  are wiped once on open. After this lands: rebuild the container, then
-  Download Missing to refill the wait list against the kept catalog.
+  a `Download*` command. Live catalog currently has ~16k wait rows. Import
+  retag/lyrics now key off `TrackFiles.id` from the organizer so a provider
+  fallback cannot skip tagging. After merge: keep the wait list, rebuild on
+  each landing, Download Missing is already filling it.
 - **Live provider validation.** No controlled real-provider download has been
   run against the video placement path — see "Manual validation" at the top.
 - **Manual video placement override.** A user cannot yet move a specific video
