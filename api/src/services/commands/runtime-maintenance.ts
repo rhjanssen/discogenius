@@ -33,7 +33,6 @@ export interface RuntimeMaintenanceSummary {
   staleTrackedAssetsRemoved: number;
   albumStatesRefreshed: number;
   artistStatesRefreshed: number;
-  databaseOptimized: boolean;
   /** Finished commands rows pruned (completed > 1 day) */
   historyJobsPruned: number;
   /** Orphaned /downloads job_* folders removed */
@@ -319,7 +318,6 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     staleTrackedAssetsRemoved: 0,
     albumStatesRefreshed: 0,
     artistStatesRefreshed: 0,
-    databaseOptimized: false,
     historyJobsPruned: 0,
     orphanDownloadFoldersRemoved: 0,
     staleTempDirsRemoved: 0,
@@ -346,11 +344,6 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
       AND COALESCE(completed_at, updated_at) < datetime('now', '-1 day')
   `).run();
   summary.historyJobsPruned = pruneResult.changes;
-
-  db.exec(`PRAGMA optimize;`);
-  db.prepare(`ANALYZE;`).run();
-  db.prepare(`VACUUM;`).run();
-  summary.databaseOptimized = true;
 
   if (
     summary.duplicateTrackedAssetsRemoved > 0 ||

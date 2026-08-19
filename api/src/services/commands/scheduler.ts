@@ -47,13 +47,15 @@ const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_M
 const MONITORING_DUE_CHECK_INTERVAL_MINUTES = readIntEnv("DISCOGENIUS_MONITORING_DUE_CHECK_INTERVAL_MINUTES", 24 * 60, 1);
 const HEALTH_CHECK_INTERVAL_MINUTES = 360;
 const DATABASE_BACKUP_INTERVAL_MINUTES = 10_080;
+const COMPACT_DATABASE_INTERVAL_MINUTES = 10_080;
 
 export type ScheduledTaskKey =
     | "monitoring-cycle"
     | "root-scan"
     | "housekeeping"
     | "health-check"
-    | "backup-database";
+    | "backup-database"
+    | "compact-database";
 
 interface ScheduledTaskDefinition {
     key: ScheduledTaskKey;
@@ -63,7 +65,8 @@ interface ScheduledTaskDefinition {
         | typeof CommandNames.RescanFolders
         | typeof CommandNames.Housekeeping
         | typeof CommandNames.CheckHealth
-        | typeof CommandNames.BackupDatabase;
+        | typeof CommandNames.BackupDatabase
+        | typeof CommandNames.CompactDatabase;
     intervalMinutes: number;
     enabled: boolean;
 }
@@ -565,6 +568,13 @@ function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
             intervalMinutes: DATABASE_BACKUP_INTERVAL_MINUTES,
             enabled: true,
         },
+        {
+            key: "compact-database",
+            name: "Compact Database",
+            taskName: CommandNames.CompactDatabase,
+            intervalMinutes: COMPACT_DATABASE_INTERVAL_MINUTES,
+            enabled: true,
+        },
     ];
 }
 function syncScheduledTasks() {
@@ -583,6 +593,13 @@ function syncScheduledTasks() {
     DELETE FROM scheduled_tasks
     WHERE task_key NOT IN (${definitions.map(() => "?").join(", ")})
   `).run(...definitions.map((definition) => definition.key));
+
+    db.prepare(`
+      UPDATE scheduled_tasks
+      SET last_queued_at = CURRENT_TIMESTAMP
+      WHERE task_key = 'compact-database'
+        AND last_queued_at IS NULL
+    `).run();
 }
 
 function trySyncScheduledTasks(): boolean {
@@ -779,18 +796,22 @@ export function pollScheduledTasks() {
             continue;
         }
 
-        if (definition.key === "health-check" || definition.key === "backup-database") {
+        if (definition.key === "health-check" || definition.key === "backup-database" || definition.key === "compact-database") {
             if (hasActiveTask(definition.taskName)) {
                 continue;
             }
             const commandId = definition.key === "health-check"
                 ? queueCheckHealth({ trigger: CommandTrigger.Scheduled })
-                : queueBackupDatabase({ trigger: CommandTrigger.Scheduled });
+                : definition.key === "backup-database"
+                    ? queueBackupDatabase({ trigger: CommandTrigger.Scheduled })
+                    : queueCompactDatabase({ trigger: CommandTrigger.Scheduled });
             if (commandId !== -1) {
                 markScheduledTaskQueued(definition.key);
                 console.log(definition.key === "health-check"
                     ? "🩺 Scheduled health check queued"
-                    : "💾 Scheduled database backup queued");
+                    : definition.key === "backup-database"
+                        ? "💾 Scheduled database backup queued"
+                        : "📦 Scheduled database compact queued");
             }
         }
     }

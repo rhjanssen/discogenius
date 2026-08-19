@@ -291,7 +291,7 @@ function collectStorageCheck(paths: string[]): HealthCheckResult {
   if (errors.length > 0) {
     return {
       scope: "database.storage",
-      status: "error",
+      status: "warning",
       message: `${errors.length} configured volume(s) have critically low free space`,
       details,
     };
@@ -360,11 +360,11 @@ function collectWalCheck(): HealthCheckResult {
   const walPath = `${DB_PATH}-wal`;
   try {
     const walBytes = fs.existsSync(walPath) ? fs.statSync(walPath).size : 0;
-    const status = walBytes >= errorBytes ? "error" : walBytes >= warningBytes ? "warning" : "ok";
+    const status = walBytes >= warningBytes ? "warning" : "ok";
     return {
       scope: "database.wal",
       status,
-      message: status === "error"
+      message: walBytes >= errorBytes
         ? "SQLite WAL is critically large; inspect active readers and checkpoint health"
         : status === "warning"
           ? "SQLite WAL is large; inspect long-lived readers and checkpoint progress"
