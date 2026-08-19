@@ -15,12 +15,14 @@ let tasksRouter: typeof import("./v1/queue.js").default;
 let activityRouter: typeof import("./v1/history.js").default;
 let statusRouter: typeof import("./status.js").default;
 let downloadProcessorModule: typeof import("../services/download/download-processor.js");
+let waitQueueModule: typeof import("../services/download/download-wait-queue.js");
 
 before(async () => {
     dbModule = await import("../database.js");
     queueModule = await import("../services/commands/command-queue-manager.js");
     historyEventsModule = await import("../services/commands/history-events.js");
     downloadProcessorModule = await import("../services/download/download-processor.js");
+    waitQueueModule = await import("../services/download/download-wait-queue.js");
     tasksRouter = (await import("./v1/queue.js")).default;
     activityRouter = (await import("./v1/history.js")).default;
     statusRouter = (await import("./status.js")).default;
@@ -29,6 +31,7 @@ before(async () => {
 
 beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
+    dbModule.db.prepare("DELETE FROM DownloadQueue").run();
     dbModule.db.prepare("DELETE FROM history_events").run();
 });
 
@@ -72,45 +75,41 @@ function getRouteHandler(router: any, method: string, pathName: string): (req: a
 }
 
 test("queue reorder accepts the frontend jobIds contract and changes effective execution order", async () => {
-    const first = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadTrack,
-        { providerId: "route-first", type: "track" },
-        "route-first",
-        100,
-        1,
-    );
-    const second = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadTrack,
-        { providerId: "route-second", type: "track" },
-        "route-second",
-        0,
-        0,
-    );
+    const enqueueTrack = (ref: string) => waitQueueModule.DownloadWaitQueue.enqueue({
+        refKey: ref,
+        mediaKind: "track",
+        commandName: queueModule.CommandNames.DownloadTrack,
+        provider: "tidal",
+        providerId: ref,
+        payload: { providerId: ref, type: "track" },
+        position: "back",
+    });
+    const first = enqueueTrack("route-first");
+    const second = enqueueTrack("route-second");
 
     const handler = getRouteHandler(tasksRouter as any, "post", "/reorder");
     const response = createMockResponse();
-    await handler({ body: { jobIds: [first], afterJobId: second } }, response);
+    await handler({ body: { jobIds: [first.id], afterJobId: second.id } }, response);
 
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(
-        queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
-            queueModule.DOWNLOAD_COMMAND_NAMES,
-            ["queued"],
-            10,
-            0,
-            { orderBy: "execution" },
-        ).map((job) => job.id),
-        [second, first],
-    );
+    const ordered = dbModule.db.prepare(`
+        SELECT id FROM DownloadQueue ORDER BY queue_order ASC, id ASC
+    `).all() as Array<{ id: number }>;
+    assert.deepEqual(ordered.map((row) => row.id), [second.id, first.id]);
 });
 
 test("deleting a started download asks the worker to cancel it without pausing the queue", async () => {
-    const commandId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadTrack,
-        { providerId: "active-delete", type: "track" },
-        "active-delete",
-    );
-    queueModule.CommandQueueManager.markProcessing(commandId);
+    const queued = waitQueueModule.DownloadWaitQueue.enqueue({
+        refKey: "active-delete",
+        mediaKind: "track",
+        commandName: queueModule.CommandNames.DownloadTrack,
+        provider: "tidal",
+        providerId: "active-delete",
+        payload: { providerId: "active-delete", type: "track" },
+    });
+    const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+    assert.ok(claimed);
+    queueModule.CommandQueueManager.markProcessing(claimed.commandId);
 
     const processor = downloadProcessorModule.downloadProcessor;
     const originalCancelJob = processor.cancelJob;
@@ -127,11 +126,12 @@ test("deleting a started download asks the worker to cancel it without pausing t
     try {
         const handler = getRouteHandler(tasksRouter as any, "delete", "/:id");
         const response = createMockResponse();
-        await handler({ params: { id: String(commandId) } }, response);
+        await handler({ params: { id: String(queued.id) } }, response);
 
         assert.equal(response.statusCode, 200);
-        assert.deepEqual(cancelledIds, [commandId]);
-        assert.equal(queueModule.CommandQueueManager.get(commandId), null);
+        assert.deepEqual(cancelledIds, [claimed.commandId]);
+        assert.equal(queueModule.CommandQueueManager.get(claimed.commandId), null);
+        assert.equal(waitQueueModule.DownloadWaitQueue.get(queued.id), null);
     } finally {
         processor.cancelJob = originalCancelJob;
         processor.pause = originalPause;
