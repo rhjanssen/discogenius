@@ -112,15 +112,8 @@ winners, leaving losers as visible candidates with no row and no download.
 `live` → `-video` (it occupies the regular slot), `lyrics` → `-lyrics`.
 Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
-## Remaining for 2.8.0
+## Remaining after 2.8.0
 
-- **Download wait queue (in progress on `wait-download-queue`).** Waiting
-  albums/videos/tracks/upgrades are skinny `DownloadQueue` rows; only an
-  in-flight download is a `Download*` command. Live catalog currently has ~16k
-  wait rows. Import retag/lyrics key off `TrackFiles.id` from the organizer so
-  a provider fallback cannot skip tagging. Completion SSE keeps the wait-row
-  id after the claim is dropped. After merge: keep the wait list, rebuild on
-  each landing, Download Missing is already filling it.
 - **Live provider validation.** No controlled real-provider download has been
   run against the video placement path — see "Manual validation" at the top.
 - **Manual video placement override.** A user cannot yet move a specific video

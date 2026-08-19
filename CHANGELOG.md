@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [2.8.0] - unreleased
+## [2.8.0] - 2026-08-20
 
 Clean-start schema 42. There is no migration from 41: `initDatabase()` refuses
 any other `user_version` and creates a fresh database.
