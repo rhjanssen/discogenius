@@ -1671,8 +1671,8 @@ test("normalizeArtworkUrl upgrades cropped YouTube, square Apple, and TIDAL 3:2 
   );
 });
 
-test("a rewrite deletes leftover 1200px proxies and embed reads origin, not a 1200 file", async () => {
-  const albumMbid = "legacy-1200-proxy-album";
+test("cached original path is origin, never a height proxy", async () => {
+  const albumMbid = "origin-not-proxy-album";
   const sourceUrl = "https://example.test/origin-cover.jpg";
   const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
   const image = jpeg.encode({
@@ -1680,9 +1680,6 @@ test("a rewrite deletes leftover 1200px proxies and embed reads origin, not a 12
     height: 800,
     data: Buffer.alloc(800 * 800 * 4, 180),
   }, 92).data;
-
-  fs.mkdirSync(folder, { recursive: true });
-  fs.writeFileSync(path.join(folder, "cover-1200.jpg"), Buffer.alloc(64, 9));
 
   globalThis.fetch = (async () => new Response(image, {
     status: 200,
