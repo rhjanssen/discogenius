@@ -114,6 +114,14 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
 ## Remaining for 2.8.0
 
+- **Download wait queue (in progress on `wait-download-queue`).** Waiting
+  albums/videos are skinny `DownloadQueue` rows; only an in-flight download is
+  a `Download*` command. Download Missing fills that list from monitored
+  acquisition plans. No Wanted page — streaming sources are queueable as soon
+  as they are monitored. Queue UI: active on top, waiting below, qBittorrent
+  reorder. Existing schema-43 catalogs stay; leftover queued download commands
+  are wiped once on open. After this lands: rebuild the container, then
+  Download Missing to refill the wait list against the kept catalog.
 - **Live provider validation.** No controlled real-provider download has been
   run against the video placement path — see "Manual validation" at the top.
 - **Manual video placement override.** A user cannot yet move a specific video

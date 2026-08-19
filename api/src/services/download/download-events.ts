@@ -1,4 +1,9 @@
 import { EventEmitter } from 'events';
+import { DownloadWaitQueue } from './download-wait-queue.js';
+
+function publicJobId(commandId: number): number {
+    return DownloadWaitQueue.getIdByCommandId(commandId) ?? commandId;
+}
 
 /**
  * Event emitter with built-in throttling.
@@ -54,7 +59,7 @@ class DownloadEventEmitter extends EventEmitter {
         if (data.state && IMMEDIATE_STATES.has(data.state)) {
             this.progressBuffer.delete(commandId);
             this.progressLastEmit.set(commandId, Date.now());
-            this.emit('progress-batch', [{ commandId, jobId: commandId, ...data }]);
+            this.emit('progress-batch', [{ commandId, jobId: publicJobId(commandId), ...data }]);
             return;
         }
 
@@ -64,7 +69,7 @@ class DownloadEventEmitter extends EventEmitter {
         if (now - lastEmit >= PROGRESS_EMIT_INTERVAL_MS) {
             this.progressBuffer.delete(commandId);
             this.progressLastEmit.set(commandId, now);
-            this.emit('progress-batch', [{ commandId, jobId: commandId, ...data }]);
+            this.emit('progress-batch', [{ commandId, jobId: publicJobId(commandId), ...data }]);
         } else {
             this.progressBuffer.set(commandId, data);
         }
@@ -93,7 +98,7 @@ class DownloadEventEmitter extends EventEmitter {
         const batch: Array<DownloadProgressData & { commandId: number; jobId: number }> = [];
         for (const [commandId, data] of this.progressBuffer) {
             this.progressLastEmit.set(commandId, now);
-            batch.push({ commandId, jobId: commandId, ...data });
+            batch.push({ commandId, jobId: publicJobId(commandId), ...data });
         }
         this.progressBuffer.clear();
         this.emit('progress-batch', batch);
@@ -108,17 +113,17 @@ class DownloadEventEmitter extends EventEmitter {
     // ---- Structural events (immediate) ----------------------------------------
 
     emitStarted(commandId: number, data: DownloadStartedData) {
-        this.emit('started', { commandId, jobId: commandId, ...data });
+        this.emit('started', { commandId, jobId: publicJobId(commandId), ...data });
     }
 
     emitCompleted(commandId: number, data: DownloadCompletedData) {
         this.clearJob(commandId);
-        this.emit('completed', { commandId, jobId: commandId, ...data });
+        this.emit('completed', { commandId, jobId: publicJobId(commandId), ...data });
     }
 
     emitFailed(commandId: number, data: DownloadFailedData) {
         this.clearJob(commandId);
-        this.emit('failed', { commandId, jobId: commandId, ...data });
+        this.emit('failed', { commandId, jobId: publicJobId(commandId), ...data });
     }
 
     // ---- Queue status (debounced, 5 s) ---------------------------------

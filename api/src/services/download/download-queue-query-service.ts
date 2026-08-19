@@ -8,6 +8,7 @@ import type {
 } from "../../contracts/status.js";
 import { downloadProcessor } from "./download-processor.js";
 import { downloadEvents } from "./download-events.js";
+import { DownloadWaitQueue } from "./download-wait-queue.js";
 import {DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { appEvents, AppEvent } from "../commands/app-events.js";
@@ -801,9 +802,24 @@ function matchesQueueDetails(job: QueueJobRow, filters: NormalizedQueueDetailsFi
   return true;
 }
 
+function buildWaitQueuePositionById(): Map<number, number> {
+  const rows = db.prepare(`
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        ORDER BY queue_order ASC, id ASC
+      ) AS queuePosition
+    FROM DownloadQueue
+    WHERE command_id IS NULL
+  `).all() as Array<{ id: number; queuePosition: number }>;
+
+  return new Map<number, number>(rows.map((row) => [Number(row.id), Number(row.queuePosition)]));
+}
+
 function buildQueuePositionById(): Map<number, number> {
-  // Rank in SQL over ids only — materializing every queued job (payload JSON
-  // included) just to number them costs seconds with a large backlog.
+  if (DownloadWaitQueue.count() > 0) {
+    return buildWaitQueuePositionById();
+  }
   const typePlaceholders = DOWNLOAD_COMMAND_NAMES.map(() => "?").join(",");
   const rows = db.prepare(`
     SELECT
@@ -818,6 +834,161 @@ function buildQueuePositionById(): Map<number, number> {
 
   return new Map<number, number>(rows.map((row) => [Number(row.id), Number(row.queuePosition)]));
 }
+
+function getPendingDownloadQueuePositionsForWaitIds(waitIds: readonly number[]): Map<number, number> {
+  const queuePositionById = new Map<number, number>();
+  if (waitIds.length === 0) {
+    return queuePositionById;
+  }
+
+  const idPlaceholders = waitIds.map(() => "?").join(",");
+  const rows = db.prepare(`
+    WITH ranked AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          ORDER BY queue_order ASC, id ASC
+        ) AS queuePosition
+      FROM DownloadQueue
+      WHERE command_id IS NULL
+    )
+    SELECT id, queuePosition
+    FROM ranked
+    WHERE id IN (${idPlaceholders})
+  `).all(...waitIds) as Array<{ id: number; queuePosition: number }>;
+
+  for (const row of rows) {
+    queuePositionById.set(Number(row.id), Number(row.queuePosition));
+  }
+
+  return queuePositionById;
+}
+
+type WaitQueueJoinedRow = {
+  id: number;
+  ref_key: string;
+  media_kind: string;
+  command_name: string;
+  plan_id: number | null;
+  provider: string | null;
+  provider_id: string | null;
+  artist_id: string | null;
+  album_id: string | null;
+  title: string | null;
+  artist: string | null;
+  cover: string | null;
+  quality: string | null;
+  slot: string | null;
+  wait_payload: unknown;
+  queue_order: number;
+  command_id: number | null;
+  created_at: string;
+  updated_at: string;
+  command_status: string | null;
+  command_payload: unknown;
+  command_progress: number | null;
+  command_error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  command_updated_at: string | null;
+};
+
+function parsePayloadValue(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function waitRowToQueueJob(row: WaitQueueJoinedRow): QueueJobRow {
+  const waitPayload = parsePayloadValue(row.wait_payload);
+  const commandPayload = parsePayloadValue(row.command_payload);
+  const payload = {
+    ...waitPayload,
+    ...commandPayload,
+    provider: row.provider ?? commandPayload.provider ?? waitPayload.provider,
+    providerId: row.provider_id ?? commandPayload.providerId ?? waitPayload.providerId,
+    title: row.title ?? commandPayload.title ?? waitPayload.title,
+    artist: row.artist ?? commandPayload.artist ?? waitPayload.artist,
+    cover: row.cover ?? commandPayload.cover ?? waitPayload.cover,
+    quality: row.quality ?? commandPayload.quality ?? waitPayload.quality,
+    slot: row.slot ?? commandPayload.slot ?? waitPayload.slot,
+    album_id: row.album_id ?? commandPayload.album_id ?? waitPayload.album_id,
+    albumId: row.album_id ?? commandPayload.albumId ?? waitPayload.albumId,
+    artist_id: row.artist_id ?? commandPayload.artist_id ?? waitPayload.artist_id,
+    artistId: row.artist_id ?? commandPayload.artistId ?? waitPayload.artistId,
+  };
+  const status = row.command_status === "started" || row.command_status === "failed"
+    ? row.command_status
+    : "queued";
+
+  return {
+    id: Number(row.id),
+    name: row.command_name,
+    status,
+    ref_id: row.ref_key,
+    payload,
+    progress: typeof row.command_progress === "number" ? row.command_progress : 0,
+    error: row.command_error,
+    created_at: row.created_at,
+    updated_at: row.command_updated_at ?? row.updated_at,
+    started_at: row.started_at,
+    completed_at: row.completed_at,
+  };
+}
+
+const WAIT_QUEUE_LIST_SQL = `
+  SELECT
+    dq.id,
+    dq.ref_key,
+    dq.media_kind,
+    dq.command_name,
+    dq.plan_id,
+    dq.provider,
+    dq.provider_id,
+    dq.artist_id,
+    dq.album_id,
+    dq.title,
+    dq.artist,
+    dq.cover,
+    dq.quality,
+    dq.slot,
+    dq.payload AS wait_payload,
+    dq.queue_order,
+    dq.command_id,
+    dq.created_at,
+    dq.updated_at,
+    c.status AS command_status,
+    c.payload AS command_payload,
+    c.progress AS command_progress,
+    c.error AS command_error,
+    c.started_at,
+    c.completed_at,
+    c.updated_at AS command_updated_at
+  FROM DownloadQueue dq
+  LEFT JOIN commands c ON c.id = dq.command_id
+`;
+
+const WAIT_QUEUE_ORDER_SQL = `
+  ORDER BY
+    CASE
+      WHEN c.status = 'started' THEN 0
+      WHEN c.status = 'failed' THEN 1
+      ELSE 2
+    END,
+    dq.queue_order ASC,
+    dq.id ASC
+`;
 
 function getPendingDownloadQueuePositionsForIds(commandIds: readonly number[]): Map<number, number> {
   const queuePositionById = new Map<number, number>();
@@ -1072,9 +1243,29 @@ export class DownloadQueueQueryService {
 
   static getQueueStatus(): QueueStatusContract {
     const status = downloadProcessor.getStatus();
-    const stats = this.getSnapshot('status-stats', () => (
-      CommandQueueManager.getStats() as QueueStatusContract["stats"]
-    ));
+    const stats = this.getSnapshot('status-stats', () => {
+      const commandStats = ((CommandQueueManager.getStats() as Array<{
+        name?: string;
+        type?: string;
+        status: string;
+        count: number;
+      }>) ?? []).map((row) => ({
+        type: row.type ?? row.name ?? "",
+        status: row.status,
+        count: row.count,
+      }));
+      const waiting = DownloadWaitQueue.countUnclaimedByCommandName();
+      const merged = commandStats.map((row) => ({ ...row }));
+      for (const [name, count] of waiting) {
+        const existing = merged.find((row) => row.type === name && row.status === "queued");
+        if (existing) {
+          existing.count = count;
+        } else {
+          merged.push({ type: name, status: "queued", count });
+        }
+      }
+      return merged;
+    });
 
     return {
       ...status,
@@ -1087,22 +1278,42 @@ export class DownloadQueueQueryService {
   }
 
   private static buildQueue(params: { limit: number; offset: number }): QueueListResponseContract {
-    const total = CommandQueueManager.countJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-      ACTIVE_QUEUE_STATUSES,
-    );
-    const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-      ACTIVE_QUEUE_STATUSES,
-      params.limit,
-      params.offset,
-      { orderBy: "download_activity" },
-    ) as unknown as QueueJobRow[];
+    if (DownloadWaitQueue.count() === 0) {
+      const total = CommandQueueManager.countJobsByTypesAndStatuses(
+        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+        ACTIVE_QUEUE_STATUSES,
+      );
+      const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
+        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+        ACTIVE_QUEUE_STATUSES,
+        params.limit,
+        params.offset,
+        { orderBy: "download_activity" },
+      ) as unknown as QueueJobRow[];
+      const queuePositionById = getPendingDownloadQueuePositionsForIds(
+        jobs
+          .filter((job) => job.status === "queued" && DOWNLOAD_COMMAND_NAMES.includes(job.name as typeof DOWNLOAD_COMMAND_NAMES[number]))
+          .map((job) => job.id),
+      );
+      const items = jobs.map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
+      return {
+        items,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+        hasMore: params.offset + jobs.length < total,
+      };
+    }
 
-    const queuePositionById = getPendingDownloadQueuePositionsForIds(
-      jobs
-        .filter((job) => job.status === "queued" && DOWNLOAD_COMMAND_NAMES.includes(job.name as typeof DOWNLOAD_COMMAND_NAMES[number]))
-        .map((job) => job.id),
+    const total = DownloadWaitQueue.count();
+    const rows = db.prepare(`
+      ${WAIT_QUEUE_LIST_SQL}
+      ${WAIT_QUEUE_ORDER_SQL}
+      LIMIT ? OFFSET ?
+    `).all(params.limit, params.offset) as WaitQueueJoinedRow[];
+    const jobs = rows.map((row) => waitRowToQueueJob(row));
+    const queuePositionById = getPendingDownloadQueuePositionsForWaitIds(
+      jobs.filter((job) => job.status === "queued").map((job) => job.id),
     );
     const items = jobs.map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
 
@@ -1178,16 +1389,56 @@ export class DownloadQueueQueryService {
     const cacheKey = `details:${normalizedFilters.artistId ?? ""}:${normalizedFilters.albumIds.join(",")}:${normalizedFilters.providerIds.join(",")}`;
     return this.getSnapshot(cacheKey, () => {
       const queuePositionById = buildQueuePositionById();
-      const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-        ACTIVE_QUEUE_STATUSES,
-        5000,
-        0,
-        { orderBy: "queue_order" },
-      ) as unknown as QueueJobRow[];
+      if (DownloadWaitQueue.count() === 0) {
+        const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
+          DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+          ACTIVE_QUEUE_STATUSES,
+          5000,
+          0,
+          { orderBy: "queue_order" },
+        ) as unknown as QueueJobRow[];
+        return jobs
+          .filter((job) => matchesQueueDetails(job, normalizedFilters))
+          .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
+      }
+      const clauses: string[] = [];
+      const sqlParams: unknown[] = [];
+      if (normalizedFilters.artistId) {
+        clauses.push(`(
+          dq.artist_id = ?
+          OR dq.album_id IN (
+            SELECT release_group.mbid
+            FROM Albums release_group
+            LEFT JOIN ArtistMetadata artist ON artist.id = release_group.artist_metadata_id
+            LEFT JOIN Artists managed ON managed.mbid = artist.mbid
+            WHERE managed.id = ? OR artist.mbid = ? OR managed.mbid = ?
+          )
+        )`);
+        sqlParams.push(
+          normalizedFilters.artistId,
+          normalizedFilters.artistId,
+          normalizedFilters.artistId,
+          normalizedFilters.artistId,
+        );
+      }
+      if (normalizedFilters.albumIds.length > 0) {
+        clauses.push(`dq.album_id IN (${placeholders(normalizedFilters.albumIds)})`);
+        sqlParams.push(...normalizedFilters.albumIds);
+      }
+      if (normalizedFilters.providerIds.length > 0) {
+        clauses.push(`dq.provider_id IN (${placeholders(normalizedFilters.providerIds)})`);
+        sqlParams.push(...normalizedFilters.providerIds);
+      }
+      const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+      const rows = db.prepare(`
+        ${WAIT_QUEUE_LIST_SQL}
+        ${whereSql}
+        ${WAIT_QUEUE_ORDER_SQL}
+        LIMIT 5000
+      `).all(...sqlParams) as WaitQueueJoinedRow[];
 
-      return jobs
-        .filter((job) => matchesQueueDetails(job, normalizedFilters))
+      return rows
+        .map((row) => waitRowToQueueJob(row))
         .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
     });
   }
@@ -1199,15 +1450,28 @@ export class DownloadQueueQueryService {
     // ~30s of synchronous main-thread work per connection with a few thousand
     // queued albums, which is what made the app unreachable under load.
     return this.getSnapshot('active-progress', () => {
-      const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-        ["started"],
-        50,
-        0,
-        { orderBy: "queue_order" },
-      ) as unknown as QueueJobRow[];
+      if (DownloadWaitQueue.count() === 0) {
+        const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
+          DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+          ["started"],
+          50,
+          0,
+          { orderBy: "queue_order" },
+        ) as unknown as QueueJobRow[];
+        return jobs
+          .map((job) => this.mapDownloadQueueJob(job))
+          .map((item) => buildProgressFromQueueItem(item))
+          .filter((item): item is DownloadProgressContract => item !== null);
+      }
+      const rows = db.prepare(`
+        ${WAIT_QUEUE_LIST_SQL}
+        WHERE c.status = 'started'
+        ${WAIT_QUEUE_ORDER_SQL}
+        LIMIT 50
+      `).all() as WaitQueueJoinedRow[];
 
-      return jobs
+      return rows
+        .map((row) => waitRowToQueueJob(row))
         .map((job) => this.mapDownloadQueueJob(job))
         .map((item) => buildProgressFromQueueItem(item))
         .filter((item): item is DownloadProgressContract => item !== null);

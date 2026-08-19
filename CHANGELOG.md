@@ -8,6 +8,14 @@ Clean-start schema 42. There is no migration from 41: `initDatabase()` refuses
 any other `user_version` and creates a fresh database.
 
 ### Changed
+- **Download queue is a wait list, not a command pile.** Waiting albums/videos
+  live in `DownloadQueue` (skinny rows with qBittorrent-style `queue_order`).
+  Only an in-flight download becomes a `Download*` command, so Download Missing
+  can queue the whole wanted set without locking SQLite. The Queue page shows
+  active downloads first, then every waiting item, and reorder/cancel use the
+  wait-row id. Existing schema-43 catalogs keep their data; leftover queued
+  download commands are wiped once on open. There is no Wanted page: monitored
+  acquisition plans *are* wanted, and Download Missing puts them in this queue.
 - **A monitoring row means monitored, at every level.** `LibraryAlbums.monitored`
   and `Recordings.monitored` / `monitored_lock` are gone; `LibraryAlbums`,
   `LibraryEditions` and the new `LibraryVideos` all say the same thing the same

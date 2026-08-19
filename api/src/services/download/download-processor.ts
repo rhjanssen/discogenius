@@ -8,6 +8,7 @@ import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { buildDurableQueueOrderClause } from "../commands/command-ordering.js";
 import { getConfigSection, Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
+import { DownloadWaitQueue } from './download-wait-queue.js';
 import {
     invalidateAlbumDownloadStatus,
     invalidateAllDownloadState,
@@ -758,6 +759,7 @@ export class DownloadProcessor {
                     console.warn(`[DOWNLOAD-PROCESSOR] Ignoring late import completion for retired attempt ${workerId || 'legacy'} on command #${commandId}`);
                     return;
                 }
+                DownloadWaitQueue.removeByCommandId(commandId);
                 this.activeImports.delete(commandId);
                 this.clearAttempt(commandId, workerId);
                 downloadEvents.emitCompleted(commandId, {
@@ -773,6 +775,7 @@ export class DownloadProcessor {
                 if (error?.name === 'ImportDownloadCancelledError' || error?.constructor?.name === 'ImportDownloadCancelledError') {
                     console.log(`[DOWNLOAD-PROCESSOR] Import command #${commandId} cancelled (${error.message})`);
                     CommandQueueManager.cancel(commandId);
+                    DownloadWaitQueue.removeByCommandId(commandId);
                     this.clearAttempt(commandId, workerId);
                     
                     const downloadPath = importPayload.path;
@@ -1484,12 +1487,12 @@ export class DownloadProcessor {
             return;
         }
 
+        DownloadWaitQueue.recoverOrphanClaims();
+
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
         // most one per provider (same-provider downloads stay serialized). ──
-        // Each iteration picks the highest-priority queued job whose provider is
-        // not already busy, then fire-and-forgets its download phase. The phase
-        // registers its slot synchronously (before its first await) so the next
-        // iteration sees the newly-occupied provider.
+        // Waiting work lives in DownloadQueue. Only a free slot claims the next
+        // wait row into a short-lived Download* command (Tidarr + qBittorrent).
         while (this.activeDownloads.size < MAX_CONCURRENT_DOWNLOADS) {
             const activeProviders = new Set<string>();
             for (const entry of this.activeDownloads.values()) {
@@ -1497,13 +1500,18 @@ export class DownloadProcessor {
             }
 
             const candidates = CommandQueueManager.getTopPendingJobsByTypes(DOWNLOAD_COMMAND_NAMES, 20);
-            const job = candidates.find((candidate) => (
+            let job = candidates.find((candidate) => (
                 !activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand))
             ));
 
             if (!job) {
-                // Either nothing queued, or every queued job's provider already
-                // has an in-flight download. Wait for a slot to free up.
+                const claimed = DownloadWaitQueue.claimNext(activeProviders);
+                if (claimed) {
+                    job = CommandQueueManager.get(claimed.commandId) ?? undefined;
+                }
+            }
+
+            if (!job) {
                 if (candidates.length > 0) {
                     this.logBusy();
                 }
@@ -1734,6 +1742,7 @@ export class DownloadProcessor {
                         updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId));
 
                         if (!CommandQueueManager.complete(job.id, workerId)) return;
+                        DownloadWaitQueue.removeByCommandId(job.id);
                         this.clearAttempt(job.id, workerId);
                         await this.cleanupDownloadSourcePath(entry.downloadPath);
 
@@ -1753,6 +1762,7 @@ export class DownloadProcessor {
                     if (payload?.reason !== 'upgrade' && alreadyDownloaded) {
                         console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${providerId} is already downloaded — marking job as complete.`);
                         if (!CommandQueueManager.complete(job.id, workerId)) return;
+                        DownloadWaitQueue.removeByCommandId(job.id);
                         this.clearAttempt(job.id, workerId);
                         await this.cleanupDownloadSourcePath(entry.downloadPath);
 
@@ -2609,6 +2619,7 @@ export class DownloadProcessor {
             this.explicitlyCancelledDownloads.add(commandId);
             activeDownload.abortController.abort();
             CommandQueueManager.cancel(commandId);
+            DownloadWaitQueue.removeByCommandId(commandId);
         } else if (this.activeImports.has(commandId)) {
             // Cannot abort active import; mark as cancelled for when it finishes
             this.explicitlyCancelledDownloads.add(commandId);
@@ -2621,6 +2632,7 @@ export class DownloadProcessor {
             await activeImport?.promise;
         } else if (currentJob.status === 'queued' || currentJob.status === 'started') {
             CommandQueueManager.cancel(commandId);
+            DownloadWaitQueue.removeByCommandId(commandId);
         }
     }
 
