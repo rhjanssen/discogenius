@@ -42,9 +42,10 @@ services:
   # block if you will not use Apple Music downloads.
   #
   # Shares the discogenius network namespace so the downloader can reach
-  # 127.0.0.1:10020/20020. If you recreate the discogenius container, also
-  # recreate this one or it stays attached to a dead network namespace:
-  #   docker compose up -d --force-recreate apple-music-wrapper
+  # 127.0.0.1:10020/20020. depends_on.restart recreates this sidecar whenever
+  # discogenius is recreated; a stale wrapper otherwise stays attached to a
+  # dead namespace and Apple downloads fail. Manual fallback:
+  #   docker compose up -d --force-recreate discogenius apple-music-wrapper
   #
   # First-time Apple ID/2FA login is done from the Auth page; Discogenius
   # provisions the supervisor script at boot into the shared data volume
@@ -64,7 +65,9 @@ services:
       - -c
       - 'while [ ! -s /app/rootfs/data/wrapper-entrypoint.sh ]; do echo "[wrapper-boot] waiting for Discogenius to provision the supervisor script..."; sleep 2; done; exec /bin/bash /app/rootfs/data/wrapper-entrypoint.sh'
     depends_on:
-      - discogenius
+      discogenius:
+        condition: service_started
+        restart: true
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data
     restart: unless-stopped
