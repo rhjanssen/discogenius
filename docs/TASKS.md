@@ -114,6 +114,13 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
 ## Remaining for 2.8.0
 
+- **Download wait queue (in progress on `wait-download-queue`).** Waiting
+  albums/videos/tracks/upgrades are skinny `DownloadQueue` rows; only an
+  in-flight download is a `Download*` command. Live catalog currently has ~16k
+  wait rows. Import retag/lyrics key off `TrackFiles.id` from the organizer so
+  a provider fallback cannot skip tagging. Completion SSE keeps the wait-row
+  id after the claim is dropped. After merge: keep the wait list, rebuild on
+  each landing, Download Missing is already filling it.
 - **Live provider validation.** No controlled real-provider download has been
   run against the video placement path — see "Manual validation" at the top.
 - **Manual video placement override.** A user cannot yet move a specific video
@@ -123,29 +130,14 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
 ### Open defects (found during 2.8 hardening, not yet fixed)
 
-- **Mid-album provider fallback still fails the import, one layer deeper.**
-  Two layers are fixed — the offer is now the authority on provenance rather
-  than the file's stamped provider (`downloaded-tracks-import-service`), and a
-  fallback now re-resolves the item/edition/variant ids under the provider that
-  actually supplied the track (`resolveFallbackProvenance`). Verified: the
-  8-track Aerosmith spatial album now imports all 8 files with the correct
-  TIDAL provider ids after falling back from Apple Music.
-
-  What remains: the command is still marked failed, now with
-  `[ImportDownload] Reported TrackFiles row 487 belongs to provider tidal, not
-  apple-music`. So for at least one track the organizer's `processedTrackIds`
-  still carries the *pre-fallback* Apple id while the file it produced is
-  stamped TIDAL — i.e. the workspace/organizer identity and the rewritten offer
-  identity disagree when a fallback happens part-way through an album.
-  `flattenTrackOfferWorkspace` is renaming to the new id, so the divergence is
-  most likely in what `processedTrackIds` reports back. **Reproduce:** delete
-  the `TrackFiles` rows for `8a58cc1a-be0d-3b1b-8d0d-aa8f467a59da` and
-  re-request its spatial slot; the Apple Atmos download fails per-track and
-  falls back to TIDAL.
-
-  Note the files themselves are correct on disk and in the database; only the
-  command outcome is wrong. That still matters — a failed command is retried
-  and shows as an error to the user.
+- done: **Mid-album provider fallback no longer fails the import on a provider
+  stamp mismatch.** Prepared quality is applied by the organizer's
+  `TrackFiles.id`. A fallback can stamp the supplying provider (`tidal`) while
+  the command still names the album's (`apple-music`); that is not an identity
+  error. Provenance still rewrites the stamp from the offer. Covered by
+  `import-operation-identity.test.ts`. Re-request the Aerosmith spatial slot
+  (`8a58cc1a-be0d-3b1b-8d0d-aa8f467a59da`) on a live catalog to confirm the
+  command completes.
 
 - **Apple Music video download fails** with `apple-music-downloader exited with
   code 1: Decrypt failed: exit status 1`. Recreating the wrapper container did

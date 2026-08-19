@@ -10,6 +10,7 @@ import {
 import {
   classifyLyricsForSidecar,
   findAdjacentLyricSidecar,
+  isSynchronizedLyricContent,
   lyricSidecarPath,
 } from "../extras/lyrics/lyric-sidecar.js";
 import { LibraryFilesService } from "./library-files.js";
@@ -52,11 +53,12 @@ function resolvedLyricsFromExistingSidecar(
   mediaPath: string,
   provider: string,
   providerId: string,
-): { filePath: string; lyrics: ResolvedLyrics } | null {
+): { filePath: string; synchronized: boolean; lyrics: ResolvedLyrics } | null {
   const sidecar = findAdjacentLyricSidecar(mediaPath, { normalizeExtension: true });
   if (!sidecar) return null;
   return {
     filePath: sidecar.filePath,
+    synchronized: sidecar.synchronized,
     lyrics: {
       text: sidecar.text,
       subtitles: sidecar.subtitles,
@@ -70,6 +72,52 @@ function resolvedLyricsFromExistingSidecar(
 function fallbackLibraryRoot(row: TrackLyricsRow, resolvedFilePath: string): string {
   return resolveLibraryRootPath(row.library_root, resolvedFilePath)
     || (row.library_slot === "spatial" ? Config.getSpatialPath() : Config.getMusicPath());
+}
+
+function removeUnsyncedLyricSidecar(
+  existingSidecar: { filePath: string; synchronized: boolean } | null,
+  replacementPath: string,
+): void {
+  if (!existingSidecar || existingSidecar.synchronized) return;
+  const previousPath = path.resolve(existingSidecar.filePath);
+  if (previousPath === path.resolve(replacementPath)) return;
+  try {
+    if (fs.existsSync(previousPath)) {
+      fs.unlinkSync(previousPath);
+    }
+  } catch (error) {
+    console.warn(`[Lyrics] Failed to remove unsynced sidecar ${previousPath}:`, error);
+  }
+  db.prepare("DELETE FROM LyricFiles WHERE file_path = ?").run(existingSidecar.filePath);
+}
+
+function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
+  const uniqueIds = Array.from(new Set(fileIds.filter((id) => Number.isInteger(id) && id > 0)));
+  if (uniqueIds.length === 0) return [];
+  const placeholders = uniqueIds.map(() => "?").join(",");
+  return db.prepare(`
+    SELECT
+      id,
+      library_id,
+      artist_id,
+      NULL AS album_id,
+      file_path,
+      relative_path,
+      library_root,
+      library_slot,
+      quality,
+      provider,
+      CAST(provider_id AS TEXT) AS provider_id,
+      canonical_artist_mbid,
+      canonical_release_group_mbid,
+      canonical_release_mbid,
+      canonical_track_mbid,
+      canonical_recording_mbid
+    FROM TrackFiles
+    WHERE file_type = 'track'
+      AND id IN (${placeholders})
+    ORDER BY id ASC
+  `).all(...uniqueIds) as TrackLyricsRow[];
 }
 
 function trackRowsForMediaIds(
@@ -143,7 +191,44 @@ export class TrackLyricsMaterializer {
     const quality = getConfigSection("quality");
     if (!metadata.save_lyrics && !quality.embed_lyrics) return result;
 
-    const rows = trackRowsForMediaIds(uniqueMediaIds, requestedProvider);
+    return this.materializeRows(trackRowsForMediaIds(uniqueMediaIds, requestedProvider), requestedProvider);
+  }
+
+  /**
+   * Same as materializeForMediaIds, keyed by exact TrackFiles.id.
+   * Import must use this: a provider_id is unique only within (provider, entity_type),
+   * and a fallback stamps a different provider than the command that queued the job.
+   */
+  static async materializeForFileIds(
+    fileIds: number[],
+    requestedProvider?: string | null,
+  ): Promise<TrackLyricsMaterializeResult> {
+    const metadata = getConfigSection("metadata");
+    const quality = getConfigSection("quality");
+    if (!metadata.save_lyrics && !quality.embed_lyrics) {
+      return {
+        lyricsByProviderMedia: new Map(),
+        discovered: 0,
+        saved: 0,
+        missing: 0,
+      };
+    }
+    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider);
+  }
+
+  private static async materializeRows(
+    rows: TrackLyricsRow[],
+    requestedProvider?: string | null,
+  ): Promise<TrackLyricsMaterializeResult> {
+    const result: TrackLyricsMaterializeResult = {
+      lyricsByProviderMedia: new Map(),
+      discovered: 0,
+      saved: 0,
+      missing: 0,
+    };
+    if (rows.length === 0) return result;
+
+    const metadata = getConfigSection("metadata");
     const resolutionPromises = new Map<string, Promise<ResolvedLyrics | null>>();
 
     const resolveRow = async (row: TrackLyricsRow): Promise<void> => {
@@ -164,12 +249,22 @@ export class TrackLyricsMaterializer {
 
       let resolution = resolutionPromises.get(key);
       if (!resolution) {
-        resolution = Promise.resolve(existingSidecar?.lyrics ?? null)
-          .then((existing) => existing || getLyricsForProviderMedia(providerId, provider))
-          .catch((error) => {
-            console.warn(`[Lyrics] Failed to resolve ${provider} track ${providerId}:`, error);
-            return null;
-          });
+        // A tiddl unsynced sidecar must not hide catalogue timed lyrics.
+        // Keep a synchronized sidecar; otherwise try the provider/API and
+        // fall back to whatever was already on disk.
+        const existingHasSync = Boolean(
+          existingSidecar?.synchronized
+          || isSynchronizedLyricContent(existingSidecar?.lyrics.subtitles)
+          || isSynchronizedLyricContent(existingSidecar?.lyrics.text),
+        );
+        resolution = (existingHasSync
+          ? Promise.resolve(existingSidecar?.lyrics ?? null)
+          : getLyricsForProviderMedia(providerId, provider)
+            .then((apiLyrics) => apiLyrics || existingSidecar?.lyrics || null)
+        ).catch((error) => {
+          console.warn(`[Lyrics] Failed to resolve ${provider} track ${providerId}:`, error);
+          return existingSidecar?.lyrics ?? null;
+        });
         resolutionPromises.set(key, resolution);
       }
 
@@ -193,17 +288,22 @@ export class TrackLyricsMaterializer {
       };
       result.lyricsByProviderMedia.set(key, normalizedLyrics);
       result.discovered++;
-      const lyricPath = existingSidecar?.filePath
-        ?? lyricSidecarPath(resolvedFilePath, classified.extension);
+      const lyricPath = classified.synchronized
+        ? lyricSidecarPath(resolvedFilePath, classified.extension)
+        : (existingSidecar?.filePath ?? lyricSidecarPath(resolvedFilePath, classified.extension));
 
       if (metadata.save_lyrics || getConfigSection("quality").embed_lyrics) {
         // Persist a sidecar whenever we embed or the user asked to save lyrics.
-        // Without a stable on-disk copy, retag preview re-fetches live lyrics and
-        // often flags a false "needs change" right after import.
-        if (!fs.existsSync(lyricPath)) {
+        // Upgrade an unsynced tiddl sidecar when catalogue lyrics are timed.
+        const shouldWrite = !fs.existsSync(lyricPath)
+          || (classified.synchronized && existingSidecar && !existingSidecar.synchronized);
+        if (shouldWrite) {
           fs.mkdirSync(path.dirname(lyricPath), { recursive: true });
           fs.writeFileSync(lyricPath, `${classified.content}\n`, "utf8");
           result.saved++;
+        }
+        if (classified.synchronized) {
+          removeUnsyncedLyricSidecar(existingSidecar, lyricPath);
         }
       }
 

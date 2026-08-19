@@ -2,7 +2,7 @@ import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { runWithAsyncBusyRetry } from "../../database.js";
 import express, { Request, Response, Router } from 'express';
 import {AnyCommandBody, CommandStatus} from "../../services/commands/command-model.js";
-import {DOWNLOAD_COMMAND_NAMES, NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
+import {NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
 import { CommandWorkerPool } from "../../services/commands/worker/command-worker-pool.js";
 import { downloadProcessor } from '../../services/download/download-processor.js';
@@ -12,6 +12,7 @@ import { buildStreamingMediaUrl, getDefaultStreamingSource, parseStreamingUrl, t
 import { assertSafeDownloadResourceId } from '../../services/download/download-path-safety.js';
 import { shouldQueueRedownloadForFailedImport } from '../../services/download/download-recovery.js';
 import { DownloadQueueQueryService } from '../../services/download/download-queue-query-service.js';
+import { DownloadWaitQueue } from '../../services/download/download-wait-queue.js';
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../../services/metadata/provider-track-resolver.js';
 import { resolvePreferredVideoOffer, resolveRequestedVideoOffer } from '../../services/music/video-offer-resolver.js';
 import { CurationService } from '../../services/music/curation-service.js';
@@ -28,9 +29,6 @@ import {
   isRequestValidationError,
 } from '../../utils/request-validation.js';
 import type {
-  DownloadAlbumCommand,
-  DownloadTrackCommand,
-  DownloadVideoCommand,
   ImportDownloadCommand,
 } from '../../services/commands/command-bodies.js';
 
@@ -63,67 +61,41 @@ function queueRedownloadForImport(commandId: number, payload: ImportDownloadComm
   }
 
   const url = buildStreamingMediaUrl(mediaType, providerId);
-  const existingJob = CommandQueueManager.getByRefId(
+  const commandName = mediaType === 'video'
+    ? CommandNames.DownloadVideo
+    : mediaType === 'album'
+      ? CommandNames.DownloadAlbum
+      : CommandNames.DownloadTrack;
+  const retryPayload = {
     providerId,
-    mediaType === 'video'
-      ? CommandNames.DownloadVideo
-      : mediaType === 'album'
-        ? CommandNames.DownloadAlbum
-        : CommandNames.DownloadTrack,
-  );
-
-  let queuedJobId = existingJob?.id;
-
-  if (queuedJobId === undefined) {
-    switch (mediaType) {
-      case 'album': {
-        queuedJobId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
-          providerId,
-          url,
-          type: mediaType,
-          title: payload.resolved?.title ?? payload.title,
-          artist: payload.resolved?.artist ?? payload.artist,
-          cover: payload.resolved?.cover ?? payload.cover,
-          album_id: payload.album_id ?? payload.albumId,
-          artist_id: payload.artist_id ?? payload.artistId,
-          quality: payload.quality ?? null,
-          qualityProfile: payload.qualityProfile,
-        } satisfies DownloadAlbumCommand, providerId, priority, trigger);
-        break;
-      }
-      case 'video': {
-        queuedJobId = CommandQueueManager.push(CommandNames.DownloadVideo, {
-          providerId,
-          url,
-          type: mediaType,
-          title: payload.resolved?.title ?? payload.title,
-          artist: payload.resolved?.artist ?? payload.artist,
-          cover: payload.resolved?.cover ?? payload.cover,
-          album_id: payload.album_id ?? payload.albumId,
-          artist_id: payload.artist_id ?? payload.artistId,
-          quality: payload.quality ?? null,
-          qualityProfile: payload.qualityProfile,
-        } satisfies DownloadVideoCommand, providerId, priority, trigger);
-        break;
-      }
-      case 'track':
-      default: {
-        queuedJobId = CommandQueueManager.push(CommandNames.DownloadTrack, {
-          providerId,
-          url,
-          type: mediaType,
-          title: payload.resolved?.title ?? payload.title,
-          artist: payload.resolved?.artist ?? payload.artist,
-          cover: payload.resolved?.cover ?? payload.cover,
-          album_id: payload.album_id ?? payload.albumId,
-          artist_id: payload.artist_id ?? payload.artistId,
-          quality: payload.quality ?? null,
-          qualityProfile: payload.qualityProfile,
-        } satisfies DownloadTrackCommand, providerId, priority, trigger);
-        break;
-      }
-    }
-  }
+    url,
+    type: mediaType,
+    title: payload.resolved?.title ?? payload.title,
+    artist: payload.resolved?.artist ?? payload.artist,
+    cover: payload.resolved?.cover ?? payload.cover,
+    album_id: payload.album_id ?? payload.albumId,
+    artist_id: payload.artist_id ?? payload.artistId,
+    quality: payload.quality ?? null,
+    qualityProfile: payload.qualityProfile,
+  };
+  const queued = DownloadWaitQueue.enqueue({
+    refKey: providerId,
+    mediaKind: mediaType,
+    commandName,
+    provider: undefined,
+    providerId,
+    artistId: payload.artist_id ?? payload.artistId ?? null,
+    albumId: payload.album_id ?? payload.albumId ?? null,
+    title: retryPayload.title ?? null,
+    artist: retryPayload.artist ?? null,
+    cover: retryPayload.cover ?? null,
+    quality: retryPayload.quality ?? null,
+    payload: retryPayload,
+    priority,
+    trigger,
+    position: 'front',
+  });
+  const queuedJobId = queued.id;
 
   if (queuedJobId === undefined || queuedJobId < 0) {
     throw new Error(`Failed to queue a new ${mediaType} download for ${providerId}.`);
@@ -135,9 +107,11 @@ function queueRedownloadForImport(commandId: number, payload: ImportDownloadComm
 
   return {
     action: 'queue-redownload',
-    message: existingJob
-      ? (existingJob.status === 'started' ? 'Download already in progress for this item' : 'Download already queued for this item')
-      : 'Re-download queued to recover the failed import',
+    message: queued.created
+      ? 'Re-download queued to recover the failed import'
+      : (queued.commandId
+        ? 'Download already in progress for this item'
+        : 'Download already queued for this item'),
     commandId: queuedJobId,
     sourceJobId: commandId,
   };
@@ -303,30 +277,37 @@ router.post('/', async (req: Request, res: Response) => {
     const queueRefId = contentType === 'album' && payload.releaseGroupMbid && payload.slot
       ? `${payload.releaseGroupMbid}:${payload.slot}`
       : resolvedProviderId;
-    let commandId: number;
-    if (contentType === 'album') {
-      commandId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
+    const commandName = contentType === 'album'
+      ? CommandNames.DownloadAlbum
+      : contentType === 'video'
+        ? CommandNames.DownloadVideo
+        : CommandNames.DownloadTrack;
+    const queued = DownloadWaitQueue.enqueue({
+      refKey: queueRefId,
+      mediaKind: contentType,
+      commandName,
+      provider: payload.provider,
+      providerId: resolvedProviderId,
+      artistId: payload.artist_id ?? payload.artistId ?? null,
+      albumId: payload.album_id ?? payload.albumId ?? payload.releaseGroupMbid ?? null,
+      title: payload.title ?? null,
+      artist: payload.artist ?? null,
+      cover: payload.cover ?? null,
+      quality: payload.quality ?? null,
+      slot: payload.slot ?? null,
+      payload: {
         ...payload,
-        type: 'album',
-      } satisfies DownloadAlbumCommand, queueRefId);
-    } else if (contentType === 'video') {
-      commandId = CommandQueueManager.push(CommandNames.DownloadVideo, {
-        ...payload,
-        type: 'video',
-      } satisfies DownloadVideoCommand, queueRefId);
-    } else {
-      commandId = CommandQueueManager.push(CommandNames.DownloadTrack, {
-        ...payload,
-        type: 'track',
-      } satisfies DownloadTrackCommand, queueRefId);
-    }
+        type: contentType,
+      },
+      position: 'front',
+    });
 
     // Trigger queue processing if not already running
     downloadProcessor.processQueue().catch(err => {
       console.error('[QUEUE-API] Error triggering queue processing:', err);
     });
 
-    res.json({ id: commandId, message: 'Added to download queue' });
+    res.json({ id: queued.id, message: queued.created ? 'Added to download queue' : 'Already in download queue' });
   } catch (error: any) {
     console.error('[QUEUE-API] Error adding to queue:', error);
     res.status(500).json({ error: 'Failed to add to queue', message: error.message });
@@ -340,31 +321,27 @@ router.post('/', async (req: Request, res: Response) => {
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const commandId = parseInt(String(id), 10);
+    const queueItemId = parseInt(String(id), 10);
 
-    if (isNaN(commandId)) {
+    if (isNaN(queueItemId)) {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const job = CommandQueueManager.get(commandId);
-    if (!job) {
+    const wait = DownloadWaitQueue.get(queueItemId);
+    if (!wait) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'started') {
+    const commandId = wait.command_id;
+    const job = commandId != null ? CommandQueueManager.get(commandId) : null;
+    if (job?.status === 'started') {
       if (job.worker_id) {
-        // Non-download command attempt: retire the owned worker before deleting
-        // the row so a cancelled hang cannot consume pool capacity forever.
-        CommandWorkerPool.abortCommand(commandId, job.worker_id, "Command deleted by user");
+        CommandWorkerPool.abortCommand(commandId!, job.worker_id, "Command deleted by user");
       } else {
-        // The download worker may be mid-download or mid-import. Signal cancel,
-        // but never block the DELETE on a long import/worker stall — under a
-        // busy main-thread SQLite load that made the queue UI feel stuck for
-        // several seconds or appear to fail.
         const CANCEL_WAIT_MS = 2_500;
         try {
           await Promise.race([
-            downloadProcessor.cancelJob(commandId),
+            downloadProcessor.cancelJob(commandId!),
             new Promise<void>((resolve) => {
               setTimeout(resolve, CANCEL_WAIT_MS);
             }),
@@ -378,7 +355,10 @@ router.delete('/:id', async (req: Request, res: Response) => {
       }
     }
 
-    CommandQueueManager.deleteCommand(commandId);
+    if (commandId != null) {
+      CommandQueueManager.deleteCommand(commandId);
+    }
+    DownloadWaitQueue.remove(queueItemId);
     res.json({ message: 'Job deleted' });
   } catch (error: any) {
     console.error('[QUEUE-API] Error deleting job:', error);
@@ -393,18 +373,28 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.post('/:id/retry', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const commandId = parseInt(String(id), 10);
+    const queueItemId = parseInt(String(id), 10);
 
-    if (isNaN(commandId)) {
+    if (isNaN(queueItemId)) {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const job = CommandQueueManager.get(commandId);
-    if (!job) {
+    const wait = DownloadWaitQueue.get(queueItemId);
+    if (!wait) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'started' && !hasFailedDownloadState(job) && downloadProcessor.isActivelyProcessingJob(commandId)) {
+    const commandId = wait.command_id;
+    const job = commandId != null ? CommandQueueManager.get(commandId) : null;
+    if (!job) {
+      // Waiting item with no command yet — already queued; kick the processor.
+      downloadProcessor.processQueue().catch(err => {
+        console.error('[QUEUE-API] Error triggering queue processing:', err);
+      });
+      return res.json(buildRetryResponse(wait.command_name, 'Download already queued'));
+    }
+
+    if (job.status === 'started' && !hasFailedDownloadState(job) && downloadProcessor.isActivelyProcessingJob(commandId!)) {
       return res.status(409).json({
         error: 'Job is processing',
         message: 'Wait for the active download to finish or cancel it before retrying',
@@ -415,7 +405,7 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
       return res.json(queueRedownloadForImport(job.id, job.payload as ImportDownloadCommand, job.priority, job.trigger ?? CommandTrigger.Unspecified));
     }
 
-    CommandQueueManager.retry(commandId);
+    CommandQueueManager.retry(commandId!);
 
     // Trigger queue processing
     downloadProcessor.processQueue().catch(err => {
@@ -570,11 +560,10 @@ router.post('/reorder', async (req: Request, res: Response) => {
       });
     }
 
-    const changed = CommandQueueManager.reorderPendingJobs(commandIds, {
+    const changed = DownloadWaitQueue.reorder(commandIds, {
       beforeJobId,
       afterJobId,
       position,
-      types: DOWNLOAD_COMMAND_NAMES,
     });
 
     res.json({ message: 'Queue reordered', changed });

@@ -472,6 +472,11 @@ test("provider artwork ids resolve through the provider interface before caching
   assert.equal(fs.existsSync(path.join(albumCache, "cover.jpg")), true);
   assert.equal(fs.existsSync(path.join(albumCache, "cover-500.jpg")), true);
   assert.equal(fs.existsSync(path.join(albumCache, "cover-250.jpg")), true);
+  assert.equal(
+    fs.existsSync(path.join(albumCache, "cover-1200.jpg")),
+    false,
+    "1200px is an embed-time cap, not a stored proxy",
+  );
 });
 
 test("artwork preference controls whether canonical or provider album art is fetched first", async () => {
@@ -876,6 +881,11 @@ test("album artwork resolver caches Cover Art Archive artwork locally when metad
   assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover.jpg")), true);
   assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover-500.jpg")), true);
   assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover-250.jpg")), true);
+  assert.equal(
+    fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover-1200.jpg")),
+    false,
+    "1200px is an embed-time cap, not a stored proxy",
+  );
 
   const secondArtworkUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid });
   assert.equal(secondArtworkUrl, artworkUrl);
@@ -1659,4 +1669,66 @@ test("normalizeArtworkUrl upgrades cropped YouTube, square Apple, and TIDAL 3:2 
     ),
     "https://resources.tidal.com/images/21824bc6/1cfd/44da/9f78/c400e83cf133/640x640.jpg",
   );
+});
+
+test("cached original path is origin, never a height proxy", async () => {
+  const albumMbid = "origin-not-proxy-album";
+  const sourceUrl = "https://example.test/origin-cover.jpg";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  const image = jpeg.encode({
+    width: 800,
+    height: 800,
+    data: Buffer.alloc(800 * 800 * 4, 180),
+  }, 92).data;
+
+  globalThis.fetch = (async () => new Response(image, {
+    status: 200,
+    headers: { "content-type": "image/jpeg" },
+  })) as typeof fetch;
+  try {
+    await mediaCoverServiceModule.ensureCachedMediaCover({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverType: "Cover",
+      sourceUrl,
+      fulfilledBy: "canonical",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fs.existsSync(path.join(folder, "cover.jpg")), true);
+  assert.equal(fs.existsSync(path.join(folder, "cover-500.jpg")), true);
+  assert.equal(fs.existsSync(path.join(folder, "cover-250.jpg")), true);
+  assert.equal(fs.existsSync(path.join(folder, "cover-1200.jpg")), false);
+
+  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(
+    albumMbid,
+    "Album",
+    "cover",
+  );
+  assert.equal(originPath, path.join(folder, "cover.jpg"));
+});
+
+test("renderCappedCoverBuffer downscales origin taller than 1200 and leaves smaller masters alone", () => {
+  const tallPath = path.join(tempDir, "tall-origin.jpg");
+  const shortPath = path.join(tempDir, "short-origin.jpg");
+  fs.writeFileSync(tallPath, jpeg.encode({
+    width: 1400,
+    height: 1400,
+    data: Buffer.alloc(1400 * 1400 * 4, 120),
+  }, 92).data);
+  fs.writeFileSync(shortPath, jpeg.encode({
+    width: 800,
+    height: 800,
+    data: Buffer.alloc(800 * 800 * 4, 120),
+  }, 92).data);
+
+  const capped = mediaCoverServiceModule.renderCappedCoverBuffer(tallPath, 1200);
+  assert.ok(capped);
+  const decoded = jpeg.decode(capped, { useTArray: true });
+  assert.equal(decoded.height, 1200);
+  assert.equal(decoded.width, 1200);
+
+  assert.equal(mediaCoverServiceModule.renderCappedCoverBuffer(shortPath, 1200), null);
 });

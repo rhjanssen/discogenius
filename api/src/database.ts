@@ -26,6 +26,7 @@ import {
 import {
   createCommandsSchema,
   createCommandsIndexes,
+  createDownloadQueueSchema,
 } from "./database/schema/commands.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
@@ -518,12 +519,55 @@ export function initDatabase() {
     runStartupIntegrityCheck();
     console.log("✅ Database schema initialized");
   } else {
-    // Existing schema-41 database: open only.
+    // Existing schema-41 database: open only, then add additive wait-queue
+    // objects that a schema-43 catalog created before this table may lack.
     runStartupIntegrityCheck();
     console.log(`✅ Opened existing schema ${BASE_SCHEMA_VERSION} database`);
   }
 
+  ensureDownloadQueueSchema();
   initializeDefaultData();
+}
+
+const DOWNLOAD_QUEUE_CUTOVER_KEY = "download_queue.wait_table_cutover";
+
+/**
+ * Additive wait-queue objects plus a one-shot wipe of fat queued Download*
+ * command rows. Schema 43 has no migration ladder; this is safe on an existing
+ * catalog because it only creates a new table and deletes command backlog the
+ * operator agreed to drop. DownloadMissing / manual queue refill the wait table.
+ */
+function ensureDownloadQueueSchema(): void {
+  createDownloadQueueSchema(db, { ifNotExists: true });
+
+  const alreadyCutOver = db.prepare(`
+    SELECT 1 AS present FROM config WHERE key = ?
+  `).get(DOWNLOAD_QUEUE_CUTOVER_KEY) as { present?: number } | undefined;
+  if (alreadyCutOver) {
+    return;
+  }
+
+  const wiped = db.prepare(`
+    DELETE FROM commands
+    WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+      AND status IN ('queued', 'started', 'failed')
+      AND (
+        id NOT IN (
+          SELECT command_id FROM DownloadQueue WHERE command_id IS NOT NULL
+        )
+      )
+  `).run();
+  db.prepare(`
+    INSERT INTO config (key, value, description, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(
+    DOWNLOAD_QUEUE_CUTOVER_KEY,
+    String(wiped.changes ?? 0),
+    "One-shot replacement of fat queued Download* commands with DownloadQueue wait rows",
+  );
+  if ((wiped.changes ?? 0) > 0) {
+    console.log(`[SQLite] Wait-queue cutover removed ${wiped.changes} leftover download commands.`);
+  }
 }
 
 /**

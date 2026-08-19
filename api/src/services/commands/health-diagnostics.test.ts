@@ -185,7 +185,7 @@ test("bounded diagnostics flag aging work, failed imports, overdue tasks, and in
   process.env.DISCOGENIUS_QUEUE_AGE_ERROR_MS = "2000";
   try {
     const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
-    assert.equal(snapshot.subsystems.commandQueue.status, "error");
+    assert.equal(snapshot.subsystems.commandQueue.status, "warning");
     assert.equal(snapshot.subsystems.imports.status, "warning");
     assert.equal(snapshot.subsystems.scheduledTasks.status, "warning");
     assert.equal(snapshot.subsystems.statistics.status, "warning");

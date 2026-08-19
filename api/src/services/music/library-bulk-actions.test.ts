@@ -360,15 +360,15 @@ test("bulk download queues the selected media jobs", async () => {
     assert.ok(trackDownload.queued > 0);
     assert.ok(videoDownload.queued > 0);
 
-    const jobTypes = dbModule.db.prepare(`
-        SELECT name
-        FROM commands
+    const waitRows = dbModule.db.prepare(`
+        SELECT command_name, media_kind
+        FROM DownloadQueue
         ORDER BY id ASC
-    `).all() as Array<{ name: string }>;
+    `).all() as Array<{ command_name: string; media_kind: string }>;
 
-    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadAlbum));
-    assert.ok(jobTypes.filter((row) => row.name === queueModule.CommandNames.DownloadAlbum).length >= 2);
-    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadVideo));
+    assert.ok(waitRows.some((row) => row.command_name === queueModule.CommandNames.DownloadAlbum));
+    assert.ok(waitRows.filter((row) => row.command_name === queueModule.CommandNames.DownloadAlbum).length >= 2);
+    assert.ok(waitRows.some((row) => row.command_name === queueModule.CommandNames.DownloadVideo));
 });
 
 test("artist download queues monitored items when nothing is already queued", async () => {

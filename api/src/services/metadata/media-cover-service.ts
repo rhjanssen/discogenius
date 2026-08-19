@@ -55,7 +55,7 @@ const MEDIA_COVER_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 /** Album/artist UI cache: both sizes. Videos only need a small card proxy + full origin. */
 const MEDIA_COVER_DEFAULT_HEIGHTS = [500, 250] as const;
 const MEDIA_COVER_VIDEO_HEIGHTS = [250] as const;
-/** Heights cleared on rewrite (includes legacy video-500 leftovers). */
+/** Heights written as UI proxies. Embed never stores a 1200px file. */
 const MEDIA_COVER_ALL_HEIGHTS = [500, 250] as const;
 const PNG = (pngjs as unknown as { PNG: any }).PNG as any;
 const mediaCoverProxyMemoryCache = new Map<string, MediaCoverProxyEntry>();

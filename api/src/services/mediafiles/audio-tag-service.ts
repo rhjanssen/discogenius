@@ -277,8 +277,9 @@ type EmbeddedCoverContext = {
 
 type EmbeddedCoverSyncOutcome = "embedded" | "unchanged" | "failed";
 
-// Keep embedded artwork in Lidarr's practical size range while the cached
-// master and folder sidecar retain the provider/catalog origin.
+// Embed-time cap only. MediaCover stores origin + 250/500 UI proxies; there is
+// no cover-1200.jpg. If origin is taller than this, renderCappedCoverBuffer
+// downscales in memory for the tag write and leaves the cache untouched.
 const EMBEDDED_COVER_HEIGHT = 1200;
 
 // How many files the retag preview/status reads at once. Disk/parse bound, so a

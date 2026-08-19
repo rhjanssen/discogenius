@@ -1,9 +1,9 @@
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
 import {CommandNames} from "../commands/command-names.js";
-import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { updateAlbumDownloadStatus } from "../download/download-state.js";
 import { downloadProcessor } from "../download/download-processor.js";
+import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { normalizeAudioQualityTag } from "../config/quality.js";
 import { UpgradableSpecification } from "../config/upgradable-specification.js";
@@ -420,18 +420,23 @@ export class UpgraderService {
 
                 updateAlbumDownloadStatus(albumId);
 
-                CommandQueueManager.push(
-                    CommandNames.DownloadAlbum,
-                    {
+                DownloadWaitQueue.enqueue({
+                    refKey: albumId,
+                    mediaKind: "album",
+                    commandName: CommandNames.DownloadAlbum,
+                    provider,
+                    providerId: albumId,
+                    payload: {
                         providerId: albumId,
                         provider,
                         type: "album",
                         reason: "upgrade",
                         url: buildStreamingMediaUrl("album", albumId, provider),
                     },
-                    albumId,
-                    -5
-                );
+                    priority: -5,
+                    position: "back",
+                    notify: false,
+                });
                 result.albums++;
 
                 for (const d of albumTracksToUpgrade) {
@@ -455,21 +460,28 @@ export class UpgraderService {
             const mediaType = isVideo ? "video" : "track";
             console.log(`[UPGRADER] Queuing ${jobType} upgrade for ${d.provider}:${d.mediaId}: ${d.reason}`);
 
-            CommandQueueManager.push(
-                jobType,
-                {
+            DownloadWaitQueue.enqueue({
+                refKey: d.mediaId,
+                mediaKind: mediaType,
+                commandName: jobType,
+                provider: d.provider,
+                providerId: d.mediaId,
+                payload: {
                     providerId: d.mediaId,
                     provider: d.provider,
                     type: mediaType,
                     reason: "upgrade",
                     url: buildStreamingMediaUrl(mediaType, d.mediaId, d.provider),
                 },
-                d.mediaId,
-                -5
-            );
+                priority: -5,
+                position: "back",
+                notify: false,
+            });
         }
 
         console.log(`✅ [UPGRADER] Queued upgrades: ${result.albums} albums, ${result.tracks} tracks, ${result.videos} videos (${result.details.length} total items).`);
+
+        DownloadWaitQueue.notifyChanged();
 
         // Kick the download processor
         downloadProcessor.processQueue().catch(err => {

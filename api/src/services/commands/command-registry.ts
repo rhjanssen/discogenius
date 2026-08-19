@@ -160,8 +160,8 @@ export const COMMAND_DEFINITIONS = {
     name: "Compact Database",
     requiresDiskAccess: true,
     isTypeExclusive: true,
-    isExclusive: false,
-    isLongRunning: false,
+    isExclusive: true,
+    isLongRunning: true,
   },
   [CommandNames.BackupDatabase]: {
     type: CommandNames.BackupDatabase,
@@ -308,11 +308,7 @@ export const COMMAND_DEFINITIONS = {
     name: "Housekeeping",
     requiresDiskAccess: true,
     isTypeExclusive: true,
-    // Housekeeping VACUUMs the whole database — on a 1 GB library file that
-    // holds the write lock for minutes. Run it alone:
-    // concurrent refresh workers would exhaust their busy-retry budgets and
-    // fail their commands en masse.
-    isExclusive: true,
+    isExclusive: false,
     isLongRunning: true,
   },
   [CommandNames.CurateArtist]: {
@@ -423,7 +419,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     kind: "scheduled",
     commandName: "Housekeeping",
     name: "Housekeeping",
-    description: "Clean stale runtime state, repair library housekeeping records, and optimize the SQLite database.",
+    description: "Prune stale runtime files, command history, and temp directories.",
     taskName: CommandNames.Housekeeping,
     category: "maintenance",
     riskLevel: "medium",
@@ -555,7 +551,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     kind: "manual",
     commandName: "CompactDatabase",
     name: "Compact Database",
-    description: "Run SQLite compaction and cleanup maintenance.",
+    description: "Run SQLite VACUUM and ANALYZE.",
     taskName: CommandNames.CompactDatabase,
     category: "maintenance",
     riskLevel: "high",

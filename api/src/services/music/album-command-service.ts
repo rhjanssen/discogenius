@@ -1,9 +1,10 @@
 import { db } from "../../database.js";
 import { emitLibraryUpdated } from "../commands/app-events.js";
 import { CommandNames } from "../commands/command-names.js";
-import { CommandQueueManager } from "../commands/command-queue-manager.js";
+import { CommandTrigger } from "../commands/command-trigger.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 import {
     monitorAlbumInLibraries,
@@ -62,13 +63,14 @@ export class AlbumCommandService {
         releaseGroupMbid: string,
         locked: boolean,
         scope: AlbumLibraryScope,
-    ): boolean {
+    ): { success: boolean; status?: number; message?: string } {
         const releaseGroup = this.releaseGroupExists(releaseGroupMbid);
         if (!releaseGroup) {
-            return false;
+            return { success: false, status: 404, message: "Release group not found" };
         }
 
         const libraryIds = resolveScopedLibraryIds(db, scope);
+        let changes = 0;
         if (libraryIds.length > 0) {
             const update = db.prepare(`
                 UPDATE LibraryAlbums
@@ -78,9 +80,17 @@ export class AlbumCommandService {
             `);
             db.transaction(() => {
                 for (const libraryId of libraryIds) {
-                    update.run(Number(locked), libraryId, releaseGroup.id);
+                    changes += update.run(Number(locked), libraryId, releaseGroup.id).changes;
                 }
             })();
+        }
+
+        if (changes === 0) {
+            return {
+                success: false,
+                status: 409,
+                message: "Cannot change lock on an unmonitored album",
+            };
         }
 
         // One Album-level lock, one meaning, one row. Curation, acquisition
@@ -90,7 +100,7 @@ export class AlbumCommandService {
         // monitored state, the curated edition set, the representative edition
         // and the selected acquisition plan alike.
         invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
-        return true;
+        return { success: true };
     }
 
     /** Set release-group wanted state in the Libraries the caller named. */
@@ -197,9 +207,9 @@ export class AlbumCommandService {
                 ? `${title} (${version})`
                 : title;
             const artistName = track.artist_name || "Unknown";
-            commandId = CommandQueueManager.push(CommandNames.DownloadTrack, {
+            const payload = {
                 url: buildStreamingMediaUrl("track", trackProviderId, provider as any),
-                type: 'track',
+                type: "track" as const,
                 provider,
                 providerId: trackProviderId,
                 canonicalTrackId: String(track.local_track_id),
@@ -211,7 +221,23 @@ export class AlbumCommandService {
                 artist: artistName,
                 albumTitle: track.album_title || null,
                 quality: track?.quality || null,
-            }, String(track.local_track_id), 0, 1);
+            };
+            const queued = DownloadWaitQueue.enqueue({
+                refKey: String(track.local_track_id),
+                mediaKind: "track",
+                commandName: CommandNames.DownloadTrack,
+                provider,
+                providerId: trackProviderId,
+                albumId: track.release_group_mbid || null,
+                title: displayTitle,
+                artist: artistName,
+                quality: track?.quality || null,
+                payload,
+                priority: 0,
+                trigger: CommandTrigger.Manual,
+                position: "front",
+            });
+            commandId = queued.id;
         }
 
         return { success: true, monitored_track: track.mbid || trackId, trackId, albumId: String(track.release_group_mbid), commandId };
@@ -284,7 +310,16 @@ export class AlbumCommandService {
                 this.setReleaseGroupMonitored(albumId, monitored, scope);
             }
             if (monitoredLock !== undefined) {
-                this.setReleaseGroupMonitoredLock(albumId, monitoredLock, scope);
+                const lockResult = this.setReleaseGroupMonitoredLock(albumId, monitoredLock, scope);
+                if (!lockResult.success) {
+                    return {
+                        success: false,
+                        albumId,
+                        monitored,
+                        status: lockResult.status,
+                        message: lockResult.message,
+                    };
+                }
             }
             return { success: true, albumId, monitored };
         }

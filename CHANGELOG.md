@@ -8,6 +8,27 @@ Clean-start schema 42. There is no migration from 41: `initDatabase()` refuses
 any other `user_version` and creates a fresh database.
 
 ### Changed
+- **Download queue is a wait list, not a command pile.** Waiting albums/videos
+  live in `DownloadQueue` (skinny rows with qBittorrent-style `queue_order`).
+  Only an in-flight download becomes a `Download*` command, so Download Missing
+  can queue the whole wanted set without locking SQLite. The Queue page shows
+  active downloads first, then every waiting item, and reorder/cancel use the
+  wait-row id. Existing schema-43 catalogs keep their data; leftover queued
+  download commands are wiped once on open. There is no Wanted page: monitored
+  acquisition plans *are* wanted, and Download Missing puts them in this queue.
+- **Import retag and lyrics use the file row the organizer produced.** A
+  fallback can stamp a different provider than the command that queued the
+  job; looking the file up by provider id plus the command's provider then
+  skipped tagging entirely, leaving downloader tags on the library copy.
+  Lyrics no longer treat an unsynced downloader sidecar as the last word —
+  timed catalogue lyrics replace it, and the leftover unsynced `.txt` is
+  removed so players cannot keep serving the dump. Prepared import quality
+  is applied by `TrackFiles.id` even when a fallback stamped a different
+  provider than the command. Track monitor-and-download and quality upgrades
+  enqueue wait rows instead of jumping the wait list as commands. Completion
+  SSE keeps the wait-row id after the claim is dropped. Import caches dest
+  album MediaCover and rewrites `cover.jpg` before tag write so leftover
+  Apple/tiddl artwork cannot stay on the library copy.
 - **A monitoring row means monitored, at every level.** `LibraryAlbums.monitored`
   and `Recordings.monitored` / `monitored_lock` are gone; `LibraryAlbums`,
   `LibraryEditions` and the new `LibraryVideos` all say the same thing the same
@@ -58,6 +79,13 @@ any other `user_version` and creates a fresh database.
   a track's regular-video slot is `-video`; separated, the same file is `-live`.
 
 ### Fixed
+- **`/health` 503 is for a dead process.** A paused download queue, a large WAL,
+  low disk, or an aging command is 200 degraded. Docker will not restart the
+  container because the operator paused downloads.
+- **Locking an unmonitored album is 409.** The padlock used to report success
+  when no `LibraryAlbums` row existed to write.
+- **Housekeeping no longer VACUUMs.** CompactDatabase is the exclusive weekly
+  compact, so prune and catalog work can overlap a housekeeping pass.
 - **Manual edition choices are overruled only when coverage is genuinely lost.**
   A manual choice used to survive curation unconditionally, silently dropping
   the recordings the declined edition carried. It now stands while those

@@ -1,9 +1,10 @@
 import { db } from "../../database.js";
 import {CommandNames} from "../commands/command-names.js";
-import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getEnabledDownloadLibrarySlots } from "../download/download-library-slots.js";
+import { DownloadWaitQueue } from "../download/download-wait-queue.js";
+import { yieldToEventLoop } from "../../utils/concurrent.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 import { resolveVideoTypeSuffix } from "../mediafiles/video-naming.js";
@@ -32,14 +33,7 @@ export class DownloadMissingService {
         const queuedTotal = () => albumJobs + trackJobs + videoJobs;
         const hasBatchCapacity = () => queuedTotal() < maxToQueue;
 
-        const hasBufferedJob = (types: string[], refId: string) => {
-            const placeholders = types.map(() => '?').join(', ');
-            const existing = db.prepare(`
-                SELECT id FROM commands
-                WHERE name IN (${placeholders}) AND ref_id = ? AND status IN ('queued', 'started', 'failed')
-            `).get(...types, refId);
-            return Boolean(existing);
-        };
+        const hasBufferedJob = (refId: string) => DownloadWaitQueue.getByRefKey(refId) != null;
 
         let albumJobs = 0;
         const trackJobs = 0;
@@ -90,12 +84,17 @@ export class DownloadMissingService {
             artistId ?? null,
             ...(Number.isFinite(maxToQueue) ? [Math.max(Number(maxToQueue) * 5, Number(maxToQueue) + 100)] : []),
         ) as Array<{ id: number }>).map(({ id }) => id);
-        for (const planId of normalizedPlanIds) {
+        for (const [index, planId] of normalizedPlanIds.entries()) {
             const queued = queueAcquisitionPlan(db, planId, {
                 canQueue: hasBatchCapacity,
                 onQueued: () => { albumJobs += 1; },
+                position: "back",
+                notify: false,
             });
             if (!queued.queued && !hasBatchCapacity()) break;
+            if (index > 0 && index % 50 === 0) {
+                await yieldToEventLoop();
+            }
         }
 
         if (allowVideos) {
@@ -297,7 +296,7 @@ export class DownloadMissingService {
                 const providerId = String(video.provider_id || "");
                 const queueRefId = recordingId ? `recording:${recordingId}:video` : `provider:${providerId}:video`;
                 if (!recordingId || !providerId) continue;
-                if (hasBufferedJob([CommandNames.DownloadVideo, CommandNames.ImportDownload], queueRefId)) {
+                if (hasBufferedJob(queueRefId)) {
                     continue;
                 }
 
@@ -305,22 +304,43 @@ export class DownloadMissingService {
                 const title = video.video_title || 'Unknown Video';
                 const provider = video.provider || "tidal";
 
-                CommandQueueManager.push(CommandNames.DownloadVideo, {
-                    url: buildStreamingMediaUrl("video", providerId, provider as any),
-                    type: 'video',
+                const queued = DownloadWaitQueue.enqueue({
+                    refKey: queueRefId,
+                    mediaKind: "video",
+                    commandName: CommandNames.DownloadVideo,
                     provider,
                     providerId,
-                    canonicalRecordingId: recordingId,
-                    canonicalRecordingMbid: video.recording_mbid || null,
+                    artistId: video.artist_mbid || null,
                     title,
                     artist: artistName,
                     cover: video.cover_image_url || null,
-                    quality: video.video_quality || null,
-                    artists: [artistName],
-                    description: `${title} by ${artistName}`,
-                }, queueRefId);
-                videoJobs++;
+                    quality: video.video_quality || video.quality || null,
+                    slot: "video",
+                    payload: {
+                        url: buildStreamingMediaUrl("video", providerId, provider as any),
+                        type: "video",
+                        provider,
+                        providerId,
+                        canonicalRecordingId: recordingId,
+                        canonicalRecordingMbid: video.recording_mbid || null,
+                        title,
+                        artist: artistName,
+                        cover: video.cover_image_url || null,
+                        quality: video.video_quality || video.quality || null,
+                        artists: [artistName],
+                        description: `${title} by ${artistName}`,
+                    },
+                    position: "back",
+                    notify: false,
+                });
+                if (queued.created) {
+                    videoJobs++;
+                }
             }
+        }
+
+        if (albumJobs + videoJobs > 0) {
+            DownloadWaitQueue.notifyChanged();
         }
 
         console.log(`[Queue] Ensured queue has ${albumJobs} albums, ${trackJobs} tracks, ${videoJobs} videos.`);

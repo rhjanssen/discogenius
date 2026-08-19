@@ -168,3 +168,76 @@ test("import lyric materializer saves provider plain lyrics as txt and reuses th
     tidal.getLyrics = originalGetLyrics;
   }
 });
+
+test("an unsynced tiddl sidecar does not hide catalogue timed lyrics", async () => {
+  dbModule.db.prepare("INSERT INTO Artists(id, name, mbid) VALUES(?, ?, ?)")
+    .run("102", "Bastille", "artist-mbid-102");
+
+  const albumDir = path.join(tempDir, "Bastille", "Wild World");
+  fs.mkdirSync(albumDir, { recursive: true });
+  const trackPath = path.join(albumDir, "01 - Good Grief.flac");
+  const textPath = path.join(albumDir, "01 - Good Grief.txt");
+  const lrcPath = path.join(albumDir, "01 - Good Grief.lrc");
+  fs.writeFileSync(trackPath, "fixture audio", "utf8");
+  fs.writeFileSync(textPath, "Unsynced tiddl lyric dump without timestamps\n", "utf8");
+
+  const inserted = dbModule.db.prepare(`
+    INSERT INTO TrackFiles(
+      artist_id, library_id,
+      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid,
+      provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension,
+      file_type, quality
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
+  `).run(
+    "102",
+    lyricsLibraryId,
+    "artist-mbid-102",
+    "release-group-mbid-202",
+    "release-mbid-202",
+    "track-mbid-302",
+    "recording-mbid-302",
+    "tidal",
+    "provider-track-302",
+    trackPath,
+    path.relative(tempDir, trackPath),
+    tempDir,
+    path.basename(trackPath),
+  );
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems(
+      provider, entity_type, provider_id, title, duration_ms
+    ) VALUES ('tidal', 'track', ?, ?, 180)
+  `).run("provider-track-302", "Good Grief");
+
+  const providersModule = await import("../providers/index.js");
+  const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
+  const originalGetLyrics = tidal.getLyrics;
+  tidal.getLyrics = async () => ({
+    text: "Good Grief",
+    subtitles: "[00:04.10]Good Grief\n",
+    provider: "TIDAL fixture",
+  });
+
+  try {
+    const result = await materializerModule.TrackLyricsMaterializer.materializeForFileIds(
+      [Number(inserted.lastInsertRowid)],
+    );
+    const key = materializerModule.providerMediaLyricsKey("tidal", "provider-track-302");
+    assert.equal(result.discovered, 1);
+    assert.equal(result.lyricsByProviderMedia.get(key)?.subtitles, "[00:04.10]Good Grief");
+    assert.equal(fs.existsSync(lrcPath), true);
+    assert.match(fs.readFileSync(lrcPath, "utf8"), /\[00:04\.10\]Good Grief/);
+    assert.equal(fs.existsSync(textPath), false, "the unsynced tiddl sidecar must be replaced, not left beside the .lrc");
+
+    const lyricRows = dbModule.db.prepare(`
+      SELECT file_path, extension FROM LyricFiles WHERE track_file_id = ?
+    `).all(Number(inserted.lastInsertRowid)) as Array<{ file_path: string; extension: string }>;
+    assert.equal(lyricRows.length, 1);
+    assert.equal(lyricRows[0]?.file_path, lrcPath);
+    assert.equal(lyricRows[0]?.extension, "lrc");
+  } finally {
+    tidal.getLyrics = originalGetLyrics;
+  }
+});

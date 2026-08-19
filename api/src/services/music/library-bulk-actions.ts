@@ -10,6 +10,7 @@ import { CurationService } from "./curation-service.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 import {
@@ -411,23 +412,37 @@ function queueVideoDownloads(videoIds: string[]): number[] {
         const title = String(video.title || video.provider_title || "Unknown Video").trim();
         const artistName = String(video.artist_name || "Unknown").trim() || "Unknown";
 
-        const commandId = CommandQueueManager.push(CommandNames.DownloadVideo, {
-            url: buildStreamingMediaUrl("video", String(video.provider_id)),
-            type: "video",
+        const queued = DownloadWaitQueue.enqueue({
+            refKey: String(video.id || videoId),
+            mediaKind: "video",
+            commandName: CommandNames.DownloadVideo,
             provider: video.provider || "tidal",
-            canonicalRecordingId: String(video.id),
-            canonicalRecordingMbid: video.mbid || null,
             providerId: String(video.provider_id),
+            artistId: video.artist_mbid || null,
             title,
             artist: artistName,
             cover: videoCoverLocalUrl(video.id),
             quality: video.quality || null,
-            artists: [artistName],
-            description: `${title} by ${artistName}`,
-        }, String(video.id || videoId));
+            slot: "video",
+            payload: {
+                url: buildStreamingMediaUrl("video", String(video.provider_id)),
+                type: "video",
+                provider: video.provider || "tidal",
+                canonicalRecordingId: String(video.id),
+                canonicalRecordingMbid: video.mbid || null,
+                providerId: String(video.provider_id),
+                title,
+                artist: artistName,
+                cover: videoCoverLocalUrl(video.id),
+                quality: video.quality || null,
+                artists: [artistName],
+                description: `${title} by ${artistName}`,
+            },
+            position: "front",
+        });
 
-        if (commandId > 0) {
-            queuedJobIds.push(commandId);
+        if (queued.id > 0) {
+            queuedJobIds.push(queued.id);
         }
     }
 

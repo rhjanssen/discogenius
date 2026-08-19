@@ -69,4 +69,13 @@ test("queueMonitoredItems runs its video branch on the active schema", async () 
 
   const after = await serviceModule.DownloadMissingService.queueMonitoredItems();
   assert.equal(after.videos, 1, "a selected video should be queued");
+
+  const waitRows = db.prepare(`SELECT COUNT(*) AS count FROM DownloadQueue`).get() as { count: number };
+  const downloadCommands = db.prepare(`
+    SELECT COUNT(*) AS count FROM commands
+    WHERE name IN ('DownloadVideo', 'DownloadAlbum', 'DownloadTrack')
+      AND status IN ('queued', 'started', 'failed')
+  `).get() as { count: number };
+  assert.equal(waitRows.count, 1, "Download Missing should write a wait-queue row");
+  assert.equal(downloadCommands.count, 0, "waiting videos must not be commands yet");
 });

@@ -1,5 +1,51 @@
 import type Database from "better-sqlite3";
 
+export function createDownloadQueueSchema(
+  db: Database.Database,
+  options: { ifNotExists?: boolean } = {},
+): void {
+  const ifNotExists = options.ifNotExists ? "IF NOT EXISTS" : "";
+  db.exec(`
+    CREATE TABLE ${ifNotExists} DownloadQueue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      -- Stable public queue id. Cancel / reorder / SSE jobId use this, not commands.id.
+      ref_key TEXT NOT NULL UNIQUE,
+      media_kind TEXT NOT NULL CHECK (media_kind IN ('album', 'track', 'video')),
+      command_name TEXT NOT NULL,
+      plan_id INTEGER,
+      track_ids TEXT,
+      provider TEXT,
+      provider_id TEXT,
+      artist_id TEXT,
+      album_id TEXT,
+      title TEXT,
+      artist TEXT,
+      cover TEXT,
+      quality TEXT,
+      slot TEXT,
+      payload TEXT NOT NULL DEFAULT '{}',
+      queue_order REAL NOT NULL,
+      priority INT NOT NULL DEFAULT 0,
+      trigger INT NOT NULL DEFAULT 0,
+      command_id INTEGER,
+      claimed_at DATETIME,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.exec(`CREATE UNIQUE INDEX ${ifNotExists} idx_download_queue_ref_key ON DownloadQueue(ref_key)`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_order ON DownloadQueue(queue_order, id)`);
+  db.exec(`
+    CREATE INDEX ${ifNotExists} idx_download_queue_unclaimed_order
+    ON DownloadQueue(queue_order, id)
+    WHERE command_id IS NULL
+  `);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_command_id ON DownloadQueue(command_id)`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_album_id ON DownloadQueue(album_id)`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_artist_id ON DownloadQueue(artist_id)`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_provider_id ON DownloadQueue(provider_id)`);
+}
+
 export function createCommandsSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE commands (
@@ -49,6 +95,8 @@ export function createCommandsSchema(db: Database.Database): void {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  createDownloadQueueSchema(db);
 
   db.exec(`
     CREATE TABLE scheduled_tasks (

@@ -25,6 +25,7 @@ before(async () => {
 
 afterEach(() => {
   for (const table of [
+    "DownloadQueue",
     "commands",
     "TrackFiles",
     "ProviderTrackMatches",
@@ -179,9 +180,9 @@ function insertTrackFile(overrides: Record<string, unknown>) {
 
 function listDownloadJobs() {
   return db.prepare(`
-    SELECT name, ref_id, payload
-    FROM commands
-    WHERE name IN (?, ?, ?)
+    SELECT command_name AS name, ref_key AS ref_id, payload
+    FROM DownloadQueue
+    WHERE command_name IN (?, ?, ?)
     ORDER BY id
   `).all(CommandNames.DownloadAlbum, CommandNames.DownloadTrack, CommandNames.DownloadVideo) as Array<{
     name: string;
