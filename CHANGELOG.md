@@ -79,6 +79,13 @@ any other `user_version` and creates a fresh database.
   a track's regular-video slot is `-video`; separated, the same file is `-live`.
 
 ### Fixed
+- **`/health` 503 is for a dead process.** A paused download queue, a large WAL,
+  low disk, or an aging command is 200 degraded. Docker will not restart the
+  container because the operator paused downloads.
+- **Locking an unmonitored album is 409.** The padlock used to report success
+  when no `LibraryAlbums` row existed to write.
+- **Housekeeping no longer VACUUMs.** CompactDatabase is the exclusive weekly
+  compact, so prune and catalog work can overlap a housekeeping pass.
 - **Manual edition choices are overruled only when coverage is genuinely lost.**
   A manual choice used to survive curation unconditionally, silently dropping
   the recordings the declined edition carried. It now stands while those

@@ -448,12 +448,7 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
       thresholds: { warningAgeMs, errorAgeMs, busyWorkerLastSeenMs: 2 * 60_000 },
     };
 
-    if (
-      deadPool
-      || expiredLeases > 0
-      || staleBusyWorkers.length > 0
-      || (oldestEligibleAgeMs != null && oldestEligibleAgeMs >= errorAgeMs)
-    ) {
+    if (deadPool || expiredLeases > 0 || staleBusyWorkers.length > 0) {
       return {
         scope: "commands.queue",
         status: "error",
