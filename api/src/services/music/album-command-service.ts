@@ -63,13 +63,14 @@ export class AlbumCommandService {
         releaseGroupMbid: string,
         locked: boolean,
         scope: AlbumLibraryScope,
-    ): boolean {
+    ): { success: boolean; status?: number; message?: string } {
         const releaseGroup = this.releaseGroupExists(releaseGroupMbid);
         if (!releaseGroup) {
-            return false;
+            return { success: false, status: 404, message: "Release group not found" };
         }
 
         const libraryIds = resolveScopedLibraryIds(db, scope);
+        let changes = 0;
         if (libraryIds.length > 0) {
             const update = db.prepare(`
                 UPDATE LibraryAlbums
@@ -79,9 +80,17 @@ export class AlbumCommandService {
             `);
             db.transaction(() => {
                 for (const libraryId of libraryIds) {
-                    update.run(Number(locked), libraryId, releaseGroup.id);
+                    changes += update.run(Number(locked), libraryId, releaseGroup.id).changes;
                 }
             })();
+        }
+
+        if (changes === 0) {
+            return {
+                success: false,
+                status: 409,
+                message: "Cannot change lock on an unmonitored album",
+            };
         }
 
         // One Album-level lock, one meaning, one row. Curation, acquisition
@@ -91,7 +100,7 @@ export class AlbumCommandService {
         // monitored state, the curated edition set, the representative edition
         // and the selected acquisition plan alike.
         invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
-        return true;
+        return { success: true };
     }
 
     /** Set release-group wanted state in the Libraries the caller named. */
@@ -301,7 +310,16 @@ export class AlbumCommandService {
                 this.setReleaseGroupMonitored(albumId, monitored, scope);
             }
             if (monitoredLock !== undefined) {
-                this.setReleaseGroupMonitoredLock(albumId, monitoredLock, scope);
+                const lockResult = this.setReleaseGroupMonitoredLock(albumId, monitoredLock, scope);
+                if (!lockResult.success) {
+                    return {
+                        success: false,
+                        albumId,
+                        monitored,
+                        status: lockResult.status,
+                        message: lockResult.message,
+                    };
+                }
             }
             return { success: true, albumId, monitored };
         }

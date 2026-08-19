@@ -109,7 +109,8 @@ test("locking an unmonitored album creates no library album row", () => {
   const result = serviceModule.AlbumCommandService.updateAlbum(
     "release-group-mbid-1", undefined, true, { kind: "all-audio-libraries" },
   );
-  assert.equal(result.success, true);
+  assert.equal(result.success, false);
+  assert.equal(result.status, 409);
   // A lock protects a monitored Album. With nothing monitored there is nothing
   // to protect, and a row created to hold the lock would claim otherwise.
   assert.deepEqual(monitoredLibraryIds(), []);

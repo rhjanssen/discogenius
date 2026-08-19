@@ -357,8 +357,8 @@ router.patch("/:albumId", async (req, res) => {
 
     const result = AlbumCommandService.updateAlbum(albumId, monitored, monitoredLock, scope);
 
-    if (result.status === 404) {
-      return res.status(404).json({ detail: result.message || "Album not found" });
+    if (result.status === 404 || result.status === 409) {
+      return res.status(result.status).json({ detail: result.message || "Album not found" });
     }
 
     const { status, message, ...body2 } = result;
