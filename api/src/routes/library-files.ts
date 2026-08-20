@@ -80,7 +80,7 @@ router.get("/rename/status", (req, res) => {
   }
 });
 
-router.post("/rename/apply", (req, res) => {
+router.post("/rename/apply", async (req, res) => {
   try {
     const ids = (req.body as any)?.ids as number[] | undefined;
     const applyAll = (req.body as any)?.applyAll === true;
@@ -107,19 +107,23 @@ router.post("/rename/apply", (req, res) => {
         : `rename-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null, libraryRoot: libraryRoot || null, fileTypes: fileTypes || [] })}`)
       : undefined;
 
-    const commandId = isArtistWideRename
-      ? CommandQueueManager.push(CommandNames.RenameArtist, {
-        artistId,
-        artistIds: artistId ? [artistId] : undefined,
-      }, refId, 1, 1)
-      : CommandQueueManager.push(CommandNames.RenameFiles, {
-        ids: normalizedIds,
-        applyAll,
-        artistId,
-        albumId,
-        libraryRoot,
-        fileTypes,
-      }, refId, 1, 1);
+    const commandId = await runWithAsyncBusyRetry(
+      () => isArtistWideRename
+        ? CommandQueueManager.push(CommandNames.RenameArtist, {
+          artistId,
+          artistIds: artistId ? [artistId] : undefined,
+        }, refId, 1, 1)
+        : CommandQueueManager.push(CommandNames.RenameFiles, {
+          ids: normalizedIds,
+          applyAll,
+          artistId,
+          albumId,
+          libraryRoot,
+          fileTypes,
+        }, refId, 1, 1),
+      30,
+      200,
+    );
 
     res.json({
       success: true,

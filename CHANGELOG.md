@@ -18,7 +18,8 @@ name that two MusicBrainz artists share no longer hides both of them.
   rebuilds under the write gate in chunks, and Housekeeping queues a
   rebuild when the marker is still missing. SQLITE_BUSY on retry-safe
   commands (Rescan Folders, Refresh Artist) is re-queued instead of
-  failed; rename/retag still fail closed.
+  failed; rename/retag still fail closed. Rename Apply and video
+  placement enqueue retries SQLITE_BUSY instead of returning HTTP 500.
 - **Global search kept neither MusicBrainz artist when two shared a
   name.** The duplicate filter treated any same-name sibling as a
   provider-only clone, so Bastille the band and Bastille the electronic

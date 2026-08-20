@@ -160,7 +160,7 @@ router.delete("/:videoId/files", (req, res) => {
 });
 
 // Update video (toggle monitoring, etc.)
-router.patch("/:videoId", (req, res) => {
+router.patch("/:videoId", async (req, res) => {
   try {
     const videoId = req.params.videoId;
     const body = getObjectBody(req.body);
@@ -247,13 +247,18 @@ router.patch("/:videoId", (req, res) => {
       }
       return null;
     })();
-    if (applied?.artistId) {
-      CommandQueueManager.push(
-        CommandNames.RenameFiles,
-        { artistId: applied.artistId, fileTypes: ["video"], applyAll: true },
-        applied.artistId,
-        1,
-        CommandTrigger.Manual,
+    const renameArtistId = applied?.artistId;
+    if (renameArtistId) {
+      await runWithAsyncBusyRetry(
+        () => CommandQueueManager.push(
+          CommandNames.RenameFiles,
+          { artistId: renameArtistId, fileTypes: ["video"], applyAll: true },
+          renameArtistId,
+          1,
+          CommandTrigger.Manual,
+        ),
+        30,
+        200,
       );
     }
 
