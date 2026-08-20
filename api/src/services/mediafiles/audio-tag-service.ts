@@ -1028,7 +1028,7 @@ export class AudioTagService {
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
         artist.name AS primary_artist_name,
-        COALESCE(canonical_track.title, provider_canonical_track.title, canonical_recording.title, provider_recording.title, provider_track.title) AS media_title,
+        COALESCE(canonical_track.title, provider_canonical_track.title, canonical_recording.title) AS media_title,
         CASE WHEN COALESCE(canonical_track.mbid, provider_canonical_track.mbid) IS NOT NULL THEN NULL ELSE provider_track.version END AS media_version,
         COALESCE(
           CASE WHEN canonical_track.length_ms IS NOT NULL THEN ROUND(canonical_track.length_ms / 1000.0) END,
@@ -1038,13 +1038,13 @@ export class AudioTagService {
           CASE WHEN provider_track.duration_ms IS NOT NULL
             THEN ROUND(provider_track.duration_ms / 1000.0) END
         ) AS media_duration,
-        COALESCE(canonical_release.date, ar.date, provider_track.release_date, provider_album.release_date) AS media_release_date,
+        COALESCE(canonical_release.date, ar.date) AS media_release_date,
         COALESCE(canonical_track.position, provider_canonical_track.position) AS media_track_number,
         COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position) AS media_volume_number,
         COALESCE(
-          provider_track.isrc,
           CASE WHEN json_valid(canonical_recording.isrcs) THEN json_extract(canonical_recording.isrcs, '$[0]') ELSE canonical_recording.isrcs END,
-          CASE WHEN json_valid(provider_recording.isrcs) THEN json_extract(provider_recording.isrcs, '$[0]') ELSE provider_recording.isrcs END
+          CASE WHEN json_valid(provider_recording.isrcs) THEN json_extract(provider_recording.isrcs, '$[0]') ELSE provider_recording.isrcs END,
+          provider_track.isrc
         ) AS media_isrc,
         COALESCE(
           canonical_recording.copyright,
@@ -1055,9 +1055,9 @@ export class AudioTagService {
         provider_track.replay_gain AS media_replay_gain,
         provider_track.peak AS media_peak,
         provider_track.musical_key AS media_musical_key,
-        COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title) AS album_title,
+        COALESCE(canonical_group.title, canonical_release.title, alb.title) AS album_title,
         CASE WHEN COALESCE(canonical_group.mbid, alb.mbid) IS NOT NULL THEN NULL ELSE provider_album.version END AS album_version,
-        COALESCE(canonical_release.date, ar.date, provider_album.release_date) AS album_release_date,
+        COALESCE(canonical_release.date, ar.date) AS album_release_date,
         canonical_release.media_count AS album_num_volumes,
         COALESCE(canonical_release.barcode, provider_album.upc) AS album_upc,
         COALESCE(canonical_group.genres, alb.genres, am.genres) AS album_genres,
@@ -1072,7 +1072,7 @@ export class AudioTagService {
           canonical_group.review_text,
           alb.review_text
         ) AS album_review_text,
-        COALESCE(canonical_recording.credits, provider_recording.credits) AS media_credits,
+        canonical_recording.credits AS media_credits,
         COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid, provider_recording.mbid) AS media_mbid,
         lf.acoustid_id AS media_acoustid_id,
         lf.fingerprint AS media_acoustid_fingerprint,

@@ -48,6 +48,8 @@ export const useMonitoring = () => {
             dispatchLibraryUpdated();
             // Invalidate relevant queries
             queryClient.invalidateQueries({ queryKey: [variables.type, variables.id] });
+            queryClient.invalidateQueries({ queryKey: ["albumPage", variables.id] });
+            queryClient.invalidateQueries({ queryKey: ["artistPage", variables.id] });
             queryClient.invalidateQueries({ queryKey: ["library"] });
         },
         onError: (error) => {
@@ -91,6 +93,8 @@ export const useMonitoring = () => {
             });
             dispatchLibraryUpdated();
             queryClient.invalidateQueries({ queryKey: [vars.type, vars.id] });
+            queryClient.invalidateQueries({ queryKey: ["albumPage", vars.id] });
+            queryClient.invalidateQueries({ queryKey: ["artistPage", vars.id] });
             queryClient.invalidateQueries({ queryKey: ["library"] });
         },
         onError: (err) => {

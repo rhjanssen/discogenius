@@ -1555,6 +1555,7 @@ export class DownloadQueueQueryService {
 
     return {
       id: job.id,
+      provider: getOptionalString(job.payload?.provider) ?? null,
       providerId,
       type: contentType,
       status: job.status as QueueItemContract["status"],

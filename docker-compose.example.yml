@@ -66,7 +66,7 @@ services:
       - 'while [ ! -s /app/rootfs/data/wrapper-entrypoint.sh ]; do echo "[wrapper-boot] waiting for Discogenius to provision the supervisor script..."; sleep 2; done; exec /bin/bash /app/rootfs/data/wrapper-entrypoint.sh'
     depends_on:
       discogenius:
-        condition: service_started
+        condition: service_healthy
         restart: true
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data

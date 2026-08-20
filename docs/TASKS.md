@@ -112,14 +112,14 @@ winners, leaving losers as visible candidates with no row and no download.
 `live` → `-video` (it occupies the regular slot), `lyrics` → `-lyrics`.
 Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
-## Remaining after 2.8.0
+## Remaining after 2.8.1
 
 - **Live provider validation.** No controlled real-provider download has been
   run against the video placement path — see "Manual validation" at the top.
-- **Manual video placement override.** A user cannot yet move a specific video
-  to a specific track; curation's ranking is the only chooser. Deferred to
-  2.8.1 along with medley/multi-recording video UX and manually selecting
-  additional losing candidates under `inline_only`.
+- **Manual video placement override UI.** 2.8.1 made a `placement_selection_mode
+  = 'manual'` row stick through curation. There is still no control to pick
+  "this video beside that track". Deferred with medley/multi-recording video
+  UX and extra `inline_only` losers.
 
 ### Open defects (found during 2.8 hardening, not yet fixed)
 
@@ -132,9 +132,10 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
   (`8a58cc1a-be0d-3b1b-8d0d-aa8f467a59da`) on a live catalog to confirm the
   command completes.
 
-- **Apple Music video download fails** with `apple-music-downloader exited with
-  code 1: Decrypt failed: exit status 1`. Recreating the wrapper container did
-  not clear it; not yet retested after recreation.
+- **Apple Music video download still needs a live repro.** `Decrypt failed` is
+  now mapped to the wrapper-session / recreate instruction. Stereo/Atmos Apple
+  was validated in 2.8.0; video was not. Re-auth + force-recreate both
+  containers, then retry a Bastille video.
 
 ### Test matrix still to run
 

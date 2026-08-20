@@ -161,6 +161,47 @@ test("only a canonical video recording can be selected as one", () => {
 // Placement
 // ---------------------------------------------------------------------------
 
+test("automatic curation does not move a manually placed video", () => {
+  const { videoId, trackId } = seed();
+  const [videoLibraryId] = resolveVideoLibraryIds(db);
+  selectLibraryVideo(db, {
+    libraryId: videoLibraryId,
+    videoRecordingId: videoId,
+    placement: {
+      mode: "inline",
+      placementLibraryId: stereoLibraryId(),
+      inlineTrackId: trackId,
+      inlineSlot: "video",
+    },
+    placementSelectionMode: "manual",
+  });
+
+  selectLibraryVideo(db, {
+    libraryId: videoLibraryId,
+    videoRecordingId: videoId,
+    placement: { mode: "separated" },
+    selectionMode: "auto",
+    placementSelectionMode: "auto",
+    reason: "curation",
+  });
+
+  assert.deepEqual(videoPlacement(db, videoLibraryId, videoId), {
+    mode: "inline",
+    placementLibraryId: stereoLibraryId(),
+    inlineTrackId: trackId,
+    inlineSlot: "video",
+  });
+  const row = db.prepare(`
+    SELECT selection_mode, placement_selection_mode
+    FROM LibraryVideos
+    WHERE library_id = ? AND video_recording_id = ?
+  `).get(videoLibraryId, videoId) as {
+    selection_mode: string;
+    placement_selection_mode: string;
+  };
+  assert.equal(row.placement_selection_mode, "manual");
+});
+
 test("placement is persisted, not re-derived", () => {
   const { videoId, trackId } = seed();
   const [videoLibraryId] = resolveVideoLibraryIds(db);

@@ -701,7 +701,7 @@ export class OrganizerService {
     // organizer consumes those decisions — it never re-matches.
     const row = db.prepare(`
       SELECT
-        COALESCE(NULLIF(TRIM(recording.title), ''), pi.title) AS title,
+        recording.title AS title,
         recording.video_variant AS video_variant,
         pi.duration_ms / 1000.0 AS duration,
         pi.explicit,
@@ -2170,14 +2170,16 @@ export class OrganizerService {
                   SELECT
                     ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id,
                     NULL AS quality,
-                    pi.title,
-                    pi.version,
-                    pi.explicit,
-                    member.position AS track_number,
-                    member.medium_position AS volume_number,
-                    canonical_track.mbid AS canonical_track_mbid,
-                    canonical_recording.mbid AS canonical_recording_mbid,
-                    canonical_artist.mbid AS artist_id
+                    CASE WHEN COUNT(DISTINCT canonical_track.title) = 1
+                      THEN MAX(NULLIF(TRIM(canonical_track.title), ''))
+                    END AS title,
+                    MAX(pi.version) AS version,
+                    MAX(pi.explicit) AS explicit,
+                    CASE WHEN COUNT(DISTINCT member.position) = 1 THEN MAX(member.position) END AS track_number,
+                    CASE WHEN COUNT(DISTINCT member.medium_position) = 1 THEN MAX(member.medium_position) END AS volume_number,
+                    CASE WHEN COUNT(DISTINCT canonical_track.mbid) = 1 THEN MAX(canonical_track.mbid) END AS canonical_track_mbid,
+                    CASE WHEN COUNT(DISTINCT canonical_recording.mbid) = 1 THEN MAX(canonical_recording.mbid) END AS canonical_recording_mbid,
+                    CASE WHEN COUNT(DISTINCT canonical_artist.mbid) = 1 THEN MAX(canonical_artist.mbid) END AS artist_id
                   FROM ProviderItems pi
                   LEFT JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
                   LEFT JOIN ProviderTrackMatches track_match
@@ -2190,7 +2192,6 @@ export class OrganizerService {
                   WHERE pi.entity_type = 'track'
                     AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
                     AND ${providerItemOnAnyReleaseSql(placeholders)}
-                  LIMIT 1
                 `).get(trackId, ...albumIds) as any)
               : null;
         }
@@ -2750,38 +2751,52 @@ export class OrganizerService {
         );
       }
 
-      // Canonical album identity comes from the accepted release match, not from
-      // provider-shadow columns; the provider row only contributes its own facts.
+      const jobReleaseGroupMbid = String(raw.releaseGroupMbid || "").trim() || null;
+      const jobReleaseMbid = String(raw.releaseMbid || "").trim() || null;
+
+      // Canonical album identity comes from accepted typed matches. A provider
+      // release can match several editions; never pick one with ORDER BY LIMIT 1.
+      // Job context wins; otherwise every accepted match must agree on the group.
       const album = db.prepare(`
         SELECT
-          canonical_artist.mbid AS artist_id,
-          release_group.mbid AS mb_release_group_id,
-          canonical_release.mbid AS mbid,
+          CASE WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(canonical_artist.mbid) END AS artist_id,
+          CASE WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(release_group.mbid) END AS mb_release_group_id,
+          CASE WHEN COUNT(DISTINCT canonical_release.mbid) = 1 THEN MAX(canonical_release.mbid) END AS mbid,
           NULL AS quality,
-          COALESCE(NULLIF(TRIM(release_group.title), ''), pi.title) AS title,
-          pi.version,
-          COALESCE(canonical_release.date, pi.release_date) AS release_date,
-          canonical_release.media_count AS num_volumes,
-          release_group.primary_type AS type,
-          release_group.primary_type AS mb_primary
+          CASE WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(NULLIF(TRIM(release_group.title), '')) END AS title,
+          MAX(pi.version) AS version,
+          CASE WHEN COUNT(DISTINCT canonical_release.mbid) = 1
+            THEN MAX(COALESCE(canonical_release.date, pi.release_date))
+            ELSE MAX(release_group.first_release_date)
+          END AS release_date,
+          CASE WHEN COUNT(DISTINCT canonical_release.mbid) = 1 THEN MAX(canonical_release.media_count) END AS num_volumes,
+          CASE WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(release_group.primary_type) END AS type,
+          CASE WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(release_group.primary_type) END AS mb_primary
         FROM ProviderItems pi
-        LEFT JOIN ProviderEditionMatches release_match
+        JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = pi.id
          AND release_match.match_state = 'accepted'
-        LEFT JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
-        LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
+        JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
+        JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
         LEFT JOIN ArtistMetadata canonical_artist
           ON canonical_artist.id = release_group.artist_metadata_id
         WHERE pi.provider = ?
           AND pi.entity_type = 'release'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY
-          CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
-          release_match.confidence DESC,
-          pi.updated_at DESC
-        LIMIT 1
-      `).get(streamingProviderId, albumId) as any;
-      if (!album) throw new Error(`Album ${albumId} offer not found in ProviderItems after scan`);
+          AND (? IS NULL OR canonical_release.mbid = ?)
+          AND (? IS NULL OR release_group.mbid = ?)
+        HAVING COUNT(DISTINCT release_group.mbid) = 1
+      `).get(
+        streamingProviderId,
+        albumId,
+        jobReleaseMbid,
+        jobReleaseMbid,
+        jobReleaseGroupMbid,
+        jobReleaseGroupMbid,
+      ) as any;
+      if (!album?.mb_release_group_id) {
+        throw new Error(`Album ${albumId} has no unique canonical release group`);
+      }
 
       // Catalog-first: resolve title/position via the Tracks table on the
       // best-known release (job-supplied release mbid, else the album's own).
@@ -2795,13 +2810,13 @@ export class OrganizerService {
           pi.provider_id AS id,
           ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id,
           NULL AS quality,
-          COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
-          pi.version,
-          pi.explicit,
-          t.mbid AS mbid,
-          canonical_artist.mbid AS artist_id,
-          t.position AS track_number,
-          t.medium_position AS volume_number
+          CASE WHEN COUNT(DISTINCT t.title) = 1 THEN MAX(NULLIF(TRIM(t.title), '')) END AS title,
+          MAX(pi.version) AS version,
+          MAX(pi.explicit) AS explicit,
+          CASE WHEN COUNT(DISTINCT t.mbid) = 1 THEN MAX(t.mbid) END AS mbid,
+          CASE WHEN COUNT(DISTINCT canonical_artist.mbid) = 1 THEN MAX(canonical_artist.mbid) END AS artist_id,
+          CASE WHEN COUNT(DISTINCT t.position) = 1 THEN MAX(t.position) END AS track_number,
+          CASE WHEN COUNT(DISTINCT t.medium_position) = 1 THEN MAX(t.medium_position) END AS volume_number
         FROM ProviderItems pi
         LEFT JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
         LEFT JOIN ProviderTrackMatches track_match
@@ -2816,10 +2831,6 @@ export class OrganizerService {
         WHERE pi.provider = ?
           AND pi.entity_type = 'track'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY
-          CASE WHEN t.id IS NULL THEN 1 ELSE 0 END,
-          pi.updated_at DESC
-        LIMIT 1
       `).get(trackPositionReleaseMbid, trackPositionReleaseMbid, streamingProviderId, providerId) as any;
       if (!trackRow) throw new Error(`Track ${providerId} offer not found in ProviderItems after scan`);
 
@@ -2838,8 +2849,6 @@ export class OrganizerService {
         || isSpatialAudioQuality(album.quality);
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
 
-      const jobReleaseGroupMbid = String(raw.releaseGroupMbid || "").trim() || null;
-      const jobReleaseMbid = String(raw.releaseMbid || "").trim() || null;
       const jobCanonicalTrackMbid = String(raw.canonicalTrackMbid || "").trim() || null;
       const jobCanonicalRecordingMbid = String(raw.canonicalRecordingMbid || "").trim() || null;
       const jobSlot = String(raw.slot || "").trim() || null;

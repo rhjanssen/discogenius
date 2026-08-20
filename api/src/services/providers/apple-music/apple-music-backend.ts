@@ -34,14 +34,16 @@ function isLikelyProviderId(value: string): boolean {
 // as cryptic strings like "Error reading response from device: EOF". Translate
 // those into one actionable instruction instead of leaking the raw wrapper text.
 const APPLE_SESSION_FAILURE_PATTERN =
-  /reading response from device|device:\s*eof|\bckc\b|sign[\s-]?in|unauthor|invalid.*(?:token|session|user)|forbidden|\b401\b|\b403\b/i;
+  /reading response from device|device:\s*eof|\bckc\b|decrypt failed|sign[\s-]?in|unauthor|invalid.*(?:token|session|user)|forbidden|\b401\b|\b403\b/i;
 
 export function describeAppleDownloaderFailure(code: number | null, errorDetail: string): string {
   const detail = (errorDetail || "").trim();
   if (APPLE_SESSION_FAILURE_PATTERN.test(detail)) {
-    return "Apple Music decryption failed — the wrapper session has expired or was rejected. "
-      + "Re-authenticate Apple Music from the Auth page and enter your Apple ID 2FA code promptly "
-      + `(the wrapper only waits ~60s).${detail ? ` [downloader: ${detail}]` : ""}`;
+    return "Apple Music decryption failed — the wrapper session has expired, was rejected, or is attached to a dead container network. "
+      + "Re-authenticate Apple Music from the Auth page (enter the Apple ID 2FA code promptly; the wrapper only waits ~60s). "
+      + "If this persists after a container restart, recreate both services: "
+      + "`docker compose up -d --force-recreate discogenius apple-music-wrapper`."
+      + `${detail ? ` [downloader: ${detail}]` : ""}`;
   }
   return `apple-music-downloader exited with code ${code}${detail ? `: ${detail}` : ""}`;
 }

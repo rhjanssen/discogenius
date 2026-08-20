@@ -199,7 +199,7 @@ router.patch("/:videoId", (req, res) => {
             // Placement is decided by video curation; a bare monitor request
             // says nothing about where the file belongs.
             placement: { mode: "separated" },
-            selectionMode: monitoredLock === true ? "manual" : "manual",
+            selectionMode: monitoredLock === true ? "manual" : "auto",
             reason: "user",
           });
           continue;

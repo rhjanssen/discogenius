@@ -228,6 +228,23 @@ export class DownloadWaitQueue {
     return new Map(rows.map((row) => [row.name, Number(row.count)]));
   }
 
+  /**
+   * Waiting work lives in DownloadQueue. A queued Download* command with no
+   * wait-row claim is leftover cutover/pause debris and must not age /health
+   * or jump the wait list.
+   */
+  static dropUnclaimedDownloadCommands(): number {
+    const result = db.prepare(`
+      DELETE FROM commands
+      WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+        AND status = 'queued'
+        AND id NOT IN (
+          SELECT command_id FROM DownloadQueue WHERE command_id IS NOT NULL
+        )
+    `).run();
+    return Number(result.changes ?? 0);
+  }
+
   static enqueue(input: DownloadWaitEnqueueInput): DownloadWaitEnqueueResult {
     const refKey = String(input.refKey || "").trim();
     if (!refKey) {
@@ -637,6 +654,34 @@ export class DownloadWaitQueue {
     `).run();
 
     return completedOrGone.changes;
+  }
+
+  /**
+   * A Download* command should only exist while a slot is running it. Pause
+   * (and a crash between claim and start) can leave a queued command attached
+   * to a wait row; that pair then ages /health forever. Return the wait row
+   * to unclaimed and delete the unused command.
+   */
+  static releaseUnstartedClaims(): number {
+    return db.transaction(() => {
+      const rows = db.prepare(`
+        SELECT dq.id AS wait_id, c.id AS command_id
+        FROM DownloadQueue dq
+        JOIN commands c ON c.id = dq.command_id
+        WHERE c.status = 'queued'
+      `).all() as Array<{ wait_id: number; command_id: number }>;
+      for (const row of rows) {
+        db.prepare(`
+          UPDATE DownloadQueue
+          SET command_id = NULL, claimed_at = NULL, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(row.wait_id);
+        db.prepare(`
+          DELETE FROM commands WHERE id = ? AND status = 'queued'
+        `).run(row.command_id);
+      }
+      return rows.length;
+    })();
   }
 
   private static nextAppendRank(): number {

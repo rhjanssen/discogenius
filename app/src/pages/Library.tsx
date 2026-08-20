@@ -52,7 +52,6 @@ import { useLibrary } from "@/hooks/useLibrary";
 import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
 import { useTracks } from "@/hooks/useTracks";
 import { useVideos } from "@/hooks/useVideos";
-import { useQueueDetails } from "@/hooks/useQueueDetails";
 import { useToast } from "@/hooks/useToast";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
@@ -380,16 +379,7 @@ const Library = () => {
     dir: sortDirection,
     enabled: selectedTab === 'videos',
   });
-  const visibleAlbumIds = useMemo(
-    () => selectedTab === "albums"
-      ? albums.map((album: any) => String(album.id))
-      : [],
-    [albums, selectedTab],
-  );
-  useQueueDetails({
-    albumIds: visibleAlbumIds,
-    enabled: selectedTab === "albums" && visibleAlbumIds.length > 0,
-  });
+
 
   // Keep server-side filters/sort in sync (prevents client-side resorting during pagination)
   useEffect(() => {
@@ -973,7 +963,8 @@ const Library = () => {
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
     const isLocked = Boolean(album.monitored_lock);
     const imageUrl = mediaCoverSrc(album);
-    const itemProgress = getProgressByProviderId(String(album.id));
+    const itemProgress = getProgressByProviderId(String(album.stereo_provider_id || ""))
+      || getProgressByProviderId(String(album.spatial_provider_id || ""));
     const qualityOffers = albumSelectedQualityOffers(album);
     return (
       <MediaCard
@@ -990,7 +981,8 @@ const Library = () => {
           <QualityBadge quality={album.quality} size="small" />
         ) : undefined}
         monitored={album.is_monitored}
-        onMonitorToggle={isLocked ? undefined : (e) => handleToggleAlbumMonitored(e, album)}
+        monitoringLocked={isLocked}
+        onMonitorToggle={(e) => handleToggleAlbumMonitored(e, album)}
         placeholder={
           <div className={cardStyles.placeholderBg}>
             <MusicNote224 className={styles.placeholderIcon} />

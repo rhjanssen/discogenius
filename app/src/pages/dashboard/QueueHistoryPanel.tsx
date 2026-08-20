@@ -381,7 +381,7 @@ export function QueueHistoryPanel({
                                                 <Text className={styles.downloadArtist} truncate>{row.subtitle}</Text>
                                             ) : null}
                                             <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
-                                                {item.providerId ? <ProviderMark provider={item.providerId} size={16} /> : null}
+                                                {item.provider ? <ProviderMark provider={item.provider} size={16} /> : null}
                                                 {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
                                                 {row.mediaBadge ? (
                                                     <MediaTypeBadge kind={row.mediaBadge.kind} label={row.mediaBadge.label} size="small" />

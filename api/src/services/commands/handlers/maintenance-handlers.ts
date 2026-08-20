@@ -20,7 +20,7 @@ export const handleLowCouplingMaintenance: CommandHandler = async (job, ctx) => 
 export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
         progress: 10,
-        description: 'Running housekeeping and optimizing the database',
+        description: 'Running housekeeping',
     });
     const summary = runRuntimeMaintenance();
     const parts = [
@@ -29,7 +29,6 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `pruned ${summary.historyJobsPruned} old job(s)`,
         `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
-        `and optimized the database`,
     ];
     ctx.updateCommandDescription(job, {
         progress: 100,

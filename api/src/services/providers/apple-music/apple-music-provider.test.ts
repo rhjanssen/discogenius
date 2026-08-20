@@ -45,6 +45,7 @@ test("describeAppleDownloaderFailure maps decryption/session errors to a re-auth
 
   assert.match(describeAppleDownloaderFailure(1, "CKC error"), /Re-authenticate Apple Music/i);
   assert.match(describeAppleDownloaderFailure(1, "sign-in required"), /Re-authenticate Apple Music/i);
+  assert.match(describeAppleDownloaderFailure(1, "Decrypt failed: exit status 1"), /Re-authenticate Apple Music/i);
 });
 
 test("describeAppleDownloaderFailure leaves unrelated errors as the raw exit message", () => {

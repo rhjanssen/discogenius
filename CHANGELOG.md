@@ -2,6 +2,59 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.8.1] - 2026-08-20
+
+Wait-queue follow-through, catalog-first filing, and a few event-loop stalls
+left after 2.8.0.
+
+### Fixed
+- **History Retry re-queues a download.** Queue history is still a command id.
+  Retry was looking that id up in `DownloadQueue` and 404ing once
+  `finishClaimed` had dropped the wait row. Retry now accepts a wait-row id
+  or a command id and, when the wait row is gone, enqueues a new one from
+  the failed payload.
+- **Stray queued `Download*` commands no longer age `/health`.** Waiting work
+  lives in `DownloadQueue`. Queued download commands with no wait-row claim
+  are dropped on open. A claim that never started (pause between claim and
+  the download slot) is returned to the wait list and the unused command is
+  deleted.
+- **Failed-download SSE keeps the wait-row id.** Completion already captured
+  it before deleting the row; fail did not.
+- **Queue rows show the provider mark.** The wait payload already stored
+  `tidal` / `apple-music`; the contract only exposed the resource id, so
+  `ProviderMark` had nothing to key on.
+- **Library album cards look up download progress by provider resource id**,
+  matching the Artist page. They were using the canonical catalogue id.
+- **Album pages refresh when files land.** Artist pages already listened for
+  `file.added` / `file.deleted` / `file.upgraded`; album pages did not.
+- **Lock does not disable Monitor.** The lock blocks automation, not the
+  user. Album cards, library cards, and `MediaCard` no longer hide or disable
+  the eye control on a locked album.
+- **Organizer no longer picks an edition with `ORDER BY confidence LIMIT 1`.**
+  A provider release can match several canonical editions; job context wins,
+  otherwise every accepted match must agree on the release group. File names
+  come from the catalog, not `ProviderItems.title`.
+- **Retag prefers catalog title, date, ISRC and credits.** Provider values
+  remain only where the catalog has no value (ISRC), or not at all (title,
+  date, credits).
+- **Rename apply reuses the path cache** and scopes sidecar replication to
+  the artist just renamed, instead of walking every `TrackFiles` row.
+- **Check Upgrades no longer JSON-scans `commands` payload** for cooldown.
+  It looks at `DownloadQueue` and `commands.ref_id`.
+- **Scan matching no longer uses `OR EXISTS` per unknown file.**
+- **`is_video` predicates use `= 0` / `= 1`** so the index applies.
+- **Video Monitor no longer writes `selection_mode = 'manual'` for a bare
+  monitor click.** Curation will not overwrite a `placement_selection_mode =
+  'manual'` row, so a future placement picker can stick.
+- **Apple `Decrypt failed` is treated as a wrapper-session error**, with
+  the recreate hint. The wrapper sidecar now waits for Discogenius to be
+  healthy before attaching to its network namespace.
+
+### Changed
+- Housekeeping no longer claims to "optimize the database". VACUUM still
+  belongs to CompactDatabase.
+- Apply Curation yields to the event loop after each artist.
+
 ## [2.8.0] - 2026-08-20
 
 Clean-start schema 42. There is no migration from 41: `initDatabase()` refuses
