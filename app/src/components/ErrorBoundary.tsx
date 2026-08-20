@@ -13,6 +13,7 @@ import {
   ArrowClockwise24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
+import { isChunkLoadError, reloadForFailedChunk, clearChunkReloadGuard } from "@/utils/chunkReload";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
 
@@ -113,7 +114,10 @@ const ErrorDisplay = ({
           <Button
             appearance="primary"
             icon={<ArrowClockwise24 />}
-            onClick={() => window.location.reload()}
+            onClick={() => {
+              clearChunkReloadGuard();
+              window.location.reload();
+            }}
           >
             Refresh Page
           </Button>
@@ -146,6 +150,10 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   handleReset = () => {
+    if (isChunkLoadError(this.state.error)) {
+      reloadForFailedChunk();
+      return;
+    }
     this.setState({
       hasError: false,
       error: null,

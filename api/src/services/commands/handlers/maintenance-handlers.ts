@@ -1,5 +1,9 @@
 import { runRuntimeMaintenance } from "../runtime-maintenance.js";
 import { runLowCouplingMaintenanceJob } from "../scheduler-maintenance-handlers.js";
+import { queueUpdateLibraryMetadata } from "../scheduler.js";
+import { AlbumLibraryIndexService } from "../../music/album-library-index-service.js";
+import { TrackLibraryIndexService } from "../../music/track-library-index-service.js";
+import { CommandTrigger } from "../command-trigger.js";
 import type {CommandModel} from "../command-model.js";
 import type { CommandHandler } from "./handler-context.js";
 
@@ -34,4 +38,10 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         progress: 100,
         description: parts.join(', '),
     });
+    if (
+        AlbumLibraryIndexService.needsRebuild()
+        || TrackLibraryIndexService.needsRebuild()
+    ) {
+        queueUpdateLibraryMetadata({ trigger: CommandTrigger.Scheduled });
+    }
 };

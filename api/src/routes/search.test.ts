@@ -115,6 +115,26 @@ test("local artist search honors canonical artwork preference", async () => {
   );
 });
 
+test("local artist search keeps two MusicBrainz artists that share a name", async () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored, popularity)
+    VALUES
+      ('band-id', 'Bastille', 'band-mbid', 1, 90),
+      ('alias-id', 'Bastille', 'alias-mbid', 0, 10),
+      ('provider-id', 'Bastille', NULL, 0, 50)
+  `).run();
+
+  const res = createMockResponse();
+  await getSearchHandler()({ query: { query: "Bastille", type: "artists", limit: "10" } }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(
+    res.body.results.artists.map((artist: { id: string }) => artist.id),
+    ["band-id", "alias-id"],
+  );
+  assert.equal(res.body.results.artists[0].monitored, true);
+});
+
 // Seeds a complete canonical->provider graph: album, edition, recording, track,
 // accepted release/track matches, a current selected plan and the typed audio
 // variant the plan track points at. Both the track and album search branches

@@ -1,26 +1,22 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import {
+  shouldAttemptChunkReload,
+} from "@/utils/chunkReload";
 
-// Self-heal: when a code-split chunk fails to load (common after rebuilds/restarts),
-// force a one-time reload with a cache-busting query param.
+// Self-heal: when a code-split chunk fails to load (common after rebuilds/restarts
+// or while the API event loop is stalled), force a one-time reload.
 const reloadOnce = () => {
-  const key = "discogenius:chunk-reload";
-  try {
-    if (sessionStorage.getItem(key)) return;
-    sessionStorage.setItem(key, "1");
-  } catch {
-    // ignore
-  }
+  if (!shouldAttemptChunkReload()) return;
   const url = new URL(window.location.href);
   url.searchParams.set("reload", String(Date.now()));
   window.location.replace(url.toString());
 };
 
 // Vite emits this in production when preloading a dynamic import fails.
-window.addEventListener("vite:preloadError", reloadOnce as any);
+window.addEventListener("vite:preloadError", reloadOnce as EventListener);
 
-// Extra safety net for browsers that surface chunk failures as window.onerror.
 window.addEventListener("error", (e) => {
   const msg = (e as ErrorEvent).message || "";
   if (

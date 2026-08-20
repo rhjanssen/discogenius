@@ -147,7 +147,7 @@ router.get("/", async (req, res) => {
         if (includeLocalLibrary) {
             if (requestedTypeSet.has("artists")) {
                 const ftsQuery = toFtsPrefixQuery(query);
-                const matchedArtistIds = ftsQuery
+                let matchedArtistIds = ftsQuery
                     ? (db.prepare(`
                         SELECT entity_id AS id
                         FROM CatalogSearch
@@ -155,9 +155,21 @@ router.get("/", async (req, res) => {
                         LIMIT ?
                     `).all(ftsQuery, limit * 2) as Array<{ id: string }>).map((row) => row.id)
                     : [];
+                if (matchedArtistIds.length === 0 && query.trim().length > 0) {
+                    const fallbackArtists = db.prepare(`
+                        SELECT id
+                        FROM Artists
+                        WHERE name LIKE ?
+                        LIMIT ?
+                    `).all(`%${query}%`, limit * 2) as Array<{ id: string }>;
+                    matchedArtistIds = fallbackArtists.map((row) => row.id);
+                }
                 const artistMarks = matchedArtistIds.map(() => "?").join(", ");
                 // Prefer MB-linked rows over provider-only duplicates with the same
                 // name (COLLATE NOCASE uses idx_artists_name; avoid lower() scans).
+                // Two MusicBrainz artists may share a name (Bastille the UK band vs
+                // Bastille the electronic alias). Dropping every row that has *any*
+                // same-name sibling hid both of them from global search.
                 const localArtists = matchedArtistIds.length === 0 ? [] : db
                     .prepare(
                         `SELECT current_artist.id, current_artist.mbid, current_artist.name,
@@ -168,14 +180,17 @@ router.get("/", async (req, res) => {
                          LEFT JOIN ArtistMetadata artist_metadata
                            ON artist_metadata.mbid = current_artist.mbid
                          WHERE current_artist.id IN (${artistMarks})
-                           AND NOT EXISTS (
-                             SELECT 1
-                             FROM Artists canonical_artist
-                             WHERE canonical_artist.mbid IS NOT NULL
-                               AND canonical_artist.id != current_artist.id
-                               AND canonical_artist.name = current_artist.name COLLATE NOCASE
+                           AND (
+                             current_artist.mbid IS NOT NULL
+                             OR NOT EXISTS (
+                               SELECT 1
+                               FROM Artists canonical_artist
+                               WHERE canonical_artist.mbid IS NOT NULL
+                                 AND canonical_artist.name = current_artist.name COLLATE NOCASE
+                             )
                            )
                          ORDER BY
+                           CASE WHEN current_artist.monitored = 1 THEN 0 ELSE 1 END,
                            CASE WHEN current_artist.mbid IS NOT NULL THEN 0 ELSE 1 END,
                            current_artist.popularity DESC
                          LIMIT ?`

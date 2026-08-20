@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 
 /**
  * Compact, album library read model.
@@ -8,6 +8,10 @@ import { db } from "../../database.js";
  * plans own provider/quality selection. This projection only denormalizes the
  * few fields needed to filter, sort and page the library without walking those
  * normalized graphs on every HTTP request.
+ *
+ * Rebuild inserts one row per library Album, never the whole catalog. A
+ * 353k-row `FROM Albums LEFT JOIN library_state` rebuild held SQLite long
+ * enough to fail UpdateLibraryMetadata with `database is locked`.
  */
 export class AlbumLibraryIndexService {
   static isReady(): boolean {
@@ -101,13 +105,13 @@ export class AlbumLibraryIndexService {
           COALESCE(album.popularity, 0),
           album.first_release_date,
           album.updated_at,
-          COALESCE(library_state.included, 0),
-          COALESCE(library_state.monitored_lock, 0),
-          COALESCE(library_state.has_stereo_provider, 0),
-          COALESCE(library_state.has_spatial_provider, 0),
+          1,
+          library_state.monitored_lock,
+          library_state.has_stereo_provider,
+          library_state.has_spatial_provider,
           CURRENT_TIMESTAMP
-        FROM Albums album
-        LEFT JOIN library_state ON library_state.release_group_id = album.id
+        FROM library_state
+        JOIN Albums album ON album.id = library_state.release_group_id
       `).run();
 
       const rows = Number(result.changes || 0);
@@ -123,5 +127,18 @@ export class AlbumLibraryIndexService {
     });
 
     return rebuild();
+  }
+
+  static async rebuildGated(
+    yieldToEventLoop?: () => Promise<void>,
+  ): Promise<{ rows: number }> {
+    const result = await withSqliteWriteGate(
+      () => this.rebuild(),
+      "album-library-index-rebuild",
+    );
+    if (yieldToEventLoop) {
+      await yieldToEventLoop();
+    }
+    return result;
   }
 }

@@ -18,6 +18,8 @@ import {
   createArtistTopTrackProjectionSchema,
   createAlbumLibraryProjectionSchema,
   createTrackLibraryProjectionSchema,
+  syncAlbumLibraryProjectionInvalidationTriggers,
+  syncTrackLibraryProjectionInvalidationTriggers,
 } from "./database/schema/projections.js";
 import {
   createTrackSearchIndex,
@@ -527,6 +529,7 @@ export function initDatabase() {
 
   ensureDownloadQueueSchema();
   ensureLibraryLookupIndexes();
+  ensureLibraryProjectionTriggers();
   initializeDefaultData();
 }
 
@@ -540,6 +543,11 @@ function ensureLibraryLookupIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_library_albums_release_group
       ON LibraryAlbums(release_group_id)
   `);
+}
+
+function ensureLibraryProjectionTriggers(): void {
+  syncAlbumLibraryProjectionInvalidationTriggers(db);
+  syncTrackLibraryProjectionInvalidationTriggers(db);
 }
 
 const DOWNLOAD_QUEUE_CUTOVER_KEY = "download_queue.wait_table_cutover";

@@ -52,6 +52,86 @@ function createProjectionInvalidationTriggers(
   }
 }
 
+function dropProjectionInvalidationTriggers(
+  db: Database.Database,
+  prefix: string,
+  tables: readonly string[],
+): void {
+  for (const table of tables) {
+    const normalizedTableName = table.replace(/[^A-Za-z0-9_]/g, "").toLowerCase();
+    for (const suffix of ["ai", "au", "ad"] as const) {
+      db.exec(`DROP TRIGGER IF EXISTS ${prefix}_${normalizedTableName}_${suffix}`);
+    }
+  }
+}
+
+/**
+ * Library-list projections must not rebuild because a catalog hydrate wrote
+ * Albums/Tracks/provider variants. Those writes are the 489-artist refresh
+ * path; invalidating on them left the index dirty for the entire run, and the
+ * follow-up rebuild then scanned the whole catalog.
+ *
+ * Membership and file changes still invalidate. Housekeeping / Update Library
+ * Metadata rebuilds after a refresh so quality flags catch up.
+ */
+const ALBUM_LIBRARY_INVALIDATION_TABLES = [
+  "LibraryAlbums",
+  "LibraryEditions",
+  "Libraries",
+] as const;
+
+const OBSOLETE_ALBUM_LIBRARY_INVALIDATION_TABLES = [
+  "Albums",
+  "AlbumEditions",
+  "AcquisitionPlans",
+  "AcquisitionPlanTracks",
+  "ProviderItemAudioVariants",
+  ...ALBUM_LIBRARY_INVALIDATION_TABLES,
+] as const;
+
+const TRACK_LIBRARY_INVALIDATION_TABLES = [
+  "TrackFiles",
+  "LibraryAlbums",
+  "LibraryEditions",
+  "Libraries",
+] as const;
+
+const OBSOLETE_TRACK_LIBRARY_INVALIDATION_TABLES = [
+  "Tracks",
+  "Recordings",
+  "AlbumEditions",
+  "AcquisitionPlans",
+  "AcquisitionPlanTracks",
+  "ProviderItemAudioVariants",
+  ...TRACK_LIBRARY_INVALIDATION_TABLES,
+] as const;
+
+export function syncAlbumLibraryProjectionInvalidationTriggers(db: Database.Database): void {
+  dropProjectionInvalidationTriggers(
+    db,
+    "trg_album_library_invalidate",
+    OBSOLETE_ALBUM_LIBRARY_INVALIDATION_TABLES,
+  );
+  createProjectionInvalidationTriggers(db, {
+    prefix: "trg_album_library_invalidate",
+    stateTable: "AlbumLibraryProjectionState",
+    tables: ALBUM_LIBRARY_INVALIDATION_TABLES,
+  });
+}
+
+export function syncTrackLibraryProjectionInvalidationTriggers(db: Database.Database): void {
+  dropProjectionInvalidationTriggers(
+    db,
+    "trg_track_library_invalidate",
+    OBSOLETE_TRACK_LIBRARY_INVALIDATION_TABLES,
+  );
+  createProjectionInvalidationTriggers(db, {
+    prefix: "trg_track_library_invalidate",
+    stateTable: "TrackLibraryProjectionState",
+    tables: TRACK_LIBRARY_INVALIDATION_TABLES,
+  });
+}
+
 export function createAlbumLibraryProjectionSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE AlbumLibraryIndex (
@@ -61,8 +141,8 @@ export function createAlbumLibraryProjectionSchema(db: Database.Database): void 
       popularity REAL NOT NULL DEFAULT 0,
       first_release_date TEXT,
       album_updated_at DATETIME,
-      -- A LibraryAlbums row exists only for a monitored Album, so "included in
-      -- a library" and "monitored" are one fact; there is one column for it.
+      -- Row existence is the library statement. Rebuild only inserts albums
+      -- that currently have a LibraryAlbums row; included stays 1 for those.
       included BOOLEAN NOT NULL DEFAULT 0,
       monitored_lock BOOLEAN NOT NULL DEFAULT 0,
       has_stereo_provider BOOLEAN NOT NULL DEFAULT 0,
@@ -87,23 +167,10 @@ export function createAlbumLibraryProjectionSchema(db: Database.Database): void 
       ON AlbumLibraryIndex(included, (album_updated_at IS NULL), album_updated_at DESC, title, release_group_id);
   `);
 
-  createProjectionInvalidationTriggers(db, {
-    prefix: "trg_album_library_invalidate",
-    stateTable: "AlbumLibraryProjectionState",
-    tables: [
-      "Albums",
-      "AlbumEditions",
-      "LibraryAlbums",
-      "LibraryEditions",
-      "AcquisitionPlans",
-      "AcquisitionPlanTracks",
-      "ProviderItemAudioVariants",
-    ],
-  });
+  syncAlbumLibraryProjectionInvalidationTriggers(db);
 
-  // A genuinely empty database is already fully projected. Every authority
-  // mutation invalidates this marker so the command worker can perform the
-  // next set-based rebuild without delaying the write path.
+  // A genuinely empty database is already fully projected. Library membership
+  // and file changes invalidate this marker; catalog hydrates do not.
   db.exec(`
     INSERT INTO AlbumLibraryProjectionState (singleton_id, row_count, updated_at)
     SELECT 1, 0, CURRENT_TIMESTAMP
@@ -144,21 +211,7 @@ export function createTrackLibraryProjectionSchema(db: Database.Database): void 
       ON TrackLibraryIndex(has_spatial, popularity DESC, track_id);
   `);
 
-  createProjectionInvalidationTriggers(db, {
-    prefix: "trg_track_library_invalidate",
-    stateTable: "TrackLibraryProjectionState",
-    tables: [
-      "Tracks",
-      "Recordings",
-      "TrackFiles",
-      "AlbumEditions",
-      "LibraryAlbums",
-      "LibraryEditions",
-      "AcquisitionPlans",
-      "AcquisitionPlanTracks",
-      "ProviderItemAudioVariants",
-    ],
-  });
+  syncTrackLibraryProjectionInvalidationTriggers(db);
 
   db.exec(`
     INSERT INTO TrackLibraryProjectionState (singleton_id, row_count, updated_at)

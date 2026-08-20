@@ -161,8 +161,20 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
     SET quality_class = 'spatial'
     WHERE id = ?
   `).run(variant.id);
-  assert.equal(AlbumLibraryIndexService.isReady(), false);
-  assert.equal(TrackLibraryIndexService.isReady(), false);
+  // Provider variants are source capability. The index reads the library
+  // quality profile, so a variant UPDATE must not wipe the projection.
+  assert.equal(AlbumLibraryIndexService.isReady(), true);
+  assert.equal(TrackLibraryIndexService.isReady(), true);
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title)
+    VALUES ('group-catalog-only', ?, 'artist-1', 'Catalog Only')
+  `).run(artist.id);
+  assert.equal(AlbumLibraryIndexService.isReady(), true);
+  assert.equal(
+    (db.prepare(`SELECT COUNT(*) AS n FROM AlbumLibraryIndex`).get() as { n: number }).n,
+    1,
+  );
 
   AlbumLibraryIndexService.rebuild();
   TrackLibraryIndexService.rebuild();
@@ -200,6 +212,8 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   db.prepare(`
     UPDATE Libraries SET quality_profile_id = ? WHERE id = ?
   `).run(spatialProfile.id, library.id);
+  assert.equal(AlbumLibraryIndexService.isReady(), false);
+  assert.equal(TrackLibraryIndexService.isReady(), false);
   AlbumLibraryIndexService.rebuild();
   TrackLibraryIndexService.rebuild();
   assert.deepEqual(
@@ -228,12 +242,12 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   `).run(library.id, releaseGroup.id);
   AlbumLibraryIndexService.rebuild();
   assert.deepEqual(TrackLibraryIndexService.rebuild(), { rows: 0 });
-  assert.deepEqual(
+  assert.equal(
     db.prepare(`
       SELECT included
       FROM AlbumLibraryIndex
       WHERE release_group_id = ?
     `).get(releaseGroup.id),
-    { included: 0 },
+    undefined,
   );
 });

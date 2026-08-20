@@ -1,5 +1,6 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazyWithRetry } from "@/utils/lazyWithRetry";
 import { Toaster } from "@/components/ui/toaster";
+import { Suspense, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { FluentThemeProvider } from "@/providers/FluentThemeProvider";
@@ -13,16 +14,16 @@ import PageErrorBoundary from "@/components/PageErrorBoundary";
 import RouteLoadingFallback from "@/components/loading/RouteLoadingFallback";
 
 // Lazy-loaded pages for code splitting
-const Auth = lazy(() => import("@/pages/Auth"));
-const AdminLogin = lazy(() => import("@/pages/AdminLogin"));
-const Library = lazy(() => import("@/pages/Library"));
-const ArtistPage = lazy(() => import("@/pages/ArtistPage"));
-const AlbumPage = lazy(() => import("@/pages/AlbumPage"));
-const Dashboard = lazy(() => import("@/pages/dashboard"));
-const VideoPage = lazy(() => import("@/pages/VideoPage"));
-const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
-const StatusPage = lazy(() => import("@/pages/StatusPage"));
-const NotFound = lazy(() => import("@/pages/NotFound"));
+const Auth = lazyWithRetry(() => import("@/pages/Auth"));
+const AdminLogin = lazyWithRetry(() => import("@/pages/AdminLogin"));
+const Library = lazyWithRetry(() => import("@/pages/Library"));
+const ArtistPage = lazyWithRetry(() => import("@/pages/ArtistPage"));
+const AlbumPage = lazyWithRetry(() => import("@/pages/AlbumPage"));
+const Dashboard = lazyWithRetry(() => import("@/pages/dashboard"));
+const VideoPage = lazyWithRetry(() => import("@/pages/VideoPage"));
+const SettingsPage = lazyWithRetry(() => import("@/pages/SettingsPage"));
+const StatusPage = lazyWithRetry(() => import("@/pages/StatusPage"));
+const NotFound = lazyWithRetry(() => import("@/pages/NotFound"));
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+Library pages stay usable during a bulk metadata refresh, and searching a
+name that two MusicBrainz artists share no longer hides both of them.
+
+### Fixed
+- **Album library index rebuilds the library, not the catalog.** Rebuild
+  scanned every `Albums` row (~353k here) in one transaction. Catalog
+  hydrates and provider-variant writes also deleted the projection marker
+  on every artist refresh, so Update Library Metadata raced RefreshArtist
+  and failed with `database is locked`. The index now inserts only
+  library albums, invalidates on membership/file/library-profile changes,
+  rebuilds under the write gate in edition-sized chunks, and Housekeeping
+  queues a rebuild when the marker is still missing.
+- **Global search kept neither MusicBrainz artist when two shared a
+  name.** The duplicate filter treated any same-name sibling as a
+  provider-only clone, so Bastille the band and Bastille the electronic
+  alias both disappeared. Provider-only rows are still suppressed when an
+  MB-linked namesake exists. Artist search also falls back to `LIKE` when
+  FTS is empty.
+- **A failed code-split chunk left the app on "Something went wrong"
+  until a hard reload.** `React.lazy` caches the rejected import, and the
+  one-shot chunk-reload guard never cleared after a successful load.
+  Route chunks retry, Try Again recovers from a chunk error, and a
+  successful import clears the guard.
+
 ## [2.9.3] - 2026-08-20
 
 Artist, album, and library pages no longer rank every library album

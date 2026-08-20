@@ -240,7 +240,9 @@ export async function runLowCouplingMaintenanceJob(
                     progress: 1,
                     description: 'Building album library index',
                 });
-                indexedAlbums = AlbumLibraryIndexService.rebuild().rows;
+                indexedAlbums = (await AlbumLibraryIndexService.rebuildGated(
+                    context.yieldToEventLoop,
+                )).rows;
             }
 
             if (TrackLibraryIndexService.needsRebuild()) {
@@ -248,7 +250,9 @@ export async function runLowCouplingMaintenanceJob(
                     progress: 2,
                     description: 'Building track library index',
                 });
-                indexedTracks = TrackLibraryIndexService.rebuild().rows;
+                indexedTracks = (await TrackLibraryIndexService.rebuildGated(
+                    context.yieldToEventLoop,
+                )).rows;
             }
 
             const summary = ArtistTopTrackService.rebuildMissingMonitoredArtists((progress) => {
