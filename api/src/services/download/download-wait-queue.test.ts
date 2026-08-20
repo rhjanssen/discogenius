@@ -69,6 +69,7 @@ test("enqueue stores waiting items without creating commands", () => {
   assert.equal(live.total, 2);
   assert.deepEqual(live.items.map((item) => item.title), ["Pompeii", "Things We Lost"]);
   assert.equal(live.items[0]?.status, "queued");
+  assert.equal(live.items[0]?.provider, "tidal");
   assert.equal(live.items[0]?.queuePosition, 1);
   assert.equal(live.items[1]?.queuePosition, 2);
 });
@@ -159,4 +160,39 @@ test("completed SSE keeps the wait-row jobId after the claim is removed", async 
   } finally {
     eventsModule.downloadEvents.off("completed", onCompleted);
   }
+});
+
+test("dropUnclaimedDownloadCommands removes queued Download* with no wait claim", () => {
+  enqueueTrack("claimed-ref", "Claimed");
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  assert.ok(claimed);
+
+  const strayId = queueModule.CommandQueueManager.push(
+    queueModule.CommandNames.DownloadAlbum,
+    { type: "album", providerId: "stray-album", provider: "tidal" },
+    "stray-album",
+  );
+  assert.equal(queueModule.CommandQueueManager.get(strayId)?.status, "queued");
+
+  const dropped = waitQueueModule.DownloadWaitQueue.dropUnclaimedDownloadCommands();
+  assert.equal(dropped, 1);
+  assert.equal(queueModule.CommandQueueManager.get(strayId), null);
+  assert.ok(queueModule.CommandQueueManager.get(claimed.commandId));
+});
+
+test("history retry by command id re-enqueues a wait row after finishClaimed", async () => {
+  const queued = enqueueTrack("hist-1", "Pompeii");
+  const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+  assert.ok(claimed);
+  queueModule.CommandQueueManager.fail(claimed.commandId, "synthetic failure");
+  waitQueueModule.DownloadWaitQueue.finishClaimed(claimed.commandId);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
+
+  const retryModule = await import("./download-queue-retry.js");
+  const result = retryModule.retryDownloadQueueItem(claimed.commandId);
+  assert.equal(result.status, 200);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
+  const live = queryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
+  assert.equal(live.items[0]?.title, "Pompeii");
+  assert.equal(live.items[0]?.provider, "tidal");
 });

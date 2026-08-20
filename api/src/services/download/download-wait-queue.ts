@@ -228,6 +228,23 @@ export class DownloadWaitQueue {
     return new Map(rows.map((row) => [row.name, Number(row.count)]));
   }
 
+  /**
+   * Waiting work lives in DownloadQueue. A queued Download* command with no
+   * wait-row claim is leftover cutover/pause debris and must not age /health
+   * or jump the wait list.
+   */
+  static dropUnclaimedDownloadCommands(): number {
+    const result = db.prepare(`
+      DELETE FROM commands
+      WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+        AND status = 'queued'
+        AND id NOT IN (
+          SELECT command_id FROM DownloadQueue WHERE command_id IS NOT NULL
+        )
+    `).run();
+    return Number(result.changes ?? 0);
+  }
+
   static enqueue(input: DownloadWaitEnqueueInput): DownloadWaitEnqueueResult {
     const refKey = String(input.refKey || "").trim();
     if (!refKey) {

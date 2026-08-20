@@ -40,6 +40,7 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
             });
             ArtistStatisticsService.refresh([artistId]);
             curated++;
+            await ctx.yieldToEventLoop();
         } catch (error: any) {
             errors++;
             console.error(`[CommandExecutor] ApplyCuration: failed to curate ${artistName} (${artistId}):`, error?.message);

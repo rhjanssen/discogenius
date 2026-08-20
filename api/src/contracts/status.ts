@@ -47,6 +47,8 @@ export interface QueueItemContract {
   quality?: string | null;
   slot?: string | null;
   stage?: QueueStageContract;
+  /** Streaming provider id (`tidal`, `apple-music`). Distinct from providerId, the resource id. */
+  provider?: string | null;
   providerId: string | null;
   path: string | null;
   status: QueueItemStatusContract;
@@ -265,6 +267,7 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     quality: expectNullableString(record.quality, `${label}.quality`),
     slot: expectNullableString(record.slot, `${label}.slot`) ?? null,
     stage: stage as QueueStageContract | undefined,
+    provider: expectNullableString(record.provider, `${label}.provider`) ?? null,
     providerId: expectNullableString(record.providerId, `${label}.providerId`) ?? null,
     path: expectNullableString(record.path, `${label}.path`) ?? null,
     status: status as QueueItemStatusContract,

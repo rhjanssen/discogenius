@@ -39,6 +39,11 @@ export const albumReleaseAvailabilityQueryKey = (albumId: string | undefined) =>
 export function useAlbumPage(albumId: string | undefined) {
     useDebouncedQueryInvalidation({
         queryKeys: [albumPageQueryKey(albumId), albumReleaseAvailabilityQueryKey(albumId)],
+        globalEvents: [
+            "file.added",
+            "file.deleted",
+            "file.upgraded",
+        ],
         windowEvents: [LIBRARY_UPDATED_EVENT, MONITOR_STATE_CHANGED_EVENT],
         enabled: Boolean(albumId),
         debounceMs: 400,

@@ -93,7 +93,11 @@ services:
       - 'while [ ! -s /app/rootfs/data/wrapper-entrypoint.sh ]; do echo "[wrapper-boot] waiting for Discogenius to provision the supervisor script..."; sleep 2; done; exec /bin/bash /app/rootfs/data/wrapper-entrypoint.sh'
     depends_on:
       discogenius:
-        condition: service_started
+        # Wait until the API is actually up so this sidecar attaches to a live
+        # network namespace, not a container that is still booting. restart:true
+        # recreates us when Compose restarts discogenius; `docker restart
+        # discogenius` still needs --force-recreate of both (shared netns).
+        condition: service_healthy
         restart: true
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data

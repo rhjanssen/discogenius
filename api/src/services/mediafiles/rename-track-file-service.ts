@@ -11,6 +11,7 @@ import {
   preloadExpectedPathIdentities,
   preloadExpectedTrackPathOccupants,
   removeEmptyParents,
+  type ExpectedPathCache,
   type RenameApplyResult,
   type RenamePreviewItem,
   type RenameScopeOptions,
@@ -542,6 +543,9 @@ export class RenameTrackFileService {
     }
 
     const rowMap = new Map(rows.map((row) => [row.id, row]));
+    const pathCache = createExpectedPathCache({ deferTrackCollisionLookup: true });
+    preloadExpectedPathIdentities(rows, pathCache);
+    preloadExpectedTrackPathOccupants(pathCache);
 
     const dbUpdates: Array<{ sql: string; args: unknown[] }> = [];
     const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
@@ -569,7 +573,7 @@ export class RenameTrackFileService {
           continue;
         }
 
-        const { expectedPath } = LibraryFilesService.computeExpectedPath(row);
+        const { expectedPath } = LibraryFilesService.computeExpectedPath(row, pathCache);
         if (!expectedPath) {
           result.skipped++;
           continue;
@@ -827,7 +831,8 @@ export class RenameTrackFileService {
     // rename already relocates its file and cleans its source parents above;
     // running these library-wide passes made one-file jobs take minutes.
     if (result.renamed > 0 && options.reconcileSeparatedSidecars === true) {
-      this.replicateSeparatedSidecars();
+      const artistIds = Array.from(new Set(rows.map((row) => String(row.artist_id || "")).filter(Boolean)));
+      this.replicateSeparatedSidecars(artistIds, pathCache);
       result.cleanedDirectories = this.cleanEmptyDirectories();
     }
 
@@ -887,7 +892,7 @@ export class RenameTrackFileService {
       const recordingMbid = String(row.canonical_recording_mbid || "").trim();
       if (recordingMbid) {
         const byMbid = db.prepare(`
-          SELECT id FROM Recordings WHERE mbid = ? AND COALESCE(is_video, 0) = 0 LIMIT 1
+          SELECT id FROM Recordings WHERE mbid = ? AND is_video = 0 LIMIT 1
         `).get(recordingMbid) as { id?: number } | undefined;
         if (byMbid?.id != null) {
           audioRecordingIds.add(Number(byMbid.id));
@@ -952,7 +957,10 @@ export class RenameTrackFileService {
     return this.executeRenameFiles(relatedVideoFileIds);
   }
 
-  private static replicateSeparatedSidecars() {
+  private static replicateSeparatedSidecars(
+    artistIds: string[] = [],
+    pathCache?: ExpectedPathCache,
+  ) {
     const musicRoot = Config.getMusicPath();
     const spatialRoot = Config.getSpatialPath();
     const videoRoot = Config.getVideoPath();
@@ -961,6 +969,9 @@ export class RenameTrackFileService {
       return;
     }
 
+    const artistFilter = artistIds.length > 0
+      ? `AND tf.artist_id IN (${artistIds.map(() => "?").join(",")})`
+      : "";
     const tracks = db.prepare(`
       SELECT tf.id, tf.artist_id,
              ${providerUnambiguousAlbumIdSql("provider_track")} AS album_id,
@@ -975,7 +986,8 @@ export class RenameTrackFileService {
        AND CAST(provider_track.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
       WHERE tf.file_type IN ('track', 'video')
         AND (tf.library_slot IN ('stereo', 'spatial') OR tf.file_type = 'video')
-    `).all() as Array<{
+        ${artistFilter}
+    `).all(...artistIds) as Array<{
       id: number;
       artist_id: string;
       album_id: string | null;
@@ -1038,7 +1050,7 @@ export class RenameTrackFileService {
         provider: target.provider || null,
         provider_entity_type: target.providerEntityType || null,
         provider_id: target.providerId || null,
-      }).expectedPath;
+      }, pathCache).expectedPath;
       if (!expectedPath) return;
 
       if (normalizeResolvedPath(sourcePath) !== normalizeResolvedPath(expectedPath) && !fs.existsSync(expectedPath)) {

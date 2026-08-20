@@ -544,6 +544,16 @@ function ensureDownloadQueueSchema(): void {
     SELECT 1 AS present FROM config WHERE key = ?
   `).get(DOWNLOAD_QUEUE_CUTOVER_KEY) as { present?: number } | undefined;
   if (alreadyCutOver) {
+    // The one-shot already ran; still drop queued Download* rows that are not
+    // claimed wait items (pause/cutover leftovers that would age /health).
+    db.prepare(`
+      DELETE FROM commands
+      WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+        AND status = 'queued'
+        AND id NOT IN (
+          SELECT command_id FROM DownloadQueue WHERE command_id IS NOT NULL
+        )
+    `).run();
     return;
   }
 

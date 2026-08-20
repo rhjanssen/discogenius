@@ -76,12 +76,42 @@ export function selectLibraryVideo(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(library_id, video_recording_id) DO UPDATE SET
       preferred_offer_key = excluded.preferred_offer_key,
-      selection_mode = excluded.selection_mode,
-      placement_mode = excluded.placement_mode,
-      placement_library_id = excluded.placement_library_id,
-      inline_track_id = excluded.inline_track_id,
-      inline_slot = excluded.inline_slot,
-      placement_selection_mode = excluded.placement_selection_mode,
+      selection_mode = CASE
+        WHEN LibraryVideos.selection_mode = 'manual'
+         AND excluded.selection_mode IS NOT 'manual'
+        THEN LibraryVideos.selection_mode
+        ELSE excluded.selection_mode
+      END,
+      placement_mode = CASE
+        WHEN LibraryVideos.placement_selection_mode = 'manual'
+         AND excluded.placement_selection_mode IS NOT 'manual'
+        THEN LibraryVideos.placement_mode
+        ELSE excluded.placement_mode
+      END,
+      placement_library_id = CASE
+        WHEN LibraryVideos.placement_selection_mode = 'manual'
+         AND excluded.placement_selection_mode IS NOT 'manual'
+        THEN LibraryVideos.placement_library_id
+        ELSE excluded.placement_library_id
+      END,
+      inline_track_id = CASE
+        WHEN LibraryVideos.placement_selection_mode = 'manual'
+         AND excluded.placement_selection_mode IS NOT 'manual'
+        THEN LibraryVideos.inline_track_id
+        ELSE excluded.inline_track_id
+      END,
+      inline_slot = CASE
+        WHEN LibraryVideos.placement_selection_mode = 'manual'
+         AND excluded.placement_selection_mode IS NOT 'manual'
+        THEN LibraryVideos.inline_slot
+        ELSE excluded.inline_slot
+      END,
+      placement_selection_mode = CASE
+        WHEN LibraryVideos.placement_selection_mode = 'manual'
+         AND excluded.placement_selection_mode IS NOT 'manual'
+        THEN LibraryVideos.placement_selection_mode
+        ELSE excluded.placement_selection_mode
+      END,
       reason = excluded.reason,
       updated_at = CURRENT_TIMESTAMP
     RETURNING id

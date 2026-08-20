@@ -89,60 +89,40 @@ function hasRecentNoImprovementUpgradeAttempt(row: UpgradeCandidateRow): boolean
 
     const mediaType = row.provider_entity_type;
     const downloadCommand = mediaType === "video" ? CommandNames.DownloadVideo : CommandNames.DownloadTrack;
-    const params: Array<string | number | null> = [
-        `-${UPGRADE_HISTORY_COOLDOWN_HOURS} hours`,
-        downloadCommand,
-        row.media_id,
-        CommandNames.ImportDownload,
-        row.media_id,
-        mediaType,
-    ];
+    const refKeys = [row.media_id, row.album_id].filter((value): value is string => Boolean(value));
 
-    let albumClause = "";
-    if (row.album_id) {
-        albumClause = `
-            OR (
-                name = ?
-                AND ref_id = ?
-                AND json_extract(payload, '$.reason') = 'upgrade'
-            )
-            OR (
-                name = ?
-                AND ref_id = ?
-                AND json_extract(payload, '$.type') = 'album'
-            )
-        `;
-        params.push(
-            CommandNames.DownloadAlbum,
-            row.album_id,
-            CommandNames.ImportDownload,
-            row.album_id,
-        );
+    const waitPlaceholders = refKeys.map(() => "?").join(", ");
+    const waiting = db.prepare(`
+        SELECT id
+        FROM DownloadQueue
+        WHERE ref_key IN (${waitPlaceholders})
+        LIMIT 1
+    `).get(...refKeys) as { id?: number } | undefined;
+    if (waiting?.id != null) {
+        return true;
     }
 
+    const commandNames = [
+        downloadCommand,
+        CommandNames.ImportDownload,
+        ...(row.album_id ? [CommandNames.DownloadAlbum] : []),
+    ];
+    const namePlaceholders = commandNames.map(() => "?").join(", ");
     const recent = db.prepare(`
         SELECT id
         FROM commands
         WHERE status = 'completed'
           AND COALESCE(completed_at, updated_at, created_at) >= datetime('now', ?)
-          AND (
-            (
-                name = ?
-                AND ref_id = ?
-                AND json_extract(payload, '$.reason') = 'upgrade'
-            )
-            OR (
-                name = ?
-                AND ref_id = ?
-                AND json_extract(payload, '$.type') = ?
-            )
-            ${albumClause}
-          )
-        ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, id DESC
+          AND name IN (${namePlaceholders})
+          AND ref_id IN (${waitPlaceholders})
         LIMIT 1
-    `).get(...params) as { id: number } | undefined;
+    `).get(
+        `-${UPGRADE_HISTORY_COOLDOWN_HOURS} hours`,
+        ...commandNames,
+        ...refKeys,
+    ) as { id?: number } | undefined;
 
-    return recent != null;
+    return recent?.id != null;
 }
 
 export class UpgraderService {

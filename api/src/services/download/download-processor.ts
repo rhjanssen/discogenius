@@ -809,7 +809,7 @@ export class DownloadProcessor {
                         cover: resolved.cover,
                         error: error?.message || 'Unknown import error',
                         state: 'importFailed',
-                    });
+                    }, DownloadWaitQueue.getIdByCommandId(commandId));
 
                     // Preserve staging after an import error. The importer may
                     // already have moved/tagged a subset of files; without an
@@ -1488,6 +1488,7 @@ export class DownloadProcessor {
         }
 
         DownloadWaitQueue.recoverOrphanClaims();
+        DownloadWaitQueue.dropUnclaimedDownloadCommands();
 
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
         // most one per provider (same-provider downloads stay serialized). ──
@@ -1957,7 +1958,7 @@ export class DownloadProcessor {
                     artist: resolved.artist,
                     cover: resolved.cover,
                     error: error?.message || 'Unknown download error',
-                });
+                }, DownloadWaitQueue.getIdByCommandId(job.id));
             }
 
             // Keep the workspace across retries so the downloader resumes and

@@ -46,6 +46,7 @@ vi.mock("@/services/api", () => ({
     getAlbumLibraryAvailability: (...args: unknown[]) => getAlbumLibraryAvailability(...args),
     getAlbumEditionTracks: (...args: unknown[]) => getAlbumEditionTracks(...args),
     getArtistActivity: () => Promise.resolve(null),
+    createGlobalEventStream: () => ({ close() {} }),
   },
 }));
 

@@ -10,9 +10,9 @@ import { downloadEvents } from '../../services/download/download-events.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { buildStreamingMediaUrl, getDefaultStreamingSource, parseStreamingUrl, type DownloadMediaType } from '../../services/download/download-routing.js';
 import { assertSafeDownloadResourceId } from '../../services/download/download-path-safety.js';
-import { shouldQueueRedownloadForFailedImport } from '../../services/download/download-recovery.js';
 import { DownloadQueueQueryService } from '../../services/download/download-queue-query-service.js';
 import { DownloadWaitQueue } from '../../services/download/download-wait-queue.js';
+import { retryDownloadQueueItem } from '../../services/download/download-queue-retry.js';
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../../services/metadata/provider-track-resolver.js';
 import { resolvePreferredVideoOffer, resolveRequestedVideoOffer } from '../../services/music/video-offer-resolver.js';
 import { CurationService } from '../../services/music/curation-service.js';
@@ -28,94 +28,11 @@ import {
   getRequiredIdentifier,
   isRequestValidationError,
 } from '../../utils/request-validation.js';
-import type {
-  ImportDownloadCommand,
-} from '../../services/commands/command-bodies.js';
 
 const router: Router = express.Router();
 
 // All queue routes require authentication
 router.use(authMiddleware);
-
-// --- HELPER FUNCTIONS ---
-function hasFailedDownloadState(job: { payload?: unknown } | null | undefined): boolean {
-  const payload = job?.payload as { downloadState?: { state?: unknown } } | undefined;
-  return payload?.downloadState?.state === 'failed';
-}
-
-function buildRetryResponse(jobType: string, message?: string) {
-  return {
-    action: jobType === CommandNames.ImportDownload ? 'retry-import' : 'retry-download',
-    message: message || (jobType === CommandNames.ImportDownload ? 'Import queued for retry' : 'Download queued for retry'),
-  };
-}
-
-function queueRedownloadForImport(commandId: number, payload: ImportDownloadCommand, priority: number, trigger: number) {
-  const mediaType = payload.type;
-  const providerId = payload.providerId;
-  if (!mediaType || !providerId) {
-    throw new Error('Import retry is missing the media type or provider ID needed to queue a re-download.');
-  }
-  if (mediaType !== 'track' && mediaType !== 'video' && mediaType !== 'album') {
-    throw new Error(`Import retry has unsupported media type: ${mediaType}`);
-  }
-
-  const url = buildStreamingMediaUrl(mediaType, providerId);
-  const commandName = mediaType === 'video'
-    ? CommandNames.DownloadVideo
-    : mediaType === 'album'
-      ? CommandNames.DownloadAlbum
-      : CommandNames.DownloadTrack;
-  const retryPayload = {
-    providerId,
-    url,
-    type: mediaType,
-    title: payload.resolved?.title ?? payload.title,
-    artist: payload.resolved?.artist ?? payload.artist,
-    cover: payload.resolved?.cover ?? payload.cover,
-    album_id: payload.album_id ?? payload.albumId,
-    artist_id: payload.artist_id ?? payload.artistId,
-    quality: payload.quality ?? null,
-    qualityProfile: payload.qualityProfile,
-  };
-  const queued = DownloadWaitQueue.enqueue({
-    refKey: providerId,
-    mediaKind: mediaType,
-    commandName,
-    provider: undefined,
-    providerId,
-    artistId: payload.artist_id ?? payload.artistId ?? null,
-    albumId: payload.album_id ?? payload.albumId ?? null,
-    title: retryPayload.title ?? null,
-    artist: retryPayload.artist ?? null,
-    cover: retryPayload.cover ?? null,
-    quality: retryPayload.quality ?? null,
-    payload: retryPayload,
-    priority,
-    trigger,
-    position: 'front',
-  });
-  const queuedJobId = queued.id;
-
-  if (queuedJobId === undefined || queuedJobId < 0) {
-    throw new Error(`Failed to queue a new ${mediaType} download for ${providerId}.`);
-  }
-
-  downloadProcessor.processQueue().catch(err => {
-    console.error('[QUEUE-API] Error triggering queue processing:', err);
-  });
-
-  return {
-    action: 'queue-redownload',
-    message: queued.created
-      ? 'Re-download queued to recover the failed import'
-      : (queued.commandId
-        ? 'Download already in progress for this item'
-        : 'Download already queued for this item'),
-    commandId: queuedJobId,
-    sourceJobId: commandId,
-  };
-}
 
 function getQueueRequestString(value: unknown): string | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -379,40 +296,8 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const wait = DownloadWaitQueue.get(queueItemId);
-    if (!wait) {
-      return res.status(404).json({ error: 'Job not found' });
-    }
-
-    const commandId = wait.command_id;
-    const job = commandId != null ? CommandQueueManager.get(commandId) : null;
-    if (!job) {
-      // Waiting item with no command yet — already queued; kick the processor.
-      downloadProcessor.processQueue().catch(err => {
-        console.error('[QUEUE-API] Error triggering queue processing:', err);
-      });
-      return res.json(buildRetryResponse(wait.command_name, 'Download already queued'));
-    }
-
-    if (job.status === 'started' && !hasFailedDownloadState(job) && downloadProcessor.isActivelyProcessingJob(commandId!)) {
-      return res.status(409).json({
-        error: 'Job is processing',
-        message: 'Wait for the active download to finish or cancel it before retrying',
-      });
-    }
-
-    if (shouldQueueRedownloadForFailedImport(job)) {
-      return res.json(queueRedownloadForImport(job.id, job.payload as ImportDownloadCommand, job.priority, job.trigger ?? CommandTrigger.Unspecified));
-    }
-
-    CommandQueueManager.retry(commandId!);
-
-    // Trigger queue processing
-    downloadProcessor.processQueue().catch(err => {
-      console.error('[QUEUE-API] Error triggering queue processing:', err);
-    });
-
-    res.json(buildRetryResponse(job.name));
+    const result = retryDownloadQueueItem(queueItemId);
+    return res.status(result.status).json(result.body);
   } catch (error: any) {
     console.error('[QUEUE-API] Error retrying job:', error);
     res.status(500).json({ error: 'Failed to retry job', message: error.message });

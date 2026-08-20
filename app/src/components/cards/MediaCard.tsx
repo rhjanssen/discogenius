@@ -323,14 +323,17 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
 
                 {onMonitorToggle && (
                     <AppTooltip
-                        content={monitoringLocked ? "Monitoring is locked" : monitored ? "Unmonitor" : "Monitor"}
+                        content={monitoringLocked
+                            ? (monitored
+                                ? "Stop monitoring. Lock only prevents automatic curation changes; manual changes remain available."
+                                : "Start monitoring. Lock only prevents automatic curation changes; manual changes remain available.")
+                            : monitored ? "Unmonitor" : "Monitor"}
                         relationship="label"
                     >
                         <button
                             type="button"
                             className={styles.monitorIndicator}
                             onClick={handleMonitorClick}
-                            disabled={monitoringLocked}
                             aria-label={monitored ? "Unmonitor" : "Monitor"}
                         >
                             {monitored ? (

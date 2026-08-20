@@ -265,7 +265,7 @@ function loadAudioRecordingCandidatesForProviderAlbum(
         WHERE release_item.provider = ?
           AND track.entity_type = 'track'
           AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
-          AND (rec.is_video IS NULL OR rec.is_video = 0)
+          AND rec.is_video = 0
     `).all(provider, providerAlbumId) as AudioRecordingCandidateRow[];
 }
 
@@ -341,7 +341,7 @@ function loadAudioRecordingCandidatesForProviderVideoMembership(
         WHERE video_item.provider = ?
           AND video_item.entity_type = 'video'
           AND CAST(video_item.provider_id AS TEXT) = CAST(? AS TEXT)
-          AND (rec.is_video IS NULL OR rec.is_video = 0)
+          AND rec.is_video = 0
     `).all(provider, providerVideoId) as AudioRecordingCandidateRow[];
 }
 
@@ -363,7 +363,7 @@ function findAudioRecordingByProviderTrack(
         WHERE track.provider = ?
           AND track.entity_type = 'track'
           AND CAST(track.provider_id AS TEXT) = CAST(? AS TEXT)
-          AND (rec.is_video IS NULL OR rec.is_video = 0)
+          AND rec.is_video = 0
         LIMIT 1
     `).get(provider, providerTrackId) as {
         id: number;
@@ -522,7 +522,7 @@ function findAudioRecordingByArtistTitleDuration(
           ) THEN 1 ELSE 0 END AS has_live_album
         FROM Recordings rec
         WHERE rec.artist_mbid = ?
-          AND (rec.is_video IS NULL OR rec.is_video = 0)
+          AND rec.is_video = 0
           AND rec.mbid IS NOT NULL
     `).all(artistMbid) as AudioRecordingCandidateRow[];
     const match = findRelatedAudioRecordingForVideo(video, candidates, {

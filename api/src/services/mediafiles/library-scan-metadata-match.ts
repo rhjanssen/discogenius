@@ -350,22 +350,20 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
             LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
             WHERE release_item.entity_type = 'release'
               AND (
-                EXISTS (
-                  SELECT 1
+                release_item.id IN (
+                  SELECT credit.item_id
                   FROM ProviderItemCredits credit
                   JOIN ProviderArtistMatches artist_match
                     ON artist_match.provider_artist_item_id = credit.artist_item_id
                    AND artist_match.match_state = 'accepted'
                   JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
                   JOIN Artists managed_artist ON managed_artist.mbid = artist_meta.mbid
-                  WHERE credit.item_id = release_item.id
-                    AND managed_artist.id = @artistId
+                  WHERE managed_artist.id = @artistId
                 )
-                OR EXISTS (
-                  SELECT 1
+                OR canonical_release.artist_mbid IN (
+                  SELECT managed_artist.mbid
                   FROM Artists managed_artist
-                  WHERE managed_artist.mbid = canonical_release.artist_mbid
-                    AND managed_artist.id = @artistId
+                  WHERE managed_artist.id = @artistId
                 )
               )
         `).all({ artistId }) as Array<{ provider_album_id: string; title: string }>;

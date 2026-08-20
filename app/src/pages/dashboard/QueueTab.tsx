@@ -1553,7 +1553,7 @@ const QueueTab = () => {
                                                     <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
                                                         <Text className={styles.downloadArtist} truncate>{group.artist}</Text>
                                                         <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
-                                                            {firstItem?.providerId ? <ProviderMark provider={firstItem.providerId} size={16} /> : null}
+                                                            {firstItem?.provider ? <ProviderMark provider={firstItem.provider} size={16} /> : null}
                                                             {group.quality ? <QualityBadge quality={group.quality} size="small" /> : null}
                                                             <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
                                                         </div>

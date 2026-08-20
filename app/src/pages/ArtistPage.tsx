@@ -953,10 +953,13 @@ const ArtistPage = () => {
           },
           {
             key: "monitor",
-            label: isLocked ? "Monitoring is locked" : (album.is_monitored ? "Unmonitor" : "Monitor"),
+            label: isLocked
+              ? (album.is_monitored
+                ? "Stop monitoring. Lock only prevents automatic curation changes."
+                : "Start monitoring. Lock only prevents automatic curation changes.")
+              : (album.is_monitored ? "Unmonitor" : "Monitor"),
             icon: album.is_monitored ? <EyeOff24 /> : <Eye24 />,
             onClick: (event) => toggleAlbumMonitored(event, String(album.id), !album.is_monitored),
-            disabled: isLocked,
           },
           {
             key: "lock",
@@ -1072,7 +1075,8 @@ const ArtistPage = () => {
           <QualityBadge quality={item.quality} size="small" />
         ) : undefined}
         monitored={isAlbumMonitored}
-        onMonitorToggle={isLocked ? undefined : (e) => toggleAlbumMonitored(e, providerId, !isAlbumMonitored)}
+        monitoringLocked={isLocked}
+        onMonitorToggle={(e) => toggleAlbumMonitored(e, providerId, !isAlbumMonitored)}
         statusBadge={statusBadge}
         downloadStatus={itemProgress?.state}
         downloadProgress={itemProgress?.progress}
