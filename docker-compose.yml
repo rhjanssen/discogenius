@@ -68,11 +68,12 @@ services:
   # downloads — catalog/auth still work without it. Delete this whole service
   # block if you will not use Apple Music downloads.
   #
-  # Shares the discogenius network namespace so the downloader can reach
-  # 127.0.0.1:10020/20020. depends_on.restart recreates this sidecar whenever
-  # discogenius is recreated; a stale wrapper otherwise stays attached to a
-  # dead namespace and Apple downloads fail. Manual fallback:
-  #   docker compose up -d --force-recreate discogenius apple-music-wrapper
+  # Own network, not shared with discogenius. The supervisor binds 0.0.0.0 on
+  # 10020/20020 and Discogenius reaches it as apple-music-wrapper:10020. A
+  # shared netns used to kill the wrapper login whenever discogenius was
+  # recreated. Recreating the API container no longer recreates this sidecar;
+  # recreate it only when the wrapper session itself is dead:
+  #   docker compose up -d --force-recreate apple-music-wrapper
   #
   # First-time Apple ID/2FA login is done from the Auth page; Discogenius
   # provisions the supervisor script at boot into the shared data volume
@@ -86,19 +87,19 @@ services:
   # only the data *directory* and waiting for the script self-heals a fresh deploy.
   apple-music-wrapper:
     image: ghcr.io/itouakirai/wrapper:x86
-    network_mode: "service:discogenius"
+    expose:
+      - "10020"
+      - "20020"
     entrypoint:
       - /bin/bash
       - -c
       - 'while [ ! -s /app/rootfs/data/wrapper-entrypoint.sh ]; do echo "[wrapper-boot] waiting for Discogenius to provision the supervisor script..."; sleep 2; done; exec /bin/bash /app/rootfs/data/wrapper-entrypoint.sh'
     depends_on:
       discogenius:
-        # Wait until the API is actually up so this sidecar attaches to a live
-        # network namespace, not a container that is still booting. restart:true
-        # recreates us when Compose restarts discogenius; `docker restart
-        # discogenius` still needs --force-recreate of both (shared netns).
+        # Wait until Discogenius is healthy so the supervisor script is already
+        # on the shared volume. Do not restart:true — that would kill a live
+        # wrapper session every time the API container is recreated.
         condition: service_healthy
-        restart: true
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data
     restart: unless-stopped

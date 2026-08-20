@@ -10,9 +10,12 @@ import {
 } from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteVideoLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import {
+  applyManualVideoPlacement,
+  keepLibraryVideo,
   resolveVideoLibraryIds,
   selectLibraryVideo,
   unselectLibraryVideo,
+  VideoPlacementError,
 } from "../../services/music/library-video-monitoring.js";
 import { getVideoDetail, listVideos } from "../../services/music/video-query-service.js";
 import {
@@ -161,11 +164,33 @@ router.patch("/:videoId", (req, res) => {
   try {
     const videoId = req.params.videoId;
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["monitored", "monitored_lock"], "Video update");
+    rejectUnknownKeys(body, ["monitored", "monitored_lock", "placement", "keep"], "Video update");
     const monitored = getOptionalBoolean(body, "monitored");
     const monitoredLock = getOptionalBoolean(body, "monitored_lock");
-    if (monitored === undefined && monitoredLock === undefined) {
+    const keep = getOptionalBoolean(body, "keep");
+    const placementBody = body.placement;
+    if (monitored === undefined && monitoredLock === undefined && keep === undefined && placementBody === undefined) {
       return res.json({ success: true });
+    }
+
+    let placementInput: { mode: "separated" } | { mode: "inline"; inlineTrackId: number } | undefined;
+    if (placementBody !== undefined) {
+      if (!placementBody || typeof placementBody !== "object" || Array.isArray(placementBody)) {
+        return res.status(400).json({ detail: "placement must be an object" });
+      }
+      const mode = (placementBody as { mode?: unknown }).mode;
+      const inlineTrackId = (placementBody as { inlineTrackId?: unknown }).inlineTrackId;
+      if (mode !== "separated" && mode !== "inline") {
+        return res.status(400).json({ detail: "placement.mode must be separated or inline" });
+      }
+      if (mode === "inline") {
+        if (typeof inlineTrackId !== "number" || !Number.isInteger(inlineTrackId) || inlineTrackId <= 0) {
+          return res.status(400).json({ detail: "placement.inlineTrackId must be a positive integer" });
+        }
+        placementInput = { mode: "inline", inlineTrackId };
+      } else {
+        placementInput = { mode: "separated" };
+      }
     }
 
     const recording = db.prepare(`
@@ -181,7 +206,7 @@ router.patch("/:videoId", (req, res) => {
     // another. `monitored_lock` is the user saying "I chose this one", which is
     // recorded as a manual selection so curation leaves it alone.
     const videoLibraryIds = resolveVideoLibraryIds(db);
-    db.transaction(() => {
+    const applied = db.transaction(() => {
       for (const libraryId of videoLibraryIds) {
         const existing = db.prepare(`
           SELECT selection_mode FROM LibraryVideos
@@ -212,7 +237,26 @@ router.patch("/:videoId", (req, res) => {
           `).run(monitoredLock ? "manual" : "auto", libraryId, recording.id);
         }
       }
+      // Unmonitor wins over keep. Keep is the user retaining an `inline_only`
+      // loser that curation would otherwise leave unselected.
+      if (keep === true && monitored !== false) {
+        keepLibraryVideo(db, recording.id);
+      }
+      if (placementInput) {
+        return applyManualVideoPlacement(db, recording.id, placementInput);
+      }
+      return null;
     })();
+    if (applied?.artistId) {
+      CommandQueueManager.push(
+        CommandNames.RenameFiles,
+        { artistId: applied.artistId, fileTypes: ["video"], applyAll: true },
+        applied.artistId,
+        1,
+        CommandTrigger.Manual,
+      );
+    }
+
     emitLibraryUpdated({
       reason: monitored === false ? "video-unmonitored" : "video-monitoring-updated",
       libraryIds: videoLibraryIds,
@@ -220,7 +264,7 @@ router.patch("/:videoId", (req, res) => {
 
     return res.json({ success: true });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
+    if (isRequestValidationError(error) || error instanceof VideoPlacementError || error?.status === 400) {
       return res.status(400).json({ detail: error.message });
     }
 

@@ -112,14 +112,15 @@ winners, leaving losers as visible candidates with no row and no download.
 `live` → `-video` (it occupies the regular slot), `lyrics` → `-lyrics`.
 Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
 
-## Remaining after 2.8.1
+## Remaining after 2.9.0
 
 - **Live provider validation.** No controlled real-provider download has been
   run against the video placement path — see "Manual validation" at the top.
-- **Manual video placement override UI.** 2.8.1 made a `placement_selection_mode
-  = 'manual'` row stick through curation. There is still no control to pick
-  "this video beside that track". Deferred with medley/multi-recording video
-  UX and extra `inline_only` losers.
+- done: **Manual video placement override UI.** Video page File location menu
+  picks Video library or beside an exact related track; `keep` retains an
+  `inline_only` loser. Curation still will not overwrite
+  `placement_selection_mode = 'manual'`.
+- pending: medley / multi-recording video UX (one video of several tracks).
 
 ### Open defects (found during 2.8 hardening, not yet fixed)
 
@@ -133,9 +134,10 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
   command completes.
 
 - **Apple Music video download still needs a live repro.** `Decrypt failed` is
-  now mapped to the wrapper-session / recreate instruction. Stereo/Atmos Apple
-  was validated in 2.8.0; video was not. Re-auth + force-recreate both
-  containers, then retry a Bastille video.
+  mapped to a wrapper-session error. Stereo/Atmos Apple was validated in
+  2.8.0; video was not. Re-auth from the Auth page, then retry a Bastille
+  video. Recreate only the wrapper if the session stays dead
+  (`docker compose up -d --force-recreate apple-music-wrapper`).
 
 ### Test matrix still to run
 
@@ -332,10 +334,9 @@ naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the lea
   the provider's single genre; the writer is correct, so confirm `Albums.genres` /
   `ArtistMetadata.genres` are populated by the refresh *before* import-time tagging runs
   (fix the download→refresh→import→tag ordering — do NOT patch the tagger).
-- pending: **Auto tag-sync on metadata change** — port `WriteAudioTags=Sync`
-  (`RefreshTrackService.SyncTags`): the scheduled refresh re-tags tracks whose curated MB
-  columns changed. Consolidates the "Metadata tagging → WriteAudioTagsType.Sync" pending
-  under Post-2.4.0 below.
+- done: **Auto tag-sync on metadata change** — `write_audio_tags_policy=sync`
+  queues `RetagArtist` after MatchArtistProviders when the catalog fingerprint
+  changed. New downloads still tag; manual import of existing files does not.
 - done: **Retag preview surfaces the cover diff** like tag fields.
 - done: **Rename & Retag preview FluentUI modal parity.** Redesigned `FileMaintenanceDialogs.tsx` matching Lidarr's modal layout/UX, adding empty tag symbol `∅`, Fluent icons (`AddCircle16Filled`, `SubtractCircle16Filled`, `Record20Regular`, `Prohibited16Regular`), and selection toolbars.
 - done: **Library list view consistency & spatial/stereo track deduplication.** Standardized separate `Thumb` column across all 4 library tables (Artists, Albums, Tracks, Videos); added dedicated desktop `Artist` column on Albums and Videos (retaining mobile-only title subtitle); updated Artist tab stats to `downloaded_albums / monitored_albums` and `downloaded_tracks / monitored_tracks`; updated Album tab stats to `downloaded_tracks / total_tracks`; standardized `Local Files` column across Album, Track, and Video views with vertical flex badge alignment; placed `Tracks` counter behind `Local Files` on Album view; mapped majority local quality badge + dual stereo/spatial quality badges; deduplicated track stats counters so Stereo and Spatial versions of the same track count as 1 track.

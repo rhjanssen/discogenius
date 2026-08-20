@@ -8,7 +8,7 @@ import path from "node:path";
 import type { FetchLike } from "./apple-music-api.js";
 import { validateAppleMusicCredentials } from "./apple-music-api.js";
 import type { AppleMusicAuthToken } from "./apple-music-auth.js";
-import { APPLE_MUSIC_DOWNLOADER_CONFIG, buildAppleMusicApiHeaders, loadStoredAppleMusicToken, syncTokenToDownloader } from "./apple-music-auth.js";
+import { APPLE_MUSIC_DOWNLOADER_CONFIG, buildAppleMusicApiHeaders, loadStoredAppleMusicToken, resolveAppleWrapperHost, syncTokenToDownloader } from "./apple-music-auth.js";
 import {
   getAppleAlbum,
   getAppleAlbumTracks,
@@ -385,6 +385,14 @@ test("Apple downloader config stays headless-safe and follows the app's lyric se
   assert.match(content, /save-lrc-file: false/);
   assert.match(content, /embed-cover: true/);
   assert.doesNotMatch(content, /mv-file-format:/);
+  assert.match(content, /decrypt-m3u8-port: "127.0.0.1:10020"/);
+  assert.match(content, /get-m3u8-port: "127.0.0.1:20020"/);
+});
+
+test("Apple wrapper host is the compose service name inside Docker", () => {
+  assert.equal(resolveAppleWrapperHost({}), "127.0.0.1");
+  assert.equal(resolveAppleWrapperHost({ DOCKER: "true" }), "apple-music-wrapper");
+  assert.equal(resolveAppleWrapperHost({ DOCKER: "true", APPLE_MUSIC_WRAPPER_HOST: "wrapper" }), "wrapper");
 });
 
 test("Apple provider saveCredentials never persists wrapper Apple account fields", async () => {

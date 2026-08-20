@@ -27,7 +27,10 @@ const {
   videoTypeSuffix,
 } = await import("./canonical-video-type.js");
 const {
+  applyManualVideoPlacement,
   isVideoMonitored,
+  keepLibraryVideo,
+  listRelatedInlineTracks,
   resolveVideoLibraryIds,
   selectLibraryVideo,
   unselectLibraryVideo,
@@ -39,9 +42,10 @@ const { db, dbModule } = await openActiveSchemaDb();
 after(() => closeActiveSchemaDb(dbModule, tempDir));
 
 function seed(): { videoId: number; otherVideoId: number; trackId: number } {
-  resetActiveSchemaRows(db);
+  resetActiveSchemaRows(db, ["RecordingRelations"]);
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-dire', 'Dire Straits');
+    INSERT INTO Artists (id, name, mbid) VALUES ('artist-dire', 'Dire Straits', 'artist-dire');
     INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title, primary_type)
     VALUES (1, 'rg-making-movies', 1, 'artist-dire', 'Making Movies', 'Album');
     INSERT INTO AlbumEditions (
@@ -56,7 +60,14 @@ function seed(): { videoId: number; otherVideoId: number; trackId: number } {
       id, mbid, album_edition_id, recording_id, release_mbid, recording_mbid,
       medium_position, position, title
     ) VALUES (1000, 'track-tunnel', 10, 100, 'edition-making-movies', 'rec-audio-tunnel', 1, 1, 'Tunnel of Love');
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source
+    ) VALUES (200, 100, 'music_video_for', 'musicbrainz');
   `);
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, curation_version)
+    VALUES (?, 10, 'auto', 1)
+  `).run(stereoLibraryId());
   return { videoId: 200, otherVideoId: 201, trackId: 1000 };
 }
 
@@ -160,6 +171,80 @@ test("only a canonical video recording can be selected as one", () => {
 // ---------------------------------------------------------------------------
 // Placement
 // ---------------------------------------------------------------------------
+
+test("applyManualVideoPlacement selects the video and stamps placement as manual", () => {
+  const { videoId, trackId } = seed();
+  const [videoLibraryId] = resolveVideoLibraryIds(db);
+
+  const applied = applyManualVideoPlacement(db, videoId, { mode: "inline", inlineTrackId: trackId });
+  assert.equal(applied.artistId, "artist-dire");
+
+  assert.deepEqual(videoPlacement(db, videoLibraryId, videoId), {
+    mode: "inline",
+    placementLibraryId: stereoLibraryId(),
+    inlineTrackId: trackId,
+    inlineSlot: "video",
+  });
+  const row = db.prepare(`
+    SELECT selection_mode, placement_selection_mode
+    FROM LibraryVideos
+    WHERE library_id = ? AND video_recording_id = ?
+  `).get(videoLibraryId, videoId) as {
+    selection_mode: string;
+    placement_selection_mode: string;
+  };
+  assert.equal(row.selection_mode, "manual");
+  assert.equal(row.placement_selection_mode, "manual");
+});
+
+test("applyManualVideoPlacement can move a video back to the Video Library", () => {
+  const { videoId, trackId } = seed();
+  const [videoLibraryId] = resolveVideoLibraryIds(db);
+  applyManualVideoPlacement(db, videoId, { mode: "inline", inlineTrackId: trackId });
+  applyManualVideoPlacement(db, videoId, { mode: "separated" });
+  assert.deepEqual(videoPlacement(db, videoLibraryId, videoId), { mode: "separated" });
+});
+
+test("applyManualVideoPlacement rejects an unknown inline track", () => {
+  const { videoId } = seed();
+  assert.throws(
+    () => applyManualVideoPlacement(db, videoId, { mode: "inline", inlineTrackId: 999999 }),
+    /Inline track not found/i,
+  );
+});
+
+test("listRelatedInlineTracks offers only exact related audio tracks in a library", () => {
+  const { videoId, otherVideoId, trackId } = seed();
+  const related = listRelatedInlineTracks(db, videoId);
+  assert.equal(related.length, 1);
+  assert.equal(related[0].id, trackId);
+  assert.equal(related[0].title, "Tunnel of Love");
+  assert.equal(related[0].albumTitle, "Making Movies");
+  assert.deepEqual(listRelatedInlineTracks(db, otherVideoId), [],
+    "a video with no exact recording relation does not offer a studio track");
+});
+
+test("keepLibraryVideo selects an unselected video as a manual choice", () => {
+  const { videoId } = seed();
+  const [videoLibraryId] = resolveVideoLibraryIds(db);
+
+  keepLibraryVideo(db, videoId);
+
+  assert.equal(isVideoMonitored(db, videoId), true);
+  const row = db.prepare(`
+    SELECT selection_mode, placement_mode, placement_selection_mode
+    FROM LibraryVideos
+    WHERE library_id = ? AND video_recording_id = ?
+  `).get(videoLibraryId, videoId) as {
+    selection_mode: string;
+    placement_mode: string;
+    placement_selection_mode: string;
+  };
+  assert.equal(row.selection_mode, "manual");
+  assert.equal(row.placement_mode, "separated");
+  assert.equal(row.placement_selection_mode, "auto",
+    "keep freezes selection, not placement");
+});
 
 test("automatic curation does not move a manually placed video", () => {
   const { videoId, trackId } = seed();

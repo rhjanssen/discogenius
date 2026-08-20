@@ -47,9 +47,9 @@ Rules:
 Examples:
 
 - Apple Music decryption wrapper: `apple-music-wrapper` service in
-  `docker-compose.yml` / `docker-compose.example.yml`, sharing Discogenius'
-  network namespace so `127.0.0.1:10020/20020` resolves. Delete the service
-  block if you will not download from Apple Music.
+  `docker-compose.yml` / `docker-compose.example.yml`, on its own compose
+  network so Discogenius reaches `apple-music-wrapper:10020/20020`. Delete
+  the service block if you will not download from Apple Music.
 - `MP4Box`: provider prerequisite reported by diagnostics. If we later bundle
   it, use a pinned binary/image source; do not clone GPAC at image build time.
 

@@ -133,6 +133,7 @@ export const CANONICAL_TABLES_IN_DELETE_ORDER = [
   "LibraryVideos",
   "LibraryEditions",
   "LibraryAlbums",
+  "RecordingRelations",
   "Tracks",
   "Recordings",
   "AlbumEditions",

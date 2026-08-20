@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { audioLibraryPredicate } from "./library-album-monitoring.js";
+import { canonicalVideoType, inlineVideoSlot } from "./canonical-video-type.js";
 
 /**
  * Selecting a canonical video into a Video Library, and where its one file goes.
@@ -190,6 +191,194 @@ export function manuallySelectedVideoPredicate(recordingIdExpr: string): string 
     WHERE selected_video.video_recording_id = ${recordingIdExpr}
       AND selected_video.selection_mode = 'manual'
   )`;
+}
+
+export type RelatedInlineTrack = {
+  id: number;
+  title: string;
+  albumTitle: string | null;
+  trackNumber: number | null;
+  volumeNumber: number | null;
+};
+
+/** User-facing placement / keep failures. Mapped to HTTP 400 by the video route. */
+export class VideoPlacementError extends Error {
+  status = 400;
+  constructor(message: string) {
+    super(message);
+    this.name = "VideoPlacementError";
+  }
+}
+
+function resolveStereoPlacementLibraryId(db: Database.Database): number | null {
+  const row = db.prepare(`
+    SELECT library.id
+    FROM Libraries library
+    JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+    WHERE library.enabled = 1
+      AND ${audioLibraryPredicate("library")}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      )
+    ORDER BY library.id
+  `).get() as { id?: number } | undefined;
+  return row?.id ?? null;
+}
+
+/**
+ * Audio tracks this video may sit beside. Exact recording relations only —
+ * the same rule association uses, so a live cut never offers a studio track.
+ */
+export function listRelatedInlineTracks(
+  db: Database.Database,
+  videoRecordingId: number,
+): RelatedInlineTrack[] {
+  return db.prepare(`
+    SELECT
+      track.id AS id,
+      COALESCE(NULLIF(TRIM(track.title), ''), audio.title) AS title,
+      album.title AS albumTitle,
+      track.position AS trackNumber,
+      track.medium_position AS volumeNumber
+    FROM RecordingRelations relation
+    JOIN Recordings audio
+      ON audio.id = relation.target_recording_id
+     AND audio.is_video = 0
+    JOIN Tracks track ON track.recording_id = audio.id
+    JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+    JOIN Albums album ON album.id = edition.release_group_id
+    JOIN LibraryEditions library_release
+      ON library_release.edition_id = edition.id
+    JOIN Libraries library
+      ON library.id = library_release.library_id
+     AND library.enabled = 1
+    WHERE relation.source_recording_id = ?
+      AND relation.relation_type IN ('provider_video_for', 'music_video_for')
+    GROUP BY track.id
+    ORDER BY album.title COLLATE NOCASE, track.medium_position, track.position, track.id
+  `).all(videoRecordingId) as RelatedInlineTrack[];
+}
+
+/**
+ * The user placing a video. Selects it if needed, stamps both selection and
+ * placement as manual so curation will not move it, and returns whether a
+ * library file should be renamed to follow.
+ */
+export function applyManualVideoPlacement(
+  db: Database.Database,
+  videoRecordingId: number,
+  input: { mode: "separated" } | { mode: "inline"; inlineTrackId: number },
+): { artistId: string | null } {
+  const videoLibraryIds = resolveVideoLibraryIds(db);
+  if (videoLibraryIds.length === 0) {
+    throw new VideoPlacementError("No Video Library is enabled");
+  }
+
+  const recording = db.prepare(`
+    SELECT id, artist_mbid, video_variant
+    FROM Recordings
+    WHERE id = ? AND is_video = 1
+  `).get(videoRecordingId) as {
+    id: number;
+    artist_mbid: string | null;
+    video_variant: string | null;
+  } | undefined;
+  if (!recording) {
+    throw new VideoPlacementError("Video not found");
+  }
+
+  let placement: VideoPlacement;
+  if (input.mode === "separated") {
+    placement = { mode: "separated" };
+  } else {
+    const track = db.prepare(`
+      SELECT id FROM Tracks WHERE id = ?
+    `).get(input.inlineTrackId) as { id?: number } | undefined;
+    if (!track?.id) {
+      throw new VideoPlacementError("Inline track not found");
+    }
+    const placementLibraryId = resolveStereoPlacementLibraryId(db);
+    if (placementLibraryId == null) {
+      throw new VideoPlacementError("No stereo library is enabled for inline video placement");
+    }
+    placement = {
+      mode: "inline",
+      placementLibraryId,
+      inlineTrackId: input.inlineTrackId,
+      inlineSlot: inlineVideoSlot(canonicalVideoType(recording.video_variant)),
+    };
+  }
+
+  const artist = recording.artist_mbid
+    ? db.prepare(`SELECT id FROM Artists WHERE mbid = ? LIMIT 1`).get(recording.artist_mbid) as { id?: string } | undefined
+    : undefined;
+
+  for (const libraryId of videoLibraryIds) {
+    selectLibraryVideo(db, {
+      libraryId,
+      videoRecordingId,
+      placement,
+      selectionMode: "manual",
+      placementSelectionMode: "manual",
+      reason: "user",
+    });
+  }
+
+  return { artistId: artist?.id ? String(artist.id) : null };
+}
+
+/**
+ * Keep this video selected even when it is not a Plex-slot winner
+ * (`inline_only` losers). Selection is stamped manual so curation will not
+ * drop it; placement is left as it is, or separated if it was never placed.
+ */
+export function keepLibraryVideo(
+  db: Database.Database,
+  videoRecordingId: number,
+): void {
+  const videoLibraryIds = resolveVideoLibraryIds(db);
+  if (videoLibraryIds.length === 0) {
+    throw new VideoPlacementError("No Video Library is enabled");
+  }
+  const recording = db.prepare(`
+    SELECT id FROM Recordings WHERE id = ? AND is_video = 1
+  `).get(videoRecordingId) as { id?: number } | undefined;
+  if (!recording?.id) {
+    throw new VideoPlacementError("Video not found");
+  }
+
+  for (const libraryId of videoLibraryIds) {
+    const current = db.prepare(`
+      SELECT placement_mode, placement_library_id, inline_track_id, inline_slot
+      FROM LibraryVideos
+      WHERE library_id = ? AND video_recording_id = ?
+    `).get(libraryId, videoRecordingId) as {
+      placement_mode?: string;
+      placement_library_id?: number | null;
+      inline_track_id?: number | null;
+      inline_slot?: "video" | "lyrics" | null;
+    } | undefined;
+    const placement = current?.placement_mode === "inline"
+      && current.placement_library_id != null
+      && current.inline_track_id != null
+      && (current.inline_slot === "video" || current.inline_slot === "lyrics")
+      ? {
+        mode: "inline" as const,
+        placementLibraryId: current.placement_library_id,
+        inlineTrackId: current.inline_track_id,
+        inlineSlot: current.inline_slot,
+      }
+      : { mode: "separated" as const };
+    selectLibraryVideo(db, {
+      libraryId,
+      videoRecordingId,
+      placement,
+      selectionMode: "manual",
+      reason: "user",
+    });
+  }
 }
 
 /** The persisted placement of one selected video, or null when unselected. */

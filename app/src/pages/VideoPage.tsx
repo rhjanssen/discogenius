@@ -18,6 +18,11 @@ import {
     DialogTitle,
     DialogContent,
     DialogActions,
+    Menu,
+    MenuItem,
+    MenuList,
+    MenuPopover,
+    MenuTrigger,
     Spinner,
 } from "@fluentui/react-components";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
@@ -38,6 +43,7 @@ import {
   Video24Filled,
   Delete24Regular,
   Delete24Filled,
+  Checkmark16Regular,
   bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
@@ -412,6 +418,32 @@ const VideoPage = () => {
     });
 
     // Toggle lock mutation
+    const placeVideo = useMutation({
+        mutationFn: (placement: { mode: "separated" } | { mode: "inline"; inlineTrackId: number }) =>
+            api.updateVideo(videoId!, { placement }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["video", videoId] });
+            queryClient.invalidateQueries({ queryKey: ["albumPage"] });
+            dispatchLibraryUpdated();
+            toast({ title: "Video placement updated" });
+        },
+        onError: (err: any) => {
+            toast({ title: "Failed to update placement", description: err.message, variant: "destructive" });
+        },
+    });
+
+    const keepVideo = useMutation({
+        mutationFn: () => api.updateVideo(videoId!, { keep: true }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["video", videoId] });
+            dispatchLibraryUpdated();
+            toast({ title: "Video kept in the library" });
+        },
+        onError: (err: any) => {
+            toast({ title: "Failed to keep video", description: err.message, variant: "destructive" });
+        },
+    });
+
     const toggleLock = useMutation({
         mutationFn: (nextLocked: boolean) =>
             api.updateVideo(videoId!, { monitored_lock: nextLocked }),
@@ -821,13 +853,16 @@ const VideoPage = () => {
 
                         <div className={styles.rightActions}>
                             <AppTooltip
-                                content={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
+                                content={isLocked
+                                    ? (isMonitored
+                                        ? "Stop monitoring. Lock only prevents automatic curation changes."
+                                        : "Start monitoring. Lock only prevents automatic curation changes.")
+                                    : (isMonitored ? "Stop monitoring" : "Start monitoring")}
                                 relationship="label"
                             >
                                 <Button
                                     appearance={isMonitored ? "subtle" : "primary"}
                                     icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
-                                    disabled={isLocked}
                                     onClick={() => toggleMonitor.mutate(!isMonitored)}
                                     className={mergeClasses(styles.actionButton, isMonitored ? styles.transparentButton : styles.primaryButton)}
                                 >
@@ -846,6 +881,50 @@ const VideoPage = () => {
                                     {isLocked ? "Unlock" : "Lock"}
                                 </Button>
                             </AppTooltip>
+
+                            <Menu>
+                                <MenuTrigger disableButtonEnhancement>
+                                    <Button
+                                        appearance="subtle"
+                                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                                    >
+                                        {video.placement?.mode === "inline"
+                                            ? `Beside ${(video.related_tracks ?? []).find((track) => track.id === video.placement?.inline_track_id)?.title ?? "track"}`
+                                            : "File location"}
+                                    </Button>
+                                </MenuTrigger>
+                                <MenuPopover>
+                                    <MenuList>
+                                        <MenuItem
+                                            icon={video.placement?.mode !== "inline" ? <Checkmark16Regular /> : undefined}
+                                            onClick={() => placeVideo.mutate({ mode: "separated" })}
+                                            disabled={placeVideo.isPending}
+                                        >
+                                            Video library
+                                        </MenuItem>
+                                        {(video.related_tracks ?? []).map((track) => (
+                                            <MenuItem
+                                                key={track.id}
+                                                icon={video.placement?.mode === "inline" && video.placement?.inline_track_id === track.id
+                                                    ? <Checkmark16Regular />
+                                                    : undefined}
+                                                onClick={() => placeVideo.mutate({ mode: "inline", inlineTrackId: track.id })}
+                                                disabled={placeVideo.isPending}
+                                            >
+                                                {`Beside ${track.title}${track.album_title ? ` (${track.album_title})` : ""}`}
+                                            </MenuItem>
+                                        ))}
+                                        {!video.is_monitored ? (
+                                            <MenuItem
+                                                onClick={() => keepVideo.mutate()}
+                                                disabled={keepVideo.isPending}
+                                            >
+                                                Keep in library even if not a slot winner
+                                            </MenuItem>
+                                        ) : null}
+                                    </MenuList>
+                                </MenuPopover>
+                            </Menu>
 
                             {!isDownloaded && (
                                 <AppTooltip

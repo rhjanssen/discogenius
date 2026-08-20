@@ -96,8 +96,9 @@ export interface NamingConfig {
  * - "no"        — Never write tags
  * - "new_files" — Only write tags on newly downloaded/imported files
  * - "all_files" — Write tags on all files (existing + new)
+ * - "sync"      — New files, and re-tag after a metadata refresh changes catalog columns
  */
-export type WriteAudioTagsPolicy = "no" | "new_files" | "all_files";
+export type WriteAudioTagsPolicy = "no" | "new_files" | "all_files" | "sync";
 
 export interface MetadataConfig {
   /** Prefer canonical catalog/CAA artwork or streaming-provider artwork. */
@@ -394,7 +395,10 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
     mark_explicit: raw?.mark_explicit ?? DEFAULT_CONFIG.metadata.mark_explicit,
     upc_target: raw?.upc_target ?? DEFAULT_CONFIG.metadata.upc_target,
     embed_replaygain: raw?.embed_replaygain ?? DEFAULT_CONFIG.metadata.embed_replaygain,
-    write_audio_tags_policy: writeAudioTagsPolicy === "no" || writeAudioTagsPolicy === "new_files" || writeAudioTagsPolicy === "all_files"
+    write_audio_tags_policy: writeAudioTagsPolicy === "no"
+      || writeAudioTagsPolicy === "new_files"
+      || writeAudioTagsPolicy === "all_files"
+      || writeAudioTagsPolicy === "sync"
       ? writeAudioTagsPolicy
       : DEFAULT_CONFIG.metadata.write_audio_tags_policy,
     scrub_audio_tags: raw?.scrub_audio_tags ?? DEFAULT_CONFIG.metadata.scrub_audio_tags,

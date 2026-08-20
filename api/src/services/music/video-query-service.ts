@@ -14,9 +14,11 @@ import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "./video-album-association.js";
 import { mainVideoMayFollowAudioRelationSql } from "./live-performance-markers.js";
 import {
+  listRelatedInlineTracks,
   manuallySelectedVideoPredicate,
   monitoredVideoPredicate,
 } from "./library-video-monitoring.js";
+import { resolvePersistedVideoPlacement } from "./video-placement-resolver.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -150,6 +152,24 @@ function mapVideoDetail(row: VideoRow, isDownloaded: boolean): VideoDetailContra
     monitored_lock: mapped.monitored_lock,
     downloaded: mapped.downloaded ?? false,
     is_downloaded: mapped.is_downloaded,
+  };
+}
+
+function persistedPlacementForDetail(videoRecordingId: string): VideoDetailContract["placement"] {
+  const persisted = resolvePersistedVideoPlacement(videoRecordingId);
+  if (!persisted) return null;
+  const selection = db.prepare(`
+    SELECT placement_selection_mode
+    FROM LibraryVideos
+    WHERE CAST(video_recording_id AS TEXT) = CAST(? AS TEXT)
+    ORDER BY id
+  `).get(videoRecordingId) as { placement_selection_mode?: string } | undefined;
+  return {
+    mode: persisted.mode,
+    placement_library_id: persisted.placementLibraryId,
+    inline_track_id: persisted.inlineTrackId,
+    inline_slot: persisted.inlineSlot,
+    selection_mode: selection?.placement_selection_mode === "manual" ? "manual" : "auto",
   };
 }
 
@@ -443,6 +463,14 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
     const detail = mapVideoDetail(canonicalRow, Boolean(canonicalRow.downloaded));
     detail.offers = getVideoProviderOffers(recordingId);
     detail.albums = getVideoAlbumRefs(recordingId);
+    detail.placement = persistedPlacementForDetail(recordingId);
+    detail.related_tracks = listRelatedInlineTracks(db, Number(recordingId)).map((track) => ({
+      id: track.id,
+      title: track.title,
+      album_title: track.albumTitle,
+      track_number: track.trackNumber,
+      volume_number: track.volumeNumber,
+    }));
     return detail;
   }
 
@@ -531,6 +559,7 @@ type AssociatedVideoRow = {
   placement_library_id: number | null;
   inline_track_id: number | null;
   inline_slot: "video" | "lyrics" | null;
+  placement_selection_mode: "auto" | "manual" | null;
 };
 
 /**
@@ -645,7 +674,8 @@ function associatedVideoSelectSql(input: {
       placement.placement_mode AS placement_mode,
       placement.placement_library_id AS placement_library_id,
       placement.inline_track_id AS inline_track_id,
-      placement.inline_slot AS inline_slot
+      placement.inline_slot AS inline_slot,
+      placement.placement_selection_mode AS placement_selection_mode
   `;
 }
 
@@ -813,6 +843,7 @@ export function getAlbumAssociatedVideos(
         placement_library_id: row.placement_library_id ?? null,
         inline_track_id: row.inline_track_id ?? null,
         inline_slot: row.inline_slot ?? null,
+        selection_mode: row.placement_selection_mode ?? null,
       },
     });
   };

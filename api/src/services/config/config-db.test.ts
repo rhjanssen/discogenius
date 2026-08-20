@@ -109,9 +109,18 @@ test("config writes strip retired quality settings", () => {
   assert.equal("embed_synced_lyrics" in (configModule.readConfig().quality as any), false);
 });
 
-test("config writes normalize unsupported metadata tag policy values", () => {
+test("config writes keep the sync metadata tag policy", () => {
   const config = configModule.readConfig() as any;
   config.metadata.write_audio_tags_policy = "sync";
+  configModule.writeConfig(config);
+
+  configModule.clearConfigCache();
+  assert.equal(configModule.readConfig().metadata.write_audio_tags_policy, "sync");
+});
+
+test("config writes normalize unsupported metadata tag policy values", () => {
+  const config = configModule.readConfig() as any;
+  config.metadata.write_audio_tags_policy = "whenever";
   configModule.writeConfig(config);
 
   configModule.clearConfigCache();

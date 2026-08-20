@@ -1918,7 +1918,12 @@ const AlbumPage = () => {
                 const videoId = String(video.id);
                 const trackLabel = formatDescriptiveTrackPosition(video);
                 const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
-                const subtitle = [trackLabel, year || null].filter(Boolean).join(" · ");
+                const placementLabel = video.placement?.mode === "inline"
+                  ? "Inline"
+                  : video.placement?.mode === "separated"
+                    ? "Video library"
+                    : null;
+                const subtitle = [trackLabel, year || null, placementLabel].filter(Boolean).join(" · ");
                 const videoProvider = String(video.provider || "").trim() || null;
                 const videoProviderId = String(video.provider_id || "").trim() || null;
                 const videoQuality = String(video.quality || "").trim() || null;

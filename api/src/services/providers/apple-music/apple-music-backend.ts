@@ -9,6 +9,7 @@ import {
   loadStoredAppleMusicToken,
   resolveAppleStorefront,
   resolveAppleVideoMaxHeight,
+  resolveAppleWrapperHost,
   syncTokenToDownloader,
 } from "./apple-music-auth.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
@@ -39,10 +40,10 @@ const APPLE_SESSION_FAILURE_PATTERN =
 export function describeAppleDownloaderFailure(code: number | null, errorDetail: string): string {
   const detail = (errorDetail || "").trim();
   if (APPLE_SESSION_FAILURE_PATTERN.test(detail)) {
-    return "Apple Music decryption failed — the wrapper session has expired, was rejected, or is attached to a dead container network. "
+    return "Apple Music decryption failed — the wrapper session has expired or was rejected. "
       + "Re-authenticate Apple Music from the Auth page (enter the Apple ID 2FA code promptly; the wrapper only waits ~60s). "
-      + "If this persists after a container restart, recreate both services: "
-      + "`docker compose up -d --force-recreate discogenius apple-music-wrapper`."
+      + "If this persists, recreate the wrapper: "
+      + "`docker compose up -d --force-recreate apple-music-wrapper`."
       + `${detail ? ` [downloader: ${detail}]` : ""}`;
   }
   return `apple-music-downloader exited with code ${code}${detail ? `: ${detail}` : ""}`;
@@ -145,9 +146,10 @@ export type AppleMusicDownloaderCapabilitySnapshot = {
 
 export async function getAppleMusicDownloaderCapabilitySnapshot(): Promise<AppleMusicDownloaderCapabilitySnapshot> {
   const downloaderBinary = getAppleMusicDownloaderBinary();
+  const wrapperHost = resolveAppleWrapperHost();
   const [wrapperDecryptPortOpen, wrapperM3u8PortOpen] = await Promise.all([
-    checkPort("127.0.0.1", 10020),
-    checkPort("127.0.0.1", 20020),
+    checkPort(wrapperHost, 10020),
+    checkPort(wrapperHost, 20020),
   ]);
   return {
     authenticated: Boolean(loadStoredAppleMusicToken()),

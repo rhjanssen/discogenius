@@ -290,6 +290,7 @@ export interface AlbumAssociatedVideoContract {
     /** The exact canonical audio Track occurrence an inline file sits beside. */
     inline_track_id?: number | null;
     inline_slot?: "video" | "lyrics" | null;
+    selection_mode?: "auto" | "manual" | null;
   } | null;
 }
 
@@ -319,11 +320,24 @@ export interface VideoDetailContract {
   offers?: VideoProviderOfferContract[];
   /** Albums (release groups) this video appears on, e.g. Apple bundled MVs. */
   albums?: VideoAlbumRefContract[];
+  placement?: AlbumAssociatedVideoContract["placement"];
+  related_tracks?: Array<{
+    id: number;
+    title: string;
+    album_title?: string | null;
+    track_number?: number | null;
+    volume_number?: number | null;
+  }>;
 }
 
 export interface VideoUpdateContract {
   monitored?: boolean;
   monitored_lock?: boolean;
+  keep?: boolean;
+  placement?: {
+    mode: "separated" | "inline";
+    inlineTrackId?: number;
+  };
 }
 
 function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFileContract {
@@ -493,6 +507,9 @@ function parseAssociatedVideoPlacement(
     inline_track_id: expectOptionalNumber(record.inline_track_id, `${label}.inline_track_id`) ?? null,
     inline_slot: record.inline_slot === "video" || record.inline_slot === "lyrics"
       ? record.inline_slot
+      : null,
+    selection_mode: record.selection_mode === "manual" || record.selection_mode === "auto"
+      ? record.selection_mode
       : null,
   };
 }
@@ -698,6 +715,21 @@ export function parseVideoDetailContract(value: unknown): VideoDetailContract {
     albums: record.albums === undefined
       ? undefined
       : expectArray(record.albums, "video.albums", (item, index) => parseVideoAlbumRefContract(item, `video.albums[${index}]`)),
+    placement: record.placement === undefined
+      ? undefined
+      : parseAssociatedVideoPlacement(record.placement, "video.placement"),
+    related_tracks: record.related_tracks === undefined
+      ? undefined
+      : expectArray(record.related_tracks, "video.related_tracks", (item, index) => {
+        const related = expectRecord(item, `video.related_tracks[${index}]`);
+        return {
+          id: expectNumber(related.id, `video.related_tracks[${index}].id`),
+          title: expectString(related.title, `video.related_tracks[${index}].title`),
+          album_title: expectNullableString(related.album_title, `video.related_tracks[${index}].album_title`),
+          track_number: expectOptionalNumber(related.track_number, `video.related_tracks[${index}].track_number`) ?? null,
+          volume_number: expectOptionalNumber(related.volume_number, `video.related_tracks[${index}].volume_number`) ?? null,
+        };
+      }),
   };
 }
 

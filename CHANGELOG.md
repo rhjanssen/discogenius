@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.9.0] - 2026-08-20
+
+Manual video placement, tag sync after metadata refresh, and an Apple
+wrapper that keeps its login when Discogenius restarts.
+
+### Added
+- **File location on the video page.** Pick Video library, or place the
+  file beside an exact related audio track. The choice is stamped
+  `placement_selection_mode = manual` so curation will not move it.
+  Unselected `inline_only` losers can be kept in the library by hand.
+  Album associated-video cards show Inline vs Video library.
+- **Write audio tags: "New files, and after metadata refresh".** When
+  catalog columns change, MatchArtistProviders queues RetagArtist. Manual
+  import of existing files is still left alone (same as "New downloads
+  only").
+
+### Changed
+- **Apple Music wrapper has its own network.** It no longer shares
+  Discogenius' namespace. Recreating the API container no longer kills
+  the wrapper login; recreate `apple-music-wrapper` only when that
+  session is dead. Docker jobs talk to `apple-music-wrapper:10020`.
+- Worker SQLite busy retries 8 → 16. RefreshArtist yields after catalog
+  sync, biography, and release-group hydrate so a heavy refresh does not
+  sit on the event loop until the lease dies.
+
 ## [2.8.1] - 2026-08-20
 
 Wait-queue follow-through, catalog-first filing, and a few event-loop stalls

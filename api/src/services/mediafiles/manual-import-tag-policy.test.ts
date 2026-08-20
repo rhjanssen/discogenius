@@ -9,4 +9,6 @@ test("shouldTagManuallyImportedFiles only tags manual imports when policy is all
   // own carefully-tagged pre-existing files must NOT get them retagged.
   assert.equal(shouldTagManuallyImportedFiles({ write_audio_tags_policy: "new_files" } as any), false);
   assert.equal(shouldTagManuallyImportedFiles({ write_audio_tags_policy: "all_files" } as any), true);
+  // Sync retags after catalog refresh, not a user's existing files at import.
+  assert.equal(shouldTagManuallyImportedFiles({ write_audio_tags_policy: "sync" } as any), false);
 });

@@ -26,7 +26,7 @@ export type UpcTargetValue = (typeof UPC_TARGET_VALUES)[number];
 export const VIDEO_FOLDER_LAYOUT_VALUES = ["separated", "inline", "inline_only"] as const;
 export type VideoFolderLayoutValue = (typeof VIDEO_FOLDER_LAYOUT_VALUES)[number];
 
-export const WRITE_AUDIO_TAGS_POLICY_VALUES = ["no", "new_files", "all_files"] as const;
+export const WRITE_AUDIO_TAGS_POLICY_VALUES = ["no", "new_files", "all_files", "sync"] as const;
 export type WriteAudioTagsPolicyValue = (typeof WRITE_AUDIO_TAGS_POLICY_VALUES)[number];
 
 export const VIDEO_THUMBNAIL_RESOLUTION_VALUES = [

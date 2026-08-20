@@ -143,11 +143,28 @@ test("media contract parsers validate album tracks and video detail payloads", (
     is_monitored: false,
     downloaded: true,
     is_downloaded: true,
+    placement: {
+      mode: "inline",
+      placement_library_id: 1,
+      inline_track_id: 1000,
+      inline_slot: "video",
+      selection_mode: "manual",
+    },
+    related_tracks: [{
+      id: 1000,
+      title: "Tunnel of Love",
+      album_title: "Making Movies",
+      track_number: 1,
+      volume_number: 1,
+    }],
   });
   assert.equal(video.artist_id, "303");
   assert.equal(video.video_variant, "live");
   assert.equal(video.cover_art_url, "/media-cover/Albums/video-release/cover.jpg");
   assert.equal(video.downloaded, true);
+  assert.equal(video.placement?.mode, "inline");
+  assert.equal(video.placement?.selection_mode, "manual");
+  assert.equal(video.related_tracks?.[0].id, 1000);
 });
 
 test("library files response parser keeps list payloads typed", () => {

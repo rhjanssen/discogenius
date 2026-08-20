@@ -45,6 +45,21 @@ export function resolveAppleStorefront(env: NodeJS.ProcessEnv = process.env): st
   return value || "us";
 }
 
+/**
+ * Host the OSS downloader uses to reach the FairPlay wrapper.
+ *
+ * Compose used to share Discogenius' network namespace so `127.0.0.1:10020`
+ * worked. That killed the wrapper session whenever the API container was
+ * recreated. The wrapper now binds `0.0.0.0` on its own network, so Docker
+ * jobs talk to `apple-music-wrapper`. Override with APPLE_MUSIC_WRAPPER_HOST
+ * for host networking or a renamed service.
+ */
+export function resolveAppleWrapperHost(env: NodeJS.ProcessEnv = process.env): string {
+  const override = String(env.APPLE_MUSIC_WRAPPER_HOST ?? "").trim();
+  if (override) return override;
+  return String(env.DOCKER ?? "").toLowerCase() === "true" ? "apple-music-wrapper" : "127.0.0.1";
+}
+
 function getJwtExpiry(token: string): number | undefined {
   try {
     const payload = token.split(".")[1];
@@ -209,8 +224,8 @@ export function syncTokenToDownloader(token: AppleMusicAuthToken | null, downloa
     `aac-save-folder: ${yamlString(outputRoot)}`,
     `mv-save-folder: ${yamlString(outputRoot)}`,
     "max-memory-limit: 256",
-    "decrypt-m3u8-port: \"127.0.0.1:10020\"",
-    "get-m3u8-port: \"127.0.0.1:20020\"",
+    `decrypt-m3u8-port: "${resolveAppleWrapperHost()}:10020"`,
+    `get-m3u8-port: "${resolveAppleWrapperHost()}:20020"`,
     "get-m3u8-from-device: true",
     // Headless jobs must exit after the final per-item error summary so the
     // Discogenius command queue can apply its bounded retry policy. Upstream

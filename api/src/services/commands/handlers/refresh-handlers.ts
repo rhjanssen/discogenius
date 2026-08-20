@@ -16,6 +16,7 @@ import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import { CommandNames } from "../command-names.js";
 import { CommandQueueManager } from "../command-queue-manager.js";
+import { getConfigSection } from "../../config/config.js";
 import type { CommandHandler } from "./handler-context.js";
 
 export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, ctx) => {
@@ -172,6 +173,22 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         trigger: job.trigger ?? CommandTrigger.Unspecified,
         priority: job.priority ?? 0,
     });
+
+    if (
+        job.payload.metadataChanged
+        && getConfigSection("metadata").write_audio_tags_policy === "sync"
+    ) {
+        CommandQueueManager.push(
+            CommandNames.RetagArtist,
+            {
+                artistId: job.payload.artistId,
+                artistIds: [job.payload.artistId],
+            },
+            job.payload.artistId,
+            nextArtistWorkflowPriority(job.priority),
+            job.trigger ?? CommandTrigger.Unspecified,
+        );
+    }
 
     if (job.payload.creditedContinuation?.length) {
         await ctx.yieldToEventLoop();

@@ -1307,7 +1307,9 @@ export class RefreshArtistService {
 
         // Canonical identity + biography.
         await this.refreshArtistMetadata(artistId, options);
+        await yieldToEventLoop();
         await refreshArtistBiography(artistId, options);
+        await yieldToEventLoop();
 
         let artistMbid = resolveArtistMbid();
 
@@ -1320,8 +1322,10 @@ export class RefreshArtistService {
                 options.forceUpdate === true,
                 isMonitored,
             );
+            await yieldToEventLoop();
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
+                await yieldToEventLoop();
             }
         }
 

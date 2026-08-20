@@ -16,12 +16,16 @@ let ArtistStatisticsService: typeof import("../../music/artist-statistics-servic
 let MediaSeedService: typeof import("../../music/media-seed-service.js").MediaSeedService;
 let handleSeedVideo: typeof import("./refresh-handlers.js").handleSeedVideo;
 let dbModule: typeof import("../../../database.js");
+let configModule: typeof import("../../config/config.js");
+let CommandNames: typeof import("../command-names.js").CommandNames;
 
 before(async () => {
   dbModule = await import("../../../database.js");
   dbModule.initDatabase();
   ({ appEvents, AppEvent } = await import("../app-events.js"));
   ({ handleMatchArtistProviders, handleSeedVideo } = await import("./refresh-handlers.js"));
+  configModule = await import("../../config/config.js");
+  ({ CommandNames } = await import("../command-names.js"));
   ({ RefreshArtistService } = await import("../../music/refresh-artist-service.js"));
   ({ ArtistStatisticsService } = await import("../../music/artist-statistics-service.js"));
   ({ MediaSeedService } = await import("../../music/media-seed-service.js"));
@@ -32,6 +36,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
+  dbModule.db.prepare("DELETE FROM commands").run();
 });
 
 after(() => {
@@ -334,4 +339,60 @@ test("MatchArtistProviders defers curation exactly when the workflow queues Cura
       ["(none)", false],
     ],
   );
+});
+
+test("MatchArtistProviders queues RetagArtist when metadata changed and tag policy is sync", async () => {
+  const originalMatch = RefreshArtistService.matchArtistProviders;
+  const originalRefreshStats = ArtistStatisticsService.refresh;
+  (RefreshArtistService as any).matchArtistProviders = async () => undefined;
+  (ArtistStatisticsService as any).refresh = () => undefined;
+
+  const config = configModule.readConfig();
+  const previousPolicy = config.metadata.write_audio_tags_policy;
+  config.metadata.write_audio_tags_policy = "sync";
+  configModule.writeConfig(config);
+  configModule.clearConfigCache();
+
+  const context = {
+    updateCommandDescription: () => undefined,
+    formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+  } as any;
+  const job = {
+    id: 81,
+    name: "MatchArtistProviders",
+    status: "started",
+    priority: 0,
+    payload: {
+      artistId: "artist-sync",
+      artistName: "Bastille",
+      artistMbid: "artist-sync-mbid",
+      shouldHydrateCatalog: false,
+      metadataChanged: true,
+      isNewArtist: false,
+    },
+  } as any;
+
+  try {
+    await handleMatchArtistProviders(job, context);
+    const queued = dbModule.db.prepare(`
+      SELECT name FROM commands WHERE name = ?
+    `).all(CommandNames.RetagArtist) as Array<{ name: string }>;
+    assert.equal(queued.length, 1);
+
+    dbModule.db.prepare("DELETE FROM commands").run();
+    config.metadata.write_audio_tags_policy = "new_files";
+    configModule.writeConfig(config);
+    configModule.clearConfigCache();
+    await handleMatchArtistProviders(job, context);
+    const skipped = dbModule.db.prepare(`
+      SELECT name FROM commands WHERE name = ?
+    `).all(CommandNames.RetagArtist) as Array<{ name: string }>;
+    assert.equal(skipped.length, 0, "new_files does not retag on metadata refresh");
+  } finally {
+    (RefreshArtistService as any).matchArtistProviders = originalMatch;
+    (ArtistStatisticsService as any).refresh = originalRefreshStats;
+    config.metadata.write_audio_tags_policy = previousPolicy;
+    configModule.writeConfig(config);
+    configModule.clearConfigCache();
+  }
 });

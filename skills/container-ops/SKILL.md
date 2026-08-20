@@ -53,17 +53,17 @@ resolution.
 
 ## Apple Music decryption wrapper sidecar
 
-The wrapper shares the Discogenius network namespace (`network_mode:
-service:discogenius`) so the downloader reaches `127.0.0.1:10020/20020`.
+The wrapper has its own compose network. The supervisor binds `0.0.0.0` on
+10020/20020 and Discogenius reaches it as `apple-music-wrapper:10020/20020`.
 Discogenius provisions the supervisor script into the shared data volume
 (`config/providers/apple-music/wrapper-rootfs/data/wrapper-entrypoint.sh`); the
 sidecar's compose entrypoint is a wait-for-script bootstrap, so a fresh deploy
 self-heals — never bind-mount that script as a file (Docker turns a missing file
 mount into an empty directory and strands the sidecar).
 
-- If you recreate the `discogenius` container, **also recreate the wrapper** or
-  it stays attached to a dead network namespace:
-  `docker compose up -d --force-recreate discogenius apple-music-wrapper`.
+- Recreating `discogenius` does **not** recreate the wrapper (the login session
+  should survive). Recreate the wrapper only when its session is dead:
+  `docker compose up -d --force-recreate apple-music-wrapper`.
 - Login stuck at "Login request sent to the decryption wrapper…" ⇒ the
   supervisor never consumed the trigger; check `docker logs apple-music-wrapper`
   and that `wrapper-entrypoint.sh` under the data dir is a **file**, not a

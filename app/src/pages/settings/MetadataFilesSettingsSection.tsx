@@ -106,13 +106,14 @@ export const MetadataFilesSettingsSection = ({
                         <Select
                             value={writeAudioTagsPolicy}
                             onChange={(_, data) => updateMetadataSettings({
-                                write_audio_tags_policy: data.value as "no" | "new_files" | "all_files",
+                                write_audio_tags_policy: data.value as "no" | "new_files" | "all_files" | "sync",
                             })}
                             className={styles.control}
                         >
                             <option value="no">Off</option>
                             <option value="new_files">New downloads only</option>
                             <option value="all_files">All files</option>
+                            <option value="sync">New files, and after metadata refresh</option>
                         </Select>
                     </div>
                 </div>

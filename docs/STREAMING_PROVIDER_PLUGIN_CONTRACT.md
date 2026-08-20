@@ -79,8 +79,8 @@ Track materialization is the critical acquisition contract:
   static `apple-music-dl` CLI; diagnostics still treat MP4Box and the wrapper
   ports as separate live-download readiness checks. Compose includes the
   `apple-music-wrapper` service in the same file (commented so operators can
-  delete it if unused), sharing Discogenius' network namespace so the
-  downloader's `127.0.0.1:10020/20020` config resolves to the wrapper.
+  delete it if unused), on its own network so the downloader's
+  `apple-music-wrapper:10020/20020` config resolves to the wrapper.
 - YouTube Music has no official Apple/TIDAL-like catalog API for this use case.
   `ytmusicapi` is the best-known catalog automation layer and emulates the web
   client with cookie/OAuth data. `yubal` is a useful reference because it combines

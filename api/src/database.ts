@@ -73,7 +73,7 @@ const SQLITE_BUSY_RETRY_MAX_MS = 2000;
 // the server for tens of seconds.
 const MAIN_THREAD_BUSY_TIMEOUT_MS = 1000;
 const WORKER_THREAD_BUSY_TIMEOUT_MS = 30000;
-const SQLITE_BUSY_RETRY_ATTEMPTS = isMainThread ? 1 : 8;
+const SQLITE_BUSY_RETRY_ATTEMPTS = isMainThread ? 1 : 16;
 
 // Optional write profiling: log any write transaction that holds the SQLite write
 // lock longer than this (ms). Off unless DISCOGENIUS_WRITE_PROFILE_MS is set. Used
