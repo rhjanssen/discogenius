@@ -318,11 +318,12 @@ preview is cluttered with cover/lyric/nfo rows.
 Provider artist/title/credits are used only for match scoring. Display, organizing/
 naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the leaks:
 
-- pending: **Album-page track artists** — `read-service.ts:~1284-1287` unconditionally
-  overrides canonical `artist_credits` with provider credits; make it catalog-only.
+- done: **Album-page track artists** — album tracks read `Recordings.credits`
+  (canonical). The old `read-service.ts` provider override is gone.
 - done: **Tag writer artist fallback** — dropped `COALESCE(canonical…, provider_recording.credits)`
   in `getTrackArtistNames` / `buildTrackRowsSql`; tagger uses canonical catalog credits exclusively.
-- pending: **Organizer naming** — stop falling back to ProviderItems title/version.
+- done: **Organizer naming** — 2.8.1 stopped falling back to `ProviderItems.title`;
+  file names come from the catalog.
 - pending: **Broad sweep** — audit every `COALESCE(canonical, provider)` / override in
   read services, tag builder, organizer. See [[discogenius-goals]], [[matching-facts]].
 
