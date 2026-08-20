@@ -92,6 +92,7 @@ export function initCurationListeners() {
                     artistName: payload.artistName,
                     workflow,
                     monitoringCycle: payload.monitoringCycle,
+                    filter: payload.metadataChanged || payload.isNewArtist ? "matched" : "known",
                 }),
                 payload.artistId,
                 nextArtistWorkflowPriority(payload.priority),

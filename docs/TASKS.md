@@ -305,11 +305,16 @@ preview is cluttered with cover/lyric/nfo rows.
 - done: **Store-once, reuse-everywhere (MediaCover Cache).** Local disk cache in `CONFIG_DIR/media-cover` serves sidecars and audio tag embedding offline without live network re-fetches.
 - pending: Preserve and strengthen testing for sidecar generation and backfill/repair without network fetching during tagging or sidecar reconciliation.
 
-#### B. Artwork identity in hybrid albums and supplemental singles (the unresolved regression)
-- pending: **Artwork identity in hybrid albums and supplemental singles.** During a hybrid album download, supplemental single artwork must never override the canonical `ArtworkOwner` album cover unless the user has explicitly selected that image as a manual artwork override.
-- pending: **Source order invariance.** Reversing the order of hybrid provider IDs in release group slots must not change the resolved artwork result.
-- pending: **Slot isolation.** Stereo and spatial artwork must not cross-contaminate if their slot folders or selections are distinct.
-- pending: **Both preference orderings in the universal pipeline** (canonical→provider and provider→canonical), applied uniformly to master + proxies + sidecar + embed.
+#### B. Artwork identity in hybrid albums and supplemental singles
+- done: **Artwork identity is the release group (or release), never the plan.**
+  `resolveAlbumArtwork` keys on `Albums.mbid`. A hybrid/composite acquisition
+  may download from contributing singles; those sources cannot become the
+  cover. Covered by `artwork-identity-regression.test.ts` (single does not
+  override album art; source-order invariant; cache survives hybrid import).
+- done: **Slot isolation.** Stereo and spatial folders each write `cover.jpg`
+  from the same RG cache. They do not borrow each other's folder art.
+- done: **Both preference orderings** in `resolveAlbumArtwork` (canonical vs
+  provider), applied to cache + sidecar + embed.
 - pending: **Per-provider high-res master (API digging).** Each provider already has `getArtworkUrl({size})`; make a "max" size return the true master: TIDAL `origin`; Apple `{w}x{h}` at max advertised; Deezer CDN `{size}x{size}`; SoundCloud `-original`; Spotify ceiling 640; YouTube maxres; Amazon largest variant; canonical CAA verbatim.
 - done (kept): 1200px embed cap (`EMBEDDED_COVER_HEIGHT`), both preference modes.
 
@@ -331,10 +336,11 @@ naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the lea
 
 - done: **Field-by-field parity** with Lidarr `WriteTags`; writes an identical tag
   set (23 standard fields + review comment + lyrics + replaygain), keeping our Plex `album; <secondary>` release types.
-- pending: **Genres reliably populated at import.** Files imported on 2.6.11 still show
-  the provider's single genre; the writer is correct, so confirm `Albums.genres` /
-  `ArtistMetadata.genres` are populated by the refresh *before* import-time tagging runs
-  (fix the download→refresh→import→tag ordering — do NOT patch the tagger).
+- done: **Genres populated at import.** Artist-summary upsert does not write
+  `Albums.genres`; full release-group detail does. Import now hydrates any dest
+  album whose genres are still empty *before* the tagger runs, so catalog
+  genres replace the downloader's leftover single genre without changing the
+  writer.
 - done: **Auto tag-sync on metadata change** — `write_audio_tags_policy=sync`
   queues `RetagArtist` after MatchArtistProviders when the catalog fingerprint
   changed. New downloads still tag; manual import of existing files does not.
@@ -344,11 +350,15 @@ naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the lea
 
 ### Scheduling & automation parity
 
-- pending: **Unify the two "Rescan Folders" registry entries** into one command; scope
-  by params (folders/artistIds/filter); adopt `UpdateScheduledTask => ArtistIds.Empty()`
-  so scoped/manual runs don't reset the daily clock (port `RescanFoldersCommand`).
-- pending: **`Matched` vs `Known` filter tuning** — deep-rescan unmatched only when
-  metadata changed, else new files only (port `FilterFilesType`).
+- done: **One Rescan Folders command.** The duplicate manual `rescan-folders`
+  registry entry is gone; `root-scan` is the scheduled task and the command-name
+  target. Payload scopes by `artistIds` / `addNewArtists` / `filter`. Per-artist
+  workflow scans no longer count as the daily root-scan being active, so they
+  do not reset or skip the scheduled clock.
+- done: **`Matched` vs `Known`.** Scheduled and unchanged-metadata manual scans
+  use `known` (new files + size/mtime). A metadata-changed refresh uses
+  `matched` (also rematch unmatched existing files). Port of Lidarr
+  `FilterFilesType`.
 - done: **Scheduled DB backup & restore capability** (ported Lidarr `BackupCommand` via `executeDatabaseBackup` + 7-backup retention + `/api/system/backups` REST endpoints for list/download/delete/restore; verified Lidarr parity that artwork/MediaCover is excluded from backup archives).
 - done: **ReplayGain & Peak tag embedding** (verified `REPLAYGAIN_TRACK_GAIN` & `REPLAYGAIN_TRACK_PEAK` formatting across FLAC/Vorbis, MP3 ID3v2 TXXX, M4A Apple atoms, and WMA).
 - done: **Scheduled health check** (ported `CheckHealth` diagnostic command).

@@ -1972,6 +1972,12 @@ export async function resolveProviderArtworkUrl(
   return null;
 }
 
+/**
+ * Artwork identity is the canonical album (release group), never the
+ * acquisition plan or a contributing hybrid/single source. `albumMbid` is
+ * Albums.mbid. A supplemental provider cover may fill a hole; it cannot
+ * replace a stored cover unless the user set a manual override.
+ */
 export async function resolveAlbumArtwork(options: {
   albumMbid?: string | null;
   servarrMetadataData?: ServarrMetadataImageContainer | null;

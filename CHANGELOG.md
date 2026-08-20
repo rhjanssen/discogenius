@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.9.1] - 2026-08-20
+
+Rescan Folders is one command, artwork stays on the release group, and
+import tagging waits for catalog genres.
+
+### Fixed
+- **Artwork identity is the release group.** A hybrid/composite plan may
+  download from contributing singles; those sources never own the cover.
+  `resolveAlbumArtwork` keys on `Albums.mbid`.
+- **Album genres come from MusicBrainz tags, not only official genre
+  entities.** Local-MB `l_genre_release_group` is sparse; folksonomy
+  `release_group_tag` is what Servarr/Lidarr expose. Import also hydrates
+  any dest album whose genres are still empty before tagging, so the
+  downloader's leftover single genre is not left on the file.
+
+### Changed
+- **One Rescan Folders command.** The duplicate manual registry entry is
+  gone. Scheduled and library-wide scans use Lidarr `Known` (new files +
+  size/mtime). A metadata-changed artist refresh uses `Matched` (also
+  rematch unmatched existing files). Per-artist scans no longer block or
+  reset the daily root-scan clock.
+
 ## [2.9.0] - 2026-08-20
 
 Manual video placement, tag sync after metadata refresh, and an Apple

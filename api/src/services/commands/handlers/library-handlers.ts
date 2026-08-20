@@ -1,6 +1,7 @@
 import { db } from "../../../database.js";
 import { getConfigSection } from "../../config/config.js";
 import { DiskScanService } from "../../mediafiles/library-scan.js";
+import { parseScanFileFilter } from "../../mediafiles/scan-file-filter.js";
 import { MoveArtistService } from "../../mediafiles/move-artist-service.js";
 import { RenameTrackFileService } from "../../mediafiles/rename-track-file-service.js";
 import { AudioTagService } from "../../mediafiles/audio-tag-service.js";
@@ -30,16 +31,21 @@ function formatReconcileSummary(prefix: string, result: ScanResult): string {
 }
 
 export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, ctx) => {
-    const artistId = job.payload.artistId;
     const addNewArtists = job.payload.addNewArtists ?? false;
+    const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
+        ? job.payload.artistIds.map((id) => String(id)).filter(Boolean)
+        : (job.payload.artistId ? [String(job.payload.artistId)] : []);
+    const perArtist = artistIds.length > 0 && !addNewArtists;
+    const filter = parseScanFileFilter(
+        job.payload.filter,
+        perArtist ? "matched" : "known",
+    );
 
-    if (artistId && !addNewArtists) {
-        // Per-artist scan (existing behavior)
+    if (perArtist) {
         const baseLabel = ctx.formatWorkflowCommandLabel(job, "Rescan folders");
-
-        // Step 1: Disk scan — reconcile track_files with disk reality
         const scanResult = await DiskScanService.scan({
-            artistIds: [artistId],
+            artistIds,
+            filter,
             trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
             onProgress: (event) => {
                 ctx.updateCommandDescription(job, {
@@ -49,21 +55,21 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             },
         });
 
-        // Step 2: Optional metadata backfill.
-        // Manual/local-only scans stop after reconciling files and importing from disk.
         if (!(job.payload.skipMetadataBackfill ?? false)) {
             ctx.updateCommandDescription(job, {
                 progress: 90,
                 description: `${baseLabel} - backfilling metadata files`,
             });
-            await DiskScanService.fillMissingMetadataFiles(artistId);
+            for (const artistId of artistIds) {
+                await DiskScanService.fillMissingMetadataFiles(artistId);
+            }
         }
 
         ctx.updateCommandDescription(job, {
             progress: 95,
             description: `${baseLabel} - updating artist statistics`,
         });
-        ArtistStatisticsService.refresh([artistId]);
+        ArtistStatisticsService.refresh(artistIds);
 
         ctx.updateCommandDescription(job, {
             progress: 100,
@@ -74,51 +80,54 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             return;
         }
 
-        // Step 3: Emit completion so artist curation cascades when requested
-        appEvents.emit(AppEvent.ARTIST_SCANNED, {
-            commandId: job.id,
-            workerId: job.worker_id ?? undefined,
-            artistId,
-            artistName: job.payload.artistName ?? "",
-            workflow: job.payload.workflow,
-            monitoringCycle: job.payload.monitoringCycle,
-            skipDownloadQueue: job.payload.skipDownloadQueue ?? false,
-            skipCuration: job.payload.skipCuration ?? false,
-            skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
-            forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
-            trigger: job.trigger ?? CommandTrigger.Unspecified,
-            priority: job.priority,
-        });
-    } else {
-        // Library-wide scan (RescanFolders with addNewArtists)
-        ctx.updateCommandDescription(job, {
-            progress: 5,
-            description: "Scanning library root folders",
-        });
-        const scanResult = await DiskScanService.scan({
-            addNewArtists: addNewArtists,
-            monitorNewArtists: job.payload.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
-            fullProcessing: job.payload.fullProcessing ?? false,
-            trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
-            trigger: job.trigger ?? CommandTrigger.Unspecified,
-            onProgress: (event) => {
-                ctx.updateCommandDescription(job, {
-                    progress: event.progress ?? 50,
-                    description: `Scanning library root folders - ${event.message}`,
-                });
-            },
-        });
-        ctx.updateCommandDescription(job, {
-            progress: 95,
-            description: "Scanning library root folders - updating artist statistics",
-        });
-        ArtistStatisticsService.refresh();
-
-        ctx.updateCommandDescription(job, {
-            progress: 100,
-            description: formatReconcileSummary("Scanning library root folders", scanResult),
-        });
+        for (const artistId of artistIds) {
+            appEvents.emit(AppEvent.ARTIST_SCANNED, {
+                commandId: job.id,
+                workerId: job.worker_id ?? undefined,
+                artistId,
+                artistName: job.payload.artistName ?? "",
+                workflow: job.payload.workflow,
+                monitoringCycle: job.payload.monitoringCycle,
+                skipDownloadQueue: job.payload.skipDownloadQueue ?? false,
+                skipCuration: job.payload.skipCuration ?? false,
+                skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
+                forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
+                trigger: job.trigger ?? CommandTrigger.Unspecified,
+                priority: job.priority,
+            });
+        }
+        return;
     }
+
+    ctx.updateCommandDescription(job, {
+        progress: 5,
+        description: "Scanning library root folders",
+    });
+    const scanResult = await DiskScanService.scan({
+        artistIds: artistIds.length > 0 ? artistIds : undefined,
+        filter,
+        addNewArtists: addNewArtists,
+        monitorNewArtists: job.payload.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
+        fullProcessing: job.payload.fullProcessing ?? false,
+        trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
+        trigger: job.trigger ?? CommandTrigger.Unspecified,
+        onProgress: (event) => {
+            ctx.updateCommandDescription(job, {
+                progress: event.progress ?? 50,
+                description: `Scanning library root folders - ${event.message}`,
+            });
+        },
+    });
+    ctx.updateCommandDescription(job, {
+        progress: 95,
+        description: "Scanning library root folders - updating artist statistics",
+    });
+    ArtistStatisticsService.refresh(artistIds.length > 0 ? artistIds : undefined);
+
+    ctx.updateCommandDescription(job, {
+        progress: 100,
+        description: formatReconcileSummary("Scanning library root folders", scanResult),
+    });
 };
 
 export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) => {

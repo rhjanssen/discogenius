@@ -431,16 +431,19 @@ export function buildRescanFoldersCommand(params: {
   artistName: string;
   workflow: Extract<ArtistWorkflow, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring">;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
+  filter?: RescanFoldersCommand["filter"];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   return {
     artistId: params.artistId,
+    artistIds: [params.artistId],
     artistName: params.artistName,
     workflow: params.workflow,
     skipDownloadQueue: !phases.queueDownloads,
     skipCuration: !phases.curate,
     skipMetadataBackfill: !phases.backfillMetadata,
     forceDownloadQueue: phases.queueDownloads,
+    filter: params.filter,
     monitoringCycle: params.monitoringCycle,
   };
 }

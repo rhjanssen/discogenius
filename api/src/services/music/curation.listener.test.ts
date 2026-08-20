@@ -81,9 +81,10 @@ test("changed scheduled monitoring refresh queues the per-artist rescan", () => 
     priority: 7,
   });
 
-  const commands = dbModule.db.prepare("SELECT name, priority FROM commands ORDER BY id").all() as Array<{ name: string; priority: number }>;
+  const commands = dbModule.db.prepare("SELECT name, priority, payload FROM commands ORDER BY id").all() as Array<{ name: string; priority: number; payload: string }>;
   assert.deepEqual(commands.map((command) => command.name), [commandNamesModule.CommandNames.RescanFolders]);
   assert.equal(commands[0]?.priority, 8);
+  assert.equal(JSON.parse(commands[0].payload).filter, "matched");
 });
 
 test("manual refresh-scan rescans even when metadata is unchanged", () => {
@@ -99,8 +100,9 @@ test("manual refresh-scan rescans even when metadata is unchanged", () => {
     priority: 0,
   });
 
-  const commands = dbModule.db.prepare("SELECT name FROM commands ORDER BY id").all() as Array<{ name: string }>;
+  const commands = dbModule.db.prepare("SELECT name, payload FROM commands ORDER BY id").all() as Array<{ name: string; payload: string }>;
   assert.deepEqual(commands.map((command) => command.name), [commandNamesModule.CommandNames.RescanFolders]);
+  assert.equal(JSON.parse(commands[0].payload).filter, "known");
 });
 
 test("artist scan completion advances curation priority", () => {

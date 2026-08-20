@@ -62,7 +62,8 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
       }];
     }
     if (sql.includes("JOIN release_label") || sql.includes("l_release_url") || sql.includes("FROM release_group_meta")
-      || sql.includes("l_genre_release_group") || sql.includes("l_release_group_url") || sql.includes("release_group_alias")) {
+      || sql.includes("l_genre_release_group") || sql.includes("release_group_tag")
+      || sql.includes("l_release_group_url") || sql.includes("release_group_alias")) {
       if (sql.includes("JOIN release_label")) {
         return [{ release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130", label_name: "Island" }];
       }
@@ -78,6 +79,9 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
       }
       if (sql.includes("l_genre_release_group")) {
         return [{ rg_id: 101, genre_name: "pop" }];
+      }
+      if (sql.includes("release_group_tag")) {
+        return [{ rg_id: 101, tag_name: "alternative" }];
       }
       if (sql.includes("l_release_group_url")) {
         return [{ rg_id: 101, rel_type: "official homepage", resource: "https://example.com/spirit" }];
@@ -99,7 +103,7 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
     assert.deepEqual(entry.detail.Releases[0].Label, ["Island"]);
     assert.deepEqual(entry.detail.Releases[0].ExternalUrls, ["https://tidal.com/album/123"]);
     assert.deepEqual(entry.detail.Releases[0].Tracks[0].Isrcs, ["GBUMTEST00001"]);
-    assert.deepEqual(entry.detail.genres, ["pop"]);
+    assert.deepEqual(entry.detail.genres, ["pop", "alternative"]);
     assert.deepEqual(entry.detail.aliases, ["Spirit"]);
     assert.deepEqual(entry.detail.links, [{ type: "official homepage", target: "https://example.com/spirit" }]);
     assert.deepEqual(entry.detail.rating, { Count: 12, Value: 8 });

@@ -175,7 +175,7 @@ export async function runLowCouplingMaintenanceJob(
                 description: 'Queueing library-wide folder rescan',
             });
             const { queueRescanFoldersPass } = await import('./scheduler.js');
-            queueRescanFoldersPass({ trigger: job.trigger ?? CommandTrigger.Manual, addNewArtists: true });
+            queueRescanFoldersPass({ trigger: job.trigger ?? CommandTrigger.Manual, addNewArtists: true, filter: "none" });
             context.updateCommandDescription({
                 progress: 100,
                 description: 'Queued library-wide folder rescan',

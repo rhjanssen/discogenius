@@ -74,6 +74,24 @@ test("RescanAllRoots delegates to queueRescanFoldersPass and queues a RescanFold
     assert.equal(queuedRootScans.length, 1);
 });
 
+test("library-wide rescan does not treat a per-artist RescanFolders as the daily root scan", async () => {
+    const taskState = await import("./task-state.js");
+    queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RescanFolders,
+        { artistId: "bastille", artistIds: ["bastille"], filter: "matched" },
+        "bastille",
+    );
+    assert.equal(taskState.hasActiveTask(queueModule.CommandNames.RescanFolders), true);
+    assert.equal(taskState.hasActiveLibraryWideRescan(), false);
+
+    queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RescanFolders,
+        { addNewArtists: false, filter: "known" },
+        "rescan-folders",
+    );
+    assert.equal(taskState.hasActiveLibraryWideRescan(), true);
+});
+
 test("CheckHealth collects a real diagnostics snapshot and reports issue counts", async () => {
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.CheckHealth,

@@ -39,6 +39,9 @@ test("command registry exposes canonical command and task metadata", () => {
   assert.ok(monitoringCycle);
   assert.equal(monitoringCycle?.id, "monitoring-cycle");
   assert.equal(monitoringCycle?.kind, "scheduled");
+  const rescanFolders = findSystemTaskDefinitionByCommandName("RescanFolders");
+  assert.equal(rescanFolders?.id, "root-scan");
+  assert.equal(rescanFolders?.kind, "scheduled");
   assert.equal(findSystemTaskDefinitionByCommandName("CheckHealth")?.kind, "scheduled");
   assert.equal(findSystemTaskDefinitionByCommandName("BackupDatabase")?.kind, "scheduled");
 

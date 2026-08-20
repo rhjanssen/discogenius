@@ -517,6 +517,26 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       entry.genres.push(name);
     }
 
+    // Official MB genres are sparse. The folksonomy (`release_group_tag`) is
+    // what Servarr/Lidarr expose as Genres and what files should embed.
+    const tagRows = await this.query<{ rg_id: number; tag_name: string }>(
+      `SELECT rg.id AS rg_id, t.name AS tag_name
+       FROM release_group rg
+       JOIN release_group_tag rgt ON rgt.release_group = rg.id
+       JOIN tag t ON t.id = rgt.tag
+       WHERE rg.id = ANY($1::int[])
+         AND COALESCE(rgt.count, 0) > 0
+         AND t.name NOT LIKE '%:%'
+       ORDER BY rg.id, rgt.count DESC, t.name`,
+      [ids],
+    );
+    for (const row of tagRows) {
+      const entry = curated.get(row.rg_id);
+      const name = String(row.tag_name || "").trim();
+      if (!entry || !name || entry.genres.includes(name) || entry.genres.length >= 10) continue;
+      entry.genres.push(name);
+    }
+
     const linkRows = await this.query<{ rg_id: number; rel_type: string | null; resource: string }>(
       `SELECT rg.id AS rg_id, lt.name AS rel_type, u.url AS resource
        FROM release_group rg

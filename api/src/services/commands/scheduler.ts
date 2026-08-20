@@ -15,6 +15,7 @@ import {
     hasActiveHousekeepingTask,
     hasActiveMonitoringCycleWorkflow,
     hasActiveTask,
+    hasActiveLibraryWideRescan,
     loadMonitoringProgress,
     saveMonitoringProgress,
     stampMonitoringCompleted,
@@ -335,17 +336,23 @@ export function queueRescanFoldersPass(options: {
     monitorArtist?: boolean;
     addNewArtists?: boolean;
     trackUnmappedFiles?: boolean;
+    filter?: "none" | "known" | "matched";
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
-    const refId = monitoringCycle ? `rescan-folders:${monitoringCycle}` : "rescan-folders";
+    const artistIds = normalizeArtistIds(options.artistIds) ?? [];
+    const refId = artistIds.length > 0
+        ? artistIds[0]
+        : (monitoringCycle ? `rescan-folders:${monitoringCycle}` : "rescan-folders");
     const commandId = CommandQueueManager.push(
         CommandNames.RescanFolders,
         {
             addNewArtists: options.addNewArtists ?? false,
-            artistIds: normalizeArtistIds(options.artistIds),
+            artistIds,
+            artistId: artistIds.length === 1 ? artistIds[0] : undefined,
             monitorArtist: options.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
             fullProcessing: options.fullProcessing ?? false,
             trackUnmappedFiles: options.trackUnmappedFiles ?? true,
+            filter: options.filter ?? (artistIds.length > 0 ? "matched" : "known"),
             monitoringCycle,
         },
         refId,
@@ -643,7 +650,7 @@ function getScheduledTaskActiveState(definition: ScheduledTaskDefinition): boole
         case "monitoring-cycle":
             return hasActiveMonitoringCycleWorkflow() || hasPendingMonitoringTerminalPass();
         case "root-scan":
-            return hasActiveTask(CommandNames.RescanFolders);
+            return hasActiveLibraryWideRescan();
         case "housekeeping":
             return hasActiveHousekeepingTask();
         default:
@@ -788,6 +795,7 @@ export function pollScheduledTasks() {
                 trigger: CommandTrigger.Scheduled,
                 fullProcessing: false,
                 addNewArtists: false,
+                filter: "known",
             });
             if (commandId !== -1) {
                 markScheduledTaskQueued(definition.key);

@@ -412,7 +412,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     category: "monitoring",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueRescanFoldersPass({ trigger: CommandTrigger.Manual, fullProcessing: false }),
+    run: () => queueRescanFoldersPass({ trigger: CommandTrigger.Manual, fullProcessing: false, filter: "known" }),
   },
   {
     id: "housekeeping",
@@ -497,18 +497,6 @@ const SYSTEM_TASK_DEFINITIONS = [
     riskLevel: "medium",
     visibleInSystemTasks: true,
     run: () => queueCheckUpgradesPass({ trigger: CommandTrigger.Manual }),
-  },
-  {
-    id: "rescan-folders",
-    kind: "manual",
-    commandName: "RescanFolders",
-    name: "Rescan Folders",
-    description: "Rescan configured library roots for known artist folders.",
-    taskName: CommandNames.RescanFolders,
-    category: "library",
-    riskLevel: "medium",
-    visibleInSystemTasks: false,
-    run: () => queueRescanFoldersPass({ trigger: CommandTrigger.Manual, fullProcessing: false }),
   },
   {
     id: "refresh-all-monitored",

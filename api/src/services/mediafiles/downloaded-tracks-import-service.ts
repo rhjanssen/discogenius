@@ -114,6 +114,56 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
     }
 }
 
+/**
+ * Import tagging reads Albums.genres. The artist-summary upsert does not write
+ * genres; only full release-group detail does. Hydrate any dest album whose
+ * genres are still empty so the tagger sees catalog genres, not the downloader's
+ * leftover single genre. Does not change the tagger.
+ */
+export async function ensureAlbumCatalogGenresForFileIds(fileIds: readonly number[]): Promise<void> {
+    const ids = Array.from(new Set(
+        fileIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
+    ));
+    if (ids.length === 0) return;
+
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db.prepare(`
+        SELECT DISTINCT
+          album.mbid AS mbid,
+          album.artist_mbid AS artistMbid,
+          album.genres AS genres
+        FROM TrackFiles file
+        JOIN Albums album ON album.mbid = file.canonical_release_group_mbid
+        WHERE file.id IN (${placeholders})
+          AND file.file_type = 'track'
+          AND album.mbid IS NOT NULL
+    `).all(...ids) as Array<{ mbid: string; artistMbid: string | null; genres: string | null }>;
+
+    const missing = rows.filter((row) => {
+        const raw = String(row.genres || "").trim();
+        return !raw || raw === "[]" || raw === "null";
+    });
+    if (missing.length === 0) return;
+
+    const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+    const byArtist = new Map<string, string[]>();
+    for (const row of missing) {
+        const artistMbid = String(row.artistMbid || "").trim();
+        const mbid = String(row.mbid || "").trim();
+        if (!artistMbid || !mbid) continue;
+        const bucket = byArtist.get(artistMbid) ?? [];
+        bucket.push(mbid);
+        byArtist.set(artistMbid, bucket);
+    }
+    for (const [artistMbid, mbids] of byArtist) {
+        try {
+            await servarrMetadata.syncArtistReleaseGroups(artistMbid, mbids);
+        } catch (error) {
+            console.warn(`[ImportDownload] Failed to hydrate catalog genres for ${mbids.length} album(s) of ${artistMbid}:`, error);
+        }
+    }
+}
+
 export class ImportDownloadCancelledError extends Error {
     constructor(phase: string) {
         super(`Import cancelled at safe boundary: ${phase}`);
@@ -1209,6 +1259,9 @@ export class DownloadedTracksImportService {
 
             cancellationCheckpoint("before applying audio tag rules");
             try {
+                if (importedFileIds.length > 0) {
+                    await ensureAlbumCatalogGenresForFileIds(importedFileIds);
+                }
                 const retagResult = importedFileIds.length > 0
                     ? await AudioTagService.apply(importedFileIds, {
                         includeExternalLyrics: lyricResult !== null,

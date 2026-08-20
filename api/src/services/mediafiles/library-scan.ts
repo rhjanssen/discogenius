@@ -39,6 +39,7 @@ import { LibraryFilesService } from "./library-files.js";
 import { libraryMetadataBackfillService, type MetadataFillResult } from "./library-metadata-backfill.js";
 import { createCooperativeBatcher, yieldToEventLoop } from "../../utils/concurrent.js";
 import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
+import { shouldRematchUnmatchedFiles, type ScanFileFilter } from "./scan-file-filter.js";
 
 // ============================================================================
 // Types
@@ -113,6 +114,11 @@ export interface DiscoveryProgress {
 export interface ScanOptions {
     /** Scope scan to specific artist IDs. When omitted, all managed artists are scanned. */
     artistIds?: string[];
+    /**
+     * Lidarr FilterFilesType. `known` skips rematching unmatched existing files.
+     * Default `matched` keeps the historical scanArtist behaviour.
+     */
+    filter?: ScanFileFilter;
     /** Discover and import unknown artist folders found in library roots. */
     addNewArtists?: boolean;
     /** Monitor newly discovered artists. Only relevant when addNewArtists is true. */
@@ -238,6 +244,7 @@ export class DiskScanService {
                 });
                 const artistResult = await this.scanArtist(artistId, {
                     trackUnmappedFiles: options.trackUnmappedFiles,
+                    filter: options.filter,
                     onProgress: (event) => {
                         onProgress?.({
                             phase: "reconcile",
@@ -271,6 +278,7 @@ export class DiskScanService {
                 });
             }, {
                 trackUnmappedFiles: options.trackUnmappedFiles,
+                filter: options.filter,
             });
             result.artists = reconcileResult.artists;
             result.orphansRemoved = reconcileResult.totalOrphans;
@@ -349,6 +357,7 @@ export class DiskScanService {
             onProgress?: (event: ArtistScanProgress) => void;
             fileIndex?: RootFileIndex;
             trackUnmappedFiles?: boolean;
+            filter?: ScanFileFilter;
         },
     ): Promise<DiskScanResult> {
         const result: DiskScanResult = {
@@ -392,26 +401,24 @@ export class DiskScanService {
         const phaseC = this.updateChangedFiles(artistId);
         result.filesUpdated = phaseC.updated;
 
-        // Phase D: Re-link historical/manual rows that have a file path but no media link.
-        const phaseD = relinkUnresolvedLibraryFiles({
-            artistId,
-            fileExists: (filePath) => fs.existsSync(filePath),
-            resolveStoredLibraryPath,
-            resolveLibraryRootKey,
-            resolveLibraryRootPath,
-            getDefaultLibraryRootPath: () => Config.getMusicPath(),
-            matchFileToMedia: (filePath, targetArtistId, libraryRoot) => this.matchFileToMedia(filePath, targetArtistId, libraryRoot),
-            upsertLibraryFile: (params) => this.upsertLibraryFile(params),
-        });
-        result.filesUpdated += phaseD.relinked;
+        // Phase D/E rematch unmatched existing files. Lidarr FilterFilesType.Known
+        // skips this: only new files and size/mtime changes. Matched/None rematch.
+        if (shouldRematchUnmatchedFiles(options?.filter ?? "matched")) {
+            const phaseD = relinkUnresolvedLibraryFiles({
+                artistId,
+                fileExists: (filePath) => fs.existsSync(filePath),
+                resolveStoredLibraryPath,
+                resolveLibraryRootKey,
+                resolveLibraryRootPath,
+                getDefaultLibraryRootPath: () => Config.getMusicPath(),
+                matchFileToMedia: (filePath, targetArtistId, libraryRoot) => this.matchFileToMedia(filePath, targetArtistId, libraryRoot),
+                upsertLibraryFile: (params) => this.upsertLibraryFile(params),
+            });
+            result.filesUpdated += phaseD.relinked;
 
-        // Phase E: self-heal canonical catalog links from embedded MB tags.
-        // Rows that were imported but never got canonical_track/recording_mbid
-        // (e.g. a provider offer with null MBIDs) exist on disk yet never count
-        // as downloaded. Re-link them directly from the file's own MusicBrainz
-        // tags — no provider offer required.
-        const phaseE = await this.backfillCanonicalLinksFromTags(artistId);
-        result.filesUpdated += phaseE.healed;
+            const phaseE = await this.backfillCanonicalLinksFromTags(artistId);
+            result.filesUpdated += phaseE.healed;
+        }
 
         LibraryFilesService.pruneDuplicateTrackedAssets(artistId);
 
@@ -522,7 +529,7 @@ export class DiskScanService {
      */
     private static async reconcileAllArtists(
         onProgress?: (event: FullLibraryScanProgress) => void,
-        options?: { trackUnmappedFiles?: boolean },
+        options?: { trackUnmappedFiles?: boolean; filter?: ScanFileFilter },
     ): Promise<{ artists: number; totalOrphans: number; totalFlagsReset: number; filesIndexed: number; filesUpdated: number; unmappedOrphans: number }> {
         const artists = getManagedArtists({ includeLibraryFiles: true })
             .map((artist) => ({ id: String(artist.id), name: artist.name || String(artist.id) }));
@@ -581,6 +588,7 @@ export class DiskScanService {
                 },
                 fileIndex: usePrebuiltRootIndex ? fileIndex : undefined,
                 trackUnmappedFiles: options?.trackUnmappedFiles,
+                filter: options?.filter,
             });
             totalOrphans += result.orphansRemoved;
             totalFlagsReset += result.downloadFlagsReset;

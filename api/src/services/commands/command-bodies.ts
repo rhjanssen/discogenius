@@ -254,6 +254,7 @@ export interface CurateArtistCommand extends CommandBodyCommon {
 
 export interface RescanFoldersCommand extends CommandBodyCommon {
   artistId?: string;
+  artistIds?: string[];
   artistName?: string;
   workflow?: Extract<ArtistWorkflowValue, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring">;
   skipDownloadQueue?: boolean;
@@ -261,6 +262,11 @@ export interface RescanFoldersCommand extends CommandBodyCommon {
   skipMetadataBackfill?: boolean;
   trackUnmappedFiles?: boolean;
   forceDownloadQueue?: boolean;
+  /**
+   * Lidarr FilterFilesType. Scheduled root scan is `known`. A metadata-changed
+   * artist refresh is `matched`. Omitted defaults in the handler.
+   */
+  filter?: "none" | "known" | "matched";
   // Library-wide scan options
   addNewArtists?: boolean;
   monitorArtist?: boolean;

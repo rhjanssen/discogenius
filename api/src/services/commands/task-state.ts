@@ -141,6 +141,23 @@ export function hasActiveTask(taskName: string): boolean {
     return Boolean(row);
 }
 
+/**
+ * Library-wide RescanFolders only. Per-artist workflow scans share the command
+ * name but must not reset or block the daily root-scan clock (Lidarr
+ * UpdateScheduledTask => ArtistIds.Empty()).
+ */
+export function hasActiveLibraryWideRescan(): boolean {
+    const row = db.prepare(`
+    SELECT 1
+    FROM commands
+    WHERE name = ?
+      AND status IN ('queued', 'started')
+      AND (ref_id = 'rescan-folders' OR ref_id LIKE 'rescan-folders:%')
+    LIMIT 1
+  `).get(CommandNames.RescanFolders);
+    return Boolean(row);
+}
+
 export function hasActiveHousekeepingTask(): boolean {
     return Boolean(getActiveHousekeepingStmt().get());
 }
