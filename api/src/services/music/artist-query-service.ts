@@ -22,7 +22,11 @@ import {
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
-import { planHeadlineQualitySql } from "../../utils/display-quality-sql.js";
+import {
+    ARTIST_WANTED_RELEASE_GROUPS_SQL,
+    planQualityExpression,
+    releaseGroupLibraryStateCte,
+} from "./release-group-library-state-sql.js";
 import { ARTIST_TOP_TRACK_LIMIT, ArtistTopTrackService } from "./artist-top-track-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 
@@ -514,120 +518,21 @@ function mapReleaseGroupCardForArtistPage(row: Record<string, any>, options: {
     };
 }
 
-const artistReleaseGroupLibraryStateCte = `
-  WITH ranked_library_state AS MATERIALIZED (
-    SELECT
-      library_group.release_group_id,
-      CASE WHEN EXISTS (
-        SELECT 1
-        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-        WHERE allowed.value = 'spatial'
-      ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-      1 AS monitored,
-      MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) OVER (
-        PARTITION BY
-          library_group.release_group_id,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-            WHERE allowed.value = 'spatial'
-          ) THEN 'spatial' ELSE 'stereo' END
-      ) AS monitored_lock,
-      release.mbid AS selected_release_mbid,
-      provider_item.id AS provider_item_id,
-      COALESCE(provider_item.provider, plan.provider) AS selected_provider,
-      provider_item.provider_id AS selected_provider_id,
-      provider_item.provider_url,
-      ${planHeadlineQualitySql("plan.id")} AS quality,
-      release_match.match_state AS match_status,
-      release_match.method AS match_method,
-      release_match.relation AS match_relation,
-      plan.composition AS plan_composition,
-      plan.coverage AS plan_coverage,
-      plan.target_track_count AS plan_target_track_count,
-      COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
-      provider_item.cover_id AS asset_id,
-      provider_item.explicit,
-      ROW_NUMBER() OVER (
-        PARTITION BY
-          library_group.release_group_id,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-            WHERE allowed.value = 'spatial'
-          ) THEN 'spatial' ELSE 'stereo' END
-        ORDER BY
-          CASE WHEN plan.state = 'current' AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
-          -- One Library can monitor several Editions of the same Album; only
-          -- the representative one speaks for the card. Without this a
-          -- supplemental Edition's plan (or its absence) decided the badge.
-          library_release.representative DESC,
-          library_release.updated_at DESC,
-          library_release.id DESC,
-          library.id ASC
-      ) AS state_rank
-    FROM LibraryAlbums library_group
-    JOIN Libraries library
-      ON library.id = library_group.library_id
-     AND library.enabled = 1
-    JOIN quality_profiles quality_profile
-      ON quality_profile.id = library.quality_profile_id
-    LEFT JOIN LibraryEditions library_release
-      ON library_release.library_id = library_group.library_id
-     AND EXISTS (
-       SELECT 1
-       FROM AlbumEditions candidate_release
-       WHERE candidate_release.id = library_release.edition_id
-         AND candidate_release.release_group_id = library_group.release_group_id
-     )
-    LEFT JOIN AlbumEditions release
-      ON release.id = library_release.edition_id
-    LEFT JOIN SelectedAcquisitionPlans plan
-      ON plan.library_edition_id = library_release.id
-     AND plan.state = 'current'
-    LEFT JOIN AcquisitionPlanSources source
-      ON source.plan_id = plan.id
-     AND source.id = (
-       SELECT preferred_source.id
-       FROM AcquisitionPlanSources preferred_source
-       WHERE preferred_source.plan_id = plan.id
-       ORDER BY
-         CASE preferred_source.role WHEN 'primary' THEN 0 ELSE 1 END,
-         preferred_source.sort_order,
-         preferred_source.id
-       LIMIT 1
-     )
-    LEFT JOIN ProviderEditionMatches release_match
-      ON release_match.id = source.provider_edition_match_id
-     AND release_match.match_state = 'accepted'
-    LEFT JOIN ProviderItems provider_item
-      ON provider_item.id = release_match.provider_edition_item_id
-     AND (
-       provider_item.availability IS NULL
-       OR LOWER(CAST(provider_item.availability AS TEXT))
-          NOT IN ('0', 'false', 'unavailable', 'no', '')
-     )
-  ),
-  library_state AS MATERIALIZED (
-    SELECT *
-    FROM ranked_library_state
-    WHERE state_rank = 1
-  )
-`;
-
 function loadArtistReleaseGroupRows(artistMbid: string): any[] {
+    const stereoQuality = planQualityExpression("stereo.selected_plan_id");
+    const spatialQuality = planQualityExpression("spatial.selected_plan_id");
     return db.prepare(`
-      ${artistReleaseGroupLibraryStateCte}
+      ${releaseGroupLibraryStateCte(ARTIST_WANTED_RELEASE_GROUPS_SQL)}
       SELECT
         release_group.*,
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
-        COALESCE(stereo.quality, spatial.quality) AS selected_quality,
+        COALESCE(${stereoQuality}, ${spatialQuality}) AS selected_quality,
         stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
         stereo.provider_url AS stereo_provider_url,
         stereo.selected_release_mbid AS stereo_release_mbid,
-        stereo.quality AS stereo_quality,
+        ${stereoQuality} AS stereo_quality,
         stereo.match_status AS stereo_match_status,
         stereo.match_method AS stereo_match_method,
         stereo.match_relation AS stereo_plan_relation,
@@ -640,7 +545,7 @@ function loadArtistReleaseGroupRows(artistMbid: string): any[] {
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.provider_url AS spatial_provider_url,
         spatial.selected_release_mbid AS spatial_release_mbid,
-        spatial.quality AS spatial_quality,
+        ${spatialQuality} AS spatial_quality,
         spatial.match_status AS spatial_match_status,
         spatial.match_method AS spatial_match_method,
         spatial.match_relation AS spatial_plan_relation,
@@ -657,19 +562,15 @@ function loadArtistReleaseGroupRows(artistMbid: string): any[] {
           WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1
           ELSE 0
         END AS wanted
-      FROM Albums release_group
+      FROM wanted_groups
+      JOIN Albums release_group
+        ON release_group.id = wanted_groups.id
       LEFT JOIN library_state stereo
         ON stereo.release_group_id = release_group.id
        AND stereo.library_class = 'stereo'
       LEFT JOIN library_state spatial
         ON spatial.release_group_id = release_group.id
        AND spatial.library_class = 'spatial'
-      WHERE release_group.artist_mbid = ?
-         OR release_group.mbid IN (
-           SELECT scope.release_group_mbid
-           FROM ArtistReleaseGroups scope
-           WHERE scope.artist_mbid = ?
-         )
       ORDER BY
         (release_group.first_release_date IS NULL) ASC,
         release_group.first_release_date DESC,

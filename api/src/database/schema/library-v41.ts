@@ -345,8 +345,11 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
     CREATE INDEX idx_library_artists_library
       ON LibraryArtists(library_id, monitored, managed_artist_id);
-    -- UNIQUE(library_id, release_group_id) already indexes the only lookup
-    -- LibraryAlbums has left, so no separate monitoring index is needed.
+    -- UNIQUE(library_id, release_group_id) covers per-library monitoring
+    -- lookups. Artist-page and paged-library reads join the other way: a
+    -- bounded set of release groups looking up their LibraryAlbums rows.
+    CREATE INDEX idx_library_albums_release_group
+      ON LibraryAlbums(release_group_id);
     CREATE INDEX idx_library_releases_library
       ON LibraryEditions(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist

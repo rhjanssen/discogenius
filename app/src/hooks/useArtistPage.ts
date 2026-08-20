@@ -41,7 +41,7 @@ export function useArtistPage(artistId: string | undefined) {
         queryFn: async ({ signal }) => api.getArtistPage(artistId!, {
             section: "albums",
             signal,
-            timeoutMs: 60_000,
+            timeoutMs: 20_000,
         }),
         enabled: Boolean(artistId) && summaryQuery.isSuccess,
         refetchOnWindowFocus: false,
@@ -49,18 +49,18 @@ export function useArtistPage(artistId: string | undefined) {
         retry: 1,
     });
 
-    // Tracks and videos wait for the albums section: the page reads top-down
-    // (header → albums → tracks → videos), so later sections must not flash in
-    // above a still-loading library, and the freed connections let the header
-    // artwork + ultrablur colors resolve first.
+    // Albums, tracks, and videos all wait on identity so the header paints
+    // first, then load together. Tracks used to wait for albums because that
+    // section stalled the API for tens of seconds; once albums is a bounded
+    // artist-scoped read, serializing the rest only delays the page.
     const tracksQuery = useQuery<any>({
         queryKey: ["artistPage", artistId, "tracks"],
         queryFn: async ({ signal }) => api.getArtistPage(artistId!, {
             section: "tracks",
             signal,
-            timeoutMs: 60_000,
+            timeoutMs: 20_000,
         }),
-        enabled: Boolean(artistId) && albumsQuery.isSuccess,
+        enabled: Boolean(artistId) && summaryQuery.isSuccess,
         refetchOnWindowFocus: false,
         staleTime: 30_000,
         retry: 1,
@@ -71,9 +71,9 @@ export function useArtistPage(artistId: string | undefined) {
         queryFn: async ({ signal }) => api.getArtistPage(artistId!, {
             section: "videos",
             signal,
-            timeoutMs: 60_000,
+            timeoutMs: 20_000,
         }),
-        enabled: Boolean(artistId) && albumsQuery.isSuccess,
+        enabled: Boolean(artistId) && summaryQuery.isSuccess,
         refetchOnWindowFocus: false,
         staleTime: 30_000,
         retry: 1,

@@ -526,7 +526,20 @@ export function initDatabase() {
   }
 
   ensureDownloadQueueSchema();
+  ensureLibraryLookupIndexes();
   initializeDefaultData();
+}
+
+/**
+ * Additive indexes for existing schema-43 catalogs. Fresh databases already
+ * get these from createLibrarySchemaV41(); IF NOT EXISTS keeps open-existing
+ * startups from failing and from rebuilding the catalog.
+ */
+function ensureLibraryLookupIndexes(): void {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_library_albums_release_group
+      ON LibraryAlbums(release_group_id)
+  `);
 }
 
 const DOWNLOAD_QUEUE_CUTOVER_KEY = "download_queue.wait_table_cutover";

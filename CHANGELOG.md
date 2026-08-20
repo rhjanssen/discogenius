@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.9.3] - 2026-08-20
+
+Artist, album, and library pages no longer rank every library album
+against millions of acquisition-plan tracks before drawing a card.
+
+### Fixed
+- **Artist album cards and the library list scoped their library-state
+  CTE to the page.** Both queries materialized every `LibraryAlbums` row
+  (~14k) and ran a correlated `AcquisitionPlanTracks` headline-quality
+  scan (~3.3M rows) before throwing most of that work away. Ranking now
+  starts from the artist's release groups or the 50-row page, and quality
+  is computed only on those outer rows.
+- **Library list fallback no longer depends on
+  `ArtistReleaseGroupCuration`.** A refresh can empty that overlay while
+  `AlbumLibraryIndex` is invalidated, which made `/album?limit=50` return
+  zero albums. The unindexed path pages from `LibraryAlbums` in enabled
+  libraries, matching the index.
+- **Artist-page top tracks no longer 500 when SQLite is busy.** Rebuilding
+  `ArtistTopTracks` on the request path raced with `RefreshArtist` writes.
+  A locked rebuild now returns the page with an empty/stale track list.
+- **Artist page sections load in parallel after identity.** Tracks and
+  videos no longer wait for the albums section.
+
 ## [2.9.2] - 2026-08-20
 
 Queue history and video pages stay on canonical recording ids, and Apple

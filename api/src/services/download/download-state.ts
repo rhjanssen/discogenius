@@ -331,21 +331,6 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
       AND ${monitoredVideoFlag}
   `).all(...metadataIds) as Array<{ link: number; recording_id: number }>;
 
-  // 3. Downloaded video recordings, derived once from the (small) set of
-  //    downloaded video files; no video files ⇒ nothing is downloaded.
-  const downloadedVideoIds = new Set<number>();
-  if (enabledLibrarySlots.video && db.prepare("SELECT 1 FROM TrackFiles WHERE file_class = 'video' LIMIT 1").get()) {
-    const downloadedRows = db.prepare(`
-      SELECT DISTINCT lf.recording_id
-      FROM TrackFiles lf
-      WHERE lf.file_class = 'video'
-        AND lf.recording_id IS NOT NULL
-    `).all() as Array<{ recording_id: number }>;
-    for (const row of downloadedRows) {
-      downloadedVideoIds.add(Number(row.recording_id));
-    }
-  }
-
   // Combine per requested artist in JS.
   const librariesByMbid = new Map<string, Array<{ total: number; downloaded: number }>>();
   for (const row of libraryRows) {
@@ -364,6 +349,31 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
     const set = videosByMetadataId.get(Number(row.link)) ?? new Set<number>();
     set.add(Number(row.recording_id));
     videosByMetadataId.set(Number(row.link), set);
+  }
+
+  // 3. Downloaded video recordings among the artist's monitored videos only.
+  //    Walking every video TrackFiles row on each artist page used to stall
+  //    the event loop on a mature library.
+  const candidateVideoIds = new Set<number>();
+  for (const ids of videosByMbid.values()) {
+    for (const id of ids) candidateVideoIds.add(id);
+  }
+  for (const ids of videosByMetadataId.values()) {
+    for (const id of ids) candidateVideoIds.add(id);
+  }
+  const downloadedVideoIds = new Set<number>();
+  if (enabledLibrarySlots.video && candidateVideoIds.size > 0) {
+    const videoIds = Array.from(candidateVideoIds);
+    const marks = videoIds.map(() => "?").join(", ");
+    const downloadedRows = db.prepare(`
+      SELECT DISTINCT recording_id
+      FROM TrackFiles
+      WHERE file_class = 'video'
+        AND recording_id IN (${marks})
+    `).all(...videoIds) as Array<{ recording_id: number }>;
+    for (const row of downloadedRows) {
+      downloadedVideoIds.add(Number(row.recording_id));
+    }
   }
 
   const rows = targets.map((target) => {

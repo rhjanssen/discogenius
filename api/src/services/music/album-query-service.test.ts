@@ -362,6 +362,26 @@ test("album list carries selected provider permalinks through the indexed detail
   );
 });
 
+test("album list stays populated when ArtistReleaseGroupCuration is empty", () => {
+  seedAlbum({
+    mbid: "no-curation-album",
+    title: "No Curation",
+    stereoProvider: "tidal",
+    stereoQuality: "HIRES_LOSSLESS",
+    spatialProvider: "apple-music",
+    spatialQuality: "DOLBY_ATMOS",
+  });
+  dbModule.db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
+
+  const result = albumQueryModule.AlbumQueryService.listAlbums({
+    limit: 20,
+    offset: 0,
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.items[0]?.id, "no-curation-album");
+});
+
 test("provider and quality filters must be satisfied by the same selected library", () => {
   seedAlbum({
     mbid: "cross-slot-album",

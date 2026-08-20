@@ -99,7 +99,16 @@ export class ArtistTopTrackService {
     `).get(identity.artistMetadataId);
 
     if (!state) {
-      this.rebuildForArtist(artistId, identity.artistMbid);
+      try {
+        this.rebuildForArtist(artistId, identity.artistMbid);
+      } catch (error: any) {
+        if (error?.code !== "SQLITE_BUSY") {
+          throw error;
+        }
+        // A worker already holds the write lock (RefreshArtist, projection
+        // rebuild). The artist page must still return; tracks stay empty until
+        // the next request can rebuild.
+      }
     }
 
     return identity;
