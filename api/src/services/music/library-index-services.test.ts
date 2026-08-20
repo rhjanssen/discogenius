@@ -13,17 +13,25 @@ let dbModule: typeof import("../../database.js");
 let AlbumLibraryIndexService: typeof import("./album-library-index-service.js").AlbumLibraryIndexService;
 let TrackLibraryIndexService: typeof import("./track-library-index-service.js").TrackLibraryIndexService;
 let ALBUM_LIBRARY_INDEX_JOIN_SQL: typeof import("./album-library-index-service.js").ALBUM_LIBRARY_INDEX_JOIN_SQL;
+let TRACK_LIBRARY_INDEX_INSERT_SQL: typeof import("./track-library-index-service.js").TRACK_LIBRARY_INDEX_INSERT_SQL;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   ({ AlbumLibraryIndexService, ALBUM_LIBRARY_INDEX_JOIN_SQL } = await import("./album-library-index-service.js"));
-  ({ TrackLibraryIndexService } = await import("./track-library-index-service.js"));
+  ({ TrackLibraryIndexService, TRACK_LIBRARY_INDEX_INSERT_SQL } = await import("./track-library-index-service.js"));
 });
 
 after(() => {
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("track library index classifies spatial vs stereo once per library", () => {
+  assert.match(TRACK_LIBRARY_INDEX_INSERT_SQL, /library_class AS MATERIALIZED/);
+  assert.match(TRACK_LIBRARY_INDEX_INSERT_SQL, /library_class\.is_spatial = 0/);
+  assert.match(TRACK_LIBRARY_INDEX_INSERT_SQL, /library_class\.is_spatial = 1/);
+  assert.equal((TRACK_LIBRARY_INDEX_INSERT_SQL.match(/json_each/g) || []).length, 1);
 });
 
 test("album library index joins LibraryEditions through the album's editions", () => {

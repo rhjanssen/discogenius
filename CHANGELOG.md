@@ -16,8 +16,11 @@ name that two MusicBrainz artists share no longer hides both of them.
   library albums, joins editions by album rather than every edition in
   the library, invalidates on membership/file/library-profile changes,
   rebuilds under the write gate in chunks, and Housekeeping queues a
-  rebuild when the marker is still missing. SQLITE_BUSY on retry-safe
-  commands (Rescan Folders, Refresh Artist) is re-queued instead of
+  rebuild when the marker is still missing. Track-index rebuild now
+  reports `(done/total)` editions and classifies spatial vs stereo once
+  per library instead of running `json_each` on every track. SQLITE_BUSY
+  on retry-safe commands (Rescan Folders, Refresh Artist) is re-queued
+  instead of
   failed; rename/retag still fail closed. Rename Apply and video
   placement enqueue retries SQLITE_BUSY instead of returning HTTP 500.
   Album monitor, edition selection, representative, and acquisition-plan

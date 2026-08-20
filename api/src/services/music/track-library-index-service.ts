@@ -1,6 +1,6 @@
 import { db, withSqliteWriteGate } from "../../database.js";
 
-const TRACK_INDEX_INSERT_SQL = `
+export const TRACK_LIBRARY_INDEX_INSERT_SQL = `
   INSERT INTO TrackLibraryIndex (
     track_id,
     album_edition_id,
@@ -10,6 +10,19 @@ const TRACK_INDEX_INSERT_SQL = `
     has_stereo,
     has_spatial,
     updated_at
+  )
+  WITH library_class AS MATERIALIZED (
+    SELECT
+      library.id AS library_id,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      ) THEN 1 ELSE 0 END AS is_spatial
+    FROM Libraries library
+    JOIN quality_profiles quality_profile
+      ON quality_profile.id = library.quality_profile_id
+    WHERE library.enabled = 1
   )
   SELECT
     track.id,
@@ -23,21 +36,13 @@ const TRACK_INDEX_INSERT_SQL = `
     MAX(CASE
       WHEN plan.state = 'current'
        AND plan_track.id IS NOT NULL
-       AND NOT EXISTS (
-         SELECT 1
-         FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-         WHERE allowed.value = 'spatial'
-       )
+       AND library_class.is_spatial = 0
       THEN 1 ELSE 0
     END),
     MAX(CASE
       WHEN plan.state = 'current'
        AND plan_track.id IS NOT NULL
-       AND EXISTS (
-         SELECT 1
-         FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-         WHERE allowed.value = 'spatial'
-       )
+       AND library_class.is_spatial = 1
       THEN 1 ELSE 0
     END),
     CURRENT_TIMESTAMP
@@ -48,8 +53,8 @@ const TRACK_INDEX_INSERT_SQL = `
   JOIN Libraries library
     ON library.id = library_release.library_id
    AND library.enabled = 1
-  JOIN quality_profiles quality_profile
-    ON quality_profile.id = library.quality_profile_id
+  JOIN library_class
+    ON library_class.library_id = library.id
   JOIN AlbumEditions release
     ON release.id = library_release.edition_id
   JOIN LibraryAlbums library_group
@@ -93,6 +98,7 @@ export class TrackLibraryIndexService {
 
   static async rebuildGated(
     yieldToEventLoop?: () => Promise<void>,
+    onProgress?: (done: number, total: number) => void,
   ): Promise<{ rows: number }> {
     await withSqliteWriteGate(() => {
       db.prepare("DELETE FROM TrackLibraryIndex").run();
@@ -105,6 +111,7 @@ export class TrackLibraryIndexService {
       await withSqliteWriteGate(() => {
         rows += this.insertForEditionIds(chunk);
       }, "track-library-index-rebuild");
+      onProgress?.(Math.min(editionIds.length, start + chunk.length), editionIds.length);
       if (yieldToEventLoop) {
         await yieldToEventLoop();
       }
@@ -137,7 +144,7 @@ export class TrackLibraryIndexService {
     }
     const marks = editionIds.map(() => "?").join(", ");
     const result = db.prepare(`
-      ${TRACK_INDEX_INSERT_SQL}
+      ${TRACK_LIBRARY_INDEX_INSERT_SQL}
       WHERE library_release.edition_id IN (${marks})
       GROUP BY track.id
     `).run(...editionIds);

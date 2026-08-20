@@ -258,6 +258,12 @@ export async function runLowCouplingMaintenanceJob(
                 });
                 indexedTracks = (await TrackLibraryIndexService.rebuildGated(
                     context.yieldToEventLoop,
+                    (done, total) => {
+                        context.updateCommandDescription({
+                            progress: 2,
+                            description: `Building track library index (${done}/${total})`,
+                        });
+                    },
                 )).rows;
             }
 
