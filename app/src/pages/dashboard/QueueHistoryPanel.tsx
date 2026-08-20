@@ -34,9 +34,10 @@ import { useNavigate } from "react-router-dom";
 import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
-import { ProviderMark } from "@/components/ui/ProviderMark";
+import { queueProviderOffers } from "@/utils/queueProviderOffers";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useDashboardStyles } from "./dashboardStyles";
 import { formatRelativeTime } from "./dashboardUtils";
@@ -300,6 +301,13 @@ export function QueueHistoryPanel({
                         const row = mapQueueHistoryItemToRow(item);
                         const isVideo = row.isVideo;
                         const isFailed = item.status === "failed" || Boolean(item.error);
+                        const qualityOffers = queueProviderOffers({
+                            type: item.type,
+                            quality: row.quality ?? item.quality,
+                            provider: item.provider,
+                            providerId: item.providerId,
+                            url: item.url,
+                        });
 
                         const handleHistoryRowClick = (event: ReactMouseEvent<HTMLDivElement>) => {
                             if (!row.navPath || isInteractiveElementTarget(event.target)) {
@@ -352,8 +360,11 @@ export function QueueHistoryPanel({
                                                 <Text className={styles.downloadArtist} truncate>{row.subtitle}</Text>
                                             ) : null}
                                             <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
-                                                {item.provider ? <ProviderMark provider={item.provider} size={16} /> : null}
-                                                {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
+                                                {qualityOffers.length > 0
+                                                    ? <ProviderQualityRow size="small" offers={qualityOffers} />
+                                                    : (row.quality
+                                                        ? <QualityBadge quality={row.quality} size="small" />
+                                                        : null)}
                                                 {row.mediaBadge ? (
                                                     <MediaTypeBadge kind={row.mediaBadge.kind} label={row.mediaBadge.label} size="small" />
                                                 ) : null}

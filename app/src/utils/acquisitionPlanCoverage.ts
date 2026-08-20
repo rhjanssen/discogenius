@@ -22,3 +22,33 @@ export function formatAcquisitionPlanCoverageSummary(input: {
   }
   return `Single source · ${coverageLabel}`;
 }
+
+/**
+ * Coverage line for a selected stereo/spatial offer when the caller has only
+ * the card's plan/match fields (artist page, library grid). Missing relation
+ * on a single source is treated as exact — the same default the album page
+ * uses when a plan has not been loaded yet.
+ */
+export function coverageSummaryForSelectedOffer(input: {
+  composition?: string | null;
+  relation?: string | null;
+  coverage?: number | null;
+  targetTrackCount?: number | null;
+  providerAlbumId?: string | null;
+}): string {
+  const albumIds = String(input.providerAlbumId || "")
+    .split(";")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const isComposite = input.composition === "composite" || albumIds.length > 1;
+  const coverage = Number(input.coverage);
+  const targetTrackCount = Number(input.targetTrackCount);
+  return formatAcquisitionPlanCoverageSummary({
+    composition: isComposite ? "composite" : "single_source",
+    relation: input.relation ?? (isComposite ? null : "exact"),
+    coverage: Number.isFinite(coverage) ? coverage : 1,
+    targetTrackCount: Number.isFinite(targetTrackCount) && targetTrackCount > 0
+      ? targetTrackCount
+      : 1,
+  });
+}

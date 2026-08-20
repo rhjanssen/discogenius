@@ -50,13 +50,14 @@ import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
+import { queueProviderOffers } from "@/utils/queueProviderOffers";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
-import { ProviderMark } from "@/components/ui/ProviderMark";
 import { QueueHistoryPanel } from "./QueueHistoryPanel";
 import {
     isInteractiveElementTarget,
@@ -1392,6 +1393,13 @@ const QueueTab = () => {
                                 const shouldRenderGroupedTrackRows = group.type === 'album' && groupedTrackItems.length > 0;
                                 const groupError = firstItem?.error || (isFailed ? prog?.statusMessage : undefined);
                                 const groupNavPath = getQueueGroupNavPath(group.type, firstItem);
+                                const qualityOffers = queueProviderOffers({
+                                    type: group.type,
+                                    quality: group.quality ?? firstItem?.quality,
+                                    provider: firstItem?.provider,
+                                    providerId: firstItem?.providerId,
+                                    url: firstItem?.url,
+                                });
                                 const isPendingReorderable = isPendingReorderableGroup(group);
                                 const pendingGroupIndex = isPendingReorderable
                                     ? pendingReorderGroups.findIndex((pendingGroup) => pendingGroup.id === group.id)
@@ -1532,8 +1540,11 @@ const QueueTab = () => {
                                                     <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
                                                         <Text className={styles.downloadArtist} truncate>{group.artist}</Text>
                                                         <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
-                                                            {firstItem?.provider ? <ProviderMark provider={firstItem.provider} size={16} /> : null}
-                                                            {group.quality ? <QualityBadge quality={group.quality} size="small" /> : null}
+                                                            {qualityOffers.length > 0
+                                                                ? <ProviderQualityRow size="small" offers={qualityOffers} />
+                                                                : (group.quality
+                                                                    ? <QualityBadge quality={group.quality} size="small" />
+                                                                    : null)}
                                                             <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
                                                         </div>
                                                     </div>

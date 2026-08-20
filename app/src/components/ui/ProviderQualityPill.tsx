@@ -15,6 +15,7 @@ import {
 } from "./badgeSizes";
 import { badgeGlassFill } from "./badgeChrome";
 import { isUnknownQualityTag } from "@/utils/qualityTier";
+import { coverageSummaryForSelectedOffer } from "@/utils/acquisitionPlanCoverage";
 
 type SlotName = "stereo" | "spatial" | "video";
 type BadgeSize = DiscogeniusBadgeSize;
@@ -41,6 +42,7 @@ export interface ProviderQualityOffer {
      * Album-level plan summary line for the quality-badge tooltip
      * (e.g. "Complete match", "Single source · Full coverage").
      * Track-scoped offers leave this unused — tooltips show ID lines only.
+     * Pass "" to hide the line (queue/history rows).
      */
     coverageSummary?: string | null;
     providerAlbumId?: string | null;
@@ -397,13 +399,22 @@ function buildQualityOfferTooltip(
     const isTrackScoped = Boolean(providerTrackId) || Boolean(offer.musicbrainzTrackId);
     const isComposite = offer.matchKind === "composite" || providerAlbumIds.length > 1;
     // Album-level summary only. Track rows skip the composition line.
-    // Prefer the caller's coverageSummary (Complete match / Full|Partial …).
+    // Callers that pass coverageSummary own the wording (Complete match /
+    // Full|Partial …). An explicit empty string hides the line (queue rows).
+    // Missing copy uses the same default as the album page.
+    const explicitSummary = offer.coverageSummary == null
+        ? null
+        : String(offer.coverageSummary).trim();
     const summaryLine = isVideo || isTrackScoped
         ? null
-        : (String(offer.coverageSummary || "").trim()
-            || (isComposite
-                ? "Composite · Full coverage"
-                : "Single source · Full coverage"));
+        : explicitSummary === ""
+            ? null
+            : (explicitSummary
+                || coverageSummaryForSelectedOffer({
+                    composition: isComposite ? "composite" : "single_source",
+                    relation: isComposite ? null : "exact",
+                    providerAlbumId: offer.providerAlbumId,
+                }));
     const albumIdLabel = isVideo
         ? `${providerName} ID`
         : (isComposite && !isTrackScoped

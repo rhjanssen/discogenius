@@ -42,6 +42,10 @@ const releaseGroupLibraryStateCte = `
       provider_item.provider_url,
       ${planHeadlineQualitySql("plan.id")} AS quality,
       release_match.match_state AS match_status,
+      release_match.relation AS match_relation,
+      plan.composition AS plan_composition,
+      plan.coverage AS plan_coverage,
+      plan.target_track_count AS plan_target_track_count,
       COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
       COALESCE(CAST(provider_item.popularity AS REAL), 0) AS popularity,
       ROW_NUMBER() OVER (
@@ -312,6 +316,10 @@ function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlb
         stereo.selected_release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
+        stereo.match_relation AS stereo_plan_relation,
+        stereo.plan_composition AS stereo_plan_composition,
+        stereo.plan_coverage AS stereo_plan_coverage,
+        stereo.plan_target_track_count AS stereo_plan_target_track_count,
         stereo.cover AS stereo_cover,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
@@ -319,6 +327,10 @@ function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlb
         spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
+        spatial.match_relation AS spatial_plan_relation,
+        spatial.plan_composition AS spatial_plan_composition,
+        spatial.plan_coverage AS spatial_plan_coverage,
+        spatial.plan_target_track_count AS spatial_plan_target_track_count,
         spatial.cover AS spatial_cover,
         ${releaseGroupPopularityExpression} AS popularity
       FROM Albums rg
@@ -392,12 +404,26 @@ function normalizeReleaseGroupListRow(
         stereo_provider_url: row.stereo_provider_url || null,
         stereo_quality: row.stereo_quality || null,
         stereo_match_status: row.stereo_match_status || null,
+        stereo_plan_relation: row.stereo_plan_relation || null,
+        stereo_plan_composition: row.stereo_plan_composition || null,
+        stereo_plan_coverage: row.stereo_plan_coverage == null ? null : Number(row.stereo_plan_coverage),
+        stereo_plan_target_track_count: row.stereo_plan_target_track_count == null
+            ? null
+            : Number(row.stereo_plan_target_track_count),
         stereo_release_mbid: row.stereo_release_mbid || null,
         spatial_provider: includeSpatial ? row.spatial_provider || null : null,
         spatial_provider_id: includeSpatial ? row.spatial_provider_id || null : null,
         spatial_provider_url: includeSpatial ? row.spatial_provider_url || null : null,
         spatial_quality: includeSpatial ? row.spatial_quality || null : null,
         spatial_match_status: includeSpatial ? row.spatial_match_status || null : null,
+        spatial_plan_relation: includeSpatial ? row.spatial_plan_relation || null : null,
+        spatial_plan_composition: includeSpatial ? row.spatial_plan_composition || null : null,
+        spatial_plan_coverage: !includeSpatial || row.spatial_plan_coverage == null
+            ? null
+            : Number(row.spatial_plan_coverage),
+        spatial_plan_target_track_count: !includeSpatial || row.spatial_plan_target_track_count == null
+            ? null
+            : Number(row.spatial_plan_target_track_count),
         spatial_release_mbid: includeSpatial ? row.spatial_release_mbid || null : null,
         selected_provider: row.selected_provider || row.stereo_provider || null,
         selected_provider_id: row.selected_provider_id || null,

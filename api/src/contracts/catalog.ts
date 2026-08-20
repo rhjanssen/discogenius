@@ -54,6 +54,10 @@ export interface AlbumContract {
   stereo_provider_url?: string | null;
   stereo_quality?: string | null;
   stereo_match_status?: string | null;
+  stereo_plan_relation?: string | null;
+  stereo_plan_composition?: string | null;
+  stereo_plan_coverage?: number | null;
+  stereo_plan_target_track_count?: number | null;
   stereo_release_mbid?: string | null;
   spatial_provider?: string | null;
   spatial_provider_id?: string | null;
@@ -61,6 +65,10 @@ export interface AlbumContract {
   spatial_provider_url?: string | null;
   spatial_quality?: string | null;
   spatial_match_status?: string | null;
+  spatial_plan_relation?: string | null;
+  spatial_plan_composition?: string | null;
+  spatial_plan_coverage?: number | null;
+  spatial_plan_target_track_count?: number | null;
   spatial_release_mbid?: string | null;
   selected_provider?: string | null;
   selected_provider_id?: string | null;
@@ -241,12 +249,20 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     stereo_provider_url: expectNullableString(record.stereo_provider_url, `${label}.stereo_provider_url`) ?? null,
     stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,
     stereo_match_status: expectOptionalString(record.stereo_match_status, `${label}.stereo_match_status`) ?? null,
+    stereo_plan_relation: expectOptionalString(record.stereo_plan_relation, `${label}.stereo_plan_relation`) ?? null,
+    stereo_plan_composition: expectOptionalString(record.stereo_plan_composition, `${label}.stereo_plan_composition`) ?? null,
+    stereo_plan_coverage: expectOptionalNumber(record.stereo_plan_coverage, `${label}.stereo_plan_coverage`) ?? null,
+    stereo_plan_target_track_count: expectOptionalNumber(record.stereo_plan_target_track_count, `${label}.stereo_plan_target_track_count`) ?? null,
     stereo_release_mbid: expectOptionalString(record.stereo_release_mbid, `${label}.stereo_release_mbid`) ?? null,
     spatial_provider: expectOptionalString(record.spatial_provider, `${label}.spatial_provider`) ?? null,
     spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
     spatial_provider_url: expectNullableString(record.spatial_provider_url, `${label}.spatial_provider_url`) ?? null,
     spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
     spatial_match_status: expectOptionalString(record.spatial_match_status, `${label}.spatial_match_status`) ?? null,
+    spatial_plan_relation: expectOptionalString(record.spatial_plan_relation, `${label}.spatial_plan_relation`) ?? null,
+    spatial_plan_composition: expectOptionalString(record.spatial_plan_composition, `${label}.spatial_plan_composition`) ?? null,
+    spatial_plan_coverage: expectOptionalNumber(record.spatial_plan_coverage, `${label}.spatial_plan_coverage`) ?? null,
+    spatial_plan_target_track_count: expectOptionalNumber(record.spatial_plan_target_track_count, `${label}.spatial_plan_target_track_count`) ?? null,
     spatial_release_mbid: expectOptionalString(record.spatial_release_mbid, `${label}.spatial_release_mbid`) ?? null,
     selected_provider: expectOptionalString(record.selected_provider, `${label}.selected_provider`) ?? null,
     selected_provider_id: expectOptionalString(record.selected_provider_id, `${label}.selected_provider_id`) ?? null,
