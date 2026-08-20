@@ -1521,8 +1521,7 @@ const ArtistPage = () => {
   const monitoredAlbumCount = pageData?.monitored_album_count ?? 0;
   const hasAlbums = albumCount > 0;
   const hasMonitoredAlbums = monitoredAlbumCount > 0;
-  const needsScan = Boolean(pageData?.needs_scan ?? !pageData?.last_scanned);
-  const hasBeenScanned = !needsScan;
+  const hasBeenScanned = Boolean(pageData?.artist?.last_scanned) || hasAlbums;
   const downloadActionDisabled = !hasBeenScanned || isScanBusy || !hasProviderMatchedItems;
   const downloadActionTitle = !hasBeenScanned
     ? 'Get metadata first to enable downloads'

@@ -263,40 +263,6 @@ async function hydrateArtistDisplayMetadataIfNeeded(
     }
 }
 
-function shouldHydrateArtistShallow(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
-    if (!artist) {
-        return true;
-    }
-
-    if (hasArtistIdentityGap(artist) || artist.bio_text == null) {
-        return true;
-    }
-
-    return shouldRefreshArtist({
-        artistId,
-        lastScanned: typeof artist.last_scanned === "string" ? artist.last_scanned : null,
-    });
-}
-
-function shouldHydrateArtistPage(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
-    if (!artist) {
-        return true;
-    }
-
-    if (shouldHydrateArtistShallow(artist, artistId)) {
-        return true;
-    }
-
-    if (RefreshArtistService.needsInitialRefresh(artistId)) {
-        return true;
-    }
-
-    return shouldRefreshArtist({
-        artistId,
-        lastScanned: typeof artist.last_scanned === "string" ? artist.last_scanned : null,
-    });
-}
-
 function parseJsonStringArray(value: unknown): string[] {
     if (Array.isArray(value)) {
         return value.map((entry) => String(entry || "").trim()).filter(Boolean);
@@ -905,7 +871,6 @@ export class ArtistQueryService {
         if (!artist) {
             return null;
         }
-        const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
         // Scope to this artist's video recordings via a UNION of the two
         // artist-link columns — each branch uses a covering index
@@ -1504,7 +1469,11 @@ export class ArtistQueryService {
                 is_downloaded: artistDownloadStats.isDownloaded,
             },
             rows,
-            needs_scan: !artist.last_scanned || needsEnrichment,
+            // Page-load hydration may still refresh stale bios/covers. "Needs scan"
+            // is only for artists that have never been ingested — using refresh-due
+            // here disabled Download Missing for every artist older than the
+            // two-day active refresh window.
+            needs_scan: !artist.last_scanned,
             album_count: releaseGroupCards.length,
             monitored_album_count: releaseGroupCards.filter((album) => album.is_monitored).length,
         };

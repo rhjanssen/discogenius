@@ -20,6 +20,15 @@ name that two MusicBrainz artists share no longer hides both of them.
   commands (Rescan Folders, Refresh Artist) is re-queued instead of
   failed; rename/retag still fail closed. Rename Apply and video
   placement enqueue retries SQLITE_BUSY instead of returning HTTP 500.
+  Album monitor, edition selection, representative, and acquisition-plan
+  writes retry the same way; leftover SQLITE_BUSY is HTTP 503 instead of
+  a 400 that looked like a client error.
+- **Download Missing stayed disabled on scanned artists.** `needs_scan`
+  was true whenever metadata was due for a scheduled refresh (two days
+  for active artists), so the artist page treated Bakermat as never
+  ingested and hid downloads behind "Get metadata first". The flag is
+  now only true when `last_scanned` is empty; the UI also trusts a
+  present scan timestamp or album cards.
 - **Global search kept neither MusicBrainz artist when two shared a
   name.** The duplicate filter treated any same-name sibling as a
   provider-only clone, so Bastille the band and Bastille the electronic

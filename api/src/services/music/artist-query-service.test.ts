@@ -593,6 +593,17 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 });
 
+test("artist page does not treat a due metadata refresh as needs_scan", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  dbModule.db.prepare(`
+    UPDATE Artists SET last_scanned = datetime('now', '-10 days') WHERE id = ?
+  `).run(artistId);
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
+  assert.equal(page?.needs_scan, false);
+  assert.ok(page?.artist?.last_scanned);
+});
+
 test("artist list excludes unhydrated mbid-named shells until they gain library presence", () => {
   seedCanonicalArtistPage();
 

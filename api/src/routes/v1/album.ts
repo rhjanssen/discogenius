@@ -8,7 +8,7 @@ import {
 import { deleteReleaseGroupLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { LibraryReleaseSelectionService } from "../../services/music/library-release-selection-service.js";
 import { getAlbumAssociatedVideos } from "../../services/music/video-query-service.js";
-import { db } from "../../database.js";
+import { db, isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -23,6 +23,19 @@ import {
 
 const router = Router();
 
+/** Same yield-and-retry budget as rename/retag enqueue: main-thread writes fail fast on SQLITE_BUSY. */
+function runAlbumUserWrite<T>(operation: () => T): Promise<T> {
+  return runWithAsyncBusyRetry(operation, 30, 200);
+}
+
+export function albumMutationHttpStatus(error: unknown): number {
+  if (isRequestValidationError(error)) return 400;
+  const status = (error as { status?: number } | undefined)?.status;
+  if (status === 409 || status === 404) return status;
+  if (isSqliteBusyError(error)) return 503;
+  return status && status >= 400 && status < 600 ? status : 500;
+}
+
 /**
  * Exclusive ("use only this") is the default, matching a normal click. Additive
  * is the deliberate Ctrl/Cmd-click or the explicit "Monitor alongside current
@@ -34,7 +47,7 @@ function parseSelectionMode(
   const mode = body.mode;
   if (mode === undefined || mode === null) return undefined;
   if (mode !== "exclusive" && mode !== "additive") {
-    throw new Error('mode must be "exclusive" or "additive"');
+    throw new RequestValidationError('mode must be "exclusive" or "additive"');
   }
   return mode;
 }
@@ -200,7 +213,9 @@ router.post("/:albumId/monitor", async (req, res) => {
     rejectUnknownKeys(body, ["monitored", "libraryId", "allLibraries"], "Album monitor");
     const monitored = parseOptionalMonitored(body.monitored);
     const scope = parseAlbumLibraryScope(body);
-    const result = AlbumCommandService.setAlbumMonitored(albumId, monitored, scope);
+    const result = await runAlbumUserWrite(() =>
+      AlbumCommandService.setAlbumMonitored(albumId, monitored, scope),
+    );
 
     if (result.status === 404) {
       return res.status(404).json({ detail: "Album not found" });
@@ -209,10 +224,7 @@ router.post("/:albumId/monitor", async (req, res) => {
     const { status, ...responseBody } = result;
     res.status(status || 200).json(responseBody);
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -234,7 +246,7 @@ router.get("/:albumId/library-availability", (req, res) => {
   }
 });
 
-router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
+router.patch("/:albumId/libraries/:libraryId/selection", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     rejectUnknownKeys(
@@ -242,18 +254,15 @@ router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
       ["editionId", "providerEditionMatchId", "mode"],
       "Library release selection",
     );
-    res.json(new LibraryReleaseSelectionService(db).selectRelease({
+    res.json(await runAlbumUserWrite(() => new LibraryReleaseSelectionService(db).selectRelease({
       releaseGroupMbid: req.params.albumId,
       libraryId: Number.parseInt(req.params.libraryId, 10),
       editionId: getRequiredInteger(body, "editionId"),
       providerEditionMatchId: getOptionalInteger(body, "providerEditionMatchId"),
       mode: parseSelectionMode(body),
-    }));
+    })));
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -261,33 +270,30 @@ router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
  * Stop monitoring one Edition in one Library. Never deletes files — that is a
  * separate, explicit deletion command.
  */
-router.delete("/:albumId/libraries/:libraryId/selection/:editionId", (req, res) => {
+router.delete("/:albumId/libraries/:libraryId/selection/:editionId", async (req, res) => {
   try {
-    res.json(new LibraryReleaseSelectionService(db).removeEdition({
+    res.json(await runAlbumUserWrite(() => new LibraryReleaseSelectionService(db).removeEdition({
       releaseGroupMbid: req.params.albumId,
       libraryId: Number.parseInt(req.params.libraryId, 10),
       editionId: Number.parseInt(req.params.editionId, 10),
-    }));
+    })));
   } catch (error: any) {
-    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
 /** Make an already-monitored Edition the Primary one for its Album. */
-router.patch("/:albumId/libraries/:libraryId/representative", (req, res) => {
+router.patch("/:albumId/libraries/:libraryId/representative", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     rejectUnknownKeys(body, ["editionId"], "Representative edition");
-    res.json(new LibraryReleaseSelectionService(db).makeRepresentative({
+    res.json(await runAlbumUserWrite(() => new LibraryReleaseSelectionService(db).makeRepresentative({
       releaseGroupMbid: req.params.albumId,
       libraryId: Number.parseInt(req.params.libraryId, 10),
       editionId: getRequiredInteger(body, "editionId"),
-    }));
+    })));
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -355,7 +361,9 @@ router.patch("/:albumId", async (req, res) => {
     }
     const scope = parseAlbumLibraryScope(body);
 
-    const result = AlbumCommandService.updateAlbum(albumId, monitored, monitoredLock, scope);
+    const result = await runAlbumUserWrite(() =>
+      AlbumCommandService.updateAlbum(albumId, monitored, monitoredLock, scope),
+    );
 
     if (result.status === 404 || result.status === 409) {
       return res.status(result.status).json({ detail: result.message || "Album not found" });
@@ -364,11 +372,7 @@ router.patch("/:albumId", async (req, res) => {
     const { status, message, ...body2 } = result;
     res.status(status || 200).json(message ? { ...body2, albumId, monitored, message } : body2);
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-
-    res.status(500).json({ detail: error.message });
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -409,7 +413,7 @@ router.delete("/:albumId/files", (req, res) => {
  * Choose which persisted acquisition plan a library executes for an edition,
  * or hand the choice back to the planner.
  */
-router.patch("/:albumId/libraries/:libraryId/plan", (req, res) => {
+router.patch("/:albumId/libraries/:libraryId/plan", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     rejectUnknownKeys(body, ["editionId", "planKey", "automatic", "mode"], "Library plan selection");
@@ -425,27 +429,24 @@ router.patch("/:albumId/libraries/:libraryId/plan", (req, res) => {
           detail: "Specify either planKey or automatic, not both",
         });
       }
-      return res.json(service.revertPlanToAutomatic({
+      return res.json(await runAlbumUserWrite(() => service.revertPlanToAutomatic({
         releaseGroupMbid: req.params.albumId,
         libraryId,
         editionId,
-      }));
+      })));
     }
     if (!planKey) {
       return res.status(400).json({ detail: "planKey is required unless automatic is true" });
     }
-    res.json(service.choosePlan({
+    res.json(await runAlbumUserWrite(() => service.choosePlan({
       releaseGroupMbid: req.params.albumId,
       libraryId,
       editionId,
       planKey,
       mode: parseSelectionMode(body),
-    }));
+    })));
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(error?.status === 409 ? 409 : 400).json({ detail: error.message });
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
