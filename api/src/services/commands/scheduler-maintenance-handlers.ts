@@ -242,6 +242,12 @@ export async function runLowCouplingMaintenanceJob(
                 });
                 indexedAlbums = (await AlbumLibraryIndexService.rebuildGated(
                     context.yieldToEventLoop,
+                    (done, total) => {
+                        context.updateCommandDescription({
+                            progress: 1,
+                            description: `Building album library index (${done}/${total})`,
+                        });
+                    },
                 )).rows;
             }
 

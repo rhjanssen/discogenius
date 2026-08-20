@@ -1,9 +1,20 @@
-import { runWithAsyncBusyRetry } from "../../database.js";
+import { isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
 import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
 import { commandExecutors } from "./executors/registry.js";
 import type { CommandHandlerContext } from "./handlers/handler-context.js";
+import {
+    resolveInfrastructureMaxAttempts,
+} from "./command-liveness-policy.js";
 import { queueNextMonitoringPass } from "./scheduler.js";
 import { normalizeUnclassifiedRemoteError } from "../../utils/remote-operation-error.js";
+
+const COMMAND_MAX_ATTEMPTS = 3;
+const COMMAND_RETRY_BASE_MS = 1_000;
+const COMMAND_RETRY_MAX_MS = 60_000;
+
+function retryDelayForAttempt(attempt: number): number {
+    return Math.min(COMMAND_RETRY_MAX_MS, COMMAND_RETRY_BASE_MS * (2 ** Math.max(0, attempt - 1)));
+}
 
 /**
  * Shared command-execution helpers.
@@ -121,8 +132,59 @@ export function buildHandlerContext(): CommandHandlerContext {
  * worker thread (`command-worker-entry`); in unit tests (no worker pool) it runs
  * inline on the main thread.
  *
- * Never throws — handler failures are caught and persisted via `fail`.
+ * Never throws — handler failures are caught and persisted via `fail`,
+ * except SQLITE_BUSY on retry-safe commands, which is re-queued.
  */
+export async function persistCommandOutcome(
+    job: CommandModel,
+    handlerError: unknown,
+): Promise<"completed" | "failed" | "requeued" | false> {
+    if (!handlerError) {
+        const completed = await runWithAsyncBusyRetry(
+            () => CommandQueueManager.complete(job.id, job.worker_id ?? undefined),
+        );
+        if (completed) {
+            console.log(`[Queue] Command #${job.id} completed`);
+            return "completed";
+        }
+        return false;
+    }
+
+    const classified = normalizeUnclassifiedRemoteError(handlerError);
+    const message = classified?.message
+        ?? (handlerError instanceof Error ? handlerError.message : "Unknown command error");
+
+    if (
+        isSqliteBusyError(handlerError)
+        && job.worker_id
+        && resolveInfrastructureMaxAttempts(job.name, COMMAND_MAX_ATTEMPTS) > 1
+    ) {
+        const recovered = await runWithAsyncBusyRetry(
+            () => CommandQueueManager.recoverOwnedCommand({
+                id: job.id,
+                workerId: job.worker_id as string,
+                reason: `sqlite busy: ${message}`,
+                maxAttempts: resolveInfrastructureMaxAttempts(job.name, COMMAND_MAX_ATTEMPTS),
+                retryDelayMs: retryDelayForAttempt(job.attempt),
+            }),
+        );
+        if (recovered.outcome === "requeued") {
+            console.warn(`[Queue] Re-queued command #${job.id} after SQLITE_BUSY`);
+            return "requeued";
+        }
+        if (recovered.outcome === "failed") {
+            console.error(`[Queue] Command #${job.id} exhausted SQLITE_BUSY retries`);
+            return "failed";
+        }
+        return false;
+    }
+
+    const failed = await runWithAsyncBusyRetry(
+        () => CommandQueueManager.fail(job.id, message, job.worker_id ?? undefined),
+    );
+    return failed ? "failed" : false;
+}
+
 export async function executeCommand(job: CommandModel): Promise<void> {
     console.log(`[Queue] Processing Command #${job.id}: ${job.name}`);
     let handlerError: unknown = null;
@@ -145,39 +207,20 @@ export async function executeCommand(job: CommandModel): Promise<void> {
     // unhandled rejection and aborted the whole process. If the write still
     // fails after retries, the row stays 'started' and is recovered as an
     // interrupted job on the next executor start.
-    let outcomePersisted = false;
+    let outcome: "completed" | "failed" | "requeued" | false = false;
     try {
-        if (handlerError) {
-            // Last resort before the message is persisted. A call site that
-            // wrapped its own failure already names its service and phase; this
-            // only rescues an unclassified client error, which would otherwise
-            // reach history as a bare "Request failed with status code 503" —
-            // a status with no dependency attached to it.
-            const classified = normalizeUnclassifiedRemoteError(handlerError);
-            const message = classified?.message
-                ?? (handlerError instanceof Error ? handlerError.message : 'Unknown command error');
-            outcomePersisted = await runWithAsyncBusyRetry(
-                () => CommandQueueManager.fail(job.id, message, job.worker_id ?? undefined),
-            );
-        } else {
-            outcomePersisted = await runWithAsyncBusyRetry(
-                () => CommandQueueManager.complete(job.id, job.worker_id ?? undefined),
-            );
-            if (outcomePersisted) {
-                console.log(`[Queue] Command #${job.id} completed`);
-            }
-        }
+        outcome = await persistCommandOutcome(job, handlerError);
     } catch (persistError) {
         console.error(`[Queue] Could not persist outcome for command #${job.id} (${job.name}):`, persistError);
     }
 
-    if (outcomePersisted) {
+    if (outcome === "completed" || outcome === "failed") {
         try {
             queueNextMonitoringPass(job);
         } catch (chainError) {
             console.error(`[Queue] Failed to queue next monitoring pass after command #${job.id}:`, chainError);
         }
-    } else if (job.worker_id) {
+    } else if (job.worker_id && outcome === false) {
         console.warn(
             `[Queue] Ignoring stale outcome/chaining for command #${job.id}; execution ownership changed`,
         );

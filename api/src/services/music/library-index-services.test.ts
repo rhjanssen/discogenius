@@ -12,17 +12,29 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let AlbumLibraryIndexService: typeof import("./album-library-index-service.js").AlbumLibraryIndexService;
 let TrackLibraryIndexService: typeof import("./track-library-index-service.js").TrackLibraryIndexService;
+let ALBUM_LIBRARY_INDEX_JOIN_SQL: typeof import("./album-library-index-service.js").ALBUM_LIBRARY_INDEX_JOIN_SQL;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
-  ({ AlbumLibraryIndexService } = await import("./album-library-index-service.js"));
+  ({ AlbumLibraryIndexService, ALBUM_LIBRARY_INDEX_JOIN_SQL } = await import("./album-library-index-service.js"));
   ({ TrackLibraryIndexService } = await import("./track-library-index-service.js"));
 });
 
 after(() => {
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("album library index joins LibraryEditions through the album's editions", () => {
+  assert.match(
+    ALBUM_LIBRARY_INDEX_JOIN_SQL,
+    /AlbumEditions release\s+ON release\.release_group_id = library_group\.release_group_id/,
+  );
+  assert.match(
+    ALBUM_LIBRARY_INDEX_JOIN_SQL,
+    /library_release\.edition_id = release\.id/,
+  );
 });
 
 test("library indexes derive monitoring, selected tracks, and quality from normalized authorities", () => {
@@ -175,6 +187,30 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
     (db.prepare(`SELECT COUNT(*) AS n FROM AlbumLibraryIndex`).get() as { n: number }).n,
     1,
   );
+
+  const releaseGroup2 = db.prepare(`
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title)
+    VALUES ('group-2', ?, 'artist-1', 'Second Library Album')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const release2 = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title
+    ) VALUES ('release-2', ?, 'group-2', ?, 'artist-1', 'Second Library Album')
+    RETURNING id
+  `).get(releaseGroup2.id, artist.id) as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryAlbums (
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, releaseGroup2.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
+  `).run(library.id, release2.id);
+  assert.deepEqual(AlbumLibraryIndexService.rebuild(), { rows: 2 });
 
   AlbumLibraryIndexService.rebuild();
   TrackLibraryIndexService.rebuild();

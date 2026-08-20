@@ -13,9 +13,12 @@ name that two MusicBrainz artists share no longer hides both of them.
   hydrates and provider-variant writes also deleted the projection marker
   on every artist refresh, so Update Library Metadata raced RefreshArtist
   and failed with `database is locked`. The index now inserts only
-  library albums, invalidates on membership/file/library-profile changes,
-  rebuilds under the write gate in edition-sized chunks, and Housekeeping
-  queues a rebuild when the marker is still missing.
+  library albums, joins editions by album rather than every edition in
+  the library, invalidates on membership/file/library-profile changes,
+  rebuilds under the write gate in chunks, and Housekeeping queues a
+  rebuild when the marker is still missing. SQLITE_BUSY on retry-safe
+  commands (Rescan Folders, Refresh Artist) is re-queued instead of
+  failed; rename/retag still fail closed.
 - **Global search kept neither MusicBrainz artist when two shared a
   name.** The duplicate filter treated any same-name sibling as a
   provider-only clone, so Bastille the band and Bastille the electronic

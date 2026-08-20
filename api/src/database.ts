@@ -127,6 +127,10 @@ function profileRead<T>(source: string, op: () => T): T {
   }
 }
 
+export function isSqliteBusyError(error: unknown): boolean {
+  return isSqliteBusy(error);
+}
+
 function isSqliteBusy(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const code = (error as { code?: string }).code;
