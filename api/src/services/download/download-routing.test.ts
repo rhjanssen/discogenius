@@ -8,7 +8,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-rout
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 process.env.DOWNLOAD_PATH = path.join(tempDir, "downloads");
 
-const { getDownloadWorkspacePath, validateDownloadWorkspacePath } = await import("./download-routing.js");
+const { buildStreamingMediaUrl, getDownloadWorkspacePath, validateDownloadWorkspacePath } = await import("./download-routing.js");
 
 after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
@@ -37,6 +37,15 @@ test("download workspaces reject provider-id traversal and unsafe path character
       /Provider resource ID/u,
     );
   }
+});
+
+test("media URLs are built for the named provider, not the default", () => {
+  const apple = buildStreamingMediaUrl("video", "1445311108", "apple-music");
+  assert.match(apple, /music\.apple\.com/i);
+  assert.match(apple, /1445311108/);
+  const tidal = buildStreamingMediaUrl("video", "1445311108", "tidal");
+  assert.match(tidal, /tidal\.com/i);
+  assert.notEqual(apple, tidal);
 });
 
 test("persisted workspace paths must remain below the configured download root", () => {

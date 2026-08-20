@@ -261,6 +261,47 @@ export function listRelatedInlineTracks(
   `).all(videoRecordingId) as RelatedInlineTrack[];
 }
 
+/** One audio track by id — used so a persisted inline placement still labels the File location menu. */
+export function describeRelatedInlineTrack(
+  db: Database.Database,
+  trackId: number,
+): RelatedInlineTrack | null {
+  if (!Number.isInteger(trackId) || trackId <= 0) {
+    return null;
+  }
+  const row = db.prepare(`
+    SELECT
+      track.id AS id,
+      COALESCE(NULLIF(TRIM(track.title), ''), recording.title) AS title,
+      album.title AS albumTitle,
+      track.position AS trackNumber,
+      track.medium_position AS volumeNumber
+    FROM Tracks track
+    JOIN Recordings recording ON recording.id = track.recording_id
+    JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+    JOIN Albums album ON album.id = edition.release_group_id
+    WHERE track.id = ?
+  `).get(trackId) as RelatedInlineTrack | undefined;
+  return row ?? null;
+}
+
+/**
+ * Exact related tracks, plus the currently placed inline track when it is
+ * missing from that list (auto placement can use edition co-membership).
+ */
+export function relatedTracksForVideoDetail(
+  db: Database.Database,
+  videoRecordingId: number,
+  inlineTrackId: number | null | undefined,
+): RelatedInlineTrack[] {
+  const related = listRelatedInlineTracks(db, videoRecordingId);
+  if (inlineTrackId == null || related.some((track) => track.id === inlineTrackId)) {
+    return related;
+  }
+  const current = describeRelatedInlineTrack(db, inlineTrackId);
+  return current ? [current, ...related] : related;
+}
+
 /**
  * The user placing a video. Selects it if needed, stamps both selection and
  * placement as manual so curation will not move it, and returns whether a

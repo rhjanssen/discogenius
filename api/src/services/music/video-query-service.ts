@@ -14,7 +14,7 @@ import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "./video-album-association.js";
 import { mainVideoMayFollowAudioRelationSql } from "./live-performance-markers.js";
 import {
-  listRelatedInlineTracks,
+  relatedTracksForVideoDetail,
   manuallySelectedVideoPredicate,
   monitoredVideoPredicate,
 } from "./library-video-monitoring.js";
@@ -464,7 +464,11 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
     detail.offers = getVideoProviderOffers(recordingId);
     detail.albums = getVideoAlbumRefs(recordingId);
     detail.placement = persistedPlacementForDetail(recordingId);
-    detail.related_tracks = listRelatedInlineTracks(db, Number(recordingId)).map((track) => ({
+    detail.related_tracks = relatedTracksForVideoDetail(
+      db,
+      Number(recordingId),
+      detail.placement?.inline_track_id,
+    ).map((track) => ({
       id: track.id,
       title: track.title,
       album_title: track.albumTitle,
@@ -1171,5 +1175,25 @@ function resolveVideoRecordingId(videoId: string): string | null {
   if (direct?.id != null) {
     return String(direct.id);
   }
-  return null;
+
+  // Queue history used to deep-link by provider resource id. Resolve only
+  // through accepted typed matches, and only when every candidate agrees.
+  const matched = db.prepare(`
+    SELECT CAST(video_match.recording_id AS TEXT) AS recording_id
+    FROM ProviderItems provider_item
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = provider_item.id
+     AND video_match.match_state = 'accepted'
+    JOIN Recordings recording
+      ON recording.id = video_match.recording_id
+     AND recording.is_video = 1
+    WHERE provider_item.entity_type = 'video'
+      AND CAST(provider_item.provider_id AS TEXT) = CAST(? AS TEXT)
+  `).all(videoId) as Array<{ recording_id: string }>;
+  const distinct = new Set(
+    matched
+      .map((row) => String(row.recording_id || "").trim())
+      .filter(Boolean),
+  );
+  return distinct.size === 1 ? [...distinct][0] : null;
 }

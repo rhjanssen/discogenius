@@ -50,6 +50,7 @@ import {
     type QueueHistoryMediaKindFilter,
     type QueueHistoryOutcomeFilter,
 } from "./queueHistoryFilters";
+import { getQueueItemNavPath } from "./queueNavigation";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
 const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
@@ -83,38 +84,8 @@ type QueueHistoryRowModel = {
     error: string | null;
 };
 
-function getOptionalIdentifier(value: unknown): string | null {
-    if (typeof value === "number" && Number.isFinite(value)) {
-        return String(value);
-    }
-
-    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function buildAlbumNavPath(albumId: unknown): string | null {
-    const resolvedAlbumId = getOptionalIdentifier(albumId);
-    return resolvedAlbumId ? `/album/${resolvedAlbumId}` : null;
-}
-
-function buildVideoNavPath(videoId: unknown): string | null {
-    const resolvedVideoId = getOptionalIdentifier(videoId);
-    return resolvedVideoId ? `/video/${resolvedVideoId}` : null;
-}
-
 function getQueueHistoryNavPath(item: QueueItem): string | null {
-    if (item.type === "video") {
-        return buildVideoNavPath(item.media_id ?? item.providerId);
-    }
-
-    if (item.type === "album") {
-        return buildAlbumNavPath(item.album_id ?? item.providerId);
-    }
-
-    if (item.type === "track") {
-        return buildAlbumNavPath(item.album_id);
-    }
-
-    return null;
+    return getQueueItemNavPath(item);
 }
 
 function getQueueHistoryMediaBadge(item: QueueItem): QueueHistoryMediaBadge | null {

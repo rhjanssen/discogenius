@@ -87,6 +87,7 @@ import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import { getAlbumPath, navigateToAlbumTrack } from "@/utils/albumNavigation";
+import { navigateToVideo } from "@/utils/videoNavigation";
 import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 import {
   compactDetailActionButtonStyles,
@@ -1178,7 +1179,7 @@ const ArtistPage = () => {
           monitored={isVideoMonitored}
           monitoringLocked={isLocked}
           videoAspect
-          onClick={() => navigate(`/video/${providerId}`)}
+          onClick={() => navigateToVideo(navigate, item.id)}
           onMonitorToggle={isLocked ? undefined : (e) => toggleVideoMonitored(e, providerId, !isVideoMonitored)}
           placeholder={
             <div className={cardStyles.placeholderBg}>

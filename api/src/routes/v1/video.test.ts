@@ -19,9 +19,11 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM commands").run();
+  dbModule.db.prepare("DELETE FROM ProviderVideoMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
+  dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -119,6 +121,43 @@ test("video add carries provider identity into the command and dedupe key", asyn
   assert.equal(command.ref_id, "apple-music:42");
   assert.equal(payload.providerId, "42");
   assert.equal(payload.provider, "apple-music");
+});
+
+test("video detail resolves a unique accepted provider video id", async () => {
+  const handler = getGetHandler("/:videoId");
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('route-artist', 'Route Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('route-artist', 'route-artist', 'Route Artist')
+  `).run();
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('route-video', ?, 'route-artist', 'Pompeii', 1, 'musicbrainz')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const item = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('apple-music', 'video', '1445311108', 'Pompeii')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(item.id, recording.id);
+
+  const res = createMockResponse();
+  await handler({ params: { videoId: "1445311108" } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.id, String(recording.id));
+  assert.equal(res.body.title, "Pompeii");
 });
 
 test("video detail does not seed unknown provider ids from GET", async () => {

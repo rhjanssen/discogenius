@@ -31,6 +31,7 @@ import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
+import { navigateToVideo } from "@/utils/videoNavigation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 
@@ -537,7 +538,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 setIsOpen(false);
                 return;
             }
-            navigate(`/video/${item.providerId}`);
+            navigateToVideo(navigate, item.id);
         } else if (item.type === 'track') {
             try {
                 const track = await api.getTrack(item.providerId) as { album_id?: string | number | null; albumId?: string | number | null; album?: { id?: string | number | null } | null };
@@ -588,7 +589,9 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 successTitle: "Added to queue",
                 successDescription: `${item.name} will be downloaded shortly`,
                 payload: {
-                    provider: "tidal",
+                    ...(item.type === "video"
+                        ? { canonicalRecordingId: item.id }
+                        : { provider: "tidal" }),
                     providerId: item.providerId,
                     title: item.name,
                     artist: item.subtitle,

@@ -133,11 +133,10 @@ Separated: `video` → `-video`, `live` → `-live`, `lyrics` → `-lyrics`.
   (`8a58cc1a-be0d-3b1b-8d0d-aa8f467a59da`) on a live catalog to confirm the
   command completes.
 
-- **Apple Music video download still needs a live repro.** `Decrypt failed` is
-  mapped to a wrapper-session error. Stereo/Atmos Apple was validated in
-  2.8.0; video was not. Re-auth from the Auth page, then retry a Bastille
-  video. Recreate only the wrapper if the session stays dead
-  (`docker compose up -d --force-recreate apple-music-wrapper`).
+- done: **Apple Music video download.** Bastille live *Pompeii* (2013)
+  Apple FHD downloaded, decrypted, imported beside the stereo track, and
+  played 1920×1080 from `/api/v1/mediaFile/stream`. Queue history linking
+  that job to Apple's provider id is fixed in 2.9.2.
 
 ### Test matrix still to run
 

@@ -22,6 +22,7 @@ import type {
   QueueHistoryMediaKindFilter,
   QueueHistoryOutcomeFilter,
 } from "../../utils/queue-history-query.js";
+import { resolveRequestedVideoOffer } from "../music/video-offer-resolver.js";
 
 type QueueJobRow = {
   id: number;
@@ -1549,7 +1550,12 @@ export class DownloadQueueQueryService {
       mediaId = getOptionalString(job.payload?.canonicalRecordingId)
         ?? getOptionalString(
           (job.payload?.resolved as Record<string, unknown> | undefined)?.canonicalRecordingId,
-        );
+        )
+        ?? resolveRequestedVideoOffer(
+          getOptionalString(job.payload?.provider),
+          providerId,
+        )?.recordingId
+        ?? null;
       cover = videoCoverLocalUrl(mediaId) ?? cover;
     }
 

@@ -54,7 +54,7 @@ import {
     selectVideoOffer,
     selectVideoPreviewOffer,
     videoOfferSelectionKey,
-    videoQueueTarget,
+    videoQueuePayload,
 } from "@/utils/videoOffers";
 import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
@@ -488,19 +488,17 @@ const VideoPage = () => {
         // normalization, so pass the selected provider offer rather than the
         // canonical Recordings id. Otherwise api.addToQueue overwrites the
         // payload's selected providerId and the server silently picks a default.
-        const queueTarget = videoQueueTarget(videoId!, downloadOffer);
-        await addToQueue(null, "video", queueTarget.providerId, {
+        const payload = videoQueuePayload(videoId!, downloadOffer, {
+            title: video?.title ?? null,
+            artist: video?.artist_name ?? null,
+            artistId: video?.artist_id ?? null,
+            cover: video?.cover ?? video?.cover_id ?? null,
+            quality: downloadOffer.quality ?? video?.quality ?? null,
+        });
+        await addToQueue(null, "video", payload.providerId, {
             successTitle: "Download queued",
             successDescription: video?.title || "Video",
-            payload: {
-                provider: queueTarget.provider,
-                providerId: queueTarget.providerId,
-                title: video?.title ?? null,
-                artist: video?.artist_name ?? null,
-                artistId: video?.artist_id ?? null,
-                cover: video?.cover ?? video?.cover_id ?? null,
-                quality: downloadOffer.quality ?? video?.quality ?? null,
-            },
+            payload,
         });
     };
 
@@ -887,6 +885,8 @@ const VideoPage = () => {
                                     <Button
                                         appearance="subtle"
                                         className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                                        aria-label="File location"
+                                        title="Choose where this video file lives"
                                     >
                                         {video.placement?.mode === "inline"
                                             ? `Beside ${(video.related_tracks ?? []).find((track) => track.id === video.placement?.inline_track_id)?.title ?? "track"}`

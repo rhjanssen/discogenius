@@ -31,6 +31,7 @@ const {
   isVideoMonitored,
   keepLibraryVideo,
   listRelatedInlineTracks,
+  relatedTracksForVideoDetail,
   resolveVideoLibraryIds,
   selectLibraryVideo,
   unselectLibraryVideo,
@@ -222,6 +223,15 @@ test("listRelatedInlineTracks offers only exact related audio tracks in a librar
   assert.equal(related[0].albumTitle, "Making Movies");
   assert.deepEqual(listRelatedInlineTracks(db, otherVideoId), [],
     "a video with no exact recording relation does not offer a studio track");
+});
+
+test("relatedTracksForVideoDetail still names the current inline track", () => {
+  const { otherVideoId, trackId } = seed();
+  applyManualVideoPlacement(db, otherVideoId, { mode: "inline", inlineTrackId: trackId });
+  const related = relatedTracksForVideoDetail(db, otherVideoId, trackId);
+  assert.equal(related.length, 1);
+  assert.equal(related[0].id, trackId);
+  assert.equal(related[0].title, "Tunnel of Love");
 });
 
 test("keepLibraryVideo selects an unselected video as a manual choice", () => {

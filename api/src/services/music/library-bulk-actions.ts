@@ -425,7 +425,11 @@ function queueVideoDownloads(videoIds: string[]): number[] {
             quality: video.quality || null,
             slot: "video",
             payload: {
-                url: buildStreamingMediaUrl("video", String(video.provider_id)),
+                url: buildStreamingMediaUrl(
+                    "video",
+                    String(video.provider_id),
+                    video.provider || undefined,
+                ),
                 type: "video",
                 provider: video.provider || "tidal",
                 canonicalRecordingId: String(video.id),

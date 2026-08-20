@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.9.2] - 2026-08-20
+
+Queue history and video pages stay on canonical recording ids, and Apple
+video downloads no longer store a TIDAL URL.
+
+### Fixed
+- **Completed video history opens the video page.** History rows were
+  linking `/video/{providerId}` because `media_id` was never written.
+  Enqueue now stores `canonicalRecordingId`; existing Apple/TIDAL jobs
+  recover it from the accepted `ProviderVideoMatches` row. The UI never
+  falls back to a provider resource id.
+- **GET `/video/:id` resolves a unique accepted provider video id.** Old
+  history links still work when every accepted match agrees; ambiguous
+  ids fail closed.
+- **Apple Music video queue URLs are Apple URLs.** `POST /v1/queue`
+  was calling `buildStreamingMediaUrl` without the provider, so Apple
+  jobs stored `https://tidal.com/browse/video/...`.
+- **File location names the track the file already sits beside.** Auto
+  inline placement can use edition co-membership; the menu still listed
+  only exact recording relations, so it showed "Beside track" with no
+  destination. The current inline track is always included.
+
 ## [2.9.1] - 2026-08-20
 
 Rescan Folders is one command, artwork stays on the release group, and

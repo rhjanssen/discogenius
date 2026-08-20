@@ -4,6 +4,7 @@ import {
   selectVideoOffer,
   selectVideoPreviewOffer,
   videoOfferSelectionKey,
+  videoQueuePayload,
   videoQueueTarget,
 } from "./videoOffers";
 
@@ -29,6 +30,15 @@ describe("video provider offer selection", () => {
     })).toEqual({
       provider: "apple-music",
       providerId: "1697173352",
+    });
+    expect(videoQueuePayload("canonical-17", {
+      provider: "apple-music",
+      provider_id: "1697173352",
+    }, { title: "Pompeii" })).toEqual({
+      provider: "apple-music",
+      providerId: "1697173352",
+      canonicalRecordingId: "canonical-17",
+      title: "Pompeii",
     });
   });
 

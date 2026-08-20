@@ -61,3 +61,34 @@ export function videoQueueTarget(
     providerId: String(selectedOffer?.provider_id || "").trim() || canonicalRecordingId,
   };
 }
+
+export function videoQueuePayload(
+  canonicalRecordingId: string,
+  selectedOffer: VideoOfferIdentity | null | undefined,
+  extras: {
+    title?: string | null;
+    artist?: string | null;
+    artistId?: string | null;
+    albumId?: string | null;
+    cover?: string | null;
+    quality?: string | null;
+  } = {},
+): {
+  provider: string | null;
+  providerId: string;
+  canonicalRecordingId: string;
+  title?: string | null;
+  artist?: string | null;
+  artistId?: string | null;
+  albumId?: string | null;
+  cover?: string | null;
+  quality?: string | null;
+} {
+  const target = videoQueueTarget(canonicalRecordingId, selectedOffer);
+  return {
+    provider: target.provider,
+    providerId: target.providerId,
+    canonicalRecordingId,
+    ...extras,
+  };
+}

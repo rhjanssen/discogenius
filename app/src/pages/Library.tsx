@@ -100,6 +100,21 @@ const downloadableVideoOffer = (video: any): { provider: string; providerId: str
   return provider && providerId ? { provider, providerId } : null;
 };
 
+const videoDownloadQueuePayload = (
+  video: any,
+  offer: { provider: string; providerId: string },
+) => ({
+  provider: offer.provider,
+  providerId: offer.providerId,
+  canonicalRecordingId: String(video.id),
+  title: video.title,
+  artist: video.artist_name,
+  artistId: video.artist_id ?? null,
+  albumId: video.album_id ?? null,
+  cover: video.cover ?? video.cover_id ?? null,
+  quality: video.quality ?? null,
+});
+
 /** Selected download offer only — matches tracks' remoteOffers (chosen slot), not every variant. */
 const selectedVideoQualityOffer = (video: any): {
   provider: string | null;
@@ -677,16 +692,7 @@ const Library = () => {
       const offer = downloadableVideoOffer(video);
       if (!offer) throw new Error("No downloadable provider offer");
       await addToQueue(null, "video", offer.providerId, {
-        payload: {
-          provider: offer.provider,
-          providerId: offer.providerId,
-          title: video.title,
-          artist: video.artist_name,
-          albumId: video.album_id,
-          artistId: video.artist_id,
-          cover: video.cover ?? video.cover_id ?? null,
-          quality: video.quality ?? null,
-        },
+        payload: videoDownloadQueuePayload(video, offer),
       });
     });
 
@@ -1167,14 +1173,7 @@ const Library = () => {
                   event.stopPropagation();
                   if (!downloadOffer) return;
                   void addToQueue(null, "video", downloadOffer.providerId, {
-                    payload: {
-                      provider: downloadOffer.provider,
-                      providerId: downloadOffer.providerId,
-                      title: video.title,
-                      artist: video.artist_name,
-                      cover: video.cover ?? video.cover_id ?? null,
-                      quality: video.quality ?? null,
-                    },
+                    payload: videoDownloadQueuePayload(video, downloadOffer),
                   });
                 },
                 hidden: Boolean(video.is_downloaded ?? video.downloaded) || !downloadOffer,
@@ -1807,14 +1806,7 @@ const Library = () => {
                       const offer = downloadableVideoOffer(video);
                       if (!offer) return;
                       void addToQueue(null, "video", offer.providerId, {
-                        payload: {
-                          provider: offer.provider,
-                          providerId: offer.providerId,
-                          title: video.title,
-                          artist: (video as any).artist_name,
-                          cover: (video as any).cover ?? (video as any).cover_id ?? null,
-                          quality: video.quality ?? null,
-                        },
+                        payload: videoDownloadQueuePayload(video, offer),
                       });
                     }}
                     onOpenVideo={(video) => navigate(`/video/${video.id}`)}

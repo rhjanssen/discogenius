@@ -67,6 +67,7 @@ import {
     defaultQueueHistoryFilters,
     type QueueHistoryFilters,
 } from "./queueHistoryFilters";
+import { getQueueItemNavPath } from "./queueNavigation";
 import {
     buildBulkEdgeMoveRequest,
     buildSingleGroupMoveRequest,
@@ -331,38 +332,16 @@ function renderTrackStatusIndicator(
     return null;
 }
 
-function getOptionalIdentifier(value: unknown): string | null {
-    if (typeof value === "number" && Number.isFinite(value)) {
-        return String(value);
-    }
-
-    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function buildAlbumNavPath(albumId: unknown): string | null {
-    const resolvedAlbumId = getOptionalIdentifier(albumId);
-    return resolvedAlbumId ? `/album/${resolvedAlbumId}` : null;
-}
-
-function buildVideoNavPath(videoId: unknown): string | null {
-    const resolvedVideoId = getOptionalIdentifier(videoId);
-    return resolvedVideoId ? `/video/${resolvedVideoId}` : null;
-}
-
 function getQueueGroupNavPath(groupType: QueueItem['type'], firstItem?: QueueItem): string | null {
     if (!firstItem) {
         return null;
     }
 
-    if (groupType === 'video') {
-        return buildVideoNavPath(firstItem.media_id ?? firstItem.providerId);
-    }
-
-    if (groupType === 'album') {
-        return buildAlbumNavPath(firstItem.album_id ?? (firstItem.type === 'album' ? firstItem.providerId : null));
-    }
-
-    return buildAlbumNavPath(firstItem.album_id);
+    return getQueueItemNavPath({
+        type: groupType,
+        media_id: firstItem.media_id,
+        album_id: firstItem.album_id,
+    });
 }
 
 function getQueueItemSlotKey(item: QueueItem): string | null {

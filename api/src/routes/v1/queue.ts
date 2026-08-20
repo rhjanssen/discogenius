@@ -96,7 +96,8 @@ router.post('/', async (req: Request, res: Response) => {
     const contentType = requestedType ?? parsedUrl?.type ?? 'track';
     const releaseGroupMbid = getQueueRequestString(body.releaseGroupMbid);
     let canonicalTrackMbid = getQueueRequestString(body.canonicalTrackMbid);
-    const canonicalRecordingMbid = getQueueRequestString(body.canonicalRecordingMbid);
+    let canonicalRecordingMbid = getQueueRequestString(body.canonicalRecordingMbid);
+    let canonicalRecordingId = getQueueRequestString(body.canonicalRecordingId);
     let resolvedProviderId = requestedProviderId ?? parsedUrl?.sourceId ?? null;
     const requestedProvider = getQueueRequestString(body.provider) ?? parsedUrl?.streamingSource ?? null;
     let resolvedProvider = requestedProvider ?? getDefaultStreamingSource();
@@ -141,6 +142,8 @@ router.post('/', async (req: Request, res: Response) => {
         resolvedProvider = offer.provider;
         resolvedProviderId = offer.providerId;
         resolvedQuality = resolvedQuality ?? offer.quality;
+        canonicalRecordingId = canonicalRecordingId ?? offer.recordingId;
+        canonicalRecordingMbid = canonicalRecordingMbid ?? offer.recordingMbid;
       } else {
         return res.status(409).json({
           error: 'provider match missing',
@@ -171,10 +174,11 @@ router.post('/', async (req: Request, res: Response) => {
     const payload = {
       provider: resolvedProvider,
       providerId: resolvedProviderId,
-      url: url || buildStreamingMediaUrl(contentType, resolvedProviderId),
+      url: url || buildStreamingMediaUrl(contentType, resolvedProviderId, resolvedProvider),
       type: contentType,
       releaseGroupMbid: releaseGroupMbid ?? undefined,
       canonicalTrackMbid: canonicalTrackMbid ?? undefined,
+      canonicalRecordingId: canonicalRecordingId ?? undefined,
       canonicalRecordingMbid: canonicalRecordingMbid ?? undefined,
       slot: resolvedSlot ?? undefined,
       title: getQueueRequestString(body.title) ?? undefined,

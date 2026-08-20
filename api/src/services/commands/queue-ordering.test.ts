@@ -30,6 +30,7 @@ before(async () => {
 
 beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
+    dbModule.db.prepare("DELETE FROM ProviderVideoMatches").run();
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
     dbModule.db.prepare("DELETE FROM Tracks").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
@@ -792,6 +793,49 @@ test("download queue prefers video poster over stamped album cover for DownloadV
     assert.ok(
         String(history.items[0]?.cover || "").startsWith(`/media-cover/Videos/${recording.id}/`),
         `expected history video poster URL, got ${history.items[0]?.cover}`,
+    );
+    assert.equal(history.items[0]?.media_id, String(recording.id));
+});
+
+test("download queue history recovers video media_id from the accepted provider match", () => {
+    const { db } = dbModule;
+    db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+        .run("artist-video-match", "Match Artist");
+    const recording = db.prepare(`
+        INSERT INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status)
+        VALUES (?, ?, ?, 1, 'musicbrainz')
+        RETURNING id
+    `).get("rec-video-match", "artist-video-match", "Pompeii") as { id: number };
+    const item = db.prepare(`
+        INSERT INTO ProviderItems (
+          provider, entity_type, provider_id, title
+        ) VALUES (?, 'video', ?, ?)
+        RETURNING id
+    `).get("apple-music", "1445311108", "Pompeii") as { id: number };
+    db.prepare(`
+        INSERT INTO ProviderVideoMatches (
+          provider_video_item_id, recording_id, match_state, decision_source,
+          confidence, method, matcher_version
+        ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    `).run(item.id, recording.id);
+
+    const commandId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadVideo,
+        {
+            type: "video",
+            provider: "apple-music",
+            providerId: "1445311108",
+            title: "Pompeii",
+            artist: "Match Artist",
+        },
+        "1445311108",
+    );
+    queueModule.CommandQueueManager.complete(commandId);
+
+    const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+    assert.equal(history.items[0]?.media_id, String(recording.id));
+    assert.ok(
+        String(history.items[0]?.cover || "").startsWith(`/media-cover/Videos/${recording.id}/`),
     );
 });
 

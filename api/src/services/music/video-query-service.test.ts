@@ -278,6 +278,48 @@ test("video list and detail use canonical video recordings with provider offers"
   const unavailableProvider = videoQueryModule.listVideos({ limit: 10, offset: 0, provider: "deezer" });
   assert.equal(unavailableProvider.total, 0);
   assert.equal(videoQueryModule.getVideoDetail("rejected-video"), null);
+  assert.equal(
+    videoQueryModule.getVideoDetail("apple-video-4k")?.id,
+    String(recording.id),
+    "accepted provider video ids resolve to the canonical recording",
+  );
+});
+
+test("video detail fails closed when two accepted matches share a provider id", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('ambiguous-artist', 'Ambiguous Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('ambiguous-artist', 'ambiguous-artist', 'Ambiguous Artist')
+  `).run();
+  const first = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-a', ?, 'ambiguous-artist', 'Video A', 1, 'musicbrainz')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const second = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-b', ?, 'ambiguous-artist', 'Video B', 1, 'musicbrainz')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  seedVideoOffer({
+    provider: "apple-music",
+    providerId: "shared-provider-id",
+    recordingId: first.id,
+    title: "Video A",
+  });
+  seedVideoOffer({
+    provider: "tidal",
+    providerId: "shared-provider-id",
+    recordingId: second.id,
+    title: "Video B",
+  });
+  assert.equal(videoQueryModule.getVideoDetail("shared-provider-id"), null);
 });
 
 test("video detail backfills null offer quality from TrackFiles", () => {
