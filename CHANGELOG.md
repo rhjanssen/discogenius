@@ -15,8 +15,9 @@ left after 2.8.0.
   the failed payload.
 - **Stray queued `Download*` commands no longer age `/health`.** Waiting work
   lives in `DownloadQueue`. Queued download commands with no wait-row claim
-  are leftover cutover/pause debris and are dropped on open and on each
-  processor tick.
+  are dropped on open. A claim that never started (pause between claim and
+  the download slot) is returned to the wait list and the unused command is
+  deleted.
 - **Failed-download SSE keeps the wait-row id.** Completion already captured
   it before deleting the row; fail did not.
 - **Queue rows show the provider mark.** The wait payload already stored

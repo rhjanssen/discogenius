@@ -1484,6 +1484,7 @@ export class DownloadProcessor {
         // finish. This keeps completed bytes from being stranded while the
         // provider-facing queue is paused.
         if (this.isPaused) {
+            DownloadWaitQueue.releaseUnstartedClaims();
             return;
         }
 

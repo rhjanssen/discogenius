@@ -554,6 +554,21 @@ function ensureDownloadQueueSchema(): void {
           SELECT command_id FROM DownloadQueue WHERE command_id IS NOT NULL
         )
     `).run();
+    db.exec(`
+      UPDATE DownloadQueue
+      SET command_id = NULL, claimed_at = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE command_id IN (
+        SELECT id FROM commands
+        WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+          AND status = 'queued'
+      );
+      DELETE FROM commands
+      WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
+        AND status = 'queued'
+        AND id NOT IN (
+          SELECT command_id FROM DownloadQueue WHERE command_id IS NOT NULL
+        );
+    `);
     return;
   }
 

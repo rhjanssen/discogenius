@@ -656,6 +656,34 @@ export class DownloadWaitQueue {
     return completedOrGone.changes;
   }
 
+  /**
+   * A Download* command should only exist while a slot is running it. Pause
+   * (and a crash between claim and start) can leave a queued command attached
+   * to a wait row; that pair then ages /health forever. Return the wait row
+   * to unclaimed and delete the unused command.
+   */
+  static releaseUnstartedClaims(): number {
+    return db.transaction(() => {
+      const rows = db.prepare(`
+        SELECT dq.id AS wait_id, c.id AS command_id
+        FROM DownloadQueue dq
+        JOIN commands c ON c.id = dq.command_id
+        WHERE c.status = 'queued'
+      `).all() as Array<{ wait_id: number; command_id: number }>;
+      for (const row of rows) {
+        db.prepare(`
+          UPDATE DownloadQueue
+          SET command_id = NULL, claimed_at = NULL, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(row.wait_id);
+        db.prepare(`
+          DELETE FROM commands WHERE id = ? AND status = 'queued'
+        `).run(row.command_id);
+      }
+      return rows.length;
+    })();
+  }
+
   private static nextAppendRank(): number {
     const row = db.prepare(`
       SELECT MAX(queue_order) AS queue_order FROM DownloadQueue

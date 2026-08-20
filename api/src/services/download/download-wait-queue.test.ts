@@ -162,6 +162,20 @@ test("completed SSE keeps the wait-row jobId after the claim is removed", async 
   }
 });
 
+test("releaseUnstartedClaims returns a claimed-but-never-started wait row to the list", () => {
+  const queued = enqueueTrack("unstarted-1", "Pompeii");
+  const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+  assert.ok(claimed);
+  assert.equal(queueModule.CommandQueueManager.get(claimed.commandId)?.status, "queued");
+
+  const released = waitQueueModule.DownloadWaitQueue.releaseUnstartedClaims();
+  assert.equal(released, 1);
+  assert.equal(queueModule.CommandQueueManager.get(claimed.commandId), null);
+  const wait = waitQueueModule.DownloadWaitQueue.get(queued.id);
+  assert.equal(wait?.command_id, null);
+  assert.equal(waitQueueModule.DownloadWaitQueue.countUnclaimed(), 1);
+});
+
 test("dropUnclaimedDownloadCommands removes queued Download* with no wait claim", () => {
   enqueueTrack("claimed-ref", "Claimed");
   const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
