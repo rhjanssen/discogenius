@@ -140,6 +140,23 @@ test("failed claimed wait rows stay off the live queue page", () => {
   assert.equal(live.items[0]?.status, "queued");
 });
 
+test("failed download commands stay off the live queue when the wait table is empty", () => {
+  const id = queueModule.CommandQueueManager.push(
+    queueModule.CommandNames.DownloadAlbum,
+    { type: "album", provider: "tidal", title: "The Spirit" },
+    "failed-album-ref",
+  );
+  queueModule.CommandQueueManager.fail(id, "Hybrid album import incomplete");
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
+
+  const live = queryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
+  assert.equal(live.total, 0);
+  assert.deepEqual(live.items, []);
+
+  const history = queryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+  assert.equal(history.items.some((item) => item.id === id), true);
+});
+
 test("claim creates a Download* command and leaves other wait rows unclaimed", () => {
   enqueueTrack("c-1", "First");
   enqueueTrack("c-2", "Second");

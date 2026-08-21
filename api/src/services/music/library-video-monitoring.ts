@@ -230,6 +230,8 @@ function resolveStereoPlacementLibraryId(db: Database.Database): number | null {
 /**
  * Audio tracks this video may sit beside. Exact recording relations only —
  * the same rule association uses, so a live cut never offers a studio track.
+ * Two monitored editions of the same album share a File location option
+ * (the representative edition) so the menu does not list "Beside X (Album)" twice.
  */
 export function listRelatedInlineTracks(
   db: Database.Database,
@@ -256,6 +258,21 @@ export function listRelatedInlineTracks(
      AND library.enabled = 1
     WHERE relation.source_recording_id = ?
       AND relation.relation_type IN ('provider_video_for', 'music_video_for')
+      AND track.id = (
+        SELECT preferred.id
+        FROM Tracks preferred
+        JOIN AlbumEditions preferred_edition
+          ON preferred_edition.id = preferred.album_edition_id
+        JOIN LibraryEditions preferred_library_release
+          ON preferred_library_release.edition_id = preferred_edition.id
+        JOIN Libraries preferred_library
+          ON preferred_library.id = preferred_library_release.library_id
+         AND preferred_library.enabled = 1
+        WHERE preferred.recording_id = audio.id
+          AND preferred_edition.release_group_id = album.id
+        ORDER BY preferred_library_release.representative DESC, preferred.id ASC
+        LIMIT 1
+      )
     GROUP BY track.id
     ORDER BY album.title COLLATE NOCASE, track.medium_position, track.position, track.id
   `).all(videoRecordingId) as RelatedInlineTrack[];

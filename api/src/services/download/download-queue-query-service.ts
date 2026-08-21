@@ -61,7 +61,8 @@ type QueueMetadata = {
 
 type QueueTrackProgress = NonNullable<QueueItemContract["tracks"]>[number];
 
-const ACTIVE_QUEUE_STATUSES: Array<"queued" | "started" | "failed"> = ["queued", "started", "failed"];
+/** Live Active queue: in-flight work only. Failed jobs belong in History. */
+const LIVE_QUEUE_STATUSES: Array<"queued" | "started"> = ["queued", "started"];
 const QUEUE_HISTORY_STATUSES: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
 
 function placeholders(values: readonly unknown[]): string {
@@ -1293,11 +1294,11 @@ export class DownloadQueueQueryService {
     if (DownloadWaitQueue.count() === 0) {
       const total = CommandQueueManager.countJobsByTypesAndStatuses(
         DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-        ACTIVE_QUEUE_STATUSES,
+        LIVE_QUEUE_STATUSES,
       );
       const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
         DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-        ACTIVE_QUEUE_STATUSES,
+        LIVE_QUEUE_STATUSES,
         params.limit,
         params.offset,
         { orderBy: "download_activity" },
@@ -1405,7 +1406,7 @@ export class DownloadQueueQueryService {
       if (DownloadWaitQueue.count() === 0) {
         const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
           DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-          ACTIVE_QUEUE_STATUSES,
+          LIVE_QUEUE_STATUSES,
           5000,
           0,
           { orderBy: "queue_order" },

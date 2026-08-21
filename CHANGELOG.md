@@ -8,6 +8,14 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **The live download queue listed leftover failed commands once the wait
+  table was empty.** Wait-row pages already hid failed claims; the command
+  fallback still treated `failed` as active, so The Spirit / Temptation /
+  Madan stayed on GET `/queue` after later retries succeeded. History still
+  keeps those rows.
+- **File location offered "Beside Pompeii (Bad Blood)" twice.** Two
+  monitored editions of the same album produced two identical menu rows.
+  The menu now keeps one option per album, the representative edition.
 - **Album import died with FOREIGN KEY when one TIDAL release matched two
   MusicBrainz groups.** Joy (Bakermat) is accepted against two editions;
   the organizer required every match to agree, resolved no artist, and

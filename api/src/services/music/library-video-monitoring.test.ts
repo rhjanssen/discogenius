@@ -225,6 +225,28 @@ test("listRelatedInlineTracks offers only exact related audio tracks in a librar
     "a video with no exact recording relation does not offer a studio track");
 });
 
+test("listRelatedInlineTracks offers one File location option per album", () => {
+  const { videoId, trackId } = seed();
+  db.exec(`
+    INSERT INTO AlbumEditions (
+      id, mbid, release_group_id, release_group_mbid, artist_mbid, title
+    ) VALUES (11, 'edition-making-movies-deluxe', 1, 'rg-making-movies', 'artist-dire', 'Making Movies');
+    INSERT INTO Tracks (
+      id, mbid, album_edition_id, recording_id, release_mbid, recording_mbid,
+      medium_position, position, title
+    ) VALUES (1001, 'track-tunnel-deluxe', 11, 100, 'edition-making-movies-deluxe', 'rec-audio-tunnel', 1, 1, 'Tunnel of Love');
+  `);
+  db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, curation_version, representative
+    ) VALUES (?, 11, 'auto', 1, 0)
+  `).run(stereoLibraryId());
+
+  const related = listRelatedInlineTracks(db, videoId);
+  assert.equal(related.length, 1);
+  assert.equal(related[0].id, trackId, "the representative edition is the one File location option");
+});
+
 test("relatedTracksForVideoDetail still names the current inline track", () => {
   const { otherVideoId, trackId } = seed();
   applyManualVideoPlacement(db, otherVideoId, { mode: "inline", inlineTrackId: trackId });
