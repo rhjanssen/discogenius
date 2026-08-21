@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.10.1] - 2026-08-21
+
+Wipe-and-import leftovers now bind to the selected edition, unmonitor cleanup
+deletes that edition's files without ghost TrackFiles, and on-disk `{TIDAL-id}`
+videos import once ProviderItems exist.
+
 ### Fixed
 - **Library scan left anniversary-edition tracks Unmapped when the release-group title differed.** `101 - Pompeii MMXXIII.m4a` sat in Bastille's Bad Blood X folder (catalog disc 1 track 1) while siblings imported, because scan compared Apple's album tag to the group title "Bad Blood" and pinned offers to All This Bad Blood. Scan now matches edition titles and album-folder siblings the way Lidarr does, and will not attach a leftover extra to a different release group.
 - **Existing files bound to an unmonitored sibling edition because scan runs before curation.** `101 - Pompeii MMXXIII.m4a` imported onto a Bad Blood X MusicBrainz release that was not the library's selected edition. After disk scan and CurateArtist, TrackFiles now rebind onto the unique monitored edition that carries that recording. Unmonitor prune does not rebind, so it can still delete the edition the user just dropped.
