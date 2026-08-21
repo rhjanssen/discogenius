@@ -146,7 +146,7 @@ export class RenameTrackFileService {
              provider, provider_entity_type, provider_id,
              quality, codec, bitrate, sample_rate, bit_depth, channels
       FROM (
-        SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+        SELECT id, artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, provider_id AS media_id,
                canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                file_path, relative_path, library_root, file_type, extension, library_slot,
                provider, provider_entity_type, provider_id,
@@ -488,7 +488,7 @@ export class RenameTrackFileService {
       const decoded = decodeSyntheticId(syntheticId);
       if (decoded.tableName === "TrackFiles") {
         const row = db.prepare(`
-          SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+          SELECT id, artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, provider_id AS media_id,
                  canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                  file_path, relative_path, library_root, file_type, extension, library_slot,
                  provider, provider_entity_type, provider_id,

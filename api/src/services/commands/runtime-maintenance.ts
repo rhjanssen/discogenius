@@ -360,7 +360,8 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     summary.duplicateLibraryFilesRemoved > 0 ||
     summary.orphanDownloadFoldersRemoved > 0 ||
     summary.staleTempDirsRemoved > 0 ||
-    summary.videoQualitiesCorrected > 0
+    summary.videoQualitiesCorrected > 0 ||
+    summary.unmonitoredFilesRemoved > 0
   ) {
     console.log(
       `[Maintenance] Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ` +
@@ -368,6 +369,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
       `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), ` +
       `${summary.orphanDownloadFoldersRemoved} orphan download folder(s), ` +
       `${summary.staleTempDirsRemoved} temp dir(s), ` +
+      `${summary.unmonitoredFilesRemoved} unmonitored file(s), ` +
       `corrected ${summary.videoQualitiesCorrected} video quality tag(s), refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,
     );

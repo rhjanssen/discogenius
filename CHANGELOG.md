@@ -8,6 +8,15 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Settings writes failed with SQLITE_BUSY while refresh workers held the
+  write lock.** Config and monitoring persist in SQLite; POST handlers now
+  yield-and-retry like album and queue mutations, and leftover SQLITE_BUSY
+  is HTTP 503 instead of a 500.
+- **Rename preview left TrackFiles without an album id.** The TrackFiles
+  union forced `album_id` to NULL even when the file had a canonical
+  release-group MBID, so artist rename grouping could not attach an album.
+- **Housekeeping logs omitted unmonitored-file prune counts.** Console
+  output now includes that total when files were removed.
 - **Library lists read membership tables, not a rebuilt index.** Lidarr
   pages `Albums` / `Tracks` (which *are* the library) and lets SQLite keep
   ordinary indexes current on write. Discogenius was DELETE+rebuilding

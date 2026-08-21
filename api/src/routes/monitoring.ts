@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
-import { db } from "../database.js";
+import { isSqliteBusyError, runWithAsyncBusyRetry } from "../database.js";
 import { parseMonitoringConfigUpdate } from "../contracts/config-updates.js";
 import { getObjectBody, isRequestValidationError } from "../utils/request-validation.js";
 import {
@@ -16,6 +16,16 @@ import {
 } from "../services/commands/scheduler.js";
 
 const router = Router();
+
+function runMonitoringUserWrite<T>(operation: () => T): Promise<T> {
+  return runWithAsyncBusyRetry(operation, 30, 200);
+}
+
+function monitoringMutationHttpStatus(error: unknown): number {
+  if (isRequestValidationError(error)) return 400;
+  if (isSqliteBusyError(error)) return 503;
+  return 500;
+}
 
 // Get monitoring status and config
 router.get("/status", (_, res) => {
@@ -43,7 +53,7 @@ router.get("/status", (_, res) => {
 });
 
 // Update monitoring config
-router.post("/config", (req, res) => {
+router.post("/config", async (req, res) => {
   try {
     const currentStatus = getMonitoringStatus();
     const validatedUpdates = parseMonitoringConfigUpdate(getObjectBody(req.body), {
@@ -59,7 +69,7 @@ router.post("/config", (req, res) => {
     if ("monitorNewArtists" in validatedUpdates) updates.monitor_new_artists = validatedUpdates.monitorNewArtists;
     if ("removeUnmonitoredFiles" in validatedUpdates) updates.remove_unmonitored_files = validatedUpdates.removeUnmonitoredFiles;
 
-    const config = updateMonitoringConfig(updates);
+    const config = await runMonitoringUserWrite(() => updateMonitoringConfig(updates));
 
     // Convert back to camelCase for response
     const response = {
@@ -73,10 +83,7 @@ router.post("/config", (req, res) => {
 
     res.json({ success: true, config: response });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -100,9 +107,11 @@ router.post("/stop", (_, res) => {
   }
 });
 
-const queueCurateArtists = (_: any, res: any) => {
+const queueCurateArtists = async (_: any, res: any) => {
   try {
-    const commandId = queueCurationPass({ trigger: CommandTrigger.Manual });
+    const commandId = await runMonitoringUserWrite(() =>
+      queueCurationPass({ trigger: CommandTrigger.Manual }),
+    );
 
     res.json({
       success: true,
@@ -110,16 +119,18 @@ const queueCurateArtists = (_: any, res: any) => {
       message: "Queued curation for monitored artists.",
     });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 };
 
 router.post("/curate", queueCurateArtists);
 
 // Trigger manual metadata refresh — metadata only, no local scan, curation, or downloads.
-router.post("/check", (_, res) => {
+router.post("/check", async (_, res) => {
   try {
-    const commandId = queueMetadataRefreshPass({ trigger: CommandTrigger.Manual });
+    const commandId = await runMonitoringUserWrite(() =>
+      queueMetadataRefreshPass({ trigger: CommandTrigger.Manual }),
+    );
 
     res.json({
       success: true,
@@ -127,14 +138,16 @@ router.post("/check", (_, res) => {
       message: "Queued a metadata refresh command.",
     });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
 // Trigger the full metadata refresh -> local scan/import -> curation -> download workflow.
-router.post("/trigger-all", (_, res) => {
+router.post("/trigger-all", async (_, res) => {
   try {
-    const commandId = queueMonitoringCyclePass({ trigger: CommandTrigger.Manual, includeRootScan: true });
+    const commandId = await runMonitoringUserWrite(() =>
+      queueMonitoringCyclePass({ trigger: CommandTrigger.Manual, includeRootScan: true }),
+    );
 
     res.json({
       success: true,
@@ -142,7 +155,7 @@ router.post("/trigger-all", (_, res) => {
       message: "Queued a monitoring cycle.",
     });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -150,28 +163,32 @@ router.post("/trigger-all", (_, res) => {
 // Monitored artist add already queues a scoped DownloadMissing after CurateArtist.
 router.post("/download-missing", async (_, res) => {
   try {
-    const commandId = queueDownloadMissingPass({ trigger: CommandTrigger.Manual });
+    const commandId = await runMonitoringUserWrite(() =>
+      queueDownloadMissingPass({ trigger: CommandTrigger.Manual }),
+    );
     res.json({
       success: true,
       commandId,
       message: "Queued a download-missing command.",
     });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
 // Scan library for files that don't meet the current quality settings and queue upgrades
 router.post("/check-upgrades", async (_, res) => {
   try {
-    const commandId = queueCheckUpgradesPass({ trigger: CommandTrigger.Manual });
+    const commandId = await runMonitoringUserWrite(() =>
+      queueCheckUpgradesPass({ trigger: CommandTrigger.Manual }),
+    );
     res.json({
       success: true,
       commandId,
       message: "Queued an upgrade check command.",
     });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 

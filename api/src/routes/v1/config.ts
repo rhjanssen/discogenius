@@ -24,12 +24,18 @@ import {
 import * as TOML from "@iarna/toml";
 import pg from "pg";
 import fs from "fs";
-import { db } from "../../database.js";
+import { db, isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
 import { applyLibrarySettingsFromConfig } from "../../services/music/library-settings-sync.js";
 
 const { Client: PgClient } = pg;
 import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
+
+import {
+  queueConfigPrune,
+  queueCurationPass,
+  queueMetadataRefreshPass,
+} from "../../services/commands/scheduler.js";
 
 /** Push Settings quality + spatial toggle onto the fixed Stereo / Spatial libraries. */
 function syncLibrariesFromSettings(): void {
@@ -38,11 +44,17 @@ function syncLibrariesFromSettings(): void {
     includeSpatial: getConfigSection("filtering").include_spatial === true,
   });
 }
-import {
-  queueConfigPrune,
-  queueCurationPass,
-  queueMetadataRefreshPass,
-} from "../../services/commands/scheduler.js";
+
+/** Same yield-and-retry budget as queue/album writes: settings persist in SQLite. */
+function runConfigUserWrite<T>(operation: () => T): Promise<T> {
+  return runWithAsyncBusyRetry(operation, 30, 200);
+}
+
+function configMutationHttpStatus(error: unknown): number {
+  if (isRequestValidationError(error)) return 400;
+  if (isSqliteBusyError(error)) return 503;
+  return 500;
+}
 
 const router = Router();
 
@@ -59,16 +71,13 @@ router.get("/account", (_, res) => {
   }
 });
 
-router.post("/account", (req, res) => {
+router.post("/account", async (req, res) => {
   try {
     const updates = parseAccountConfigUpdate(getObjectBody(req.body), Config.getAccountConfig());
-    updateConfig("account", updates);
+    await runConfigUserWrite(() => updateConfig("account", updates));
     res.json({ success: true });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -84,18 +93,15 @@ router.get("/app", (_, res) => {
   }
 });
 
-router.post("/app", (req, res) => {
+router.post("/app", async (req, res) => {
   try {
     const updates = parsePublicAppConfigUpdate(getObjectBody(req.body), {
       acoustid_api_key: getConfigSection("app").acoustid_api_key,
     });
-    updateConfig("app", updates);
+    await runConfigUserWrite(() => updateConfig("app", updates));
     res.json({ success: true });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -119,9 +125,11 @@ router.get("/quality", (_, res) => {
 router.post("/quality", async (req, res) => {
   try {
     const updates = parseQualityConfigUpdate(getObjectBody(req.body), getConfigSection("quality"));
-    updateConfig("quality", updates);
-    // Stereo library profile follows audio_quality (max/high/normal/low).
-    syncLibrariesFromSettings();
+    await runConfigUserWrite(() => {
+      updateConfig("quality", updates);
+      // Stereo library profile follows audio_quality (max/high/normal/low).
+      syncLibrariesFromSettings();
+    });
     await syncDownloadBackends();
 
     // Trigger upgrade check asynchronously if enabled
@@ -134,10 +142,7 @@ router.post("/quality", async (req, res) => {
 
     res.json({ success: true });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -149,18 +154,15 @@ router.get("/catalog", (_, res) => {
   }
 });
 
-router.post("/catalog", (req, res) => {
+router.post("/catalog", async (req, res) => {
   try {
     const updates = parseCatalogConfigUpdate(getObjectBody(req.body), getConfigSection("catalog"));
-    updateConfig("catalog", updates);
+    await runConfigUserWrite(() => updateConfig("catalog", updates));
     // Re-resolve the active catalog source so the change takes effect immediately.
     catalogProviderRegistry.refreshFromConfig();
     res.json({ success: true, activeSource: catalogProviderRegistry.getActiveId() });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -217,19 +219,18 @@ const getFilteringConfig = (_: any, res: any) => {
   }
 };
 
-const updateFilteringConfig = (req: any, res: any) => {
+const updateFilteringConfig = async (req: any, res: any) => {
   try {
     const updates = parseFilteringConfigUpdate(getObjectBody(req.body), getConfigSection("filtering"));
-    updateConfig("filtering", updates);
-    // Spatial library enabled flag follows include_spatial.
-    syncLibrariesFromSettings();
-    const commandId = queueCurationPass({ trigger: CommandTrigger.Manual });
+    const commandId = await runConfigUserWrite(() => {
+      updateConfig("filtering", updates);
+      // Spatial library enabled flag follows include_spatial.
+      syncLibrariesFromSettings();
+      return queueCurationPass({ trigger: CommandTrigger.Manual });
+    });
     res.json({ success: true, commandId });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 };
 
@@ -250,7 +251,7 @@ router.post("/metadata", async (req, res) => {
   try {
     const previousPreference = getConfigSection("metadata")?.artwork_preference;
     const updates = parseMetadataConfigUpdate(getObjectBody(req.body), getConfigSection("metadata"));
-    updateConfig("metadata", updates);
+    await runConfigUserWrite(() => updateConfig("metadata", updates));
     await syncDownloadBackends();
 
     const artworkPreferenceChanged = Boolean(
@@ -263,33 +264,30 @@ router.post("/metadata", async (req, res) => {
       // provider I/O. Run the normal durable refresh/match workflow so canonical
       // artwork is considered first and provider-preferred artwork can replace it
       // during matching, instead of doing untracked network work in this route.
-      artworkRefreshCommandId = queueMetadataRefreshPass({
+      artworkRefreshCommandId = await runConfigUserWrite(() => queueMetadataRefreshPass({
         trigger: CommandTrigger.Manual,
-      });
+      }));
     }
 
     // RefreshMetadata fans out monitored artists at -1 and each subsequent
     // workflow phase gets a higher priority. Keep an artwork reconciliation
     // below both monitored (-1) and credited (-10) workflows so cache
     // acquisition finishes before sidecars and embedded covers are updated.
-    queueConfigPrune({
+    await runConfigUserWrite(() => queueConfigPrune({
       trigger: CommandTrigger.Manual,
       priority: artworkPreferenceChanged ? -100 : 0,
       refId: artworkPreferenceChanged
         ? `artwork-preference-backfill:${artworkRefreshCommandId}`
         : "config-prune",
       refreshArtworkPreference: artworkPreferenceChanged,
-    });
+    }));
 
     res.json({
       success: true,
       ...(artworkRefreshCommandId != null ? { artworkRefreshCommandId } : {}),
     });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -336,7 +334,7 @@ router.post("/naming/preview", (req, res) => {
   }
 });
 
-router.post("/naming", (req, res) => {
+router.post("/naming", async (req, res) => {
   try {
     const updates = parseNamingConfigUpdate(getObjectBody(req.body), getConfigSection("naming"));
     const next = { ...getConfigSection("naming"), ...updates };
@@ -348,13 +346,10 @@ router.post("/naming", (req, res) => {
         validation,
       });
     }
-    updateConfig("naming", updates);
+    await runConfigUserWrite(() => updateConfig("naming", updates));
     res.json({ success: true });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -367,16 +362,13 @@ router.get("/path", (_, res) => {
   }
 });
 
-router.post("/path", (req, res) => {
+router.post("/path", async (req, res) => {
   try {
     const updates = parsePathConfigUpdate(getObjectBody(req.body), getConfigSection("path"));
-    updateConfig("path", updates);
+    await runConfigUserWrite(() => updateConfig("path", updates));
     res.json({ success: true });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 

@@ -540,6 +540,7 @@ test("rename preload follows the selected-release track identity for hybrid sour
 
   assert.equal(previews.length, 1);
   assert.equal(path.resolve(previews[0]?.expected_path || ""), path.resolve(expectedPath));
+  assert.equal(previews[0]?.album_id, "release-group-mbid-1");
   assert.equal(previews[0]?.reason, undefined);
 });
 

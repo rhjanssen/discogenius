@@ -296,6 +296,8 @@ const useStyles = makeStyles({
     // ActionOverflowMenu collapsing extra actions rather than by clipping.
     overflow: "visible",
     marginTop: tokens.spacingVerticalS,
+    // Keep action clicks out from under the sticky app bar (same as dashboard queue).
+    scrollMarginTop: "72px",
     alignItems: "stretch",
     "@media (min-width: 768px)": {
       justifyContent: "flex-start",
