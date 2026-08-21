@@ -61,8 +61,6 @@ type QueueMetadata = {
 
 type QueueTrackProgress = NonNullable<QueueItemContract["tracks"]>[number];
 
-/** Live Active queue: in-flight work only. Failed jobs belong in History. */
-const LIVE_QUEUE_STATUSES: Array<"queued" | "started"> = ["queued", "started"];
 const QUEUE_HISTORY_STATUSES: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
 
 function placeholders(values: readonly unknown[]): string {
@@ -120,182 +118,10 @@ function getJobProviderId(job: QueueJobRow): string | null {
     ?? getOptionalString(job.ref_id);
 }
 
-function getJobProvider(job: QueueJobRow): string | null {
-  return getOptionalString(job.payload?.provider);
-}
-
-function getJobAlbumId(job: QueueJobRow): string | null {
-  const payloadAlbumId = getOptionalString(
-    job.payload?.album_id
-    ?? job.payload?.albumId
-    ?? job.payload?.releaseGroupMbid
-    ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumId,
-  );
-  if (payloadAlbumId) {
-    return payloadAlbumId;
-  }
-
-  const contentType = resolveQueueItemContentType(job);
-  const providerId = getJobProviderId(job);
-
-  if (!providerId) {
-    return null;
-  }
-
-  const provider = getJobProvider(job);
-  if (!provider) {
-    return null;
-  }
-
-  const providerItemAlbumId = getProviderItemAlbumId(contentType, provider, providerId);
-  if (providerItemAlbumId) {
-    return providerItemAlbumId;
-  }
-
-  return null;
-}
-
-function getJobArtistId(job: QueueJobRow): string | null {
-  const payloadArtistId = getOptionalString(
-    job.payload?.artist_id
-    ?? job.payload?.artistId
-    ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.artistId,
-  );
-  if (payloadArtistId) {
-    return payloadArtistId;
-  }
-
-  const contentType = resolveQueueItemContentType(job);
-  const providerId = getJobProviderId(job);
-
-  if (!providerId) {
-    return null;
-  }
-
-  const provider = getJobProvider(job);
-  if (!provider) {
-    return null;
-  }
-
-  const providerItemArtistId = getProviderItemArtistId(contentType, provider, providerId);
-  if (providerItemArtistId) {
-    return providerItemArtistId;
-  }
-
-  return null;
-}
-
 function getProviderItemEntityTypes(contentType: QueueItemContract["type"]): string[] {
   if (contentType === "album") return ["release"];
   if (contentType === "video") return ["video"];
   return ["track"];
-}
-
-function getProviderItemAlbumId(
-  contentType: QueueItemContract["type"],
-  provider: string,
-  providerId: string,
-): string | null {
-  const rows = contentType === "album"
-    ? db.prepare(`
-        SELECT DISTINCT release_group.mbid AS release_group_mbid
-        FROM ProviderItems provider_item
-        JOIN ProviderEditionMatches release_match
-          ON release_match.provider_edition_item_id = provider_item.id
-         AND release_match.match_state = 'accepted'
-        JOIN AlbumEditions release ON release.id = release_match.edition_id
-        JOIN Albums release_group ON release_group.id = release.release_group_id
-        WHERE provider_item.provider = ?
-          AND provider_item.provider_id = ?
-          AND provider_item.entity_type = 'release'
-      `).all(provider, providerId)
-    : contentType === "track"
-      ? db.prepare(`
-          SELECT DISTINCT release_group.mbid AS release_group_mbid
-          FROM ProviderItems provider_item
-          JOIN ProviderTrackMatches track_match
-            ON track_match.provider_track_item_id = provider_item.id
-           AND track_match.match_state = 'accepted'
-          JOIN Tracks track ON track.id = track_match.track_id
-          JOIN AlbumEditions release ON release.id = track.album_edition_id
-          JOIN Albums release_group ON release_group.id = release.release_group_id
-          WHERE provider_item.provider = ?
-            AND provider_item.provider_id = ?
-            AND provider_item.entity_type = 'track'
-        `).all(provider, providerId)
-      : db.prepare(`
-          SELECT DISTINCT release_group.mbid AS release_group_mbid
-          FROM ProviderItems provider_item
-          JOIN ProviderVideoMatches video_match
-            ON video_match.provider_video_item_id = provider_item.id
-           AND video_match.match_state = 'accepted'
-          JOIN RecordingRelations relation
-            ON relation.source_recording_id = video_match.recording_id
-           AND relation.relation_type IN ('provider_video_for', 'music_video_for')
-          JOIN Tracks track ON track.recording_id = relation.target_recording_id
-          JOIN AlbumEditions release ON release.id = track.album_edition_id
-          JOIN Albums release_group ON release_group.id = release.release_group_id
-          WHERE provider_item.provider = ?
-            AND provider_item.provider_id = ?
-            AND provider_item.entity_type = 'video'
-        `).all(provider, providerId);
-  const albumIds = new Set(
-    (rows as Array<{ release_group_mbid?: string | null }>)
-      .map((row) => getOptionalString(row.release_group_mbid))
-      .filter((value): value is string => value !== null),
-  );
-
-  return albumIds.size === 1 ? [...albumIds][0] : null;
-}
-
-function getProviderItemArtistId(
-  contentType: QueueItemContract["type"],
-  provider: string,
-  providerId: string,
-): string | null {
-  const entityType = getProviderItemEntityTypes(contentType)[0];
-  const rows = db.prepare(`
-    SELECT DISTINCT artist.mbid AS artist_mbid
-    FROM ProviderItems provider_item
-    LEFT JOIN ProviderEditionMatches release_match
-      ON provider_item.entity_type = 'release'
-     AND release_match.provider_edition_item_id = provider_item.id
-     AND release_match.match_state = 'accepted'
-    LEFT JOIN AlbumEditions direct_release ON direct_release.id = release_match.edition_id
-    LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
-    LEFT JOIN ProviderEditionMembers member
-      ON provider_item.entity_type = 'track'
-     AND member.member_item_id = provider_item.id
-    LEFT JOIN ProviderTrackMatches track_match
-      ON track_match.provider_edition_member_id = member.id
-     AND track_match.match_state = 'accepted'
-    LEFT JOIN Tracks track ON track.id = track_match.track_id
-    LEFT JOIN AlbumEditions track_release ON track_release.id = track.album_edition_id
-    LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
-    LEFT JOIN ProviderVideoMatches video_match
-      ON provider_item.entity_type = 'video'
-     AND video_match.provider_video_item_id = provider_item.id
-     AND video_match.match_state = 'accepted'
-    LEFT JOIN Recordings recording
-      ON recording.id = COALESCE(video_match.recording_id, track_match.recording_id)
-    LEFT JOIN ArtistMetadata artist
-      ON artist.id = COALESCE(
-        direct_group.artist_metadata_id,
-        track_group.artist_metadata_id,
-        recording.artist_metadata_id
-      )
-    WHERE provider_item.provider = ?
-      AND provider_item.provider_id = ?
-      AND provider_item.entity_type = ?
-      AND artist.mbid IS NOT NULL
-  `).all(provider, providerId, entityType) as Array<{ artist_mbid?: string | null }>;
-  const artistIds = new Set(
-    rows
-      .map((row) => getOptionalString(row.artist_mbid))
-      .filter((value): value is string => value !== null),
-  );
-
-  return artistIds.size === 1 ? [...artistIds][0] : null;
 }
 
 function parseProviderData(value: unknown): Record<string, unknown> {
@@ -782,28 +608,6 @@ function normalizeQueueDetailsFilters(filters: QueueDetailsFilters): NormalizedQ
   };
 }
 
-function matchesQueueDetails(job: QueueJobRow, filters: NormalizedQueueDetailsFilters): boolean {
-  if (filters.artistId && getJobArtistId(job) !== filters.artistId) {
-    return false;
-  }
-
-  if (filters.albumIds.length > 0) {
-    const albumId = getJobAlbumId(job);
-    if (!albumId || !filters.albumIds.includes(albumId)) {
-      return false;
-    }
-  }
-
-  if (filters.providerIds.length > 0) {
-    const providerId = getJobProviderId(job);
-    if (!providerId || !filters.providerIds.includes(providerId)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 function buildWaitQueuePositionById(): Map<number, number> {
   const rows = db.prepare(`
     SELECT
@@ -814,25 +618,6 @@ function buildWaitQueuePositionById(): Map<number, number> {
     FROM DownloadQueue
     WHERE command_id IS NULL
   `).all() as Array<{ id: number; queuePosition: number }>;
-
-  return new Map<number, number>(rows.map((row) => [Number(row.id), Number(row.queuePosition)]));
-}
-
-function buildQueuePositionById(): Map<number, number> {
-  if (DownloadWaitQueue.count() > 0) {
-    return buildWaitQueuePositionById();
-  }
-  const typePlaceholders = DOWNLOAD_COMMAND_NAMES.map(() => "?").join(",");
-  const rows = db.prepare(`
-    SELECT
-      id,
-      ROW_NUMBER() OVER (
-        ORDER BY COALESCE(queue_order, 2147483647), created_at, id
-      ) AS queuePosition
-    FROM commands
-    WHERE status = 'queued'
-      AND name IN (${typePlaceholders})
-  `).all(...DOWNLOAD_COMMAND_NAMES) as Array<{ id: number; queuePosition: number }>;
 
   return new Map<number, number>(rows.map((row) => [Number(row.id), Number(row.queuePosition)]));
 }
@@ -1001,40 +786,6 @@ function countActiveWaitRows(): number {
     WHERE ${WAIT_QUEUE_ACTIVE_PREDICATE}
   `).get() as { count?: number };
   return Number(row.count || 0);
-}
-
-function getPendingDownloadQueuePositionsForIds(commandIds: readonly number[]): Map<number, number> {
-  const queuePositionById = new Map<number, number>();
-  if (commandIds.length === 0) {
-    return queuePositionById;
-  }
-
-  const typePlaceholders = DOWNLOAD_COMMAND_NAMES.map(() => "?").join(",");
-  const idPlaceholders = commandIds.map(() => "?").join(",");
-  // One ranked pass over the pending queue. The previous correlated COUNT
-  // subquery re-scanned the whole queued set per requested row, which cost
-  // seconds per page once the backlog reached tens of thousands of commands.
-  const rows = db.prepare(`
-    WITH ranked AS (
-      SELECT
-        id,
-        ROW_NUMBER() OVER (
-          ORDER BY COALESCE(queue_order, 2147483647), created_at, id
-        ) AS queuePosition
-      FROM commands
-      WHERE status = 'queued'
-        AND name IN (${typePlaceholders})
-    )
-    SELECT id, queuePosition
-    FROM ranked
-    WHERE id IN (${idPlaceholders})
-  `).all(...DOWNLOAD_COMMAND_NAMES, ...commandIds) as Array<{ id: number; queuePosition: number }>;
-
-  for (const row of rows) {
-    queuePositionById.set(Number(row.id), Number(row.queuePosition));
-  }
-
-  return queuePositionById;
 }
 
 type QueueHistoryQueryFilters = {
@@ -1291,33 +1042,6 @@ export class DownloadQueueQueryService {
   }
 
   private static buildQueue(params: { limit: number; offset: number }): QueueListResponseContract {
-    if (DownloadWaitQueue.count() === 0) {
-      const total = CommandQueueManager.countJobsByTypesAndStatuses(
-        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-        LIVE_QUEUE_STATUSES,
-      );
-      const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-        LIVE_QUEUE_STATUSES,
-        params.limit,
-        params.offset,
-        { orderBy: "download_activity" },
-      ) as unknown as QueueJobRow[];
-      const queuePositionById = getPendingDownloadQueuePositionsForIds(
-        jobs
-          .filter((job) => job.status === "queued" && DOWNLOAD_COMMAND_NAMES.includes(job.name as typeof DOWNLOAD_COMMAND_NAMES[number]))
-          .map((job) => job.id),
-      );
-      const items = jobs.map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
-      return {
-        items,
-        total,
-        limit: params.limit,
-        offset: params.offset,
-        hasMore: params.offset + jobs.length < total,
-      };
-    }
-
     const total = countActiveWaitRows();
     const rows = db.prepare(`
       ${WAIT_QUEUE_LIST_SQL}
@@ -1402,19 +1126,7 @@ export class DownloadQueueQueryService {
     // synchronous payload parsing, so repeat polls must share one snapshot.
     const cacheKey = `details:${normalizedFilters.artistId ?? ""}:${normalizedFilters.albumIds.join(",")}:${normalizedFilters.providerIds.join(",")}`;
     return this.getSnapshot(cacheKey, () => {
-      const queuePositionById = buildQueuePositionById();
-      if (DownloadWaitQueue.count() === 0) {
-        const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-          DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-          LIVE_QUEUE_STATUSES,
-          5000,
-          0,
-          { orderBy: "queue_order" },
-        ) as unknown as QueueJobRow[];
-        return jobs
-          .filter((job) => matchesQueueDetails(job, normalizedFilters))
-          .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
-      }
+      const queuePositionById = buildWaitQueuePositionById();
       const clauses: string[] = [WAIT_QUEUE_ACTIVE_PREDICATE];
       const sqlParams: unknown[] = [];
       if (normalizedFilters.artistId) {
@@ -1464,19 +1176,6 @@ export class DownloadQueueQueryService {
     // ~30s of synchronous main-thread work per connection with a few thousand
     // queued albums, which is what made the app unreachable under load.
     return this.getSnapshot('active-progress', () => {
-      if (DownloadWaitQueue.count() === 0) {
-        const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-          DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-          ["started"],
-          50,
-          0,
-          { orderBy: "queue_order" },
-        ) as unknown as QueueJobRow[];
-        return jobs
-          .map((job) => this.mapDownloadQueueJob(job))
-          .map((item) => buildProgressFromQueueItem(item))
-          .filter((item): item is DownloadProgressContract => item !== null);
-      }
       const rows = db.prepare(`
         ${WAIT_QUEUE_LIST_SQL}
         WHERE c.status = 'started'
@@ -1548,14 +1247,18 @@ export class DownloadQueueQueryService {
     if (albumId && contentType === "album") {
       cover = albumCoverLocalUrl({ albumMbid: albumId }) ?? cover;
     }
-    const offerMetadata = canonicalMetadata ?? providerItemMetadata;
-    if (offerMetadata) {
-      title ||= offerMetadata.title ?? undefined;
-      artist ||= offerMetadata.artist ?? undefined;
-      cover ||= offerMetadata.cover ?? null;
-      albumId ||= offerMetadata.albumId ?? null;
-      albumTitle ||= offerMetadata.albumTitle ?? null;
-      quality ||= offerMetadata.quality ?? null;
+    if (canonicalMetadata || providerItemMetadata) {
+      // Album metadata fills album_title/cover, not the row title of a track/video.
+      if (contentType === "album") {
+        title ||= canonicalMetadata?.title ?? providerItemMetadata?.title ?? undefined;
+      } else {
+        title ||= providerItemMetadata?.title ?? undefined;
+      }
+      artist ||= canonicalMetadata?.artist ?? providerItemMetadata?.artist ?? undefined;
+      cover ||= canonicalMetadata?.cover ?? providerItemMetadata?.cover ?? null;
+      albumId ||= canonicalMetadata?.albumId ?? providerItemMetadata?.albumId ?? null;
+      albumTitle ||= canonicalMetadata?.albumTitle ?? canonicalMetadata?.title ?? providerItemMetadata?.albumTitle ?? null;
+      quality ||= providerItemMetadata?.quality ?? canonicalMetadata?.quality ?? null;
     }
     // Prefer the video poster over any album art gap-fill or stale payload cover.
     let mediaId: string | null = null;

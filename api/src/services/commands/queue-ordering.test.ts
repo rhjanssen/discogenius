@@ -18,6 +18,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let queueModule: typeof import("./command-queue-manager.js");
 let downloadQueueQueryModule: typeof import("../download/download-queue-query-service.js");
+let waitQueueModule: typeof import("../download/download-wait-queue.js");
 const require = createRequire(import.meta.url);
 const betterSqlite3ModulePath = require.resolve("better-sqlite3");
 
@@ -25,10 +26,12 @@ before(async () => {
     dbModule = await import("../../database.js");
     queueModule = await import("./command-queue-manager.js");
     downloadQueueQueryModule = await import("../download/download-queue-query-service.js");
+    waitQueueModule = await import("../download/download-wait-queue.js");
     dbModule.initDatabase();
 });
 
 beforeEach(() => {
+    dbModule.db.prepare("DELETE FROM DownloadQueue").run();
     dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM ProviderVideoMatches").run();
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
@@ -56,6 +59,42 @@ function queuePendingDownload(type: "track" | "video" | "album", providerId: str
         { providerId, type, url: `https://listen.tidal.com/${type}/${providerId}` },
         providerId,
     );
+}
+
+function enqueueLive(input: {
+    mediaKind: "album" | "track" | "video";
+    refKey: string;
+    payload: Record<string, unknown>;
+    provider?: string;
+    providerId?: string | null;
+    artistId?: string | null;
+    albumId?: string | null;
+    title?: string | null;
+    artist?: string | null;
+    cover?: string | null;
+    quality?: string | null;
+    slot?: string | null;
+}) {
+    const commandName = input.mediaKind === "video"
+        ? queueModule.CommandNames.DownloadVideo
+        : input.mediaKind === "album"
+            ? queueModule.CommandNames.DownloadAlbum
+            : queueModule.CommandNames.DownloadTrack;
+    return waitQueueModule.DownloadWaitQueue.enqueue({
+        refKey: input.refKey,
+        mediaKind: input.mediaKind,
+        commandName,
+        provider: input.provider ?? "tidal",
+        providerId: input.providerId ?? null,
+        artistId: input.artistId ?? null,
+        albumId: input.albumId ?? null,
+        title: input.title ?? null,
+        artist: input.artist ?? null,
+        cover: input.cover ?? null,
+        quality: input.quality ?? null,
+        slot: input.slot ?? null,
+        payload: input.payload,
+    });
 }
 
 async function runWhilePeerWriteIsLocked<T>(
@@ -583,9 +622,16 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
 });
 
 test("download queue query surfaces pending, processing, and history items with payload metadata", () => {
-    const processingAlbumId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadAlbum,
-        {
+    const processingAlbum = enqueueLive({
+        mediaKind: "album",
+        refKey: "release-group-1:stereo",
+        albumId: "release-group-1",
+        title: "Processing Album",
+        artist: "Queue Artist",
+        cover: "processing-cover",
+        quality: "HIRES_LOSSLESS",
+        slot: "stereo",
+        payload: {
             type: "album",
             provider: "tidal",
             releaseGroupMbid: "release-group-1",
@@ -596,11 +642,21 @@ test("download queue query surfaces pending, processing, and history items with 
             quality: "HIRES_LOSSLESS",
             downloadState: { progress: 42, currentFileNum: 2, totalFiles: 5 },
         },
-        "release-group-1:stereo",
-    );
-    const pendingAlbumId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadAlbum,
-        {
+    });
+    const claimed = waitQueueModule.DownloadWaitQueue.claim(processingAlbum.id);
+    assert.ok(claimed);
+    queueModule.CommandQueueManager.markProcessing(claimed.commandId);
+
+    const pendingAlbum = enqueueLive({
+        mediaKind: "album",
+        refKey: "release-group-2:spatial",
+        albumId: "release-group-2",
+        title: "Pending Album",
+        artist: "Queue Artist",
+        cover: "pending-cover",
+        quality: "DOLBY_ATMOS",
+        slot: "spatial",
+        payload: {
             type: "album",
             provider: "tidal",
             releaseGroupMbid: "release-group-2",
@@ -610,8 +666,7 @@ test("download queue query surfaces pending, processing, and history items with 
             cover: "pending-cover",
             quality: "DOLBY_ATMOS",
         },
-        "release-group-2:spatial",
-    );
+    });
     const completedTrackId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,
         {
@@ -625,12 +680,11 @@ test("download queue query surfaces pending, processing, and history items with 
         "provider-track-1",
     );
 
-    queueModule.CommandQueueManager.markProcessing(processingAlbumId);
     queueModule.CommandQueueManager.complete(completedTrackId);
 
     const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     assert.equal(live.total, 2);
-    assert.deepEqual(live.items.map((item) => item.id), [processingAlbumId, pendingAlbumId]);
+    assert.deepEqual(live.items.map((item) => item.id), [processingAlbum.id, pendingAlbum.id]);
     assert.equal(live.items[0]?.title, "Processing Album");
     assert.equal(live.items[0]?.progress, 42);
     assert.equal(live.items[0]?.currentFileNum, 2);
@@ -641,7 +695,7 @@ test("download queue query surfaces pending, processing, and history items with 
     assert.equal(live.items[1]?.slot, "spatial");
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({});
-    assert.deepEqual(details.map((item) => item.id), [processingAlbumId, pendingAlbumId]);
+    assert.deepEqual(details.map((item) => item.id), [processingAlbum.id, pendingAlbum.id]);
 
     const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
     assert.equal(history.total, 1);
@@ -703,21 +757,25 @@ test("download queue query resolves canonical release-group provider offers with
         providerQualityLabel: "HIRES_LOSSLESS",
     });
 
-    const commandId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadAlbum,
-        {
+    const queued = enqueueLive({
+        mediaKind: "album",
+        refKey: "rg-gmtf:stereo",
+        providerId: "tidal-gmtf-expanded",
+        artistId: "artist-bastille",
+        albumId: "rg-gmtf",
+        slot: "stereo",
+        payload: {
             type: "album",
             provider: "tidal",
             providerId: "tidal-gmtf-expanded",
             releaseGroupMbid: "rg-gmtf",
             slot: "stereo",
         },
-        "rg-gmtf:stereo",
-    );
+    });
 
     const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     assert.equal(live.total, 1);
-    assert.equal(live.items[0]?.id, commandId);
+    assert.equal(live.items[0]?.id, queued.id);
     assert.equal(live.items[0]?.title, "Give Me the Future");
     assert.equal(live.items[0]?.artist, "Bastille");
     assert.equal(live.items[0]?.album_id, "rg-gmtf");
@@ -732,7 +790,7 @@ test("download queue query resolves canonical release-group provider offers with
         albumIds: ["rg-gmtf"],
         providerIds: ["tidal-gmtf-expanded"],
     });
-    assert.deepEqual(details.map((item) => item.id), [commandId]);
+    assert.deepEqual(details.map((item) => item.id), [queued.id]);
 });
 
 test("download queue prefers video poster over stamped album cover for DownloadVideo", () => {
@@ -760,23 +818,27 @@ test("download queue prefers video poster over stamped album cover for DownloadV
     ) VALUES (?, 'video', ?, ?)
     `).run( "tidal", "tidal-video-cover-1", "Pompeii" );
 
-    const commandId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadVideo,
-        {
+    const queued = enqueueLive({
+        mediaKind: "video",
+        refKey: "tidal-video-cover-1",
+        providerId: "tidal-video-cover-1",
+        title: "Pompeii",
+        artist: "Video Cover Artist",
+        payload: {
             type: "video",
             provider: "tidal",
             providerId: "tidal-video-cover-1",
             canonicalRecordingId: String(recording.id),
             title: "Pompeii",
             artist: "Video Cover Artist",
-            // Missing cover forces gap-fill through resolveProviderItemMetadata.
         },
-        "tidal-video-cover-1",
-    );
+    });
+    const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+    assert.ok(claimed);
 
     const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     assert.equal(live.total, 1);
-    assert.equal(live.items[0]?.id, commandId);
+    assert.equal(live.items[0]?.id, queued.id);
     assert.equal(live.items[0]?.type, "video");
     assert.ok(
         String(live.items[0]?.cover || "").startsWith(`/media-cover/Videos/${recording.id}/`),
@@ -787,7 +849,7 @@ test("download queue prefers video poster over stamped album cover for DownloadV
         "album cover must not win for DownloadVideo queue rows",
     );
 
-    queueModule.CommandQueueManager.complete(commandId);
+    queueModule.CommandQueueManager.complete(claimed.commandId);
     const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
     assert.equal(history.total, 1);
     assert.ok(
@@ -950,19 +1012,22 @@ test("download queue query resolves canonical track provider offers without Prov
         trackMbid: "track-collision",
     });
 
-    const commandId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadTrack,
-        {
+    const queued = enqueueLive({
+        mediaKind: "track",
+        refKey: "tidal-track-1",
+        providerId: "tidal-track-1",
+        artistId: "artist-track",
+        albumId: "rg-track",
+        payload: {
             type: "track",
             provider: "tidal",
             providerId: "tidal-track-1",
         },
-        "tidal-track-1",
-    );
+    });
 
     const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     assert.equal(live.total, 1);
-    assert.equal(live.items[0]?.id, commandId);
+    assert.equal(live.items[0]?.id, queued.id);
     assert.equal(live.items[0]?.title, "Canonical Track");
     assert.equal(live.items[0]?.artist, "Track Artist");
     assert.equal(live.items[0]?.album_id, "rg-track");
@@ -975,7 +1040,7 @@ test("download queue query resolves canonical track provider offers without Prov
         albumIds: ["rg-track"],
         providerIds: ["tidal-track-1"],
     });
-    assert.deepEqual(details.map((item) => item.id), [commandId]);
+    assert.deepEqual(details.map((item) => item.id), [queued.id]);
     assert.deepEqual(
         downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
             artistId: "artist-collision",
@@ -1032,10 +1097,18 @@ test("download queue history collapses completed download and import jobs into o
     assert.equal(history.items[0]?.type, "album");
 });
 
-test("download queue history hides completed download while paired import is active", () => {
-    const downloadJobId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.DownloadAlbum,
-        {
+test("download queue keeps the wait row live during the same command's import phase", () => {
+    const queued = enqueueLive({
+        mediaKind: "album",
+        refKey: "release-group-handoff:stereo",
+        providerId: "provider-album-handoff",
+        albumId: "release-group-handoff",
+        title: "Handoff Album",
+        artist: "Queue Artist",
+        cover: "album-cover",
+        quality: "LOSSLESS",
+        slot: "stereo",
+        payload: {
             type: "album",
             provider: "tidal",
             providerId: "provider-album-handoff",
@@ -1046,40 +1119,34 @@ test("download queue history hides completed download while paired import is act
             cover: "album-cover",
             quality: "LOSSLESS",
             downloadState: {
+                state: "importing",
                 tracks: [
                     { title: "Import Track 1", trackNum: 1, status: "completed" },
                     { title: "Import Track 2", trackNum: 2, status: "completed" },
                 ],
             },
         },
-        "release-group-handoff:stereo",
-    );
-    queueModule.CommandQueueManager.complete(downloadJobId);
-
-    const importJobId = queueModule.CommandQueueManager.push(
-        queueModule.CommandNames.ImportDownload,
-        {
-            type: "album",
-            provider: "tidal",
-            providerId: "provider-album-handoff",
-            releaseGroupMbid: "release-group-handoff",
-            slot: "stereo",
-            title: "Handoff Album",
-            artist: "Queue Artist",
-            cover: "album-cover",
-            quality: "LOSSLESS",
-            path: path.join(tempDir, "download-provider-album-handoff"),
-            originalJobId: downloadJobId,
+    });
+    const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+    assert.ok(claimed);
+    queueModule.CommandQueueManager.markProcessing(claimed.commandId);
+    queueModule.CommandQueueManager.updateState(claimed.commandId, {
+        payloadPatch: {
+            downloadState: {
+                state: "importing",
+                tracks: [
+                    { title: "Import Track 1", trackNum: 1, status: "queued" },
+                    { title: "Import Track 2", trackNum: 2, status: "queued" },
+                ],
+            },
         },
-        "provider-album-handoff",
-    );
-    queueModule.CommandQueueManager.markProcessing(importJobId);
+    });
 
     const activeDuringImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     const historyDuringImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
 
     assert.equal(activeDuringImport.total, 1);
-    assert.equal(activeDuringImport.items[0]?.id, importJobId);
+    assert.equal(activeDuringImport.items[0]?.id, queued.id);
     assert.equal(activeDuringImport.items[0]?.stage, "import");
     assert.deepEqual(activeDuringImport.items[0]?.tracks, [
         { title: "Import Track 1", trackNum: 1, volumeNum: undefined, status: "queued" },
@@ -1087,12 +1154,13 @@ test("download queue history hides completed download while paired import is act
     ]);
     assert.equal(historyDuringImport.total, 0);
 
-    queueModule.CommandQueueManager.complete(importJobId);
+    queueModule.CommandQueueManager.complete(claimed.commandId);
+    waitQueueModule.DownloadWaitQueue.finishClaimed(claimed.commandId);
 
     const historyAfterImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
 
     assert.equal(historyAfterImport.total, 1);
-    assert.equal(historyAfterImport.items[0]?.id, importJobId);
+    assert.equal(historyAfterImport.items[0]?.id, claimed.commandId);
     assert.equal(historyAfterImport.items[0]?.stage, "import");
     assert.equal(historyAfterImport.items[0]?.title, "Handoff Album");
 });

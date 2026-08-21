@@ -1502,12 +1502,10 @@ export class DownloadProcessor {
 
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
         // most one per provider (same-provider downloads stay serialized). ──
-        // Waiting work lives in DownloadQueue. Only a free slot claims the next
-        // wait row into a short-lived Download* command (Tidarr + qBittorrent).
-        // Pending Download* commands that were not claimed from the wait table
-        // must not jump the wait list; the command-first path is only for
-        // already-claimed rows (and for the empty-table legacy fallback).
-        const waitTableInUse = DownloadWaitQueue.count() > 0;
+        // Waiting work lives in DownloadQueue (Lidarr Queue / qBittorrent
+        // transfer list). A free slot claims the next wait row into a
+        // Download* command (Tidarr). Already-queued Download* commands are
+        // only those claimed wait rows; never start a command with no wait row.
         while (this.activeDownloads.size < MAX_CONCURRENT_DOWNLOADS) {
             const activeProviders = new Set<string>();
             for (const entry of this.activeDownloads.values()) {
@@ -1519,7 +1517,6 @@ export class DownloadProcessor {
                 if (activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand))) {
                     return false;
                 }
-                if (!waitTableInUse) return true;
                 return DownloadWaitQueue.getByCommandId(candidate.id) != null;
             });
 

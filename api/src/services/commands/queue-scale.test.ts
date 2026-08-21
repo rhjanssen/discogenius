@@ -86,6 +86,22 @@ test("queue/history queries and sparse reorder stay bounded at 100k command rows
     );
 
     const seedTenThousand = elapsed(() => seedRange(1_000, 10_000, "queued"));
+    const insertWait = dbModule.db.prepare(`
+        INSERT INTO DownloadQueue(
+            ref_key, media_kind, command_name, payload, queue_order, priority, trigger
+        )
+        VALUES(?, 'track', 'DownloadTrack', ?, ?, 0, 0)
+    `);
+    const seedWaitRows = dbModule.db.transaction((count: number) => {
+        for (let index = 0; index < count; index += 1) {
+            insertWait.run(
+                `scale-wait-${index}`,
+                queuePayload(index),
+                (index + 1) * 1024,
+            );
+        }
+    });
+    seedWaitRows(10_000);
     const queuePage = elapsed(() => queryModule.DownloadQueueQueryService.getQueue({
         limit: 50,
         offset: 0,

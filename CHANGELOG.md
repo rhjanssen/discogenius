@@ -8,12 +8,32 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Library scan left tagged mixtape rips in Unmapped Files.** Other People's
+  Heartache, Pt. 2 already existed in the MusicBrainz catalog with 11 tracks,
+  but scan would only auto-import a file that hit a provider offer. SoundCloud
+  had imported some sibling `.m4a`s, so Dreams / Free / the numbered Pt. 1
+  titles (`01. ADAGIO FOR STRINGS (ft. Maiday)`) never matched. Scan now
+  matches album+track tags to the canonical catalog the way Lidarr does, and
+  strips a leading track index from tagged titles.
+- **Manual Import search dropped the album the guess had just found.** Refreshing
+  mappings searches with an artist filter and compared the raw title, so
+  `Other People's Heartache, Pt. 2` (ASCII apostrophe) missed the catalog's
+  curly-apostrophe title. Artist-scoped album search now tokenizes like the
+  global search box.
+- **The live download queue no longer falls back to leftover Download*
+  commands.** Waiting and in-flight work is the DownloadQueue wait table
+  (Lidarr Queue / qBittorrent transfer list). Commands are only the claimed
+  worker job. An empty wait table is an empty Active queue; History still
+  lists completed and failed commands. The download worker no longer starts a
+  Download* command that has no wait row.
 - **GET /tracks tests raced the async list handler.** Two suite tests
   asserted `res.body` before `json()` ran. They now await the handler.
+- **Imported files bound to an unmonitored sibling edition.** Basket Case
   and SAVE MY SOUL landed on a provider-matched MusicBrainz release that
   was not the library's selected edition, so completion stayed 0% with the
   file on disk. Identity now remaps to the unique monitored edition that
   carries the same recording, and upsert writes that `track_id`.
+- **Album page always said an album was 0% downloaded.** List/artist cards
   already used library completion stats; the album page and getAlbum
   hardcoded `downloaded: 0`. Basket Case stayed unmarked after a successful
   FLAC import. Those endpoints now use the same stats.
