@@ -13,6 +13,10 @@ name that two MusicBrainz artists share no longer hides both of them.
   the organizer required every match to agree, resolved no artist, and
   wrote TrackFiles with an empty `artist_id`. Import now uses the job's
   release-group MBID to pick the managed artist.
+- **Embedded lyrics verified as dirty immediately after a successful write.**
+  music-metadata parses FLAC `LYRICS` into timed objects and the retag
+  checker compared that comma-joined parse to the LRC string we wrote.
+  Verification now reads the native tag.
 - **Download Missing queued a second copy of a video that was already
   downloading.** The artist-page Download button keys the wait row by
   provider id; Download Missing keyed it by recording id, so the same

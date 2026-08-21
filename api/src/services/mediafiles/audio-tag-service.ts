@@ -851,13 +851,16 @@ function mergeMp4KeyedNativeLookup(metadata: mm.IAudioMetadata, lookup: Map<stri
   }
 }
 
-function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, string>, tag: ManagedTag): string | null {
+export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, string>, tag: ManagedTag): string | null {
   const common = metadata.common as Record<string, any>;
   const fallback = () => getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
 
   switch (tag.key) {
     case "lyrics":
-      return normalizeValue(common.lyrics) || fallback();
+      // music-metadata parses Vorbis LYRICS into timed objects and
+      // normalizeValue joins them with ", ", which never matches the LRC
+      // string we wrote. Prefer the native tag we actually embedded.
+      return fallback() || normalizeValue(common.lyrics);
     case "title":
       return normalizeValue(common.title) || fallback();
     case "artist":

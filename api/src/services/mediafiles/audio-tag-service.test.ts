@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   AudioTagService,
   buildEmbeddedLyricsManagedTag,
+  getCurrentTagValue,
   selectEmbeddedLyricsText,
   type ManagedTag,
 } from "./audio-tag-service.js";
@@ -243,6 +244,29 @@ test("resolved sidecar lyrics become the managed embedded-lyrics tag", () => {
     aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
   });
   assert.equal(buildEmbeddedLyricsManagedTag(null), null);
+});
+
+test("lyrics verification reads the native LYRICS tag, not music-metadata timed objects", () => {
+  const lyricTag = buildEmbeddedLyricsManagedTag({
+    subtitles: "[00:00.11] This is a song my heart does sing",
+    text: "This is a song my heart does sing",
+  });
+  assert.ok(lyricTag);
+  const lookup = new Map([
+    ["lyrics", "[00:00.11] This is a song my heart does sing"],
+  ]);
+  const metadata = {
+    common: {
+      lyrics: [{ text: "This is a song my heart does sing", time: 0.11 }],
+    },
+    native: {},
+    format: {},
+    quality: { warnings: [] },
+  } as any;
+  assert.equal(
+    getCurrentTagValue(metadata, lookup, lyricTag),
+    "[00:00.11] This is a song my heart does sing",
+  );
 });
 
 test("plain txt sidecar lyrics remain plain when reused for the embedded tag", () => {
