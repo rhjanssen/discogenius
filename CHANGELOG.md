@@ -46,6 +46,12 @@ name that two MusicBrainz artists share no longer hides both of them.
   `v8::ToLocalChecked Empty MaybeLocal`. Progress ticks now skip while
   the process write lock is held. Lightweight health also no longer
   treats empty library-projection markers as stale.
+- **Album Local Files showed two stereo qualities for one recording.**
+  Sibling editions of the same album (Dutch CD + anniversary ALAC + a
+  hi-res FLAC in another folder) all attached by recording MBID, so
+  Oblivion on Bad Blood listed HIGH and MAX in one stereo library. The
+  tracklist now keeps the displayed edition's own file, or the single
+  best stereo fallback plus spatial.
 
 ## [2.9.3] - 2026-08-20
 

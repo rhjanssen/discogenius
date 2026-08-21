@@ -351,6 +351,83 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
   assert.equal(tracks[0].downloaded, true);
 });
 
+test("album tracks show one stereo file per recording, not every sibling edition copy", async () => {
+  const artistMbid = "artist-mbid-bad-blood-files";
+  const releaseGroupMbid = "release-group-bad-blood-files";
+  const dutchReleaseMbid = "release-bad-blood-dutch";
+  const anniversaryReleaseMbid = "release-bad-blood-x";
+  const hiresReleaseMbid = "release-bad-blood-2014";
+  const dutchTrackMbid = "track-oblivion-dutch";
+  const anniversaryTrackMbid = "track-oblivion-x";
+  const hiresTrackMbid = "track-oblivion-2014";
+  const recordingMbid = "recording-oblivion";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Bastille", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Bad Blood", "Album", "2013-03-04");
+
+  const insertRelease = dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run(dutchReleaseMbid, releaseGroupMbid, artistMbid, "All This Bad Blood", "Official", "2012-04-27", 1, 1);
+  insertRelease.run(anniversaryReleaseMbid, releaseGroupMbid, artistMbid, "Bad Blood X", "Official", "2023-07-14", 1, 1);
+  insertRelease.run(hiresReleaseMbid, releaseGroupMbid, artistMbid, "All This Bad Blood (2014)", "Official", "2014-06-06", 1, 1);
+
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, length_ms) VALUES (?, ?, ?)")
+    .run(recordingMbid, "Oblivion", 196000);
+
+  const insertTrack = dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run(dutchTrackMbid, dutchReleaseMbid, recordingMbid, 1, 8, "8", "Oblivion", 196000);
+  insertTrack.run(anniversaryTrackMbid, anniversaryReleaseMbid, recordingMbid, 1, 9, "9", "Oblivion", 196000);
+  insertTrack.run(hiresTrackMbid, hiresReleaseMbid, recordingMbid, 1, 8, "8", "Oblivion", 196000);
+
+  const insertFile = dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, library_slot, file_path, relative_path,
+      library_root, filename, extension, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertFile.run(
+    artistMbid, artistMbid, releaseGroupMbid, anniversaryReleaseMbid, anniversaryTrackMbid, recordingMbid,
+    "stereo", "/library/stereo/Bad Blood X/Oblivion.m4a", "Bad Blood X/Oblivion.m4a",
+    "/library/stereo", "Oblivion.m4a", ".m4a", "track", "LOSSLESS",
+  );
+  insertFile.run(
+    artistMbid, artistMbid, releaseGroupMbid, hiresReleaseMbid, hiresTrackMbid, recordingMbid,
+    "stereo", "/library/stereo/All This Bad Blood/Oblivion.flac", "All This Bad Blood/Oblivion.flac",
+    "/library/stereo", "Oblivion.flac", ".flac", "track", "HIRES_LOSSLESS",
+  );
+  hydrateCanonicalForeignKeys(releaseGroupMbid);
+  selectLibraryRelease(releaseGroupMbid, dutchReleaseMbid);
+
+  const dutchTracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(releaseGroupMbid);
+  assert.equal(dutchTracks.length, 1);
+  assert.equal(dutchTracks[0].files.filter((file) => file.file_type === "track").length, 1);
+  assert.equal(dutchTracks[0].files[0]?.quality, "HIRES_LOSSLESS");
+
+  const anniversaryEditionId = (
+    dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(anniversaryReleaseMbid) as { id: number }
+  ).id;
+  const anniversaryTracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getEditionTracks(
+    releaseGroupMbid,
+    anniversaryEditionId,
+  );
+  assert.equal(anniversaryTracks[0].files.filter((file) => file.file_type === "track").length, 1);
+  assert.equal(anniversaryTracks[0].files[0]?.quality, "LOSSLESS");
+  assert.equal(anniversaryTracks[0].files[0]?.canonical_release_mbid, anniversaryReleaseMbid);
+});
+
 /**
  * The track-list tab strip asks for one edition at a time, so the read has to
  * answer for the edition named — not for whichever one the library prefers.

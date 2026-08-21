@@ -670,6 +670,77 @@ function normalizeLibraryFileFromRow(row: any) {
     };
 }
 
+function isSpatialLibraryFile(file: { library_slot?: string | null; quality?: string | null }): boolean {
+    const slot = String(file.library_slot || "").trim().toLowerCase();
+    if (slot === "spatial") return true;
+    const quality = String(file.quality || "").toUpperCase();
+    return quality.includes("ATMOS") || quality.includes("SPATIAL") || quality.includes("SONY_360");
+}
+
+function stereoFileQualityRank(quality: string | null | undefined): number {
+    const normalized = String(quality || "").toUpperCase();
+    if (normalized.includes("HIRES") || normalized.includes("HI_RES")) return 3;
+    if (normalized.includes("LOSSLESS")) return 2;
+    if (normalized) return 1;
+    return 0;
+}
+
+function pickBestAudioFile<T extends { quality?: string | null }>(files: T[]): T[] {
+    if (files.length <= 1) return files;
+    return [files.reduce((best, file) => (
+        stereoFileQualityRank(file.quality) > stereoFileQualityRank(best.quality) ? file : best
+    ))];
+}
+
+/**
+ * One stereo file and one spatial file per track row. Sibling editions of the
+ * same album routinely share a recording (Dutch CD + 10th anniversary ALAC +
+ * a hi-res FLAC in another folder). Painting every copy onto this tracklist
+ * made Local Files show HIGH and MAX for one stereo library.
+ *
+ * Prefer files that belong to the displayed edition. If that edition has none,
+ * keep the best remaining stereo copy so a monitored edition is not blank when
+ * the files were imported under a sibling release.
+ */
+function collapseLocalAudioFilesForEdition<T extends {
+    file_type?: string | null;
+    library_slot?: string | null;
+    quality?: string | null;
+    canonical_release_mbid?: string | null;
+    canonical_track_mbid?: string | null;
+}>(
+    files: T[],
+    targetReleaseMbid: string,
+    trackMbidsSet: Set<string>,
+): T[] {
+    const lyrics: T[] = [];
+    const spatial: T[] = [];
+    const stereo: T[] = [];
+    for (const file of files) {
+        if (String(file.file_type || "track") === "lyrics") {
+            lyrics.push(file);
+        } else if (isSpatialLibraryFile(file)) {
+            spatial.push(file);
+        } else {
+            stereo.push(file);
+        }
+    }
+
+    const belongsToDisplayedEdition = (file: T): boolean => {
+        const releaseMbid = String(file.canonical_release_mbid || "").trim();
+        const trackMbid = String(file.canonical_track_mbid || "").trim();
+        return (releaseMbid !== "" && releaseMbid === targetReleaseMbid)
+            || (trackMbid !== "" && trackMbidsSet.has(trackMbid));
+    };
+
+    const ownedStereo = stereo.filter(belongsToDisplayedEdition);
+    return [
+        ...pickBestAudioFile(ownedStereo.length > 0 ? ownedStereo : stereo),
+        ...pickBestAudioFile(spatial),
+        ...lyrics,
+    ];
+}
+
 function attachCanonicalFilesToTracks(
     tracks: AlbumTrackContract[],
     releaseGroupMbid: string,
@@ -840,11 +911,15 @@ function attachCanonicalFilesToTracks(
         }
 
         const canonicalFileIds = new Set(canonicalFiles.map((file) => file.id));
-        const files = [
-            ...canonicalFiles,
-            ...(track.files || []).filter((file) => !canonicalFileIds.has(file.id)),
-        ];
-        const primaryFile = canonicalFiles.find((file) => file.file_type === "track") || canonicalFiles[0];
+        const files = collapseLocalAudioFilesForEdition(
+            [
+                ...canonicalFiles,
+                ...(track.files || []).filter((file) => !canonicalFileIds.has(file.id)),
+            ],
+            targetReleaseMbid,
+            trackMbidsSet,
+        );
+        const primaryFile = files.find((file) => file.file_type === "track") || files[0];
 
         return {
             ...track,
