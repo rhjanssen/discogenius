@@ -230,3 +230,25 @@ test("isExactVideoTwin allows ±2s catalog rounding but rejects farther cuts", (
     lengthMsB: 228_000,
   }), false);
 });
+
+test("a MusicBrainz video without duration still matches the official provider title", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Living",
+    titleB: "Living (feat. Alex Clare)",
+    lengthMsA: null,
+    lengthMsB: 214_000,
+  });
+  assert.equal(match.matched, true);
+  assert.ok(match.titleScore >= 0.9);
+});
+
+test("audio-cut provider titles stay split from a duration-less catalog video", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Living",
+    titleB: "Living (Audio)",
+    lengthMsA: null,
+    lengthMsB: 214_000,
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.reason, "variant-incompatible");
+});

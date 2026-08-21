@@ -360,8 +360,17 @@ export function scoreVideoIdentityMatch(input: VideoIdentitySignals): VideoIdent
   // When either side lacks a release date, lean on duration/ISRC: title+weak-date
   // alone must not glue lyric/live cuts that are several seconds apart.
   const durationsKnown = lengthMsA != null && lengthMsB != null;
-  const matched = score >= VIDEO_IDENTITY_MATCH_THRESHOLD
-    && (isrcOverlap || durationsKnown || (datesKnown && durationScore >= 0.95));
+  const durationMissing = lengthMsA == null || lengthMsB == null;
+  const matched = (
+    score >= VIDEO_IDENTITY_MATCH_THRESHOLD
+    && (isrcOverlap || durationsKnown || (datesKnown && durationScore >= 0.95))
+  ) || (
+    // MusicBrainz video recordings often have no duration. Requiring both
+    // lengths (or ISRC/dates) left official MVs like Bakermat "Living"
+    // unmatched against provider offers, so Download stayed disabled.
+    durationMissing
+    && titleScore >= 0.9
+  );
 
   return {
     matched,

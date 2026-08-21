@@ -1,5 +1,5 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
-import { runWithAsyncBusyRetry } from "../../database.js";
+import { isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
 import express, { Request, Response, Router } from 'express';
 import {AnyCommandBody, CommandStatus} from "../../services/commands/command-model.js";
 import {NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
@@ -30,6 +30,17 @@ import {
 } from '../../utils/request-validation.js';
 
 const router: Router = express.Router();
+
+/** Same yield-and-retry budget as album/retag writes: ride out worker ingest locks. */
+function runQueueUserWrite<T>(operation: () => T): Promise<T> {
+  return runWithAsyncBusyRetry(operation, 30, 200);
+}
+
+function queueMutationHttpStatus(error: unknown): number {
+  if (isSqliteBusyError(error)) return 503;
+  const status = (error as { status?: number } | undefined)?.status;
+  return status && status >= 400 && status < 600 ? status : 500;
+}
 
 // All queue routes require authentication
 router.use(authMiddleware);
@@ -74,10 +85,10 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '100'), 10) || 100));
     const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
-    res.json(DownloadQueueQueryService.getQueue({ limit, offset }));
+    res.json(await runQueueUserWrite(() => DownloadQueueQueryService.getQueue({ limit, offset })));
   } catch (error: any) {
     console.error('[QUEUE-API] Error getting queue:', error);
-    res.status(500).json({ error: 'Failed to get queue', message: error.message });
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to get queue', message: error.message });
   }
 });
 
@@ -203,7 +214,7 @@ router.post('/', async (req: Request, res: Response) => {
       : contentType === 'video'
         ? CommandNames.DownloadVideo
         : CommandNames.DownloadTrack;
-    const queued = DownloadWaitQueue.enqueue({
+    const queued = await runQueueUserWrite(() => DownloadWaitQueue.enqueue({
       refKey: queueRefId,
       mediaKind: contentType,
       commandName,
@@ -221,7 +232,7 @@ router.post('/', async (req: Request, res: Response) => {
         type: contentType,
       },
       position: 'front',
-    });
+    }));
 
     // Trigger queue processing if not already running
     downloadProcessor.processQueue().catch(err => {
@@ -231,7 +242,7 @@ router.post('/', async (req: Request, res: Response) => {
     res.json({ id: queued.id, message: queued.created ? 'Added to download queue' : 'Already in download queue' });
   } catch (error: any) {
     console.error('[QUEUE-API] Error adding to queue:', error);
-    res.status(500).json({ error: 'Failed to add to queue', message: error.message });
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to add to queue', message: error.message });
   }
 });
 
@@ -248,7 +259,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const wait = DownloadWaitQueue.get(queueItemId);
+    const wait = await runQueueUserWrite(() => DownloadWaitQueue.get(queueItemId));
     if (!wait) {
       return res.status(404).json({ error: 'Job not found' });
     }
@@ -277,13 +288,13 @@ router.delete('/:id', async (req: Request, res: Response) => {
     }
 
     if (commandId != null) {
-      CommandQueueManager.deleteCommand(commandId);
+      await runQueueUserWrite(() => CommandQueueManager.deleteCommand(commandId));
     }
-    DownloadWaitQueue.remove(queueItemId);
+    await runQueueUserWrite(() => DownloadWaitQueue.remove(queueItemId));
     res.json({ message: 'Job deleted' });
   } catch (error: any) {
     console.error('[QUEUE-API] Error deleting job:', error);
-    res.status(500).json({ error: 'Failed to delete job', message: error.message });
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to delete job', message: error.message });
   }
 });
 
@@ -300,7 +311,7 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const result = retryDownloadQueueItem(queueItemId);
+    const result = await runQueueUserWrite(() => retryDownloadQueueItem(queueItemId));
     return res.status(result.status).json(result.body);
   } catch (error: any) {
     console.error('[QUEUE-API] Error retrying job:', error);
@@ -314,10 +325,10 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
  */
 router.get('/status', async (_req: Request, res: Response) => {
   try {
-    res.json(DownloadQueueQueryService.getQueueStatus());
+    res.json(await runQueueUserWrite(() => DownloadQueueQueryService.getQueueStatus()));
   } catch (error: any) {
     console.error('[QUEUE-API] Error getting status:', error);
-    res.status(500).json({ error: 'Failed to get status', message: error.message });
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to get status', message: error.message });
   }
 });
 
@@ -449,16 +460,16 @@ router.post('/reorder', async (req: Request, res: Response) => {
       });
     }
 
-    const changed = DownloadWaitQueue.reorder(commandIds, {
+    const changed = await runQueueUserWrite(() => DownloadWaitQueue.reorder(commandIds, {
       beforeJobId,
       afterJobId,
       position,
-    });
+    }));
 
     res.json({ message: 'Queue reordered', changed });
   } catch (error: any) {
     console.error('[QUEUE-API] Error reordering queue:', error);
-    res.status(409).json({ error: 'Failed to reorder queue', message: error.message });
+    res.status(isSqliteBusyError(error) ? 503 : 409).json({ error: 'Failed to reorder queue', message: error.message });
   }
 });
 

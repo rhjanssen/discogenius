@@ -457,6 +457,8 @@ export const useDashboardStyles = makeStyles({
         justifyContent: "flex-end",
         alignItems: "center",
         flexShrink: 0,
+        // Keep reorder/remove buttons out from under the sticky app bar.
+        scrollMarginTop: "72px",
     },
     queueHistoryItem: {
         outlineStyle: "none",
