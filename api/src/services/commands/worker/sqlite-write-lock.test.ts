@@ -119,8 +119,10 @@ function acquire(requestId) {
 
 (async () => {
   const errors = [];
-  // Give sibling workers time to start so the first acquires actually queue.
-  await new Promise((r) => setTimeout(r, 25));
+  const startAt = Number(workerData.startAt || 0);
+  while (startAt && Date.now() < startAt) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
   for (let i = 0; i < workerData.iterations; i += 1) {
     const requestId = workerData.name + ":" + i;
     await acquire(requestId);
@@ -157,6 +159,7 @@ test("four concurrent command workers never overlap a write", async () => {
   const names = ["refresh-artist-1", "refresh-artist-2", "match-providers", "curate-artist"];
   const iterations = 25;
   const betterSqlitePath = createRequire(import.meta.url).resolve("better-sqlite3");
+  const startAt = Date.now() + 250;
 
   // Terminations are awaited before cleanup: on Windows a worker still holding
   // the SQLite handle makes rmSync fail with EBUSY.
@@ -166,7 +169,7 @@ test("four concurrent command workers never overlap a write", async () => {
       name: string; errors: string[];
     }>((resolve, reject) => {
       const worker = new Worker(workerPath, {
-        workerData: { name, iterations, dbPath, betterSqlitePath },
+        workerData: { name, iterations, dbPath, betterSqlitePath, startAt },
       });
       worker.on("message", (message: { kind?: string; requestId?: string; name?: string; errors?: string[] }) => {
         if (message.kind === "writeLockAcquire" && message.requestId) {
