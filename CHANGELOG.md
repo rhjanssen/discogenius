@@ -40,6 +40,12 @@ name that two MusicBrainz artists share no longer hides both of them.
   one-shot chunk-reload guard never cleared after a successful load.
   Route chunks retry, Try Again recovers from a chunk error, and a
   successful import clears the guard.
+- **Download progress writes could native-crash the API.** Flushing
+  buffered download state from a timer while a command worker held a
+  multi-second SQLite write made better-sqlite3 abort with
+  `v8::ToLocalChecked Empty MaybeLocal`. Progress ticks now skip while
+  the process write lock is held. Lightweight health also no longer
+  treats empty library-projection markers as stale.
 
 ## [2.9.3] - 2026-08-20
 

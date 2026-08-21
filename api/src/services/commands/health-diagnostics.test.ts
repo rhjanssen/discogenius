@@ -150,7 +150,7 @@ test("deep database audit records foreign-key violations as unhealthy", () => {
   }
 });
 
-test("bounded diagnostics flag aging work, failed imports, overdue tasks, and invalid projections", () => {
+test("bounded diagnostics flag aging work, failed imports, and overdue tasks", () => {
   dbModule.db.prepare(`
     INSERT INTO commands (
       name, payload, status, priority, created_at, completed_at, updated_at
@@ -188,7 +188,7 @@ test("bounded diagnostics flag aging work, failed imports, overdue tasks, and in
     assert.equal(snapshot.subsystems.commandQueue.status, "warning");
     assert.equal(snapshot.subsystems.imports.status, "warning");
     assert.equal(snapshot.subsystems.scheduledTasks.status, "warning");
-    assert.equal(snapshot.subsystems.statistics.status, "warning");
+    assert.equal(snapshot.subsystems.statistics.status, "ok");
     assert.deepEqual(
       snapshot.subsystems.statistics.details?.staleProjections,
       ["album-library", "track-library"],

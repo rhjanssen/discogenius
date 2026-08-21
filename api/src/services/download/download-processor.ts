@@ -17,6 +17,7 @@ import {
     invalidateReleaseGroupDownloadStatus,
     updateAlbumDownloadStatus,
 } from './download-state.js';
+import { writeLockDiagnostics } from "../commands/worker/sqlite-write-lock.js";
 import { downloadBackendRegistry } from './download-backend.js';
 import { readIntEnv } from '../../utils/env.js';
 import fs from 'fs';
@@ -1317,6 +1318,13 @@ export class DownloadProcessor {
                 clearInterval(this.progressFlushTimer);
                 this.progressFlushTimer = undefined;
             }
+            return;
+        }
+
+        // better-sqlite3 can native-abort (v8::ToLocalChecked Empty MaybeLocal)
+        // when stmt.run tries to throw SQLITE_BUSY while a worker holds a
+        // multi-second write. Progress is lossy; skip this tick.
+        if (writeLockDiagnostics().held) {
             return;
         }
 

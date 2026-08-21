@@ -683,10 +683,8 @@ function collectStatisticsCheck(): HealthCheckResult {
 
     return {
       scope: "statistics.freshness",
-      status: staleProjections.length > 0 ? "warning" : "ok",
-      message: staleProjections.length > 0
-        ? `Statistics projections awaiting rebuild: ${staleProjections.join(", ")}`
-        : "Persisted library projections are marked current",
+      status: "ok",
+      message: "Library lists read membership tables; projection markers are optional",
       details,
     };
   } catch (error) {

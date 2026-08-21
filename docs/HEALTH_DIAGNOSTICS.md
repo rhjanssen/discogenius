@@ -34,7 +34,8 @@ traffic. TIDAL/tiddl authentication is inspected from local credential state.
 Other provider and catalog connectivity still needs explicit integration
 checks; the HTTP probe does not claim those services are reachable.
 
-Persisted projection markers cover Album and Track library projections.
+Library lists page from membership tables, so empty Album/Track projection
+markers are informational rather than a health warning.
 `ArtistStatistics.updated_at` is reported as evidence, while the dashboard's
 in-memory stale-while-revalidate cache age is not currently externally
 observable. Health reports that limitation rather than claiming cache freshness.

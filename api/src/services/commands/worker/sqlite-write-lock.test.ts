@@ -217,6 +217,7 @@ test("diagnostics name the section that holds the lock, and the longest holder",
   ownerAcquire("queued", "worker-2", () => {}, "provider-album-offers:tidal");
 
   const whileHeld = writeLockDiagnostics();
+  assert.equal(whileHeld.held, true);
   assert.equal(whileHeld.heldByLabel, "servarr:artist-albums");
   assert.deepEqual(whileHeld.waitingLabels, ["provider-album-offers:tidal"]);
 
