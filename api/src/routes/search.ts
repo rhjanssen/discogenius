@@ -223,17 +223,48 @@ router.get("/", async (req, res) => {
 
                 if (artistParam) {
                     const titleQuery = query.replace(new RegExp(artistParam.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ").replace(/\s+/g, " ").trim() || query;
-                    const artistMbids = db.prepare(`
-                        SELECT DISTINCT rg.mbid
-                        FROM Albums rg
-                        JOIN Artists a ON a.mbid = rg.artist_mbid
-                        LEFT JOIN AlbumEditions e ON e.release_group_id = rg.id
-                        LEFT JOIN Tracks t ON t.album_edition_id = e.id
-                        WHERE a.name LIKE ?
-                          AND (rg.title LIKE ? OR t.title LIKE ? OR ? = '')
-                        LIMIT ?
-                    `).all(`%${artistParam}%`, `%${titleQuery}%`, `%${titleQuery}%`, titleQuery, limit) as Array<{ mbid: string }>;
-                    matchedAlbumMbids = artistMbids.map((r) => r.mbid);
+                    // Artist-scoped album search must not require the raw title
+                    // string (ASCII vs curly apostrophes, "Pt." vs "Pt") to match
+                    // LIKE. Tokenize like unfiltered search, then keep this artist.
+                    const titleTokens = (titleQuery.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) || [])
+                        .filter((token) => token.length >= 2)
+                        .slice(0, 8);
+                    const ftsQuery = titleTokens.length > 0
+                        ? titleTokens.map((token) => `"${token.replace(/"/g, '""')}"*`).join(" AND ")
+                        : null;
+                    if (ftsQuery) {
+                        matchedAlbumMbids = (db.prepare(`
+                            SELECT cs.entity_id AS mbid
+                            FROM CatalogSearch cs
+                            JOIN Albums rg ON rg.mbid = cs.entity_id
+                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            WHERE cs.entity_type = 'album'
+                              AND CatalogSearch MATCH ?
+                              AND a.name LIKE ?
+                            LIMIT ?
+                        `).all(ftsQuery, `%${artistParam}%`, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                    }
+                    if (matchedAlbumMbids.length === 0 && titleTokens.length > 0) {
+                        const titleConditions = titleTokens.map(() => "rg.title LIKE ?").join(" AND ");
+                        const titleParams = titleTokens.map((token) => `%${token}%`);
+                        matchedAlbumMbids = (db.prepare(`
+                            SELECT DISTINCT rg.mbid
+                            FROM Albums rg
+                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            WHERE a.name LIKE ?
+                              AND ${titleConditions}
+                            LIMIT ?
+                        `).all(`%${artistParam}%`, ...titleParams, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                    }
+                    if (matchedAlbumMbids.length === 0 && titleQuery === "") {
+                        matchedAlbumMbids = (db.prepare(`
+                            SELECT rg.mbid
+                            FROM Albums rg
+                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            WHERE a.name LIKE ?
+                            LIMIT ?
+                        `).all(`%${artistParam}%`, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                    }
                 } else {
                     const ftsQuery = toFtsPrefixQuery(query);
                     matchedAlbumMbids = ftsQuery

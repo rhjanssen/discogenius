@@ -494,3 +494,63 @@ test("embedded release identity survives when it is itself selected in the libra
   assert.equal(link!.releaseMbid, "rel-deluxe");
   assert.equal(link!.trackMbid, "trk-deluxe");
 });
+
+test("tagged files match a catalog mixtape without a provider offer", () => {
+  const { db } = dbModule;
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-oph2",
+    releaseMbid: "rel-oph2",
+    trackMbid: "trk-dreams",
+    recordingMbid: "rec-dreams",
+    title: "Other People’s Heartache, Pt. 2",
+  });
+  db.prepare("UPDATE Tracks SET title = ? WHERE mbid = ?").run("Dreams", "trk-dreams");
+  db.prepare("UPDATE Recordings SET title = ? WHERE mbid = ?").run("Dreams", "rec-dreams");
+
+  const match = matchModule.matchAudioFileByMetadata(
+    path.join(tempDir, "06 - Dreams.mp3"),
+    "artist-1",
+    "music",
+    {
+      title: "Dreams [ft. Gabrielle Aplin]",
+      album: "Other People's Heartache, Pt. 2",
+      artist: "Bastille",
+      durationSeconds: 259,
+    },
+  );
+
+  assert.ok(match, "ASCII-apostrophe tags should still hit the curly-apostrophe catalog album");
+  assert.equal(match!.canonicalTrackMbid, "trk-dreams");
+  assert.equal(match!.canonicalReleaseGroupMbid, "rg-oph2");
+  assert.equal(match!.provider, "");
+  assert.equal(match!.duplicateOfExisting, false);
+});
+
+test("leading track numbers in tags do not block a catalog title match", () => {
+  const { db } = dbModule;
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-oph1",
+    releaseMbid: "rel-oph1",
+    trackMbid: "trk-adagio",
+    recordingMbid: "rec-adagio",
+    title: "Other People’s Heartache",
+  });
+  db.prepare("UPDATE Tracks SET title = ? WHERE mbid = ?").run("Adagio for Strings", "trk-adagio");
+
+  const match = matchModule.matchAudioFileByMetadata(
+    path.join(tempDir, "01 - Adagio for Strings.mp3"),
+    "artist-1",
+    "music",
+    {
+      title: "01. ADAGIO FOR STRINGS (ft. Maiday)",
+      album: "Other People's Heartache",
+      artist: "BASTILLE",
+      durationSeconds: 239,
+    },
+  );
+
+  assert.ok(match);
+  assert.equal(match!.canonicalTrackMbid, "trk-adagio");
+});

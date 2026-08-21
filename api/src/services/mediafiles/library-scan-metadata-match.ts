@@ -542,6 +542,129 @@ function findSameFolderDuplicate(
     };
 }
 
+function existingTrackFileForCanonical(
+    artistId: string,
+    recordingMbid: string,
+    librarySlot: string,
+): { file_path: string } | undefined {
+    return db.prepare(`
+        SELECT file_path
+        FROM TrackFiles
+        WHERE artist_id = ?
+          AND canonical_recording_mbid = ?
+          AND file_type = 'track'
+          AND (library_slot IS NULL OR library_slot = ?)
+        ORDER BY verified_at DESC, id DESC
+        LIMIT 1
+    `).get(artistId, recordingMbid, librarySlot) as { file_path: string } | undefined;
+}
+
+/**
+ * Lidarr-style tag match: album + track titles against the canonical catalog,
+ * with no provider offer required. Sibling SoundCloud rips of the same mixtape
+ * used to pin preferredAlbumIds to that provider album, so tracks the provider
+ * does not carry (and rips whose titles are "01. TITANIUM (ft. …)") stayed in
+ * UnmappedFiles even though MusicBrainz already had the release.
+ */
+function matchCatalogTrackByTags(
+    filePath: string,
+    artistId: string,
+    tags: ParsedAudioTags,
+    preferredSlot: string,
+): MetadataMatchResult | null {
+    const albumTitle = tags.album?.trim();
+    const trackTitle = tags.title?.trim();
+    if (!albumTitle || !trackTitle) return null;
+
+    const groups = db.prepare(`
+        SELECT album.mbid AS release_group_mbid, album.title
+        FROM Albums album
+        JOIN Artists artist ON artist.mbid = album.artist_mbid
+        WHERE artist.id = ?
+    `).all(artistId) as Array<{ release_group_mbid: string; title: string }>;
+    const matchingGroupMbids = groups
+        .filter((group) => sameRecordingTitle(albumTitle, group.title))
+        .map((group) => group.release_group_mbid);
+    if (matchingGroupMbids.length === 0) return null;
+
+    const placeholders = matchingGroupMbids.map(() => "?").join(", ");
+    const rows = db.prepare(`
+        SELECT
+          track.mbid AS track_mbid,
+          track.recording_mbid AS recording_mbid,
+          track.release_mbid AS release_mbid,
+          track.title AS title,
+          recording.length_ms AS length_ms,
+          album.mbid AS release_group_mbid
+        FROM Tracks track
+        JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+        JOIN Albums album ON album.id = edition.release_group_id
+        LEFT JOIN Recordings recording ON recording.id = track.recording_id
+        WHERE album.mbid IN (${placeholders})
+    `).all(...matchingGroupMbids) as Array<{
+        track_mbid: string;
+        recording_mbid: string | null;
+        release_mbid: string;
+        title: string;
+        length_ms: number | null;
+        release_group_mbid: string;
+    }>;
+
+    const titleHits = rows.filter((row) => sameRecordingTitle(trackTitle, row.title));
+    const durationHits = titleHits.filter((row) =>
+        durationClose(
+            tags.durationSeconds,
+            row.length_ms != null && row.length_ms > 0 ? row.length_ms / 1000 : null,
+        ),
+    );
+    let hits = durationHits.length > 0 ? durationHits : titleHits;
+    if (hits.length === 0) return null;
+
+    const selectedByGroup = new Map<string, Set<string>>();
+    for (const groupMbid of matchingGroupMbids) {
+        selectedByGroup.set(groupMbid, selectedReleasesForGroup(groupMbid, preferredSlot));
+    }
+    const selectedHits = hits.filter((row) => {
+        const selected = selectedByGroup.get(row.release_group_mbid);
+        return selected != null && selected.size > 0 && selected.has(row.release_mbid);
+    });
+    if (selectedHits.length > 0) {
+        hits = selectedHits;
+    }
+
+    const recordingIds = new Set(
+        hits.map((row) => String(row.recording_mbid || "")).filter(Boolean),
+    );
+    if (hits.length > 1 && recordingIds.size !== 1) {
+        return null;
+    }
+
+    const winner = hits[0];
+    const recordingMbid = winner.recording_mbid ? String(winner.recording_mbid) : "";
+    const existing = recordingMbid
+        ? existingTrackFileForCanonical(artistId, recordingMbid, preferredSlot)
+        : undefined;
+    const resolvedExisting = existing?.file_path || null;
+    const duplicateOfExisting = Boolean(
+        resolvedExisting && path.resolve(resolvedExisting) !== path.resolve(filePath),
+    );
+
+    return {
+        albumId: winner.release_group_mbid,
+        mediaId: "",
+        provider: "",
+        fileType: "track",
+        quality: importedQualityForTrackedFile(filePath),
+        librarySlot: preferredSlot,
+        duplicateOfExisting,
+        existingFilePath: duplicateOfExisting ? resolvedExisting : null,
+        canonicalTrackMbid: winner.track_mbid,
+        canonicalRecordingMbid: recordingMbid || null,
+        canonicalReleaseMbid: winner.release_mbid,
+        canonicalReleaseGroupMbid: winner.release_group_mbid,
+    };
+}
+
 /**
  * Rematch an on-disk audio file that lacks an embedded provider id / expected
  * path, using tags + nearby album-folder TrackFiles. Used by library scan so
@@ -691,7 +814,7 @@ export function matchAudioFileByMetadata(
                 ...canonical,
             };
         }
-        return null;
+        return matchCatalogTrackByTags(filePath, artistId, tags, preferredSlot);
     }
 
     // Provider items are slot-agnostic in schema 41 (renditions live on

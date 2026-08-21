@@ -64,7 +64,7 @@ export class IdentificationService {
     private static getLocalTitle(file: IdentifiableFile): string {
         const fromTags = file.detected_track?.trim();
         if (fromTags) {
-            return this.normalizeText(fromTags);
+            return this.normalizeText(fromTags.replace(/^\s*\d{1,3}\s*[.-]\s+/, ""));
         }
 
         const baseName = file.filename.replace(/\.[^/.]+$/, "");

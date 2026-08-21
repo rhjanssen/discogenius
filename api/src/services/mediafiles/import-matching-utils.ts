@@ -186,8 +186,17 @@ function significantDashSuffix(text: string): string | null {
  * "Good Grief - ARTE Live at Turner Contemporary" that providers usually omit;
  * stripping them exposes the shared base title.
  */
+/**
+ * Drop a leading track index ("01. ", "7 - ") so tagged rips compare equal to
+ * catalog titles. Requires a separator after the number so "99 Problems" and
+ * "1989" stay intact.
+ */
+export function stripLeadingTrackIndex(input?: string | null): string {
+    return String(input || "").replace(/^\s*\d{1,3}\s*[.-]\s+/, "").trim();
+}
+
 export function baseComparableTitle(input?: string | null): string {
-    let text = String(input || "").trim();
+    let text = stripLeadingTrackIndex(input);
     for (;;) {
         let next = text.replace(/\s*[([][^()[\]]*[)\]]\s*$/u, "");
         if (next === text && significantDashSuffix(text)) {

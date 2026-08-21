@@ -353,3 +353,31 @@ test("empty-library search automatically includes canonical catalog discovery", 
     provider.search = originalSearch;
   }
 });
+
+test("artist-filtered album search finds titles whose apostrophes differ from the query", async () => {
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES ('bastille-mbid', 'Bastille')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES ('bastille-id', 'Bastille', 'bastille-mbid', 1)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('oph2-mbid', 'bastille-mbid', 'Other People’s Heartache, Pt. 2', 'Album')
+  `).run();
+
+  const res = createMockResponse();
+  await getSearchHandler()({
+    query: {
+      query: "Other People's Heartache, Pt. 2",
+      type: "albums",
+      limit: "10",
+      artist: "Bastille",
+    },
+  }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.results.albums.length, 1);
+  assert.equal(res.body.results.albums[0].id, "oph2-mbid");
+});
