@@ -810,6 +810,31 @@ function persistDeepHealthResult(
 }
 
 /**
+ * FTS5 checksum mismatches happen when search-index shadow tables drift from
+ * the content table (concurrent writer + WAL is the usual live cause). Rebuild
+ * is the documented repair; without it /health stays 503 until the next
+ * CheckHealth even after the rest of the database is fine.
+ */
+function rebuildFtsSearchIndexes(): string[] {
+  const rebuilt: string[] = [];
+  for (const table of ["CatalogSearch", "TrackSearch"] as const) {
+    const exists = db.prepare(
+      "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(table) as { ok?: number } | undefined;
+    if (!exists) continue;
+    db.exec(`INSERT INTO ${table}(${table}) VALUES('rebuild')`);
+    rebuilt.push(table);
+  }
+  return rebuilt;
+}
+
+function runQuickCheck(): { passed: boolean; results: string[] } {
+  const quickRows = db.pragma("quick_check") as Array<Record<string, unknown>>;
+  const results = quickRows.flatMap((row) => Object.values(row).map(String));
+  return { passed: results.length === 1 && results[0] === "ok", results };
+}
+
+/**
  * Run the expensive integrity audit used by the CheckHealth command.
  *
  * Production CheckHealth commands execute in the command worker pool, so the
@@ -820,9 +845,15 @@ export function runDeepDatabaseHealthCheck(): DeepDatabaseHealthResult {
   const startedAt = process.hrtime.bigint();
   let result: DeepDatabaseHealthResult;
   try {
-    const quickRows = db.pragma("quick_check") as Array<Record<string, unknown>>;
-    const quickResults = quickRows.flatMap((row) => Object.values(row).map(String));
-    const quickPassed = quickResults.length === 1 && quickResults[0] === "ok";
+    let { passed: quickPassed, results: quickResults } = runQuickCheck();
+    if (!quickPassed && quickResults.some((line) => /fts5: checksum mismatch/i.test(line))) {
+      const rebuilt = rebuildFtsSearchIndexes();
+      const retried = runQuickCheck();
+      quickPassed = retried.passed;
+      quickResults = rebuilt.length > 0
+        ? [`rebuilt ${rebuilt.join(", ")}`, ...retried.results]
+        : retried.results;
+    }
     let foreignKeyViolationCount = 0;
     const foreignKeySample: Array<Record<string, unknown>> = [];
     for (const row of db.prepare("SELECT * FROM pragma_foreign_key_check").iterate() as Iterable<Record<string, unknown>>) {

@@ -194,7 +194,16 @@ export class ProviderCatalogRepository {
         WHERE id = ?
       `);
       const remove = this.db.prepare("DELETE FROM ProviderEditionMembers WHERE id = ?");
-      const ids = members.map((member) => {
+      const itemExists = this.db.prepare("SELECT 1 AS ok FROM ProviderItems WHERE id = ?");
+      const ids = members.flatMap((member) => {
+        if (!Number.isInteger(member.memberItemId) || member.memberItemId <= 0
+          || !itemExists.get(member.memberItemId)) {
+          console.warn(
+            `[ProviderCatalog] Skipping edition ${providerEditionItemId} member `
+            + `${member.mediumPosition}:${member.position} — ProviderItems.id ${member.memberItemId} is missing`,
+          );
+          return [];
+        }
         const key = `${member.mediumPosition}:${member.position}`;
         const current = existingByPosition.get(key);
         if (current && current.member_item_id === member.memberItemId) {

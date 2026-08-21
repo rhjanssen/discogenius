@@ -8,6 +8,17 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Download Missing queued a second copy of a video that was already
+  downloading.** The artist-page Download button keys the wait row by
+  provider id; Download Missing keyed it by recording id, so the same
+  TIDAL video could sit in the queue twice. Video wait rows now collapse
+  on provider id either way.
+- **YouTube Music album ingest aborted on a missing ProviderItems row.**
+  Replacing edition members now skips members whose item id is gone
+  instead of failing the whole artist refresh with FOREIGN KEY.
+- **A transient CatalogSearch FTS checksum mismatch left /health on 503
+  for 24 hours.** CheckHealth now rebuilds the search indexes and
+  re-runs quick_check before recording the deep-audit result.
 - **Settings toggles announced only as "on".** Fluent Switch inputs
   next to Spatial audio, Download music videos, and the other settings
   rows had no accessible name. They now use the row title.

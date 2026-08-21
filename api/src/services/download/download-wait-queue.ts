@@ -192,6 +192,25 @@ export class DownloadWaitQueue {
     return row ? hydrateWaitRow(row) : null;
   }
 
+  /**
+   * Manual video downloads key the wait row by provider id; Download Missing
+   * keys it by recording id. Treat the same provider video as already queued
+   * either way so a Download Missing pass cannot start a second copy while
+   * the first job is still downloading.
+   */
+  private static findExistingVideoJob(input: DownloadWaitEnqueueInput): DownloadWaitRow | null {
+    if (input.mediaKind !== "video") return null;
+    const providerId = String(input.providerId || "").trim();
+    if (!providerId) return null;
+    const row = db.prepare(`
+      SELECT * FROM DownloadQueue
+      WHERE media_kind = 'video'
+        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `).get(providerId) as Record<string, unknown> | undefined;
+    return row ? hydrateWaitRow(row) : null;
+  }
+
   static getByCommandId(commandId: number): DownloadWaitRow | null {
     const row = db.prepare(`
       SELECT * FROM DownloadQueue WHERE command_id = ?
@@ -251,7 +270,8 @@ export class DownloadWaitQueue {
       throw new Error("Download wait queue requires a refKey.");
     }
 
-    const existing = this.getByRefKey(refKey);
+    const existing = this.getByRefKey(refKey)
+      ?? this.findExistingVideoJob(input);
     if (existing) {
       return { id: existing.id, created: false, commandId: existing.command_id };
     }

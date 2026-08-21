@@ -82,6 +82,31 @@ test("duplicate refKey does not insert a second wait row", () => {
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
 });
 
+test("manual video download and Download Missing share one wait row for the same provider video", () => {
+  const fromPage = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "64660138",
+    mediaKind: "video",
+    commandName: queueModule.CommandNames.DownloadVideo,
+    provider: "tidal",
+    providerId: "64660138",
+    title: "Living",
+    payload: { type: "video", provider: "tidal", providerId: "64660138" },
+  });
+  const fromMissing = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "recording:1:video",
+    mediaKind: "video",
+    commandName: queueModule.CommandNames.DownloadVideo,
+    provider: "tidal",
+    providerId: "64660138",
+    title: "Living",
+    payload: { type: "video", provider: "tidal", providerId: "64660138" },
+  });
+  assert.equal(fromPage.created, true);
+  assert.equal(fromMissing.created, false);
+  assert.equal(fromMissing.id, fromPage.id);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
+});
+
 test("manual front insert sits before bulk waiting items", () => {
   enqueueTrack("bulk-1", "Bulk One", "back");
   enqueueTrack("bulk-2", "Bulk Two", "back");

@@ -76,6 +76,32 @@ test("refreshing unchanged membership preserves row identity regardless of input
   });
 });
 
+test("replaceReleaseMembers skips members whose ProviderItems row is missing", () => {
+  fixture((db, repository) => {
+    const release = repository.upsertItem({
+      provider: "youtube-music",
+      entityType: "release",
+      providerId: "MPREb_missing-member",
+    });
+    const track = repository.upsertItem({
+      provider: "youtube-music",
+      entityType: "track",
+      providerId: "real-track",
+    });
+    const ids = repository.replaceReleaseMembers(release, [
+      { memberItemId: track, mediumPosition: 1, position: 1 },
+      { memberItemId: 999999, mediumPosition: 1, position: 2 },
+    ]);
+    assert.deepEqual(ids, [ids[0]]);
+    assert.equal(ids.length, 1);
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM ProviderEditionMembers")
+        .get() as { count: number }).count,
+      1,
+    );
+  });
+});
+
 test("ordered provider credits preserve supplied role and join phrase without inference", () => {
   fixture((db, repository) => {
     const release = repository.upsertItem({ provider: "apple-music", entityType: "release", providerId: "r" });
