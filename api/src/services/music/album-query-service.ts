@@ -10,7 +10,6 @@ import type { AlbumPageContract } from "../../contracts/pages.js";
 import { getAlbumAssociatedVideos } from "./video-query-service.js";
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
-import { AlbumLibraryIndexService } from "./album-library-index-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "../metadata/musicbrainz-artist-credit-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
 import {
@@ -294,17 +293,17 @@ function getReleaseGroupOrderBy(sortParam: string | undefined, sortDir: "ASC" | 
     }
 }
 
-function getAlbumLibraryIndexOrderBy(sortParam: string | undefined, sortDir: "ASC" | "DESC"): string {
+function getAlbumMembershipOrderBy(sortParam: string | undefined, sortDir: "ASC" | "DESC"): string {
     switch (sortParam) {
         case "name":
-            return ` ORDER BY library_album.title ${sortDir}, library_album.release_group_id ASC`;
+            return ` ORDER BY album.title ${sortDir}, album.id ASC`;
         case "scannedAt":
-            return ` ORDER BY (library_album.album_updated_at IS NULL) ASC, library_album.album_updated_at ${sortDir}, library_album.title ASC, library_album.release_group_id ASC`;
+            return ` ORDER BY (album.updated_at IS NULL) ASC, album.updated_at ${sortDir}, album.title ASC, album.id ASC`;
         case "popularity":
-            return ` ORDER BY library_album.popularity ${sortDir}, library_album.title ASC, library_album.release_group_id ASC`;
+            return ` ORDER BY COALESCE(album.popularity, 0) ${sortDir}, album.title ASC, album.id ASC`;
         case "releaseDate":
         default:
-            return ` ORDER BY (library_album.first_release_date IS NULL) ASC, library_album.first_release_date ${sortDir}, library_album.title ASC, library_album.release_group_id ASC`;
+            return ` ORDER BY (album.first_release_date IS NULL) ASC, album.first_release_date ${sortDir}, album.title ASC, album.id ASC`;
     }
 }
 
@@ -365,12 +364,14 @@ function normalizeReleaseGroupListRow(
 
 export class AlbumQueryService {
     static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
-        // The materialized index has no provider/quality columns, so provider- or
-        // quality-tier-filtered queries (the less common case) use the direct
-        // normalized library-state query below.
+        // Library pages start from LibraryAlbums (membership), not Albums
+        // (catalog) and not a rebuilt projection. Lidarr does the same: its
+        // Albums table *is* the library, and SQLite indexes stay current on
+        // write. Provider/quality filters still need the plan-state join.
+        // monitored=false is the unmonitored catalog remainder.
         const hasProviderQualityFilter = Boolean(String(input.provider || "").trim() || String(input.qualityTier || "").trim());
-        if (AlbumLibraryIndexService.isReady() && !hasProviderQualityFilter) {
-            return this.listAlbumsFromIndex(input);
+        if (!hasProviderQualityFilter && input.monitored !== false) {
+            return this.listAlbumsFromMembership(input);
         }
 
         const limit = input.limit;
@@ -561,7 +562,7 @@ export class AlbumQueryService {
         };
     }
 
-    private static listAlbumsFromIndex(input: AlbumListQuery): AlbumsListResponseContract {
+    private static listAlbumsFromMembership(input: AlbumListQuery): AlbumsListResponseContract {
         const limit = input.limit;
         const offset = input.offset;
         const libraryFilter = input.libraryFilter || "all";
@@ -569,21 +570,14 @@ export class AlbumQueryService {
         const sortDir = (input.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
-        const where = ["library_album.included = 1"];
+        const where = ["1 = 1"];
+        const having: string[] = [];
 
         if (input.search) {
-            where.push("(library_album.title LIKE ? OR artist.name LIKE ?)");
+            where.push("(album.title LIKE ? OR artist.name LIKE ?)");
             const searchParam = `%${input.search}%`;
             params.push(searchParam, searchParam);
             countParams.push(searchParam, searchParam);
-        }
-
-        if (input.monitored !== undefined) {
-            // Row existence is the monitoring statement: an Album in the index
-            // with included = 1 is monitored in some enabled library.
-            where.push("library_album.included = ?");
-            params.push(input.monitored ? 1 : 0);
-            countParams.push(input.monitored ? 1 : 0);
         }
 
         if (input.downloaded !== undefined) {
@@ -598,34 +592,50 @@ export class AlbumQueryService {
             }
         }
 
-        if (input.locked !== undefined) {
-            where.push("library_album.monitored_lock = ?");
-            params.push(input.locked ? 1 : 0);
-            countParams.push(input.locked ? 1 : 0);
+        if (input.locked === true) {
+            having.push("MAX(library_group.locked) = 1");
+        } else if (input.locked === false) {
+            having.push("MAX(library_group.locked) = 0");
         }
 
         if (libraryFilter === "spatial") {
-            where.push(getConfigSection("filtering").include_spatial === true
-                ? "library_album.has_spatial_provider = 1"
-                : "0 = 1");
+            if (getConfigSection("filtering").include_spatial !== true) {
+                where.push("0 = 1");
+            } else {
+                having.push("MAX(library_class.is_spatial) = 1");
+            }
         } else if (libraryFilter === "stereo") {
-            where.push("library_album.has_stereo_provider = 1");
+            having.push("MAX(CASE WHEN library_class.is_spatial = 0 THEN 1 ELSE 0 END) = 1");
         }
 
         const whereClause = `WHERE ${where.join(" AND ")}`;
-        // The projection is self-contained for the normal library view. Keep
-        // catalog joins out of the hot count/page path unless a filter truly
-        // needs a field that is not projected.
+        const havingClause = having.length > 0 ? `HAVING ${having.join(" AND ")}` : "";
         const fromClause = `
-          FROM AlbumLibraryIndex library_album
-          ${input.downloaded !== undefined ? "JOIN Albums album ON album.id = library_album.release_group_id" : ""}
-          ${input.search ? "LEFT JOIN Artists artist ON artist.mbid = library_album.artist_mbid" : ""}
+          FROM LibraryAlbums library_group
+          JOIN (
+            SELECT
+              library.id AS library_id,
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              ) THEN 1 ELSE 0 END AS is_spatial
+            FROM Libraries library
+            JOIN quality_profiles quality_profile
+              ON quality_profile.id = library.quality_profile_id
+            WHERE library.enabled = 1
+          ) library_class
+            ON library_class.library_id = library_group.library_id
+          JOIN Albums album ON album.id = library_group.release_group_id
+          ${input.search ? "LEFT JOIN Artists artist ON artist.mbid = album.artist_mbid" : ""}
         `;
         const candidates = db.prepare(`
-          SELECT library_album.release_group_id AS id
+          SELECT album.id AS id
           ${fromClause}
           ${whereClause}
-          ${getAlbumLibraryIndexOrderBy(input.sort, sortDir)}
+          GROUP BY album.id
+          ${havingClause}
+          ${getAlbumMembershipOrderBy(input.sort, sortDir)}
           LIMIT ? OFFSET ?
         `).all(...params, limit, offset) as Array<{ id: number }>;
 
@@ -650,8 +660,13 @@ export class AlbumQueryService {
         const localQualitiesMap = getAlbumLocalQualitiesMap(releaseGroupMbids);
         const count = Number((db.prepare(`
           SELECT COUNT(*) AS count
-          ${fromClause}
-          ${whereClause}
+          FROM (
+            SELECT album.id
+            ${fromClause}
+            ${whereClause}
+            GROUP BY album.id
+            ${havingClause}
+          )
         `).get(...countParams) as { count?: number } | undefined)?.count || 0);
 
         return {

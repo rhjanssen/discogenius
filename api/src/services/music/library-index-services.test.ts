@@ -256,8 +256,8 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   db.prepare(`
     UPDATE Libraries SET quality_profile_id = ? WHERE id = ?
   `).run(spatialProfile.id, library.id);
-  assert.equal(AlbumLibraryIndexService.isReady(), false);
-  assert.equal(TrackLibraryIndexService.isReady(), false);
+  assert.equal(AlbumLibraryIndexService.isReady(), true);
+  assert.equal(TrackLibraryIndexService.isReady(), true);
   AlbumLibraryIndexService.rebuild();
   TrackLibraryIndexService.rebuild();
   assert.deepEqual(

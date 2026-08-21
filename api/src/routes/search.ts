@@ -222,17 +222,19 @@ router.get("/", async (req, res) => {
                 let matchedAlbumMbids: string[] = [];
 
                 if (artistParam) {
+                    const titleQuery = query.replace(new RegExp(artistParam.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ").replace(/\s+/g, " ").trim() || query;
                     const artistMbids = db.prepare(`
-                        SELECT rg.mbid
+                        SELECT DISTINCT rg.mbid
                         FROM Albums rg
                         JOIN Artists a ON a.mbid = rg.artist_mbid
-                        WHERE a.name LIKE ? AND (rg.title LIKE ? OR ? = '')
+                        LEFT JOIN AlbumEditions e ON e.release_group_id = rg.id
+                        LEFT JOIN Tracks t ON t.album_edition_id = e.id
+                        WHERE a.name LIKE ?
+                          AND (rg.title LIKE ? OR t.title LIKE ? OR ? = '')
                         LIMIT ?
-                    `).all(`%${artistParam}%`, `%${query}%`, query, limit) as Array<{ mbid: string }>;
+                    `).all(`%${artistParam}%`, `%${titleQuery}%`, `%${titleQuery}%`, titleQuery, limit) as Array<{ mbid: string }>;
                     matchedAlbumMbids = artistMbids.map((r) => r.mbid);
-                }
-
-                if (matchedAlbumMbids.length === 0) {
+                } else {
                     const ftsQuery = toFtsPrefixQuery(query);
                     matchedAlbumMbids = ftsQuery
                         ? (db.prepare(`
@@ -242,20 +244,20 @@ router.get("/", async (req, res) => {
                             LIMIT ?
                         `).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
                         : [];
-                }
 
-                if (matchedAlbumMbids.length === 0 && query.trim().length > 0) {
-                    const tokens = query.trim().split(/\s+/).filter(Boolean);
-                    const likeConditions = tokens.map(() => "(rg.title LIKE ? OR a.name LIKE ?)").join(" AND ");
-                    const params = tokens.flatMap((t) => [`%${t}%`, `%${t}%`]);
-                    const fallbackMbids = db.prepare(`
-                        SELECT rg.mbid
-                        FROM Albums rg
-                        LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-                        WHERE ${likeConditions}
-                        LIMIT ?
-                    `).all(...params, limit) as Array<{ mbid: string }>;
-                    matchedAlbumMbids = fallbackMbids.map((r) => r.mbid);
+                    if (matchedAlbumMbids.length === 0 && query.trim().length > 0) {
+                        const tokens = query.trim().split(/\s+/).filter(Boolean);
+                        const likeConditions = tokens.map(() => "(rg.title LIKE ? OR a.name LIKE ?)").join(" AND ");
+                        const tokenParams = tokens.flatMap((t) => [`%${t}%`, `%${t}%`]);
+                        const fallbackMbids = db.prepare(`
+                            SELECT rg.mbid
+                            FROM Albums rg
+                            LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+                            WHERE ${likeConditions}
+                            LIMIT ?
+                        `).all(...tokenParams, limit) as Array<{ mbid: string }>;
+                        matchedAlbumMbids = fallbackMbids.map((r) => r.mbid);
+                    }
                 }
                 const albumMarks = matchedAlbumMbids.map(() => "?").join(", ");
                 const localReleaseGroups = matchedAlbumMbids.length === 0 ? [] : db

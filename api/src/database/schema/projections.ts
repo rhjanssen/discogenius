@@ -29,29 +29,6 @@ export function createArtistTopTrackProjectionSchema(db: Database.Database): voi
   `);
 }
 
-function createProjectionInvalidationTriggers(
-  db: Database.Database,
-  options: {
-    prefix: string;
-    stateTable: string;
-    tables: readonly string[];
-  },
-): void {
-  for (const table of options.tables) {
-    const normalizedTableName = table.replace(/[^A-Za-z0-9_]/g, "");
-    for (const operation of ["INSERT", "UPDATE", "DELETE"] as const) {
-      const suffix = operation === "INSERT" ? "ai" : operation === "UPDATE" ? "au" : "ad";
-      db.exec(`
-        CREATE TRIGGER ${options.prefix}_${normalizedTableName.toLowerCase()}_${suffix}
-        AFTER ${operation} ON ${table}
-        BEGIN
-          DELETE FROM ${options.stateTable};
-        END;
-      `);
-    }
-  }
-}
-
 function dropProjectionInvalidationTriggers(
   db: Database.Database,
   prefix: string,
@@ -66,70 +43,53 @@ function dropProjectionInvalidationTriggers(
 }
 
 /**
- * Library-list projections must not rebuild because a catalog hydrate wrote
- * Albums/Tracks/provider variants. Those writes are the 489-artist refresh
- * path; invalidating on them left the index dirty for the entire run, and the
- * follow-up rebuild then scanned the whole catalog.
+ * Library lists page from LibraryAlbums / LibraryEditions, the way Lidarr pages
+ * from Albums / Tracks: SQLite B-tree indexes on those tables update themselves
+ * on write. A denormalized copy that we DELETE+rebuild is not required, and
+ * wiping AlbumLibraryProjectionState on membership writes is what forced
+ * Update Library Metadata to lock the database for minutes.
  *
- * Membership and file changes still invalidate. Housekeeping / Update Library
- * Metadata rebuilds after a refresh so quality flags catch up.
+ * These functions only drop the old invalidate/dirty triggers. Catalog hydrates
+ * never needed to touch a projection marker.
  */
-const ALBUM_LIBRARY_INVALIDATION_TABLES = [
-  "LibraryAlbums",
-  "LibraryEditions",
-  "Libraries",
-] as const;
-
-const OBSOLETE_ALBUM_LIBRARY_INVALIDATION_TABLES = [
+const OBSOLETE_PROJECTION_TRIGGER_TABLES = [
   "Albums",
   "AlbumEditions",
   "AcquisitionPlans",
   "AcquisitionPlanTracks",
   "ProviderItemAudioVariants",
-  ...ALBUM_LIBRARY_INVALIDATION_TABLES,
-] as const;
-
-const TRACK_LIBRARY_INVALIDATION_TABLES = [
   "TrackFiles",
+  "Recordings",
+  "Tracks",
   "LibraryAlbums",
   "LibraryEditions",
   "Libraries",
-] as const;
-
-const OBSOLETE_TRACK_LIBRARY_INVALIDATION_TABLES = [
-  "Tracks",
-  "Recordings",
-  "AlbumEditions",
-  "AcquisitionPlans",
-  "AcquisitionPlanTracks",
-  "ProviderItemAudioVariants",
-  ...TRACK_LIBRARY_INVALIDATION_TABLES,
 ] as const;
 
 export function syncAlbumLibraryProjectionInvalidationTriggers(db: Database.Database): void {
   dropProjectionInvalidationTriggers(
     db,
     "trg_album_library_invalidate",
-    OBSOLETE_ALBUM_LIBRARY_INVALIDATION_TABLES,
+    OBSOLETE_PROJECTION_TRIGGER_TABLES,
   );
-  createProjectionInvalidationTriggers(db, {
-    prefix: "trg_album_library_invalidate",
-    stateTable: "AlbumLibraryProjectionState",
-    tables: ALBUM_LIBRARY_INVALIDATION_TABLES,
-  });
+  dropProjectionInvalidationTriggers(
+    db,
+    "trg_album_library_dirty",
+    OBSOLETE_PROJECTION_TRIGGER_TABLES,
+  );
 }
 
 export function syncTrackLibraryProjectionInvalidationTriggers(db: Database.Database): void {
   dropProjectionInvalidationTriggers(
     db,
     "trg_track_library_invalidate",
-    OBSOLETE_TRACK_LIBRARY_INVALIDATION_TABLES,
+    OBSOLETE_PROJECTION_TRIGGER_TABLES,
   );
-  createProjectionInvalidationTriggers(db, {
-    prefix: "trg_track_library_invalidate",
-    stateTable: "TrackLibraryProjectionState",
-    tables: TRACK_LIBRARY_INVALIDATION_TABLES,
-  });
+  dropProjectionInvalidationTriggers(
+    db,
+    "trg_track_library_dirty",
+    OBSOLETE_PROJECTION_TRIGGER_TABLES,
+  );
 }
 
 export function createAlbumLibraryProjectionSchema(db: Database.Database): void {
@@ -169,8 +129,6 @@ export function createAlbumLibraryProjectionSchema(db: Database.Database): void 
 
   syncAlbumLibraryProjectionInvalidationTriggers(db);
 
-  // A genuinely empty database is already fully projected. Library membership
-  // and file changes invalidate this marker; catalog hydrates do not.
   db.exec(`
     INSERT INTO AlbumLibraryProjectionState (singleton_id, row_count, updated_at)
     SELECT 1, 0, CURRENT_TIMESTAMP

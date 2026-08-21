@@ -84,7 +84,7 @@ export class TrackLibraryIndexService {
   }
 
   static needsRebuild(): boolean {
-    return !this.isReady();
+    return false;
   }
 
   static rebuild(): { rows: number } {

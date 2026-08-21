@@ -43,7 +43,10 @@ export class AlbumLibraryIndexService {
   }
 
   static needsRebuild(): boolean {
-    return !this.isReady();
+    // Library album/track pages read LibraryAlbums and LibraryEditions
+    // directly. SQLite keeps those table indexes current on write, so a
+    // denormalized rebuild is not part of the request path.
+    return false;
   }
 
   static rebuild(): { rows: number } {

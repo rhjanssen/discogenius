@@ -3,7 +3,6 @@ import type { AlbumTrackContract, LibraryFileContract, TrackRemoteOfferContract 
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { getConfigSection } from "../config/config.js";
 import { albumCoverLocalUrl, imageContainerFromImagesColumn } from "../metadata/media-cover-service.js";
-import { TrackLibraryIndexService } from "./track-library-index-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
 
 const canonicalTrackDownloadedPredicate = `
@@ -918,12 +917,10 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
   const sort = normalizeSortField(input.sort);
   const dir = normalizeSortDirection(input.dir);
   const orderBy = getTrackOrderBy(sort, dir);
-  const trackLibraryReady = TrackLibraryIndexService.isReady();
-
-  // Select the page from canonical integer identities first. Provider offers,
-  // quality unions, files, and credits are intentionally enriched only for
-  // the surviving rows; evaluating those correlated lookups across the whole
-  // multi-million-row Tracks table blocked the API event loop for ~30 seconds.
+  // Page identities from LibraryEditions (membership), then enrich the page.
+  // Lidarr does the same from Tracks: that table *is* the library. Walking
+  // the MusicBrainz Tracks catalog, or waiting on TrackLibraryIndex rebuild,
+  // is what hung the event loop.
   const candidateOrderBy = sort === "popularity"
     ? ` ORDER BY MAX(
           COALESCE(recording.popularity, 0),
@@ -944,30 +941,13 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
           ), 0)
         ) ${dir}, COALESCE(artist.popularity, 0) ${dir}, track.mbid ASC`
     : orderBy;
-  const usePopularityPage = sort === "popularity"
-    && input.monitored === true
-    && input.locked !== true
-    && !input.search
-    && (!input.libraryFilter || input.libraryFilter === "all")
-    && !hasSelectedOfferFilter
-    && trackLibraryReady;
-  const candidateSql = usePopularityPage ? `
-    SELECT library_track.track_id AS id, '' AS mbid
-    FROM TrackLibraryIndex library_track
-    ${input.downloaded === undefined ? "" : "WHERE library_track.downloaded = ?"}
-    ORDER BY
-      library_track.popularity ${dir},
-      library_track.track_id ASC
-    LIMIT ? OFFSET ?
-  ` : `
+  const candidateSql = `
     ${candidateScope}
     ${getTrackFromSql("track.id, track.mbid", whereClause, true)}
     ${candidateOrderBy}
     LIMIT ? OFFSET ?
   `;
-  const candidateParams = usePopularityPage && input.downloaded !== undefined
-    ? [input.downloaded ? 1 : 0, input.limit, input.offset]
-    : [...params, input.limit, input.offset];
+  const candidateParams = [...params, input.limit, input.offset];
   const candidates = db.prepare(candidateSql)
     .all(...candidateParams) as Array<{ id: number; mbid: string }>;
   const candidateIds = candidates.map((candidate) => candidate.id);
@@ -980,17 +960,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
     .map((candidate) => detailById.get(candidate.id))
     .filter((row): row is TrackRow => row != null);
 
-  const useFastMonitoredCount = input.monitored === true
-    && !input.search
-    && (!input.libraryFilter || input.libraryFilter === "all")
-    && input.locked !== true
-    && !hasSelectedOfferFilter
-    && trackLibraryReady;
-  const totalResult = useFastMonitoredCount ? db.prepare(`
-    SELECT COUNT(*) AS total
-    FROM TrackLibraryIndex count_track
-    ${input.downloaded === undefined ? "" : "WHERE count_track.downloaded = ?"}
-  `).get(...(input.downloaded === undefined ? [] : [input.downloaded ? 1 : 0])) as { total: number } : db.prepare(`
+  const totalResult = db.prepare(`
     ${candidateScope}
     ${getTrackFromSql("COUNT(*) as total", whereClause, true)}
   `).get(...params) as { total: number };

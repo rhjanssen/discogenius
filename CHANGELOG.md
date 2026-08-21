@@ -8,24 +8,21 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
-- **Album library index rebuilds the library, not the catalog.** Rebuild
-  scanned every `Albums` row (~353k here) in one transaction. Catalog
-  hydrates and provider-variant writes also deleted the projection marker
-  on every artist refresh, so Update Library Metadata raced RefreshArtist
-  and failed with `database is locked`. The index now inserts only
-  library albums, joins editions by album rather than every edition in
-  the library, invalidates on membership/file/library-profile changes,
-  rebuilds under the write gate in chunks, and Housekeeping queues a
-  rebuild when the marker is still missing. Track-index rebuild now
-  reports `(done/total)` editions and classifies spatial vs stereo once
-  per library instead of running `json_each` on every track. SQLITE_BUSY
-  on retry-safe commands (Rescan Folders, Refresh Artist) is re-queued
-  instead of
-  failed; rename/retag still fail closed. Rename Apply and video
-  placement enqueue retries SQLITE_BUSY instead of returning HTTP 500.
-  Album monitor, edition selection, representative, and acquisition-plan
-  writes retry the same way; leftover SQLITE_BUSY is HTTP 503 instead of
-  a 400 that looked like a client error.
+- **Library lists read membership tables, not a rebuilt index.** Lidarr
+  pages `Albums` / `Tracks` (which *are* the library) and lets SQLite keep
+  ordinary indexes current on write. Discogenius was DELETE+rebuilding
+  `AlbumLibraryIndex` / `TrackLibraryIndex` whenever membership or files
+  changed, which locked the live database for minutes. Album and track
+  library pages now start from `LibraryAlbums` / `LibraryEditions`. Update
+  Library Metadata no longer rebuilds those projections. Manual Import
+  search with an artist filter no longer falls back to other artists'
+  albums when that artist has no album of the same title.
+- SQLITE_BUSY on retry-safe commands (Rescan Folders, Refresh Artist) is
+  re-queued instead of failed; rename/retag still fail closed. Rename
+  Apply and video placement enqueue retries SQLITE_BUSY instead of
+  returning HTTP 500. Album monitor, edition selection, representative,
+  and acquisition-plan writes retry the same way; leftover SQLITE_BUSY
+  is HTTP 503 instead of a 400 that looked like a client error.
 - **Download Missing stayed disabled on scanned artists.** `needs_scan`
   was true whenever metadata was due for a scheduled refresh (two days
   for active artists), so the artist page treated Bakermat as never

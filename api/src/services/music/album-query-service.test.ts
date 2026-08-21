@@ -348,8 +348,6 @@ test("album list carries selected provider permalinks through the indexed detail
     spatialProvider: "apple-music",
     spatialQuality: "DOLBY_ATMOS",
   });
-  const { AlbumLibraryIndexService } = await import("./album-library-index-service.js");
-  AlbumLibraryIndexService.rebuild();
 
   const result = albumQueryModule.AlbumQueryService.listAlbums({
     limit: 20,
