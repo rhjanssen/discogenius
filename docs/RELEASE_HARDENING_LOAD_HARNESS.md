@@ -1,6 +1,6 @@
 # Release-hardening synthetic load harness
 
-The release-hardening harness creates a deterministic, disposable schema-42
+The release-hardening harness creates a deterministic, disposable active-schema
 Discogenius environment and drives mixed Artist workflow load through real
 SQLite WAL connections. It exists to test queue liveness and final-state truth
 without making thousands of provider or MusicBrainz requests.

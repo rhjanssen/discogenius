@@ -187,7 +187,7 @@ VOLUME ["/config", "/downloads", "/library"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3737') + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+    CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3737') + '/ping').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 

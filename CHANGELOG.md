@@ -8,6 +8,12 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Library scan skipped cover.jpg and album.nfo backfill.** Refresh & Scan /
+  library-scan set `skipMetadataBackfill` from the catalog hydration phase, so
+  gap-fill folders (All This Bad Blood 2012, Heartache Pt. 1, Give Me the Future)
+  kept audio and never received NFO/cover. Disk scan now always writes missing
+  sidecars and embeds the canonical MediaCover; Docker liveness is `/ping` so a
+  diagnostic `/health` warning cannot fail Compose.
 - **Monitored edition folders stole each other's cover.jpg and album.nfo.**
   Sidecars were treated as one singleton per release group, so writing Bad Blood
   X deleted All This Bad Blood's cover (and the reverse for NFO). Each monitored
@@ -453,8 +459,6 @@ any other `user_version` and creates a fresh database.
 
 ### Added
 - **Retag progress counter**: RetagFiles / RetagArtist now report `writing file x/y`.
-
-## [Unreleased]
 
 ## [2.7.0] - 2026-07-24
 

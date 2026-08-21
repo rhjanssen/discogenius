@@ -4,6 +4,7 @@ import {
   ARTIST_WORKFLOW_PRIORITY,
   CREDITED_ARTIST_HYDRATION_BATCH_SIZE,
   buildRefreshArtistCommand,
+  buildRescanFoldersCommand,
   nextArtistWorkflowPriority,
   queueCreditedArtistHydrationBatch,
   queueArtistIntake,
@@ -47,6 +48,17 @@ test("unmonitored artist intake reuses metadata refresh without collaborator sno
     assert.equal("scanDepth" in (queued.payload ?? {}), false);
   } finally {
     CommandQueueManager.push = originalAddJob;
+  }
+});
+
+test("library scan and refresh-scan still write cover and NFO sidecars", () => {
+  for (const workflow of ["library-scan", "refresh-scan"] as const) {
+    const payload = buildRescanFoldersCommand({
+      artistId: "7808accb-6395-4b25-858c-678bbb73896b",
+      artistName: "Bastille",
+      workflow,
+    });
+    assert.equal(payload.skipMetadataBackfill, false, workflow);
   }
 });
 

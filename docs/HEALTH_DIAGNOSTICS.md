@@ -2,6 +2,11 @@
 
 Discogenius has two deliberately different health paths.
 
+Docker `HEALTHCHECK` and Compose `depends_on: service_healthy` use `/ping`
+(plain `pong`). That probe only asks whether the HTTP server is up. Diagnostic
+status lives on `/health` so a failed deep check or last week's import cannot
+mark the container unhealthy and block the Apple Music wrapper.
+
 The HTTP `/health`, `/api/health`, and authenticated `/api/v1/system/status`
 paths are lightweight snapshots. They inspect writable paths, configured-volume
 free space, schema/WAL state, command leases and backlog age, scheduler

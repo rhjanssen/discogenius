@@ -418,7 +418,11 @@ class LibraryMetadataBackfillService {
                             ) as Array<{ id: number }>).map((row) => row.id);
                             await AudioTagService.syncEmbeddedCovers(trackFileIds);
                         }
-                    } catch {
+                    } catch (error) {
+                        console.warn(
+                            `[LibraryScan] Failed album cover sidecar ${coverPath}:`,
+                            error instanceof Error ? error.message : error,
+                        );
                         result.failed++;
                     }
 
@@ -517,7 +521,11 @@ class LibraryMetadataBackfillService {
                         } else {
                             result.skipped++;
                         }
-                    } catch {
+                    } catch (error) {
+                        console.warn(
+                            `[LibraryScan] Failed album NFO ${nfoPath}:`,
+                            error instanceof Error ? error.message : error,
+                        );
                         result.failed++;
                     }
                 }

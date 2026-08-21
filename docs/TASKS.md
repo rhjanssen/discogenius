@@ -18,8 +18,10 @@ Status: pending | in progress | decided | revisit
 
 ## Done: the 2.8.0 architecture
 
-Landed on `claude/implementation-brief-reconcile-taw5jb`. Schema 42 is
-clean-start; `initDatabase()` refuses any other `user_version`.
+Landed on `claude/implementation-brief-reconcile-taw5jb`. The aspirational
+CORE catalogue contract is `domain-v41`; production `createBaselineSchemaV41()`
+is what `initDatabase()` builds (currently `user_version` 43) and converges
+onto that model. There are no compatibility migrations.
 
 **Monitoring is row existence, everywhere.** `LibraryAlbums.monitored` and
 `Recordings.monitored` / `monitored_lock` are gone. `LibraryAlbums`,
@@ -303,6 +305,7 @@ preview is cluttered with cover/lyric/nfo rows.
 - done (2.7.4): **Sidecar placement and missing-file regeneration.** Writing into the actual existing album folder is known-good (`ensureAlbumCoverArtSidecarSync`, regenerated on scan).
 - done: **Store-once, reuse-everywhere (MediaCover Cache).** Local disk cache in `CONFIG_DIR/media-cover` serves sidecars and audio tag embedding offline without live network re-fetches.
 - done (2.10.0): **One cover.jpg and album.nfo per monitored edition folder.** Sidecars were a release-group singleton, so importing Bad Blood X deleted All This Bad Blood's cover (and NFO the other way). Folder-scoped sidecars stay in each edition directory that still has audio; unmonitored leftover media is removed when "Remove unmonitored files" is on.
+- done (2.10.0): **Disk scan always writes missing cover/NFO.** Library-scan and Refresh & Scan skipped sidecar backfill because that flag was the catalog `backfillMetadata` phase (hydrate album tracks). Gap-fill folders then kept a leftover cover and never got `album.nfo`. Sidecar fill is part of RescanFolders; catalog hydration stays on the workflow phase.
 - pending: Preserve and strengthen testing for sidecar generation and backfill/repair without network fetching during tagging or sidecar reconciliation.
 
 #### B. Artwork identity in hybrid albums and supplemental singles
@@ -722,9 +725,9 @@ Still open:
   audio/video; sidecars in separate tables).
 - No multi-user / roles for the foreseeable future (Lidarr posture:
   single-operator). Auth stays the app/session gate.
-- Schema **v39** is the upgrade floor (adds `Recordings.video_variant`). After
-  2.4.0’s v38 baseline, schema changes use forward migrations (not wipe), once
-  the migration runner lands.
+- Schema **41** is the catalogue-model target (`AGENTS.md`). Production
+  `createBaselineSchemaV41()` currently opens as `user_version` 43 and
+  converges onto that model; there are no compatibility migrations.
 
 ## Deprioritized
 

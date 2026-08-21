@@ -30,6 +30,30 @@ function formatReconcileSummary(prefix: string, result: ScanResult): string {
     );
 }
 
+/**
+ * Cover.jpg / album.nfo / lyrics are disk artifacts, not catalog hydration.
+ * RescanFolders always writes missing sidecars unless a test explicitly
+ * sets skipMetadataBackfill. Library-scan and Refresh & Scan used to skip
+ * this because the workflow's backfillMetadata phase meant "hydrate album
+ * tracks" — sibling edition folders then kept a cover and lost NFO.
+ */
+async function fillSidecarMetadata(
+    artistIds: string[],
+    skip: boolean | undefined,
+    onProgress: (description: string) => void,
+    progressPrefix: string,
+): Promise<void> {
+    if (skip) return;
+    onProgress(`${progressPrefix} - backfilling metadata files`);
+    if (artistIds.length > 0) {
+        for (const artistId of artistIds) {
+            await DiskScanService.fillMissingMetadataFiles(artistId);
+        }
+        return;
+    }
+    await DiskScanService.fillMissingMetadataFilesForLibrary();
+}
+
 export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, ctx) => {
     const addNewArtists = job.payload.addNewArtists ?? false;
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
@@ -55,15 +79,12 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             },
         });
 
-        if (!(job.payload.skipMetadataBackfill ?? false)) {
-            ctx.updateCommandDescription(job, {
-                progress: 90,
-                description: `${baseLabel} - backfilling metadata files`,
-            });
-            for (const artistId of artistIds) {
-                await DiskScanService.fillMissingMetadataFiles(artistId);
-            }
-        }
+        await fillSidecarMetadata(
+            artistIds,
+            job.payload.skipMetadataBackfill,
+            (description) => ctx.updateCommandDescription(job, { progress: 90, description }),
+            baseLabel,
+        );
 
         ctx.updateCommandDescription(job, {
             progress: 95,
@@ -118,6 +139,13 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             });
         },
     });
+    await fillSidecarMetadata(
+        artistIds,
+        job.payload.skipMetadataBackfill,
+        (description) => ctx.updateCommandDescription(job, { progress: 90, description }),
+        "Scanning library root folders",
+    );
+
     ctx.updateCommandDescription(job, {
         progress: 95,
         description: "Scanning library root folders - updating artist statistics",

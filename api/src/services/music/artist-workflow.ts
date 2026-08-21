@@ -441,7 +441,10 @@ export function buildRescanFoldersCommand(params: {
     workflow: params.workflow,
     skipDownloadQueue: !phases.queueDownloads,
     skipCuration: !phases.curate,
-    skipMetadataBackfill: !phases.backfillMetadata,
+    // Sidecar cover/NFO/lyrics belong to disk scan. Do not inherit the
+    // catalog `backfillMetadata` phase — that skipped NFO on library-scan
+    // and Refresh & Scan while organize still wrote sidecars on download.
+    skipMetadataBackfill: false,
     forceDownloadQueue: phases.queueDownloads,
     filter: params.filter,
     monitoringCycle: params.monitoringCycle,
