@@ -248,3 +248,14 @@ test("history retry by command id re-enqueues a wait row after finishClaimed", a
   assert.equal(live.items[0]?.title, "Pompeii");
   assert.equal(live.items[0]?.provider, "tidal");
 });
+
+test("recoverOrphanClaims drops wait rows whose command already failed", () => {
+  enqueueTrack("fail-orphan", "Stuck Album");
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  assert.ok(claimed);
+  queueModule.CommandQueueManager.fail(claimed.commandId, "import failed");
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
+  const dropped = waitQueueModule.DownloadWaitQueue.recoverOrphanClaims();
+  assert.equal(dropped, 1);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
+});

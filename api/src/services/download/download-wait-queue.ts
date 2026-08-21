@@ -692,7 +692,7 @@ export class DownloadWaitQueue {
         FROM DownloadQueue dq
         LEFT JOIN commands c ON c.id = dq.command_id
         WHERE dq.command_id IS NOT NULL
-          AND (c.id IS NULL OR c.status IN ('completed', 'cancelled'))
+          AND (c.id IS NULL OR c.status IN ('completed', 'cancelled', 'failed'))
       )
     `).run();
 

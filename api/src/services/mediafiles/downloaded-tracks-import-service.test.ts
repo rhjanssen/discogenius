@@ -134,3 +134,18 @@ test("cancellation after an organizer boundary preserves media already moved int
     fs.rmSync(path.dirname(libraryFile), { recursive: true, force: true });
   }
 });
+
+test("album-mode imports with provenance offers do not hard-fail a shortfall", () => {
+  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({
+    type: "album",
+    acquisitionMode: "album",
+    processedCount: 23,
+    trackOfferCount: 24,
+  }), false);
+  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({
+    type: "album",
+    acquisitionMode: "trackOffers",
+    processedCount: 23,
+    trackOfferCount: 24,
+  }), true);
+});

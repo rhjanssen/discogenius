@@ -17,6 +17,13 @@ name that two MusicBrainz artists share no longer hides both of them.
   music-metadata parses FLAC `LYRICS` into timed objects and the retag
   checker compared that comma-joined parse to the LRC string we wrote.
   Verification now reads the native tag.
+- **Full-album imports failed as hybrid when one offered track missed.**
+  Album-mode jobs still attach `trackOffers` for tagging; the importer
+  treated any offer list as a hybrid job and refused 23/24. Only
+  `acquisitionMode=trackOffers` hard-fails a shortfall now.
+- **Failed download wait rows blocked the same acquisition plan forever.**
+  Startup recovery now drops wait rows whose command already failed, not
+  only completed or cancelled ones.
 - **Download Missing queued a second copy of a video that was already
   downloading.** The artist-page Download button keys the wait row by
   provider id; Download Missing keyed it by recording id, so the same

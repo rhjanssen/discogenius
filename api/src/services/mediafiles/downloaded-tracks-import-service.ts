@@ -33,6 +33,19 @@ import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
+/** Full-album jobs carry trackOffers for tagging; only trackOffers mode hard-fails on shortfalls. */
+export function shouldHardFailIncompleteAlbumImport(options: {
+  type?: string;
+  acquisitionMode?: string | null;
+  processedCount: number;
+  trackOfferCount: number;
+}): boolean {
+  return options.type === "album"
+    && options.acquisitionMode === "trackOffers"
+    && options.trackOfferCount > 0
+    && options.processedCount < options.trackOfferCount;
+}
+
 function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
     return Array.from(new Set(
         Object.values(organizeResult.importedTrackFileIds || {})
@@ -1334,17 +1347,22 @@ export class DownloadedTracksImportService {
         const expectedProcessedTracks = organizeResult.expectedTracks ?? 0;
         const trackOfferCount = Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers.length : 0;
         const acquisitionMode = String(job.payload.acquisitionMode || "").trim();
-        const isTrackOffersJob = acquisitionMode === "trackOffers" || trackOfferCount > 0;
+        // Album-mode jobs still carry trackOffers for provenance. Only an
+        // explicit trackOffers download (hybrid / remaining missing tracks)
+        // must hard-fail when some offers never organized.
+        const isTrackOffersJob = acquisitionMode === "trackOffers";
         // Soft-incomplete for normal full-album downloads (bonus files, etc.).
         // Hybrid trackOffers must not green-check when most catalog tracks never landed.
         const softIncomplete = type === "album"
             && !isTrackOffersJob
             && expectedProcessedTracks > 0
             && organizeResult.processedTrackIds.length < expectedProcessedTracks;
-        const hardIncomplete = type === "album"
-            && isTrackOffersJob
-            && trackOfferCount > 0
-            && organizeResult.processedTrackIds.length < trackOfferCount;
+        const hardIncomplete = shouldHardFailIncompleteAlbumImport({
+            type,
+            acquisitionMode,
+            processedCount: organizeResult.processedTrackIds.length,
+            trackOfferCount,
+        });
 
         if (softIncomplete || hardIncomplete) {
             try {
