@@ -10,6 +10,7 @@ import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { LibraryFilesService, removeEmptyParents, resolveVideoTypeSuffix } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
+import { comparablePathColumnSql, normalizeComparablePath } from "./path-utils.js";
 import { getDefaultStreamingSource, getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
@@ -1398,6 +1399,19 @@ export class OrganizerService {
     return expectedPath;
   }
 
+  private static directoryHasTrackedAudio(directory: string): boolean {
+    const normalized = normalizeComparablePath(directory);
+    if (!normalized) return false;
+    const like = `${normalized.replace(/([\\%_])/g, "\\$1")}/%`;
+    const rows = db.prepare(`
+      SELECT file_path
+      FROM TrackFiles
+      WHERE file_type IN ('track', 'video')
+        AND ${comparablePathColumnSql("file_path")} LIKE ? ESCAPE '\\'
+    `).all(like) as Array<{ file_path: string }>;
+    return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
+  }
+
   private static relocateSingletonSidecar(params: {
     artistId: string;
     albumId?: string | null;
@@ -1463,6 +1477,22 @@ export class OrganizerService {
       }
 
       try {
+        const sourceDir = path.dirname(resolvedFilePath);
+        const destDir = path.dirname(params.expectedPath);
+        const siblingEditionFolder = this.normalizeResolvedPath(sourceDir) !== this.normalizeResolvedPath(destDir)
+          && this.directoryHasTrackedAudio(sourceDir);
+
+        if (siblingEditionFolder) {
+          // One folder per monitored edition. Copy the canonical sidecar into
+          // the destination; never steal it from a folder that still has audio.
+          if (!hasExpectedSidecar) {
+            this.ensureDir(destDir);
+            fs.copyFileSync(resolvedFilePath, params.expectedPath);
+            hasExpectedSidecar = true;
+          }
+          continue;
+        }
+
         if (!hasExpectedSidecar) {
           this.moveFileCrossDevice(resolvedFilePath, params.expectedPath);
           hasExpectedSidecar = true;
@@ -1493,8 +1523,9 @@ export class OrganizerService {
       });
 
       if (params.albumId) {
-        db.prepare(`
-          DELETE FROM MetadataFiles
+        const leftover = db.prepare(`
+          SELECT id, file_path, library_root
+          FROM MetadataFiles
           WHERE (
               canonical_release_group_mbid = ?
               OR canonical_release_mbid = ?
@@ -1506,7 +1537,20 @@ export class OrganizerService {
             AND COALESCE(library_root, '') = COALESCE(?, '')
             AND file_type = ?
             AND file_path != ?
-        `).run(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
+        `).all(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath) as Array<{
+          id: number;
+          file_path: string;
+          library_root: string;
+        }>;
+        for (const row of leftover) {
+          const leftoverPath = resolveStoredLibraryPath({
+            filePath: row.file_path,
+            libraryRoot: row.library_root,
+          });
+          if (!fs.existsSync(leftoverPath)) {
+            db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(row.id);
+          }
+        }
       } else {
         db.prepare(`
           DELETE FROM MetadataFiles
@@ -2549,6 +2593,8 @@ export class OrganizerService {
               quality: null,
               namingTemplate: null,
               expectedPath: albumCoverPath,
+              canonicalReleaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || null,
+              canonicalReleaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid || null,
             });
           }
         } catch (error) {
@@ -2646,6 +2692,8 @@ export class OrganizerService {
             quality: null,
             namingTemplate: null,
             expectedPath: albumNfoPath,
+            canonicalReleaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || null,
+            canonicalReleaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid || null,
           });
         } catch (error) {
           console.warn(`[Organizer] Failed to write album NFO for ${albumIds[0]}:`, error);
@@ -3160,6 +3208,8 @@ export class OrganizerService {
             quality: null,
             namingTemplate: null,
             expectedPath: albumCoverPath,
+            canonicalReleaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || null,
+            canonicalReleaseMbid: trackIdentity.canonicalReleaseMbid || null,
           });
         }
       }
@@ -3252,6 +3302,8 @@ export class OrganizerService {
             quality: null,
             namingTemplate: null,
             expectedPath: albumNfoPath,
+            canonicalReleaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || null,
+            canonicalReleaseMbid: trackIdentity.canonicalReleaseMbid || null,
           });
         } catch (error) {
           console.warn(`[Organizer] Failed to write album NFO for ${libraryAlbumId}:`, error);

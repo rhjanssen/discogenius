@@ -302,6 +302,7 @@ preview is cluttered with cover/lyric/nfo rows.
 #### A. Sidecar placement and missing-file regeneration
 - done (2.7.4): **Sidecar placement and missing-file regeneration.** Writing into the actual existing album folder is known-good (`ensureAlbumCoverArtSidecarSync`, regenerated on scan).
 - done: **Store-once, reuse-everywhere (MediaCover Cache).** Local disk cache in `CONFIG_DIR/media-cover` serves sidecars and audio tag embedding offline without live network re-fetches.
+- done (2.10.0): **One cover.jpg and album.nfo per monitored edition folder.** Sidecars were a release-group singleton, so importing Bad Blood X deleted All This Bad Blood's cover (and NFO the other way). Folder-scoped sidecars stay in each edition directory that still has audio; unmonitored leftover media is removed when "Remove unmonitored files" is on.
 - pending: Preserve and strengthen testing for sidecar generation and backfill/repair without network fetching during tagging or sidecar reconciliation.
 
 #### B. Artwork identity in hybrid albums and supplemental singles

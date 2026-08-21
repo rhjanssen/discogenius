@@ -584,6 +584,74 @@ test("canonical albums without any provider match still regenerate album.nfo", a
     assert.doesNotMatch(nfo, /tidalAlbum/);
 });
 
+test("metadata backfill writes album.nfo into each monitored edition folder", async () => {
+    seedCanonicalLibraryFiles();
+    const library = dbModule.db.prepare(`
+        SELECT id FROM Libraries WHERE name = 'Metadata Backfill Stereo'
+    `).get() as { id: number };
+    const releaseGroup = dbModule.db.prepare(`
+        SELECT id FROM Albums WHERE mbid = 'release-group-mbid-200'
+    `).get() as { id: number };
+    const deluxe = dbModule.db.prepare(`
+        INSERT INTO AlbumEditions(mbid, release_group_id, release_group_mbid, artist_mbid, title, date, media_count)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+        RETURNING id
+    `).get("release-mbid-deluxe", releaseGroup.id, "release-group-mbid-200", "artist-mbid-100", "Canonical Album Deluxe", "2024-02-03", 1) as { id: number };
+    dbModule.db.prepare(`
+        INSERT INTO LibraryEditions (
+          library_id, edition_id, selection_mode, reason, curation_version
+        ) VALUES (?, ?, 'auto', 'test', 1)
+    `).run(library.id, deluxe.id);
+
+    const musicRoot = configModule.Config.getMusicPath();
+    const deluxeDir = path.join(musicRoot, "The Example Artist", "Canonical Album Deluxe");
+    fs.mkdirSync(deluxeDir, { recursive: true });
+    const deluxeTrackPath = path.join(deluxeDir, "01 - Canonical Track.flac");
+    fs.writeFileSync(deluxeTrackPath, "audio");
+    const original = dbModule.db.prepare(`
+        SELECT * FROM TrackFiles WHERE file_type = 'track' LIMIT 1
+    `).get() as any;
+    dbModule.db.prepare(`
+        INSERT INTO TrackFiles (
+          artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+          canonical_track_mbid, canonical_recording_mbid,
+          release_group_id, album_edition_id, track_id, recording_id, library_id,
+          provider, provider_entity_type, provider_id, library_slot,
+          file_path, relative_path, library_root, filename, extension, file_type, quality
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        original.artist_id,
+        original.canonical_artist_mbid,
+        original.canonical_release_group_mbid,
+        "release-mbid-deluxe",
+        original.canonical_track_mbid,
+        original.canonical_recording_mbid,
+        original.release_group_id,
+        deluxe.id,
+        original.track_id,
+        original.recording_id,
+        original.library_id,
+        original.provider,
+        original.provider_entity_type,
+        "301",
+        original.library_slot,
+        deluxeTrackPath,
+        path.relative(musicRoot, deluxeTrackPath),
+        musicRoot,
+        path.basename(deluxeTrackPath),
+        "flac",
+        "track",
+        "LOSSLESS",
+    );
+
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    assert.equal(result.failed, 0);
+    const originalNfo = path.join(path.dirname(original.file_path), "album.nfo");
+    const deluxeNfo = path.join(deluxeDir, "album.nfo");
+    assert.equal(fs.existsSync(originalNfo), true);
+    assert.equal(fs.existsSync(deluxeNfo), true);
+});
+
 test("a stale tracked lyric row does not block adjacent-sidecar recovery", async () => {
     seedCanonicalLibraryFiles();
     configModule.updateConfig("metadata", {

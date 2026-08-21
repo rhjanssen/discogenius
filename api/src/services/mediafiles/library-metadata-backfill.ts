@@ -183,22 +183,30 @@ class LibraryMetadataBackfillService {
         naming: ReturnType<typeof getNamingConfig>,
         result: MetadataFillResult,
     ) {
-        // Canonical-first: backfill each selected release group independently in
-        // every library that owns imported audio for it.
+        // Canonical-first: backfill each selected edition independently in
+        // every library that owns imported audio for it. Grouping only by
+        // release group wrote one cover.jpg / album.nfo and stole it between
+        // sibling edition folders (All This Bad Blood vs Bad Blood X).
         const albums = db.prepare(`
       SELECT
         lf.release_group_id,
         lf.library_id,
+        lf.album_edition_id,
         release_group.mbid AS canonical_release_group_mbid,
+        edition.mbid AS edition_mbid,
         CASE WHEN EXISTS (
           SELECT 1
           FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
           WHERE allowed.value = 'spatial'
-        ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-        MIN(lf.album_edition_id) AS album_edition_id
+        ) THEN 'spatial' ELSE 'stereo' END AS library_class
       FROM TrackFiles lf
       JOIN Albums release_group
         ON release_group.id = lf.release_group_id
+      JOIN AlbumEditions edition
+        ON edition.id = lf.album_edition_id
+      JOIN LibraryEditions library_edition
+        ON library_edition.library_id = lf.library_id
+       AND library_edition.edition_id = lf.album_edition_id
       JOIN Libraries library
         ON library.id = lf.library_id
       JOIN quality_profiles quality_profile
@@ -207,14 +215,15 @@ class LibraryMetadataBackfillService {
         AND lf.file_type = 'track'
         AND lf.release_group_id IS NOT NULL
         AND lf.library_id IS NOT NULL
-      GROUP BY lf.release_group_id, lf.library_id
+        AND lf.album_edition_id IS NOT NULL
+      GROUP BY lf.release_group_id, lf.library_id, lf.album_edition_id
     `).all(artistId) as any[];
         const processedLibraryAlbums = new Set<string>();
 
         for (const sourceAlbum of albums) {
             const canonicalReleaseGroupMbid = String(sourceAlbum.canonical_release_group_mbid || "").trim();
             const librarySlot = String(sourceAlbum.library_class || "stereo");
-            const libraryAlbumKey = `${sourceAlbum.library_id}:${sourceAlbum.release_group_id}`;
+            const libraryAlbumKey = `${sourceAlbum.library_id}:${sourceAlbum.release_group_id}:${sourceAlbum.album_edition_id}`;
             if (processedLibraryAlbums.has(libraryAlbumKey)) {
                 continue;
             }
@@ -262,10 +271,10 @@ class LibraryMetadataBackfillService {
                     JOIN ProviderItems provider_release
                       ON provider_release.id = release_match.provider_edition_item_id
                     WHERE library_release.library_id = ?
-                      AND selected_release.release_group_id = ?
+                      AND library_release.edition_id = ?
                     ORDER BY plan_source.sort_order, plan_source.id
                     LIMIT 1
-                `).get(sourceAlbum.library_id, sourceAlbum.release_group_id) as {
+                `).get(sourceAlbum.library_id, sourceAlbum.album_edition_id) as {
                     selected_provider?: string | null;
                     selected_provider_id?: string | null;
                     selected_release_mbid?: string | null;
@@ -290,7 +299,7 @@ class LibraryMetadataBackfillService {
                 : undefined;
             const selectedProviderAlbumId = String(selectedPlan?.selected_provider_id || "").trim() || null;
             const representativeAlbumId = String(albumProviderItem?.provider_id || selectedProviderAlbumId || "").trim() || null;
-            const canonicalReleaseMbid = selectedPlan?.selected_release_mbid
+            const canonicalReleaseMbid = String(sourceAlbum.edition_mbid || selectedPlan?.selected_release_mbid || "").trim()
                 || (sourceAlbum.album_edition_id
                     ? (db.prepare("SELECT mbid FROM AlbumEditions WHERE id = ?")
                         .get(sourceAlbum.album_edition_id) as { mbid?: string | null } | undefined)?.mbid
@@ -326,9 +335,10 @@ class LibraryMetadataBackfillService {
         AND lf.library_root IS NOT NULL
         AND lf.release_group_id = ?
         AND lf.library_id = ?
+        AND lf.album_edition_id = ?
       GROUP BY lf.library_root
       ORDER BY lf.library_root ASC
-    `).all(artistId, sourceAlbum.release_group_id, sourceAlbum.library_id) as Array<{ library_root: string | null; file_path: string | null; relative_path: string | null }>)
+    `).all(artistId, sourceAlbum.release_group_id, sourceAlbum.library_id, sourceAlbum.album_edition_id) as Array<{ library_root: string | null; file_path: string | null; relative_path: string | null }>)
                 .filter((row) => String(row.library_root || "").trim());
 
             for (const libraryRootRow of libraryRootRows) {
@@ -389,9 +399,6 @@ class LibraryMetadataBackfillService {
                                 canonicalReleaseMbid,
                                 librarySlot,
                             });
-                        }
-
-                        if (syncResult === "written") {
                             const trackFileIds = (db.prepare(`
                                 SELECT id
                                 FROM TrackFiles
@@ -399,12 +406,14 @@ class LibraryMetadataBackfillService {
                                   AND file_type = 'track'
                                   AND release_group_id = ?
                                   AND library_id = ?
+                                  AND album_edition_id = ?
                                   AND library_root = ?
                                 ORDER BY id ASC
                             `).all(
                                 artistId,
                                 sourceAlbum.release_group_id,
                                 sourceAlbum.library_id,
+                                sourceAlbum.album_edition_id,
                                 libraryRoot,
                             ) as Array<{ id: number }>).map((row) => row.id);
                             await AudioTagService.syncEmbeddedCovers(trackFileIds);

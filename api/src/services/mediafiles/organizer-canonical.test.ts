@@ -504,6 +504,63 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
   assert.equal(rows[0].file_path, newPath);
 });
 
+test("sidecar relocate copies into a sibling edition folder that still has audio", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid-sibling", "Canonical Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-sibling", "Canonical Artist", "artist-mbid-sibling");
+
+  const deluxeDir = path.join(tempDir, "All This Bad Blood (2012)");
+  const anniversaryDir = path.join(tempDir, "Bad Blood X (2023)");
+  fs.mkdirSync(deluxeDir, { recursive: true });
+  fs.mkdirSync(anniversaryDir, { recursive: true });
+  const deluxeCover = path.join(deluxeDir, "cover.jpg");
+  const anniversaryCover = path.join(anniversaryDir, "cover.jpg");
+  fs.writeFileSync(deluxeCover, "canonical-cover");
+  const deluxeAudio = path.join(deluxeDir, "201 - Poet.flac");
+  fs.writeFileSync(deluxeAudio, "audio");
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-sibling", deluxeAudio, "All This Bad Blood (2012)/201 - Poet.flac", tempDir, "201 - Poet.flac", "flac", "track");
+
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, provider, provider_entity_type, provider_id, library_slot,
+      canonical_release_group_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-sibling",
+    "All This Bad Blood (2012)/cover.jpg",
+    deluxeCover,
+    tempDir,
+    "jpg",
+    "AlbumImage",
+    "cover",
+    "tidal",
+    "album",
+    "provider-album-deluxe",
+    "stereo",
+    "rg-bad-blood",
+  );
+
+  (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+    artistId: "artist-sibling",
+    albumId: "rg-bad-blood",
+    expectedPath: anniversaryCover,
+    libraryRoot: tempDir,
+    fileType: "cover",
+  });
+
+  assert.equal(fs.existsSync(anniversaryCover), true);
+  assert.equal(fs.existsSync(deluxeCover), true, "sibling edition cover must stay");
+  assert.equal(fs.readFileSync(deluxeCover, "utf8"), "canonical-cover");
+  assert.equal(fs.readFileSync(anniversaryCover, "utf8"), "canonical-cover");
+});
+
 test("typed plan identity maps a provider source track onto the selected canonical release", async () => {
   const { getCanonicalTrackPosition, resolveCanonicalTrackPosition } = await import("../metadata/canonical-track-position.js");
   const { getCanonicalAlbumMetadata } = await import("../metadata/canonical-album-metadata.js");

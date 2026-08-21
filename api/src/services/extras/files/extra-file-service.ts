@@ -5,6 +5,8 @@ import { db } from "../../../database.js";
 export const METADATA_EXTRA_FILE_TYPES = new Set(["cover", "video_cover", "video_thumbnail", "nfo"]);
 export const LYRIC_EXTRA_FILE_TYPES = new Set(["lyrics"]);
 export const EXTRA_FILE_TYPES = new Set([...METADATA_EXTRA_FILE_TYPES, ...LYRIC_EXTRA_FILE_TYPES]);
+/** Album-folder sidecars. One cover.jpg / album.nfo per edition folder, not per release group. */
+export const FOLDER_SCOPED_METADATA_TYPES = new Set(["cover", "nfo", "video_cover"]);
 
 export type ExtraFileUpsertInput = {
   artistId: string;

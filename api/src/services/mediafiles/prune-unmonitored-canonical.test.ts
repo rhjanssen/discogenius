@@ -314,3 +314,75 @@ test("duplicate leftover files that fill a monitored edition hole keep the best 
   assert.deepEqual(ids, [pruneDuplicate, pruneBonus].sort((a, b) => a - b));
   assert.equal(ids.includes(keepFiller), false);
 });
+
+test("unmonitored edition folders lose untracked extra media when cleanup is on", () => {
+  seedArtist();
+  seedLibraryGroup("rg-bad-blood", 1);
+  const albumId = (db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-bad-blood'").get() as { id: number }).id;
+  const deluxe = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES ('ed-x-live', ?, 'rg-bad-blood', 'artist-mbid', 'Bad Blood X', 1)
+    RETURNING id
+  `).get(albumId) as { id: number };
+  const leftover = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES ('ed-2014-live', ?, 'rg-bad-blood', 'artist-mbid', 'All This Bad Blood', 1)
+    RETURNING id
+  `).get(albumId) as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, representative, curation_version
+    ) VALUES (?, ?, 'manual', 1, 1)
+  `).run(testLibraryId, deluxe.id);
+
+  const recording = db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES ('rec-oblivion-live', 'Oblivion', 'artist-mbid', 0)
+    RETURNING id
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title
+    ) VALUES ('trk-x-oblivion-live', ?, 'ed-x-live', ?, 'rec-oblivion-live', 1, 1, 'Oblivion')
+  `).run(deluxe.id, recording.id);
+
+  const leftoverDir = path.join(tempDir, "All This Bad Blood (2014)");
+  fs.mkdirSync(leftoverDir, { recursive: true });
+  const holeFillPath = path.join(leftoverDir, "108 - Oblivion.flac");
+  const extraPath = path.join(leftoverDir, "101 - Pompeii.flac");
+  fs.writeFileSync(holeFillPath, "hole-fill");
+  fs.writeFileSync(extraPath, "untracked-extra");
+
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, library_id, release_group_id, album_edition_id, recording_id,
+      canonical_release_group_mbid, canonical_release_mbid, canonical_recording_mbid,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "art1",
+    testLibraryId,
+    albumId,
+    leftover.id,
+    recording.id,
+    "rg-bad-blood",
+    "ed-2014-live",
+    "rec-oblivion-live",
+    "stereo",
+    holeFillPath,
+    path.relative(tempDir, holeFillPath),
+    tempDir,
+    "108 - Oblivion.flac",
+    "flac",
+    "track",
+    "LOSSLESS",
+  );
+
+  const result = LibraryFilesService.pruneUnmonitoredFiles("art1");
+  assert.equal(fs.existsSync(holeFillPath), true, "hole-fill copy of the missing monitored track stays");
+  assert.equal(fs.existsSync(extraPath), false, "untracked extra in the unmonitored folder is removed");
+  assert.ok(result.deleted >= 1);
+});

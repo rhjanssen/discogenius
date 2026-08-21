@@ -8,6 +8,12 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Monitored edition folders stole each other's cover.jpg and album.nfo.**
+  Sidecars were treated as one singleton per release group, so writing Bad Blood
+  X deleted All This Bad Blood's cover (and the reverse for NFO). Each monitored
+  edition folder now keeps its own canonical MediaCover copy and album.nfo.
+  Unmonitored leftover extras in those folders are removed when "Remove
+  unmonitored files" is on.
 - **Library scan left tagged mixtape rips in Unmapped Files.** Other People's
   Heartache, Pt. 2 already existed in the MusicBrainz catalog with 11 tracks,
   but scan would only auto-import a file that hit a provider offer. SoundCloud

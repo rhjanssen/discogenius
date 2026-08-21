@@ -21,6 +21,7 @@ import {
   type CurrentLibraryRoots,
 } from "./library-paths.js";
 import {
+  comparablePathColumnSql,
   normalizeComparablePath,
   normalizeResolvedPath,
   resolvedPathIsInsideRoot,
@@ -37,7 +38,7 @@ import { getCanonicalTrackPosition } from "../metadata/canonical-track-position.
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
-import { ExtraFileService, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "../extras/files/extra-file-service.js";
+import { ExtraFileService, FOLDER_SCOPED_METADATA_TYPES, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "../extras/files/extra-file-service.js";
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
 import { MetadataFileService } from "../extras/metadata/files/metadata-file-service.js";
 import { resolveVideoTypeSuffix } from "./video-naming.js";
@@ -2637,6 +2638,58 @@ export class LibraryFilesService {
       return { removed: 0 };
     }
 
+    const folderScoped = !params.mediaId && FOLDER_SCOPED_METADATA_TYPES.has(params.fileType);
+    if (!folderScoped) {
+      return { removed: this.removeDuplicateTrackedAssetRows(tableName, rows) };
+    }
+
+    // Each monitored edition has its own album folder. Cover.jpg / album.nfo in
+    // "All This Bad Blood (2012)" and "Bad Blood X (2023)" are not duplicates.
+    // A leftover sidecar in a folder with no audio (rename debris) still is.
+    const byDirectory = new Map<string, TrackedAssetRow[]>();
+    for (const row of rows) {
+      const directory = path.dirname(normalizeResolvedPath(resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+        relativePath: row.relative_path,
+      })));
+      const group = byDirectory.get(directory) ?? [];
+      group.push(row);
+      byDirectory.set(directory, group);
+    }
+
+    const live: TrackedAssetRow[][] = [];
+    const stale: TrackedAssetRow[] = [];
+    for (const [directory, group] of byDirectory) {
+      if (this.directoryHasTrackedAudio(directory)) live.push(group);
+      else stale.push(...group);
+    }
+
+    if (live.length === 0) {
+      return { removed: this.removeDuplicateTrackedAssetRows(tableName, rows) };
+    }
+
+    let removed = 0;
+    for (const group of live) {
+      removed += this.removeDuplicateTrackedAssetRows(tableName, group);
+    }
+    if (stale.length > 0) {
+      removed += this.deleteTrackedAssetRows(tableName, stale);
+    }
+    if (removed > 0) {
+      console.log(`[${tableName}] Removed ${removed} duplicate tracked ${params.fileType} file(s) for artist ${params.artistId}.`);
+    }
+    return { removed };
+  }
+
+  private static removeDuplicateTrackedAssetRows(
+    tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles",
+    rows: TrackedAssetRow[],
+  ): number {
+    if (rows.length <= 1) {
+      return 0;
+    }
+
     const [keep, ...remove] = [...rows].sort((left, right) => this.compareTrackedAssets(left, right));
     const keepResolvedPath = normalizeResolvedPath(resolveStoredLibraryPath({
       filePath: keep.file_path,
@@ -2685,11 +2738,51 @@ export class LibraryFilesService {
       batchDelete(tableName, idsToDelete);
     }
 
-    if (removed > 0) {
-      console.log(`[${tableName}] Removed ${removed} duplicate tracked ${keep.file_type} file(s) for artist ${params.artistId}.`);
-    }
+    return removed;
+  }
 
-    return { removed };
+  private static deleteTrackedAssetRows(
+    tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles",
+    rows: TrackedAssetRow[],
+  ): number {
+    if (rows.length === 0) return 0;
+    let removed = 0;
+    const idsToDelete: number[] = [];
+    for (const row of rows) {
+      const resolvedPath = resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+        relativePath: row.relative_path,
+      });
+      try {
+        if (fs.existsSync(resolvedPath)) {
+          fs.rmSync(resolvedPath, { force: true });
+          const root = resolveLibraryRootPath(row.library_root, row.file_path);
+          if (root) {
+            removeEmptyParents(path.dirname(resolvedPath), root);
+          }
+        }
+      } catch (error) {
+        console.warn(`[${tableName}] Failed removing stale ${row.file_type} file ${resolvedPath}:`, error);
+      }
+      idsToDelete.push(row.id);
+      this.emitFileDeleted({
+        libraryFileId: row.id,
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        filePath: resolvedPath,
+        libraryRoot: row.library_root,
+        reason: "duplicate-tracked-asset",
+        missing: !fs.existsSync(resolvedPath),
+      });
+      removed += 1;
+    }
+    if (idsToDelete.length > 0) {
+      batchDelete(tableName, idsToDelete);
+    }
+    return removed;
   }
 
   static pruneDuplicateTrackedAssets(artistId?: string): { removed: number } {
@@ -3056,9 +3149,10 @@ export class LibraryFilesService {
     }
 
     const rows = LibraryFilesService.selectUnmonitoredFileRows(artistId);
+    const prunedDirectories = new Map<string, string>();
 
     if (rows.length === 0) {
-      return { deleted: 0, missing: 0, errors: 0 };
+      return this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
     }
 
     let deleted = 0;
@@ -3124,10 +3218,186 @@ export class LibraryFilesService {
       const root = resolveLibraryRootPath(row.library_root, row.file_path);
 
       if (root) {
+        prunedDirectories.set(normalizeResolvedPath(path.dirname(resolvedFilePath)), row.library_root);
         removeEmptyParents(path.dirname(resolvedFilePath), root);
       }
     }
 
+    const leftovers = this.pruneLeftoversInEditionDirectories(prunedDirectories);
+    deleted += leftovers.deleted;
+    missing += leftovers.missing;
+    errors += leftovers.errors;
+    const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
+    deleted += untracked.deleted;
+    missing += untracked.missing;
+    errors += untracked.errors;
+
+    return { deleted, missing, errors };
+  }
+
+  private static readonly LEFTOVER_MEDIA_EXTENSIONS = new Set([
+    ".flac", ".alac", ".wav", ".aiff", ".mp3", ".m4a", ".aac", ".ogg", ".opus",
+    ".wma", ".ape", ".mp2", ".mp4", ".m4v", ".mkv", ".mov", ".webm",
+  ]);
+
+  private static directoryHasTrackedAudio(directory: string): boolean {
+    const normalized = normalizeComparablePath(directory);
+    if (!normalized) return false;
+    const like = `${normalized.replace(/([\\%_])/g, "\\$1")}/%`;
+    const rows = db.prepare(`
+      SELECT file_path
+      FROM TrackFiles
+      WHERE file_type IN ('track', 'video')
+        AND ${comparablePathColumnSql("file_path")} LIKE ? ESCAPE '\\'
+    `).all(like) as Array<{ file_path: string }>;
+    return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
+  }
+
+  private static directoryHasMonitoredAudio(directory: string): boolean {
+    const normalizedDir = normalizeComparablePath(directory);
+    if (!normalizedDir) return false;
+    const like = `${normalizedDir.replace(/([\\%_])/g, "\\$1")}/%`;
+    const rows = db.prepare(`
+      SELECT lf.file_path, lf.library_id, lf.album_edition_id
+      FROM TrackFiles lf
+      WHERE lf.file_type IN ('track', 'video')
+        AND ${comparablePathColumnSql("lf.file_path")} LIKE ? ESCAPE '\\'
+    `).all(like) as Array<{ file_path: string; library_id: number | null; album_edition_id: number | null }>;
+    return rows.some((row) => {
+      if (normalizeComparablePath(path.dirname(row.file_path)) !== normalizedDir) return false;
+      if (row.library_id == null || row.album_edition_id == null) return false;
+      const monitored = db.prepare(`
+        SELECT 1 FROM LibraryEditions
+        WHERE library_id = ? AND edition_id = ?
+        LIMIT 1
+      `).get(row.library_id, row.album_edition_id);
+      return Boolean(monitored);
+    });
+  }
+
+  private static deleteLeftoverPath(filePath: string, libraryRoot: string): boolean {
+    const resolved = resolveStoredLibraryPath({ filePath, libraryRoot });
+    let deletedPhysical = false;
+    if (fs.existsSync(resolved)) {
+      fs.rmSync(resolved, { force: true });
+      deletedPhysical = true;
+    }
+    db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
+    db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(filePath);
+    for (const table of ["MetadataFiles", "LyricFiles", "ExtraFiles"] as const) {
+      db.prepare(`DELETE FROM ${table} WHERE file_path = ?`).run(resolved);
+      db.prepare(`DELETE FROM ${table} WHERE file_path = ?`).run(filePath);
+    }
+    return deletedPhysical;
+  }
+
+  /**
+   * After tracked unmonitored files are gone, wipe leftover sidecars/media in
+   * those album folders when no monitored-edition audio remains there.
+   */
+  private static pruneLeftoversInEditionDirectories(
+    directories: Map<string, string>,
+  ): { deleted: number; missing: number; errors: number } {
+    let deleted = 0;
+    let missing = 0;
+    let errors = 0;
+    for (const [directory, libraryRoot] of directories) {
+      if (this.directoryHasMonitoredAudio(directory)) continue;
+      if (!fs.existsSync(directory)) continue;
+      try {
+        const entries = fs.readdirSync(directory, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          const fullPath = path.join(directory, entry.name);
+          try {
+            if (this.deleteLeftoverPath(fullPath, libraryRoot)) deleted += 1;
+            else missing += 1;
+          } catch (error) {
+            console.warn(`[TrackFiles] Failed leftover delete ${fullPath}:`, error);
+            errors += 1;
+          }
+        }
+        const root = resolveLibraryRootPath(libraryRoot, directory);
+        if (root) removeEmptyParents(directory, root);
+      } catch (error) {
+        console.warn(`[TrackFiles] Failed leftover sweep of ${directory}:`, error);
+        errors += 1;
+      }
+    }
+    return { deleted, missing, errors };
+  }
+
+  /**
+   * Hole-fill can leave one tracked file in an unmonitored edition folder
+   * (Bad Blood 2014 Daniel in the Den). Untracked siblings in that folder are
+   * extras and go when "Remove unmonitored files" is on.
+   */
+  private static pruneUntrackedMediaInUnmonitoredEditionFolders(
+    artistId: string,
+  ): { deleted: number; missing: number; errors: number } {
+    const rows = db.prepare(`
+      SELECT lf.file_path, lf.library_root, lf.library_id, lf.album_edition_id
+      FROM TrackFiles lf
+      WHERE lf.artist_id = ?
+        AND lf.file_type IN ('track', 'video')
+        AND lf.album_edition_id IS NOT NULL
+        AND lf.library_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM LibraryEditions monitored
+          WHERE monitored.library_id = lf.library_id
+            AND monitored.edition_id = lf.album_edition_id
+        )
+    `).all(artistId) as Array<{
+      file_path: string;
+      library_root: string;
+      library_id: number;
+      album_edition_id: number;
+    }>;
+
+    const directories = new Map<string, string>();
+    for (const row of rows) {
+      const resolved = resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+      });
+      const directory = path.dirname(resolved);
+      if (this.directoryHasMonitoredAudio(directory)) continue;
+      directories.set(normalizeResolvedPath(directory), row.library_root);
+    }
+
+    let deleted = 0;
+    let missing = 0;
+    let errors = 0;
+    for (const [directory, libraryRoot] of directories) {
+      if (!fs.existsSync(directory)) continue;
+      const tracked = new Set(
+        (db.prepare(`
+          SELECT file_path FROM TrackFiles
+          WHERE ${comparablePathColumnSql("file_path")} LIKE ? ESCAPE '\\'
+        `).all(`${normalizeComparablePath(directory).replace(/([\\%_])/g, "\\$1")}/%`) as Array<{ file_path: string }>)
+          .filter((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalizeComparablePath(directory))
+          .map((row) => normalizeResolvedPath(row.file_path)),
+      );
+      try {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          if (!entry.isFile()) continue;
+          const fullPath = path.join(directory, entry.name);
+          if (tracked.has(normalizeResolvedPath(fullPath))) continue;
+          const ext = path.extname(entry.name).toLowerCase();
+          if (!this.LEFTOVER_MEDIA_EXTENSIONS.has(ext)) continue;
+          try {
+            if (this.deleteLeftoverPath(fullPath, libraryRoot)) deleted += 1;
+            else missing += 1;
+          } catch (error) {
+            console.warn(`[TrackFiles] Failed untracked extra delete ${fullPath}:`, error);
+            errors += 1;
+          }
+        }
+      } catch (error) {
+        console.warn(`[TrackFiles] Failed untracked extra sweep of ${directory}:`, error);
+        errors += 1;
+      }
+    }
     return { deleted, missing, errors };
   }
 
