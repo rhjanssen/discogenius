@@ -21,10 +21,10 @@ export function queueAcquisitionPlan(
     position?: "front" | "back";
     notify?: boolean;
   } = {},
-): { queued: boolean; commandId: number | null } {
+): { queued: boolean; created: boolean; commandId: number | null } {
   const command = buildAcquisitionDownloadCommand(db, planId, { trackIds: options.trackIds });
   if (!command || options.canQueue?.() === false) {
-    return { queued: false, commandId: null };
+    return { queued: false, created: false, commandId: null };
   }
 
   const queued = DownloadWaitQueue.enqueue({
@@ -53,5 +53,5 @@ export function queueAcquisitionPlan(
   if (queued.created) {
     options.onQueued?.(queued.id);
   }
-  return { queued: true, commandId: queued.id };
+  return { queued: true, created: queued.created, commandId: queued.id };
 }

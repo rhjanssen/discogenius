@@ -610,3 +610,81 @@ export class AcquisitionPlanningService {
     return result.selectedPlanId;
   }
 }
+
+export interface MonitoredEditionRef {
+  libraryId: number;
+  editionId: number;
+}
+
+/**
+ * Rebuild acquisition plans for monitored editions whose selected plan was
+ * deleted (provider rematch / re-ingest). Without this, Download Missing sees
+ * no current plan and reports "nothing missing" while the album page shows
+ * empty local files.
+ */
+export function replanMonitoredEditions(
+  db: Database.Database,
+  editions: readonly MonitoredEditionRef[],
+  plannerVersion = 1,
+): number {
+  if (editions.length === 0) return 0;
+  const configuredPriority = getConfigSection("streaming")?.provider_priority;
+  const providerPriority = Array.isArray(configuredPriority)
+    ? configuredPriority.map(String)
+    : [];
+  const planner = new AcquisitionPlanningService(db);
+  const seen = new Set<string>();
+  let rebuilt = 0;
+  for (const edition of editions) {
+    const key = `${edition.libraryId}:${edition.editionId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const monitored = db.prepare(`
+      SELECT 1 FROM LibraryEditions
+      WHERE library_id = ? AND edition_id = ?
+    `).get(edition.libraryId, edition.editionId);
+    if (!monitored) continue;
+    planner.compute({
+      libraryId: edition.libraryId,
+      editionId: edition.editionId,
+      providerPriority,
+      plannerVersion,
+    });
+    rebuilt += 1;
+  }
+  return rebuilt;
+}
+
+export function listStrandedMonitoredEditions(
+  db: Database.Database,
+  artistId?: string,
+): MonitoredEditionRef[] {
+  const artistMbid = artistId
+    ? ((db.prepare(`
+        SELECT mbid FROM ArtistMetadata WHERE mbid = ? LIMIT 1
+      `).get(artistId) as { mbid: string } | undefined)?.mbid
+      ?? artistId)
+    : null;
+  return db.prepare(`
+    SELECT le.library_id AS libraryId, le.edition_id AS editionId
+    FROM LibraryEditions le
+    JOIN Libraries library ON library.id = le.library_id
+    JOIN AlbumEditions ae ON ae.id = le.edition_id
+    JOIN Albums a ON a.id = ae.release_group_id
+    JOIN LibraryAlbums la
+      ON la.library_id = le.library_id
+     AND la.release_group_id = a.id
+    LEFT JOIN ArtistMetadata am ON am.id = a.artist_metadata_id
+    WHERE library.enabled = 1
+      AND (? IS NULL OR am.mbid = ?)
+      AND (
+        le.preferred_plan_key IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM AcquisitionPlans p
+          WHERE p.library_id = le.library_id
+            AND p.edition_id = le.edition_id
+            AND p.plan_key = le.preferred_plan_key
+        )
+      )
+  `).all(artistMbid, artistMbid) as MonitoredEditionRef[];
+}

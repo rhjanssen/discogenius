@@ -6,7 +6,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { buildAcquisitionDownloadCommand } from "./acquisition-plan-executor.js";
-import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
+import { AcquisitionPlanningService, listStrandedMonitoredEditions, replanMonitoredEditions } from "./acquisition-planning-service.js";
 
 function seedStandardDeluxeFixture(db: Database.Database): number {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
@@ -501,6 +501,44 @@ test("a plan is rebuilt when its inputs change, and reused when they do not", ()
       "1999-01-01 00:00:00",
       "a changed quality profile must replan",
     );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("replanMonitoredEditions restores a selected plan after rematch deleted it", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-replan-stranded-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createCurrentDomainSchema(db);
+    seedStandardDeluxeFixture(db);
+    db.prepare(`
+      INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, curation_version)
+      VALUES (1, 1, 'auto', 1)
+    `).run();
+
+    const service = new AcquisitionPlanningService(db);
+    const planId = service.compute({
+      libraryId: 1,
+      editionId: 1,
+      providerPriority: ["tidal"],
+      plannerVersion: 1,
+    });
+    assert.ok(planId);
+
+    db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL WHERE id = 1").run();
+    db.prepare("DELETE FROM AcquisitionPlans").run();
+    assert.equal(listStrandedMonitoredEditions(db).length, 1);
+
+    const rebuilt = replanMonitoredEditions(db, [{ libraryId: 1, editionId: 1 }]);
+    assert.equal(rebuilt, 1);
+    const selected = db.prepare(`
+      SELECT COUNT(*) AS n FROM SelectedAcquisitionPlans WHERE library_edition_id = 1
+    `).get() as { n: number };
+    assert.equal(selected.n, 1);
+    assert.equal(listStrandedMonitoredEditions(db).length, 0);
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });

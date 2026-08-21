@@ -392,9 +392,32 @@ export class DownloadWaitQueue {
     let refId = wait.ref_key;
 
     if (wait.plan_id != null) {
-      const command = buildAcquisitionDownloadCommand(db, wait.plan_id, {
+      let command = buildAcquisitionDownloadCommand(db, wait.plan_id, {
         trackIds: wait.track_ids,
       });
+      if (!command && wait.album_id) {
+        const current = db.prepare(`
+          SELECT plan.id
+          FROM SelectedAcquisitionPlans plan
+          JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
+          JOIN Libraries library ON library.id = library_release.library_id
+          JOIN AlbumEditions release ON release.id = library_release.edition_id
+          JOIN Albums release_group ON release_group.id = release.release_group_id
+          WHERE plan.state = 'current'
+            AND release_group.mbid = ?
+            AND (
+              (? = 'spatial' AND library.name LIKE '%spatial%')
+              OR ((? IS NULL OR ? = 'stereo') AND library.name NOT LIKE '%spatial%' AND library.name NOT LIKE '%Video%')
+            )
+          ORDER BY library.id
+          LIMIT 1
+        `).get(wait.album_id, wait.slot, wait.slot, wait.slot) as { id: number } | undefined;
+        if (current) {
+          command = buildAcquisitionDownloadCommand(db, current.id, {
+            trackIds: wait.track_ids,
+          });
+        }
+      }
       if (!command) {
         this.remove(wait.id);
         return null;

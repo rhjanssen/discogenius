@@ -13,12 +13,16 @@ import {
   requiresAlbumLinkedVideosOnly,
 } from "../mediafiles/video-folder-layout.js";
 import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
+import {
+  listStrandedMonitoredEditions,
+  replanMonitoredEditions,
+} from "./acquisition-planning-service.js";
 
 export class DownloadMissingService {
     static async queueMonitoredItems(
         artistId?: string,
         options: { limit?: number } = {},
-    ): Promise<{ albums: number; tracks: number; videos: number }> {
+    ): Promise<{ albums: number; tracks: number; videos: number; alreadyQueued: number }> {
         console.log(`[Queue] Queueing monitored items${artistId ? ` for artist ${artistId}` : ' app-wide'}...`);
 
         const filteringConfig = getConfigSection("filtering");
@@ -38,6 +42,13 @@ export class DownloadMissingService {
         let albumJobs = 0;
         const trackJobs = 0;
         let videoJobs = 0;
+        let alreadyQueued = 0;
+
+        const stranded = listStrandedMonitoredEditions(db, artistId);
+        for (let index = 0; index < stranded.length; index += 1) {
+            replanMonitoredEditions(db, [stranded[index]]);
+            if (index % 8 === 0) await yieldToEventLoop();
+        }
 
         const normalizedPlanIds = (db.prepare(`
             SELECT plan.id
@@ -91,6 +102,7 @@ export class DownloadMissingService {
                 position: "back",
                 notify: false,
             });
+            if (queued.queued && !queued.created) alreadyQueued += 1;
             if (!queued.queued && !hasBatchCapacity()) break;
             if (index > 0 && index % 50 === 0) {
                 await yieldToEventLoop();
@@ -343,8 +355,8 @@ export class DownloadMissingService {
             DownloadWaitQueue.notifyChanged();
         }
 
-        console.log(`[Queue] Ensured queue has ${albumJobs} albums, ${trackJobs} tracks, ${videoJobs} videos.`);
-        return { albums: albumJobs, tracks: trackJobs, videos: videoJobs };
+        console.log(`[Queue] Ensured queue has ${albumJobs} albums, ${trackJobs} tracks, ${videoJobs} videos (${alreadyQueued} already waiting).`);
+        return { albums: albumJobs, tracks: trackJobs, videos: videoJobs, alreadyQueued };
     }
 }
 

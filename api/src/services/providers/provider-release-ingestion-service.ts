@@ -19,6 +19,7 @@ import {
   type MatchTargetTrack,
   type TrackMatchEvidence,
 } from "../music/provider-track-matcher.js";
+import { replanMonitoredEditions } from "../music/acquisition-planning-service.js";
 
 const MIN_AMBIGUITY_MARGIN = 0.1;
 
@@ -202,8 +203,9 @@ export class ProviderReleaseIngestionService {
    * **Soft path (Servarr / no UPC):** primary edition plus fan-out to siblings
    * and same-artist subset hosts, with Munkres-style title/duration assignment.
    *
-   * Planning still runs per edition later; this only decides which
-   * ProviderEditionMatches rows exist.
+   * After the match rewrite, monitored editions that lost their cached plan
+   * are replanned so Download Missing and the album page still see a current
+   * selection.
    *
    * Return stats describe the caller's primary edition for a stable contract.
    */
@@ -213,9 +215,10 @@ export class ProviderReleaseIngestionService {
     acceptedTrackCount: number;
     ambiguousTrackCount: number;
   } {
-    return this.db.transaction(() => {
+    let droppedEditions: Array<{ libraryId: number; editionId: number }> = [];
+    const result = this.db.transaction(() => {
       const providerEditionItemId = this.catalog.upsertItem(input.release);
-      this.clearDependentAcquisitionPlans(providerEditionItemId);
+      droppedEditions = this.clearDependentAcquisitionPlans(providerEditionItemId);
       if (input.releaseAudioVariants) {
         this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants,
           { provider: input.release.provider });
@@ -324,6 +327,8 @@ export class ProviderReleaseIngestionService {
         ambiguousTrackCount: primaryStats.ambiguousTrackCount,
       };
     })();
+    replanMonitoredEditions(this.db, droppedEditions);
+    return result;
   }
 
   /** Editions whose barcode equals the provider UPC (after digit normalize). */
@@ -641,7 +646,7 @@ export class ProviderReleaseIngestionService {
     })();
   }
 
-  private clearDependentAcquisitionPlans(providerEditionItemId: number): void {
+  private clearDependentAcquisitionPlans(providerEditionItemId: number): Array<{ libraryId: number; editionId: number }> {
     // Plans reference this release three ways, and none of the track-level
     // foreign keys cascade: sources point at the edition match, plan tracks
     // point at individual track matches, and plan tracks also pin the exact
@@ -683,6 +688,12 @@ export class ProviderReleaseIngestionService {
       providerEditionItemId,
     ];
 
+    const droppedEditions = this.db.prepare(`
+      SELECT DISTINCT plan.library_id AS libraryId, plan.edition_id AS editionId
+      FROM AcquisitionPlans plan
+      WHERE plan.id IN (${dependentPlanIds})
+    `).all(...args) as Array<{ libraryId: number; editionId: number }>;
+
     // A plan the operator picked is still pointed at by
     // `LibraryEditions.preferred_plan_key`, and that reference is a real
     // foreign key. Deleting the plan under it aborts the whole re-ingest with
@@ -704,6 +715,7 @@ export class ProviderReleaseIngestionService {
     this.db.prepare(`
       DELETE FROM AcquisitionPlans WHERE id IN (${dependentPlanIds})
     `).run(...args);
+    return droppedEditions;
   }
 
   private materializeCredits(

@@ -17,8 +17,8 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
         artistIds: string[] | undefined,
         ctx: CommandHandlerContext,
         job: CommandModelOf<"DownloadMissing">,
-    ): Promise<{ albums: number; tracks: number; videos: number }> {
-        const total = { albums: 0, tracks: 0, videos: 0 };
+    ): Promise<{ albums: number; tracks: number; videos: number; alreadyQueued: number }> {
+        const total = { albums: 0, tracks: 0, videos: 0, alreadyQueued: 0 };
 
         if (artistIds && artistIds.length > 0) {
             const artists = getManagedArtists({ artistIds }) as Array<{ id: string | number; name?: string }>;
@@ -37,6 +37,7 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
                 total.albums += queued.albums;
                 total.tracks += queued.tracks;
                 total.videos += queued.videos;
+                total.alreadyQueued += queued.alreadyQueued;
             }
             return total;
         }
@@ -55,12 +56,15 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
 
         const queued = await this.queueForScope(selectedArtistIds, ctx, job);
         const total = queued.albums + queued.tracks + queued.videos;
+        const alreadyQueued = queued.alreadyQueued ?? 0;
 
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: total > 0
                 ? `Queued ${total} download(s) (${queued.albums} albums, ${queued.tracks} tracks, ${queued.videos} videos)`
-                : "Wanted check complete: no monitored missing media found",
+                : alreadyQueued > 0
+                    ? `${alreadyQueued} missing album(s) already waiting in the download queue`
+                    : "Wanted check complete: no monitored missing media found",
         });
     }
 }
