@@ -2077,6 +2077,10 @@ export class LibraryFilesService {
           UPDATE TrackFiles
           SET library_id = ?,
               artist_id = ?,
+              release_group_id = COALESCE(?, release_group_id),
+              album_edition_id = COALESCE(?, album_edition_id),
+              track_id = COALESCE(?, track_id),
+              recording_id = COALESCE(?, recording_id),
               canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
               canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
               canonical_release_mbid = COALESCE(?, canonical_release_mbid),
@@ -2113,6 +2117,10 @@ export class LibraryFilesService {
         `).run(
           libraryId,
           params.artistId,
+          catalogIds.release_group_id,
+          catalogIds.album_edition_id,
+          catalogIds.track_id,
+          catalogIds.recording_id,
           canonicalIdentity.canonicalArtistMbid,
           canonicalIdentity.canonicalReleaseGroupMbid,
           canonicalIdentity.canonicalReleaseMbid,
@@ -2234,6 +2242,10 @@ export class LibraryFilesService {
         db.prepare(`
           UPDATE TrackFiles
           SET artist_id = ?,
+              release_group_id = COALESCE(?, release_group_id),
+              album_edition_id = COALESCE(?, album_edition_id),
+              track_id = COALESCE(?, track_id),
+              recording_id = COALESCE(?, recording_id),
               canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
               canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
               canonical_release_mbid = COALESCE(?, canonical_release_mbid),
@@ -2269,6 +2281,10 @@ export class LibraryFilesService {
           WHERE id = ?
         `).run(
           params.artistId,
+          catalogIds.release_group_id,
+          catalogIds.album_edition_id,
+          catalogIds.track_id,
+          catalogIds.recording_id,
           canonicalIdentity.canonicalArtistMbid,
           canonicalIdentity.canonicalReleaseGroupMbid,
           canonicalIdentity.canonicalReleaseMbid,

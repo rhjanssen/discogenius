@@ -725,6 +725,113 @@ test("typed plan identity maps a provider source track onto the selected canonic
   assert.equal(getCanonicalTrackPosition(fromNativeTrackOnHybrid.canonicalTrackMbid)?.trackNumber, 2);
 });
 
+test("unmonitored sibling job release remaps onto the unique monitored edition", async () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Bastille", "artist-mbid");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-basket", "artist-mbid", "Basket Case");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-basket-selected", "rg-basket", "artist-mbid", "Basket Case", 1, 1);
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-basket-sibling", "rg-basket", "artist-mbid", "Basket Case", 1, 1);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 0)")
+    .run("rec-basket", "Basket Case", "artist-mbid");
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 1)
+  `).run("t-basket-selected", "rel-basket-selected", "rec-basket", "Basket Case");
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 1)
+  `).run("t-basket-sibling", "rel-basket-sibling", "rec-basket", "Basket Case");
+  dbModule.db.prepare(`
+    UPDATE Albums SET artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')
+  `).run();
+  dbModule.db.prepare(`
+    UPDATE AlbumEditions SET
+      release_group_id = (SELECT id FROM Albums WHERE mbid = AlbumEditions.release_group_mbid),
+      artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')
+  `).run();
+  dbModule.db.prepare(`
+    UPDATE Tracks SET
+      album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid),
+      recording_id = (SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid)
+  `).run();
+
+  const group = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-basket'")
+    .get() as { id: number };
+  const selectedEdition = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-basket-selected'")
+    .get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Identity Test', '{}')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id)
+    SELECT 'Basket Stereo', ?, metadata_profile.id, quality_profile.id
+    FROM MetadataProfiles metadata_profile
+    JOIN quality_profiles quality_profile
+      ON COALESCE(quality_profile.allowed_source_formats, '[]') NOT LIKE '%spatial%'
+    WHERE metadata_profile.name = 'Identity Test'
+    ORDER BY quality_profile.id
+    LIMIT 1
+  `).run(path.join(tempDir, "basket-stereo"));
+  const library = dbModule.db.prepare("SELECT id FROM Libraries WHERE name = 'Basket Stereo'")
+    .get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO LibraryAlbums (
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, group.id);
+  dbModule.db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
+  `).run(library.id, selectedEdition.id);
+
+  const remapped = identityModule.resolveLibraryFileIdentity({
+    provider: "deezer",
+    providerEntityType: "track",
+    providerId: "deezer-basket",
+    fileType: "track",
+    librarySlot: "stereo",
+    canonicalReleaseGroupMbid: "rg-basket",
+    canonicalReleaseMbid: "rel-basket-sibling",
+    canonicalTrackMbid: "t-basket-sibling",
+    canonicalRecordingMbid: "rec-basket",
+  });
+  assert.equal(remapped.canonicalReleaseMbid, "rel-basket-selected");
+  assert.equal(remapped.canonicalTrackMbid, "t-basket-selected");
+
+  const siblingEdition = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-basket-sibling'")
+    .get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
+  `).run(library.id, siblingEdition.id);
+
+  const kept = identityModule.resolveLibraryFileIdentity({
+    provider: "deezer",
+    providerEntityType: "track",
+    providerId: "deezer-basket",
+    fileType: "track",
+    librarySlot: "stereo",
+    canonicalReleaseGroupMbid: "rg-basket",
+    canonicalReleaseMbid: "rel-basket-sibling",
+    canonicalTrackMbid: "t-basket-sibling",
+    canonicalRecordingMbid: "rec-basket",
+  });
+  assert.equal(kept.canonicalReleaseMbid, "rel-basket-sibling");
+  assert.equal(kept.canonicalTrackMbid, "t-basket-sibling");
+});
+
 test("hybrid tips with providerAlbumId on secondary albums match organize scope", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bastille");

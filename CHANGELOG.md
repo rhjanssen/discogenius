@@ -8,7 +8,11 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
-- **Album page always said an album was 0% downloaded.** List/artist cards
+- **Imported files bound to an unmonitored sibling edition.** Basket Case
+  and SAVE MY SOUL landed on a provider-matched MusicBrainz release that
+  was not the library's selected edition, so completion stayed 0% with the
+  file on disk. Identity now remaps to the unique monitored edition that
+  carries the same recording, and upsert writes that `track_id`.
   already used library completion stats; the album page and getAlbum
   hardcoded `downloaded: 0`. Basket Case stayed unmarked after a successful
   FLAC import. Those endpoints now use the same stats.

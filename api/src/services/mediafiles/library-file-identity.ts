@@ -65,6 +65,7 @@ type CanonicalTrackRow = {
 type LibrarySelection = {
   releaseGroupMbid: string;
   releaseMbid: string;
+  monitoredReleaseMbids: string[];
   libraryClass: "stereo" | "spatial";
   providerEditionItemId: number | null;
 };
@@ -457,57 +458,47 @@ function loadCanonicalTracks(mbids: string[]): Map<string, CanonicalTrackRow> {
   return byMbid;
 }
 
+function audioLibraryClassSql(qualityProfileAlias: string): string {
+  return `
+    CASE WHEN EXISTS (
+      SELECT 1
+      FROM json_each(COALESCE(${qualityProfileAlias}.allowed_source_formats, '[]')) allowed
+      WHERE allowed.value = 'spatial'
+    ) THEN 'spatial' ELSE 'stereo' END
+  `;
+}
+
 function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, LibrarySelection> {
   const byGroupAndClass = new Map<string, LibrarySelection>();
   for (const groupMbids of chunks(uniqueTexts(releaseGroupMbids))) {
     const marks = groupMbids.map(() => "?").join(",");
     const rows = db.prepare(`
-      WITH ranked AS (
-        SELECT
-          release_group.mbid AS release_group_mbid,
-          release.mbid AS release_mbid,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-            WHERE allowed.value = 'spatial'
-          ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-          provider_match.provider_edition_item_id,
-          ROW_NUMBER() OVER (
-            PARTITION BY
-              release_group.id,
-              CASE WHEN EXISTS (
-                SELECT 1
-                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-                WHERE allowed.value = 'spatial'
-              ) THEN 'spatial' ELSE 'stereo' END
-            ORDER BY library_release.updated_at DESC, library_release.id DESC
-          ) AS selection_rank
-        FROM LibraryEditions library_release
-        JOIN AlbumEditions release ON release.id = library_release.edition_id
-        JOIN Albums release_group ON release_group.id = release.release_group_id
-        JOIN Libraries library
-          ON library.id = library_release.library_id
-         AND library.enabled = 1
-        JOIN quality_profiles quality_profile
-          ON quality_profile.id = library.quality_profile_id
-        LEFT JOIN SelectedAcquisitionPlans plan
-          ON plan.library_edition_id = library_release.id
-         AND plan.state = 'current'
-        LEFT JOIN AcquisitionPlanSources source
-          ON source.plan_id = plan.id
-         AND source.role = 'primary'
-        LEFT JOIN ProviderEditionMatches provider_match
-          ON provider_match.id = source.provider_edition_match_id
-         AND provider_match.match_state = 'accepted'
-        WHERE release_group.mbid IN (${marks})
-      )
       SELECT
-        release_group_mbid,
-        release_mbid,
-        library_class,
-        provider_edition_item_id
-      FROM ranked
-      WHERE selection_rank = 1
+        release_group.mbid AS release_group_mbid,
+        release.mbid AS release_mbid,
+        ${audioLibraryClassSql("quality_profile")} AS library_class,
+        provider_match.provider_edition_item_id,
+        library_release.updated_at,
+        library_release.id AS library_edition_id
+      FROM LibraryEditions library_release
+      JOIN AlbumEditions release ON release.id = library_release.edition_id
+      JOIN Albums release_group ON release_group.id = release.release_group_id
+      JOIN Libraries library
+        ON library.id = library_release.library_id
+       AND library.enabled = 1
+      JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
+      LEFT JOIN SelectedAcquisitionPlans plan
+        ON plan.library_edition_id = library_release.id
+       AND plan.state = 'current'
+      LEFT JOIN AcquisitionPlanSources source
+        ON source.plan_id = plan.id
+       AND source.role = 'primary'
+      LEFT JOIN ProviderEditionMatches provider_match
+        ON provider_match.id = source.provider_edition_match_id
+       AND provider_match.match_state = 'accepted'
+      WHERE release_group.mbid IN (${marks})
+      ORDER BY library_release.updated_at DESC, library_release.id DESC
     `).all(...groupMbids) as Array<{
       release_group_mbid: string;
       release_mbid: string;
@@ -515,15 +506,83 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
       provider_edition_item_id: number | null;
     }>;
     for (const row of rows) {
-      byGroupAndClass.set(selectionKey(row.release_group_mbid, row.library_class), {
-        releaseGroupMbid: row.release_group_mbid,
-        releaseMbid: row.release_mbid,
-        libraryClass: row.library_class,
-        providerEditionItemId: row.provider_edition_item_id,
-      });
+      const key = selectionKey(row.release_group_mbid, row.library_class);
+      const existing = byGroupAndClass.get(key);
+      if (!existing) {
+        byGroupAndClass.set(key, {
+          releaseGroupMbid: row.release_group_mbid,
+          releaseMbid: row.release_mbid,
+          monitoredReleaseMbids: [row.release_mbid],
+          libraryClass: row.library_class,
+          providerEditionItemId: row.provider_edition_item_id,
+        });
+        continue;
+      }
+      if (!existing.monitoredReleaseMbids.includes(row.release_mbid)) {
+        existing.monitoredReleaseMbids.push(row.release_mbid);
+      }
     }
   }
   return byGroupAndClass;
+}
+
+function recordingSelectionKey(
+  releaseGroupMbid: string,
+  recordingMbid: string,
+  libraryClass: string,
+): string {
+  return `${releaseGroupMbid}|${recordingMbid}|${libraryClass}`;
+}
+
+/**
+ * When a job names an unmonitored sibling edition, bind the file to the
+ * monitored edition that uniquely carries the same recording. Two monitored
+ * editions sharing that recording stay unresolved here — callers must keep
+ * the explicit monitored edition instead of guessing.
+ */
+function loadUniqueMonitoredReleaseByRecording(
+  releaseGroupMbids: string[],
+): Map<string, string> {
+  const byKey = new Map<string, string>();
+  for (const groupMbids of chunks(uniqueTexts(releaseGroupMbids))) {
+    const marks = groupMbids.map(() => "?").join(",");
+    const rows = db.prepare(`
+      SELECT
+        release_group.mbid AS release_group_mbid,
+        recording.mbid AS recording_mbid,
+        ${audioLibraryClassSql("quality_profile")} AS library_class,
+        CASE WHEN COUNT(DISTINCT release.mbid) = 1
+          THEN MAX(release.mbid)
+        END AS release_mbid
+      FROM LibraryEditions library_release
+      JOIN AlbumEditions release ON release.id = library_release.edition_id
+      JOIN Albums release_group ON release_group.id = release.release_group_id
+      JOIN Libraries library
+        ON library.id = library_release.library_id
+       AND library.enabled = 1
+      JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
+      JOIN Tracks track ON track.album_edition_id = release.id
+      JOIN Recordings recording ON recording.id = track.recording_id
+      WHERE release_group.mbid IN (${marks})
+        AND recording.is_video = 0
+      GROUP BY release_group.mbid, recording.mbid, library_class
+      HAVING COUNT(DISTINCT release.mbid) = 1
+    `).all(...groupMbids) as Array<{
+      release_group_mbid: string;
+      recording_mbid: string;
+      library_class: string;
+      release_mbid: string | null;
+    }>;
+    for (const row of rows) {
+      if (!row.release_mbid) continue;
+      byKey.set(
+        recordingSelectionKey(row.release_group_mbid, row.recording_mbid, row.library_class),
+        row.release_mbid,
+      );
+    }
+  }
+  return byKey;
 }
 
 function chooseMatch(
@@ -756,6 +815,7 @@ export function resolveLibraryFileIdentities(
     ]),
   );
   const selections = loadLibrarySelections(releaseGroupMbids);
+  const uniqueMonitoredReleases = loadUniqueMonitoredReleaseByRecording(releaseGroupMbids);
   for (const entry of evidence) {
       const libraryClass = entry.prepared.preferredSlot === "spatial" ? "spatial" : "stereo";
       const selection = entry.releaseGroupMbid
@@ -777,17 +837,31 @@ export function resolveLibraryFileIdentities(
       const selectedForResolvedGroup = entry.releaseGroupMbid
         ? selections.get(selectionKey(entry.releaseGroupMbid, libraryClass)) ?? null
         : null;
-      entry.releaseMbid =
-        explicitRelease?.mbid
-        ?? selectedForResolvedGroup?.releaseMbid
-        ?? albumMatch?.releaseMbid
-        ?? mediaMatch?.releaseMbid
-        ?? entry.inputTrack?.releaseMbid
-        ?? null;
       entry.recordingMbid =
         nullableText(entry.prepared.input.canonicalRecordingMbid)
         ?? entry.inputTrack?.recordingMbid
         ?? mediaMatch?.recordingMbid
+        ?? null;
+      const explicitReleaseIsMonitored = Boolean(
+        explicitRelease?.mbid
+        && selectedForResolvedGroup?.monitoredReleaseMbids.includes(explicitRelease.mbid),
+      );
+      const uniqueMonitoredRelease = entry.releaseGroupMbid && entry.recordingMbid
+        ? uniqueMonitoredReleases.get(
+          recordingSelectionKey(entry.releaseGroupMbid, entry.recordingMbid, libraryClass),
+        ) ?? null
+        : null;
+      // An unmonitored sibling named on the download job must not steal
+      // TrackFiles.track_id. Prefer the job edition when it is monitored,
+      // otherwise the unique monitored edition that carries this recording.
+      entry.releaseMbid =
+        (explicitReleaseIsMonitored ? explicitRelease?.mbid : null)
+        ?? uniqueMonitoredRelease
+        ?? selectedForResolvedGroup?.releaseMbid
+        ?? explicitRelease?.mbid
+        ?? albumMatch?.releaseMbid
+        ?? mediaMatch?.releaseMbid
+        ?? entry.inputTrack?.releaseMbid
         ?? null;
   }
 
