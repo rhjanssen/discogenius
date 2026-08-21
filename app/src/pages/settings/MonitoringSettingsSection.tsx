@@ -106,7 +106,7 @@ export const MonitoringSettingsSection = ({
                 <Text size={200} className={styles.mutedText}>{options.description}</Text>
             </div>
             <div className={styles.rowControl}>
-                <Switch checked={options.checked} onChange={(_, data) => options.onChange(data.checked)} />
+                <Switch aria-label={options.title} checked={options.checked} onChange={(_, data) => options.onChange(data.checked)} />
             </div>
         </div>
     );

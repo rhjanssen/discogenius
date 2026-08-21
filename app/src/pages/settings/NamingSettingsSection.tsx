@@ -603,6 +603,7 @@ export const NamingSettingsSection = ({
                             </Text>
                         </div>
                         <Switch
+                            aria-label="Create Empty Artist Folders"
                             checked={Boolean(pathSettings?.create_empty_artist_folders)}
                             onChange={(_, data) => updatePathSettings({ create_empty_artist_folders: data.checked })}
                         />

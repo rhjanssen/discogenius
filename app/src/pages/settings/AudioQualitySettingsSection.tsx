@@ -173,6 +173,7 @@ export const AudioQualitySettingsSection = ({
                     </div>
                     <div className={styles.rowControl}>
                         <Switch
+                            aria-label="Spatial audio"
                             checked={includeSpatial}
                             onChange={(_, data) => onIncludeSpatialChange(data.checked)}
                         />

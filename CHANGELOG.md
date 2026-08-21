@@ -8,6 +8,9 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Settings toggles announced only as "on".** Fluent Switch inputs
+  next to Spatial audio, Download music videos, and the other settings
+  rows had no accessible name. They now use the row title.
 - **SQLite writes are serialized like Lidarr, not retried per route.**
   Lidarr's three command threads use WAL + `BusyTimeout = 1000ms` and
   almost never surface "database is locked" because they do not overlap

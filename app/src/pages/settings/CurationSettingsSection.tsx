@@ -215,6 +215,7 @@ export const CurationSettingsSection = ({
             </div>
             <div className={styles.rowControl}>
                 <Switch
+                    aria-label={title}
                     checked={checked}
                     onChange={(_, data) => onChange(data.checked)}
                 />
