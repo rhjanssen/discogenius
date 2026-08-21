@@ -256,7 +256,7 @@ test("PATCH track updates normalized library release-group wanted state", () => 
   assert.deepEqual(remaining.map((row) => row.name), ["Video"]);
 });
 
-test("GET tracks sorts popularity by track evidence instead of artist popularity", () => {
+test("GET tracks sorts popularity by track evidence instead of artist popularity", async () => {
   const { db } = dbModule;
   db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name, popularity)
@@ -302,7 +302,7 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
   `).run(selection.libraryId);
 
   const res = createMockResponse();
-  getRouteHandler("/", "get")({
+  await getRouteHandler("/", "get")({
     query: { sort: "popularity", dir: "desc", limit: "10", offset: "0" },
   }, res);
 
@@ -314,7 +314,7 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
   assert.equal(res.body.items[0].popularity, 80);
 });
 
-test("GET tracks filters selected offers and keeps remote quality separate from local files", () => {
+test("GET tracks filters selected offers and keeps remote quality separate from local files", async () => {
   insertCanonicalTrackFixture();
   const { db } = dbModule;
   const plan = insertTidalPlan();
@@ -331,7 +331,7 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
   `).run(plan.libraryId, plan.releaseGroupId, plan.editionId, plan.trackId, plan.recordingId);
 
   const selected = createMockResponse();
-  getRouteHandler("/", "get")({
+  await getRouteHandler("/", "get")({
     query: { provider: "tidal", quality_tier: "MAX", limit: "10", offset: "0" },
   }, selected);
 
@@ -352,7 +352,7 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
   assert.equal(selected.body.items[0].files[0].quality, "LOSSLESS");
 
   const wrongProvider = createMockResponse();
-  getRouteHandler("/", "get")({
+  await getRouteHandler("/", "get")({
     query: { provider: "apple-music", limit: "10", offset: "0" },
   }, wrongProvider);
   assert.equal(wrongProvider.body.total, 0);

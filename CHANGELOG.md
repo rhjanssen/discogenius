@@ -8,7 +8,8 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
-- **Imported files bound to an unmonitored sibling edition.** Basket Case
+- **GET /tracks tests raced the async list handler.** Two suite tests
+  asserted `res.body` before `json()` ran. They now await the handler.
   and SAVE MY SOUL landed on a provider-matched MusicBrainz release that
   was not the library's selected edition, so completion stayed 0% with the
   file on disk. Identity now remaps to the unique monitored edition that
