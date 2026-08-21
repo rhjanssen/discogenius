@@ -3002,8 +3002,10 @@ export class LibraryFilesService {
    * AND none of those anchors are monitored. Files with no canonical anchor at
    * all are left untouched (unclassifiable — never auto-deleted). Album-level
    * monitoring alone does not keep leftover files from unmonitored editions of
-   * a still-monitored album (Bad Blood X while only the Dutch edition is
-   * selected).
+   * a still-monitored album (All This Bad Blood after the user unmonitors it
+   * while Bad Blood X stays selected). Filling a hole on the remaining edition
+   * is the organizer's job; prune must not leave ghost TrackFiles in a wiped
+   * unmonitored folder.
    */
   static selectUnmonitoredFileRows(artistId: string): Array<{
     id: number;
@@ -3071,53 +3073,6 @@ export class LibraryFilesService {
             AND lf.file_type != 'video'
             AND file_edition.id IS NOT NULL
             AND library_edition.id IS NULL
-            AND NOT (
-              rec.id IS NOT NULL
-              AND EXISTS (
-                SELECT 1
-                FROM LibraryEditions monitored_edition
-                JOIN Tracks monitored_track
-                  ON monitored_track.album_edition_id = monitored_edition.edition_id
-                WHERE monitored_edition.library_id = lf.library_id
-                  AND monitored_track.recording_id = rec.id
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM TrackFiles native_file
-                    WHERE native_file.library_id = monitored_edition.library_id
-                      AND native_file.track_id = monitored_track.id
-                      AND (native_file.file_class = 'audio' OR native_file.file_type IN ('track', 'lyrics'))
-                  )
-              )
-              AND lf.id = (
-                SELECT peer.id
-                FROM TrackFiles peer
-                LEFT JOIN Recordings peer_recording
-                  ON peer_recording.id = COALESCE(
-                    peer.recording_id,
-                    (
-                      SELECT recording.id
-                      FROM Recordings recording
-                      WHERE recording.mbid = peer.canonical_recording_mbid
-                      LIMIT 1
-                    )
-                  )
-                WHERE peer.library_id = lf.library_id
-                  AND peer_recording.id = rec.id
-                  AND (peer.file_class IS NULL OR peer.file_class != 'video')
-                  AND peer.file_type != 'video'
-                ORDER BY
-                  CASE UPPER(COALESCE(peer.quality, ''))
-                    WHEN 'HIRES_LOSSLESS' THEN 0
-                    WHEN 'LOSSLESS' THEN 1
-                    WHEN 'HIGH' THEN 2
-                    WHEN 'NORMAL' THEN 3
-                    WHEN 'LOW' THEN 4
-                    ELSE 9
-                  END,
-                  peer.id
-                LIMIT 1
-              )
-            )
           )
           OR (
             (lf.file_class IS NULL OR lf.file_class != 'video')
@@ -3138,12 +3093,122 @@ export class LibraryFilesService {
     }>;
   }
 
+  /**
+   * Disk scan runs before CurateArtist, so a file can land on an unmonitored
+   * sibling edition of the same album (101 Pompeii MMXXIII on Bad Blood X Oct 13
+   * while curation later selects the Jan 1 edition). Re-resolve identity now
+   * that LibraryEditions exist: the unique monitored edition that carries this
+   * recording wins, matching download-import remap.
+   */
+  static rebindFilesToMonitoredEditions(artistId: string): { rebound: number } {
+    const rows = db.prepare(`
+      SELECT
+        id, artist_id, file_path, library_root, file_type, quality, library_slot,
+        provider, provider_entity_type, provider_id,
+        canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+        canonical_track_mbid, canonical_recording_mbid
+      FROM TrackFiles
+      WHERE artist_id = ?
+        AND file_type IN ('track', 'video')
+        AND canonical_recording_mbid IS NOT NULL
+    `).all(artistId) as Array<{
+      id: number;
+      artist_id: string | number;
+      file_path: string;
+      library_root: string | null;
+      file_type: string;
+      quality: string | null;
+      library_slot: string | null;
+      provider: string | null;
+      provider_entity_type: string | null;
+      provider_id: string | null;
+      canonical_artist_mbid: string | null;
+      canonical_release_group_mbid: string | null;
+      canonical_release_mbid: string | null;
+      canonical_track_mbid: string | null;
+      canonical_recording_mbid: string | null;
+    }>;
+    if (rows.length === 0) return { rebound: 0 };
+
+    const identities = resolveLibraryFileIdentities(rows.map((row) => ({
+      artistId: row.artist_id,
+      fileType: row.file_type,
+      quality: row.quality,
+      libraryRoot: row.library_root,
+      provider: row.provider,
+      providerEntityType: row.provider_entity_type,
+      providerId: row.provider_id,
+      librarySlot: row.library_slot,
+      canonicalArtistMbid: row.canonical_artist_mbid,
+      canonicalReleaseGroupMbid: row.canonical_release_group_mbid,
+      canonicalReleaseMbid: row.canonical_release_mbid,
+      canonicalTrackMbid: row.canonical_track_mbid,
+      canonicalRecordingMbid: row.canonical_recording_mbid,
+    })));
+
+    let rebound = 0;
+    const update = db.prepare(`
+      UPDATE TrackFiles
+      SET album_edition_id = ?,
+          track_id = ?,
+          recording_id = ?,
+          canonical_release_mbid = ?,
+          canonical_track_mbid = ?,
+          canonical_recording_mbid = COALESCE(?, canonical_recording_mbid),
+          canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid)
+      WHERE id = ?
+    `);
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const identity = identities[index];
+      if (!identity?.canonicalReleaseMbid || !identity.canonicalTrackMbid) continue;
+      if (
+        identity.canonicalReleaseMbid === row.canonical_release_mbid
+        && identity.canonicalTrackMbid === row.canonical_track_mbid
+      ) {
+        continue;
+      }
+      const catalogIds = db.prepare(`
+        SELECT
+          (SELECT id FROM AlbumEditions WHERE mbid = ?) AS album_edition_id,
+          (SELECT id FROM Tracks WHERE mbid = ?) AS track_id,
+          (SELECT id FROM Recordings WHERE mbid = ?) AS recording_id
+      `).get(
+        identity.canonicalReleaseMbid,
+        identity.canonicalTrackMbid,
+        identity.canonicalRecordingMbid,
+      ) as {
+        album_edition_id: number | null;
+        track_id: number | null;
+        recording_id: number | null;
+      };
+      if (!catalogIds.album_edition_id || !catalogIds.track_id) continue;
+      update.run(
+        catalogIds.album_edition_id,
+        catalogIds.track_id,
+        catalogIds.recording_id,
+        identity.canonicalReleaseMbid,
+        identity.canonicalTrackMbid,
+        identity.canonicalRecordingMbid,
+        identity.canonicalReleaseGroupMbid,
+        row.id,
+      );
+      rebound += 1;
+    }
+    if (rebound > 0) {
+      console.log(`[TrackFiles] Rebound ${rebound} file(s) onto monitored editions for artist ${artistId}`);
+    }
+    return { rebound };
+  }
+
   static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
     const artist = db.prepare(`SELECT monitored FROM Artists WHERE id = ?`).get(artistId) as any;
     const artistMonitored = Boolean(artist?.monitored);
 
     // Unmonitoring an artist does not implicitly wipe the artist folder.
     // Automatic cleanup only applies while the artist remains managed and curation explicitly unmonitors child items.
+    // Do not rebind here: that would absorb an unmonitored edition's files onto
+    // the remaining selected edition instead of deleting them.
     if (!artistMonitored) {
       return { deleted: 0, missing: 0, errors: 0 };
     }
@@ -3284,6 +3349,8 @@ export class LibraryFilesService {
     }
     db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
     db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(filePath);
+    db.prepare("DELETE FROM TrackFiles WHERE file_path = ?").run(resolved);
+    db.prepare("DELETE FROM TrackFiles WHERE file_path = ?").run(filePath);
     for (const table of ["MetadataFiles", "LyricFiles", "ExtraFiles"] as const) {
       db.prepare(`DELETE FROM ${table} WHERE file_path = ?`).run(resolved);
       db.prepare(`DELETE FROM ${table} WHERE file_path = ?`).run(filePath);
@@ -3328,9 +3395,9 @@ export class LibraryFilesService {
   }
 
   /**
-   * Hole-fill can leave one tracked file in an unmonitored edition folder
-   * (Bad Blood 2014 Daniel in the Den). Untracked siblings in that folder are
-   * extras and go when "Remove unmonitored files" is on.
+   * After tracked unmonitored files are gone, wipe leftover extras (duplicate
+   * mp3s, unmapped media) in those edition folders when no monitored-edition
+   * audio remains there.
    */
   private static pruneUntrackedMediaInUnmonitoredEditionFolders(
     artistId: string,

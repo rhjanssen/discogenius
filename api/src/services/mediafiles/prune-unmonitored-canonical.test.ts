@@ -225,7 +225,7 @@ test("files of an unmonitored edition are pruned even when the album stays monit
   assert.equal(ids.includes(keep), false);
 });
 
-test("duplicate leftover files that fill a monitored edition hole keep the best copy", () => {
+test("unmonitored-edition files are pruned even when they could fill a hole on the remaining edition", () => {
   seedArtist();
   seedLibraryGroup("rg-bad-blood", 1);
   const albumId = (db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-bad-blood'").get() as { id: number }).id;
@@ -311,8 +311,7 @@ test("duplicate leftover files that fill a monitored edition hole keep the best 
   });
 
   const ids = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id).sort((a, b) => a - b);
-  assert.deepEqual(ids, [pruneDuplicate, pruneBonus].sort((a, b) => a - b));
-  assert.equal(ids.includes(keepFiller), false);
+  assert.deepEqual(ids, [keepFiller, pruneDuplicate, pruneBonus].sort((a, b) => a - b));
 });
 
 test("unmonitored edition folders lose untracked extra media when cleanup is on", () => {
@@ -382,7 +381,12 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
   );
 
   const result = LibraryFilesService.pruneUnmonitoredFiles("art1");
-  assert.equal(fs.existsSync(holeFillPath), true, "hole-fill copy of the missing monitored track stays");
+  assert.equal(fs.existsSync(holeFillPath), false, "unmonitored-edition audio is removed with the folder");
   assert.equal(fs.existsSync(extraPath), false, "untracked extra in the unmonitored folder is removed");
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n,
+    0,
+    "prune must not leave TrackFiles pointing at deleted paths",
+  );
   assert.ok(result.deleted >= 1);
 });

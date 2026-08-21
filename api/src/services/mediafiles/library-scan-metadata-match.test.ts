@@ -707,3 +707,54 @@ test("a title absent from the folder's catalog edition stays unmapped even if a 
 
   assert.equal(match, null, "bonus sitting in a known album folder must not attach to a different release group");
 });
+
+test("the same recording on a different album is not a duplicate leftover", () => {
+  const { db } = dbModule;
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-heartache",
+    releaseMbid: "rel-heartache",
+    trackMbid: "trk-night-oph",
+    recordingMbid: "rec-night",
+    title: "Of the Night",
+    albumTitle: "Other People’s Heartache",
+    lengthMs: 214000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-atbb",
+    releaseMbid: "rel-atbb",
+    trackMbid: "trk-night-atbb",
+    recordingMbid: "rec-night",
+    title: "Of the Night",
+    albumTitle: "All This Bad Blood",
+    lengthMs: 214000,
+  });
+
+  const heartacheFolder = "/library/stereo-music/Bastille/Other People's Heartache (2012)";
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, file_type, library_slot, library_root, file_path, relative_path, filename, extension,
+      canonical_release_mbid, canonical_release_group_mbid, canonical_track_mbid, canonical_recording_mbid
+    ) VALUES (
+      'artist-1', 'track', 'stereo', 'music', ?, 'Bastille/Heartache/04 - Of the Night.mp3',
+      '04 - Of the Night.mp3', 'mp3',
+      'rel-heartache', 'rg-heartache', 'trk-night-oph', 'rec-night'
+    )
+  `).run(`${heartacheFolder}/04 - Of the Night.mp3`);
+
+  const match = matchModule.matchAudioFileByMetadata(
+    "/library/stereo-music/Bastille/All This Bad Blood (2012)/209 - Of the Night.m4a",
+    "artist-1",
+    "music",
+    {
+      title: "Of the Night",
+      album: "All This Bad Blood",
+      durationSeconds: 214,
+    },
+  );
+
+  assert.ok(match, "All This Bad Blood's own copy must import even if Heartache already has the recording");
+  assert.equal(match!.canonicalTrackMbid, "trk-night-atbb");
+  assert.equal(match!.canonicalReleaseMbid, "rel-atbb");
+  assert.equal(match!.duplicateOfExisting, false);
+});

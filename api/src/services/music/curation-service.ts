@@ -147,6 +147,13 @@ export class CurationService {
     `).get(managedArtistId) as { count: number }).count);
 
     const cleanupArtistId = identity.localArtistId;
+    if (cleanupArtistId) {
+      // Disk scan runs before this curation pass, so existing files may have
+      // bound to an unmonitored sibling (Bad Blood X Oct 13 vs the selected
+      // Jan 1 edition). Rebind onto the unique monitored edition first;
+      // prune then only deletes files that still have nowhere to live.
+      LibraryFilesService.rebindFilesToMonitoredEditions(cleanupArtistId);
+    }
     if (cleanupArtistId && getConfigSection("monitoring")?.remove_unmonitored_files === true) {
       LibraryFilesService.pruneUnmonitoredFiles(cleanupArtistId);
     }

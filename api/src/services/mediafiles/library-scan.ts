@@ -421,6 +421,7 @@ export class DiskScanService {
         }
 
         LibraryFilesService.pruneDuplicateTrackedAssets(artistId);
+        LibraryFilesService.rebindFilesToMonitoredEditions(artistId);
 
         if (result.orphansRemoved > 0 || result.filesIndexed > 0 || result.filesUpdated > 0) {
             console.log(

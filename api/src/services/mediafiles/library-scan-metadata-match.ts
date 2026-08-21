@@ -615,7 +615,24 @@ function existingTrackFileForCanonical(
     artistId: string,
     recordingMbid: string,
     librarySlot: string,
+    releaseMbid?: string | null,
 ): { file_path: string } | undefined {
+    // Same recording on a different edition/album is a second TrackFile, the
+    // way Lidarr keeps one file per Track. Only treat it as a leftover extra
+    // when the file would attach to a release that already has this recording.
+    if (releaseMbid) {
+        return db.prepare(`
+            SELECT file_path
+            FROM TrackFiles
+            WHERE artist_id = ?
+              AND canonical_recording_mbid = ?
+              AND canonical_release_mbid = ?
+              AND file_type = 'track'
+              AND (library_slot IS NULL OR library_slot = ?)
+            ORDER BY verified_at DESC, id DESC
+            LIMIT 1
+        `).get(artistId, recordingMbid, releaseMbid, librarySlot) as { file_path: string } | undefined;
+    }
     return db.prepare(`
         SELECT file_path
         FROM TrackFiles
@@ -711,7 +728,7 @@ function pickCatalogTrackMatch(
     const winner = hits[0];
     const recordingMbid = winner.recording_mbid ? String(winner.recording_mbid) : "";
     const existing = recordingMbid
-        ? existingTrackFileForCanonical(artistId, recordingMbid, preferredSlot)
+        ? existingTrackFileForCanonical(artistId, recordingMbid, preferredSlot, winner.release_mbid)
         : undefined;
     const resolvedExisting = existing?.file_path || null;
     const duplicateOfExisting = Boolean(
