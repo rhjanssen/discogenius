@@ -236,6 +236,8 @@ test("retag apply writes a real file, verifies it, and produces an idempotent se
   const preview = before.find((item) => item.id === row.id);
   assert.ok(preview);
   assert.equal(preview.missing, false);
+  const album = dbModule.db.prepare(`SELECT id FROM Albums WHERE mbid = ?`).get("release-group-mbid-1") as { id: number };
+  assert.equal(preview.albumId, album.id);
   assert.ok(preview.changes.some((change) => change.field === "Title"));
   assert.ok(preview.changes.some((change) => change.field === "Artist"));
 

@@ -15,6 +15,7 @@ import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
 import { CommandWorkerPool, isPoolShutdownError } from "./worker/command-worker-pool.js";
+import { shouldDeferCatalogHydration } from "./command-ordering.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
@@ -228,6 +229,21 @@ export class CommandExecutor {
                         if (started >= slotsAvailable) break;
                         // Skip jobs already being processed
                         if (this.activeJobs.has(candidate.id)) continue;
+
+                        const remainingSlotsIncludingThis = slotsAvailable - started;
+                        if (shouldDeferCatalogHydration({
+                            candidateName: candidate.name,
+                            remainingSlotsIncludingThis,
+                            pendingNames: candidates
+                                .filter((other) => other.id !== candidate.id && !this.activeJobs.has(other.id))
+                                .map((other) => other.name),
+                        })) {
+                            this.logBlocked(
+                                candidate.name,
+                                "Keeping one worker free for queued operator work",
+                            );
+                            continue;
+                        }
 
                         const { canStart, reason } = CommandManager.canStartCommand(
                             candidate.name, candidate.payload, candidate.ref_id,

@@ -103,6 +103,18 @@ export function isDownloadOrImportJobType(type: string): type is typeof DOWNLOAD
     return (DOWNLOAD_OR_IMPORT_COMMAND_NAMES as readonly string[]).includes(type);
 }
 
+/** Metadata hydration that can occupy every command worker for tens of minutes. */
+export const CATALOG_HYDRATION_COMMAND_NAMES = [
+    CommandNames.RefreshArtist,
+    CommandNames.MatchArtistProviders,
+    CommandNames.RefreshMetadata,
+    CommandNames.BulkRefreshArtist,
+] as const;
+
+export function isCatalogHydrationCommand(type: string): boolean {
+    return (CATALOG_HYDRATION_COMMAND_NAMES as readonly string[]).includes(type);
+}
+
 export function isCommandName(value: string): value is CommandName {
     return (Object.values(CommandNames) as string[]).includes(value);
 }

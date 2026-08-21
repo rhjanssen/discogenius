@@ -10,7 +10,7 @@
 
 import { CommandTrigger } from "./command-trigger.js";
 import type { CommandBodyCommon } from "./command-bodies.js";
-import { isCommandName, type CommandName } from "./command-names.js";
+import { isCatalogHydrationCommand, isCommandName, type CommandName } from "./command-names.js";
 import type { AnyCommandBody, CommandModel, CommandModelRecordBase } from "./command-model.js";
 
 export function isObjectPayload(value: unknown): value is CommandBodyCommon {
@@ -226,6 +226,21 @@ export function compareJobsByDurableQueueOrder(left: CommandModel, right: Comman
     }
 
     return left.id - right.id;
+}
+
+/**
+ * Keep one command-worker slot free for operator work (housekeeping, curate,
+ * download-missing, rename) when catalog hydration would otherwise consume the
+ * last idle worker for tens of minutes.
+ */
+export function shouldDeferCatalogHydration(options: {
+    candidateName: string;
+    remainingSlotsIncludingThis: number;
+    pendingNames: readonly string[];
+}): boolean {
+    if (options.remainingSlotsIncludingThis > 1) return false;
+    if (!isCatalogHydrationCommand(options.candidateName)) return false;
+    return options.pendingNames.some((name) => !isCatalogHydrationCommand(name));
 }
 
 export function sortJobsByExecutionOrder<T extends CommandModel>(jobs: T[]): T[] {

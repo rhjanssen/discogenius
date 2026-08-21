@@ -343,9 +343,9 @@ router.post("/:artistId/scan", async (req, res) => {
     // fetch — a refresh that looked like it ran and changed nothing. Scheduled
     // refreshes enqueue RefreshArtist directly and still honour staleness.
     const requested = (req.body as any)?.forceUpdate;
-    const queued = await queueArtistRefreshScan(artistId, {
+    const queued = await runWithAsyncBusyRetry(() => queueArtistRefreshScan(artistId, {
       forceUpdate: requested == null ? true : Boolean(requested),
-    });
+    }));
 
     if (!queued) {
       return res.status(404).json({ detail: "Artist not found" });
@@ -640,13 +640,13 @@ router.post("/:artistId/curate", async (req, res) => {
     }
 
     const artistName = String(artist.name || "").trim() || requireArtistName(artistId);
-    const commandId = queueArtistWorkflow({
+    const commandId = await runWithAsyncBusyRetry(() => queueArtistWorkflow({
       artistId,
       artistName,
       workflow: "curation",
       priority: 1,
       trigger: CommandTrigger.Manual,
-    });
+    }));
 
     res.json({
       success: true,

@@ -1011,7 +1011,7 @@ export class AudioTagService {
       SELECT
         lf.id,
         lf.artist_id,
-        NULL AS album_id,
+        COALESCE(lf.release_group_id, canonical_group.id, alb.id) AS album_id,
         lf.provider_id AS media_id,
         lf.file_path,
         lf.relative_path,
