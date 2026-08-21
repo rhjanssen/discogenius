@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { DB_PATH } from "../config/bootstrap.js";
+import { sqliteWriteMutexWorkerData } from "../../database/sqlite-write-mutex.js";
 import {
   ownerAcquire,
   ownerRelease,
@@ -46,7 +47,7 @@ function resolveSpawn(): { entry: string; workerData: Record<string, unknown> } 
   };
 
   if (isCompiled) {
-    return { entry: path.join(here, "wal-maintenance-worker.js"), workerData: { walMaintenance } };
+    return { entry: path.join(here, "wal-maintenance-worker.js"), workerData: { walMaintenance, ...sqliteWriteMutexWorkerData() } };
   }
   // Under tsx the loader is not propagated into worker threads; reuse the
   // command pool's bootstrap, which registers it before importing the entry.
@@ -54,6 +55,7 @@ function resolveSpawn(): { entry: string; workerData: Record<string, unknown> } 
     entry: path.join(here, "..", "commands", "worker", "command-worker-bootstrap.mjs"),
     workerData: {
       walMaintenance,
+      ...sqliteWriteMutexWorkerData(),
       __entry: pathToFileURL(path.join(here, "wal-maintenance-worker.ts")).href,
     },
   };

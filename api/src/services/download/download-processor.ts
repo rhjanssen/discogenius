@@ -17,7 +17,7 @@ import {
     invalidateReleaseGroupDownloadStatus,
     updateAlbumDownloadStatus,
 } from './download-state.js';
-import { writeLockDiagnostics } from "../commands/worker/sqlite-write-lock.js";
+import { isSqliteWriteMutexHeld, sqliteWriteMutexWorkerData } from "../../database/sqlite-write-mutex.js";
 import { downloadBackendRegistry } from './download-backend.js';
 import { readIntEnv } from '../../utils/env.js';
 import fs from 'fs';
@@ -1324,7 +1324,7 @@ export class DownloadProcessor {
         // better-sqlite3 can native-abort (v8::ToLocalChecked Empty MaybeLocal)
         // when stmt.run tries to throw SQLITE_BUSY while a worker holds a
         // multi-second write. Progress is lossy; skip this tick.
-        if (writeLockDiagnostics().held) {
+        if (isSqliteWriteMutexHeld()) {
             return;
         }
 
@@ -1461,6 +1461,7 @@ export class DownloadProcessor {
                     this.scheduleNext();
                 }
             });
+            appEvents.on(AppEvent.QUEUE_CLEARED, () => this.scheduleNext());
             this.queueEventsSubscribed = true;
         }
 
@@ -2767,7 +2768,10 @@ type DownloadWorkerRequest = {
 function resolveDownloadWorkerSpawn(): { entry: string; workerData: Record<string, unknown> } {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const isCompiled = here.includes(`${path.sep}dist${path.sep}`) || here.endsWith(`${path.sep}dist`);
-    const workerData: Record<string, unknown> = { [DOWNLOAD_WORKER_MARKER]: true };
+    const workerData: Record<string, unknown> = {
+        [DOWNLOAD_WORKER_MARKER]: true,
+        ...sqliteWriteMutexWorkerData(),
+    };
 
     if (isCompiled) {
         return {
@@ -2867,9 +2871,20 @@ export class DownloadProcessorWorkerProxy {
         appEvents.on(AppEvent.COMMAND_ADDED, (event: CommandEventPayload) => {
             if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
             if (!DOWNLOAD_OR_IMPORT_COMMAND_NAMES.includes(event.type as (typeof DOWNLOAD_OR_IMPORT_COMMAND_NAMES)[number])) return;
-            void this.processQueue().catch((error) => {
-                console.error('[DOWNLOAD-PROCESSOR] Failed to relay queue kick to download worker:', error);
-            });
+            this.kickQueue();
+        });
+        // DownloadMissing writes wait-table rows with no command yet, then emits
+        // QUEUE_CLEARED. Without this kick those rows sit forever: processQueue
+        // is what claimNext()s a wait row into a Download* command.
+        appEvents.on(AppEvent.QUEUE_CLEARED, () => {
+            if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
+            this.kickQueue();
+        });
+    }
+
+    private kickQueue(): void {
+        void this.processQueue().catch((error) => {
+            console.error('[DOWNLOAD-PROCESSOR] Failed to relay queue kick to download worker:', error);
         });
     }
 

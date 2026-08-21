@@ -1,31 +1,17 @@
 /**
- * The process-global SQLite write lock.
+ * SQLite write-lock diagnostics and the labeled `withGlobalSqliteWriteLock`
+ * helper.
  *
- * `withSqliteWriteGate` used to be a module-scope promise tail in
- * `database.ts`. Command workers are real `worker_threads` Workers, and each
- * thread loads its own copy of every module — so each got its *own* gate. Two
- * RefreshArtist workers and a MatchArtistProviders worker could all believe
- * they held it and then contend for SQLite's single writer lock, which is what
- * produced the `SQLITE_BUSY` claims, the skipped scheduled-task syncs and the
- * expired MatchArtistProviders leases in the 500-artist run.
- *
- * The lock is now owned by the main thread and requested over the existing
- * worker bridge. That is the smallest design that is actually process-global:
- * a worker-local mutex cannot be made correct, and routing every write through
- * a writer actor would mean rewriting every call site.
- *
- * Two properties matter beyond correctness:
- *
- *  - **Waiting is asynchronous.** A worker awaits a message rather than
- *    blocking, so it keeps its event loop free and its lease heartbeat alive
- *    while another command writes.
- *  - **A dying holder does not deadlock the process.** The owner releases every
- *    lock held by a worker when that worker exits; otherwise one crash would
- *    stop all writing forever.
+ * Exclusion itself is the SharedArrayBuffer mutex in `sqlite-write-mutex.ts`
+ * (Lidarr-shaped: one writer for the process). This module keeps the owner
+ * queue for WAL-maintenance message relay and for tests that inspect fairness
+ * / crash recovery. Command workers no longer ask for the lock over postMessage;
+ * `db.prepare().run()` takes the mutex directly.
  */
-import { randomUUID } from "node:crypto";
-import { parentPort } from "node:worker_threads";
-import { isCommandWorker } from "./command-worker-protocol.js";
+import {
+  acquireSqliteWriteMutexAsync,
+  releaseSqliteWriteMutex,
+} from "../../../database/sqlite-write-mutex.js";
 
 export interface WriteLockWaitStats {
   /** Milliseconds spent waiting for the lock, before the work ran. */
@@ -174,66 +160,30 @@ export function resetWriteLockForTests(): void {
   stats.maxQueueDepth = 0;
 }
 
-/* ── Client side: whichever thread is asking ────────────────────────── */
-
-const pendingGrants = new Map<string, () => void>();
-let workerListenerAttached = false;
-
-function attachWorkerListener(): void {
-  if (workerListenerAttached || !parentPort) return;
-  workerListenerAttached = true;
-  parentPort.on("message", (message: { kind?: string; requestId?: string }) => {
-    if (message?.kind !== "writeLockGranted" || !message.requestId) return;
-    const grant = pendingGrants.get(message.requestId);
-    if (!grant) return;
-    pendingGrants.delete(message.requestId);
-    grant();
-  });
-}
-
 /**
- * Take the process-global write lock, run `work`, release it.
+ * Take the process-wide writer mutex, run `work`, release it.
  *
- * On the main thread this is a direct queue entry. Inside a command worker it
- * is a round trip to the owner — asynchronous, so the worker stays responsive
- * and keeps heartbeating while it waits.
+ * The mutex lives in a SharedArrayBuffer shared with every worker thread, so
+ * this is the Lidarr-shaped "one writer" — not a per-thread promise tail and
+ * not a SQLITE_BUSY retry loop. Waiting is async (`waitAsync`) so the HTTP
+ * event loop and worker heartbeats stay alive.
  */
 export async function withGlobalSqliteWriteLock<T>(
   work: () => T | Promise<T>,
   onStats?: (stats: WriteLockWaitStats) => void,
-  label = "unlabelled",
+  _label = "unlabelled",
 ): Promise<T> {
-  const requestId = randomUUID();
   const queuedAt = Date.now();
-  let queueDepthAtGrant = 0;
-
-  if (isCommandWorker() && parentPort) {
-    attachWorkerListener();
-    await new Promise<void>((resolve) => {
-      pendingGrants.set(requestId, resolve);
-      parentPort!.postMessage({ kind: "writeLockAcquire", requestId, label });
-    });
-  } else {
-    await new Promise<void>((resolve) => {
-      queueDepthAtGrant = waiters.length;
-      ownerAcquire(requestId, "main", resolve, label);
-    });
-  }
-
+  await acquireSqliteWriteMutexAsync();
   const grantedAt = Date.now();
   try {
     return await work();
   } finally {
-    if (isCommandWorker() && parentPort) {
-      pendingGrants.delete(requestId);
-      parentPort.postMessage({ kind: "writeLockRelease", requestId });
-    } else {
-      ownerRelease(requestId);
-    }
+    releaseSqliteWriteMutex();
     onStats?.({
       waitedMs: grantedAt - queuedAt,
       heldMs: Date.now() - grantedAt,
-      queueDepth: queueDepthAtGrant,
+      queueDepth: 0,
     });
   }
 }

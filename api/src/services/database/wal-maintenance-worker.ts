@@ -28,9 +28,12 @@
  * is the thing that measures it.
  */
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
 import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
+import {
+  acquireSqliteWriteMutexAsync,
+  releaseSqliteWriteMutex,
+} from "../../database/sqlite-write-mutex.js";
 
 export interface WalMaintenanceAttempt {
   at: string;
@@ -78,39 +81,24 @@ const db = new Database(config.dbPath, { fileMustExist: true });
 db.pragma("journal_mode = WAL");
 
 let shuttingDown = false;
-const pendingGrants = new Map<string, () => void>();
 
 port.on("message", (message: MainToWalWorker) => {
   if (message?.kind === "shutdown") {
     shuttingDown = true;
-    return;
-  }
-  if (message?.kind === "writeLockGranted") {
-    const grant = pendingGrants.get(message.requestId);
-    if (!grant) return;
-    pendingGrants.delete(message.requestId);
-    grant();
   }
 });
 
 /**
- * Take the process-global write gate over the bridge, exactly as a command
- * worker does. Waiting is a message round trip rather than a blocked thread, so
- * a checkpoint attempt never wedges behind an in-flight batch write.
+ * Take the process writer mutex so checkpoint does not overlap command writes.
+ * Waiting is async, so this thread stays responsive.
  */
-async function withWriteGate<T>(label: string, work: () => T): Promise<{ value: T; waitedMs: number }> {
-  const requestId = randomUUID();
+async function withWriteGate<T>(_label: string, work: () => T): Promise<{ value: T; waitedMs: number }> {
   const queuedAt = Date.now();
-  await new Promise<void>((resolve) => {
-    pendingGrants.set(requestId, resolve);
-    port.postMessage({ kind: "writeLockAcquire", requestId, label } satisfies WalWorkerToMain);
-  });
-  const waitedMs = Date.now() - queuedAt;
+  await acquireSqliteWriteMutexAsync();
   try {
-    return { value: work(), waitedMs };
+    return { value: work(), waitedMs: Date.now() - queuedAt };
   } finally {
-    pendingGrants.delete(requestId);
-    port.postMessage({ kind: "writeLockRelease", requestId } satisfies WalWorkerToMain);
+    releaseSqliteWriteMutex();
   }
 }
 

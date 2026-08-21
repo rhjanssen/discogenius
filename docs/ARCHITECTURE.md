@@ -86,25 +86,28 @@ catalog): `RefreshMetadata`, `MonitoringCycle`, `ApplyCuration`,
 
 ## SQLite concurrency and main-thread responsiveness
 
-`better-sqlite3` is synchronous and SQLite allows one writer at a time. Up to
-four writers contend: three command-worker threads plus the main HTTP/SSE thread.
-The hard constraint is that the **main thread is the event loop** — any
-synchronous wait there freezes all requests, SSE streams, and `/health`. The
-model in `api/src/database.ts`:
+SQLite allows one writer at a time. Lidarr also runs three command threads
+(`CommandExecutor.THREAD_LIMIT = 3`) against WAL with `BusyTimeout = 1000ms`
+and **no per-controller retry loops**. That works because those threads *block*
+on SQLite and Kestrel still serves other HTTP requests from the thread pool.
 
-- **Main thread fails fast** (`busy_timeout = 1000ms`, single quick retry) and
-  retries at the next scheduler tick rather than blocking the loop, mirroring
-  Lidarr's short request-path timeout.
-- **Workers wait** (`busy_timeout = 30000ms` + retries) so heavy refresh writes
-  wait their turn instead of erroring with `database is locked`.
-- **Chunked catalog writes** commit large refresh/hydration in bounded chunks so
-  no single transaction holds the write lock long enough to starve peers.
-  Keep this pattern; do not collapse hydration into one giant transaction.
-  Optional 2.6 work (local-MB): parallel catalog fetches across artists with a
-  single-flight write gate — see `docs/TASKS.md` (do not bump `RefreshArtist`
-  `maxConcurrent` without that gate).
-- **Bounded WAL** (`journal_size_limit`, `wal_autocheckpoint`, periodic passive
-  checkpoint) keeps the WAL from ballooning under a write storm.
+Discogenius cannot copy the blocking part on the HTTP event loop (`better-sqlite3`
+is synchronous). It copies the part that actually prevents `database is locked`:
+**one writer for the process**, implemented as a SharedArrayBuffer mutex in
+`api/src/database/sqlite-write-mutex.ts` and applied to every `db.prepare().run()`
+/ `exec` / `transaction`:
+
+- **Command, download, and WAL workers** take the mutex with `Atomics.wait`
+  (they can block; they are not the HTTP loop).
+- **HTTP and scheduler writes** take it with `Atomics.waitAsync` via
+  `withDbWrite` / `runWithAsyncBusyRetry`, so the event loop stays free while
+  they wait their turn.
+- **SQLite `busy_timeout` is Lidarr's 1000ms on every connection**, as a
+  backstop only. Do not add per-route SQLITE_BUSY retry loops.
+- **Chunked catalog writes** still commit in bounded chunks so one refresh
+  cannot hold the mutex for tens of seconds.
+- **Bounded WAL** (`journal_size_limit`, `wal_autocheckpoint`, WAL maintenance
+  thread) keeps the log from ballooning under a write storm.
 
 ## Metadata, scan, and import
 

@@ -41,41 +41,31 @@ import path from "node:path";
 import { LibraryCurationRepository } from "./services/music/library-curation-repository.js";
 import { ensureDefaultQualityProfiles } from "./services/music/library-settings-sync.js";
 import { clearConfigCache, getConfigSection } from "./services/config/config.js";
+import {
+  withSqliteWriteMutexAsync,
+  withSqliteWriteMutexSync,
+} from "./database/sqlite-write-mutex.js";
 
 let _db: Database.Database | null = null;
 
 /**
- * Run a user-initiated write on the MAIN thread with an async busy-retry that
- * yields the event loop between attempts (never freezes it). Relies on
- * SQLite's own locking + a short busy_timeout + retry rather than an app-level
- * write mutex; this is the main-thread equivalent for route/scheduler writes so
- * they ride out brief worker write-lock contention instead of failing fast.
+ * Run a user-initiated write. Lidarr doesn't retry SQLITE_BUSY in every
+ * controller — it serializes writers and lets SQLite's 1s BusyTimeout cover
+ * the rare overlap. HTTP handlers await this so they wait for the writer mutex
+ * without freezing the event loop.
  */
 export function withDbWrite<T>(fn: () => T): Promise<T> {
-  return runWithAsyncBusyRetry(fn);
+  return withSqliteWriteMutexAsync(fn);
 }
 
 const SQLITE_BUSY_RETRY_BASE_MS = 50;
-const SQLITE_BUSY_RETRY_MAX_MS = 2000;
-// SQLite serialises writers. Under multithreaded execution (worker pool + main
-// thread) write-lock contention is expected, so connections must WAIT rather
-// than error: a busy_timeout long enough to ride out a peer's write transaction
-// plus a JS-level retry backstop. If a write throws SQLITE_BUSY uncaught,
-// better-sqlite3 can hard-abort the process (v8::ToLocalChecked) — so every
-// write must go through the retry.
-//
-// The crucial asymmetry: worker threads run OFF the HTTP/SSE event loop, so they
-// can afford to block — a generous timeout + many retries means heavy refresh
-// writes wait their turn instead of erroring. The MAIN thread *is* the event
-// loop, and better-sqlite3 is synchronous, so any wait here freezes every HTTP
-// request, SSE stream, and /health probe for its full duration. Keep the main
-// thread's timeout small and its retry to a single quick attempt so a contended
-// main-thread write (chiefly the markProcessing job-claim, occasionally a route
-// write) fails fast and is retried at the next scheduler tick — never freezing
-// the server for tens of seconds.
-const MAIN_THREAD_BUSY_TIMEOUT_MS = 1000;
-const WORKER_THREAD_BUSY_TIMEOUT_MS = 30000;
-const SQLITE_BUSY_RETRY_ATTEMPTS = isMainThread ? 1 : 16;
+const SQLITE_BUSY_RETRY_MAX_MS = 200;
+// Lidarr: BusyTimeout = 1000ms, WAL, three command threads. SQLITE_BUSY is rare
+// because writers block on that timeout instead of racing. Discogenius adds a
+// process-wide writer mutex so worker_threads don't overlap connections; this
+// timeout is only a backstop if something bypasses the mutex.
+const SQLITE_BUSY_TIMEOUT_MS = 1000;
+const SQLITE_BUSY_RETRY_ATTEMPTS = 2;
 
 // Optional write profiling: log any write transaction that holds the SQLite write
 // lock longer than this (ms). Off unless DISCOGENIUS_WRITE_PROFILE_MS is set. Used
@@ -148,9 +138,9 @@ function sleepSync(ms: number): void {
 }
 
 /**
- * Run a synchronous DB operation, retrying on SQLITE_BUSY/LOCKED with capped
- * exponential backoff. Applied on both the main thread and worker threads so a
- * lost write-lock race never escapes as an uncaught (process-aborting) error.
+ * Last-resort SQLITE_BUSY retry. Call sites should not need this: the writer
+ * mutex is the Lidarr-shaped strategy. Kept as a backstop so an uncaught busy
+ * error cannot abort the process.
  */
 export function runWithSqliteBusyRetry<T>(operation: () => T): T {
   let lastError: unknown;
@@ -173,36 +163,17 @@ export function runWithSqliteBusyRetry<T>(operation: () => T): T {
 }
 
 /**
- * Async busy-retry for user-initiated writes on the MAIN (request) thread.
+ * Wait for the process writer mutex, then run the write once.
  *
- * The synchronous `runWithSqliteBusyRetry` is right for workers but on the main
- * thread it can only fail fast (1 attempt) — otherwise it would freeze the event
- * loop. That's correct for the background job-claim, but a user action (enqueue
- * an import, add an artist, toggle monitoring) shouldn't error just because a
- * refresh worker held the write lock for a moment. This retries the write with
- * `await setTimeout` backoff, which YIELDS the event loop between attempts, so
- * the server stays responsive while the write waits its turn. Route handlers are
- * already async, so they can `await` this.
+ * Kept under the old name so existing route handlers pick up the Lidarr-shaped
+ * strategy without a call-site sweep. Extra attempt/delay arguments are ignored.
  */
 export async function runWithAsyncBusyRetry<T>(
   operation: () => T,
-  attempts = 10,
-  baseDelayMs = 150,
+  _attempts?: number,
+  _baseDelayMs?: number,
 ): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= attempts; attempt += 1) {
-    try {
-      return operation();
-    } catch (error) {
-      if (!isSqliteBusy(error) || attempt >= attempts) {
-        throw error;
-      }
-      lastError = error;
-      const delayMs = Math.min(1000, baseDelayMs * (attempt + 1)) + Math.floor(Math.random() * baseDelayMs);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-  throw lastError;
+  return withSqliteWriteMutexAsync(operation);
 }
 
 function getDbInstance(): Database.Database {
@@ -210,8 +181,7 @@ function getDbInstance(): Database.Database {
 
   try {
     console.log(`📁 Database path: ${DB_PATH}`);
-    const busyTimeoutMs = isMainThread ? MAIN_THREAD_BUSY_TIMEOUT_MS : WORKER_THREAD_BUSY_TIMEOUT_MS;
-    _db = new Database(DB_PATH, { timeout: busyTimeoutMs });
+    _db = new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS });
   } catch (error: any) {
     if (process.platform === "win32" || error.code === "ERR_DLOPEN_FAILED") {
       throw new Error(
@@ -225,7 +195,7 @@ function getDbInstance(): Database.Database {
 
   const journalMode = "WAL";
   _db.pragma(`journal_mode = ${journalMode}`);
-  _db.pragma(`busy_timeout = ${isMainThread ? MAIN_THREAD_BUSY_TIMEOUT_MS : WORKER_THREAD_BUSY_TIMEOUT_MS}`);
+  _db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   _db.pragma("synchronous = NORMAL");
   _db.pragma("cache_size = -512000");
   _db.pragma("foreign_keys = ON");
@@ -244,13 +214,14 @@ export const db = new Proxy({} as any, {
   get(target, prop, receiver) {
     const instance = getDbInstance();
     if (prop === "prepare") {
-      // Wrap every prepared statement's write path (.run) in busy-retry so a
-      // lost write-lock race never aborts the process. Reads (.get/.all) don't
-      // take the write lock under WAL, so they're left untouched.
+      // Writes take the process writer mutex (Lidarr: one writer), then a short
+      // busy_timeout backstop. Reads don't take the write lock under WAL.
       return (source: string) => {
         const stmt = instance.prepare(source);
         const originalRun = stmt.run.bind(stmt);
-        stmt.run = ((...args: unknown[]) => runWithSqliteBusyRetry(() => originalRun(...args))) as typeof stmt.run;
+        stmt.run = ((...args: unknown[]) => withSqliteWriteMutexSync(
+          () => runWithSqliteBusyRetry(() => originalRun(...args)),
+        )) as typeof stmt.run;
         // Only wrap reads when profiling is on AND we're on the event loop —
         // otherwise leave .get/.all untouched for zero hot-path overhead.
         if (READ_PROFILE_MS && isMainThread) {
@@ -263,15 +234,25 @@ export const db = new Proxy({} as any, {
       };
     }
     if (prop === "exec") {
-      return (source: string) => runWithSqliteBusyRetry(() => instance.exec(source));
+      return (source: string) => withSqliteWriteMutexSync(
+        () => runWithSqliteBusyRetry(() => instance.exec(source)),
+      );
     }
     if (prop === "transaction") {
       return (fn: any) => {
         const txn = instance.transaction(fn) as any;
-        const runImmediate = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.immediate(...args)));
-        const runDeferred = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.deferred(...args)));
-        const runDefault = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.default(...args)));
-        const runExclusive = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.exclusive(...args)));
+        const runImmediate = (...args: any[]) => withSqliteWriteMutexSync(
+          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.immediate(...args))),
+        );
+        const runDeferred = (...args: any[]) => withSqliteWriteMutexSync(
+          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.deferred(...args))),
+        );
+        const runDefault = (...args: any[]) => withSqliteWriteMutexSync(
+          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.default(...args))),
+        );
+        const runExclusive = (...args: any[]) => withSqliteWriteMutexSync(
+          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.exclusive(...args))),
+        );
         const immediateTxn = (...args: any[]) => runImmediate(...args);
         Object.defineProperties(immediateTxn, {
           default: { value: runDefault },

@@ -8,6 +8,7 @@ import {
     isImportDownloadCancellationRequested,
 } from "../../mediafiles/downloaded-tracks-import-service.js";
 import { clearConfigCache } from "../../config/config.js";
+import { catalogProviderRegistry } from "../../catalog/index.js";
 import { withSqliteWriteGate } from "../../../database.js";
 import { initCurationListeners } from "../../music/curation.listener.js";
 import {
@@ -89,9 +90,12 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
     }
 
     // Settings are written on the main thread. Workers keep a process-local
-    // config cache, so without a refresh they keep boot-time defaults
-    // (e.g. include_videos=false, old naming templates) forever.
+    // config cache *and* a catalog-provider registry, so without a refresh they
+    // keep boot-time defaults (Servarr catalog, include_videos=false, old
+    // naming templates) forever. Catalog source lives on the registry, not in
+    // the config cache — clearing the cache alone is not enough.
     clearConfigCache();
+    catalogProviderRegistry.refreshFromConfig();
     try {
         if (job.name === CommandNames.ImportDownload) {
             // Imports are owned by the download processor (it persists

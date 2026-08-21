@@ -103,7 +103,7 @@ test("network-level silence counts as transient, provider errors do not", () => 
   const timeout = new Error("The operation was aborted due to timeout");
   timeout.name = "TimeoutError";
   assert.equal(isTransientMbFailure(timeout), true);
-  assert.equal(isTransientMbFailure(new Error("fetch failed")), true);
+  assert.equal(isTransientMbFailure(new Error("timeout of 10000ms exceeded")), true);
   assert.equal(isTransientMbFailure(new MbHttpError("busy", 503, "/x")), true);
   assert.equal(isTransientMbFailure(new MbHttpError("nope", 404, "/x")), false);
   assert.equal(isTransientMbFailure(new Error("Unexpected token < in JSON")), false);

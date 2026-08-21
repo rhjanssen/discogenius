@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 
+import { sqliteWriteMutexWorkerData } from "../../../database/sqlite-write-mutex.js";
 import { forwardCacheInvalidate, forwardEventToMain, isCommandWorker, COMMAND_WORKER_MARKER } from "./command-worker-protocol.js";
 
 interface CollectedMessage {
@@ -24,7 +25,11 @@ test("command worker bridge forwards events + cache invalidations across the thr
     const fixtureExt = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
     const fixtureUrl = new URL(`./command-worker-bridge.fixture${fixtureExt}`, import.meta.url);
     const worker = new Worker(bootstrapUrl, {
-        workerData: { [COMMAND_WORKER_MARKER]: true, __entry: fixtureUrl.href },
+        workerData: {
+            [COMMAND_WORKER_MARKER]: true,
+            __entry: fixtureUrl.href,
+            ...sqliteWriteMutexWorkerData(),
+        },
     });
 
     const messages: CollectedMessage[] = [];

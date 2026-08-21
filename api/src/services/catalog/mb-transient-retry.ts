@@ -41,7 +41,7 @@ export function isTransientMbFailure(error: unknown): boolean {
     // AbortSignal.timeout rejects with TimeoutError; undici surfaces connection
     // resets as TypeError("fetch failed"). Both mean "no answer", not "no".
     if (error.name === "TimeoutError" || error.name === "AbortError") return true;
-    if (/fetch failed|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up/i.test(error.message)) {
+    if (/fetch failed|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|timeout of \d+ms exceeded/i.test(error.message)) {
       return true;
     }
   }

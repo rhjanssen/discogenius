@@ -8,12 +8,27 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **SQLite writes are serialized like Lidarr, not retried per route.**
+  Lidarr's three command threads use WAL + `BusyTimeout = 1000ms` and
+  almost never surface "database is locked" because they do not overlap
+  writers. Discogenius now takes a process-wide writer mutex on every
+  `db.run` / transaction (workers block, HTTP awaits without freezing
+  the event loop). Per-handler SQLITE_BUSY retry loops are no longer
+  the strategy.
+- **Download Missing filled the queue but nothing started downloading.**
+  Wait-table rows have no command until the download worker claims them,
+  and that worker only woke on Download* COMMAND_ADDED. It now also
+  kicks on the wait-queue change event.
+- **Command workers kept the boot-time catalog source after Settings
+  switched to local MusicBrainz.** Each job already cleared the config
+  cache; it now also re-resolves the catalog registry so Refresh Artist
+  uses Postgres instead of Servarr + musicbrainz.org.
 - **Settings writes failed with SQLITE_BUSY while refresh workers held the
-  write lock.** Config and monitoring persist in SQLite; POST handlers now
-  yield-and-retry like album and queue mutations, and leftover SQLITE_BUSY
+  write lock.** Config and monitoring persist in SQLite; they now wait
+  on the writer mutex like other mutations, and leftover SQLITE_BUSY
   is HTTP 503 instead of a 500.
 - **Cancelling a running command returned HTTP 500 while SQLite was busy.**
-  Command DELETE now yield-and-retries like other operator writes.
+  Command DELETE waits on the writer mutex like other operator writes.
 - **The download queue listed failed albums ahead of waiting work.** Leftover
   claimed rows whose Download* command had failed sorted above waiting
   albums, so the first page was Afterlife failures and move-to-top looked

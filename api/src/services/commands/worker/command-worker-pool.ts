@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { readIntEnv } from "../../../utils/env.js";
+import { sqliteWriteMutexWorkerData } from "../../../database/sqlite-write-mutex.js";
 import { appEvents, type AppEvent } from "../app-events.js";
 import { ownerAcquire, ownerRelease, ownerReleaseAllFor } from "./sqlite-write-lock.js";
 import type {CommandModel} from "../command-model.js";
@@ -125,6 +126,7 @@ export class CommandWorkerPool {
         const baseWorkerData: Record<string, unknown> = {
             [COMMAND_WORKER_MARKER]: true,
             [COMMAND_WORKER_ID]: workerId,
+            ...sqliteWriteMutexWorkerData(),
         };
 
         if (this.testWorkerEntryUrl) {

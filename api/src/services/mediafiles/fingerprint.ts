@@ -114,7 +114,7 @@ export async function scheduleMusicBrainzRequest<T>(request: () => Promise<T>): 
 export async function requestMusicBrainzJson<T = any>(url: string): Promise<T> {
     return scheduleMusicBrainzRequest(async () => {
         const response = await axios.get(url, {
-            timeout: 10000,
+            timeout: 30_000,
             headers: getMusicBrainzHeaders(),
         });
         return response.data as T;
