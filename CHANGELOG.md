@@ -8,6 +8,11 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Album import died with FOREIGN KEY when one TIDAL release matched two
+  MusicBrainz groups.** Joy (Bakermat) is accepted against two editions;
+  the organizer required every match to agree, resolved no artist, and
+  wrote TrackFiles with an empty `artist_id`. Import now uses the job's
+  release-group MBID to pick the managed artist.
 - **Download Missing queued a second copy of a video that was already
   downloading.** The artist-page Download button keys the wait row by
   provider id; Download Missing keyed it by recording id, so the same

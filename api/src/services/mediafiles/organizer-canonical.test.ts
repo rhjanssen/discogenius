@@ -1017,3 +1017,40 @@ test("an exact plan source organizes under the job release, not a same-recording
   assert.equal(contextNoJobRg?.releaseGroupMbid, "rg-btb");
   assert.equal(contextNoJobRg?.releaseMbid, "rel-btb-deluxe");
 });
+
+test("album artist resolution uses the job release group when provider matches disagree", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Bakermat");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-mbid", "Bakermat", "artist-mbid");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-joy-single", "artist-mbid", "Joy single");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-joy-album", "artist-mbid", "Joy");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-joy-single", "rg-joy-single", "artist-mbid", "Joy single", 1, 1);
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-joy-album", "rg-joy-album", "artist-mbid", "Joy", 1, 2);
+
+  const disagreedAlbum = {
+    artist_id: null,
+    mb_release_group_id: null,
+    mbid: null,
+  };
+  const resolved = (organizerModule.OrganizerService as any).resolveCanonicalArtistForAlbum(
+    disagreedAlbum,
+    "rg-joy-album",
+  );
+  assert.equal(resolved.artistId, "artist-mbid");
+  assert.equal(resolved.artistMbId, "artist-mbid");
+  assert.equal(resolved.artistName, "Bakermat");
+
+  assert.throws(
+    () => (organizerModule.OrganizerService as any).resolveCanonicalArtistForAlbum(disagreedAlbum),
+    /no managed artist/,
+  );
+});

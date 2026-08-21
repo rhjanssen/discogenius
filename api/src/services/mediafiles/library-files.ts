@@ -1863,6 +1863,9 @@ export class LibraryFilesService {
         `Cannot persist expected path ${params.expectedPath}: path is outside the library root ${ownershipRoot}`,
       );
     }
+    if (!String(params.artistId || "").trim()) {
+      throw new Error(`Cannot persist ${params.filePath}: artist id is required`);
+    }
 
     const relativePath = path.relative(params.libraryRoot, params.filePath);
     const filename = path.basename(params.filePath);

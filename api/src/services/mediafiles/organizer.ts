@@ -368,9 +368,16 @@ export class OrganizerService {
     }
   }
 
-  private static resolveCanonicalArtistForAlbum(album: any): OrganizerArtistContext {
-    const fallbackArtistId = String(album?.artist_id || "");
-    const releaseGroupMbid = String(album?.mb_release_group_id || "").trim();
+  private static resolveCanonicalArtistForAlbum(
+    album: any,
+    preferredReleaseGroupMbid?: string | null,
+  ): OrganizerArtistContext {
+    const fallbackArtistId = String(album?.artist_id || "").trim();
+    // A provider edition can be accepted against several canonical groups
+    // (edition supersets). The download job names one; use that instead of
+    // requiring every accepted match to agree, which left artist_id empty
+    // and TrackFiles INSERT failing FOREIGN KEY.
+    const releaseGroupMbid = String(preferredReleaseGroupMbid || album?.mb_release_group_id || "").trim();
 
     let artist = releaseGroupMbid
       ? db.prepare(`
@@ -426,13 +433,21 @@ export class OrganizerService {
     }
 
     if (!artist?.name) {
-      return {
-        artistId: fallbackArtistId,
-        artistName: "Unknown Artist",
-        artistMbId: "",
-        artistPath: "Unknown Artist",
-        artistGenre: null,
-      };
+      const fallbackArtist = fallbackArtistId
+        ? db.prepare("SELECT id FROM Artists WHERE id = ?").get(fallbackArtistId) as { id?: string } | undefined
+        : null;
+      if (fallbackArtist?.id) {
+        return {
+          artistId: String(fallbackArtist.id),
+          artistName: "Unknown Artist",
+          artistMbId: "",
+          artistPath: "Unknown Artist",
+          artistGenre: null,
+        };
+      }
+      throw new Error(
+        `Cannot import: no managed artist for release group ${releaseGroupMbid || "unknown"}`,
+      );
     }
 
     const artistId = String(artist.id);
@@ -1939,7 +1954,7 @@ export class OrganizerService {
       const jobReleaseMbid = String(raw.releaseMbid || "").trim()
         || canonicalContext?.releaseMbid
         || null;
-      const artistContext = this.resolveCanonicalArtistForAlbum(album);
+      const artistContext = this.resolveCanonicalArtistForAlbum(album, jobReleaseGroupMbid);
       const artistId = artistContext.artistId;
       const artistMbId = artistContext.artistMbId;
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
@@ -2834,7 +2849,7 @@ export class OrganizerService {
       `).get(trackPositionReleaseMbid, trackPositionReleaseMbid, streamingProviderId, providerId) as any;
       if (!trackRow) throw new Error(`Track ${providerId} offer not found in ProviderItems after scan`);
 
-      const artistContext = this.resolveCanonicalArtistForAlbum(album);
+      const artistContext = this.resolveCanonicalArtistForAlbum(album, jobReleaseGroupMbid);
       const artistId = artistContext.artistId;
       const artistMbId = artistContext.artistMbId;
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
