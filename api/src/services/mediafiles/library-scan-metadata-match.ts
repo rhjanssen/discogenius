@@ -291,7 +291,6 @@ function pickBestOffer(
 function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTags): Set<string> {
     const folder = path.dirname(filePath);
     const normalizedFolder = folder.replace(/\\/g, "/");
-    const folderName = path.basename(folder).replace(/\s*\(\d{4}\)\s*$/, "").trim();
 
     const albumIds = new Set<string>();
 
@@ -334,14 +333,42 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
         }
     }
 
-    // Match album title from tags or folder name against the artist's provider
-    // releases (canonical release-group title preferred over the provider title).
-    const albumTitleCandidate = tags?.album?.trim() || folderName;
-    if (albumTitleCandidate) {
+    // Sibling TrackFiles already mapped onto a canonical release → every
+    // provider edition accepted-matched to that release. The siblings themselves
+    // may still carry an older provider album id (All This Bad Blood song ids
+    // sitting in a Bad Blood X folder after re-anchoring), which would otherwise
+    // hide tracks that exist on the anniversary provider album.
+    const siblingReleaseMbids = folderCanonicalReleaseMbids(filePath, artistId);
+    if (siblingReleaseMbids.size > 0) {
+        const releaseList = Array.from(siblingReleaseMbids);
+        const placeholders = releaseList.map(() => "?").join(", ");
+        const matched = db.prepare(`
+            SELECT DISTINCT CAST(release_item.provider_id AS TEXT) AS album_id
+            FROM AlbumEditions canonical_release
+            JOIN ProviderEditionMatches release_match
+              ON release_match.edition_id = canonical_release.id
+             AND release_match.match_state = 'accepted'
+            JOIN ProviderItems release_item
+              ON release_item.id = release_match.provider_edition_item_id
+             AND release_item.entity_type = 'release'
+            WHERE canonical_release.mbid IN (${placeholders})
+        `).all(...releaseList) as Array<{ album_id: string }>;
+        for (const row of matched) {
+            if (row.album_id) albumIds.add(String(row.album_id));
+        }
+    }
+
+    // Match album title from tags or folder name against provider title,
+    // edition title, AND release-group title. Edition names ("Bad Blood X")
+    // often disagree with the group ("Bad Blood"); preferring the group used
+    // to skip the provider album the file is actually tagged with.
+    for (const albumTitleCandidate of albumTitleCandidates(filePath, tags)) {
         const albumRows = db.prepare(`
             SELECT
               CAST(release_item.provider_id AS TEXT) AS provider_album_id,
-              COALESCE(release_group.title, release_item.title) AS title
+              release_item.title AS provider_title,
+              canonical_release.title AS edition_title,
+              release_group.title AS release_group_title
             FROM ProviderItems release_item
             LEFT JOIN ProviderEditionMatches release_match
               ON release_match.provider_edition_item_id = release_item.id
@@ -366,16 +393,58 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
                   WHERE managed_artist.id = @artistId
                 )
               )
-        `).all({ artistId }) as Array<{ provider_album_id: string; title: string }>;
+        `).all({ artistId }) as Array<{
+            provider_album_id: string;
+            provider_title: string | null;
+            edition_title: string | null;
+            release_group_title: string | null;
+        }>;
 
         for (const row of albumRows) {
-            if (row.provider_album_id && row.title && sameRecordingTitle(albumTitleCandidate, row.title)) {
+            if (!row.provider_album_id) continue;
+            if (
+                albumTitleMatches(albumTitleCandidate, row.provider_title)
+                || albumTitleMatches(albumTitleCandidate, row.edition_title)
+                || albumTitleMatches(albumTitleCandidate, row.release_group_title)
+            ) {
                 albumIds.add(String(row.provider_album_id));
             }
         }
     }
 
     return albumIds;
+}
+
+function albumTitleCandidates(filePath: string, tags?: ParsedAudioTags): string[] {
+    const folderName = path.basename(path.dirname(filePath)).replace(/\s*\(\d{4}\)\s*$/, "").trim();
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+    for (const value of [tags?.album?.trim(), folderName]) {
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        candidates.push(value);
+    }
+    return candidates;
+}
+
+function albumTitleMatches(tagged: string | null | undefined, catalog: string | null | undefined): boolean {
+    // Trailing parentheticals (" (10th Anniversary Edition)") are stripped by
+    // sameRecordingTitle, so "Bad Blood X (10th Anniversary Edition)" equals
+    // edition title "Bad Blood X" without equating either to RG "Bad Blood".
+    return Boolean(tagged && catalog) && sameRecordingTitle(tagged, catalog);
+}
+
+function folderCanonicalReleaseMbids(filePath: string, artistId: string): Set<string> {
+    const folder = path.dirname(filePath).replace(/\\/g, "/");
+    const rows = db.prepare(`
+        SELECT DISTINCT tf.canonical_release_mbid AS release_mbid
+        FROM TrackFiles tf
+        WHERE tf.artist_id = ?
+          AND tf.file_type = 'track'
+          AND tf.canonical_release_mbid IS NOT NULL
+          AND ${comparablePathColumnSql("tf.file_path")} LIKE ? || '/%'
+    `).all(artistId, folder) as Array<{ release_mbid: string | null }>;
+    return new Set(rows.map((row) => String(row.release_mbid || "")).filter(Boolean));
 }
 
 /**
@@ -566,29 +635,17 @@ function existingTrackFileForCanonical(
  * does not carry (and rips whose titles are "01. TITANIUM (ft. …)") stayed in
  * UnmappedFiles even though MusicBrainz already had the release.
  */
-function matchCatalogTrackByTags(
-    filePath: string,
-    artistId: string,
-    tags: ParsedAudioTags,
-    preferredSlot: string,
-): MetadataMatchResult | null {
-    const albumTitle = tags.album?.trim();
-    const trackTitle = tags.title?.trim();
-    if (!albumTitle || !trackTitle) return null;
+type CatalogTrackRow = {
+    track_mbid: string;
+    recording_mbid: string | null;
+    release_mbid: string;
+    title: string;
+    length_ms: number | null;
+    release_group_mbid: string;
+};
 
-    const groups = db.prepare(`
-        SELECT album.mbid AS release_group_mbid, album.title
-        FROM Albums album
-        JOIN Artists artist ON artist.mbid = album.artist_mbid
-        WHERE artist.id = ?
-    `).all(artistId) as Array<{ release_group_mbid: string; title: string }>;
-    const matchingGroupMbids = groups
-        .filter((group) => sameRecordingTitle(albumTitle, group.title))
-        .map((group) => group.release_group_mbid);
-    if (matchingGroupMbids.length === 0) return null;
-
-    const placeholders = matchingGroupMbids.map(() => "?").join(", ");
-    const rows = db.prepare(`
+function catalogTracksWhere(whereSql: string, params: unknown[]): CatalogTrackRow[] {
+    return db.prepare(`
         SELECT
           track.mbid AS track_mbid,
           track.recording_mbid AS recording_mbid,
@@ -600,15 +657,20 @@ function matchCatalogTrackByTags(
         JOIN AlbumEditions edition ON edition.id = track.album_edition_id
         JOIN Albums album ON album.id = edition.release_group_id
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
-        WHERE album.mbid IN (${placeholders})
-    `).all(...matchingGroupMbids) as Array<{
-        track_mbid: string;
-        recording_mbid: string | null;
-        release_mbid: string;
-        title: string;
-        length_ms: number | null;
-        release_group_mbid: string;
-    }>;
+        WHERE ${whereSql}
+    `).all(...params) as CatalogTrackRow[];
+}
+
+function pickCatalogTrackMatch(
+    filePath: string,
+    artistId: string,
+    tags: ParsedAudioTags,
+    preferredSlot: string,
+    rows: CatalogTrackRow[],
+    options?: { restrictToReleases?: Set<string> },
+): MetadataMatchResult | null {
+    const trackTitle = tags.title?.trim();
+    if (!trackTitle || rows.length === 0) return null;
 
     const titleHits = rows.filter((row) => sameRecordingTitle(trackTitle, row.title));
     const durationHits = titleHits.filter((row) =>
@@ -620,8 +682,15 @@ function matchCatalogTrackByTags(
     let hits = durationHits.length > 0 ? durationHits : titleHits;
     if (hits.length === 0) return null;
 
+    if (options?.restrictToReleases && options.restrictToReleases.size > 0) {
+        const pinned = hits.filter((row) => options.restrictToReleases!.has(row.release_mbid));
+        if (pinned.length === 0) return null;
+        hits = pinned;
+    }
+
+    const groupMbids = [...new Set(hits.map((row) => row.release_group_mbid))];
     const selectedByGroup = new Map<string, Set<string>>();
-    for (const groupMbid of matchingGroupMbids) {
+    for (const groupMbid of groupMbids) {
         selectedByGroup.set(groupMbid, selectedReleasesForGroup(groupMbid, preferredSlot));
     }
     const selectedHits = hits.filter((row) => {
@@ -666,6 +735,95 @@ function matchCatalogTrackByTags(
 }
 
 /**
+ * Lidarr-style tag match: album + track titles against the canonical catalog,
+ * with no provider offer required. Sibling SoundCloud rips of the same mixtape
+ * used to pin preferredAlbumIds to that provider album, so tracks the provider
+ * does not carry (and rips whose titles are "01. TITANIUM (ft. …)") stayed in
+ * UnmappedFiles even though MusicBrainz already had the release.
+ *
+ * Album comparison uses edition titles as well as release-group titles, because
+ * anniversary/deluxe editions are often tagged "Bad Blood X (10th Anniversary
+ * Edition)" while the group stays "Bad Blood". When sibling TrackFiles already
+ * pin a canonical release, that folder is the album — a miss is a genuine extra,
+ * not a prompt to attach a different release group (the standalone single).
+ */
+function matchCatalogTrackByTags(
+    filePath: string,
+    artistId: string,
+    tags: ParsedAudioTags,
+    preferredSlot: string,
+): MetadataMatchResult | null {
+    const trackTitle = tags.title?.trim();
+    if (!trackTitle) return null;
+
+    const siblingReleases = folderCanonicalReleaseMbids(filePath, artistId);
+    if (siblingReleases.size > 0) {
+        const placeholders = Array.from(siblingReleases).map(() => "?").join(", ");
+        return pickCatalogTrackMatch(
+            filePath,
+            artistId,
+            tags,
+            preferredSlot,
+            catalogTracksWhere(
+                `track.release_mbid IN (${placeholders})`,
+                Array.from(siblingReleases),
+            ),
+            { restrictToReleases: siblingReleases },
+        );
+    }
+
+    const titleCandidates = albumTitleCandidates(filePath, tags);
+    if (titleCandidates.length === 0) return null;
+
+    const editions = db.prepare(`
+        SELECT
+          album.mbid AS release_group_mbid,
+          album.title AS release_group_title,
+          edition.mbid AS release_mbid,
+          edition.title AS edition_title,
+          edition.disambiguation AS disambiguation
+        FROM Albums album
+        JOIN Artists artist ON artist.mbid = album.artist_mbid
+        JOIN AlbumEditions edition ON edition.release_group_id = album.id
+        WHERE artist.id = ?
+    `).all(artistId) as Array<{
+        release_group_mbid: string;
+        release_group_title: string;
+        release_mbid: string;
+        edition_title: string | null;
+        disambiguation: string | null;
+    }>;
+
+    const matchingGroupMbids = new Set<string>();
+    const matchingEditionMbids = new Set<string>();
+    for (const edition of editions) {
+        const disambiguated = edition.disambiguation
+            ? `${edition.release_group_title} (${edition.disambiguation})`
+            : null;
+        const hit = titleCandidates.some((candidate) =>
+            albumTitleMatches(candidate, edition.release_group_title)
+            || albumTitleMatches(candidate, edition.edition_title)
+            || albumTitleMatches(candidate, disambiguated)
+        );
+        if (!hit) continue;
+        matchingGroupMbids.add(edition.release_group_mbid);
+        matchingEditionMbids.add(edition.release_mbid);
+    }
+    if (matchingGroupMbids.size === 0) return null;
+
+    const groupList = Array.from(matchingGroupMbids);
+    const groupPlaceholders = groupList.map(() => "?").join(", ");
+    return pickCatalogTrackMatch(
+        filePath,
+        artistId,
+        tags,
+        preferredSlot,
+        catalogTracksWhere(`album.mbid IN (${groupPlaceholders})`, groupList),
+        matchingEditionMbids.size > 0 ? { restrictToReleases: matchingEditionMbids } : undefined,
+    );
+}
+
+/**
  * Rematch an on-disk audio file that lacks an embedded provider id / expected
  * path, using tags + nearby album-folder TrackFiles. Used by library scan so
  * Discogenius-organized files are not stuck in UnmappedFiles when a provider
@@ -701,11 +859,30 @@ export function matchAudioFileByMetadata(
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
     const releaseMbid = tags.musicbrainzAlbumId?.trim() || null;
 
-    // Authoritative catalog identity from the file's own embedded MB IDs. This is
-    // independent of whether a provider offer still exists, so it both fills the
-    // canonical linkage on any offer match below and enables a provider-free
-    // (Lidarr-style) match when no offer is found.
-    const catalogLink = resolveCatalogTrackFromEmbeddedMbids(tags, preferredSlot);
+    // Catalog identity before provider offers: embedded MBIDs first, then
+    // Lidarr-style album-folder / edition-title matching. Computing this now
+    // means a later provider-offer hit still carries canonical MBIDs (the file
+    // often has none yet — Apple rips in a Discogenius folder).
+    const catalogMatch = matchCatalogTrackByTags(filePath, artistId, tags, preferredSlot);
+    if (catalogMatch?.duplicateOfExisting) {
+        return catalogMatch;
+    }
+    const siblingPinned = folderCanonicalReleaseMbids(filePath, artistId).size > 0;
+    if (siblingPinned && !catalogMatch) {
+        // Known album folder, title not on that edition. Stay Unmapped rather
+        // than attaching a different album via ISRC (e.g. the standalone single).
+        return null;
+    }
+
+    const catalogLink = resolveCatalogTrackFromEmbeddedMbids(tags, preferredSlot)
+        ?? (catalogMatch?.canonicalTrackMbid
+            ? {
+                trackMbid: catalogMatch.canonicalTrackMbid,
+                recordingMbid: catalogMatch.canonicalRecordingMbid || "",
+                releaseMbid: catalogMatch.canonicalReleaseMbid || "",
+                releaseGroupMbid: catalogMatch.canonicalReleaseGroupMbid ?? null,
+            }
+            : null);
     const canonical = catalogLink
         ? {
             canonicalTrackMbid: catalogLink.trackMbid,
@@ -797,10 +974,11 @@ export function matchAudioFileByMetadata(
 
     const best = pickBestOffer(offers, tags, preferredAlbumIds);
     if (!best) {
-        // No provider offer, but the embedded MB IDs resolve to a catalog track:
-        // link the file directly (Lidarr-style). The TrackFile carries no
-        // provider identity, only canonical MBIDs, which is enough to count as
-        // downloaded and to render on the album page.
+        // No provider offer, but the catalog still knows this track: link the
+        // file directly (Lidarr-style). The TrackFile carries no provider
+        // identity, only canonical MBIDs, which is enough to count as downloaded
+        // and to render on the album page.
+        if (catalogMatch) return catalogMatch;
         if (catalogLink) {
             return {
                 albumId: catalogLink.releaseGroupMbid,
@@ -814,7 +992,7 @@ export function matchAudioFileByMetadata(
                 ...canonical,
             };
         }
-        return matchCatalogTrackByTags(filePath, artistId, tags, preferredSlot);
+        return null;
     }
 
     // Provider items are slot-agnostic in schema 41 (renditions live on

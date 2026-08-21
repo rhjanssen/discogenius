@@ -170,22 +170,34 @@ function seedCatalogTrack(params: {
   trackMbid: string;
   recordingMbid: string;
   title: string;
+  albumTitle?: string;
+  editionTitle?: string;
+  editionDisambiguation?: string;
+  position?: number;
+  lengthMs?: number;
   slot?: string;
 }) {
   const { db } = dbModule;
   const slot = params.slot || "stereo";
+  const albumTitle = params.albumTitle ?? params.title;
+  const editionTitle = params.editionTitle ?? albumTitle;
+  const position = params.position ?? 1;
   db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title) VALUES (?, 'artist-mbid', ?)`)
-    .run(params.releaseGroupMbid, params.title);
+    .run(params.releaseGroupMbid, albumTitle);
   db.prepare(`
     INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title)
     VALUES (?, ?, 'artist-mbid', ?)
-  `).run(params.releaseMbid, params.releaseGroupMbid, params.title);
-  db.prepare(`INSERT OR IGNORE INTO Recordings (mbid, title) VALUES (?, ?)`)
-    .run(params.recordingMbid, params.title);
+  `).run(params.releaseMbid, params.releaseGroupMbid, editionTitle);
+  if (params.editionDisambiguation) {
+    db.prepare("UPDATE AlbumEditions SET disambiguation = ? WHERE mbid = ?")
+      .run(params.editionDisambiguation, params.releaseMbid);
+  }
+  db.prepare(`INSERT OR IGNORE INTO Recordings (mbid, title, length_ms) VALUES (?, ?, ?)`)
+    .run(params.recordingMbid, params.title, params.lengthMs ?? null);
   db.prepare(`
     INSERT OR IGNORE INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, title)
-    VALUES (?, ?, ?, 1, 1, ?)
-  `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, params.title);
+    VALUES (?, ?, ?, 1, ?, ?)
+  `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, position, params.title);
   const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
     .get() as { id: number };
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
@@ -553,4 +565,145 @@ test("leading track numbers in tags do not block a catalog title match", () => {
 
   assert.ok(match);
   assert.equal(match!.canonicalTrackMbid, "trk-adagio");
+});
+
+test("edition-titled tags match a catalog track when the release-group title differs", () => {
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-mmxxiii",
+    recordingMbid: "rec-mmxxiii",
+    title: "Pompeii MMXXIII",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    editionDisambiguation: "10th Anniversary Edition",
+    lengthMs: 336000,
+  });
+
+  const match = matchModule.matchAudioFileByMetadata(
+    "/library/stereo-music/Bastille/Bad Blood X (2023)/101 - Pompeii MMXXIII.m4a",
+    "artist-1",
+    "music",
+    {
+      title: "Pompeii MMXXIII",
+      album: "Bad Blood X (10th Anniversary Edition)",
+      artist: "Bastille & Hans Zimmer",
+      durationSeconds: 337,
+    },
+  );
+
+  assert.ok(match, "Apple's anniversary album tag should hit the Bad Blood X edition, not require RG title Bad Blood");
+  assert.equal(match!.canonicalTrackMbid, "trk-mmxxiii");
+  assert.equal(match!.canonicalReleaseMbid, "rel-bbx");
+  assert.equal(match!.canonicalReleaseGroupMbid, "rg-bad-blood");
+  assert.equal(match!.duplicateOfExisting, false);
+});
+
+test("album-folder siblings pin catalog matching to that edition", () => {
+  const { db } = dbModule;
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-pompeii",
+    recordingMbid: "rec-pompeii",
+    title: "Pompeii",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    position: 2,
+    lengthMs: 214000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-mmxxiii",
+    recordingMbid: "rec-mmxxiii",
+    title: "Pompeii MMXXIII",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    position: 1,
+    lengthMs: 336000,
+  });
+
+  const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      canonical_release_mbid, canonical_release_group_mbid, canonical_track_mbid, canonical_recording_mbid
+    ) VALUES (
+      'artist-1', 'apple-music', 'track', '1443355207', 'track', 'stereo',
+      'music', ?, 'Bastille/Bad Blood X/102 - Pompeii.m4a', '102 - Pompeii.m4a', 'm4a',
+      'rel-bbx', 'rg-bad-blood', 'trk-pompeii', 'rec-pompeii'
+    )
+  `).run(`${folder}/102 - Pompeii.m4a`);
+
+  const match = matchModule.matchAudioFileByMetadata(
+    `${folder}/101 - Pompeii MMXXIII.m4a`,
+    "artist-1",
+    "music",
+    {
+      title: "Pompeii MMXXIII",
+      album: "Bad Blood X (10th Anniversary Edition)",
+      artist: "Bastille & Hans Zimmer",
+      isrc: "GBUM72307839",
+      durationSeconds: 337,
+    },
+  );
+
+  assert.ok(match);
+  assert.equal(match!.canonicalTrackMbid, "trk-mmxxiii");
+  assert.equal(match!.canonicalReleaseMbid, "rel-bbx");
+  assert.equal(match!.duplicateOfExisting, false);
+});
+
+test("a title absent from the folder's catalog edition stays unmapped even if a single exists", () => {
+  const { db } = dbModule;
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-pompeii",
+    recordingMbid: "rec-pompeii",
+    title: "Pompeii",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    lengthMs: 214000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-mmxxiii-single",
+    releaseMbid: "rel-mmxxiii-single",
+    trackMbid: "trk-mmxxiii-single",
+    recordingMbid: "rec-mmxxiii-single",
+    title: "Pompeii MMXXIII",
+    albumTitle: "Pompeii MMXXIII",
+    lengthMs: 337000,
+  });
+
+  const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      canonical_release_mbid, canonical_release_group_mbid
+    ) VALUES (
+      'artist-1', 'apple-music', 'track', '1443355207', 'track', 'stereo',
+      'music', ?, 'Bastille/Bad Blood X/102 - Pompeii.m4a', '102 - Pompeii.m4a', 'm4a',
+      'rel-bbx', 'rg-bad-blood'
+    )
+  `).run(`${folder}/102 - Pompeii.m4a`);
+
+  const match = matchModule.matchAudioFileByMetadata(
+    `${folder}/101 - Pompeii MMXXIII.m4a`,
+    "artist-1",
+    "music",
+    {
+      title: "Pompeii MMXXIII",
+      album: "Pompeii MMXXIII",
+      durationSeconds: 337,
+    },
+  );
+
+  assert.equal(match, null, "bonus sitting in a known album folder must not attach to a different release group");
 });
