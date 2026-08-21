@@ -6,6 +6,7 @@ import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { parseMediaFormats } from "./media-formats.js";
 import { editionRendition, planEligibleForEdition } from "./rendition-policy.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
+import { LibraryFilesService } from "../mediafiles/library-files.js";
 import {
   planHeadlineQualitySql,
   planQualityHistogramSql,
@@ -638,6 +639,18 @@ export class LibraryReleaseSelectionService {
       libraryId: input.libraryId,
       reason: "edition-unmonitored",
     });
+    if (getConfigSection("monitoring")?.remove_unmonitored_files === true) {
+      const artist = this.db.prepare(`
+        SELECT CAST(artist.id AS TEXT) AS id
+        FROM Albums album
+        JOIN Artists artist ON artist.mbid = album.artist_mbid
+        WHERE album.mbid = ?
+        LIMIT 1
+      `).get(input.releaseGroupMbid) as { id?: string } | undefined;
+      if (artist?.id) {
+        LibraryFilesService.pruneUnmonitoredFiles(artist.id);
+      }
+    }
     return this.getAvailability(input.releaseGroupMbid);
   }
 

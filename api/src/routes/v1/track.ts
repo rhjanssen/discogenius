@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db } from "../../database.js";
+import { db, runWithAsyncBusyRetry } from "../../database.js";
 import { invalidateReleaseGroupDownloadStatus } from "../../services/download/download-state.js";
 import {
   deletionScopeFromRequest,
@@ -101,7 +101,7 @@ function hasCanonicalTrack(trackId: string): boolean {
   return Boolean(getCanonicalTrackReleaseGroup(trackId));
 }
 
-router.get("/", (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 100;
     const offset = parseInt(req.query.offset as string) || 0;
@@ -117,7 +117,7 @@ router.get("/", (req, res) => {
     const dirParam = (req.query.dir as string | undefined) || 'desc';
     const sortDir = dirParam.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-    res.json(listTracks({
+    res.json(await runWithAsyncBusyRetry(() => listTracks({
       limit,
       offset,
       search,
@@ -129,7 +129,7 @@ router.get("/", (req, res) => {
       qualityTier: qualityTierFilter,
       sort: sortParam,
       dir: sortDir,
-    }));
+    }), 20, 100));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

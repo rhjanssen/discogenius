@@ -159,3 +159,30 @@ test("tracks of an unmonitored release group stay out of the monitored listing",
   assert.equal(result.total, 0);
   assert.equal(result.items.length, 0);
 });
+
+test("unmonitored catalog tracks of a stored artist are listed when the filter asks for them", () => {
+  const { db } = dbModule;
+  seedSelectedReleaseWithoutPlanOrFiles();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
+
+  const hidden = trackQueryModule.listTracks({
+    monitored: true,
+    libraryFilter: "all",
+    limit: 100,
+    offset: 0,
+  } as any);
+  assert.equal(hidden.total, 0);
+
+  const visible = trackQueryModule.listTracks({
+    monitored: false,
+    libraryFilter: "all",
+    limit: 100,
+    offset: 0,
+  } as any);
+  assert.equal(visible.total, 2);
+  assert.deepEqual(
+    visible.items.map((item: any) => item.title).sort(),
+    ["Pompeii", "Things We Lost in the Fire"],
+  );
+});

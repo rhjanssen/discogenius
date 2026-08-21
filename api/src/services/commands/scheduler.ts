@@ -527,7 +527,9 @@ export function queueHousekeepingPass(options: { trigger?: number } = {}) {
             description: "Cleaning runtime state and stale library records",
         },
         "housekeeping",
-        0,
+        // Ahead of the RefreshArtist flood (priority 0/-1) so leftover-file
+        // cleanup is not starved for hours behind metadata refresh.
+        5,
         trigger,
     );
     if (commandId !== -1) {

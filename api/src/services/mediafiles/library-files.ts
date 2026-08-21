@@ -2866,18 +2866,20 @@ export class LibraryFilesService {
   /**
    * Canonical delete-candidate selection for {@link pruneUnmonitoredFiles}.
    *
-   * A file is kept (monitored) when the canonical entity behind it is monitored
-   * or user-locked:
-   *  - audio: its exact `LibraryAlbums` row, keyed by the file's
-   *    `library_id` + `release_group_id`;
-   *  - video / recording-scoped files: their exact `Recordings` row, matched by
-   *    the exact `recording_id` persisted on the file row.
+   * A file is kept when its *edition* (not merely its album) is still monitored
+   * in that library, or — for videos — when its recording is in LibraryVideos:
+   *  - audio with a known edition (`album_edition_id` or `canonical_release_mbid`):
+   *    a `LibraryEditions` row for that exact edition + library;
+   *  - audio without edition identity: the album-level `LibraryAlbums` row
+   *    (legacy imports we cannot classify more tightly);
+   *  - video / recording-scoped files: their exact `Recordings` row.
    *
    * A file is a prune candidate only when it has at least one canonical anchor
-   * (release group or recording) AND none of those
-   * anchors are monitored/locked. Files with no canonical anchor at all are left
-   * untouched (unclassifiable — never auto-deleted). Replaces the old
-   * `ProviderMedia.monitored`/`ProviderAlbums.monitored` linkage.
+   * AND none of those anchors are monitored. Files with no canonical anchor at
+   * all are left untouched (unclassifiable — never auto-deleted). Album-level
+   * monitoring alone does not keep leftover files from unmonitored editions of
+   * a still-monitored album (Bad Blood X while only the Dutch edition is
+   * selected).
    */
   static selectUnmonitoredFileRows(artistId: string): Array<{
     id: number;
@@ -2896,17 +2898,110 @@ export class LibraryFilesService {
       LEFT JOIN LibraryAlbums library_group
         ON library_group.library_id = lf.library_id
        AND library_group.release_group_id = lf.release_group_id
+      LEFT JOIN AlbumEditions file_edition
+        ON file_edition.id = COALESCE(
+          lf.album_edition_id,
+          (
+            SELECT edition.id
+            FROM AlbumEditions edition
+            WHERE edition.mbid = lf.canonical_release_mbid
+            LIMIT 1
+          )
+        )
+      LEFT JOIN LibraryEditions library_edition
+        ON library_edition.library_id = lf.library_id
+       AND library_edition.edition_id = file_edition.id
       LEFT JOIN Recordings rec
-        ON rec.id = lf.recording_id
+        ON rec.id = COALESCE(
+          lf.recording_id,
+          (
+            SELECT recording.id
+            FROM Recordings recording
+            WHERE recording.mbid = lf.canonical_recording_mbid
+            LIMIT 1
+          )
+        )
       WHERE lf.artist_id = ?
-        -- must have at least one canonical anchor to be classifiable
         AND (
           (lf.library_id IS NOT NULL AND lf.release_group_id IS NOT NULL)
           OR lf.recording_id IS NOT NULL
+          OR rec.id IS NOT NULL
+          OR lf.album_edition_id IS NOT NULL
+          OR (lf.canonical_release_mbid IS NOT NULL AND TRIM(lf.canonical_release_mbid) != '')
         )
-        -- and none of the anchors may be monitored or user-locked
-        AND library_group.id IS NULL
-        AND NOT EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = rec.id)
+        AND (
+          (
+            (lf.file_class = 'video' OR lf.file_type = 'video')
+            AND rec.id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM LibraryVideos selected_video
+              JOIN Libraries selected_video_library
+                ON selected_video_library.id = selected_video.library_id
+               AND selected_video_library.enabled = 1
+              WHERE selected_video.video_recording_id = rec.id
+            )
+          )
+          OR (
+            (lf.file_class IS NULL OR lf.file_class != 'video')
+            AND lf.file_type != 'video'
+            AND file_edition.id IS NOT NULL
+            AND library_edition.id IS NULL
+            AND NOT (
+              rec.id IS NOT NULL
+              AND EXISTS (
+                SELECT 1
+                FROM LibraryEditions monitored_edition
+                JOIN Tracks monitored_track
+                  ON monitored_track.album_edition_id = monitored_edition.edition_id
+                WHERE monitored_edition.library_id = lf.library_id
+                  AND monitored_track.recording_id = rec.id
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM TrackFiles native_file
+                    WHERE native_file.library_id = monitored_edition.library_id
+                      AND native_file.track_id = monitored_track.id
+                      AND (native_file.file_class = 'audio' OR native_file.file_type IN ('track', 'lyrics'))
+                  )
+              )
+              AND lf.id = (
+                SELECT peer.id
+                FROM TrackFiles peer
+                LEFT JOIN Recordings peer_recording
+                  ON peer_recording.id = COALESCE(
+                    peer.recording_id,
+                    (
+                      SELECT recording.id
+                      FROM Recordings recording
+                      WHERE recording.mbid = peer.canonical_recording_mbid
+                      LIMIT 1
+                    )
+                  )
+                WHERE peer.library_id = lf.library_id
+                  AND peer_recording.id = rec.id
+                  AND (peer.file_class IS NULL OR peer.file_class != 'video')
+                  AND peer.file_type != 'video'
+                ORDER BY
+                  CASE UPPER(COALESCE(peer.quality, ''))
+                    WHEN 'HIRES_LOSSLESS' THEN 0
+                    WHEN 'LOSSLESS' THEN 1
+                    WHEN 'HIGH' THEN 2
+                    WHEN 'NORMAL' THEN 3
+                    WHEN 'LOW' THEN 4
+                    ELSE 9
+                  END,
+                  peer.id
+                LIMIT 1
+              )
+            )
+          )
+          OR (
+            (lf.file_class IS NULL OR lf.file_class != 'video')
+            AND lf.file_type != 'video'
+            AND file_edition.id IS NULL
+            AND library_group.id IS NULL
+          )
+        )
     `).all(artistId) as Array<{
       id: number;
       artist_id: number;
@@ -3003,6 +3098,33 @@ export class LibraryFilesService {
     }
 
     return { deleted, missing, errors };
+  }
+
+  /**
+   * Housekeeping entry: when "Remove unmonitored files" is on, delete leftover
+   * files for every still-managed artist. Curation already prunes at unmonitor
+   * time; this catches editions that stayed unselected after an import or plan
+   * change (Dutch edition monitored, Bad Blood X still on disk).
+   */
+  static pruneUnmonitoredFilesForMonitoredArtists(): { artists: number; deleted: number; missing: number; errors: number } {
+    if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
+      return { artists: 0, deleted: 0, missing: 0, errors: 0 };
+    }
+    const artists = db.prepare(`
+      SELECT CAST(id AS TEXT) AS id
+      FROM Artists
+      WHERE monitored = 1
+    `).all() as Array<{ id: string }>;
+    let deleted = 0;
+    let missing = 0;
+    let errors = 0;
+    for (const artist of artists) {
+      const result = this.pruneUnmonitoredFiles(artist.id);
+      deleted += result.deleted;
+      missing += result.missing;
+      errors += result.errors;
+    }
+    return { artists: artists.length, deleted, missing, errors };
   }
 
   /**

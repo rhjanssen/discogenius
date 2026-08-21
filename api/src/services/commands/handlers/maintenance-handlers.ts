@@ -33,6 +33,7 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `pruned ${summary.historyJobsPruned} old job(s)`,
         `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
+        `removed ${summary.unmonitoredFilesRemoved} unmonitored file(s)`,
     ];
     ctx.updateCommandDescription(job, {
         progress: 100,

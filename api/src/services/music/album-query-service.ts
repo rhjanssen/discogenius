@@ -364,13 +364,14 @@ function normalizeReleaseGroupListRow(
 
 export class AlbumQueryService {
     static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
-        // Library pages start from LibraryAlbums (membership), not Albums
-        // (catalog) and not a rebuilt projection. Lidarr does the same: its
-        // Albums table *is* the library, and SQLite indexes stay current on
-        // write. Provider/quality filters still need the plan-state join.
-        // monitored=false is the unmonitored catalog remainder.
+        // Page from the catalog we actually store (monitored artists plus
+        // credited associates), then overlay LibraryAlbums for per-library
+        // status. Monitoring cannot live on Albums because it is per library.
+        // Membership is only a fast path for the default monitored=true filter;
+        // unmonitored / "all" must still list catalog rows without a LibraryAlbums
+        // row. Provider/quality filters need the plan-state join.
         const hasProviderQualityFilter = Boolean(String(input.provider || "").trim() || String(input.qualityTier || "").trim());
-        if (!hasProviderQualityFilter && input.monitored !== false) {
+        if (!hasProviderQualityFilter && input.monitored === true) {
             return this.listAlbumsFromMembership(input);
         }
 
@@ -396,19 +397,20 @@ export class AlbumQueryService {
             countParams.push(searchParam, searchParam);
         }
 
-        // Match AlbumLibraryIndex: default/monitored=true is "in an enabled
-        // library". Curation.included is not the monitoring statement and is
-        // empty while a refresh rebuilds ArtistReleaseGroupCuration.
+        // Overlay only: omit the predicate when the caller wants every stored
+        // album. Default library UI still sends monitored=true.
         if (monitoredFilter === false) {
             if (needsLibraryState) {
                 where.push(`${releaseGroupMonitoredExpression} = 0`);
             } else {
                 where.push(`NOT ${monitoredLibraryExistsSql("rg")}`);
             }
-        } else if (needsLibraryState) {
-            where.push(`${releaseGroupMonitoredExpression} = 1`);
-        } else {
-            where.push(monitoredLibraryExistsSql("rg"));
+        } else if (monitoredFilter === true) {
+            if (needsLibraryState) {
+                where.push(`${releaseGroupMonitoredExpression} = 1`);
+            } else {
+                where.push(monitoredLibraryExistsSql("rg"));
+            }
         }
 
         if (downloadedFilter !== undefined) {

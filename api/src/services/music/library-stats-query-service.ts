@@ -121,11 +121,11 @@ export class LibraryStatsQueryService {
                 FROM LibraryAlbums library_album
                 JOIN enabled_audio_libraries enabled_library
                   ON enabled_library.id = library_album.library_id
+                JOIN AlbumEditions edition
+                  ON edition.release_group_id = library_album.release_group_id
                 JOIN LibraryEditions library_edition
                   ON library_edition.library_id = library_album.library_id
-                JOIN AlbumEditions edition
-                  ON edition.id = library_edition.edition_id
-                 AND edition.release_group_id = library_album.release_group_id
+                 AND library_edition.edition_id = edition.id
                 JOIN Tracks track
                   ON track.album_edition_id = edition.id
                 JOIN Recordings recording

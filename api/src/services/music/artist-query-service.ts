@@ -1,7 +1,6 @@
 import { db } from "../../database.js";
 import {
     getArtistDownloadStats,
-    getArtistDownloadStatsMap,
     getReleaseGroupDownloadStatsMap,
 } from "../download/download-state.js";
 import { hydrateTrackRows } from "./track-query-service.js";
@@ -640,23 +639,12 @@ export class ArtistQueryService {
         const totalResult = db.prepare(countQuery).get(...countParams) as { total: number };
         const artistIds = artists.map((artist) => String(artist.id)).filter(Boolean);
         // Read precomputed statistics only — never compute on the request thread.
-        // Statistics are (re)computed off the main thread by the command workers
-        // as artists are scanned/curated (see the *-handlers refresh calls); the
-        // ArtistStatistics table persists, so the list endpoint stays fast.
-        // Missing rows surface as 0 until the owning artist's next worker refresh.
-        let artistStatisticsById = includeCounts
+        // A missing row stays 0 until the owning artist's next worker refresh.
+        // Recomputing here used to stall GET /artists long enough for the UI
+        // 15s timeout ("failed to load artists") whenever RefreshArtist held SQLite.
+        const artistStatisticsById = includeCounts || includeDownloadStats
             ? ArtistStatisticsService.getStatisticsMap(artistIds)
             : new Map();
-        if (includeCounts && artistIds.length > 0) {
-            const missingIds = artistIds.filter((id) => !artistStatisticsById.has(id));
-            if (missingIds.length > 0) {
-                ArtistStatisticsService.refresh(missingIds);
-                artistStatisticsById = ArtistStatisticsService.getStatisticsMap(artistIds);
-            }
-        }
-        const artistDownloadStats = includeDownloadStats
-            ? getArtistDownloadStatsMap(artistIds)
-            : null;
 
         return {
             items: artists.map((artist) => {
@@ -674,6 +662,8 @@ export class ArtistQueryService {
                         video_count: Number(statistics?.video_count || 0),
                     }
                     : {};
+                const monitoredAlbumCount = Number(statistics?.monitored_album_count || 0);
+                const downloadedAlbumCount = Number(statistics?.downloaded_album_count || 0);
 
                 return {
                     ...artist,
@@ -681,11 +671,13 @@ export class ArtistQueryService {
                     cover_image_url: artistFanartUrl(artist.mbid, artist.cover_image_url),
                     ...countFields,
                     downloaded: includeDownloadStats
-                        ? artistDownloadStats?.get(artistId)?.downloadedPercent ?? 0
+                        ? (monitoredAlbumCount > 0
+                            ? Math.round((downloadedAlbumCount / monitoredAlbumCount) * 100)
+                            : 0)
                         : Number(artist.downloaded ?? 0),
                     is_monitored: Boolean(artist.effective_monitor),
                     is_downloaded: includeDownloadStats
-                        ? artistDownloadStats?.get(artistId)?.isDownloaded ?? false
+                        ? monitoredAlbumCount > 0 && downloadedAlbumCount >= monitoredAlbumCount
                         : false,
                 };
             }),

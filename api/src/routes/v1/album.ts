@@ -103,13 +103,13 @@ const parseOptionalMonitored = (value: unknown): boolean => {
 
 // MusicBrainz release-group album routes. provider IDs are handled as selected
 // offers by command/download services, not as catalog identity.
-router.get("/", (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
     const downloadedFilter = parseOptionalQueryBoolean(req.query.downloaded);
     const lockedFilter = parseOptionalQueryBoolean(req.query.locked);
 
-    res.json(AlbumQueryService.listAlbums({
+    res.json(await runWithAsyncBusyRetry(() => AlbumQueryService.listAlbums({
       limit: parseInt(req.query.limit as string) || 50,
       offset: parseInt(req.query.offset as string) || 0,
       search: req.query.search as string | undefined,
@@ -121,7 +121,7 @@ router.get("/", (req, res) => {
       qualityTier: req.query.quality_tier as string | undefined,
       sort: req.query.sort as string | undefined,
       dir: req.query.dir as string | undefined,
-    }));
+    }), 20, 100));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

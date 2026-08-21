@@ -15,7 +15,11 @@ const { db } = dbModule;
 const { LibraryFilesService } = await import("./library-files.js");
 
 function reset() {
-  for (const t of ["TrackFiles", "LibraryAlbums", "ProviderItems", "Recordings", "Albums", "Artists", "ArtistMetadata"]) {
+  for (const t of [
+    "TrackFiles", "LibraryVideos", "LibraryEditions", "LibraryAlbums",
+    "ProviderVideoMatches", "ProviderItems", "Tracks", "Recordings", "AlbumEditions",
+    "Albums", "Artists", "ArtistMetadata",
+  ]) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
 }
@@ -100,25 +104,30 @@ function insertFile(o: {
   fileType: string; slot: string; rg?: string | null; rec?: string | null;
   recordingId?: number | null;
   providerEntityType?: string | null; providerId?: string | null;
+  albumEditionId?: number | null;
+  releaseMbid?: string | null;
+  quality?: string | null;
 }) {
   tfId += 1;
   const info = db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id,
+      artist_id, library_id, release_group_id, album_edition_id,
       recording_id,
-      canonical_release_group_mbid, canonical_recording_mbid,
+      canonical_release_group_mbid, canonical_release_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
-      file_path, relative_path, library_root, filename, extension, file_type
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_path, relative_path, library_root, filename, extension, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "art1",
     o.rg ? testLibraryId : null,
     o.rg ? (db.prepare("SELECT id FROM Albums WHERE mbid = ?").get(o.rg) as { id: number }).id : null,
+    o.albumEditionId ?? null,
     o.recordingId ?? null,
     o.rg ?? null,
+    o.releaseMbid ?? null,
     o.rec ?? null,
     o.providerId ? "tidal" : null, o.providerEntityType ?? null, o.providerId ?? null, o.slot,
-    `C:/lib/f${tfId}`, `f${tfId}`, "C:/lib", `f${tfId}`, "flac", o.fileType,
+    `C:/lib/f${tfId}`, `f${tfId}`, "C:/lib", `f${tfId}`, "flac", o.fileType, o.quality ?? null,
   );
   return Number(info.lastInsertRowid);
 }
@@ -172,4 +181,136 @@ test("an unmonitored library release group does not affect monitored sibling rel
   const ids = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id);
   assert.deepEqual(ids, [select]);
   assert.equal(ids.includes(keep), false);
+});
+
+test("files of an unmonitored edition are pruned even when the album stays monitored", () => {
+  seedArtist();
+  seedLibraryGroup("rg-bad-blood", 1);
+  const albumId = (db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-bad-blood'").get() as { id: number }).id;
+  const dutch = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES ('ed-dutch', ?, 'rg-bad-blood', 'artist-mbid', 'Bad Blood', 1)
+    RETURNING id
+  `).get(albumId) as { id: number };
+  const deluxe = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES ('ed-x', ?, 'rg-bad-blood', 'artist-mbid', 'Bad Blood X', 1)
+    RETURNING id
+  `).get(albumId) as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, representative, curation_version
+    ) VALUES (?, ?, 'manual', 1, 1)
+  `).run(testLibraryId, dutch.id);
+
+  const keep = insertFile({
+    fileType: "track",
+    slot: "stereo",
+    rg: "rg-bad-blood",
+    albumEditionId: dutch.id,
+    releaseMbid: "ed-dutch",
+  });
+  const prune = insertFile({
+    fileType: "track",
+    slot: "stereo",
+    rg: "rg-bad-blood",
+    albumEditionId: deluxe.id,
+    releaseMbid: "ed-x",
+  });
+
+  const ids = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id);
+  assert.deepEqual(ids, [prune]);
+  assert.equal(ids.includes(keep), false);
+});
+
+test("duplicate leftover files that fill a monitored edition hole keep the best copy", () => {
+  seedArtist();
+  seedLibraryGroup("rg-bad-blood", 1);
+  const albumId = (db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-bad-blood'").get() as { id: number }).id;
+  const dutch = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES ('ed-dutch-hole', ?, 'rg-bad-blood', 'artist-mbid', 'Bad Blood', 1)
+    RETURNING id
+  `).get(albumId) as { id: number };
+  const deluxe = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES ('ed-x-hole', ?, 'rg-bad-blood', 'artist-mbid', 'Bad Blood X', 1)
+    RETURNING id
+  `).get(albumId) as { id: number };
+  const older = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES ('ed-2014-hole', ?, 'rg-bad-blood', 'artist-mbid', 'All This Bad Blood', 1)
+    RETURNING id
+  `).get(albumId) as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, representative, curation_version
+    ) VALUES (?, ?, 'manual', 1, 1)
+  `).run(testLibraryId, dutch.id);
+
+  const recording = db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES ('rec-oblivion', 'Oblivion', 'artist-mbid', 0)
+    RETURNING id
+  `).get() as { id: number };
+  const bonusRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES ('rec-bonus', 'Bonus Track', 'artist-mbid', 0)
+    RETURNING id
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title
+    ) VALUES ('trk-dutch-oblivion', ?, 'ed-dutch-hole', ?, 'rec-oblivion', 1, 1, 'Oblivion')
+  `).run(dutch.id, recording.id);
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title
+    ) VALUES ('trk-x-oblivion', ?, 'ed-x-hole', ?, 'rec-oblivion', 1, 1, 'Oblivion')
+  `).run(deluxe.id, recording.id);
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title
+    ) VALUES ('trk-x-bonus', ?, 'ed-x-hole', ?, 'rec-bonus', 1, 2, 'Bonus Track')
+  `).run(deluxe.id, bonusRecording.id);
+
+  const keepFiller = insertFile({
+    fileType: "track",
+    slot: "stereo",
+    rg: "rg-bad-blood",
+    albumEditionId: older.id,
+    releaseMbid: "ed-2014-hole",
+    recordingId: recording.id,
+    quality: "HIRES_LOSSLESS",
+  });
+  const pruneDuplicate = insertFile({
+    fileType: "track",
+    slot: "stereo",
+    rg: "rg-bad-blood",
+    albumEditionId: deluxe.id,
+    releaseMbid: "ed-x-hole",
+    recordingId: recording.id,
+    quality: "LOSSLESS",
+  });
+  const pruneBonus = insertFile({
+    fileType: "track",
+    slot: "stereo",
+    rg: "rg-bad-blood",
+    albumEditionId: deluxe.id,
+    releaseMbid: "ed-x-hole",
+    recordingId: bonusRecording.id,
+    quality: "LOSSLESS",
+  });
+
+  const ids = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id).sort((a, b) => a - b);
+  assert.deepEqual(ids, [pruneDuplicate, pruneBonus].sort((a, b) => a - b));
+  assert.equal(ids.includes(keepFiller), false);
 });

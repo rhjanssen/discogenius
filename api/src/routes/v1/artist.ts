@@ -113,7 +113,7 @@ router.get("/", async (req, res) => {
     const includeDownloadStats = parseOptionalQueryBoolean(req.query.includeDownloadStats) ?? true;
     const includeCounts = parseOptionalQueryBoolean(req.query.includeCounts) ?? true;
 
-    res.json(ArtistQueryService.listArtists({
+    res.json(await runWithAsyncBusyRetry(() => ArtistQueryService.listArtists({
       limit: parseInt(req.query.limit as string) || 50,
       offset: parseInt(req.query.offset as string) || 0,
       search: req.query.search as string | undefined,
@@ -122,7 +122,7 @@ router.get("/", async (req, res) => {
       monitored: monitoredFilter,
       includeDownloadStats,
       includeCounts,
-    }));
+    }), 20, 100));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

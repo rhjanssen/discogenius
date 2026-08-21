@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { runWithAsyncBusyRetry } from "../../database.js";
 import { getCommandHistory, mapJob } from "../../services/commands/command-history.js";
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
 import { runCommandByName } from "../../services/commands/system-task-service.js";
@@ -40,10 +41,14 @@ router.get("/:id", (req, res) => {
   }
 });
 
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    const commandId = runCommandByName(getRequiredString(body, "name"));
+    const commandId = await runWithAsyncBusyRetry(
+      () => runCommandByName(getRequiredString(body, "name")),
+      20,
+      100,
+    );
     if (commandId === -1) {
       return res.status(400).json({ detail: "Unsupported command name" });
     }

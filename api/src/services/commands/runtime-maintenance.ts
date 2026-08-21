@@ -41,6 +41,8 @@ export interface RuntimeMaintenanceSummary {
   staleTempDirsRemoved: number;
   /** Video files whose quality tag was corrected from stored dimensions */
   videoQualitiesCorrected: number;
+  /** Files deleted because they belong to unmonitored albums/editions */
+  unmonitoredFilesRemoved: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -322,6 +324,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     orphanDownloadFoldersRemoved: 0,
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
+    unmonitoredFilesRemoved: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
@@ -329,13 +332,19 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   summary.orphanDownloadFoldersRemoved = pruneOrphanDownloadFolders();
   summary.staleTempDirsRemoved = pruneStaleTempDirectories();
   summary.videoQualitiesCorrected = correctVideoQualitiesFromDimensions();
+  summary.unmonitoredFilesRemoved = LibraryFilesService.pruneUnmonitoredFilesForMonitoredArtists().deleted;
 
   db.transaction(() => {
     dedupeLibraryFiles(summary);
   })();
 
   refreshDownloadState(summary);
-  ArtistStatisticsService.refresh();
+  const monitoredArtistIds = (db.prepare(`
+    SELECT CAST(id AS TEXT) AS id FROM Artists WHERE monitored = 1
+  `).all() as Array<{ id: string }>).map((row) => row.id);
+  if (monitoredArtistIds.length > 0) {
+    ArtistStatisticsService.refresh(monitoredArtistIds);
+  }
 
   // Prune finished commands rows older than 1 day
   const pruneResult = db.prepare(`

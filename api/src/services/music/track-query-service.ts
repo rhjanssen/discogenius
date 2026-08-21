@@ -773,20 +773,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
   return hydrated;
 }
 
-export function listTracks(input: ListTracksQuery): TracksListResponse {
-  const where: string[] = [];
-  const params: Array<string | number> = [];
-
-  // A LibraryAlbums row exists only for a monitored Album, so the candidate
-  // scope's own join already restricts to monitored ones.
-  const monitoredCandidatePredicate = "";
-  const candidateScope = `
-    WITH candidate_track_ids(id) AS MATERIALIZED (
-      -- Every canonical track of a release this library has selected. Acquisition
-      -- is NOT a precondition for visibility: a selected release's tracks stay
-      -- listed while still unavailable/unplanned, and only then can the UI show
-      -- them as missing. This is the same scope TrackLibraryIndex projects, so
-      -- the fast COUNT path and the listed items always describe one set.
+const monitoredTrackCandidateSql = `
       SELECT selected_track.id
       FROM LibraryEditions library_release
       JOIN AlbumEditions release
@@ -799,8 +786,6 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
       JOIN Libraries library
         ON library.id = library_release.library_id
        AND library.enabled = 1
-      WHERE 1 = 1
-        ${monitoredCandidatePredicate}
       UNION
       SELECT available_file.track_id
       FROM TrackFiles available_file
@@ -814,22 +799,51 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
        AND library.enabled = 1
       WHERE available_file.track_id IS NOT NULL
         AND (available_file.file_class = 'audio' OR available_file.file_type IN ('track', 'lyrics'))
-        ${monitoredCandidatePredicate}
-    )
+`;
+
+const unmonitoredTrackCandidateSql = `
+      SELECT catalog_track.id
+      FROM Albums album
+      JOIN Artists artist
+        ON artist.mbid = album.artist_mbid
+       AND artist.mbid IS NOT NULL
+       AND artist.monitored = 1
+      JOIN AlbumEditions catalog_edition
+        ON catalog_edition.release_group_id = album.id
+      JOIN Tracks catalog_track
+        ON catalog_track.album_edition_id = catalog_edition.id
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM LibraryAlbums library_group
+        JOIN Libraries library
+          ON library.id = library_group.library_id
+         AND library.enabled = 1
+        WHERE library_group.release_group_id = album.id
+      )
+`;
+
+function candidateTrackScopeSql(monitored: boolean | undefined): string {
+  const body = monitored === true
+    ? monitoredTrackCandidateSql
+    : monitored === false
+      ? unmonitoredTrackCandidateSql
+      : `${monitoredTrackCandidateSql}      UNION
+${unmonitoredTrackCandidateSql}`;
+  return `
+    WITH candidate_track_ids(id) AS MATERIALIZED (
+${body}    )
   `;
+}
+
+export function listTracks(input: ListTracksQuery): TracksListResponse {
+  const where: string[] = [];
+  const params: Array<string | number> = [];
+  const candidateScope = candidateTrackScopeSql(input.monitored);
 
   if (input.search) {
     const searchParam = `%${input.search}%`;
     where.push("(track.title LIKE ? OR artist.name LIKE ? OR release_group.title LIKE ?)");
     params.push(searchParam, searchParam, searchParam);
-  }
-
-  if (input.monitored !== undefined) {
-    // The monitored candidate source above already applies this positive
-    // filter before expanding releases into tracks.
-    if (!input.monitored) {
-      where.push(`NOT (${canonicalTrackMonitoredPredicate})`);
-    }
   }
 
   if (input.downloaded !== undefined) {
@@ -917,10 +931,9 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
   const sort = normalizeSortField(input.sort);
   const dir = normalizeSortDirection(input.dir);
   const orderBy = getTrackOrderBy(sort, dir);
-  // Page identities from LibraryEditions (membership), then enrich the page.
-  // Lidarr does the same from Tracks: that table *is* the library. Walking
-  // the MusicBrainz Tracks catalog, or waiting on TrackLibraryIndex rebuild,
-  // is what hung the event loop.
+  // Page identities from catalog Tracks of stored artists, restricted to
+  // LibraryEditions when the caller asks for monitored-only. Unmonitored
+  // albums still have catalog tracks even though they have no LibraryAlbums row.
   const candidateOrderBy = sort === "popularity"
     ? ` ORDER BY MAX(
           COALESCE(recording.popularity, 0),

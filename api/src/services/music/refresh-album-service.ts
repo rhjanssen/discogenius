@@ -793,11 +793,11 @@ export class RefreshAlbumService {
      * the *decision*, not the data. Credits and variants are omitted from the
      * ingest input so their existing rows survive untouched.
      */
-    static rematchStoredProviderRelease(
+    static async rematchStoredProviderRelease(
         providerId: string,
         albumId: string,
         canonicalReleaseMbid?: string | null,
-    ): { acceptedTrackCount: number; ambiguousTrackCount: number } | null {
+    ): Promise<{ acceptedTrackCount: number; ambiguousTrackCount: number } | null> {
         // Mirror storeProviderTrackOffers: when the release-group matcher does not
         // name a release this pass, the edition this provider release is already
         // accepted against is the canonical target. Requiring a freshly selected
@@ -851,6 +851,7 @@ export class RefreshAlbumService {
         `).all(releaseRow.id) as Array<Record<string, any>>;
         if (memberRows.length === 0) return null;
 
+        return withSqliteWriteGate(() => {
         const ingested = new ProviderReleaseIngestionService(db).ingest({
             canonicalReleaseId: canonicalRelease.id,
             matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
@@ -919,6 +920,7 @@ export class RefreshAlbumService {
             acceptedTrackCount: ingested.acceptedTrackCount,
             ambiguousTrackCount: ingested.ambiguousTrackCount,
         };
+        }, `rematch-stored-release:${providerId}:${albumId}`);
     }
 
     /**

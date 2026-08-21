@@ -408,3 +408,43 @@ test("provider and quality filters must be satisfied by the same selected librar
   assert.equal(result.total, 1);
   assert.deepEqual(result.items.map((album) => album.id), ["same-slot-album"]);
 });
+
+test("album list pages from catalog so unmonitored albums of stored artists are visible", () => {
+  seedAlbum({
+    mbid: "monitored-visible",
+    title: "Monitored Visible",
+    stereoProvider: "tidal",
+    stereoQuality: "HIRES_LOSSLESS",
+    spatialProvider: "apple-music",
+    spatialQuality: "DOLBY_ATMOS",
+  });
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES ('unmonitored-visible', 'artist-mbid', 'Unmonitored Visible', 'Album', '2020-01-01')
+  `).run();
+
+  const monitored = albumQueryModule.AlbumQueryService.listAlbums({
+    limit: 20,
+    offset: 0,
+    monitored: true,
+  });
+  assert.equal(monitored.items.some((album) => album.id === "monitored-visible"), true);
+  assert.equal(monitored.items.some((album) => album.id === "unmonitored-visible"), false);
+
+  const unmonitored = albumQueryModule.AlbumQueryService.listAlbums({
+    limit: 20,
+    offset: 0,
+    monitored: false,
+  });
+  assert.equal(unmonitored.items.some((album) => album.id === "unmonitored-visible"), true);
+  assert.equal(unmonitored.items.some((album) => album.id === "monitored-visible"), false);
+  assert.equal(unmonitored.items.find((album) => album.id === "unmonitored-visible")?.is_monitored, false);
+
+  const all = albumQueryModule.AlbumQueryService.listAlbums({
+    limit: 20,
+    offset: 0,
+  });
+  assert.equal(all.items.some((album) => album.id === "monitored-visible"), true);
+  assert.equal(all.items.some((album) => album.id === "unmonitored-visible"), true);
+});

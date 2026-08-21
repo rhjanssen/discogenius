@@ -1696,7 +1696,7 @@ export class RefreshArtistService {
                         // from the stored membership — no provider traffic.
                         if (!album._provider_tracks) continue;
                         try {
-                            if (RefreshAlbumSvc.rematchStoredProviderRelease(
+                            if (await RefreshAlbumSvc.rematchStoredProviderRelease(
                                 provider.id,
                                 String(album.provider_id),
                                 matchedReleaseMbid,
@@ -1917,7 +1917,7 @@ export class RefreshArtistService {
         for (const release of stale) {
             await yieldReplay();
             try {
-                if (RefreshAlbumSvc.rematchStoredProviderRelease(
+                if (await RefreshAlbumSvc.rematchStoredProviderRelease(
                     release.provider,
                     release.provider_id,
                     release.edition_mbid,
