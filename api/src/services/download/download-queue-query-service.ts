@@ -948,6 +948,8 @@ function waitRowToQueueJob(row: WaitQueueJoinedRow): QueueJobRow {
   };
 }
 
+const WAIT_QUEUE_ACTIVE_PREDICATE = `(dq.command_id IS NULL OR c.status IN ('queued', 'started'))`;
+
 const WAIT_QUEUE_LIST_SQL = `
   SELECT
     dq.id,
@@ -984,12 +986,21 @@ const WAIT_QUEUE_ORDER_SQL = `
   ORDER BY
     CASE
       WHEN c.status = 'started' THEN 0
-      WHEN c.status = 'failed' THEN 1
-      ELSE 2
+      ELSE 1
     END,
     dq.queue_order ASC,
     dq.id ASC
 `;
+
+function countActiveWaitRows(): number {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM DownloadQueue dq
+    LEFT JOIN commands c ON c.id = dq.command_id
+    WHERE ${WAIT_QUEUE_ACTIVE_PREDICATE}
+  `).get() as { count?: number };
+  return Number(row.count || 0);
+}
 
 function getPendingDownloadQueuePositionsForIds(commandIds: readonly number[]): Map<number, number> {
   const queuePositionById = new Map<number, number>();
@@ -1306,9 +1317,10 @@ export class DownloadQueueQueryService {
       };
     }
 
-    const total = DownloadWaitQueue.count();
+    const total = countActiveWaitRows();
     const rows = db.prepare(`
       ${WAIT_QUEUE_LIST_SQL}
+      WHERE ${WAIT_QUEUE_ACTIVE_PREDICATE}
       ${WAIT_QUEUE_ORDER_SQL}
       LIMIT ? OFFSET ?
     `).all(params.limit, params.offset) as WaitQueueJoinedRow[];
@@ -1402,7 +1414,7 @@ export class DownloadQueueQueryService {
           .filter((job) => matchesQueueDetails(job, normalizedFilters))
           .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
       }
-      const clauses: string[] = [];
+      const clauses: string[] = [WAIT_QUEUE_ACTIVE_PREDICATE];
       const sqlParams: unknown[] = [];
       if (normalizedFilters.artistId) {
         clauses.push(`(
@@ -1430,7 +1442,7 @@ export class DownloadQueueQueryService {
         clauses.push(`dq.provider_id IN (${placeholders(normalizedFilters.providerIds)})`);
         sqlParams.push(...normalizedFilters.providerIds);
       }
-      const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+      const whereSql = `WHERE ${clauses.join(" AND ")}`;
       const rows = db.prepare(`
         ${WAIT_QUEUE_LIST_SQL}
         ${whereSql}

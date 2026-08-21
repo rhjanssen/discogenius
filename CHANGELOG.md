@@ -12,6 +12,12 @@ name that two MusicBrainz artists share no longer hides both of them.
   write lock.** Config and monitoring persist in SQLite; POST handlers now
   yield-and-retry like album and queue mutations, and leftover SQLITE_BUSY
   is HTTP 503 instead of a 500.
+- **Cancelling a running command returned HTTP 500 while SQLite was busy.**
+  Command DELETE now yield-and-retries like other operator writes.
+- **The download queue listed failed albums ahead of waiting work.** Leftover
+  claimed rows whose Download* command had failed sorted above waiting
+  albums, so the first page was Afterlife failures and move-to-top looked
+  like a no-op. The live queue now shows started then waiting rows only.
 - **Rename preview left TrackFiles without an album id.** The TrackFiles
   union forced `album_id` to NULL even when the file had a canonical
   release-group MBID, so artist rename grouping could not attach an album.

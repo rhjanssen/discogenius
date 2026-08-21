@@ -102,6 +102,19 @@ test("reorder moves a waiting item to the top like qBittorrent", () => {
   assert.equal(live.items[0]?.queuePosition, 1);
 });
 
+test("failed claimed wait rows stay off the live queue page", () => {
+  enqueueTrack("fail-1", "Failed Album");
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  assert.ok(claimed);
+  queueModule.CommandQueueManager.fail(claimed.commandId, "provider error");
+  enqueueTrack("wait-1", "Waiting Album");
+
+  const live = queryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
+  assert.deepEqual(live.items.map((item) => item.title), ["Waiting Album"]);
+  assert.equal(live.total, 1);
+  assert.equal(live.items[0]?.status, "queued");
+});
+
 test("claim creates a Download* command and leaves other wait rows unclaimed", () => {
   enqueueTrack("c-1", "First");
   enqueueTrack("c-2", "Second");

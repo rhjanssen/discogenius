@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runWithAsyncBusyRetry } from "../../database.js";
+import { isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
 import { getCommandHistory, mapJob } from "../../services/commands/command-history.js";
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
 import { runCommandByName } from "../../services/commands/system-task-service.js";
@@ -7,6 +7,16 @@ import { getObjectBody, getRequiredString, isRequestValidationError } from "../.
 import { CommandWorkerPool } from "../../services/commands/worker/command-worker-pool.js";
 
 const router = Router();
+
+function runCommandUserWrite<T>(operation: () => T): Promise<T> {
+  return runWithAsyncBusyRetry(operation, 30, 200);
+}
+
+function commandMutationHttpStatus(error: unknown): number {
+  if (isRequestValidationError(error)) return 400;
+  if (isSqliteBusyError(error)) return 503;
+  return 500;
+}
 
 router.get("/", (req, res) => {
   try {
@@ -19,7 +29,7 @@ router.get("/", (req, res) => {
 
     res.json([...active, ...history]);
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(commandMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
@@ -37,17 +47,15 @@ router.get("/:id", (req, res) => {
 
     res.json(mapJob(job));
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(commandMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
 router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    const commandId = await runWithAsyncBusyRetry(
+    const commandId = await runCommandUserWrite(
       () => runCommandByName(getRequiredString(body, "name")),
-      20,
-      100,
     );
     if (commandId === -1) {
       return res.status(400).json({ detail: "Unsupported command name" });
@@ -56,28 +64,28 @@ router.post("/", async (req, res) => {
     const job = CommandQueueManager.get(commandId);
     res.status(201).json(job ? mapJob(job) : { id: commandId });
   } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
+    res.status(commandMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
-router.delete("/:id", (req, res) => {
+router.delete("/:id", async (req, res) => {
   try {
     const commandId = parseInt(req.params.id, 10);
     if (Number.isNaN(commandId)) {
       return res.status(400).json({ detail: "Invalid command id" });
     }
 
-    const job = CommandQueueManager.get(commandId);
-    CommandQueueManager.cancel(commandId);
+    const job = await runCommandUserWrite(() => {
+      const current = CommandQueueManager.get(commandId);
+      CommandQueueManager.cancel(commandId);
+      return current;
+    });
     if (job?.status === "started" && job.worker_id) {
       CommandWorkerPool.abortCommand(commandId, job.worker_id, "Command cancelled by user");
     }
     res.json({ success: true });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(commandMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
