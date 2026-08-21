@@ -40,6 +40,7 @@ import { libraryMetadataBackfillService, type MetadataFillResult } from "./libra
 import { createCooperativeBatcher, yieldToEventLoop } from "../../utils/concurrent.js";
 import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
 import { shouldRematchUnmatchedFiles, type ScanFileFilter } from "./scan-file-filter.js";
+import { parseProviderFilenameToken } from "./path-utils.js";
 
 // ============================================================================
 // Types
@@ -1732,6 +1733,30 @@ export class DiskScanService {
      * provider resource is rejected rather than resolved arbitrarily.
      */
     private static findTrackIdentityByStem(stem: string, artistId: string): ProviderItemIdentity | null {
+        const token = parseProviderFilenameToken(stem);
+        if (token) {
+            const rows = db.prepare(`
+                SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
+                FROM ProviderItems pi
+                WHERE lower(pi.provider) = ?
+                  AND CAST(pi.provider_id AS TEXT) = ?
+                  AND pi.entity_type IN ('track', 'video')
+            `).all(token.provider, token.providerId) as Array<{
+                id: number;
+                provider: string;
+                entity_type: string;
+                provider_id: string;
+            }>;
+            const preferVideo = /-video\b/i.test(stem);
+            const narrowed = preferVideo && rows.length > 1
+                ? rows.filter((row) => row.entity_type === "video")
+                : rows;
+            if (narrowed.length === 1) {
+                const identity = this.resolveProviderIdentity(narrowed[0]);
+                if (identity) return identity;
+            }
+        }
+
         const candidateIds: string[] = [];
         if (/^\d+$/.test(stem)) candidateIds.push(stem);
         const idMatch = stem.match(/\b(\d{6,})\b/);

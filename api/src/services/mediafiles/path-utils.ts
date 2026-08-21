@@ -61,3 +61,14 @@ export function comparablePathColumnSql(column: string): string {
         ? `LOWER(${separatorNormalized})`
         : separatorNormalized;
 }
+
+/**
+ * `{TIDAL-25701976}` / `{apple-music-xyz}` tokens Discogenius writes into
+ * library filenames. The token is a (provider, provider_id) pair, so scan can
+ * resolve it without guessing from a bare numeric id.
+ */
+export function parseProviderFilenameToken(stem: string): { provider: string; providerId: string } | null {
+    const match = String(stem || "").match(/\{([A-Za-z][A-Za-z0-9-]*)-([^}]+)\}/);
+    if (!match) return null;
+    return { provider: match[1].toLowerCase(), providerId: match[2] };
+}

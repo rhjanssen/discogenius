@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 - **Existing files bound to an unmonitored sibling edition because scan runs before curation.** `101 - Pompeii MMXXIII.m4a` imported onto a Bad Blood X MusicBrainz release that was not the library's selected edition. After disk scan and CurateArtist, TrackFiles now rebind onto the unique monitored edition that carries that recording. Unmonitor prune does not rebind, so it can still delete the edition the user just dropped.
 - **A second album copy of the same recording stayed Unmapped as a "duplicate".** Of the Night on All This Bad Blood and Joy on Grace Note were blocked because Heartache / the Joy single already owned the recording. Duplicate leftovers are same-folder extras (mp3 beside m4a); a different album keeps its own TrackFile.
 - **Unmonitoring an edition left ghost TrackFiles after the folder was wiped.** Hole-fill kept four All This Bad Blood rows while leftover-folder cleanup deleted the files. Prune now removes every file of an unmonitored edition when "Remove unmonitored files" is on, including copies that could have filled a hole on the remaining edition.
+- **Already-on-disk music videos stayed Unmapped even after the TIDAL video existed in ProviderItems.** `{TIDAL-25701976}` in the filename is a unique (provider, id) token; scan now resolves that token directly instead of requiring the video to also pass artist-folder credit scope.
 
 ## [2.10.0] - 2026-08-21
 
