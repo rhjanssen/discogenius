@@ -8,6 +8,14 @@ Library pages stay usable during a bulk metadata refresh, and searching a
 name that two MusicBrainz artists share no longer hides both of them.
 
 ### Fixed
+- **Album page always said an album was 0% downloaded.** List/artist cards
+  already used library completion stats; the album page and getAlbum
+  hardcoded `downloaded: 0`. Basket Case stayed unmarked after a successful
+  FLAC import. Those endpoints now use the same stats.
+- **Switching video layout to separated renamed Living inside the stereo
+  album folder.** Expected-path used the file's current `library_root`, so
+  an inline `.mp4` stayed under stereo-music with video-filename tokens.
+  Separated layout now always targets the video library.
 - **The live download queue listed leftover failed commands once the wait
   table was empty.** Wait-row pages already hid failed claims; the command
   fallback still treated `failed` as active, so The Spirit / Temptation /

@@ -951,3 +951,95 @@ test("an edition's tracklist shows its own plan's offers, not a sibling edition'
     "an edition with no plan of its own must not borrow a sibling edition's offers",
   );
 });
+
+test("album page reports downloaded when the selected edition has audio files", async () => {
+  const artistMbid = "artist-mbid-basket-page";
+  const releaseGroupMbid = "release-group-basket-page";
+  const releaseMbid = "release-basket-page";
+  const trackMbid = "track-basket-page";
+  const recordingMbid = "recording-basket-page";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Bastille", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Basket Case", "Single", "2017-01-01");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Basket Case", "Official", "2017-01-01", 1, 1);
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, length_ms, is_video) VALUES (?, ?, ?, 0)
+  `).run(recordingMbid, "Basket Case", 180000);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, 1, 1, '1', ?, ?)
+  `).run(trackMbid, releaseMbid, recordingMbid, "Basket Case", 180000);
+  hydrateCanonicalForeignKeys(releaseGroupMbid);
+  const libraryEditionId = selectLibraryRelease(releaseGroupMbid, releaseMbid);
+  const library = dbModule.db.prepare(`
+    SELECT library.id AS library_id, library.root_path
+    FROM LibraryEditions library_edition
+    JOIN Libraries library ON library.id = library_edition.library_id
+    WHERE library_edition.id = ?
+  `).get(libraryEditionId) as { library_id: number; root_path: string };
+  const identities = dbModule.db.prepare(`
+    SELECT
+      track.id AS track_id,
+      track.recording_id,
+      track.album_edition_id,
+      album.id AS release_group_id
+    FROM Tracks track
+    JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+    JOIN Albums album ON album.id = edition.release_group_id
+    WHERE track.mbid = ?
+  `).get(trackMbid) as {
+    track_id: number;
+    recording_id: number;
+    album_edition_id: number;
+    release_group_id: number;
+  };
+
+  const pageBefore = await readServiceModule.MusicBrainzReleaseGroupReadService.getPage(releaseGroupMbid);
+  assert.equal(pageBefore?.album.is_downloaded, false);
+  assert.equal(pageBefore?.album.downloaded, 0);
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, release_group_id, album_edition_id,
+      track_id, recording_id, library_slot, library_id, file_path, relative_path,
+      library_root, filename, extension, file_type, file_class
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    artistMbid,
+    artistMbid,
+    releaseGroupMbid,
+    releaseMbid,
+    trackMbid,
+    recordingMbid,
+    identities.release_group_id,
+    identities.album_edition_id,
+    identities.track_id,
+    identities.recording_id,
+    "stereo",
+    library.library_id,
+    "/library/stereo-music/Basket Case.flac",
+    "Basket Case.flac",
+    library.root_path,
+    "Basket Case.flac",
+    ".flac",
+    "track",
+    "audio",
+  );
+
+  const page = await readServiceModule.MusicBrainzReleaseGroupReadService.getPage(releaseGroupMbid);
+  assert.equal(page?.album.is_downloaded, true);
+  assert.equal(page?.album.downloaded, 100);
+  assert.equal(page?.album.track_file_count, 1);
+  assert.equal(page?.album.track_count, 1);
+});

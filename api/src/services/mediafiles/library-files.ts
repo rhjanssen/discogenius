@@ -580,6 +580,18 @@ function resolveExpectedLibraryRootKey(
   row: LibraryFileRow,
   cache?: ExpectedPathCache,
 ): library_root | null {
+  const videoFolderLayout = cache?.configSnapshot.path.video_folder_layout
+    ?? getConfigSection("path")?.video_folder_layout;
+  // An inline file's library_root is "music". Switching the layout to
+  // separated must retarget it to the video library, not rename it in the
+  // album folder with video-filename tokens.
+  if (
+    (row.file_type === "video" || row.file_type === "video_thumbnail")
+    && !allowsInlineVideoPlacement(videoFolderLayout)
+  ) {
+    return "videos";
+  }
+
   const resolved = resolveLibraryRootKey(
     row.library_root,
     row.file_path,

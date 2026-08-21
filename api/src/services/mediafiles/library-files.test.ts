@@ -1563,6 +1563,18 @@ dbModule.db.prepare(`
   const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video-video {TIDAL-video-inline-test}.mp4");
   assert.equal(expectedSeparated.expectedPath, expectedSeparatedPath);
 
+  const rowVideoCurrentlyInline = {
+    ...rowVideoSeparated,
+    file_path: path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.mp4"),
+    library_root: "music",
+  };
+  const expectedFromInlineLocation = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoCurrentlyInline);
+  assert.equal(
+    expectedFromInlineLocation.expectedPath,
+    expectedSeparatedPath,
+    "separated layout must move an inline file into the video library, not rename it under stereo-music",
+  );
+
   const expectedSeparatedThumbnail = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     ...rowVideoSeparated,
     id: 1001,

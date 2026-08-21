@@ -17,6 +17,7 @@ import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "./mus
 import { getConfigSection } from "../config/config.js";
 import { AlbumTrackListNavigationService } from "../music/album-track-list-navigation-service.js";
 import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
+import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -549,6 +550,18 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         review_source: releaseGroup.review_source || null,
         review_last_updated: releaseGroup.review_last_updated || null,
     };
+}
+
+function applyAlbumDownloadStats(album: AlbumContract): AlbumContract {
+    const stats = getReleaseGroupDownloadStatsMap([album.id]).get(album.id);
+    if (!stats) {
+        return album;
+    }
+    album.is_downloaded = stats.isDownloaded;
+    album.downloaded = stats.downloadedPercent;
+    album.track_file_count = stats.downloadedTracks;
+    album.track_count = stats.totalTracks;
+    return album;
 }
 
 /**
@@ -1231,11 +1244,11 @@ export class MusicBrainzReleaseGroupReadService {
             return null;
         }
 
-        return normalizeMusicBrainzReleaseGroupAlbum(
+        return applyAlbumDownloadStats(normalizeMusicBrainzReleaseGroupAlbum(
             releaseGroup,
             selectPreferredRelease(releaseGroupMbid),
             await resolveReleaseGroupArtwork(releaseGroup),
-        );
+        ));
     }
 
     static async getTracks(releaseGroupMbid: string): Promise<AlbumTrackContract[]> {
@@ -1293,7 +1306,9 @@ export class MusicBrainzReleaseGroupReadService {
 
         const release = selectPreferredRelease(releaseGroupMbid);
         const coverUrl = await resolveReleaseGroupArtwork(releaseGroup);
-        const album = normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, coverUrl);
+        const album = applyAlbumDownloadStats(
+            normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, coverUrl),
+        );
         const providerReview = await resolveProviderAlbumReview(releaseGroup);
         if (providerReview) {
             album.review = providerReview.review;
