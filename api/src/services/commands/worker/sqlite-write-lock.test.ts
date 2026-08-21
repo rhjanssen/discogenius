@@ -119,6 +119,8 @@ function acquire(requestId) {
 
 (async () => {
   const errors = [];
+  // Give sibling workers time to start so the first acquires actually queue.
+  await new Promise((r) => setTimeout(r, 25));
   for (let i = 0; i < workerData.iterations; i += 1) {
     const requestId = workerData.name + ":" + i;
     await acquire(requestId);
