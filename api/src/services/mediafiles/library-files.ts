@@ -39,6 +39,7 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { ExtraFileService, FOLDER_SCOPED_METADATA_TYPES, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "../extras/files/extra-file-service.js";
+import { captureLinkedExtras, releaseExtrasForDeletedTrackFiles } from "../extras/files/extra-file-deletion.js";
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
 import { MetadataFileService } from "../extras/metadata/files/metadata-file-service.js";
 import { resolveVideoTypeSuffix } from "./video-naming.js";
@@ -3220,6 +3221,10 @@ export class LibraryFilesService {
       return this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
     }
 
+    const linkedExtras = captureLinkedExtras(rows.map((row) => row.id));
+    const deletedTrackFileIds: number[] = [];
+    const storedFilePaths: string[] = [];
+
     let deleted = 0;
     let missing = 0;
     let errors = 0;
@@ -3246,6 +3251,8 @@ export class LibraryFilesService {
       if (!canRemove) continue;
 
       db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
+      deletedTrackFileIds.push(row.id);
+      storedFilePaths.push(row.file_path);
 
       try {
         recordHistoryEvent({
@@ -3287,6 +3294,16 @@ export class LibraryFilesService {
         removeEmptyParents(path.dirname(resolvedFilePath), root);
       }
     }
+
+    const extras = releaseExtrasForDeletedTrackFiles({
+      scope: { kind: "all-libraries" },
+      deletedTrackFileIds,
+      storedFilePaths,
+      linkedExtras,
+    });
+    deleted += extras.deleted;
+    missing += extras.missing;
+    errors += extras.errors;
 
     const leftovers = this.pruneLeftoversInEditionDirectories(prunedDirectories);
     deleted += leftovers.deleted;
@@ -3474,6 +3491,31 @@ export class LibraryFilesService {
    * time; this catches editions that stayed unselected after an import or plan
    * change (Dutch edition monitored, Bad Blood X still on disk).
    */
+  /**
+   * After an Album or Edition is unmonitored, delete its library files when
+   * "Remove unmonitored files" is on. Album-toggle, track-toggle, and edition
+   * removal all go through here so Heartache extras in that folder leave with
+   * the TrackFiles instead of surviving as orphan ExtraFiles.
+   */
+  static pruneUnmonitoredForReleaseGroup(releaseGroupMbid: string): {
+    deleted: number; missing: number; errors: number;
+  } {
+    if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
+      return { deleted: 0, missing: 0, errors: 0 };
+    }
+    const artist = db.prepare(`
+      SELECT CAST(artist.id AS TEXT) AS id
+      FROM Albums album
+      JOIN Artists artist ON artist.mbid = album.artist_mbid
+      WHERE album.mbid = ?
+      LIMIT 1
+    `).get(releaseGroupMbid) as { id?: string } | undefined;
+    if (!artist?.id) {
+      return { deleted: 0, missing: 0, errors: 0 };
+    }
+    return this.pruneUnmonitoredFiles(artist.id);
+  }
+
   static pruneUnmonitoredFilesForMonitoredArtists(): { artists: number; deleted: number; missing: number; errors: number } {
     if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
       return { artists: 0, deleted: 0, missing: 0, errors: 0 };

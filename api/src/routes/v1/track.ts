@@ -6,6 +6,7 @@ import {
   scopeToOptions,
 } from "../../services/mediafiles/library-deletion-scope.js";
 import { deleteTrackLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
+import { LibraryFilesService } from "../../services/mediafiles/library-files.js";
 import {
   monitorAlbumInLibraries,
   resolveScopedLibraryIds,
@@ -92,6 +93,10 @@ function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boole
       });
     }
   })();
+
+  if (!monitored) {
+    LibraryFilesService.pruneUnmonitoredForReleaseGroup(canonicalTrack.release_group_mbid);
+  }
 
   invalidateReleaseGroupDownloadStatus(canonicalTrack.release_group_mbid);
   return true;

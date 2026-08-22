@@ -140,8 +140,9 @@ export function monitorAlbumInLibraries(
  * The monitored Editions under it go too — an Edition monitored inside an
  * unmonitored Album is the contradiction row-existence semantics exist to
  * prevent. Candidate acquisition plans, canonical metadata, provider matches
- * and files on disk all survive; only the statement "this Library wants this
- * Album" is withdrawn.
+ * and files on disk survive unless Settings → Remove unmonitored files is on;
+ * that prune is the caller's job after this function returns. Only the
+ * statement "this Library wants this Album" is withdrawn here.
  */
 export function unmonitorAlbumInLibraries(
   db: Database.Database,

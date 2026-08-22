@@ -639,18 +639,7 @@ export class LibraryReleaseSelectionService {
       libraryId: input.libraryId,
       reason: "edition-unmonitored",
     });
-    if (getConfigSection("monitoring")?.remove_unmonitored_files === true) {
-      const artist = this.db.prepare(`
-        SELECT CAST(artist.id AS TEXT) AS id
-        FROM Albums album
-        JOIN Artists artist ON artist.mbid = album.artist_mbid
-        WHERE album.mbid = ?
-        LIMIT 1
-      `).get(input.releaseGroupMbid) as { id?: string } | undefined;
-      if (artist?.id) {
-        LibraryFilesService.pruneUnmonitoredFiles(artist.id);
-      }
-    }
+    LibraryFilesService.pruneUnmonitoredForReleaseGroup(input.releaseGroupMbid);
     return this.getAvailability(input.releaseGroupMbid);
   }
 

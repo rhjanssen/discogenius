@@ -267,8 +267,9 @@ router.patch("/:albumId/libraries/:libraryId/selection", async (req, res) => {
 });
 
 /**
- * Stop monitoring one Edition in one Library. Never deletes files — that is a
- * separate, explicit deletion command.
+ * Stop monitoring one Edition in one Library. Deletes on-disk files only when
+ * Settings → Remove unmonitored files is on (including duplicate extras in that
+ * edition folder). Explicit Delete files remains the path when that setting is off.
  */
 router.delete("/:albumId/libraries/:libraryId/selection/:editionId", async (req, res) => {
   try {

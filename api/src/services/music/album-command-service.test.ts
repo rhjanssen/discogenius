@@ -24,6 +24,8 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
+  db.prepare("DELETE FROM ExtraFiles").run();
+  db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM DownloadQueue").run();
   db.prepare("DELETE FROM ProviderTrackMatches").run();
@@ -244,4 +246,95 @@ test("monitor-and-download for a track enqueues a wait row, not a command", asyn
     SELECT COUNT(*) AS n FROM commands WHERE name = 'DownloadTrack'
   `).get() as { n: number }).n;
   assert.equal(commandCount, 0);
+});
+
+test("unmonitoring an album deletes its files and duplicate extras when cleanup is on", async () => {
+  const { updateConfig } = await import("../config/config.js");
+  updateConfig("monitoring", { remove_unmonitored_files: true });
+  try {
+    const { db } = dbModule;
+    const stereoId = libraryId("Stereo");
+    const edition = db.prepare(`
+      INSERT INTO AlbumEditions (
+        mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+      ) VALUES ('ed-heartache-pt2', 1, 'release-group-mbid-1', 'artist-mbid-1', 'Heartache Pt. 2', 1)
+      RETURNING id
+    `).get() as { id: number };
+    db.prepare(`
+      INSERT INTO LibraryAlbums (
+        library_id, release_group_id, selection_mode, locked, curation_version
+      ) VALUES (?, 1, 'manual', 0, 1)
+    `).run(stereoId);
+    db.prepare(`
+      INSERT INTO LibraryEditions (
+        library_id, edition_id, selection_mode, representative, curation_version
+      ) VALUES (?, ?, 'manual', 1, 1)
+    `).run(stereoId, edition.id);
+
+    const albumDir = path.join(tempDir, "Heartache Pt. 2");
+    fs.mkdirSync(albumDir, { recursive: true });
+    const m4aPath = path.join(albumDir, "01 - Tuning In.m4a");
+    const mp3Path = path.join(albumDir, "01 - Tuning In.mp3");
+    fs.writeFileSync(m4aPath, "primary");
+    fs.writeFileSync(mp3Path, "duplicate");
+
+    db.prepare(`
+      INSERT INTO TrackFiles (
+        artist_id, library_id, release_group_id, album_edition_id,
+        canonical_release_group_mbid, canonical_release_mbid,
+        library_slot, file_path, relative_path, library_root, filename, extension, file_type, quality
+      ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "artist-1",
+      stereoId,
+      edition.id,
+      "release-group-mbid-1",
+      "ed-heartache-pt2",
+      "stereo",
+      m4aPath,
+      path.relative(tempDir, m4aPath),
+      tempDir,
+      "01 - Tuning In.m4a",
+      "m4a",
+      "track",
+      "LOSSY",
+    );
+    const trackFileId = Number(
+      (db.prepare("SELECT id FROM TrackFiles WHERE file_path = ?").get(m4aPath) as { id: number }).id,
+    );
+    db.prepare(`
+      INSERT INTO ExtraFiles (
+        artist_id, track_file_id, relative_path, file_path, library_root,
+        extension, file_type, library_slot
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "artist-1",
+      trackFileId,
+      path.relative(tempDir, mp3Path),
+      mp3Path,
+      tempDir,
+      "mp3",
+      "duplicate",
+      "stereo",
+    );
+
+    const result = serviceModule.AlbumCommandService.setAlbumMonitored(
+      "release-group-mbid-1",
+      false,
+      { kind: "library", libraryId: stereoId },
+    );
+    assert.equal(result.success, true);
+    assert.equal(fs.existsSync(m4aPath), false, "unmonitored album audio is deleted");
+    assert.equal(fs.existsSync(mp3Path), false, "duplicate extra leaves with the album");
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n,
+      0,
+    );
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS n FROM ExtraFiles").get() as { n: number }).n,
+      0,
+    );
+  } finally {
+    updateConfig("monitoring", { remove_unmonitored_files: false });
+  }
 });

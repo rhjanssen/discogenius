@@ -6,6 +6,7 @@ import { invalidateReleaseGroupDownloadStatus } from "../download/download-state
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
+import { LibraryFilesService } from "../mediafiles/library-files.js";
 import {
     monitorAlbumInLibraries,
     resolveScopedLibraryIds,
@@ -41,6 +42,10 @@ export class AlbumCommandService {
                 unmonitorAlbumInLibraries(db, releaseGroup.id, libraryIds, { actor: "user" });
             }
         })();
+
+        if (!monitored) {
+            LibraryFilesService.pruneUnmonitoredForReleaseGroup(releaseGroupMbid);
+        }
 
         ArtistStatisticsService.refreshForReleaseGroupMbids([releaseGroupMbid]);
         emitLibraryUpdated({

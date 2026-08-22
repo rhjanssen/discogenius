@@ -16,7 +16,7 @@ const { LibraryFilesService } = await import("./library-files.js");
 
 function reset() {
   for (const t of [
-    "TrackFiles", "LibraryVideos", "LibraryEditions", "LibraryAlbums",
+    "TrackFiles", "ExtraFiles", "LibraryVideos", "LibraryEditions", "LibraryAlbums",
     "ProviderVideoMatches", "ProviderItems", "Tracks", "Recordings", "AlbumEditions",
     "Albums", "Artists", "ArtistMetadata",
   ]) {
@@ -352,8 +352,10 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
   fs.mkdirSync(leftoverDir, { recursive: true });
   const holeFillPath = path.join(leftoverDir, "108 - Oblivion.flac");
   const extraPath = path.join(leftoverDir, "101 - Pompeii.flac");
+  const extraMp3Path = path.join(leftoverDir, "108 - Oblivion.mp3");
   fs.writeFileSync(holeFillPath, "hole-fill");
   fs.writeFileSync(extraPath, "untracked-extra");
+  fs.writeFileSync(extraMp3Path, "duplicate-extra");
 
   db.prepare(`
     INSERT INTO TrackFiles (
@@ -380,9 +382,31 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
     "LOSSLESS",
   );
 
+  db.prepare(`
+    INSERT INTO ExtraFiles (
+      artist_id, track_file_id, relative_path, file_path, library_root,
+      extension, file_type, library_slot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "art1",
+    Number((db.prepare("SELECT id FROM TrackFiles WHERE file_path = ?").get(holeFillPath) as { id: number }).id),
+    path.relative(tempDir, extraMp3Path),
+    extraMp3Path,
+    tempDir,
+    "mp3",
+    "duplicate",
+    "stereo",
+  );
+
   const result = LibraryFilesService.pruneUnmonitoredFiles("art1");
   assert.equal(fs.existsSync(holeFillPath), false, "unmonitored-edition audio is removed with the folder");
   assert.equal(fs.existsSync(extraPath), false, "untracked extra in the unmonitored folder is removed");
+  assert.equal(fs.existsSync(extraMp3Path), false, "duplicate ExtraFiles mp3 leaves with the unmonitored folder");
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS n FROM ExtraFiles").get() as { n: number }).n,
+    0,
+    "ExtraFiles rows for deleted duplicates must not linger",
+  );
   assert.equal(
     (db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n,
     0,

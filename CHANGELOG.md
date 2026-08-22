@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Unmonitoring an album left Heartache duplicate `.mp3` extras on disk.** The
+  Settings toggle "Remove unmonitored files" only ran after edition-picker
+  removal and artist curation, not after the album or track monitor switch.
+  Unmonitor now prunes that album's TrackFiles and leftover extras in the same
+  folder (the Pt. 2 `.mp3`s beside imported `.m4a`s).
 - **Heartache Pt. 2 leftover `.mp3`s sat in Unmapped as unexplained duplicates.** They are the same recordings as the imported `.m4a`s. Scan now attaches them as duplicate extras on the existing TrackFile (Lidarr keeps extras unless you delete them) so they leave Unmapped and show in file tools. `upgrade_existing_files` still defaults off; we do not delete extras silently.
 - **Bad Blood X `103` / `202` Things We Lost stayed Unmapped.** Apple tags the group title "Bad Blood" while the folder is the anniversary edition, and the 10th-anniversary disc/track numbers do not match the original. Scan now prefers the album-folder edition title and uses `{medium}{track}` filenames the way Lidarr does. `(Abbey Road sessions)` is a different recording from the studio cut, so `202` imports onto disc 2 instead of attaching as a duplicate of `103`. Duplicate extras are re-evaluated on the next scan so a matcher fix can promote them.
 - **Inline `Living-video.mp4` without `{TIDAL-id}` stayed Unmapped.** Token matching is only a fast path. Scan matches videos from tags, duration, title, album folder and catalog recordings, so a file downloaded elsewhere still imports.
