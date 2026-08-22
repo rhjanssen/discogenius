@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.10.2] - 2026-08-22
+
+Album unmonitor now deletes that album's files when Remove unmonitored files
+is on, including duplicate extras in the same folder. Scan matches anniversary
+editions, tokenless videos, and edition titles in search.
+
 ### Fixed
 - **Unmonitoring an album left Heartache duplicate `.mp3` extras on disk.** The
   Settings toggle "Remove unmonitored files" only ran after edition-picker
