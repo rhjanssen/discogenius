@@ -717,7 +717,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     return Array.from(groups.values());
   }
 
-  // ---- video recordings (MB-owned enrichment for Discogenius-owned videos) ----
+  // ---- video recordings (canonical MB identity for is_video=1 rows) ----
 
   async getArtistVideoRecordings(artistMbid: string): Promise<CatalogVideoRecording[]> {
     const [artistRow] = await this.query<{ id: number }>(
@@ -727,8 +727,16 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     if (!artistRow) return [];
 
     // Only recordings flagged video=true (cheap vs browsing every recording).
-    const videos = await this.query<{ id: number; gid: string; name: string; length: number | null; artist_credit: number; isrcs: string | null }>(
-      `SELECT rec.id, rec.gid, rec.name, rec.length, rec.artist_credit,
+    const videos = await this.query<{
+      id: number;
+      gid: string;
+      name: string;
+      length: number | null;
+      comment: string | null;
+      artist_credit: number;
+      isrcs: string | null;
+    }>(
+      `SELECT rec.id, rec.gid, rec.name, rec.length, rec.comment, rec.artist_credit,
           (SELECT string_agg(i.isrc::text, ',') FROM isrc i WHERE i.recording = rec.id) AS isrcs
        FROM recording rec
        JOIN artist_credit_name acn ON acn.artist_credit = rec.artist_credit AND acn.artist = $1
@@ -810,6 +818,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     return videos.map((row) => ({
       id: row.gid,
       title: row.name,
+      disambiguation: row.comment || null,
       length: row.length,
       video: true,
       isrcs: row.isrcs ? row.isrcs.split(",").filter(Boolean) : [],

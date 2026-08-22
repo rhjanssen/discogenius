@@ -267,6 +267,10 @@ function fixtureFetch(input: string) {
     payload = track;
   } else if (url.pathname === "/tracks/194886454") {
     payload = album.tracks[1];
+  } else if (/^\/tracks\/(3001|3003|3004|3005|3006|3007|26282908)$/u.test(url.pathname)) {
+    const id = Number(url.pathname.slice("/tracks/".length));
+    payload = ophMixedDrmPlaylist.tracks.find((item) => item.id === id)
+      || ophDrmOfficial.tracks.find((item) => item.id === id);
   } else if (url.pathname.startsWith("/media/")) {
     payload = { url: "https://cf-media.sndcdn.com/fixture.128.mp3" };
   } else if (url.hostname === "cf-media.sndcdn.com") {
@@ -498,7 +502,7 @@ test("SoundCloud native backend downloads progressive MP3 named by provider id",
   assert.ok(progress.length > 0);
 });
 
-test("SoundCloud album skips DRM-only tracks and completes the playable remainder", async () => {
+test("SoundCloud album omits DRM tracks and downloads the playable remainder", async () => {
   saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
   const downloadPath = path.join(tempDir, "album-partial-dl");
   fs.rmSync(downloadPath, { recursive: true, force: true });
@@ -541,8 +545,56 @@ test("SoundCloud album skips DRM-only tracks and completes the playable remainde
   });
   assert.equal(fallbackRuns, 0);
   assert.deepEqual(fs.readdirSync(downloadPath).sort(), ["194886453.mp3"]);
-  assert.ok(warnings.some((message) => /skipped 1 DRM\/SNIP/i.test(message)));
-  assert.ok(skippedStatuses.includes("194886454"));
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(skippedStatuses, []);
+});
+
+test("SoundCloud mixed album downloads 6 progressive tracks and never queues the DRM row", async () => {
+  saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
+  const downloadPath = path.join(tempDir, "album-mixed-6-of-7-dl");
+  fs.rmSync(downloadPath, { recursive: true, force: true });
+  fs.mkdirSync(downloadPath, { recursive: true });
+  let fallbackRuns = 0;
+  const warnings: string[] = [];
+  const seenIds = new Set<string>();
+  const backend = new SoundCloudBackend({
+    fetchImpl: fixtureFetch,
+    preferNative: true,
+    spawnImpl: () => {
+      fallbackRuns += 1;
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill: () => boolean;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child as any;
+    },
+  });
+
+  await backend.download({
+    provider: "soundcloud",
+    entityType: "album",
+    providerId: "220003999",
+    downloadPath,
+  }, {
+    onProgress: (event) => {
+      if (event.warningMessage) warnings.push(event.warningMessage);
+      for (const track of event.tracks || []) {
+        if (track.providerTrackId) seenIds.add(track.providerTrackId);
+      }
+    },
+  });
+  assert.equal(fallbackRuns, 0);
+  assert.deepEqual(
+    fs.readdirSync(downloadPath).sort(),
+    ["3001.mp3", "3003.mp3", "3004.mp3", "3005.mp3", "3006.mp3", "3007.mp3"],
+  );
+  assert.deepEqual(warnings, []);
+  assert.ok(!seenIds.has("26282908"));
 });
 
 test("SoundCloud removes staged native album files when a later transfer fails", async () => {

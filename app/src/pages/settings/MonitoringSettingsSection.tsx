@@ -78,18 +78,22 @@ const useStyles = makeStyles({
 export interface MonitoringSettingsSectionProps {
     monitoringConfig: MonitoringConfigContract | null;
     upgradeExistingFiles: boolean;
+    downconvertExistingFiles: boolean;
     isScanInProgress: boolean;
     onUpdateMonitoring: (updates: Partial<MonitoringConfigContract>) => void | Promise<void>;
     onUpgradeExistingFilesChange: (checked: boolean) => void | Promise<void>;
+    onDownconvertExistingFilesChange: (checked: boolean) => void | Promise<void>;
     onRunNow: () => void | Promise<void>;
 }
 
 export const MonitoringSettingsSection = ({
     monitoringConfig,
     upgradeExistingFiles,
+    downconvertExistingFiles,
     isScanInProgress,
     onUpdateMonitoring,
     onUpgradeExistingFilesChange,
+    onDownconvertExistingFilesChange,
     onRunNow,
 }: MonitoringSettingsSectionProps) => {
     const styles = useStyles();
@@ -130,6 +134,12 @@ export const MonitoringSettingsSection = ({
                     description: "Replace existing files if you raise the preferred quality.",
                     checked: upgradeExistingFiles,
                     onChange: (checked) => void onUpgradeExistingFilesChange(checked),
+                })}
+                {renderToggleRow({
+                    title: "Also downconvert existing files",
+                    description: "When you lower preferred quality, transcode files already in the stereo library down to that class. Off keeps higher-quality files as they are.",
+                    checked: downconvertExistingFiles,
+                    onChange: (checked) => void onDownconvertExistingFilesChange(checked),
                 })}
                 {renderToggleRow({
                     title: "Monitor newly found artists",

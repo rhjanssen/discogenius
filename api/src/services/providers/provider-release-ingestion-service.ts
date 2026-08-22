@@ -370,6 +370,7 @@ export class ProviderReleaseIngestionService {
         track.recording_id,
         recording.mbid AS recording_mbid,
         recording.isrcs,
+        recording.title AS recording_title,
         track.title,
         track.length_ms,
         track.position,
@@ -383,23 +384,55 @@ export class ProviderReleaseIngestionService {
       recording_id: number;
       recording_mbid: string;
       isrcs: string | null;
+      recording_title: string | null;
       title: string;
       length_ms: number | null;
       position: number;
       medium_position: number;
     }>;
-    return canonicalTracks.map((track) => ({
-      id: track.id,
-      recordingId: track.recording_id,
-      target: {
-        recordingMbid: track.recording_mbid,
-        isrcs: normalizeIsrcs(track.isrcs),
-        title: track.title,
-        trackNumber: track.position,
-        volumeNumber: track.medium_position,
-        durationSec: track.length_ms == null ? null : track.length_ms / 1000,
-      },
-    }));
+    const titlesByRecording = new Map<number, string[]>();
+    if (canonicalTracks.length > 0) {
+      const recordingIds = [...new Set(canonicalTracks.map((track) => track.recording_id))];
+      const placeholders = recordingIds.map(() => "?").join(",");
+      const siblingTitles = this.db.prepare(`
+        SELECT sibling.recording_id AS recording_id, sibling.title AS title
+        FROM Tracks sibling
+        JOIN AlbumEditions sibling_edition ON sibling_edition.id = sibling.album_edition_id
+        JOIN AlbumEditions target_edition ON target_edition.id = ?
+        WHERE sibling_edition.release_group_id = target_edition.release_group_id
+          AND sibling.recording_id IN (${placeholders})
+      `).all(editionId, ...recordingIds) as Array<{ recording_id: number; title: string | null }>;
+      for (const row of siblingTitles) {
+        const title = String(row.title || "").trim();
+        if (!title) continue;
+        const titles = titlesByRecording.get(row.recording_id) ?? [];
+        if (!titles.includes(title)) titles.push(title);
+        titlesByRecording.set(row.recording_id, titles);
+      }
+    }
+    return canonicalTracks.map((track) => {
+      const seen = new Set([String(track.title || "").trim()]);
+      const alternateTitles: string[] = [];
+      for (const name of [track.recording_title, ...(titlesByRecording.get(track.recording_id) ?? [])]) {
+        const title = String(name || "").trim();
+        if (!title || seen.has(title)) continue;
+        seen.add(title);
+        alternateTitles.push(title);
+      }
+      return {
+        id: track.id,
+        recordingId: track.recording_id,
+        target: {
+          recordingMbid: track.recording_mbid,
+          isrcs: normalizeIsrcs(track.isrcs),
+          title: track.title,
+          alternateTitles,
+          trackNumber: track.position,
+          volumeNumber: track.medium_position,
+          durationSec: track.length_ms == null ? null : track.length_ms / 1000,
+        },
+      };
+    });
   }
 
   private matchAgainstEdition(input: {

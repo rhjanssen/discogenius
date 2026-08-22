@@ -5,7 +5,7 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 
 import type { DownloadBackend, DownloadProgress, DownloadRequest } from "../../download/download-backend.js";
-import { getYtDlpBinary, parseYtDlpProgressLine, type SpawnYtDlp } from "../youtube-music/yt-dlp-backend.js";
+import { getYtDlpBinary, parseYtDlpProgressLine, ytDlpLossyAudioFormat, type SpawnYtDlp } from "../youtube-music/yt-dlp-backend.js";
 import {
   loadSoundCloudCredentials,
   SOUNDCLOUD_COOKIES_FILE,
@@ -18,6 +18,7 @@ import {
   type SoundCloudPlaylistResource,
   type SoundCloudTrackResource,
 } from "./soundcloud-api.js";
+import { classifySoundCloudTrackDownloadability } from "./soundcloud-downloadability.js";
 
 const TRACK_ID = /^\d{1,18}$/u;
 const MEDIA_EXTENSIONS = new Set([".mp3", ".m4a", ".aac", ".opus", ".ogg", ".mp4", ".webm"]);
@@ -179,7 +180,7 @@ export class SoundCloudBackend implements DownloadBackend {
       "--output",
       outputTemplate,
       request.entityType === "album" ? "--yes-playlist" : "--no-playlist",
-      "--format", "bestaudio/best",
+      "--format", ytDlpLossyAudioFormat(),
       "--extract-audio",
       // Same reasoning as the YouTube backend, and it mattered more here: Go+
       // serves AAC 256, which SoundCloud itself equates to MP3 320, and this
@@ -200,20 +201,22 @@ export class SoundCloudBackend implements DownloadBackend {
     return args;
   }
 
-  private async resolveTrackNative(trackId: string): Promise<ResolvedNativeTrack | null> {
-    const track = await soundcloudApiRequest<SoundCloudTrackResource>(
-      `/tracks/${encodeURIComponent(trackId)}`,
-      { fetchImpl: this.options.fetchImpl },
-    );
+  private async resolveFromResource(track: SoundCloudTrackResource): Promise<ResolvedNativeTrack | null> {
+    const trackId = soundcloudResourceId(track.id);
     const title = String(track.title || trackId);
-    const policy = String(track.policy || "").toUpperCase();
-    if (policy === "SNIP") {
+    const kind = classifySoundCloudTrackDownloadability(track);
+    if (kind === "snip") {
       throw new Error(
         `SoundCloud track ${trackId} (${title}) is preview-only for this account (policy=SNIP). A Go+ session may unlock full streams.`,
       );
     }
+    if (kind === "drm" || kind === "block") {
+      throw new Error(
+        `SoundCloud track ${trackId} (${title}) is DRM-protected (encrypted HLS / Go+). Discogenius cannot download DRM streams.`,
+      );
+    }
 
-    // Prefer progressive, then plain HLS. Encrypted HLS is DRM — never decrypt.
+    // Prefer progressive, then plain HLS. Encrypted HLS is DRM; never decrypt.
     const media = await resolveSoundCloudMediaUrl(track, { fetchImpl: this.options.fetchImpl });
     if (media && (media.protocol === "progressive" || media.protocol === "hls")) {
       return {
@@ -228,12 +231,21 @@ export class SoundCloudBackend implements DownloadBackend {
     const transcodings = track.media?.transcodings || [];
     const hasEncrypted = transcodings.some((item) =>
       String(item.format?.protocol || "").toLowerCase().includes("encrypted"));
+    const policy = String(track.policy || "").toUpperCase();
     if (hasEncrypted || policy === "BLOCK") {
       throw new Error(
         `SoundCloud track ${trackId} (${title}) is DRM-protected (encrypted HLS / Go+). Discogenius cannot download DRM streams.`,
       );
     }
     return null;
+  }
+
+  private async resolveTrackNative(trackId: string): Promise<ResolvedNativeTrack | null> {
+    const track = await soundcloudApiRequest<SoundCloudTrackResource>(
+      `/tracks/${encodeURIComponent(trackId)}`,
+      { fetchImpl: this.options.fetchImpl },
+    );
+    return this.resolveFromResource(track);
   }
 
   private async downloadHlsTrack(
@@ -399,36 +411,21 @@ export class SoundCloudBackend implements DownloadBackend {
         `/playlists/${encodeURIComponent(playlistId)}?representation=full`,
         { fetchImpl: this.options.fetchImpl },
       );
-      const tracks = (playlist.tracks || [])
+      const trackIds = (playlist.tracks || [])
         .map((track) => soundcloudResourceId(track.id))
         .filter((id) => TRACK_ID.test(id));
-      if (tracks.length === 0) return false;
+      if (trackIds.length === 0) return false;
 
-      // Resolve playable tracks; skip DRM/SNIP so the rest of the album can
-      // still import. Never fall through to yt-dlp for Widevine/encrypted HLS.
+      // Omit DRM/SNIP/BLOCK; they are not stored as offers and must not skip at download.
       const resolved: ResolvedNativeTrack[] = [];
-      const skipped: Array<{ trackId: string; title: string; reason: string }> = [];
       const trackStatuses: NonNullable<DownloadProgress["tracks"]> = [];
-      for (const trackId of tracks) {
+      let omittedUndownloadable = 0;
+      for (const trackId of trackIds) {
         if (options.signal?.aborted) throw abortError();
         try {
           const track = await this.resolveTrackNative(trackId);
           if (!track) {
-            const reason = "no progressive/HLS stream";
-            skipped.push({ trackId, title: trackId, reason });
-            trackStatuses.push({
-              title: trackId,
-              status: "skipped",
-              providerTrackId: trackId,
-            });
-            options.onProgress({
-              state: "downloading",
-              currentProviderTrackId: trackId,
-              currentTrack: trackId,
-              trackStatus: "skipped",
-              statusMessage: `Skipped SoundCloud track ${trackId}: ${reason}`,
-              tracks: [...trackStatuses],
-            });
+            omittedUndownloadable += 1;
             continue;
           }
           resolved.push(track);
@@ -440,42 +437,22 @@ export class SoundCloudBackend implements DownloadBackend {
         } catch (error) {
           if (error instanceof Error && error.name === "AbortError") throw error;
           if (this.isTerminalAccountRestriction(error)) {
-            const reason = error instanceof Error ? error.message : String(error);
-            const titleMatch = reason.match(/\(([^)]+)\) is (?:preview-only|DRM-protected)/u);
-            const title = titleMatch?.[1] || trackId;
-            skipped.push({ trackId, title, reason });
-            trackStatuses.push({
-              title,
-              status: "skipped",
-              providerTrackId: trackId,
-            });
-            options.onProgress({
-              state: "downloading",
-              currentProviderTrackId: trackId,
-              currentTrack: title,
-              trackStatus: "skipped",
-              statusMessage: `Skipped: ${reason}`,
-              tracks: [...trackStatuses],
-            });
+            omittedUndownloadable += 1;
             continue;
           }
           throw error;
         }
       }
       if (resolved.length === 0) {
-        if (skipped.length > 0) {
+        if (omittedUndownloadable > 0) {
           throw new Error(
-            `SoundCloud album ${playlistId}: all ${skipped.length} track(s) are DRM/SNIP-only or unplayable for this account.`,
+            `SoundCloud album ${playlistId}: all ${omittedUndownloadable} track(s) are DRM/SNIP-only or unplayable for this account.`,
           );
         }
         return false;
       }
-      const warningMessage = skipped.length > 0
-        ? `Downloaded ${resolved.length}/${tracks.length} SoundCloud tracks; skipped ${skipped.length} DRM/SNIP/unplayable track(s).`
-        : undefined;
       const downloaded = await this.downloadResolvedSetNative(resolved, request.downloadPath, {
         ...options,
-        warningMessage,
         onProgress: (progress) => {
           if (progress.currentProviderTrackId && progress.trackStatus === "completed") {
             const row = trackStatuses.find((item) => item.providerTrackId === progress.currentProviderTrackId);
@@ -484,7 +461,6 @@ export class SoundCloudBackend implements DownloadBackend {
           options.onProgress({
             ...progress,
             tracks: [...trackStatuses],
-            warningMessage: progress.warningMessage || warningMessage,
           });
         },
       });

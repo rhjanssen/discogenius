@@ -256,3 +256,47 @@ test("video matches reject missing or non-video canonical targets", () => {
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("video matches accept a YouTube-only catalog recording", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-provider-video-yt-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createCurrentDomainSchema(db);
+    db.prepare(`
+      INSERT INTO Recordings (id, title, is_video, youtube_video_id, metadata_status)
+      VALUES (3, 'YouTube-only video', 1, 'a1xFsoRYrds', 'youtube')
+    `).run();
+    const itemId = new ProviderCatalogRepository(db).upsertItem({
+      provider: "youtube-music",
+      entityType: "video",
+      providerId: "a1xFsoRYrds",
+      title: "YouTube-only video",
+    });
+    const repository = new ProviderMatchRepository(db);
+    const matchId = repository.upsertVideoMatch({
+      providerVideoItemId: itemId,
+      recordingId: 3,
+      decision: {
+        matchState: "accepted",
+        decisionSource: "automatic",
+        confidence: 0.99,
+        method: "youtube_video_id",
+        matcherVersion: 1,
+      },
+    });
+    assert.ok(matchId > 0);
+    const row = db.prepare(`
+      SELECT recording_id AS recordingId, match_state AS matchState, method
+      FROM ProviderVideoMatches WHERE id = ?
+    `).get(matchId) as { recordingId: number; matchState: string; method: string };
+    assert.deepEqual(row, {
+      recordingId: 3,
+      matchState: "accepted",
+      method: "youtube_video_id",
+    });
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

@@ -114,3 +114,49 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
     await provider.dispose();
   }
 });
+
+test("local MusicBrainz video recordings include the recording comment", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({
+    connectionString: "postgresql://unused:unused@127.0.0.1:1/unused",
+  });
+
+  (provider as any).query = async (sql: string) => {
+    if (sql.includes("FROM artist WHERE gid")) {
+      return [{ id: 9 }];
+    }
+    if (sql.includes("string_agg") && sql.includes("rec.video = true")) {
+      assert.match(sql, /rec\.comment/, "video browse must select recording.comment");
+      return [{
+        id: 1,
+        gid: "video-gid",
+        name: "Overjoyed",
+        length: 195000,
+        comment: "Watch Listen Tell session",
+        artist_credit: 4,
+        isrcs: null,
+      }];
+    }
+    if (sql.includes("ce3de655")) return [];
+    if (sql.includes("free streaming")) return [];
+    if (sql.includes("artist_credit = ANY")) {
+      return [{
+        artist_credit: 4,
+        artist_gid: "artist-gid",
+        name: "Bastille",
+        join_phrase: null,
+      }];
+    }
+    throw new Error(`Unexpected SQL in fixture: ${sql}`);
+  };
+
+  try {
+    const recordings = await provider.getArtistVideoRecordings(
+      "7808accb-6395-4b25-858c-678bbb73896b",
+    );
+    assert.equal(recordings.length, 1);
+    assert.equal(recordings[0].title, "Overjoyed");
+    assert.equal(recordings[0].disambiguation, "Watch Listen Tell session");
+  } finally {
+    await provider.dispose();
+  }
+});

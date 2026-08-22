@@ -44,6 +44,7 @@ const QUALITY_UPDATE_KEYS = [
   "embed_cover",
   "embed_lyrics",
   "upgrade_existing_files",
+  "downconvert_existing_files",
   "convert_video_mp4",
   "extract_flac",
 ] as const satisfies readonly (keyof QualityConfigContract)[];

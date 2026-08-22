@@ -110,7 +110,8 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     JSON.stringify({ codec: "preserve", lossless: true }),
     "preserve",
   ));
-  // High — preferred max = lossless (hi-res ≡ lossless for ranking; lossy worse).
+  // High — preferred max = 16-bit lossless. 24-bit that arrives anyway (Apple
+  // ALAC at 24/48) is kept and badges MAX unless Settings also downconverts.
   upsert.run(...row(
     "High Quality",
     1,
@@ -120,11 +121,10 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     stereoPreference,
     0,
     "best_allowed",
-    JSON.stringify({ codec: "flac", lossless: true, bitDepth: 16, sampleRate: 44100 }),
-    "downconvert_hires",
+    JSON.stringify({ codec: "preserve", lossless: true }),
+    "preserve",
   ));
-  // Normal — preferred max = lossy band: hi-res ≡ lossless ≡ lossy for ranking;
-  // coverage / single-source / provider decide. Output still targets ~320k when converting.
+  // Normal — leftover lossless converts to Opus 160. Native AAC/Opus/Vorbis is kept.
   upsert.run(...row(
     "Normal Quality",
     0,
@@ -134,10 +134,10 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     stereoPreference,
     0,
     "best_allowed",
-    JSON.stringify({ codec: "mp3", lossless: false, bitrate: 320000 }),
+    JSON.stringify({ codec: "opus", lossless: false, bitrate: 160000 }),
     "transcode_allowed",
   ));
-  // Low — same equal band as Normal for ranking; smaller lossy output target.
+  // Low — leftover lossless converts to Opus 96.
   upsert.run(...row(
     "Low Quality",
     0,
@@ -147,7 +147,7 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     stereoPreference,
     0,
     "best_allowed",
-    JSON.stringify({ codec: "mp3", lossless: false, bitrate: 128000 }),
+    JSON.stringify({ codec: "opus", lossless: false, bitrate: 96000 }),
     "transcode_allowed",
   ));
   upsert.run(...row(

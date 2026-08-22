@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import type { AcquisitionQualityProfile, NormalizedAudioQuality } from "./acquisition-plan-optimizer.js";
 
 export interface DesiredOutputFormat {
-  codec: "flac" | "mp3" | "aac" | "preserve";
+  codec: "flac" | "alac" | "mp3" | "aac" | "opus" | "preserve";
   lossless: boolean;
   bitDepth?: number | null;
   sampleRate?: number | null;
@@ -21,10 +21,16 @@ export interface QualityProfilePolicy extends AcquisitionQualityProfile {
 export interface SourceAudioFacts {
   quality: NormalizedAudioQuality;
   codec?: string | null;
+  extension?: string | null;
   bitDepth?: number | null;
   sampleRate?: number | null;
   bitrate?: number | null;
   spatialFormat?: string | null;
+}
+
+export interface ImportQualityOptions {
+  /** When true, 24-bit lossless on a lossless profile is transcoded to 16/44.1. */
+  conformToTarget?: boolean;
 }
 
 export interface ImportQualityDecision {
@@ -82,12 +88,12 @@ function parseOutputFormat(value: string | null): DesiredOutputFormat {
   }
   const object = parsed as Record<string, unknown>;
   const codec = String(object.codec || "preserve") as DesiredOutputFormat["codec"];
-  if (!["flac", "mp3", "aac", "preserve"].includes(codec)) {
+  if (!["flac", "alac", "mp3", "aac", "opus", "preserve"].includes(codec)) {
     throw new Error(`Unsupported output codec '${codec}'`);
   }
   return {
     codec,
-    lossless: object.lossless === true || codec === "flac",
+    lossless: object.lossless === true || codec === "flac" || codec === "alac",
     bitDepth: object.bitDepth == null ? null : Number(object.bitDepth),
     sampleRate: object.sampleRate == null ? null : Number(object.sampleRate),
     bitrate: object.bitrate == null ? null : Number(object.bitrate),
@@ -143,6 +149,85 @@ function importedQualityFor(output: DesiredOutputFormat, source: SourceAudioFact
     : "lossless";
 }
 
+export const NORMAL_DOWNCONVERT_BITRATE = 160_000;
+export const LOW_DOWNCONVERT_BITRATE = 96_000;
+
+/** Same-codec CD-quality target: ALAC stays ALAC, everything else becomes FLAC. */
+export function losslessDownconvertCodec(source: {
+  codec?: string | null;
+  extension?: string | null;
+}): "flac" | "alac" {
+  const codec = String(source.codec || "").toLowerCase();
+  const extension = String(source.extension || "").replace(/^\./, "").toLowerCase();
+  if (codec.includes("alac") || codec.includes("apple lossless") || extension === "alac") {
+    return "alac";
+  }
+  return "flac";
+}
+
+export function buildDownconvertDecision(input: {
+  audioQuality: "low" | "normal" | "high" | "max";
+  codec?: string | null;
+  extension?: string | null;
+}): ImportQualityDecision {
+  if (input.audioQuality === "high") {
+    const codec = losslessDownconvertCodec(input);
+    return {
+      accepted: true,
+      transcode: true,
+      reason: `Downconvert to 16-bit/44.1 ${codec.toUpperCase()}`,
+      sourceQuality: "hires-lossless",
+      importedQuality: "lossless",
+      output: {
+        codec,
+        lossless: true,
+        bitDepth: 16,
+        sampleRate: 44_100,
+        bitrate: null,
+        spatial: false,
+      },
+    };
+  }
+  if (input.audioQuality === "normal") {
+    return {
+      accepted: true,
+      transcode: true,
+      reason: "Downconvert to Opus 160 kbps",
+      sourceQuality: "lossless",
+      importedQuality: "lossy",
+      output: {
+        codec: "opus",
+        lossless: false,
+        bitrate: NORMAL_DOWNCONVERT_BITRATE,
+        spatial: false,
+      },
+    };
+  }
+  if (input.audioQuality === "low") {
+    return {
+      accepted: true,
+      transcode: true,
+      reason: "Downconvert to Opus 96 kbps",
+      sourceQuality: "lossless",
+      importedQuality: "lossy",
+      output: {
+        codec: "opus",
+        lossless: false,
+        bitrate: LOW_DOWNCONVERT_BITRATE,
+        spatial: false,
+      },
+    };
+  }
+  return {
+    accepted: true,
+    transcode: false,
+    reason: "MAX has no downconvert target",
+    sourceQuality: "hires-lossless",
+    importedQuality: "hires-lossless",
+    output: null,
+  };
+}
+
 /**
  * Decide import conversion from normalized facts only.
  *
@@ -153,6 +238,7 @@ function importedQualityFor(output: DesiredOutputFormat, source: SourceAudioFact
 export function decideImportedQuality(
   profile: QualityProfilePolicy,
   source: SourceAudioFacts,
+  options: ImportQualityOptions = {},
 ): ImportQualityDecision {
   if (!profile.allowedQualities.has(source.quality)) {
     return {
@@ -165,13 +251,58 @@ export function decideImportedQuality(
     };
   }
   const output = profile.outputFormat;
-  // Lossy can only land as lossy. Prefer keep-as-is over rejecting the only
-  // available offer when Max/High fell back to SoundCloud / YouTube Music.
-  if (source.quality === "lossy" && output.lossless) {
+  // 24-bit lossless is already MAX. Apple HIGH can deliver 24/48 ALAC; keep it
+  // on lossless profiles unless Settings asked to conform the library down.
+  // Lossy profiles (Normal/Low) still convert leftover lossless, including 24-bit.
+  if (
+    output.lossless
+    && (source.quality === "lossless" || source.quality === "hires-lossless")
+    && source.bitDepth != null
+    && source.bitDepth >= 24
+  ) {
+    if (options.conformToTarget) {
+      const codec = losslessDownconvertCodec(source);
+      return {
+        accepted: true,
+        transcode: true,
+        reason: "conforming 24-bit lossless to 16-bit/44.1",
+        sourceQuality: source.quality,
+        importedQuality: "lossless",
+        output: {
+          codec,
+          lossless: true,
+          bitDepth: 16,
+          sampleRate: 44_100,
+          bitrate: null,
+          spatial: false,
+        },
+      };
+    }
     return {
       accepted: true,
       transcode: false,
-      reason: "lossy source preserved; cannot be upscaled to a lossless label",
+      reason: "native 24-bit lossless kept; not downconverted to 16-bit",
+      sourceQuality: source.quality,
+      importedQuality: "hires-lossless",
+      output: {
+        codec: "preserve",
+        lossless: true,
+        bitDepth: source.bitDepth,
+        sampleRate: source.sampleRate ?? null,
+        bitrate: null,
+        spatial: false,
+      },
+    };
+  }
+  // Lossy lands as lossy. Keep the acquired AAC/Opus/Vorbis/MP3 file instead of
+  // a second lossy generation, and never invent a lossless label for it.
+  if (source.quality === "lossy") {
+    return {
+      accepted: true,
+      transcode: false,
+      reason: output.lossless
+        ? "lossy source preserved; cannot be upscaled to a lossless label"
+        : "native lossy delivery kept; no second lossy generation",
       sourceQuality: source.quality,
       importedQuality: "lossy",
       output: {
@@ -208,7 +339,6 @@ export function decideImportedQuality(
     transcode: !preserve && (
       output.codec !== "preserve"
       || downconvertsHires
-      || (!output.lossless && source.quality !== "lossy")
     ),
     reason: preserve ? "source is preserved" : "source is converted to the profile output",
     sourceQuality: source.quality,

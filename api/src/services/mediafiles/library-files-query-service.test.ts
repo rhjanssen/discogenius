@@ -114,9 +114,9 @@ test("library file listing resolves downloaded videos by canonical recording row
     RETURNING id
   `).get("artist-mbid", "Canonical Artist") as { id: number };
   db.prepare(`
-    INSERT INTO Recordings (id, artist_metadata_id, artist_mbid, title, is_video)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(501, artistMetadata.id, "artist-mbid", "Canonical Video", 1);
+    INSERT INTO Recordings (id, artist_metadata_id, artist_mbid, title, is_video, metadata_status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(501, artistMetadata.id, "artist-mbid", "Canonical Video", 1, "provider_catalog");
   db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, recording_id, provider, provider_entity_type, provider_id,

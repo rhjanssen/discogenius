@@ -134,7 +134,7 @@ router.post("/quality", async (req, res) => {
 
     // Trigger upgrade check asynchronously if enabled
     const finalConfig = getConfigSection("quality");
-    if (finalConfig.upgrade_existing_files) {
+    if (finalConfig.upgrade_existing_files || finalConfig.downconvert_existing_files) {
       UpgraderService.checkUpgrades().catch(err => {
         console.error("❌ [UPGRADER] Error checking upgrades:", err);
       });

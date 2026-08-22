@@ -11,4 +11,4 @@
  * There is no migration ladder: Discogenius is pre-1.0 and a version mismatch
  * is a reset, so this is a single number rather than a sequence.
  */
-export const BASE_SCHEMA_VERSION = 43;
+export const BASE_SCHEMA_VERSION = 44;

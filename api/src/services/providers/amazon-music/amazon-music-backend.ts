@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseFile } from "music-metadata";
 import type { DownloadBackend, DownloadProgress, DownloadRequest } from "../../download/download-backend.js";
 import { assertPathInsideRoot, assertSafeDownloadResourceId, safeProviderMediaFilename } from "../../download/download-path-safety.js";
+import { configuredAudioQuality } from "../../config/config.js";
 import { amazonMusicApiRequest, unwrapAmazonData } from "./amazon-music-api.js";
 import { getAmazonMusicConfigDir, loadAmazonMusicCredentials } from "./amazon-music-auth.js";
 
@@ -50,12 +51,37 @@ export function getAmazonMusicBridgePath(): string {
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
 }
 
-export function amazonQualityForRequest(request: DownloadRequest): string {
-  if (request.slot === "spatial") return "Atmos_EC-3";
-  const quality = String(request.quality || "").toLowerCase();
-  if (/hi.?res|uhd|max|master/u.test(quality)) return "Max";
-  if (/lossless|flac|\bhd\b/u.test(quality)) return "High";
+export type AmazonStereoQuality = "Normal" | "High" | "Max";
+
+const AMAZON_STEREO_RANK: Record<AmazonStereoQuality, number> = {
+  Normal: 0,
+  High: 1,
+  Max: 2,
+};
+
+function amazonQualityFromOffer(quality: string | null | undefined): AmazonStereoQuality {
+  const normalized = String(quality || "").toLowerCase();
+  if (/hi.?res|uhd|max|master/u.test(normalized)) return "Max";
+  if (/lossless|flac|\bhd\b|\bhigh\b/u.test(normalized)) return "High";
   return "Normal";
+}
+
+function amazonQualityFromSettings(configured: "low" | "normal" | "high" | "max"): AmazonStereoQuality {
+  if (configured === "low" || configured === "normal") return "Normal";
+  if (configured === "high") return "High";
+  return "Max";
+}
+
+export function amazonQualityForRequest(
+  request: DownloadRequest,
+  configuredQuality: "low" | "normal" | "high" | "max" = configuredAudioQuality(),
+): string {
+  if (request.slot === "spatial") return "Atmos_EC-3";
+  const fromOffer = amazonQualityFromOffer(request.quality);
+  const fromSettings = amazonQualityFromSettings(configuredQuality);
+  return AMAZON_STEREO_RANK[fromOffer] > AMAZON_STEREO_RANK[fromSettings]
+    ? fromSettings
+    : fromOffer;
 }
 
 export function buildAmazonMusicBridgeArgs(request: DownloadRequest): string[] {

@@ -285,6 +285,9 @@ export function createCatalogSchema(db: Database.Database): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       foreign_recording_id TEXT UNIQUE,
       mbid TEXT UNIQUE,
+      -- YouTube watch id (11-char). Catalog identity for videos, not a
+      -- ProviderItems.provider_id. Audio recordings leave this NULL.
+      youtube_video_id TEXT,
       artist_metadata_id INTEGER,
       artist_mbid TEXT,
       title TEXT NOT NULL,
@@ -317,7 +320,24 @@ export function createCatalogSchema(db: Database.Database): void {
       isrcs TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
-      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE SET NULL
+      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE SET NULL,
+      -- Audio stays MusicBrainz-canonical. Video identity is mbid, a YouTube
+      -- watch id, or a provider-catalog mint (Apple/TIDAL until a later MB/YT hit).
+      CHECK (
+        (
+          is_video = 0
+          AND mbid IS NOT NULL
+          AND youtube_video_id IS NULL
+        )
+        OR (
+          is_video = 1
+          AND (
+            mbid IS NOT NULL
+            OR youtube_video_id IS NOT NULL
+            OR metadata_status = 'provider_catalog'
+          )
+        )
+      )
     );
 
     CREATE TABLE Tracks (
@@ -545,7 +565,7 @@ export function createCatalogSchema(db: Database.Database): void {
           THEN RAISE(ABORT, 'provider video match source must be a video item')
         WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
           SELECT 1 FROM Recordings
-          WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
+          WHERE id = NEW.recording_id AND is_video = 1
         )
           THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
       END;
@@ -559,7 +579,7 @@ export function createCatalogSchema(db: Database.Database): void {
           THEN RAISE(ABORT, 'provider video match source must be a video item')
         WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
           SELECT 1 FROM Recordings
-          WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
+          WHERE id = NEW.recording_id AND is_video = 1
         )
           THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
       END;
@@ -601,6 +621,8 @@ export function createCatalogSchema(db: Database.Database): void {
       );
     CREATE INDEX idx_provider_video_matches_recording
       ON ProviderVideoMatches(recording_id, match_state);
+    CREATE INDEX idx_provider_video_matches_item
+      ON ProviderVideoMatches(provider_video_item_id, match_state);
 
     CREATE TRIGGER provider_release_members_validate_insert
     BEFORE INSERT ON ProviderEditionMembers
@@ -718,6 +740,7 @@ export function createCatalogSchema(db: Database.Database): void {
   // app-wide "request timed out" errors). Indexed, that path drops to ~1s.
   db.exec("CREATE INDEX idx_recordings_artist_mbid ON Recordings(artist_mbid, is_video)");
   db.exec("CREATE INDEX idx_recordings_artist_metadata ON Recordings(artist_metadata_id, is_video)");
+  db.exec("CREATE UNIQUE INDEX idx_recordings_youtube_video_id ON Recordings(youtube_video_id) WHERE is_video = 1 AND youtube_video_id IS NOT NULL");
   db.exec("CREATE INDEX idx_recordings_video ON Recordings(is_video) WHERE is_video = 1");
   db.exec("CREATE INDEX idx_recordings_video_release_date ON Recordings((release_date IS NULL), release_date DESC, id) WHERE is_video = 1");
   db.exec("CREATE INDEX idx_recordings_video_popularity ON Recordings(COALESCE(popularity, 0) DESC, id) WHERE is_video = 1");

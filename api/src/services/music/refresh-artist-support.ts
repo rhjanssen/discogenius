@@ -10,11 +10,10 @@ export { normalizeIsrc };
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * Providers whose music-video catalog is treated as a CORE metadata source —
- * always consulted for video discovery, exactly like MusicBrainz/Servarr, even
- * when the user has not connected that provider's download plugin. YouTube is
- * the canonical public music-video catalog; downloading or previewing one of its
- * videos still requires the YouTube Music plugin to be configured.
+ * YouTube Music is a core video *catalog* source (same role as MusicBrainz),
+ * not a download-plugin feature. MatchArtistProviders still lists it when
+ * cookies are missing; RefreshArtist also ingests via syncYouTubeVideoCatalogForArtist.
+ * Downloading a YouTube video still needs browser headers/cookies.
  */
 export function isCoreVideoCatalogProvider(providerId: string): boolean {
     return String(providerId || "").trim().toLowerCase() === "youtube-music";

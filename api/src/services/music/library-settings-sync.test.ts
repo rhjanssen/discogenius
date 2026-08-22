@@ -191,3 +191,37 @@ test("all stereo profiles share one ladder; only preferred max (cutoff) differs"
     assert.equal(byName["Low Quality"].cutoff, "lossy");
   });
 });
+
+test("High Quality preserves native lossless instead of downconverting 24-bit to 16/44.1", () => {
+  withDb((db) => {
+    ensureDefaultQualityProfiles(db);
+    const row = db.prepare(`
+      SELECT output_format, transcode_policy, cutoff
+      FROM quality_profiles
+      WHERE name = 'High Quality'
+    `).get() as { output_format: string; transcode_policy: string; cutoff: string };
+    const output = JSON.parse(row.output_format);
+    assert.equal(row.cutoff, "lossless");
+    assert.equal(row.transcode_policy, "preserve");
+    assert.equal(output.codec, "preserve");
+    assert.equal(output.lossless, true);
+    assert.equal(output.bitDepth, undefined);
+    assert.equal(output.sampleRate, undefined);
+  });
+});
+
+test("Normal and Low convert leftover lossless to Opus, not MP3", () => {
+  withDb((db) => {
+    ensureDefaultQualityProfiles(db);
+    const rows = db.prepare(`
+      SELECT name, output_format
+      FROM quality_profiles
+      WHERE name IN ('Normal Quality', 'Low Quality')
+    `).all() as Array<{ name: string; output_format: string }>;
+    const byName = Object.fromEntries(rows.map((row) => [row.name, JSON.parse(row.output_format)]));
+    assert.equal(byName["Normal Quality"].codec, "opus");
+    assert.equal(byName["Normal Quality"].bitrate, 160000);
+    assert.equal(byName["Low Quality"].codec, "opus");
+    assert.equal(byName["Low Quality"].bitrate, 96000);
+  });
+});

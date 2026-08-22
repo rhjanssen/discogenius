@@ -320,6 +320,7 @@ async function prepareWorkspaceForLibraryProfile(
     `).get(libraryId) as { quality_profile_id: number } | undefined;
     if (!library) throw new Error(`Import library ${libraryId} is unavailable`);
     const profile = new QualityProfileRepository(db).get(library.quality_profile_id);
+    const conformToTarget = Config.getQualityConfig().downconvert_existing_files === true;
     const outcomes = new Map<string, PreparedImportQuality>();
 
     const files = listWorkspaceAudioFiles(downloadPath);
@@ -338,11 +339,12 @@ async function prepareWorkspaceForLibraryProfile(
             decision: decideImportedQuality(profile, {
                 quality: normalizedQuality,
                 codec: metrics.codec,
+                extension: path.extname(filePath),
                 bitDepth: metrics.bitDepth,
                 sampleRate: metrics.sampleRate,
                 bitrate: metrics.bitrate,
                 spatialFormat: normalizedQuality === "spatial" ? legacyQuality : null,
-            }),
+            }, { conformToTarget }),
         });
     }
 

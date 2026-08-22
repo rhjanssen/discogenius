@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
+import { BASE_SCHEMA_VERSION } from "../../database/schema/version.js";
 import {
   assertSafeOutputRoot,
   readJson,
@@ -58,7 +59,7 @@ test("synthetic release-hardening harness generates and drains an isolated deter
     assert.equal(fs.existsSync(manifestPath), true);
     assert.equal(fs.existsSync(expectedPath), true);
     const manifest = readJson<SyntheticRunManifest>(manifestPath);
-    assert.equal(manifest.schemaVersion, 43);
+    assert.equal(manifest.schemaVersion, BASE_SCHEMA_VERSION);
     assert.equal(manifest.configuration.primaryArtists, 8);
     assert.equal(manifest.configuration.creditedArtists, 16);
     assert.equal(manifest.configuration.historyRows, 50);
@@ -77,7 +78,7 @@ test("synthetic release-hardening harness generates and drains an isolated deter
       fileMustExist: true,
     });
     try {
-      assert.equal(fixtureDb.pragma("user_version", { simple: true }), 43);
+      assert.equal(fixtureDb.pragma("user_version", { simple: true }), BASE_SCHEMA_VERSION);
       assert.equal(fixtureDb.pragma("quick_check", { simple: true }), "ok");
       assert.deepEqual(fixtureDb.pragma("foreign_key_check"), []);
       const commandCount = fixtureDb.prepare("SELECT COUNT(*) AS count FROM commands").get() as {

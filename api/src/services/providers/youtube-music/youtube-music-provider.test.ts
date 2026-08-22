@@ -33,6 +33,7 @@ const {
   YtDlpBackend,
   buildYouTubeMusicSourceUrl,
   parseYtDlpProgressLine,
+  ytDlpLossyAudioFormat,
 } = await import("./yt-dlp-backend.js");
 const {
   PythonYtMusicBridge,
@@ -634,6 +635,7 @@ test("yt-dlp arguments use provider-ID filenames and select audio/video formats 
   // does not decide which, so forcing Opus decoded AAC and re-encoded it — a
   // second lossy generation that could only lose signal.
   assert.equal(audioArgs[audioArgs.indexOf("--audio-format") + 1], "best");
+  assert.equal(audioArgs[audioArgs.indexOf("--format") + 1], "bestaudio/best");
   assert.ok(!audioArgs.includes("--audio-quality"), "no re-encode quality to set");
   assert.ok(audioArgs.includes("--no-playlist"));
   assert.equal(audioArgs.at(-1), `https://music.youtube.com/watch?v=${TRACK_ID}`);
@@ -654,6 +656,13 @@ test("yt-dlp arguments use provider-ID filenames and select audio/video formats 
     () => buildYouTubeMusicSourceUrl("video", `https://example.com/watch?v=${VIDEO_ID}`),
     /Only youtube\.com/u,
   );
+});
+
+test("yt-dlp Low format selector caps bitrate instead of taking Premium bestaudio", () => {
+  assert.equal(ytDlpLossyAudioFormat("low"), "bestaudio[abr<=160]/bestaudio[tbr<=160]/bestaudio");
+  assert.equal(ytDlpLossyAudioFormat("normal"), "bestaudio/best");
+  assert.equal(ytDlpLossyAudioFormat("high"), "bestaudio/best");
+  assert.equal(ytDlpLossyAudioFormat("max"), "bestaudio/best");
 });
 
 test("yt-dlp progress parser keeps provider identity and playlist-wide progress", () => {

@@ -138,7 +138,7 @@ export class ProviderMatchRepository {
       const canonicalTarget = this.db.prepare(`
         SELECT 1 AS valid
         FROM Recordings
-        WHERE id = ? AND is_video = 1 AND mbid IS NOT NULL
+        WHERE id = ? AND is_video = 1
         LIMIT 1
       `).get(input.recordingId) as { valid?: number } | undefined;
       if (!canonicalTarget?.valid) {

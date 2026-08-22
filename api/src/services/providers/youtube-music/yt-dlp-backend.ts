@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { DownloadBackend, DownloadProgress, DownloadRequest } from "../../download/download-backend.js";
-import { Config } from "../../config/config.js";
+import { Config, configuredAudioQuality } from "../../config/config.js";
 import { configuredVideoMaxHeight } from "../provider-quality.js";
 import { YOUTUBE_MUSIC_COOKIES_FILE } from "./youtube-music-auth.js";
 
@@ -46,6 +46,21 @@ const defaultSpawn: SpawnYtDlp = (binary, args, options) => (
 
 export function getYtDlpBinary(): string {
   return process.env.YT_DLP_BIN?.trim() || "yt-dlp";
+}
+
+/**
+ * yt-dlp audio selector. YouTube (and SoundCloud via the same binary) only
+ * serve lossy; Settings Low caps ~160 kbps so a Premium cookie session does
+ * not silently pull the 256 kbps rung. Normal/High/Max keep bestaudio —
+ * cookies decide ~128 vs ~256, and there is no lossless offer to request.
+ */
+export function ytDlpLossyAudioFormat(
+  configuredQuality: "low" | "normal" | "high" | "max" = configuredAudioQuality(),
+): string {
+  if (configuredQuality === "low") {
+    return "bestaudio[abr<=160]/bestaudio[tbr<=160]/bestaudio";
+  }
+  return "bestaudio/best";
 }
 
 function stripAnsi(value: string): string {
@@ -249,7 +264,7 @@ export class YtDlpBackend implements DownloadBackend {
     } else {
       args.push(
         request.entityType === "album" ? "--yes-playlist" : "--no-playlist",
-        "--format", "bestaudio/best",
+        "--format", ytDlpLossyAudioFormat(),
         "--extract-audio",
         // `best` means "do not re-encode". YouTube serves AAC *or* Opus and the
         // quality tier does not decide which; forcing Opus meant decoding an

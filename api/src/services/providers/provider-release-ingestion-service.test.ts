@@ -1015,3 +1015,75 @@ test("a composite target is reachable through Recordings, not through edition ma
     );
   });
 });
+
+// Bad Blood X disc 2: Apple has both bonus tracks (ISRCs and all) but the
+// canonical edition titles them differently than Apple, and the recording
+// ISRCs are stripped in online-catalog mode. Matching still has to succeed
+// from the recording title / a sibling edition's title.
+test("Bad Blood X Apple titles cover the canonical edition's renamed disc-2 tracks", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title)
+        VALUES (1, 'bf37b1a0-d94f-4230-b2c7-09b17f9f8a68', 1, 'Bad Blood');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, disambiguation) VALUES
+        (1, '2ae85560-0c6b-48f2-8d37-4e717e97e73c', 1, 'Bad Blood X', '10th Anniversary Edition'),
+        (2, '20d01ccb-f796-4916-861c-49535a6d7b46', 1, 'Bad Blood X', '10th anniversary edition');
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
+        (1, '08e28858-425c-4136-b8a8-2b203885105c', 'Pompeii (live at Studio Brussel) (acoustic)', 199800),
+        (2, '4819e198-b732-4e16-adf9-96af5ed9d3d7', 'Laura Palmer (Dan’s Bedroom demo)', 179880);
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
+        (1, 't-pompeii-x', 1, 1, 2, 6, 'Pompeii (live from Studio Brussel)', 199800),
+        (2, 't-laura-x', 1, 2, 2, 8, 'Laura Palmer (Dan’s Bedroom demo)', 179880),
+        (3, 't-pompeii-sib', 2, 1, 2, 6, 'Pompeii (live at Studio Brussel / acoustic)', 199800),
+        (4, 't-laura-sib', 2, 2, 2, 8, 'Laura Palmer (Racing Heart demo)', 179880);
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 3,
+      release: {
+        provider: "apple-music",
+        entityType: "release",
+        providerId: "1710633308",
+        title: "Bad Blood X (10th Anniversary Edition)",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "1710633656",
+          title: "Pompeii (Live At Studio Brussel / Acoustic)",
+          mediumPosition: 2,
+          position: 7,
+          durationMs: 200000,
+          isrc: "GBUM71405601",
+        }),
+        trackMember({
+          providerId: "1710633661",
+          title: "Laura Palmer (Racing Heart Demo)",
+          mediumPosition: 2,
+          position: 9,
+          durationMs: 180000,
+          isrc: "GBUM72301351",
+        }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 2);
+    const accepted = db.prepare(`
+      SELECT track.title AS canonical_title, item.title AS provider_title
+      FROM ProviderTrackMatches match
+      JOIN Tracks track ON track.id = match.track_id
+      JOIN ProviderItems item ON item.id = match.provider_track_item_id
+      WHERE match.match_state = 'accepted'
+      ORDER BY track.position
+    `).all() as Array<{ canonical_title: string; provider_title: string }>;
+    assert.deepEqual(
+      accepted.map((row) => [row.canonical_title, row.provider_title]),
+      [
+        ["Pompeii (live from Studio Brussel)", "Pompeii (Live At Studio Brussel / Acoustic)"],
+        ["Laura Palmer (Dan’s Bedroom demo)", "Laura Palmer (Racing Heart Demo)"],
+      ],
+    );
+  });
+});

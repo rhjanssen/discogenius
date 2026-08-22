@@ -7,9 +7,10 @@ import type Database from "better-sqlite3";
  * model can be contract-tested in isolation before `database.ts` switches the
  * production baseline to it.
  *
- * Not pinned to a version: it was written at 41 and has since gained schema-43
- * fields such as the Recording comment, so a `V41` name now names something
- * that is not true. The version lives in `schema/version.ts` alone.
+ * Not pinned to a version: it was written at 41 and has since gained fields
+ * such as the Recording comment and video youtube_video_id, so a `V41` name
+ * now names something that is not true. The version lives in `schema/version.ts`
+ * alone.
  */
 export function createCurrentDomainSchema(db: Database.Database): void {
   db.exec(`
@@ -104,8 +105,9 @@ export function createCurrentDomainSchema(db: Database.Database): void {
 
     CREATE TABLE Recordings (
       id INTEGER PRIMARY KEY,
-      mbid TEXT NOT NULL UNIQUE,
+      mbid TEXT UNIQUE,
       foreign_recording_id TEXT UNIQUE,
+      youtube_video_id TEXT,
       title TEXT NOT NULL,
       length_ms INTEGER,
       -- MusicBrainz's recording.comment ("live", "dolby atmos mix"); see the
@@ -125,7 +127,22 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       monitored_at TEXT,
       locked_at TEXT,
       isrcs TEXT,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK (
+        (
+          is_video = 0
+          AND mbid IS NOT NULL
+          AND youtube_video_id IS NULL
+        )
+        OR (
+          is_video = 1
+          AND (
+            mbid IS NOT NULL
+            OR youtube_video_id IS NOT NULL
+            OR metadata_status = 'provider_catalog'
+          )
+        )
+      )
     );
 
     CREATE TABLE Tracks (
@@ -632,6 +649,8 @@ export function createCurrentDomainSchema(db: Database.Database): void {
         recording_id
       );
     CREATE INDEX idx_provider_video_matches_recording ON ProviderVideoMatches(recording_id, match_state);
+    CREATE INDEX idx_provider_video_matches_item ON ProviderVideoMatches(provider_video_item_id, match_state);
+    CREATE UNIQUE INDEX idx_recordings_youtube_video_id ON Recordings(youtube_video_id) WHERE is_video = 1 AND youtube_video_id IS NOT NULL;
 
     CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
     CREATE INDEX idx_library_artists_library ON LibraryArtists(library_id, monitored, managed_artist_id);
@@ -744,7 +763,7 @@ export function createCurrentDomainSchema(db: Database.Database): void {
           THEN RAISE(ABORT, 'provider video match source must be a video item')
         WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
           SELECT 1 FROM Recordings
-          WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
+          WHERE id = NEW.recording_id AND is_video = 1
         )
           THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
       END;
@@ -758,7 +777,7 @@ export function createCurrentDomainSchema(db: Database.Database): void {
           THEN RAISE(ABORT, 'provider video match source must be a video item')
         WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
           SELECT 1 FROM Recordings
-          WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
+          WHERE id = NEW.recording_id AND is_video = 1
         )
           THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
       END;

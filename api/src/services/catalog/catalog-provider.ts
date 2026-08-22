@@ -116,15 +116,17 @@ export interface CatalogSearchOptions {
 
 /**
  * A MusicBrainz video recording for an artist, in the `/ws/2` recording shape the
- * video sync consumes (id/title/length/artist-credit/isrcs + optional music-video
- * relations to the underlying audio recording). Videos are a Discogenius-owned
- * canonical entity (MB video coverage is sparse); this only supplies the MB ids /
- * enrichment for videos MB happens to have. MB-local serves it from Postgres —
- * only `recording.video = true`, far cheaper than browsing every recording.
+ * video sync consumes (id/title/length/disambiguation/artist-credit/isrcs plus
+ * optional music-video and URL relations). Canonical video identity is MB
+ * `mbid` and/or YouTube `youtube_video_id`. A provider clip with no catalog hit
+ * may mint `provider_catalog`. MB-local serves this from Postgres
+ * (`recording.video = true`).
  */
 export interface CatalogVideoRecording {
   id?: string;
   title?: string;
+  /** MusicBrainz recording comment (`recording.comment`). */
+  disambiguation?: string | null;
   length?: number | null;
   video?: boolean | string | null;
   isrcs?: string[] | null;
@@ -194,10 +196,9 @@ export interface CatalogProvider {
   getCreditedReleaseGroupsForArtist?(artistMbid: string): Promise<CatalogArtistCreditReleaseGroup[]>;
 
   /**
-   * MusicBrainz video recordings credited to an artist (the ones MB has). Optional
-   * because videos are a Discogenius-owned canonical entity, not MB-authoritative;
-   * this only pulls MB ids/enrichment. MB-local serves it from Postgres. When a
-   * provider does not implement it, the video sync falls back to the public MB browse.
+   * MusicBrainz video recordings credited to an artist. Optional: hosted Servarr
+   * has no video browse, so the sync falls back to the public MB recording search.
+   * MB-local reads `recording.video = true` from Postgres.
    */
   getArtistVideoRecordings?(artistMbid: string): Promise<CatalogVideoRecording[]>;
 

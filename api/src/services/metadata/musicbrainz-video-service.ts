@@ -1,12 +1,14 @@
 import { db } from "../../database.js";
 import { getMusicBrainzHeaders, scheduleMusicBrainzRequest } from "../mediafiles/fingerprint.js";
 import { ProviderMatchRepository } from "../music/provider-match-repository.js";
+import { claimYouTubeWatchId, parseYouTubeWatchId } from "../music/video-recording-catalog.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { parseProviderResourceIdentity } from "./provider-url-identity.js";
 
 type MusicBrainzRecording = {
   id?: string;
   title?: string;
+  disambiguation?: string | null;
   length?: number | null;
   video?: boolean | string | null;
   isrcs?: string[] | null;
@@ -134,13 +136,15 @@ function createSyncContext(): SyncContext {
     upsertRecording: db.prepare(`
       INSERT INTO Recordings (
         foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-        artist_credit, credits, length_ms, is_video, isrcs, metadata_status, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', CURRENT_TIMESTAMP)
+        disambiguation, artist_credit, credits, length_ms, is_video, isrcs,
+        metadata_status, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         foreign_recording_id = COALESCE(Recordings.foreign_recording_id, excluded.foreign_recording_id),
         artist_metadata_id = COALESCE(Recordings.artist_metadata_id, excluded.artist_metadata_id),
         artist_mbid = COALESCE(Recordings.artist_mbid, excluded.artist_mbid),
         title = COALESCE(NULLIF(excluded.title, ''), Recordings.title),
+        disambiguation = COALESCE(excluded.disambiguation, Recordings.disambiguation),
         artist_credit = COALESCE(Recordings.artist_credit, excluded.artist_credit),
         credits = COALESCE(Recordings.credits, excluded.credits),
         length_ms = COALESCE(excluded.length_ms, Recordings.length_ms),
@@ -209,6 +213,7 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     artistMetadataId,
     recordingArtistMbid,
     title,
+    nullableText(recording.disambiguation),
     artistCredit(recording),
     structuredArtistCredits(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
@@ -216,7 +221,17 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     isrcJson,
   ) as { id?: number | null } | undefined;
 
-  return row?.id == null ? null : Number(row.id);
+  let recordingId = row?.id == null ? null : Number(row.id);
+  if (recordingId != null && options.isVideo) {
+    for (const relation of recording.relations || []) {
+      const relationType = String(relation.type || "").toLowerCase();
+      if (relationType !== "free streaming" && relationType !== "streaming") continue;
+      const watchId = parseYouTubeWatchId(relation.url?.resource);
+      if (!watchId) continue;
+      recordingId = claimYouTubeWatchId(recordingId, watchId);
+    }
+  }
+  return recordingId;
 }
 
 function upsertMusicVideoRelations(

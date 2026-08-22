@@ -13,6 +13,7 @@ import { shouldRefreshArtist, shouldRefreshVideos } from "../config/refresh-poli
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { servarrMetadata } from "../metadata/servarr-metadata.js";
 import { syncMusicBrainzVideosForArtist } from "../metadata/musicbrainz-video-service.js";
+import { syncYouTubeVideoCatalogForArtist } from "./youtube-video-catalog.js";
 import {
     matchProviderAlbumsToReleaseGroups,
     type MusicBrainzReleaseGroupForMatching,
@@ -171,12 +172,13 @@ export class RefreshArtistService {
         if (syncedVideos > 0) {
             console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
         }
-        // An Edition carrying both audio and video Tracks says which
-        // performance each video is of — the festival/deluxe shape, where
-        // MusicBrainz represents the video tracks but states no relation.
-        const editionVideoRelations = syncVideoRelationsFromEditionMembership(artistMbid);
-        if (editionVideoRelations > 0) {
-            console.log(`[RefreshArtistService] Derived ${editionVideoRelations} video→audio relation(s) from canonical edition membership for ${artistMbid}`);
+        try {
+            const youtubeVideos = await syncYouTubeVideoCatalogForArtist(artistId, artistMbid);
+            if (youtubeVideos > 0) {
+                console.log(`[RefreshArtistService] Synced ${youtubeVideos} YouTube video recording(s) for artist ${artistMbid}`);
+            }
+        } catch (error) {
+            console.warn(`[RefreshArtistService] YouTube video catalog sync failed for ${artistMbid}:`, error);
         }
         // MusicBrainz free-streaming URL offers are written inside a sync
         // transaction and cannot probe resolution inline, so they land with
@@ -192,6 +194,21 @@ export class RefreshArtistService {
         }
 
         return artistMbid;
+    }
+
+    /**
+     * Video→audio relations that need hydrated Tracks: mixed-edition membership
+     * first, then the shared title+duration function for leftover standalone OMVs.
+     */
+    private static syncCatalogVideoAudioRelations(artistMbid: string): void {
+        const editionVideoRelations = syncVideoRelationsFromEditionMembership(artistMbid);
+        if (editionVideoRelations > 0) {
+            console.log(`[RefreshArtistService] Derived ${editionVideoRelations} video→audio relation(s) from canonical edition membership for ${artistMbid}`);
+        }
+        const inferred = RefreshVideoService.linkCatalogVideoAudioRelations(artistMbid);
+        if (inferred > 0) {
+            console.log(`[RefreshArtistService] Linked ${inferred} catalog video→audio relation(s) for ${artistMbid}`);
+        }
     }
 
     /**
@@ -1326,6 +1343,7 @@ export class RefreshArtistService {
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
                 await yieldToEventLoop();
+                this.syncCatalogVideoAudioRelations(artistMbid);
             }
         }
 
@@ -1407,16 +1425,10 @@ export class RefreshArtistService {
             .filter((entry) => entry.status.connected)
             .map((entry) => entry.provider);
 
-        // Music-video CATALOG is a core, always-on metadata source (like
-        // MusicBrainz/Servarr): YouTube keeps contributing video metadata even
-        // when its download plugin is not configured. Downloading/previewing that
-        // video still requires the corresponding plugin.
-        const videoCatalogProviders = resolvedStatuses
-            .filter((entry) => entry.status.connected
-                || (entry.status.remoteCatalogAvailable && isCoreVideoCatalogProvider(entry.provider.id)))
-            .map((entry) => entry.provider);
-        const videoOnlyProviders = videoCatalogProviders.filter(
-            (provider) => !connectedProviders.some((connected) => connected.id === provider.id),
+        // YouTube video listing is core catalog (syncYouTubeVideoCatalogForArtist),
+        // not a connected-plugin fetch. Apple/TIDAL/etc. still list videos here.
+        const videoCatalogProviders = connectedProviders.filter(
+            (provider) => Boolean(provider.getArtistVideos) && !isCoreVideoCatalogProvider(provider.id),
         );
 
         // The queued workflow always ends in a CurateArtist command, so curating
@@ -1436,6 +1448,11 @@ export class RefreshArtistService {
                 options.forceUpdate === true ||
                 shouldRefreshVideos({ artistId });
             if (shouldRefreshArtistVideos) {
+                try {
+                    await syncYouTubeVideoCatalogForArtist(artistId, artistMbid);
+                } catch (error) {
+                    console.warn(`[RefreshArtistService] YouTube video catalog sync failed for ${artistId}:`, error);
+                }
                 await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
             }
             ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
@@ -1448,11 +1465,6 @@ export class RefreshArtistService {
                 `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
                 `(no providers connected)`,
             );
-            // Video discovery is core metadata, so it still runs with no audio
-            // plugin connected (e.g. YouTube's public music-video catalog).
-            if (videoCatalogProviders.length > 0) {
-                await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
-            }
             ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
             await this.precacheArtistMediaCovers(artistId, artistMbid);
             return;
@@ -1460,22 +1472,8 @@ export class RefreshArtistService {
 
         let totalAlbumsCount = 0;
 
-        // Core video-catalog providers that are NOT connected for audio still
-        // contribute music-video metadata (YouTube's public catalog). They are
-        // deliberately excluded from the album/offer hydration loop below.
         // Run connected providers in parallel so adding Apple/YouTube/etc. does
         // not serialize wall-clock matching time against TIDAL.
-        await Promise.all(videoOnlyProviders.map(async (provider) => {
-            try {
-                const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
-                if (providerArtistIds.length > 0) {
-                    await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
-                }
-            } catch (err) {
-                console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
-            }
-        }));
-
         await Promise.all(connectedProviders.map(async (provider) => {
             const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
             if (providerArtistIds.length === 0) {
@@ -1483,10 +1481,12 @@ export class RefreshArtistService {
                 return;
             }
 
-            try {
-                await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
-            } catch (err) {
-                console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
+            if (!isCoreVideoCatalogProvider(provider.id)) {
+                try {
+                    await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
+                } catch (err) {
+                    console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
+                }
             }
 
             try {
@@ -1974,6 +1974,7 @@ export class RefreshArtistService {
             const videos = (await provider.getArtistVideos(providerArtistId) || [])
                 .map((video) => ({
                     ...providerVideoToOfferRow(video, artistId),
+                    provider: provider.id,
                     _provider: provider.id,
                 }));
             // Fill missing publish dates / duration / quality, and always try to

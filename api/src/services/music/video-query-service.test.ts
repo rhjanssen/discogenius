@@ -459,7 +459,7 @@ test("video detail appears-on follows related audio via provider_video_for, not 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
       foreign_recording_id, artist_metadata_id, artist_mbid, title, is_video, metadata_status
-    ) VALUES ('apple-video-99', ?, 'artist-mbid', 'Canonical Video', 1, 'provider_only')
+    ) VALUES ('apple-video-99', ?, 'artist-mbid', 'Canonical Video', 1, 'provider_catalog')
     RETURNING id
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
@@ -576,7 +576,7 @@ test("video detail appears-on follows related audio recordings and prefers monit
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
       artist_metadata_id, artist_mbid, title, is_video, metadata_status
-    ) VALUES (?, 'artist-affil', 'Song', 1, 'provider_only')
+    ) VALUES (?, 'artist-affil', 'Song', 1, 'provider_catalog')
     RETURNING id
   `).get(artist.id) as { id: number };
 
@@ -833,7 +833,7 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
   const orphanVideo = dbModule.db.prepare(`
     INSERT INTO Recordings (
       artist_metadata_id, artist_mbid, title, is_video, metadata_status
-    ) VALUES (?, 'artist-mbid', 'Orphan Video', 1, 'provider_only')
+    ) VALUES (?, 'artist-mbid', 'Orphan Video', 1, 'provider_catalog')
     RETURNING id
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
@@ -891,7 +891,7 @@ test("album associated videos honor monitored state and music-video type filters
   const makeVideo = (title: string, variant: string, monitored: number): number => {
     const row = dbModule.db.prepare(`
       INSERT INTO Recordings (artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status)
-      VALUES (?, 'artist-mbid', ?, 1, ?, 'provider_only')
+      VALUES (?, 'artist-mbid', ?, 1, ?, 'provider_catalog')
       RETURNING id
     `).get(artist.id, title, variant) as { id: number };
     // Monitoring is a LibraryVideos row, not a column on the recording.
@@ -925,4 +925,37 @@ test("album associated videos honor monitored state and music-video type filters
     [String(monitoredOfficial), String(downloadedUnmonitored)].sort(),
     "only the monitored official video and the downloaded (on-disk) video should appear",
   );
+});
+
+test("video detail appends MusicBrainz recording disambiguation", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-mbid', 'Bastille')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-mbid', 'artist-mbid', 'Bastille')
+  `).run();
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
+      disambiguation, length_ms, is_video, metadata_status
+    ) VALUES (
+      'mb-wlt', 'mb-wlt', ?, 'artist-mbid', 'Overjoyed',
+      'Watch Listen Tell session', 195000, 1, 'musicbrainz'
+    )
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  selectVideoInVideoLibraries(dbModule.db, recording.id);
+  seedVideoOffer({
+    provider: "youtube-music",
+    providerId: "hm92KOlB7NE",
+    recordingId: recording.id,
+    title: "Overjoyed",
+    durationMs: 195_000,
+  });
+
+  const detail = videoQueryModule.getVideoDetail(String(recording.id));
+  assert.equal(detail?.title, "Overjoyed (Watch Listen Tell session)");
 });

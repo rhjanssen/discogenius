@@ -54,8 +54,8 @@ const QUALITY_OPTIONS: Array<{
     label: string;
     description: string;
 }> = [
-    { value: "low", label: "Low", description: "Preferred max: lossy band — hi-res, lossless and lossy rank equally; smaller files when converting" },
-    { value: "normal", label: "Normal", description: "Preferred max: lossy band — hi-res ≡ lossless ≡ lossy for ranking; ~320k when converting" },
+    { value: "low", label: "Low", description: "Preferred max: lossy band — hi-res, lossless and lossy rank equally; Opus 96 kbps when converting leftover lossless" },
+    { value: "normal", label: "Normal", description: "Preferred max: lossy band — hi-res ≡ lossless ≡ lossy for ranking; Opus 160 kbps when converting leftover lossless" },
     { value: "high", label: "High", description: "Preferred max: lossless — hi-res ≡ lossless; lossy only as last resort" },
     { value: "max", label: "Max", description: "Preferred max: hi-res — each step counts (hi-res > lossless > lossy)" },
 ];

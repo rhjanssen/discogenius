@@ -279,3 +279,51 @@ test("the combined track still matches the provider track that actually contains
     provider({ title: "Amy Amy Amy / Outro", trackNumber: 13, durationSec: 797 }),
   ));
 });
+
+test("live at and live from the same venue are one recording, including an extra acoustic tag", () => {
+  // Bad Blood X disc 2: MusicBrainz "Pompeii (live from Studio Brussel)" vs
+  // Apple "Pompeii (Live At Studio Brussel / Acoustic)". Positions also differ
+  // because Apple put Pompeii MMXXIII on disc 2.
+  const score = scoreTrackMatch(
+    target({
+      title: "Pompeii (live from Studio Brussel)",
+      trackNumber: 6,
+      volumeNumber: 2,
+      durationSec: 199.8,
+    }),
+    provider({
+      title: "Pompeii (Live At Studio Brussel / Acoustic)",
+      trackNumber: 7,
+      volumeNumber: 2,
+      durationSec: 200,
+    }),
+  );
+  assert.ok(score >= 0.9, `Studio Brussel live/acoustic should match, got ${score}`);
+});
+
+test("a differently named demo of the same recording matches via an alternate title", () => {
+  const canonical = target({
+    title: "Laura Palmer (Dan’s Bedroom demo)",
+    trackNumber: 8,
+    volumeNumber: 2,
+    durationSec: 179.88,
+  });
+  const apple = provider({
+    title: "Laura Palmer (Racing Heart Demo)",
+    trackNumber: 9,
+    volumeNumber: 2,
+    durationSec: 180,
+  });
+  assert.ok(
+    scoreTrackMatch(canonical, apple) < TRACK_MATCH_THRESHOLD,
+    "Dan's Bedroom vs Racing Heart is not the same name",
+  );
+  const score = scoreTrackMatch(
+    {
+      ...canonical,
+      alternateTitles: ["Laura Palmer (Racing Heart demo)"],
+    },
+    apple,
+  );
+  assert.ok(score >= 0.9, `sibling Racing Heart title should cover the Apple track, got ${score}`);
+});

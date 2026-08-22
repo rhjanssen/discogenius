@@ -14,10 +14,13 @@ schema/provider work. It is not a migration log. Current schema details live in
 
 ## Current Rules
 
-1. MusicBrainz/Servarr Metadata Server is the catalog source of truth in the shipping app.
-2. Streaming providers are availability and acquisition resources only.
-3. Providers must not create canonical artists, release groups, releases,
-   tracks, or recordings by themselves.
+1. MusicBrainz/Servarr Metadata Server is the catalog source of truth for audio
+   in the shipping app. Video catalog is MusicBrainz plus public YouTube.
+2. Streaming providers are availability and acquisition resources. YouTube's
+   public listing is the exception: it is core video catalog, not a plugin.
+3. Providers must not create canonical artists, release groups, releases, or
+   tracks by themselves. Video recordings may be minted only after MB and
+   YouTube catalog lookup miss (`metadata_status = 'provider_catalog'`).
 4. Provider UPC/barcode and ISRC are matching evidence. In normal Servarr Metadata Server mode
    they stay provider-scoped and are not copied into catalog barcode/ISRC fields.
 5. Provider data may supplement catalog holes where it directly improves library
@@ -36,8 +39,8 @@ Core catalog tables:
 - `Albums` for MusicBrainz release groups
 - `AlbumEditions` for MusicBrainz releases
 - `Tracks` for release-specific track positions
-- `Recordings` for canonical recording-level identity: MusicBrainz audio and
-  video recordings
+- `Recordings` for canonical recording-level identity: MusicBrainz audio, plus
+  video recordings keyed by MusicBrainz `mbid` and/or YouTube `youtube_video_id`
 - `AlbumArtists`, `ArtistReleaseGroups`, `ArtistReleaseGroupCuration`
 - `RecordingRelations`
 
@@ -53,13 +56,15 @@ row at all.
 editions, and `ProviderItemAudioVariants` represents source capabilities.
 
 `ProviderArtistMatches`, `ProviderEditionMatches`, `ProviderTrackMatches`, and
-`ProviderVideoMatches` are the only provider-to-MusicBrainz edges. Provider
+`ProviderVideoMatches` are the only provider-to-catalog edges. Provider
 items do not carry MusicBrainz shadow identity.
 
-An unmatched provider video remains a cached `ProviderItems` offer. It must not
-mint a provisional `Recordings` row or an accepted match. Every identity-bearing
-`ProviderVideoMatches` target is an existing MusicBrainz video recording; a
-provider-supplied MBID is matching evidence, not authority to create that row.
+Video `Recordings` are catalog rows: MusicBrainz, YouTube watch id, or a
+last-resort provider mint. Apple/TIDAL/YouTube-download offers match onto those
+rows. YouTube listing itself is core catalog (public ytmusicapi) and does not
+wait for the YouTube Music plugin to be connected. An unmatched Apple/TIDAL
+clip may mint `metadata_status = 'provider_catalog'` so the library can still
+select it; that mint is not provider identity.
 
 There are no active provider catalog tables such as `ProviderAlbums` or
 `ProviderMedia`.

@@ -809,7 +809,7 @@ test("download queue prefers video poster over stamped album cover for DownloadV
     );
     const recording = db.prepare(`
         INSERT INTO Recordings (artist_mbid, title, is_video, metadata_status)
-        VALUES (?, ?, 1, 'provider_only')
+        VALUES (?, ?, 1, 'provider_catalog')
         RETURNING id
     `).get("artist-video-cover", "Pompeii") as { id: number };
     db.prepare(`

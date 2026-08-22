@@ -238,7 +238,13 @@ export function versionQualifierSignature(title?: string | null): string {
     if (dashSuffix) {
         qualifiers.push(dashSuffix);
     }
-    const normalized = normalizeComparableText(qualifiers.join(" "));
+    // "live from Studio Brussel" and "live at Studio Brussel" are one venue.
+    // Leaving the preposition in made them look like distinct live cuts, so
+    // Apple's "Pompeii (Live At Studio Brussel / Acoustic)" never covered the
+    // canonical "Pompeii (live from Studio Brussel)". Distinct venues still
+    // fail: "live kalkscheune berlin" vs "live bbc radio 1".
+    const normalized = normalizeComparableText(qualifiers.join(" "))
+        .replace(/\blive\s+(?:at|from|in)\b/g, "live");
     return normalized && SIGNIFICANT_VERSION_RE.test(normalized) ? normalized : "";
 }
 

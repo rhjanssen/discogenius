@@ -143,6 +143,8 @@ export interface QualityConfig {
   embed_cover: boolean;
   embed_lyrics: boolean;
   upgrade_existing_files: boolean;
+  /** When true, lowering preferred quality transcodes existing stereo files down to that class. */
+  downconvert_existing_files: boolean;
   convert_video_mp4?: boolean;
   extract_flac?: boolean;
 }
@@ -213,6 +215,7 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_cover: true,
     embed_lyrics: true,
     upgrade_existing_files: false,
+    downconvert_existing_files: false,
     convert_video_mp4: true,
     extract_flac: true,
   },
@@ -450,6 +453,7 @@ function normalizeQualityConfig(raw?: Partial<QualityConfig>): QualityConfig {
     embed_cover: raw?.embed_cover ?? DEFAULT_CONFIG.quality.embed_cover,
     embed_lyrics: raw?.embed_lyrics ?? DEFAULT_CONFIG.quality.embed_lyrics,
     upgrade_existing_files: raw?.upgrade_existing_files ?? DEFAULT_CONFIG.quality.upgrade_existing_files,
+    downconvert_existing_files: raw?.downconvert_existing_files ?? DEFAULT_CONFIG.quality.downconvert_existing_files,
     convert_video_mp4: raw?.convert_video_mp4 ?? DEFAULT_CONFIG.quality.convert_video_mp4,
     extract_flac: raw?.extract_flac ?? DEFAULT_CONFIG.quality.extract_flac,
   };
@@ -690,4 +694,20 @@ export class Config {
     return getConfigSection("account") || {};
   }
 
+}
+
+/**
+ * Settings stereo ceiling. Download backends cap native requests to this;
+ * missing config (unit tests, early bootstrap) behaves as max.
+ */
+export function configuredAudioQuality(): QualityConfig["audio_quality"] {
+  try {
+    const value = getConfigSection("quality").audio_quality;
+    if (value === "low" || value === "normal" || value === "high" || value === "max") {
+      return value;
+    }
+  } catch {
+    // Config database is not always available in backend unit tests.
+  }
+  return "max";
 }

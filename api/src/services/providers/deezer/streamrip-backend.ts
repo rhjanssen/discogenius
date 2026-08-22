@@ -6,6 +6,7 @@ import type {
   DownloadProgress,
   DownloadRequest,
 } from "../../download/download-backend.js";
+import { configuredAudioQuality } from "../../config/config.js";
 import { getDeezerConfigDir, loadDeezerCredentials } from "./deezer-auth.js";
 
 const MEDIA_EXTENSIONS = new Set([".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus"]);
@@ -191,7 +192,9 @@ export function buildStreamripArgs(request: DownloadRequest): string[] {
   ];
 }
 
-export function streamripQualityCeiling(quality: string | null | undefined): "0" | "1" | "2" {
+const STREAMRIP_LEVEL_RANK = { "0": 0, "1": 1, "2": 2 } as const;
+
+function streamripLevelFromOffer(quality: string | null | undefined): "0" | "1" | "2" {
   const normalized = String(quality || "").trim().toLowerCase().replace(/[\s_-]+/gu, "");
   if (normalized === "low" || normalized.includes("128")) return "0";
   if (
@@ -201,6 +204,24 @@ export function streamripQualityCeiling(quality: string | null | undefined): "0"
     || normalized.includes("320")
   ) return "1";
   return "2";
+}
+
+function streamripLevelFromSettings(configured: "low" | "normal" | "high" | "max"): "0" | "1" | "2" {
+  if (configured === "low") return "0";
+  if (configured === "normal") return "1";
+  // Deezer HiFi tops out at 16-bit FLAC (streamrip 2). There is no 24-bit rung.
+  return "2";
+}
+
+export function streamripQualityCeiling(
+  quality: string | null | undefined,
+  configuredQuality: "low" | "normal" | "high" | "max" = configuredAudioQuality(),
+): "0" | "1" | "2" {
+  const fromOffer = streamripLevelFromOffer(quality);
+  const fromSettings = streamripLevelFromSettings(configuredQuality);
+  return STREAMRIP_LEVEL_RANK[fromOffer] > STREAMRIP_LEVEL_RANK[fromSettings]
+    ? fromSettings
+    : fromOffer;
 }
 
 function mediaFilesUnder(root: string): string[] {

@@ -11,6 +11,7 @@ const {
     mapAudioQualityToTiddl,
     mapVideoQualityToTiddl,
     nativeTiddlTrackQuality,
+    capTiddlTrackQuality,
     syncTokenToTiddl,
     readTiddlAuth,
     clearTiddlAuth,
@@ -42,6 +43,14 @@ test("nativeTiddlTrackQuality keeps config values verbatim (tiddl 'high' is FLAC
     assert.equal(nativeTiddlTrackQuality("max"), "max");
     assert.equal(nativeTiddlTrackQuality("LOSSLESS"), null);
     assert.equal(nativeTiddlTrackQuality(undefined), null);
+});
+
+test("capTiddlTrackQuality applies the Settings stereo ceiling and leaves spatial uncapped", () => {
+    assert.equal(capTiddlTrackQuality("max", false, "normal"), "normal");
+    assert.equal(capTiddlTrackQuality("max", false, "low"), "low");
+    assert.equal(capTiddlTrackQuality("high", false, "high"), "high");
+    assert.equal(capTiddlTrackQuality("low", false, "max"), "low");
+    assert.equal(capTiddlTrackQuality("max", true, "normal"), "max");
 });
 
 test("mapAudioQualityToTiddl falls back to configured audio quality", () => {

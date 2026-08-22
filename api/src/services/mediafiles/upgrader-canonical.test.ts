@@ -3,6 +3,7 @@ import { after, afterEach, before, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-upgrader-canonical-"));
@@ -402,6 +403,168 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
   assert.equal(result.albums, 0);
   assert.deepEqual(listDownloadJobs(), []);
 });
+
+const ffmpegAvailable = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
+
+async function withQualityConfig(
+  updates: { audio_quality: "low" | "normal" | "high" | "max"; downconvert_existing_files: boolean },
+  fn: () => Promise<void>,
+): Promise<void> {
+  const { updateConfig, getConfigSection } = await import("../config/config.js");
+  const previous = getConfigSection("quality");
+  updateConfig("quality", updates);
+  try {
+    await fn();
+  } finally {
+    updateConfig("quality", {
+      audio_quality: previous.audio_quality,
+      downconvert_existing_files: previous.downconvert_existing_files,
+    });
+  }
+}
+
+test("CheckUpgrades does not downconvert 24/48 when the toggle is off", {
+  skip: !ffmpegAvailable,
+}, async () => {
+  seedArtistAndRelease();
+  const source = path.join(tempDir, "keep-max.flac");
+  const generated = spawnSync("ffmpeg", [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=0.3",
+    "-c:a", "flac", "-sample_fmt", "s32", source,
+  ], { windowsHide: true });
+  assert.equal(generated.status, 0, String(generated.stderr || ""));
+  const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
+  addReleaseMember(tidalRelease, providerItem("tidal", "track", "track-provider-1", "Track One"));
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+    quality: "HIRES_LOSSLESS",
+    codec: "FLAC",
+    bit_depth: 24,
+    sample_rate: 48000,
+    file_path: source,
+    relative_path: "keep-max.flac",
+    filename: "keep-max.flac",
+    extension: "flac",
+  });
+
+  await withQualityConfig({ audio_quality: "high", downconvert_existing_files: false }, async () => {
+    const result = await UpgraderService.checkUpgrades(true, "artist-local");
+    assert.equal(result.tracks, 0);
+    assert.deepEqual(listDownloadJobs(), []);
+  });
+  const probe = spawnSync("ffprobe", [
+    "-v", "error", "-show_entries", "stream=sample_rate", "-of", "default=noprint_wrappers=1", source,
+  ], { windowsHide: true, encoding: "utf-8" });
+  assert.match(probe.stdout, /48000/);
+});
+
+test("CheckUpgrades downconverts 24/48 FLAC to 16/44.1 when the toggle is on", {
+  skip: !ffmpegAvailable,
+}, async () => {
+  seedArtistAndRelease();
+  const source = path.join(tempDir, "down-high.flac");
+  const generated = spawnSync("ffmpeg", [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=0.3",
+    "-c:a", "flac", "-sample_fmt", "s32", source,
+  ], { windowsHide: true });
+  assert.equal(generated.status, 0, String(generated.stderr || ""));
+  const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
+  addReleaseMember(tidalRelease, providerItem("tidal", "track", "track-provider-1", "Track One"));
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+    quality: "HIRES_LOSSLESS",
+    codec: "FLAC",
+    bit_depth: 24,
+    sample_rate: 48000,
+    file_path: source,
+    relative_path: "down-high.flac",
+    filename: "down-high.flac",
+    extension: "flac",
+  });
+
+  await withQualityConfig({ audio_quality: "high", downconvert_existing_files: true }, async () => {
+    const result = await UpgraderService.checkUpgrades(true, "artist-local");
+    assert.equal(result.tracks, 1);
+    assert.equal(result.details[0]?.action, "downconvert");
+    assert.deepEqual(listDownloadJobs(), []);
+  });
+  const probe = spawnSync("ffprobe", [
+    "-v", "error", "-show_entries", "stream=codec_name,sample_rate,bits_per_sample",
+    "-of", "default=noprint_wrappers=1", source,
+  ], { windowsHide: true, encoding: "utf-8" });
+  assert.match(probe.stdout, /codec_name=flac/);
+  assert.match(probe.stdout, /sample_rate=44100/);
+  const row = db.prepare("SELECT quality, bit_depth, sample_rate FROM TrackFiles WHERE file_path = ?")
+    .get(source) as { quality: string; bit_depth: number; sample_rate: number };
+  assert.equal(row.quality, "LOSSLESS");
+  assert.equal(row.bit_depth, 16);
+  assert.equal(row.sample_rate, 44100);
+});
+
+test("CheckUpgrades downconverts FLAC to Opus 160 when Settings is NORMAL", {
+  skip: !ffmpegAvailable,
+}, async () => {
+  seedArtistAndRelease();
+  const source = path.join(tempDir, "down-normal.flac");
+  const generated = spawnSync("ffmpeg", [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=0.3",
+    "-c:a", "flac", "-sample_fmt", "s16", source,
+  ], { windowsHide: true });
+  assert.equal(generated.status, 0, String(generated.stderr || ""));
+  const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
+  addReleaseMember(tidalRelease, providerItem("tidal", "track", "track-provider-1", "Track One"));
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+    quality: "LOSSLESS",
+    codec: "FLAC",
+    bit_depth: 16,
+    sample_rate: 44100,
+    file_path: source,
+    relative_path: "down-normal.flac",
+    filename: "down-normal.flac",
+    extension: "flac",
+  });
+
+  await withQualityConfig({ audio_quality: "normal", downconvert_existing_files: true }, async () => {
+    const result = await UpgraderService.checkUpgrades(true, "artist-local");
+    assert.equal(result.tracks, 1);
+    assert.equal(result.details[0]?.action, "downconvert");
+    assert.deepEqual(listDownloadJobs(), []);
+  });
+  const opusPath = path.join(tempDir, "down-normal.opus");
+  assert.equal(fs.existsSync(source), false);
+  assert.equal(fs.existsSync(opusPath), true);
+  const row = db.prepare("SELECT quality, extension, codec FROM TrackFiles WHERE id = (SELECT id FROM TrackFiles LIMIT 1)")
+    .get() as { quality: string; extension: string; codec: string };
+  assert.equal(row.extension, "opus");
+  assert.match(String(row.codec), /opus/i);
+  assert.equal(row.quality, "HIGH");
+});
+
 
 
 

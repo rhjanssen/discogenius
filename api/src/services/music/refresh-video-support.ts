@@ -4,7 +4,7 @@
  * Variant class + clean group titles live in video-variant.ts.
  */
 
-import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
+import { versionsCompatible, videoComparableTitle } from "../mediafiles/import-matching-utils.js";
 import {
     isLivePerformanceTitle,
 } from "./live-performance-markers.js";
@@ -215,6 +215,23 @@ export function liveVenueSignaturesCompatible(
     return left.some((a) => right.some((b) => a === b || a.includes(b) || b.includes(a)));
 }
 
+/**
+ * MusicBrainz comment folded into the title for version checks.
+ * "Overjoyed" + "Watch Listen Tell session" is a different performance than
+ * unlabeled studio "Overjoyed"; the comment never reaches provider titles.
+ */
+export function recordingPerformanceTitle(
+    title: string | null | undefined,
+    disambiguation?: string | null,
+): string {
+    const base = String(title || "").trim();
+    const extra = String(disambiguation || "").trim();
+    if (!extra) return base;
+    if (!base) return extra;
+    if (base.toLowerCase().includes(extra.toLowerCase())) return base;
+    return `${base} (${extra})`;
+}
+
 /** Core title must agree before an explicit album-position audio link sticks. */
 export function videoAudioTitlesCompatible(
     videoTitle: string | null | undefined,
@@ -227,7 +244,10 @@ export function videoAudioTitlesCompatible(
         || videoComparable.includes(audioComparable)
         || audioComparable.includes(videoComparable);
     if (!titleOk) return false;
-    return liveVenueSignaturesCompatible(videoTitle, audioTitle);
+    if (!liveVenueSignaturesCompatible(videoTitle, audioTitle)) return false;
+    // videoComparableTitle strips "live"; significant-version still has to
+    // veto session/reprise/remix comments that are not live-marker tokens.
+    return versionsCompatible(videoTitle, audioTitle);
 }
 
 function candidateHasNonLiveAlbum(row: AudioRecordingCandidateRow): boolean {
@@ -274,11 +294,9 @@ export function findRelatedAudioRecordingForVideo(
     for (const row of candidates) {
         const rawAudioTitle = String(row.title || "");
         const audioIsLive = candidateAudioIsLive(row);
-        // Live↔studio gate is independent of duration/ISRC closeness.
-        if (videoIsLive && !audioIsLive) {
-            continue;
-        }
-        if (preferStudio && audioIsLive) {
+        // Live↔studio is a hard veto, including ISRC and the wider studio
+        // duration window. Live-album-only audio (Alchemy) has a bare title.
+        if (videoIsLive !== audioIsLive) {
             continue;
         }
         if (!liveVenueSignaturesCompatible(rawVideoTitle, rawAudioTitle)) {
@@ -288,6 +306,16 @@ export function findRelatedAudioRecordingForVideo(
         const audioTitle = videoComparableTitle(row.title);
         if (!audioTitle) {
             continue;
+        }
+        // Session/remix comments are not live-marker tokens, so studio pairs
+        // still run significant-version. Live pairs skip it: live-album-only
+        // audio is often a bare title, and "(Live)" on the video would look
+        // like a one-sided qualifier.
+        if (!videoIsLive) {
+            const videoLabel = recordingPerformanceTitle(rawVideoTitle, video.disambiguation);
+            if (!versionsCompatible(videoLabel, rawAudioTitle)) {
+                continue;
+            }
         }
 
         const audioIsrcs = parseIsrcValues(row.isrcs);

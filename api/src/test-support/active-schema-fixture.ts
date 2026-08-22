@@ -4,15 +4,16 @@
  *
  * Why this exists
  * ---------------
- * Some suites built their fixture from `database/schema/domain-v41.ts`. That is
- * the ASPIRATIONAL clean-start schema — it is contract-tested but not wired into
- * production, and it diverges from the active baseline in both directions. A
- * production service tested against it can pass while being broken at runtime;
- * that is exactly how an UPDATE writing `TrackFiles.provider_item_id` shipped
- * against an active schema that had no such column.
+ * Some suites built their fixture from `database/schema/domain-baseline.ts`.
+ * That is the ASPIRATIONAL clean-start schema — it is contract-tested but not
+ * wired into production, and it diverges from the active baseline in both
+ * directions. A production service tested against it can pass while being
+ * broken at runtime; that is exactly how an UPDATE writing
+ * `TrackFiles.provider_item_id` shipped against an active schema that had no
+ * such column.
  *
  * Rule: production-service fixtures boot the active schema (this helper).
- * `domain-v41.ts` fixtures are only for domain/schema contract tests.
+ * `domain-baseline.ts` fixtures are only for domain/schema contract tests.
  *
  * Usage — the DB path env vars must be set before `database.js` is imported, so
  * call `prepareActiveSchemaEnv()` at module top level, then `openActiveSchemaDb()`:

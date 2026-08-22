@@ -64,6 +64,7 @@ export interface QualityConfigContract {
   embed_cover: boolean;
   embed_lyrics: boolean;
   upgrade_existing_files: boolean;
+  downconvert_existing_files: boolean;
   convert_video_mp4?: boolean;
   extract_flac?: boolean;
 }
@@ -213,6 +214,10 @@ export function parseQualityConfigContract(value: unknown): QualityConfigContrac
     embed_cover: expectBoolean(record.embed_cover, "quality.embed_cover"),
     embed_lyrics: expectBoolean(record.embed_lyrics, "quality.embed_lyrics"),
     upgrade_existing_files: expectBoolean(record.upgrade_existing_files, "quality.upgrade_existing_files"),
+    downconvert_existing_files: expectBoolean(
+      record.downconvert_existing_files,
+      "quality.downconvert_existing_files",
+    ),
     convert_video_mp4: expectOptionalBoolean(record.convert_video_mp4, "quality.convert_video_mp4"),
     extract_flac: expectOptionalBoolean(record.extract_flac, "quality.extract_flac"),
   };

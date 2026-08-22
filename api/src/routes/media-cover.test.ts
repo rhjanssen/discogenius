@@ -217,8 +217,8 @@ test("existing video covers are served immediately without blocking on source re
   const oldUrl = "https://example.test/video/old.jpg";
   const newUrl = "https://example.test/video/new.jpg";
   const recording = dbModule.db.prepare(`
-    INSERT INTO Recordings (title, is_video, cover_image_url)
-    VALUES ('Changed Video Cover', 1, ?)
+    INSERT INTO Recordings (title, is_video, cover_image_url, metadata_status)
+    VALUES ('Changed Video Cover', 1, ?, 'provider_catalog')
     RETURNING id
   `).get(newUrl) as { id: number };
   const folder = path.join(tempDir, "media-cover", "Videos", String(recording.id));

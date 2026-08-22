@@ -99,6 +99,13 @@ const useStyles = makeStyles({
             padding: tokens.spacingVerticalS,
             gap: tokens.spacingVerticalS,
         },
+        // Desktop: cancel Layout <main> paddingTop and this container's
+        // paddingTop so the sticky category list is already at the app-bar
+        // offset and does not jump up on first scroll.
+        [MEDIA.desktop]: {
+            paddingTop: tokens.spacingVerticalNone,
+            marginTop: `calc(-1 * ${tokens.spacingVerticalM})`,
+        },
     },
     layout: {
         display: "flex",
@@ -134,6 +141,9 @@ const useStyles = makeStyles({
         [MEDIA.desktop]: {
             width: "240px",
             alignSelf: "flex-start",
+            paddingTop: tokens.spacingVerticalNone,
+            // Match the desktop app bar (~48px), not the 56px mobile offset.
+            top: "calc(env(safe-area-inset-top, 0px) + 48px)",
             maxHeight: "calc(100vh - env(safe-area-inset-top, 0px) - 68px)",
             overflowY: "auto",
             overflowX: "clip",
@@ -555,9 +565,11 @@ const SettingsPage = () => {
                     <MonitoringSettingsSection
                         monitoringConfig={monitoringConfig}
                         upgradeExistingFiles={qualitySettings?.upgrade_existing_files ?? false}
+                        downconvertExistingFiles={qualitySettings?.downconvert_existing_files ?? false}
                         isScanInProgress={isScanInProgress}
                         onUpdateMonitoring={updateMonitoring}
                         onUpgradeExistingFilesChange={(upgrade_existing_files) => updateQualitySettings({ upgrade_existing_files })}
+                        onDownconvertExistingFilesChange={(downconvert_existing_files) => updateQualitySettings({ downconvert_existing_files })}
                         onRunNow={handleRunMonitoringNow}
                     />
                     <ProvidersSettingsSection

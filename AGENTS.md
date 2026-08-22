@@ -85,8 +85,9 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   ALWAYS run before tagging a release to catch tsc-only errors.
 - `docker compose up -d --build` when runtime packaging changes.
 - **Production-service tests boot the ACTIVE schema** via
-  `api/src/test-support/active-schema-fixture.ts`. `domain-v41` fixtures are only
-  for domain/schema contract tests. Getting this wrong once let an UPDATE writing
+  `api/src/test-support/active-schema-fixture.ts`. `domain-baseline.ts` is the
+  aspirational CORE schema contract (catalogue/library only) and is never what
+  `initDatabase()` creates. Getting that mixup wrong once let an UPDATE writing
   a non-existent column ship with a fully green suite.
 - **Judge a change by failing test NAMES, not counts.** Capture the TAP output
   before and after and `comm` the sorted `not ok` lines; zero newly-failing is
@@ -157,8 +158,13 @@ from. Same reason `foreign_release_id` keeps its name.
   `TrackFiles.id` it produced; callers never re-find rows by `provider_id`, and
   never position-match two lists. Missing or ambiguous identity is an error.
 - Never assume one selected edition per album.
-- **MusicBrainz / the configured catalog provider is the source of truth.**
-  Providers download media and may supplement allowed catalogue holes (cover-art
+- **MusicBrainz / the configured catalog provider is the source of truth for
+  audio.** Video recordings are catalog identity with a MusicBrainz `mbid`
+  and/or a YouTube `youtube_video_id`. Public YouTube listing is core catalog
+  (ytmusicapi), not the YouTube Music download plugin. Apple/TIDAL/etc. match
+  onto those rows through `ProviderVideoMatches`. Mint a `provider_catalog`
+  recording only when neither catalog has the video.
+- Providers download media and may supplement allowed catalogue holes (cover-art
   ids, copyright, replay gain/peak, provider URLs/availability). Provider
   UPC/ISRC are matching evidence and live on `ProviderItems`. If a feature is
   populated exclusively from provider data, re-source it from the catalogue or
@@ -171,11 +177,11 @@ from. Same reason `foreign_release_id` keeps its name.
   better-sqlite3 with `{readonly:true, fileMustExist:true}`.
 - **Two schema definitions exist and they are not the same thing.**
   `createBaselineSchemaV41()` in `api/src/database.ts` is what `initDatabase()`
-  builds and what production runs. `api/src/database/schema/domain-v41.ts` is the
-  aspirational CORE schema (catalogue/library only) and is contract-tested but
-  never created at runtime. The active schema converges onto the target; until it
-  has, a test proving something against `domain-v41` proves nothing about
-  production.
+  builds and what production runs (currently `user_version` 44).
+  `api/src/database/schema/domain-baseline.ts` is the aspirational CORE schema
+  (catalogue/library only) and is contract-tested but never created at runtime.
+  The active schema converges onto the target; until it has, a test proving
+  something against `domain-baseline` proves nothing about production.
 
 ## Import & M4A
 - M4A stores tags fine (iTunes-style atoms).

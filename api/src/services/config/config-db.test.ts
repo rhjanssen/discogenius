@@ -53,6 +53,7 @@ test("fresh installs use the production monitoring and library defaults", () => 
   assert.equal(config.monitoring.monitor_new_artists, false);
   assert.equal(config.monitoring.remove_unmonitored_files, false);
   assert.equal(config.quality.upgrade_existing_files, false);
+  assert.equal(config.quality.downconvert_existing_files, false);
   assert.equal(config.filtering.require_provider_availability, true);
   assert.equal(config.filtering.include_spatial, false);
   assert.equal(config.filtering.include_videos, false);

@@ -25,7 +25,10 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
+  dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 
@@ -101,45 +104,10 @@ function seedLegacyNoncanonicalVideoMatch(input: {
   title: string;
   durationMs: number;
 }): void {
-  dbModule.db.exec(`
-    DROP TRIGGER provider_video_matches_validate_insert;
-    DROP TRIGGER provider_video_matches_validate_update;
-  `);
-  try {
-    seedAcceptedProviderVideoMatch(dbModule.db, input);
-  } finally {
-    dbModule.db.exec(`
-      CREATE TRIGGER provider_video_matches_validate_insert
-      BEFORE INSERT ON ProviderVideoMatches
-      BEGIN
-        SELECT CASE
-          WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_video_item_id) != 'video'
-            THEN RAISE(ABORT, 'provider video match source must be a video item')
-          WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
-            SELECT 1 FROM Recordings
-            WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
-          )
-            THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
-        END;
-      END;
-      CREATE TRIGGER provider_video_matches_validate_update
-      BEFORE UPDATE OF provider_video_item_id, recording_id, match_state ON ProviderVideoMatches
-      BEGIN
-        SELECT CASE
-          WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_video_item_id) != 'video'
-            THEN RAISE(ABORT, 'provider video match source must be a video item')
-          WHEN NEW.match_state != 'rejected' AND NOT EXISTS (
-            SELECT 1 FROM Recordings
-            WHERE id = NEW.recording_id AND is_video = 1 AND mbid IS NOT NULL
-          )
-            THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
-        END;
-      END;
-    `);
-  }
+  seedAcceptedProviderVideoMatch(dbModule.db, input);
 }
 
-test("unmatched provider videos remain offers without inventing canonical recordings", () => {
+test("unmatched provider videos mint a provider_catalog recording", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
     provider_id: "tidal-video-1",
@@ -178,12 +146,17 @@ test("unmatched provider videos remain offers without inventing canonical record
       AND video_item.provider_id = 'tidal-video-1'
   `).get() as { releaseId: string };
   assert.equal(membership.releaseId, "tidal-release-1");
-  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 0);
-  assert.equal(countRows("SELECT COUNT(*) AS count FROM ProviderVideoMatches"), 0);
-  assert.equal(countRows("SELECT COUNT(*) AS count FROM RecordingRelations"), 0);
+  const recording = dbModule.db.prepare(`
+    SELECT id, mbid, youtube_video_id AS yt, metadata_status AS status
+    FROM Recordings WHERE is_video = 1
+  `).get() as { id: number; mbid: string | null; yt: string | null; status: string };
+  assert.equal(recording.mbid, null);
+  assert.equal(recording.yt, null);
+  assert.equal(recording.status, "provider_catalog");
+  assert.equal(acceptedVideoMatch("tidal", "tidal-video-1")?.recordingId, recording.id);
 });
 
-test("a provider-supplied recording MBID is evidence and cannot mint a catalog row", () => {
+test("a provider-supplied recording MBID is evidence and cannot mint with that MBID", () => {
   const providerVideo = {
     provider: "tidal",
     provider_id: "tidal-video-mbid",
@@ -194,8 +167,12 @@ test("a provider-supplied recording MBID is evidence and cannot mint a catalog r
   };
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [providerVideo]);
-  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings"), 0);
-  assert.equal(acceptedVideoMatch("tidal", "tidal-video-mbid"), undefined);
+  const minted = dbModule.db.prepare(`
+    SELECT id, mbid, metadata_status AS status FROM Recordings WHERE is_video = 1
+  `).get() as { id: number; mbid: string | null; status: string };
+  assert.equal(minted.mbid, null);
+  assert.equal(minted.status, "provider_catalog");
+  assert.equal(acceptedVideoMatch("tidal", "tidal-video-mbid")?.recordingId, minted.id);
 
   const canonicalId = insertCanonicalVideo({
     mbid: "mb-video-1",
@@ -205,6 +182,7 @@ test("a provider-supplied recording MBID is evidence and cannot mint a catalog r
   });
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [providerVideo]);
   assert.equal(acceptedVideoMatch("tidal", "tidal-video-mbid")?.recordingId, canonicalId);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 1);
 });
 
 test("title matching links only the compatible cut and preserves canonical facts", () => {
@@ -240,9 +218,14 @@ test("title matching links only the compatible cut and preserves canonical facts
   }]);
 
   assert.equal(acceptedVideoMatch("tidal", "tidal-pompeii-official")?.recordingId, canonicalId);
-  assert.equal(acceptedVideoMatch("tidal", "tidal-pompeii-lyric"), undefined);
-  assert.equal(acceptedVideoMatch("apple-music", "apple-pompeii-performance"), undefined);
-  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 1);
+  const lyricMatch = acceptedVideoMatch("tidal", "tidal-pompeii-lyric");
+  const performanceMatch = acceptedVideoMatch("apple-music", "apple-pompeii-performance");
+  assert.ok(lyricMatch);
+  assert.ok(performanceMatch);
+  assert.notEqual(lyricMatch.recordingId, canonicalId);
+  assert.notEqual(performanceMatch.recordingId, canonicalId);
+  assert.notEqual(lyricMatch.recordingId, performanceMatch.recordingId);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 3);
 
   const canonical = dbModule.db.prepare(`
     SELECT title, length_ms AS lengthMs, release_date AS releaseDate,
@@ -271,8 +254,14 @@ test("equally strong canonical candidates fail closed instead of selecting by ro
     duration: 240,
   }]);
 
-  assert.equal(acceptedVideoMatch("apple-music", "apple-glory"), undefined);
-  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+  const gloryMatch = acceptedVideoMatch("apple-music", "apple-glory");
+  assert.ok(gloryMatch);
+  const canonicalIds = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1 AND mbid IS NOT NULL
+  `).all() as Array<{ id: number }>;
+  assert.equal(canonicalIds.length, 2);
+  assert.ok(!canonicalIds.some((row) => row.id === gloryMatch.recordingId));
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 3);
 });
 
 test("a manual accepted match to a MusicBrainz recording survives automatic revalidation", () => {
@@ -308,15 +297,15 @@ test("a manual accepted match to a MusicBrainz recording survives automatic reva
   });
 });
 
-test("the active schema rejects identity-bearing matches to noncanonical videos", () => {
-  const providerOnly = dbModule.db.prepare(`
-    INSERT INTO Recordings (artist_mbid, title, is_video, metadata_status)
-    VALUES ('artist-mbid', 'Provider-only video', 1, 'provider_only')
+test("the active schema rejects identity-bearing matches to audio recordings", () => {
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status)
+    VALUES ('audio-1', 'artist-mbid', 'Pompeii', 0, 'musicbrainz')
     RETURNING id
   `).get() as { id: number };
   const providerItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('tidal', 'video', 'tidal-invalid-target', 'Provider-only video')
+    VALUES ('tidal', 'video', 'tidal-invalid-target', 'Provider video')
     RETURNING id
   `).get() as { id: number };
 
@@ -326,21 +315,21 @@ test("the active schema rejects identity-bearing matches to noncanonical videos"
         provider_video_item_id, recording_id, match_state, decision_source,
         confidence, method, matcher_version
       ) VALUES (?, ?, 'accepted', 'automatic', 1, 'invalid', 1)
-    `).run(providerItem.id, providerOnly.id),
+    `).run(providerItem.id, audio.id),
     /canonical video recording/,
   );
 });
 
-test("legacy provider-only identity is removed while its file and provider provenance survive", () => {
-  const legacy = dbModule.db.prepare(`
+test("a provider-catalog mint keeps its file and match when no MusicBrainz twin exists", () => {
+  const minted = dbModule.db.prepare(`
     INSERT INTO Recordings (artist_mbid, title, length_ms, is_video, metadata_status)
-    VALUES ('artist-mbid', 'Orphan Provider Video', 180000, 1, 'provider_only')
+    VALUES ('artist-mbid', 'Orphan Provider Video', 180000, 1, 'provider_catalog')
     RETURNING id
   `).get() as { id: number };
   seedLegacyNoncanonicalVideoMatch({
     provider: "tidal",
     providerVideoId: "tidal-orphan",
-    recordingId: legacy.id,
+    recordingId: minted.id,
     title: "Orphan Provider Video",
     durationMs: 180000,
   });
@@ -353,7 +342,7 @@ test("legacy provider-only identity is removed while its file and provider prove
       'video', 'C:/library/orphan.mp4', 'orphan.mp4', 'C:/library',
       'orphan.mp4', '.mp4', 'video'
     )
-  `).run(legacy.id);
+  `).run(minted.id);
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
@@ -369,14 +358,13 @@ test("legacy provider-only identity is removed while its file and provider prove
     FROM TrackFiles WHERE file_path = 'C:/library/orphan.mp4'
   `).get();
   assert.deepEqual(file, {
-    recordingId: null,
+    recordingId: minted.id,
     recordingMbid: null,
     provider: "tidal",
     entityType: "video",
     providerId: "tidal-orphan",
   });
-  assert.equal(dbModule.db.prepare("SELECT id FROM Recordings WHERE id = ?").get(legacy.id), undefined);
-  assert.equal(acceptedVideoMatch("tidal", "tidal-orphan"), undefined);
+  assert.equal(acceptedVideoMatch("tidal", "tidal-orphan")?.recordingId, minted.id);
 });
 
 test("legacy provider-only files are re-homed when a canonical video becomes available", () => {
@@ -391,7 +379,7 @@ test("legacy provider-only files are re-homed when a canonical video becomes ava
       artist_mbid, title, length_ms, video_variant, is_video, metadata_status, release_date
     ) VALUES (
       'artist-mbid', 'Me & Mr. Jones (Live at Other Voices, 2006)', 203000,
-      'live', 1, 'provider_only', '2024-09-02'
+      'live', 1, 'provider_catalog', '2024-09-02'
     )
     RETURNING id
   `).get() as { id: number };
@@ -435,7 +423,7 @@ test("legacy provider-only files are re-homed when a canonical video becomes ava
   assert.equal(dbModule.db.prepare("SELECT id FROM Recordings WHERE id = ?").get(legacy.id), undefined);
 });
 
-test("provider audio evidence creates a relation only after the video has canonical identity", () => {
+test("provider audio evidence links a minted video, then follows a later MusicBrainz merge", () => {
   const audio = dbModule.db.prepare(`
     INSERT INTO Recordings (
       foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
@@ -463,7 +451,17 @@ test("provider audio evidence creates a relation only after the video has canoni
     related_track_id: "apple-song-1",
   };
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [offer]);
-  assert.equal(countRows("SELECT COUNT(*) AS count FROM RecordingRelations"), 0);
+  const minted = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1 AND mbid IS NULL
+  `).get() as { id: number };
+  const mintedRelation = dbModule.db.prepare(`
+    SELECT source_recording_id AS videoId, target_recording_id AS audioId, confidence, data
+    FROM RecordingRelations WHERE relation_type = 'provider_video_for'
+  `).get() as { videoId: number; audioId: number; confidence: number; data: string };
+  assert.equal(mintedRelation.videoId, minted.id);
+  assert.equal(mintedRelation.audioId, audio.id);
+  assert.equal(mintedRelation.confidence, 0.96);
+  assert.match(mintedRelation.data, /provider-video-related-track/);
 
   const videoId = insertCanonicalVideo({
     mbid: "mb-video-pompeii",
@@ -479,6 +477,7 @@ test("provider audio evidence creates a relation only after the video has canoni
   assert.equal(relation.audioId, audio.id);
   assert.equal(relation.confidence, 0.96);
   assert.match(relation.data, /provider-video-related-track/);
+  assert.equal(dbModule.db.prepare("SELECT id FROM Recordings WHERE id = ?").get(minted.id), undefined);
 });
 
 test("provider refresh preserves previously probed video quality", () => {
@@ -506,7 +505,7 @@ test("provider refresh preserves previously probed video quality", () => {
   assert.equal(row.quality, "FHD");
 });
 
-test("missing quality backfill probes only accepted canonical video offers", async () => {
+test("missing quality backfill probes only accepted video offers", async () => {
   const providerModule = await import("../providers/index.js");
   const manager = providerModule.streamingProviderManager as unknown as {
     getStreamingProvider: (id: string) => unknown;
@@ -524,11 +523,10 @@ test("missing quality backfill probes only accepted canonical video offers", asy
     recordingId: canonicalId,
     title: "Pompeii",
   });
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
-    provider: "youtube-music",
-    provider_id: "youtube-unmatched",
-    title: "Unknown Provider Cut",
-  }]);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('youtube-music', 'video', 'youtube-unmatched', 'Unknown Provider Cut')
+  `).run();
 
   const probed: string[] = [];
   manager.getStreamingProvider = (id: string) => {
@@ -555,4 +553,194 @@ test("missing quality backfill probes only accepted canonical video offers", asy
   } finally {
     manager.getStreamingProvider = original;
   }
+});
+
+test("Watch Listen Tell session video does not attach to studio Overjoyed audio", () => {
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-overjoyed', 'artist-mbid', 'Bad Blood', 'Album')
+  `).run();
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
+    VALUES ('rel-overjoyed', 'rg-overjoyed', 'artist-mbid', 'Bad Blood', 1)
+  `).run();
+  const audio = db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    ) VALUES (
+      'audio-overjoyed', 'audio-overjoyed', 'artist-mbid', 'Overjoyed', 206000, 0, 'musicbrainz'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, recording_id, title, position, medium_position, length_ms)
+    VALUES ('track-overjoyed', 'rel-overjoyed', 'audio-overjoyed', ?, 'Overjoyed', 1, 1, 206000)
+  `).run(audio.id);
+
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-wlt-overjoyed",
+    title: "Overjoyed",
+    lengthMs: 195000,
+  });
+  db.prepare(`UPDATE Recordings SET disambiguation = ? WHERE id = ?`)
+    .run("Watch Listen Tell session", videoId);
+  seedAcceptedProviderVideoMatch(db, {
+    provider: "youtube-music",
+    providerVideoId: "hm92KOlB7NE",
+    recordingId: videoId,
+    title: "Overjoyed",
+    durationMs: 195000,
+  });
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "youtube-music",
+    provider_id: "hm92KOlB7NE",
+    title: "Overjoyed",
+    duration: 195,
+  }]);
+
+  const relation = db.prepare(`
+    SELECT target_recording_id AS audioId
+    FROM RecordingRelations
+    WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+  `).get(videoId) as { audioId: number } | undefined;
+  assert.equal(relation, undefined);
+});
+
+function seedStudioAudio(input: {
+  recordingMbid: string;
+  title: string;
+  lengthMs: number;
+  albumMbid?: string;
+  editionMbid?: string;
+}): number {
+  const { db } = dbModule;
+  const albumMbid = input.albumMbid ?? `rg-${input.recordingMbid}`;
+  const editionMbid = input.editionMbid ?? `rel-${input.recordingMbid}`;
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, 'artist-mbid', ?, 'Album')
+  `).run(albumMbid, input.title);
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
+    VALUES (?, ?, 'artist-mbid', ?, 1)
+  `).run(editionMbid, albumMbid, input.title);
+  const audio = db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    ) VALUES (?, ?, 'artist-mbid', ?, ?, 0, 'musicbrainz')
+    RETURNING id
+  `).get(input.recordingMbid, input.recordingMbid, input.title, input.lengthMs) as { id: number };
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, recording_id, title, position, medium_position, length_ms)
+    VALUES (?, ?, ?, ?, ?, 1, 1, ?)
+  `).run(`track-${input.recordingMbid}`, editionMbid, input.recordingMbid, audio.id, input.title, input.lengthMs);
+  return audio.id;
+}
+
+test("catalog ingest links a standalone OMV to studio audio with no provider offers", () => {
+  const audioId = seedStudioAudio({
+    recordingMbid: "audio-pompeii",
+    title: "Pompeii",
+    lengthMs: 214000,
+  });
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-video-pompeii-omv",
+    title: "Pompeii",
+    lengthMs: 223000,
+    variant: "official",
+  });
+
+  const linked = refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid");
+  assert.equal(linked, 1);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId, source, data
+    FROM RecordingRelations
+    WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+  `).get(videoId) as { audioId: number; source: string; data: string };
+  assert.equal(relation.audioId, audioId);
+  assert.equal(relation.source, "canonical");
+  assert.equal(JSON.parse(relation.data).method, "canonical-title-duration");
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM ProviderItems"), 0);
+});
+
+test("catalog ingest does not attach a session video to studio audio", () => {
+  seedStudioAudio({
+    recordingMbid: "audio-overjoyed-catalog",
+    title: "Overjoyed",
+    lengthMs: 206000,
+  });
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-wlt-catalog",
+    title: "Overjoyed",
+    lengthMs: 195000,
+  });
+  dbModule.db.prepare(`UPDATE Recordings SET disambiguation = ? WHERE id = ?`)
+    .run("Watch Listen Tell session", videoId);
+
+  assert.equal(
+    refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
+    0,
+  );
+  assert.equal(
+    Number((dbModule.db.prepare(`
+      SELECT COUNT(*) AS count FROM RecordingRelations WHERE source_recording_id = ?
+    `).get(videoId) as { count: number }).count),
+    0,
+  );
+});
+
+test("catalog ingest does not attach a live video to studio-only audio", () => {
+  seedStudioAudio({
+    recordingMbid: "audio-oblivion",
+    title: "Oblivion",
+    lengthMs: 200000,
+  });
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-video-oblivion-live",
+    title: "Oblivion (Live)",
+    lengthMs: 200000,
+    variant: "live",
+  });
+
+  assert.equal(
+    refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
+    0,
+  );
+  assert.equal(
+    Number((dbModule.db.prepare(`
+      SELECT COUNT(*) AS count FROM RecordingRelations WHERE source_recording_id = ?
+    `).get(videoId) as { count: number }).count),
+    0,
+  );
+});
+
+test("catalog ingest leaves an existing music_video_for relation alone", () => {
+  const audioId = seedStudioAudio({
+    recordingMbid: "audio-flaws",
+    title: "Flaws",
+    lengthMs: 220000,
+  });
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-video-flaws",
+    title: "Flaws",
+    lengthMs: 220000,
+    variant: "official",
+  });
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, ?, 'music_video_for', 'musicbrainz', 1)
+  `).run(videoId, audioId);
+
+  assert.equal(
+    refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
+    0,
+  );
+  const rows = dbModule.db.prepare(`
+    SELECT relation_type AS type FROM RecordingRelations WHERE source_recording_id = ?
+  `).all(videoId) as Array<{ type: string }>;
+  assert.deepEqual(rows.map((row) => row.type), ["music_video_for"]);
 });

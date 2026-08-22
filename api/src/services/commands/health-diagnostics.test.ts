@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { BASE_SCHEMA_VERSION } from "../../database/schema/version.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-health-diagnostics-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.health-diagnostics.test.db");
@@ -73,7 +74,7 @@ test("lightweight diagnostics tolerate collection before schema initialization",
 test("lightweight diagnostics expose schema, WAL, storage, queue, and configured connectivity", () => {
   const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
 
-  assert.equal(snapshot.subsystems.database.schema.details?.userVersion, 43);
+  assert.equal(snapshot.subsystems.database.schema.details?.userVersion, BASE_SCHEMA_VERSION);
   assert.equal(snapshot.subsystems.database.schema.details?.journalMode, "wal");
   assert.equal(snapshot.subsystems.database.wal.status, "ok");
   assert.equal(snapshot.subsystems.database.storage.status, "ok");

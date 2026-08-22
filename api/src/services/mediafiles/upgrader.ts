@@ -7,6 +7,7 @@ import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { normalizeAudioQualityTag } from "../config/quality.js";
 import { UpgradableSpecification } from "../config/upgradable-specification.js";
+import { conformExistingTrackFile } from "./library-quality-conform.js";
 import { readIntEnv } from "../../utils/env.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { providerResolvedAlbumIdSql } from "../providers/provider-item-artist-scope.js";
@@ -17,6 +18,7 @@ export type UpgradeDetail = {
     reason: string;
     provider: string;
     albumId: string | null;
+    action?: "upgrade" | "downconvert";
 };
 
 export type UpgradeResult = {
@@ -41,6 +43,12 @@ type UpgradeCandidateRow = {
     current_bitrate: number | null;
     current_sample_rate: number | null;
     album_quality: string | null;
+    file_path: string | null;
+    relative_path: string | null;
+    library_root: string | null;
+    filename: string | null;
+    library_slot: string | null;
+    expected_path: string | null;
 };
 
 type AlbumUpgradeTarget = {
@@ -149,8 +157,8 @@ export class UpgraderService {
         console.log(`🔍 [UPGRADER] Checking library for quality upgrades${artistId ? ` (Artist: ${artistId})` : ''}...`);
 
         const qualityConfig = Config.getQualityConfig();
-        if (!force && !qualityConfig.upgrade_existing_files) {
-            console.log("⏭️ [UPGRADER] Upgrade existing files is disabled in settings. Skipping.");
+        if (!force && !qualityConfig.upgrade_existing_files && !qualityConfig.downconvert_existing_files) {
+            console.log("⏭️ [UPGRADER] Upgrade/downconvert of existing files is disabled in settings. Skipping.");
             return { tracks: 0, videos: 0, albums: 0, details: [] };
         }
         const qualityProfile = UpgradableSpecification.buildEffectiveProfile(
@@ -212,6 +220,12 @@ export class UpgraderService {
             lf.bit_depth    AS current_bit_depth,
             lf.bitrate      AS current_bitrate,
             lf.sample_rate  AS current_sample_rate,
+            lf.file_path    AS file_path,
+            lf.relative_path AS relative_path,
+            lf.library_root AS library_root,
+            lf.filename     AS filename,
+            lf.library_slot AS library_slot,
+            lf.expected_path AS expected_path,
             -- Album-level source capability, kept as the fallback it always was:
             -- the best available variant across the resolved provider release's
             -- member tracks. Correlates on the release item resolved below.
@@ -332,6 +346,8 @@ export class UpgraderService {
                 // When spatial audio is disabled, curation unmonitors the items and
                 // remove_unmonitored_files handles file deletion.
                 continue;
+            } else if (row.library_slot === "spatial") {
+                continue;
             } else {
                 evaluation = UpgradableSpecification.evaluateAudioChange({
                     profile: qualityProfile,
@@ -342,6 +358,42 @@ export class UpgraderService {
                     bitDepth: row.current_bit_depth,
                     sampleRate: row.current_sample_rate,
                 });
+            }
+
+            if (evaluation.direction === "downgrade" && row.media_type !== "Music Video") {
+                if (evaluation.needsChange && row.file_path) {
+                    try {
+                        await conformExistingTrackFile({
+                            fileId: row.file_id,
+                            filePath: row.file_path,
+                            relativePath: row.relative_path,
+                            libraryRoot: row.library_root,
+                            filename: row.filename,
+                            expectedPath: row.expected_path,
+                            codec: row.current_codec,
+                            extension: row.current_extension,
+                            quality: row.current_quality,
+                            bitDepth: row.current_bit_depth,
+                            sampleRate: row.current_sample_rate,
+                            audioQuality: qualityConfig.audio_quality,
+                        });
+                        result.tracks++;
+                        result.details.push({
+                            mediaId: String(row.media_id),
+                            type: row.media_type,
+                            reason: evaluation.reason,
+                            provider,
+                            albumId: row.album_id ? String(row.album_id) : null,
+                            action: "downconvert",
+                        });
+                    } catch (error) {
+                        console.error(
+                            `[UPGRADER] Downconvert failed for ${row.file_path}:`,
+                            error instanceof Error ? error.message : error,
+                        );
+                    }
+                }
+                continue;
             }
 
             if (evaluation.needsChange) {
@@ -359,6 +411,7 @@ export class UpgraderService {
                     reason: evaluation.reason,
                     provider,
                     albumId,
+                    action: "upgrade",
                 });
 
                 if (row.media_type === 'Music Video') {
@@ -382,6 +435,7 @@ export class UpgraderService {
 
             const albumTracksToUpgrade = result.details.filter(
                 d => d.type !== 'Music Video'
+                    && d.action !== "downconvert"
                     && d.provider === provider
                     && d.albumId === albumId
             );
@@ -433,6 +487,7 @@ export class UpgraderService {
             detailsLoopCounter++;
             await this.maybeYield(detailsLoopCounter);
 
+            if (d.action === "downconvert") continue;
             if (trackMediaIdsQueuedViaAlbum.has(`${d.provider}\0${d.mediaId}`)) continue;
 
             const isVideo = d.type === 'Music Video';

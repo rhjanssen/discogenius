@@ -439,79 +439,74 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
   ]);
 });
 
-test("SoundCloud storeProviderTrackOffers drops DRM tracks so they never become plan sources", async () => {
+test("SoundCloud storeProviderTrackOffers keeps 6 progressive offers and drops the DRM track", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "91111111-1111-4111-8111-111111111119";
   const releaseMbid = "92222222-2222-4222-8222-222222222229";
-  const progressiveRecordingMbid = "93333333-3333-4333-8333-333333333339";
-  const drmRecordingMbid = "94444444-4444-4444-8444-444444444449";
-  const progressiveTrackMbid = "95555555-5555-4555-8555-555555555559";
-  const drmTrackMbid = "96666666-6666-4666-8666-666666666669";
+  const titles = [
+    "Adagio for Strings",
+    "What Would You Do?",
+    "Requiem for Blue Jeans",
+    "Of the Night",
+    "Titanium",
+    "Love Don't Live Here",
+    "Falling",
+  ];
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
-    .run(releaseGroupMbid, artistMbid, "DRM Filter EP");
+    .run(releaseGroupMbid, artistMbid, "Other People's Heartache");
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, ?, 'Official')
-  `).run(releaseMbid, releaseGroupMbid, artistMbid, "DRM Filter EP");
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
-    .run(progressiveRecordingMbid, artistMbid, "Progressive Fan Cut");
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
-    .run(drmRecordingMbid, artistMbid, "Official DRM Cut");
-  dbModule.db.prepare(`
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
+
+  const insertRecording = dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)");
+  const insertTrack = dbModule.db.prepare(`
     INSERT INTO Tracks (
       mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
-  `).run(progressiveTrackMbid, releaseMbid, progressiveRecordingMbid, 1, "1", "Progressive Fan Cut", 180000);
-  dbModule.db.prepare(`
-    INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
-    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
-  `).run(drmTrackMbid, releaseMbid, drmRecordingMbid, 2, "2", "Official DRM Cut", 200000);
+  `);
+  const canonical = titles.map((title, index) => {
+    const n = index + 1;
+    const recordingMbid = `93333333-3333-4333-8333-33333333333${n}`;
+    const trackMbid = `95555555-5555-4555-8555-55555555555${n}`;
+    insertRecording.run(recordingMbid, artistMbid, title);
+    insertTrack.run(trackMbid, releaseMbid, recordingMbid, n, String(n), title, (180 + index) * 1000);
+    return { title, trackMbid, providerId: n === 2 ? "sc-drm" : `sc-progressive-${n}` };
+  });
 
   await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
     "soundcloud",
     "sc-mixed-drm",
-    [
-      {
-        provider_id: "sc-progressive",
-        title: "Progressive Fan Cut",
-        duration: 180,
-        track_number: 1,
+    canonical.map((row, index) => {
+      const isDrm = row.providerId === "sc-drm";
+      return {
+        provider_id: row.providerId,
+        title: row.title,
+        duration: 180 + index,
+        track_number: index + 1,
         volume_number: 1,
         policy: "ALLOW",
         media: {
           transcodings: [{
-            url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:1/progressive",
+            url: `https://api-v2.soundcloud.com/media/soundcloud:tracks:${index + 1}/${isDrm ? "enc" : "progressive"}`,
             snipped: false,
-            format: { protocol: "progressive", mime_type: "audio/mpeg" },
+            format: {
+              protocol: isDrm ? "ctr-encrypted-hls" : "progressive",
+              mime_type: isDrm ? "audio/mp4" : "audio/mpeg",
+            },
           }],
         },
-      },
-      {
-        provider_id: "sc-drm",
-        title: "Official DRM Cut",
-        duration: 200,
-        track_number: 2,
-        volume_number: 1,
-        policy: "ALLOW",
-        media: {
-          transcodings: [{
-            url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:2/enc",
-            snipped: false,
-            format: { protocol: "ctr-encrypted-hls", mime_type: "audio/mp4" },
-          }],
-        },
-      },
-    ],
+      };
+    }),
     null,
     releaseMbid,
   );
 
   const members = dbModule.db.prepare(`
-    SELECT item.provider_id, track_match.match_state, track.mbid AS track_mbid
+    SELECT item.provider_id, item.availability, track_match.match_state, track.mbid AS track_mbid
     FROM ProviderItems release_item
     JOIN ProviderEditionMembers member
       ON member.provider_edition_item_id = release_item.id
@@ -522,13 +517,29 @@ test("SoundCloud storeProviderTrackOffers drops DRM tracks so they never become 
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     WHERE release_item.provider = 'soundcloud'
       AND release_item.provider_id = 'sc-mixed-drm'
-    ORDER BY item.provider_id
-  `).all() as Array<{ provider_id: string; match_state: string | null; track_mbid: string | null }>;
+    ORDER BY member.position
+  `).all() as Array<{
+    provider_id: string;
+    availability: string;
+    match_state: string | null;
+    track_mbid: string | null;
+  }>;
 
-  assert.deepEqual(members.map((row) => row.provider_id), ["sc-progressive"]);
-  assert.equal(members[0]?.match_state, "accepted");
-  assert.equal(members[0]?.track_mbid, progressiveTrackMbid);
+  assert.deepEqual(
+    members.map((row) => row.provider_id),
+    canonical.filter((row) => row.providerId !== "sc-drm").map((row) => row.providerId),
+  );
+  assert.equal(members.length, 6);
+  assert.ok(members.every((row) => row.availability === "available"));
+  assert.ok(members.every((row) => row.match_state === "accepted"));
   assert.ok(!members.some((row) => row.provider_id === "sc-drm"));
+  assert.equal(
+    (dbModule.db.prepare(`
+      SELECT COUNT(*) AS n FROM ProviderItems
+      WHERE provider = 'soundcloud' AND entity_type = 'track' AND provider_id = 'sc-drm'
+    `).get() as { n: number }).n,
+    0,
+  );
 });
 
 test("same-release provider superset maps exact-duration version tracks and clears stale positional links", async () => {

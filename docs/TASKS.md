@@ -19,8 +19,8 @@ Status: pending | in progress | decided | revisit
 ## Done: the 2.8.0 architecture
 
 Landed on `claude/implementation-brief-reconcile-taw5jb`. The aspirational
-CORE catalogue contract is `domain-v41`; production `createBaselineSchemaV41()`
-is what `initDatabase()` builds (currently `user_version` 43) and converges
+CORE catalogue contract is `domain-baseline.ts`; production `createBaselineSchemaV41()`
+is what `initDatabase()` builds (currently `user_version` 44) and converges
 onto that model. There are no compatibility migrations.
 
 **Monitoring is row existence, everywhere.** `LibraryAlbums.monitored` and
@@ -726,7 +726,7 @@ Still open:
 - No multi-user / roles for the foreseeable future (Lidarr posture:
   single-operator). Auth stays the app/session gate.
 - Schema **41** is the catalogue-model target (`AGENTS.md`). Production
-  `createBaselineSchemaV41()` currently opens as `user_version` 43 and
+  `createBaselineSchemaV41()` currently opens as `user_version` 44 and
   converges onto that model; there are no compatibility migrations.
 
 ## Deprioritized

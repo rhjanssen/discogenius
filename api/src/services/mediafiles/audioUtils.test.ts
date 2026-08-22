@@ -208,6 +208,18 @@ test("an unclassifiable container is not reported as lossless", () => {
   assert.equal(deriveQuality("", {}), "UNKNOWN");
 });
 
+test("24-bit lossless is MAX class, including 24/48", () => {
+  assert.equal(deriveQuality(".flac", { bitDepth: 16, sampleRate: 44100 }), "LOSSLESS");
+  assert.equal(deriveQuality(".m4a", { codec: "alac", bitDepth: 24, sampleRate: 48000 }), "HIRES_LOSSLESS");
+  assert.equal(deriveQuality(".flac", { bitDepth: 24, sampleRate: 96000 }), "HIRES_LOSSLESS");
+});
+
+test("Opus 96 is LOW and Opus 160 is HIGH", () => {
+  assert.equal(deriveQuality(".opus", { codec: "opus", bitrate: 96_000 }), "LOW");
+  assert.equal(deriveQuality(".opus", { codec: "opus", bitrate: 160_000 }), "HIGH");
+  assert.equal(deriveQuality(".m4a", { codec: "aac", bitrate: 256_000 }), "HIGH");
+});
+
 test("unknown local quality never satisfies a quality cutoff", () => {
   const profile = UpgradableSpecification.buildEffectiveProfile({
     audio_quality: "high",

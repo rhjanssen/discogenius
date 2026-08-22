@@ -4,6 +4,42 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-08-22
+
+Video recordings are MusicBrainz and/or YouTube catalog rows. Providers match
+onto those rows instead of being the identity. Low/Normal quality is a native
+lossy cap. Apple 24/48 stays Max unless you turn on downconvert.
+
+### Added
+- **YouTube video listing is core catalog, not the download plugin.** RefreshArtist
+  pulls public ytmusicapi artist videos into `Recordings.youtube_video_id` even
+  when YouTube Music is disconnected or has no cookies. Cookies stay for
+  download. Missing Python/ytmusicapi is logged and does not fail the refresh.
+- **Schema 44 `Recordings.youtube_video_id`.** Video identity is an MBID, a
+  YouTube watch id, or a last-resort `provider_catalog` mint. MusicBrainz-only
+  videos (no YouTube twin) are valid Apple/TIDAL match targets.
+- **Also downconvert existing files** (Settings, Monitoring). Off by default.
+  Lowering preferred quality keeps higher-quality files unless this is on.
+- Settings category list stays under the desktop app bar instead of jumping on
+  first scroll.
+
+### Fixed
+- **Bad Blood X showed 31/33 because two Apple tracks never matched.** Disc 2
+  "Pompeii (live from Studio Brussel)" and "Laura Palmer (Dan's Bedroom demo)"
+  are the same recordings as Apple's "Live At Studio Brussel / Acoustic" and
+  "Racing Heart Demo". Online catalog strips ISRCs, so matcher v3 treats live
+  at/from/in as one venue and tries sibling-edition titles of the same
+  Recording.
+
+### Changed
+- Low/Normal keep native lossy files (no second AAC/Opus generation). Leftover
+  lossless converts to Opus 96 kbps (Low) or 160 kbps (Normal) when downconvert
+  is on. High still treats Apple 24/48 ALAC as Max unless that toggle is on.
+- SoundCloud omits DRM, SNIP, and Go+ encrypted-HLS tracks from offers instead
+  of matching undownloadable official shells.
+- Catalog refresh links standalone MusicBrainz videos to studio audio. Live
+  videos do not attach to studio-only recordings.
+
 ## [2.10.3] - 2026-08-22
 
 Metadata toggles delete the sidecars they turn off, and a Servarr artist

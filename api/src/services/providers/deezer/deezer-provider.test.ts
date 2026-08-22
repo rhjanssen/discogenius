@@ -208,10 +208,27 @@ test("Streamrip arguments select resource, output root and account quality witho
 });
 
 test("Deezer presets map to Streamrip ceilings without claiming actual output quality", () => {
-  assert.equal(streamripQualityCeiling("LOW"), "0");
-  assert.equal(streamripQualityCeiling("NORMAL"), "1");
-  assert.equal(streamripQualityCeiling("HIGH"), "2");
-  assert.equal(streamripQualityCeiling("MAX"), "2");
+  assert.equal(streamripQualityCeiling("LOW", "max"), "0");
+  assert.equal(streamripQualityCeiling("NORMAL", "max"), "1");
+  assert.equal(streamripQualityCeiling("HIGH", "max"), "2");
+  assert.equal(streamripQualityCeiling("MAX", "max"), "2");
+});
+
+test("Deezer Streamrip Settings ceiling wins over a lossless catalog tag", () => {
+  assert.equal(streamripQualityCeiling("LOSSLESS", "low"), "0");
+  assert.equal(streamripQualityCeiling("LOSSLESS", "normal"), "1");
+  assert.equal(streamripQualityCeiling("LOSSLESS", "high"), "2");
+  assert.equal(streamripQualityCeiling("LOW", "max"), "0");
+  const args = buildStreamripArgs({
+    provider: "deezer",
+    entityType: "track",
+    providerId: "3103033041",
+    downloadPath: path.join(tempDir, "ceiling-job"),
+    quality: "LOSSLESS",
+    slot: "stereo",
+  });
+  // Tests default Settings to max, so a LOSSLESS offer still requests FLAC.
+  assert.equal(args[args.indexOf("--quality") + 1], "2");
 });
 
 test("Streamrip progress recognizes download, completion and error output", () => {

@@ -186,16 +186,19 @@ const TIDDL_TRACK_QUALITY_RANK: Record<TiddlTrackQuality, number> = {
  * Spatial requests are exempt — Atmos streams are selected via --dolby-atmos
  * and have no FLAC tier to cap.
  */
-export function capTiddlTrackQuality(requested: TiddlTrackQuality, isSpatial: boolean): TiddlTrackQuality {
+export function capTiddlTrackQuality(
+    requested: TiddlTrackQuality,
+    isSpatial: boolean,
+    configuredQuality: TiddlTrackQuality | null = nativeTiddlTrackQuality(getConfigSection("quality")?.audio_quality),
+): TiddlTrackQuality {
     if (isSpatial) {
         return requested;
     }
-    const configured = nativeTiddlTrackQuality(getConfigSection('quality')?.audio_quality);
-    if (!configured) {
+    if (!configuredQuality) {
         return requested;
     }
-    return TIDDL_TRACK_QUALITY_RANK[requested] > TIDDL_TRACK_QUALITY_RANK[configured]
-        ? configured
+    return TIDDL_TRACK_QUALITY_RANK[requested] > TIDDL_TRACK_QUALITY_RANK[configuredQuality]
+        ? configuredQuality
         : requested;
 }
 

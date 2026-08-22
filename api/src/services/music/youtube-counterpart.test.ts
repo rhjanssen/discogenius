@@ -209,3 +209,80 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
   `).get(videoOffer.recording_id) as { target_recording_id: number };
   assert.equal(relation.target_recording_id, audioRecId);
 });
+
+test("YouTube self-OMV with album-track duration still follows a unique music_video_for", async () => {
+  const { db } = dbModule;
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-yt-mv", "Bastille");
+  db.prepare(`INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)`)
+    .run("artist-yt-mv", "Bastille", "artist-yt-mv");
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
+    .run("rg-yt-mv", "artist-yt-mv", "Bad Blood", "Album");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
+    VALUES (?, ?, ?, ?, 1)
+  `).run("release-yt-mv", "rg-yt-mv", "artist-yt-mv", "Bad Blood");
+  db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video) VALUES (?, ?, ?, ?, 0)`)
+    .run("rec-audio-yt-mv", "artist-yt-mv", "Overjoyed", 206000);
+  const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-mv") as { id: number }).id;
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, metadata_status)
+    VALUES ('rec-video-yt-mv', 'artist-yt-mv', 'Overjoyed', 223000, 1, 'musicbrainz')
+  `).run();
+  const videoRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-video-yt-mv") as { id: number }).id;
+  db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, ?, 'music_video_for', 'musicbrainz', 1)
+  `).run(videoRecId, audioRecId);
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    VALUES (?, ?, ?, ?, 1, 1, 206000)
+  `).run("track-yt-mv", "release-yt-mv", "rec-audio-yt-mv", "Overjoyed");
+
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('youtube-music', 'release', 'MPREb_yt_mv', 'Bad Blood X')
+  `).run();
+  seedAcceptedProviderReleaseMatch(db, {
+    provider: "youtube-music",
+    providerEditionId: "MPREb_yt_mv",
+    releaseMbid: "release-yt-mv",
+  });
+
+  const providerTrack = {
+    providerId: "fK3fVJtFTh0",
+    title: "Overjoyed",
+    artist: { providerId: "UCbastille", name: "Bastille" },
+    album: {
+      providerId: "MPREb_yt_mv",
+      title: "Bad Blood X",
+      artist: { providerId: "UCbastille", name: "Bastille" },
+    },
+    // YouTube Music album listing uses the stereo duration, not the 223s OMV.
+    duration: 207,
+    trackNumber: 1,
+    volumeNumber: 1,
+    quality: "YOUTUBE_LOSSY",
+    counterpartVideoId: "fK3fVJtFTh0",
+  };
+
+  await refreshAlbumModule.RefreshAlbumService.storeProviderTrackOffers(
+    "youtube-music",
+    "MPREb_yt_mv",
+    [refreshAlbumModule.providerTrackToTrackMetadataRow(providerTrack as any)],
+    "artist-yt-mv",
+  );
+
+  const videoOffer = db.prepare(`
+    SELECT match.recording_id
+    FROM ProviderItems item
+    JOIN ProviderVideoMatches match
+      ON match.provider_video_item_id = item.id
+     AND match.match_state = 'accepted'
+    WHERE item.provider = 'youtube-music'
+      AND item.entity_type = 'video'
+      AND item.provider_id = 'fK3fVJtFTh0'
+  `).get() as { recording_id: number } | undefined;
+  assert.equal(videoOffer?.recording_id, videoRecId);
+});

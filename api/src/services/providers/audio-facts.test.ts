@@ -125,6 +125,7 @@ test("hi-res means better than CD on either axis", () => {
   const cd = facts("deezer", "flac");
   assert.equal(fidelityClassOf(cd), "lossless");
   assert.equal(fidelityClassOf({ ...cd, bitDepth: 24 }), "hires-lossless");
+  assert.equal(fidelityClassOf({ ...cd, bitDepth: 24, sampleRateHz: 48000 }), "hires-lossless");
   assert.equal(fidelityClassOf({ ...cd, sampleRateHz: 96000 }), "hires-lossless");
 });
 

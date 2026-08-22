@@ -6,6 +6,7 @@ import type {
   DownloadProgress,
   DownloadRequest,
 } from "../../download/download-backend.js";
+import { configuredAudioQuality } from "../../config/config.js";
 import type { SpotifyAuthStore } from "./spotify-auth.js";
 import { spotifyAuthStore } from "./spotify-auth.js";
 
@@ -168,6 +169,24 @@ async function findMediaFiles(directory: string): Promise<string[]> {
   return found;
 }
 
+export function votifyAudioQualityForDownload(
+  requestQuality: string | null | undefined,
+  configuredQuality: "low" | "normal" | "high" | "max" = configuredAudioQuality(),
+): "vorbis-low" | "vorbis-medium" | "vorbis-high" {
+  const settingsCap: "vorbis-low" | "vorbis-high" = configuredQuality === "low"
+    ? "vorbis-low"
+    : "vorbis-high";
+  if (!requestQuality) return settingsCap;
+  try {
+    const requested = resolveVotifyAudioQuality(requestQuality);
+    const rank = { "vorbis-low": 0, "vorbis-medium": 1, "vorbis-high": 2 } as const;
+    return rank[requested] > rank[settingsCap] ? settingsCap : requested;
+  } catch {
+    // Catalog lossless tags are not a Spotify Vorbis delivery; use the Settings cap.
+    return settingsCap;
+  }
+}
+
 export function resolveVotifyAudioQuality(raw: string | null | undefined): "vorbis-low" | "vorbis-medium" | "vorbis-high" {
   const normalized = String(raw ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
   if (!normalized || normalized === "lossy" || normalized === "standard" || normalized === "high" || normalized === "vorbis-medium" || normalized === "160") {
@@ -218,7 +237,7 @@ export class VotifyBackend implements DownloadBackend {
     if (request.entityType === "video" || (request.slot && request.slot !== "stereo")) {
       throw new Error("Spotify's baseline Votify backend supports stereo audio only");
     }
-    const quality = resolveVotifyAudioQuality(request.quality);
+    const quality = votifyAudioQualityForDownload(request.quality);
     const resourceType = request.entityType === "track" ? "track" : "album";
     const url = `https://open.spotify.com/${resourceType}/${request.providerId}`;
     return [

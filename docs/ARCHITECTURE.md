@@ -194,9 +194,10 @@ Operational semantics:
   selected-offer snapshots — not raw response blobs — and must not create
   canonical artists/albums/releases/tracks or wanted state by themselves.
 - `Recordings` is the canonical extension point for MusicBrainz audio
-  recordings, spatial/alternate mixes, and MusicBrainz video recordings.
-  Provider-only videos stay in `ProviderItems` until matched to that canonical
-  graph.
+  recordings, spatial/alternate mixes, and video recordings (MusicBrainz and/or
+  YouTube watch id). Providers match onto those rows; they do not *be* the
+  identity. A provider clip with no catalog hit may mint a `provider_catalog`
+  recording as a last resort.
   `RecordingRelations` stores MusicBrainz `music_video_for` links plus inferred
   relations like `same_lyrical_content`.
 - Lyrics are sidecar files in `LyricFiles`; the payload is never stored in

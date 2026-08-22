@@ -43,6 +43,7 @@ test("config contract parsers normalize expected public settings shapes", () => 
     embed_cover: true,
     embed_lyrics: false,
     upgrade_existing_files: true,
+    downconvert_existing_files: false,
     convert_video_mp4: true,
   });
   assert.equal(qualityConfig.audio_quality, "max");

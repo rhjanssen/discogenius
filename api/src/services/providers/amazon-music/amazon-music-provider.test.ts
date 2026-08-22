@@ -14,6 +14,7 @@ const { amazonMusicQualityMapping } = await import("./amazon-music-quality.js");
 const {
   AmazonMusicBackend,
   amazonProgressForLine,
+  amazonQualityForRequest,
   buildAmazonMusicBridgeArgs,
   normalizeAmazonMusicDownloadFilenames,
 } = await import("./amazon-music-backend.js");
@@ -256,6 +257,22 @@ test("Amazon Music bridge arguments are non-interactive and never expose the tok
   assert.ok(args.includes("Atmos_EC-3"));
   assert.ok(!args.some((value) => value.includes(credentials.accessToken)));
   assert.ok(args.includes("B0ALBUM123"));
+});
+
+test("Amazon Music Settings ceiling caps a hi-res offer to lossy or 16-bit", () => {
+  const request = {
+    provider: "amazon-music" as const,
+    entityType: "track" as const,
+    providerId: "B0TRACK123",
+    downloadPath: path.join(tempDir, "cap-job"),
+    quality: "HIRES_LOSSLESS",
+    slot: "stereo" as const,
+  };
+  assert.equal(amazonQualityForRequest(request, "low"), "Normal");
+  assert.equal(amazonQualityForRequest(request, "normal"), "Normal");
+  assert.equal(amazonQualityForRequest(request, "high"), "High");
+  assert.equal(amazonQualityForRequest(request, "max"), "Max");
+  assert.equal(amazonQualityForRequest({ ...request, quality: "LOSSLESS" }, "max"), "High");
 });
 
 test("Amazon Music normalizes downloaded files to provider IDs using exact ISRC/title evidence", async () => {

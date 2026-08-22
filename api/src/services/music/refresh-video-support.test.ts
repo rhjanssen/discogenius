@@ -5,6 +5,7 @@ import {
   isLivePerformanceTitle,
   liveVenueSignaturesCompatible,
   preferredMergedVideoTitle,
+  recordingPerformanceTitle,
   videoAudioTitlesCompatible,
 } from "./refresh-video-support.js";
 
@@ -240,4 +241,81 @@ test("Oblivion live title is incompatible with Flaws Unit 24 audio", () => {
     ),
     false,
   );
+});
+
+test("studio OMV does not attach to Unplugged or Alchemy-style live audio", () => {
+  assert.equal(
+    findRelatedAudioRecordingForVideo(
+      { title: "Pompeii (Official Music Video)", duration: 214 },
+      [{
+        id: 1,
+        mbid: "unplugged-pompeii",
+        title: "Pompeii (MTV Unplugged)",
+        length_ms: 214_000,
+        has_live_album: 1,
+        has_non_live_album: 0,
+        has_studio_album: 0,
+      }],
+    ),
+    null,
+  );
+  const alchemyAudio = [{
+    id: 2,
+    mbid: "alchemy-sultans",
+    title: "Sultans of Swing",
+    length_ms: 347_000,
+    has_live_album: 1,
+    has_non_live_album: 0,
+    has_studio_album: 0,
+  }];
+  assert.equal(
+    findRelatedAudioRecordingForVideo(
+      { title: "Sultans of Swing (Official Music Video)", duration: 347 },
+      alchemyAudio,
+    ),
+    null,
+    "bare live-album title is still live; studio OMV must not attach",
+  );
+  const liveOfThatCut = findRelatedAudioRecordingForVideo(
+    { title: "Sultans of Swing (Live)", duration: 347 },
+    alchemyAudio,
+  );
+  assert.equal(liveOfThatCut?.id, 2);
+});
+
+test("Watch Listen Tell session is not the studio Overjoyed recording", () => {
+  assert.equal(
+    recordingPerformanceTitle("Overjoyed", "Watch Listen Tell session"),
+    "Overjoyed (Watch Listen Tell session)",
+  );
+  assert.equal(
+    videoAudioTitlesCompatible("Overjoyed (Watch Listen Tell session)", "Overjoyed"),
+    false,
+  );
+  assert.equal(
+    videoAudioTitlesCompatible("Overjoyed (Official Music Video)", "Overjoyed"),
+    true,
+  );
+  const studio = [{
+    id: 6,
+    mbid: "overjoyed-studio",
+    title: "Overjoyed",
+    length_ms: 206_253,
+    has_non_live_album: 1,
+    has_studio_album: 1,
+  }];
+  assert.equal(
+    findRelatedAudioRecordingForVideo(
+      { title: "Overjoyed", duration: 195, disambiguation: "Watch Listen Tell session" },
+      studio,
+      { videoVariant: "video", preferStudioAudio: true },
+    ),
+    null,
+  );
+  const official = findRelatedAudioRecordingForVideo(
+    { title: "Overjoyed", duration: 223 },
+    studio,
+    { videoVariant: "video", preferStudioAudio: true },
+  );
+  assert.equal(official?.id, 6);
 });

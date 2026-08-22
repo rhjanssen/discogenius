@@ -835,7 +835,7 @@ test("release-group-only provider evidence does not leak a guessed MusicBrainz e
   assert.equal(typedMatchCount.count, 0);
 });
 
-test("public remote catalog caches unmatched video offers without inventing recordings", async () => {
+test("connected video provider mints a provider_catalog recording when no catalog twin exists", async () => {
   const artistMbid = "11111111-1111-4111-8111-111111111111";
   const providerArtistId = "fake-video-artist";
   let videoFetches = 0;
@@ -957,16 +957,15 @@ test("public remote catalog caches unmatched video offers without inventing reco
        AND video_match.match_state = 'accepted'
       WHERE item.provider = ? AND item.entity_type = 'video' AND item.provider_id = ?
     `).get("fake-video-provider", "fake-video-1") as { count: number }).count,
-    0,
+    1,
   );
-  assert.equal(
-    (dbModule.db.prepare(`
-      SELECT COUNT(*) AS count
-      FROM Recordings
-      WHERE artist_mbid = ? AND is_video = 1
-    `).get(artistMbid) as { count: number }).count,
-    0,
-  );
+  const minted = dbModule.db.prepare(`
+    SELECT youtube_video_id AS yt, metadata_status AS status
+    FROM Recordings
+    WHERE artist_mbid = ? AND is_video = 1
+  `).get(artistMbid) as { yt: string | null; status: string };
+  assert.equal(minted.yt, null);
+  assert.equal(minted.status, "provider_catalog");
 });
 
 

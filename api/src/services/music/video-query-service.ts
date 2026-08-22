@@ -179,19 +179,29 @@ function persistedPlacementForDetail(videoRecordingId: string): VideoDetailContr
  * ProviderItems.title was later filled — artist cards and the video page must
  * agree on the same display title.
  */
-const VIDEO_DISPLAY_TITLE_SQL = `
+function videoDisplayTitleSql(alias: string, providerAlias = "provider_item"): string {
+  return `
   CASE
-    WHEN recording.title IS NOT NULL
-      AND TRIM(recording.title) != ''
-      AND LOWER(TRIM(recording.title)) != 'unknown video'
-    THEN recording.title
+    WHEN ${alias}.title IS NOT NULL
+      AND TRIM(${alias}.title) != ''
+      AND LOWER(TRIM(${alias}.title)) != 'unknown video'
+    THEN CASE
+      WHEN ${alias}.disambiguation IS NOT NULL
+        AND TRIM(${alias}.disambiguation) != ''
+        AND INSTR(LOWER(${alias}.title), LOWER(TRIM(${alias}.disambiguation))) = 0
+      THEN ${alias}.title || ' (' || TRIM(${alias}.disambiguation) || ')'
+      ELSE ${alias}.title
+    END
     ELSE COALESCE(
-      NULLIF(TRIM(provider_item.title), ''),
-      NULLIF(TRIM(recording.title), ''),
+      NULLIF(TRIM(${providerAlias}.title), ''),
+      NULLIF(TRIM(${alias}.title), ''),
       'Unknown Video'
     )
   END
 `;
+}
+
+const VIDEO_DISPLAY_TITLE_SQL = videoDisplayTitleSql("recording");
 
 function getCanonicalVideoSelectSql(whereClause: string): string {
   return `
@@ -635,17 +645,7 @@ function associatedVideoSelectSql(input: {
   return `
     SELECT
       CAST(video.id AS TEXT) AS id,
-      CASE
-        WHEN video.title IS NOT NULL
-          AND TRIM(video.title) != ''
-          AND LOWER(TRIM(video.title)) != 'unknown video'
-        THEN video.title
-        ELSE COALESCE(
-          NULLIF(TRIM(pi.title), ''),
-          NULLIF(TRIM(video.title), ''),
-          'Unknown Video'
-        )
-      END AS title,
+      ${videoDisplayTitleSql("video", "pi")} AS title,
       video.video_variant AS video_variant,
       video.release_date AS release_date,
       ${monitoredVideoPredicate("video.id")} AS monitored,

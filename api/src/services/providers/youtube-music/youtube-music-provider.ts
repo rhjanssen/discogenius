@@ -364,9 +364,13 @@ export class YouTubeMusicProvider implements StreamingProvider {
     // ~256 kbps. It is probed once per session and published for the variant
     // writers, which hold only a provider id.
     try {
+      const extraArgs = fs.existsSync(YOUTUBE_MUSIC_COOKIES_FILE)
+        ? ["--cookies", YOUTUBE_MUSIC_COOKIES_FILE]
+        : [];
       const capabilities = await getYouTubeSessionCapabilities({
         authenticated: connected,
         binary: getYtDlpBinary(),
+        extraArgs,
       });
       publishProviderSessionCapabilities(this.id, {
         youtubePremium: youtubePremiumForExpectations(capabilities),

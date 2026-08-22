@@ -31,6 +31,13 @@ export interface MatchTargetTrack {
     /** Normalized canonical ISRCs for the recording. */
     isrcs: Set<string>;
     title: string;
+    /**
+     * Other displayed names of this same Recording: the recording title, and
+     * sibling edition track titles. MusicBrainz often retitles one performance
+     * per release ("Laura Palmer (Dan's Bedroom demo)" vs Apple's
+     * "Laura Palmer (Racing Heart Demo)"); those are names, not other recordings.
+     */
+    alternateTitles?: readonly string[];
     /** Position on the medium (1-based). */
     trackNumber: number;
     /** Medium / disc number (1-based). */
@@ -259,11 +266,32 @@ export const TRACK_MATCH_THRESHOLD = 0.55;
  *
  * 2: dash-suffixed version qualifiers ("… - ARTE Live at …") are read as
  *    qualifiers, and a gross duration mismatch vetoes the title-only fallback.
+ * 3: live at/from/in collapse to one venue token; a Recording's other edition
+ *    titles are tried as names of the same performance (Bad Blood X disc 2).
  */
-export const PROVIDER_TRACK_MATCHER_VERSION = 2;
+export const PROVIDER_TRACK_MATCHER_VERSION = 3;
 
 function normalizeIsrc(value: string | null | undefined): string {
     return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function uniqueTargetTitles(target: MatchTargetTrack): string[] {
+    const seen = new Set<string>();
+    const titles: string[] = [];
+    for (const value of [target.title, ...(target.alternateTitles || [])]) {
+        const title = String(value || "").trim();
+        if (!title || seen.has(title)) continue;
+        seen.add(title);
+        titles.push(title);
+    }
+    return titles.length > 0 ? titles : [String(target.title || "")];
+}
+
+function betterTrackEvidence(candidate: TrackMatchEvidence, incumbent: TrackMatchEvidence): boolean {
+    const candidateRank = trackMatchMethodRank(candidate.method);
+    const incumbentRank = trackMatchMethodRank(incumbent.method);
+    return candidateRank < incumbentRank
+        || (candidateRank === incumbentRank && candidate.score > incumbent.score);
 }
 
 /**
@@ -288,6 +316,19 @@ export function describeTrackMatch(
         return { score: 1.0, method: "external_id" };
     }
 
+    let best: TrackMatchEvidence = { score: 0, method: "none" };
+    for (const title of uniqueTargetTitles(target)) {
+        const evidence = describeTitleDurationMatch({ ...target, title }, pt, options);
+        if (betterTrackEvidence(evidence, best)) best = evidence;
+    }
+    return best;
+}
+
+function describeTitleDurationMatch(
+    target: MatchTargetTrack,
+    pt: MatchProviderTrack,
+    options: TrackMatchOptions,
+): TrackMatchEvidence {
     const positionAligned = Number(target.trackNumber || 0) > 0
         && Number(pt.trackNumber || 0) > 0
         && Number(target.trackNumber) === Number(pt.trackNumber)

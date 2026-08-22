@@ -24,6 +24,7 @@ import {
   VotifyBackend,
   parseVotifyProgressLine,
   resolveVotifyAudioQuality,
+  votifyAudioQualityForDownload,
   type VotifyRunRequest,
 } from "./votify-backend.js";
 
@@ -213,6 +214,10 @@ test("Spotify quality mapping advertises only the configured Vorbis lossy path",
   assert.equal(resolveVotifyAudioQuality(undefined), "vorbis-medium");
   assert.equal(resolveVotifyAudioQuality("320"), "vorbis-high");
   assert.throws(() => resolveVotifyAudioQuality("HIRES_LOSSLESS"), /not supported/);
+  assert.equal(votifyAudioQualityForDownload(undefined, "low"), "vorbis-low");
+  assert.equal(votifyAudioQualityForDownload(undefined, "normal"), "vorbis-high");
+  assert.equal(votifyAudioQualityForDownload("96", "max"), "vorbis-low");
+  assert.equal(votifyAudioQualityForDownload("HIRES_LOSSLESS", "normal"), "vorbis-high");
 });
 
 test("Votify progress parser extracts track status and its zero/nonzero error summary", () => {
@@ -242,7 +247,7 @@ test("Votify backend builds a non-interactive deterministic media-id invocation"
   assert.equal(args[args.indexOf("--single-disc-file-template") + 1], "{media_id}");
   assert.equal(args[args.indexOf("--multi-disc-file-template") + 1], "{media_id}");
   assert.equal(args[args.indexOf("--no-album-file-template") + 1], "{media_id}");
-  assert.equal(args[args.indexOf("--audio-quality") + 1], "vorbis-medium");
+  assert.equal(args[args.indexOf("--audio-quality") + 1], "vorbis-high");
   assert.equal(args.includes("--no-synced-lyrics-file"), false);
   assert.equal(args.at(-1), `https://open.spotify.com/album/${SPOTIFY_FIXTURE_IDS.album}`);
   assert.throws(() => backend.buildArgs({

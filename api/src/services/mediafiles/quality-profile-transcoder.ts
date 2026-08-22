@@ -13,8 +13,10 @@ export interface QualityTranscodeResult {
 function outputExtension(decision: ImportQualityDecision, inputPath: string): string {
   switch (decision.output?.codec) {
     case "flac": return ".flac";
+    case "alac": return ".m4a";
     case "mp3": return ".mp3";
     case "aac": return ".m4a";
+    case "opus": return ".opus";
     default: return path.extname(inputPath);
   }
 }
@@ -39,16 +41,22 @@ function buildFfmpegArgs(
   if (output.codec === "flac") {
     args.push("-c:a", "flac");
     if (output.bitDepth === 16) args.push("-sample_fmt", "s16");
+  } else if (output.codec === "alac") {
+    args.push("-c:a", "alac");
+    if (output.bitDepth === 16) args.push("-sample_fmt", "s16p");
   } else if (output.codec === "mp3") {
     args.push("-c:a", "libmp3lame");
     if (output.bitrate) args.push("-b:a", `${Math.round(output.bitrate / 1000)}k`);
   } else if (output.codec === "aac") {
     args.push("-c:a", "aac");
     if (output.bitrate) args.push("-b:a", `${Math.round(output.bitrate / 1000)}k`);
+  } else if (output.codec === "opus") {
+    args.push("-c:a", "libopus", "-application", "audio", "-vbr", "off");
+    if (output.bitrate) args.push("-b:a", `${Math.round(output.bitrate / 1000)}k`);
   } else {
     throw new Error(`Cannot transcode to output codec '${output.codec}'`);
   }
-  if (output.sampleRate) args.push("-ar", String(output.sampleRate));
+  if (output.sampleRate && output.codec !== "opus") args.push("-ar", String(output.sampleRate));
   args.push(outputPath);
   return args;
 }

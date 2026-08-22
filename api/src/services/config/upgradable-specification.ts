@@ -10,6 +10,7 @@ export interface EffectiveQualityProfile {
     audioCutoff: AudioQualityTier;
     videoCutoff: VideoQualityTier;
     allowRedownloads: boolean;
+    allowDownconverts: boolean;
     preferFlac: boolean;
     preferMp4: boolean;
 }
@@ -99,6 +100,7 @@ export class UpgradableSpecification {
             audioCutoff: getAudioCutoffFromSetting(config.audio_quality),
             videoCutoff: getVideoCutoffFromSetting(config.video_quality),
             allowRedownloads: config.upgrade_existing_files !== false,
+            allowDownconverts: config.downconvert_existing_files === true,
             preferFlac: config.extract_flac !== false,
             preferMp4: config.convert_video_mp4 !== false,
         };
@@ -167,6 +169,16 @@ export class UpgradableSpecification {
         }
 
         if (currentRank > targetRank) {
+            if (profile.allowDownconverts) {
+                return {
+                    needsChange: true,
+                    direction: "downgrade",
+                    currentQuality,
+                    targetQuality,
+                    qualityCutoffNotMet: false,
+                    reason: `Quality downconvert: ${currentQuality || "UNKNOWN"} -> ${targetQuality}`,
+                };
+            }
             // Lidarr semantics: lowering the configured quality never triggers an
             // automatic re-download — existing better files are kept as-is.
             return {
@@ -180,7 +192,9 @@ export class UpgradableSpecification {
         }
 
         const requiresFlac = profile.preferFlac && (targetQuality === "LOSSLESS" || targetQuality === "HIRES_LOSSLESS");
-        if (requiresFlac && codec !== "FLAC" && extension !== "flac") {
+        const alreadyLossless = codec === "FLAC" || codec === "ALAC" || codec === "PCM"
+          || extension === "flac" || extension === "alac" || extension === "wav" || extension === "aiff";
+        if (requiresFlac && !alreadyLossless) {
             return {
                 needsChange: profile.allowRedownloads,
                 direction: "upgrade",
@@ -211,6 +225,25 @@ export class UpgradableSpecification {
                     targetQuality,
                     qualityCutoffNotMet: true,
                     reason: `Strict upgrade: target is LOSSLESS, but file is ${bitDepth}-bit / ${sampleRate}Hz`,
+                };
+            } else if (targetQuality === "LOSSLESS" && (bitDepth > 16 || sampleRate > 48000)) {
+                if (profile.allowDownconverts) {
+                    return {
+                        needsChange: true,
+                        direction: "downgrade",
+                        currentQuality,
+                        targetQuality,
+                        qualityCutoffNotMet: false,
+                        reason: `Quality downconvert: ${bitDepth}-bit / ${sampleRate}Hz -> 16-bit/44.1`,
+                    };
+                }
+                return {
+                    needsChange: false,
+                    direction: "downgrade",
+                    currentQuality,
+                    targetQuality,
+                    qualityCutoffNotMet: false,
+                    reason: `Existing ${bitDepth}-bit / ${sampleRate}Hz exceeds LOSSLESS target; keeping better file`,
                 };
             }
         }

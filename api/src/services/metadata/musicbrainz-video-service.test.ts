@@ -131,6 +131,7 @@ test("syncMusicBrainzVideosForArtist creates youtube-music offers from free-stre
         {
           id: "video-recording-mbid-yt",
           title: "Tears Dry on Their Own",
+          disambiguation: "Watch Listen Tell session",
           video: true,
           length: 196000,
           "artist-credit": [
@@ -151,9 +152,16 @@ test("syncMusicBrainzVideosForArtist creates youtube-music offers from free-stre
   assert.equal(synced, 1);
 
   const recording = dbModule.db.prepare(`
-    SELECT id FROM Recordings WHERE mbid = ?
-  `).get("video-recording-mbid-yt") as { id: number } | undefined;
+    SELECT id, disambiguation, youtube_video_id AS yt
+    FROM Recordings WHERE mbid = ?
+  `).get("video-recording-mbid-yt") as {
+    id: number;
+    disambiguation: string | null;
+    yt: string | null;
+  } | undefined;
   assert.ok(recording);
+  assert.equal(recording.disambiguation, "Watch Listen Tell session");
+  assert.equal(recording.yt, "a1xFsoRYrds");
 
   const offer = dbModule.db.prepare(`
     SELECT item.provider, item.provider_id, match.recording_id,
