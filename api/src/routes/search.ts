@@ -245,12 +245,13 @@ router.get("/", async (req, res) => {
                         `).all(ftsQuery, `%${artistParam}%`, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
                     }
                     if (matchedAlbumMbids.length === 0 && titleTokens.length > 0) {
-                        const titleConditions = titleTokens.map(() => "rg.title LIKE ?").join(" AND ");
-                        const titleParams = titleTokens.map((token) => `%${token}%`);
+                        const titleConditions = titleTokens.map(() => "(rg.title LIKE ? OR e.title LIKE ?)").join(" AND ");
+                        const titleParams = titleTokens.flatMap((token) => [`%${token}%`, `%${token}%`]);
                         matchedAlbumMbids = (db.prepare(`
                             SELECT DISTINCT rg.mbid
                             FROM Albums rg
                             JOIN Artists a ON a.mbid = rg.artist_mbid
+                            LEFT JOIN AlbumEditions e ON e.release_group_id = rg.id
                             WHERE a.name LIKE ?
                               AND ${titleConditions}
                             LIMIT ?
@@ -278,12 +279,13 @@ router.get("/", async (req, res) => {
 
                     if (matchedAlbumMbids.length === 0 && query.trim().length > 0) {
                         const tokens = query.trim().split(/\s+/).filter(Boolean);
-                        const likeConditions = tokens.map(() => "(rg.title LIKE ? OR a.name LIKE ?)").join(" AND ");
-                        const tokenParams = tokens.flatMap((t) => [`%${t}%`, `%${t}%`]);
+                        const likeConditions = tokens.map(() => "(rg.title LIKE ? OR e.title LIKE ? OR a.name LIKE ?)").join(" AND ");
+                        const tokenParams = tokens.flatMap((t) => [`%${t}%`, `%${t}%`, `%${t}%`]);
                         const fallbackMbids = db.prepare(`
-                            SELECT rg.mbid
+                            SELECT DISTINCT rg.mbid
                             FROM Albums rg
                             LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+                            LEFT JOIN AlbumEditions e ON e.release_group_id = rg.id
                             WHERE ${likeConditions}
                             LIMIT ?
                         `).all(...tokenParams, limit) as Array<{ mbid: string }>;

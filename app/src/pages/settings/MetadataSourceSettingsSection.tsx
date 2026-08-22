@@ -136,7 +136,7 @@ export const MetadataSourceSettingsSection = ({
                     <div className={styles.nestedFields}>
                         <Field
                             label="MusicBrainz host"
-                            hint="Hostname or IP only. Discogenius uses the standard MusicBrainz ports automatically."
+                            hint="Hostname or IP of your MusicBrainz-docker host. Do not use localhost when Discogenius itself runs in Docker — that is the container, not the mirror. Postgres 5432 and search 5000 are derived automatically."
                             validationState={
                                 catalogTest.status === "ok" ? "success"
                                     : catalogTest.status === "error" ? "error"

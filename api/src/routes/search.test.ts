@@ -381,3 +381,37 @@ test("artist-filtered album search finds titles whose apostrophes differ from th
   assert.equal(res.body.results.albums.length, 1);
   assert.equal(res.body.results.albums[0].id, "oph2-mbid");
 });
+
+test("artist-filtered album search finds an edition title All This Bad Blood", async () => {
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES ('bastille-mbid', 'Bastille')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES ('bastille-id', 'Bastille', 'bastille-mbid', 1)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('bb-mbid', 'bastille-mbid', 'Bad Blood', 'Album')
+  `).run();
+  const album = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'bb-mbid'").get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES ('atbb-edition', ?, 'bb-mbid', 'bastille-mbid', 'All This Bad Blood')
+  `).run(album.id);
+
+  const res = createMockResponse();
+  await getSearchHandler()({
+    query: {
+      query: "All This Bad Blood",
+      type: "albums",
+      limit: "10",
+      artist: "Bastille",
+    },
+  }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.results.albums.length, 1);
+  assert.equal(res.body.results.albums[0].id, "bb-mbid");
+  assert.equal(res.body.results.albums[0].name, "Bad Blood");
+});

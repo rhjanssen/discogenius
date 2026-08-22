@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Heartache Pt. 2 leftover `.mp3`s sat in Unmapped as unexplained duplicates.** They are the same recordings as the imported `.m4a`s. Scan now attaches them as duplicate extras on the existing TrackFile (Lidarr keeps extras unless you delete them) so they leave Unmapped and show in file tools. `upgrade_existing_files` still defaults off; we do not delete extras silently.
+- **Bad Blood X `103` / `202` Things We Lost stayed Unmapped.** Apple tags the group title "Bad Blood" while the folder is the anniversary edition, and the 10th-anniversary disc/track numbers do not match the original. Scan now prefers the album-folder edition title and uses `{medium}{track}` filenames the way Lidarr does.
+- **Inline `Living-video.mp4` without `{TIDAL-id}` stayed Unmapped.** Token matching is only a fast path. Scan matches videos from tags, duration, title, album folder and catalog recordings, so a file downloaded elsewhere still imports.
+- **Artist-scoped album search missed edition titles.** `All This Bad Blood` found nothing because search keyed only off the release-group title `Bad Blood`. Album search now matches edition titles as well.
+- **MusicBrainz host `localhost` inside Docker is the container, not a LAN mirror.** The Settings field already stored a host; the hint now says to use the MusicBrainz-docker IP (for this setup `192.168.1.100`) rather than localhost.
+
 ## [2.10.1] - 2026-08-21
 
 Wipe-and-import leftovers now bind to the selected edition, unmonitor cleanup

@@ -9,7 +9,7 @@ import { ImportService } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
-import { matchAudioFileByMetadata, resolveCatalogTrackFromEmbeddedMbids } from "./library-scan-metadata-match.js";
+import { matchAudioFileByMetadata, matchVideoFileByMetadata, resolveCatalogTrackFromEmbeddedMbids, videoStemComparableTitle } from "./library-scan-metadata-match.js";
 import {
     PROVIDER_RESOLVED_ALBUM_ID_SQL,
     LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL,
@@ -41,6 +41,7 @@ import { createCooperativeBatcher, yieldToEventLoop } from "../../utils/concurre
 import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
 import { shouldRematchUnmatchedFiles, type ScanFileFilter } from "./scan-file-filter.js";
 import { parseProviderFilenameToken } from "./path-utils.js";
+import { resolveVideoLibraryIds, selectLibraryVideo } from "../music/library-video-monitoring.js";
 
 // ============================================================================
 // Types
@@ -784,19 +785,23 @@ export class DiskScanService {
         }
 
         // Collect all existing file paths for this artist (for quick lookup)
-        const existingPaths = new Set(
-            (db.prepare("SELECT file_path, relative_path, library_root FROM TrackFiles WHERE artist_id = ?").all(artistId) as Array<{
+        const existingPaths = new Set<string>();
+        for (const table of ["TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles"] as const) {
+            const rows = db.prepare(
+                `SELECT file_path, relative_path, library_root FROM ${table} WHERE artist_id = ?`,
+            ).all(artistId) as Array<{
                 file_path: string;
                 relative_path: string | null;
                 library_root: string;
-            }>)
-                .map((row) => resolveStoredLibraryPath({
+            }>;
+            for (const row of rows) {
+                existingPaths.add(path.resolve(resolveStoredLibraryPath({
                     filePath: row.file_path,
                     libraryRoot: row.library_root,
                     relativePath: row.relative_path,
-                }))
-                .map((filePath) => path.resolve(filePath))
-        );
+                })));
+            }
+        }
 
         let indexed = 0;
         let shouldPromoteArtist = false;
@@ -978,17 +983,19 @@ export class DiskScanService {
                             };
 
                             const audioExtensions = new Set([".flac", ".m4a", ".mp3", ".aac", ".wav", ".ogg", ".opus", ".aif", ".aiff", ".wma", ".ape", ".mp2"]);
+                            const videoExtensions = new Set([".mp4", ".ts", ".mkv", ".webm", ".m4v", ".mov"]);
+                            const parsedTags = {
+                                title: detectedTrack,
+                                album: detectedAlbum,
+                                artist: detectedArtist,
+                                isrc,
+                                musicbrainzRecordingId,
+                                musicbrainzTrackId,
+                                musicbrainzAlbumId,
+                                durationSeconds: metrics.duration || null,
+                            };
                             if (audioExtensions.has(ext)) {
-                                const metadataMatch = matchAudioFileByMetadata(resolved, artistId, key, {
-                                    title: detectedTrack,
-                                    album: detectedAlbum,
-                                    artist: detectedArtist,
-                                    isrc,
-                                    musicbrainzRecordingId,
-                                    musicbrainzTrackId,
-                                    musicbrainzAlbumId,
-                                    durationSeconds: metrics.duration || null,
-                                });
+                                const metadataMatch = matchAudioFileByMetadata(resolved, artistId, key, parsedTags);
                                 if (metadataMatch?.duplicateOfExisting) {
                                     const isSelfTrackFile = Boolean(
                                         metadataMatch.existingFilePath === resolved ||
@@ -998,7 +1005,50 @@ export class DiskScanService {
                                         db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
                                         unmappedReason = null;
                                     } else {
-                                        unmappedReason = "Duplicate of an existing imported library file";
+                                        const existing = metadataMatch.existingFilePath
+                                            ? db.prepare(`
+                                                SELECT id, canonical_track_mbid, canonical_recording_mbid,
+                                                       canonical_release_mbid, canonical_release_group_mbid
+                                                FROM TrackFiles
+                                                WHERE file_path = ?
+                                                LIMIT 1
+                                              `).get(metadataMatch.existingFilePath) as {
+                                                id: number;
+                                                canonical_track_mbid: string | null;
+                                                canonical_recording_mbid: string | null;
+                                                canonical_release_mbid: string | null;
+                                                canonical_release_group_mbid: string | null;
+                                            } | undefined
+                                            : undefined;
+                                        LibraryFilesService.upsertLibraryFile({
+                                            artistId,
+                                            albumId: metadataMatch.albumId,
+                                            mediaId: metadataMatch.mediaId,
+                                            trackFileId: existing?.id ?? null,
+                                            filePath: resolved,
+                                            libraryRoot: rootPath,
+                                            fileType: "duplicate",
+                                            quality: metadataMatch.quality,
+                                            expectedPath: resolved,
+                                            provider: metadataMatch.provider,
+                                            canonicalTrackMbid: metadataMatch.canonicalTrackMbid
+                                                ?? existing?.canonical_track_mbid
+                                                ?? null,
+                                            canonicalRecordingMbid: metadataMatch.canonicalRecordingMbid
+                                                ?? existing?.canonical_recording_mbid
+                                                ?? null,
+                                            canonicalReleaseMbid: metadataMatch.canonicalReleaseMbid
+                                                ?? existing?.canonical_release_mbid
+                                                ?? null,
+                                            canonicalReleaseGroupMbid: metadataMatch.canonicalReleaseGroupMbid
+                                                ?? existing?.canonical_release_group_mbid
+                                                ?? null,
+                                            librarySlot: metadataMatch.librarySlot,
+                                            removeFromUnmapped: true,
+                                        });
+                                        unmappedReason = null;
+                                        indexed++;
+                                        existingPaths.add(resolved);
                                     }
                                 } else if (metadataMatch) {
                                     match = {
@@ -1017,6 +1067,29 @@ export class DiskScanService {
                                     };
                                 } else {
                                     unmappedReason = "No matching release found in catalog";
+                                }
+                            } else if (videoExtensions.has(ext)) {
+                                const videoMatch = matchVideoFileByMetadata(resolved, artistId, key, parsedTags);
+                                if (videoMatch?.duplicateOfExisting) {
+                                    db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
+                                    unmappedReason = null;
+                                } else if (videoMatch) {
+                                    match = {
+                                        albumId: videoMatch.albumId,
+                                        mediaId: videoMatch.mediaId,
+                                        fileType: "video",
+                                        quality: videoMatch.quality,
+                                    };
+                                    matchProvider = videoMatch.provider;
+                                    canonicalLink = {
+                                        canonicalTrackMbid: videoMatch.canonicalTrackMbid ?? null,
+                                        canonicalRecordingMbid: videoMatch.canonicalRecordingMbid ?? null,
+                                        canonicalReleaseMbid: videoMatch.canonicalReleaseMbid ?? null,
+                                        canonicalReleaseGroupMbid: videoMatch.canonicalReleaseGroupMbid ?? null,
+                                        librarySlot: videoMatch.librarySlot ?? null,
+                                    };
+                                } else {
+                                    unmappedReason = "No matching video found in catalog";
                                 }
                             } else {
                                 unmappedReason = "No matching provider item found";
@@ -1045,39 +1118,16 @@ export class DiskScanService {
                         librarySlot: canonicalLink?.librarySlot ?? null,
                     });
 
-                    if (match.mediaId && (match.fileType === "track" || match.fileType === "video")) {
-                        shouldPromoteArtist = true;
+                    if (match.fileType === "track" || match.fileType === "video") {
+                        if (match.mediaId || canonicalLink?.canonicalRecordingMbid || canonicalLink?.canonicalTrackMbid) {
+                            shouldPromoteArtist = true;
+                        }
                         if (match.fileType === "video") {
-                            // A video file on disk is evidence the library
-                            // wants the video, so the selection is asserted.
-                            db.prepare(`
-                                INSERT INTO LibraryVideos (
-                                    library_id, video_recording_id, selection_mode,
-                                    placement_mode, reason, selected_at, updated_at
-                                )
-                                SELECT library.id, (
-                                    SELECT MIN(video_match.recording_id)
-                                    FROM ProviderItems item
-                                    JOIN ProviderVideoMatches video_match
-                                      ON video_match.provider_video_item_id = item.id
-                                     AND video_match.match_state = 'accepted'
-                                    WHERE item.entity_type = 'video'
-                                      AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
-                                      AND (? IS NULL OR item.provider = ?)
-                                    HAVING COUNT(DISTINCT video_match.recording_id) = 1
-                                ), 'auto', 'separated',
-                                       'library_scan', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                                FROM Libraries library
-                                JOIN quality_profiles library_quality_profile
-                                  ON library_quality_profile.id = library.quality_profile_id
-                                WHERE library.enabled = 1
-                                  AND EXISTS (
-                                    SELECT 1
-                                    FROM json_each(COALESCE(library_quality_profile.allowed_source_formats, '[]')) allowed_format
-                                    WHERE allowed_format.value = 'video'
-                                  )
-                                ON CONFLICT(library_id, video_recording_id) DO NOTHING
-                            `).run(match.mediaId, matchProvider, matchProvider);
+                            DiskScanService.assertScannedVideoSelection({
+                                providerId: match.mediaId,
+                                provider: matchProvider,
+                                recordingMbid: canonicalLink?.canonicalRecordingMbid,
+                            });
                         }
 
                         if (match.albumId && match.fileType === "track") {
@@ -1115,7 +1165,7 @@ export class DiskScanService {
                                 `).run(providerItem.release_group_id, rootPath);
                             }
                             updateAlbumDownloadStatus(match.albumId);
-                        } else {
+                        } else if (match.mediaId) {
                             // matchProvider is the resolved provider identity for this
                             // stem; pass it so the recompute cannot hit a same-id
                             // resource belonging to a different provider.
@@ -1855,9 +1905,17 @@ export class DiskScanService {
               AND ${LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL}
         `).all({ artistId }) as Array<any>;
 
+        const comparableStem = videoStemComparableTitle(stem);
         const titleMatches = videos.filter((video) =>
-            stem.includes(video.title) || String(video.title).includes(stem));
-        return titleMatches.length === 1 ? this.resolveProviderIdentity(titleMatches[0]) : null;
+            videoStemComparableTitle(String(video.title || "")) === comparableStem
+            || (comparableStem.length > 0 && videoStemComparableTitle(String(video.title || "")).includes(comparableStem))
+            || (comparableStem.length > 0 && comparableStem.includes(videoStemComparableTitle(String(video.title || ""))))
+        );
+        const exactTitle = titleMatches.filter((video) =>
+            videoStemComparableTitle(String(video.title || "")) === comparableStem
+        );
+        const narrowed = exactTitle.length === 1 ? exactTitle : titleMatches;
+        return narrowed.length === 1 ? this.resolveProviderIdentity(narrowed[0]) : null;
     }
 
     /**
@@ -1991,6 +2049,51 @@ export class DiskScanService {
             // Permission errors, etc.
         }
         return results;
+    }
+
+    /**
+     * A video file on disk is evidence the library wants the video.
+     * Prefer the catalog recording MBID; fall back to a unique provider video.
+     */
+    private static assertScannedVideoSelection(params: {
+        providerId?: string | null;
+        provider?: string | null;
+        recordingMbid?: string | null;
+    }): void {
+        let recordingId: number | null = null;
+        const recordingMbid = String(params.recordingMbid || "").trim();
+        if (recordingMbid) {
+            const row = db.prepare(`
+                SELECT id FROM Recordings WHERE mbid = ? AND is_video = 1 LIMIT 1
+            `).get(recordingMbid) as { id: number } | undefined;
+            recordingId = row?.id ?? null;
+        }
+        if (recordingId == null && params.providerId) {
+            const row = db.prepare(`
+                SELECT MIN(video_match.recording_id) AS recording_id
+                FROM ProviderItems item
+                JOIN ProviderVideoMatches video_match
+                  ON video_match.provider_video_item_id = item.id
+                 AND video_match.match_state = 'accepted'
+                WHERE item.entity_type = 'video'
+                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                  AND (? IS NULL OR item.provider = ?)
+                HAVING COUNT(DISTINCT video_match.recording_id) = 1
+            `).get(params.providerId, params.provider ?? null, params.provider ?? null) as {
+                recording_id?: number | null;
+            } | undefined;
+            recordingId = row?.recording_id ?? null;
+        }
+        if (recordingId == null) return;
+        for (const libraryId of resolveVideoLibraryIds(db)) {
+            selectLibraryVideo(db, {
+                libraryId,
+                videoRecordingId: recordingId,
+                placement: { mode: "separated" },
+                selectionMode: "auto",
+                reason: "library_scan",
+            });
+        }
     }
 
     /**

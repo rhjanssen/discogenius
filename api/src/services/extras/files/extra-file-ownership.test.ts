@@ -198,3 +198,9 @@ test("a track-scoped extra with no evidence fails closed instead of guessing", (
     /No library owns sidecar/,
   );
 });
+
+test("duplicate leftover audio is tracked as an extra, not a mystery unmapped file", () => {
+  assert.equal(serviceModule.isExtraFileType("duplicate"), true);
+  assert.equal(serviceModule.isMetadataExtraFileType("duplicate"), false);
+  assert.equal(serviceModule.isLyricExtraFileType("duplicate"), false);
+});

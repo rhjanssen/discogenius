@@ -66,12 +66,13 @@ export class CatalogCandidateService {
         // Tier 1 — artist + album title (Lidarr GetDbCandidates: artist tag → album candidates).
         if (artist && album) {
             mbids = (db.prepare(`
-                SELECT al.mbid
+                SELECT DISTINCT al.mbid
                 FROM Albums al
                 JOIN Artists a ON a.mbid = al.artist_mbid
-                WHERE a.name LIKE ? AND al.title LIKE ?
+                LEFT JOIN AlbumEditions e ON e.release_group_id = al.id
+                WHERE a.name LIKE ? AND (al.title LIKE ? OR e.title LIKE ?)
                 LIMIT ?
-            `).all(`%${artist}%`, `%${album}%`, limit) as Array<{ mbid: string }>).map((r) => r.mbid);
+            `).all(`%${artist}%`, `%${album}%`, `%${album}%`, limit) as Array<{ mbid: string }>).map((r) => r.mbid);
         }
 
         // Tier 2 — album-title FTS (handles punctuation/ordering the LIKE misses).
@@ -91,12 +92,13 @@ export class CatalogCandidateService {
         if (mbids.length === 0) {
             const tokens = [artist, album].filter(Boolean).join(" ").split(/\s+/).filter(Boolean);
             if (tokens.length > 0) {
-                const conditions = tokens.map(() => "(al.title LIKE ? OR a.name LIKE ?)").join(" AND ");
-                const params = tokens.flatMap((t) => [`%${t}%`, `%${t}%`]);
+                const conditions = tokens.map(() => "(al.title LIKE ? OR e.title LIKE ? OR a.name LIKE ?)").join(" AND ");
+                const params = tokens.flatMap((t) => [`%${t}%`, `%${t}%`, `%${t}%`]);
                 mbids = (db.prepare(`
-                    SELECT al.mbid
+                    SELECT DISTINCT al.mbid
                     FROM Albums al
                     LEFT JOIN Artists a ON a.mbid = al.artist_mbid
+                    LEFT JOIN AlbumEditions e ON e.release_group_id = al.id
                     WHERE ${conditions}
                     LIMIT ?
                 `).all(...params, limit) as Array<{ mbid: string }>).map((r) => r.mbid);

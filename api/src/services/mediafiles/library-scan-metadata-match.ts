@@ -3,6 +3,8 @@ import { db } from "../../database.js";
 import {
     normalizeComparableText,
     sameRecordingTitle,
+    stripLeadingTrackIndex,
+    videoComparableTitle,
 } from "./import-matching-utils.js";
 import {
     PROVIDER_RESOLVED_ALBUM_ID_SQL,
@@ -15,7 +17,7 @@ export type MetadataMatchResult = {
     albumId: string | null;
     mediaId: string;
     provider: string;
-    fileType: "track";
+    fileType: "track" | "video";
     quality: string | null;
     librarySlot: string;
     /** True when another on-disk TrackFile already owns this provider offer. */
@@ -415,8 +417,12 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
     return albumIds;
 }
 
+function albumFolderTitle(filePath: string): string {
+    return path.basename(path.dirname(filePath)).replace(/\s*\(\d{4}\)\s*$/, "").trim();
+}
+
 function albumTitleCandidates(filePath: string, tags?: ParsedAudioTags): string[] {
-    const folderName = path.basename(path.dirname(filePath)).replace(/\s*\(\d{4}\)\s*$/, "").trim();
+    const folderName = albumFolderTitle(filePath);
     const seen = new Set<string>();
     const candidates: string[] = [];
     for (const value of [tags?.album?.trim(), folderName]) {
@@ -425,6 +431,29 @@ function albumTitleCandidates(filePath: string, tags?: ParsedAudioTags): string[
         candidates.push(value);
     }
     return candidates;
+}
+
+/**
+ * Discogenius multi-disc names `{medium:0}{track:00}` (`103`, `202`) and
+ * single-disc `{track:00}` (`01`). Requires a separator so "1989" stays a title.
+ */
+export function parseFilenameDiscTrack(filePath: string): { medium: number; position: number } | null {
+    const stem = path.parse(filePath).name;
+    const multi = stem.match(/^(\d)(\d{2})\s*[-.]\s+/);
+    if (multi) {
+        return { medium: Number(multi[1]), position: Number(multi[2]) };
+    }
+    const single = stem.match(/^(\d{1,2})\s*[-.]\s+/);
+    if (single) {
+        return { medium: 1, position: Number(single[1]) };
+    }
+    return null;
+}
+
+export function videoStemComparableTitle(stem: string): string {
+    const withoutToken = String(stem || "").replace(/\s*\{[A-Za-z][A-Za-z0-9-]*-[^}]+\}\s*$/g, "");
+    const withoutVideoSuffix = withoutToken.replace(/-video\b/gi, " ");
+    return videoComparableTitle(stripLeadingTrackIndex(withoutVideoSuffix));
 }
 
 function albumTitleMatches(tagged: string | null | undefined, catalog: string | null | undefined): boolean {
@@ -561,11 +590,24 @@ function findSameFolderDuplicate(
     filePath: string,
     artistId: string,
     tags: ParsedAudioTags,
-): { provider: string; providerId: string; albumId: string | null; quality: string | null; librarySlot: string; existingFilePath: string } | null {
+): {
+    provider: string;
+    providerId: string;
+    albumId: string | null;
+    quality: string | null;
+    librarySlot: string;
+    existingFilePath: string;
+    canonicalTrackMbid: string | null;
+    canonicalRecordingMbid: string | null;
+    canonicalReleaseMbid: string | null;
+    canonicalReleaseGroupMbid: string | null;
+} | null {
     if (!tags.title) return null;
     const folder = path.dirname(filePath).replace(/\\/g, "/");
     const rows = db.prepare(`
         SELECT tf.file_path, tf.provider, tf.provider_id, tf.library_slot, tf.quality, tf.duration,
+               tf.canonical_track_mbid, tf.canonical_recording_mbid,
+               tf.canonical_release_mbid, tf.canonical_release_group_mbid,
                pi.title,
                ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS provider_album_id,
                pi.duration_ms / 1000.0 AS offer_duration
@@ -586,6 +628,10 @@ function findSameFolderDuplicate(
         library_slot: string | null;
         quality: string | null;
         duration: number | null;
+        canonical_track_mbid: string | null;
+        canonical_recording_mbid: string | null;
+        canonical_release_mbid: string | null;
+        canonical_release_group_mbid: string | null;
         title: string | null;
         provider_album_id: string | null;
         offer_duration: number | null;
@@ -608,6 +654,10 @@ function findSameFolderDuplicate(
         quality: hit.quality || null,
         librarySlot: hit.library_slot || "stereo",
         existingFilePath: hit.file_path,
+        canonicalTrackMbid: hit.canonical_track_mbid,
+        canonicalRecordingMbid: hit.canonical_recording_mbid,
+        canonicalReleaseMbid: hit.canonical_release_mbid,
+        canonicalReleaseGroupMbid: hit.canonical_release_group_mbid,
     };
 }
 
@@ -659,6 +709,8 @@ type CatalogTrackRow = {
     title: string;
     length_ms: number | null;
     release_group_mbid: string;
+    medium_position: number | null;
+    position: number | null;
 };
 
 function catalogTracksWhere(whereSql: string, params: unknown[]): CatalogTrackRow[] {
@@ -669,13 +721,41 @@ function catalogTracksWhere(whereSql: string, params: unknown[]): CatalogTrackRo
           track.release_mbid AS release_mbid,
           track.title AS title,
           recording.length_ms AS length_ms,
-          album.mbid AS release_group_mbid
+          album.mbid AS release_group_mbid,
+          track.medium_position AS medium_position,
+          track.position AS position
         FROM Tracks track
         JOIN AlbumEditions edition ON edition.id = track.album_edition_id
         JOIN Albums album ON album.id = edition.release_group_id
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
         WHERE ${whereSql}
     `).all(...params) as CatalogTrackRow[];
+}
+
+function uniqueRecordingHits(hits: CatalogTrackRow[]): CatalogTrackRow[] | null {
+    if (hits.length === 0) return null;
+    const recordingIds = new Set(
+        hits.map((row) => String(row.recording_mbid || "")).filter(Boolean),
+    );
+    if (hits.length > 1 && recordingIds.size !== 1) return null;
+    return hits;
+}
+
+function preferSelectedCatalogHits(
+    hits: CatalogTrackRow[],
+    preferredSlot: string,
+): CatalogTrackRow[] {
+    if (hits.length === 0) return hits;
+    const groupMbids = [...new Set(hits.map((row) => row.release_group_mbid))];
+    const selectedByGroup = new Map<string, Set<string>>();
+    for (const groupMbid of groupMbids) {
+        selectedByGroup.set(groupMbid, selectedReleasesForGroup(groupMbid, preferredSlot));
+    }
+    const selectedHits = hits.filter((row) => {
+        const selected = selectedByGroup.get(row.release_group_mbid);
+        return selected != null && selected.size > 0 && selected.has(row.release_mbid);
+    });
+    return selectedHits.length > 0 ? selectedHits : hits;
 }
 
 function pickCatalogTrackMatch(
@@ -686,10 +766,17 @@ function pickCatalogTrackMatch(
     rows: CatalogTrackRow[],
     options?: { restrictToReleases?: Set<string> },
 ): MetadataMatchResult | null {
+    if (rows.length === 0) return null;
     const trackTitle = tags.title?.trim();
-    if (!trackTitle || rows.length === 0) return null;
+    const discTrack = parseFilenameDiscTrack(filePath);
+    const restricted = options?.restrictToReleases && options.restrictToReleases.size > 0
+        ? rows.filter((row) => options.restrictToReleases!.has(row.release_mbid))
+        : rows;
+    if (restricted.length === 0) return null;
 
-    const titleHits = rows.filter((row) => sameRecordingTitle(trackTitle, row.title));
+    const titleHits = trackTitle
+        ? restricted.filter((row) => sameRecordingTitle(trackTitle, row.title))
+        : [];
     const durationHits = titleHits.filter((row) =>
         durationClose(
             tags.durationSeconds,
@@ -697,35 +784,36 @@ function pickCatalogTrackMatch(
         ),
     );
     let hits = durationHits.length > 0 ? durationHits : titleHits;
-    if (hits.length === 0) return null;
+    hits = preferSelectedCatalogHits(hits, preferredSlot);
 
-    if (options?.restrictToReleases && options.restrictToReleases.size > 0) {
-        const pinned = hits.filter((row) => options.restrictToReleases!.has(row.release_mbid));
-        if (pinned.length === 0) return null;
-        hits = pinned;
+    if (discTrack) {
+        const positionHits = preferSelectedCatalogHits(
+            restricted.filter((row) =>
+                Number(row.medium_position || 1) === discTrack.medium
+                && Number(row.position || 0) === discTrack.position
+            ),
+            preferredSlot,
+        );
+        const uniquePosition = uniqueRecordingHits(positionHits);
+        if (uniquePosition) {
+            const titledPosition = hits.filter((row) =>
+                Number(row.medium_position || 1) === discTrack.medium
+                && Number(row.position || 0) === discTrack.position
+            );
+            if (hits.length > 0 && uniqueRecordingHits(hits) == null) {
+                hits = titledPosition.length > 0 ? titledPosition : uniquePosition.filter((row) =>
+                    Boolean(trackTitle) && sameRecordingTitle(trackTitle, row.title)
+                );
+            } else if (titledPosition.length > 0) {
+                hits = titledPosition;
+            }
+        }
     }
 
-    const groupMbids = [...new Set(hits.map((row) => row.release_group_mbid))];
-    const selectedByGroup = new Map<string, Set<string>>();
-    for (const groupMbid of groupMbids) {
-        selectedByGroup.set(groupMbid, selectedReleasesForGroup(groupMbid, preferredSlot));
-    }
-    const selectedHits = hits.filter((row) => {
-        const selected = selectedByGroup.get(row.release_group_mbid);
-        return selected != null && selected.size > 0 && selected.has(row.release_mbid);
-    });
-    if (selectedHits.length > 0) {
-        hits = selectedHits;
-    }
+    const uniqueHits = uniqueRecordingHits(hits);
+    if (!uniqueHits) return null;
 
-    const recordingIds = new Set(
-        hits.map((row) => String(row.recording_mbid || "")).filter(Boolean),
-    );
-    if (hits.length > 1 && recordingIds.size !== 1) {
-        return null;
-    }
-
-    const winner = hits[0];
+    const winner = uniqueHits[0];
     const recordingMbid = winner.recording_mbid ? String(winner.recording_mbid) : "";
     const existing = recordingMbid
         ? existingTrackFileForCanonical(artistId, recordingMbid, preferredSlot, winner.release_mbid)
@@ -771,7 +859,8 @@ function matchCatalogTrackByTags(
     preferredSlot: string,
 ): MetadataMatchResult | null {
     const trackTitle = tags.title?.trim();
-    if (!trackTitle) return null;
+    const discTrack = parseFilenameDiscTrack(filePath);
+    if (!trackTitle && !discTrack) return null;
 
     const siblingReleases = folderCanonicalReleaseMbids(filePath, artistId);
     if (siblingReleases.size > 0) {
@@ -790,7 +879,8 @@ function matchCatalogTrackByTags(
     }
 
     const titleCandidates = albumTitleCandidates(filePath, tags);
-    if (titleCandidates.length === 0) return null;
+    const folderName = albumFolderTitle(filePath);
+    if (titleCandidates.length === 0 && !folderName) return null;
 
     const editions = db.prepare(`
         SELECT
@@ -811,12 +901,20 @@ function matchCatalogTrackByTags(
         disambiguation: string | null;
     }>;
 
+    const folderEditionMbids = new Set<string>();
     const matchingGroupMbids = new Set<string>();
     const matchingEditionMbids = new Set<string>();
     for (const edition of editions) {
         const disambiguated = edition.disambiguation
             ? `${edition.release_group_title} (${edition.disambiguation})`
             : null;
+        if (
+            albumTitleMatches(folderName, edition.edition_title)
+            || albumTitleMatches(folderName, disambiguated)
+        ) {
+            folderEditionMbids.add(edition.release_mbid);
+            matchingGroupMbids.add(edition.release_group_mbid);
+        }
         const hit = titleCandidates.some((candidate) =>
             albumTitleMatches(candidate, edition.release_group_title)
             || albumTitleMatches(candidate, edition.edition_title)
@@ -828,6 +926,7 @@ function matchCatalogTrackByTags(
     }
     if (matchingGroupMbids.size === 0) return null;
 
+    const restrictToReleases = folderEditionMbids.size > 0 ? folderEditionMbids : matchingEditionMbids;
     const groupList = Array.from(matchingGroupMbids);
     const groupPlaceholders = groupList.map(() => "?").join(", ");
     return pickCatalogTrackMatch(
@@ -836,7 +935,7 @@ function matchCatalogTrackByTags(
         tags,
         preferredSlot,
         catalogTracksWhere(`album.mbid IN (${groupPlaceholders})`, groupList),
-        matchingEditionMbids.size > 0 ? { restrictToReleases: matchingEditionMbids } : undefined,
+        restrictToReleases.size > 0 ? { restrictToReleases } : undefined,
     );
 }
 
@@ -868,6 +967,10 @@ export function matchAudioFileByMetadata(
             librarySlot: folderDuplicate.librarySlot || preferredSlot,
             duplicateOfExisting: true,
             existingFilePath: folderDuplicate.existingFilePath,
+            canonicalTrackMbid: folderDuplicate.canonicalTrackMbid,
+            canonicalRecordingMbid: folderDuplicate.canonicalRecordingMbid,
+            canonicalReleaseMbid: folderDuplicate.canonicalReleaseMbid,
+            canonicalReleaseGroupMbid: folderDuplicate.canonicalReleaseGroupMbid,
         };
     }
 
@@ -1037,3 +1140,139 @@ export function matchAudioFileByMetadata(
         ...canonical,
     };
 }
+
+/**
+ * Match an on-disk video by tags, duration, album folder and catalog — not by
+ * a `{PROVIDER-id}` filename token. A rip from YouTube or a sidecar living
+ * next to the audio track will not have that token.
+ */
+export function matchVideoFileByMetadata(
+    filePath: string,
+    artistId: string,
+    libraryRoot: LibraryRootKey,
+    tags: ParsedAudioTags,
+): MetadataMatchResult | null {
+    const preferredSlot = librarySlotForRoot(libraryRoot);
+    const stem = path.parse(filePath).name;
+    const comparable = videoStemComparableTitle(stem)
+        || videoComparableTitle(tags.title)
+        || videoStemComparableTitle(String(tags.title || ""));
+    if (!comparable) return null;
+
+    const artist = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string } | undefined;
+    const artistMbid = artist?.mbid ? String(artist.mbid) : "";
+
+    type VideoRow = {
+        recording_id: number;
+        recording_mbid: string;
+        title: string;
+        length_ms: number | null;
+        video_variant: string | null;
+        provider: string | null;
+        provider_id: string | null;
+    };
+
+    const catalogRows = artistMbid
+        ? db.prepare(`
+            SELECT
+              recording.id AS recording_id,
+              recording.mbid AS recording_mbid,
+              recording.title AS title,
+              recording.length_ms AS length_ms,
+              recording.video_variant AS video_variant,
+              NULL AS provider,
+              NULL AS provider_id
+            FROM Recordings recording
+            WHERE recording.is_video = 1
+              AND recording.mbid IS NOT NULL
+              AND (
+                recording.artist_mbid = ?
+                OR recording.artist_metadata_id IN (
+                  SELECT id FROM ArtistMetadata WHERE mbid = ?
+                )
+              )
+          `).all(artistMbid, artistMbid) as VideoRow[]
+        : [];
+
+    const providerRows = db.prepare(`
+        SELECT
+          recording.id AS recording_id,
+          recording.mbid AS recording_mbid,
+          COALESCE(pi.title, recording.title) AS title,
+          COALESCE(pi.duration_ms, recording.length_ms) AS length_ms,
+          recording.video_variant AS video_variant,
+          pi.provider AS provider,
+          CAST(pi.provider_id AS TEXT) AS provider_id
+        FROM ProviderItems pi
+        JOIN ProviderVideoMatches video_match
+          ON video_match.provider_video_item_id = pi.id
+         AND video_match.match_state = 'accepted'
+        JOIN Recordings recording ON recording.id = video_match.recording_id
+        WHERE pi.entity_type = 'video'
+          AND ${LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL}
+    `).all({ artistId }) as VideoRow[];
+
+    const merged = [...providerRows, ...catalogRows];
+    const titleHits = merged.filter((row) => videoComparableTitle(row.title) === comparable);
+    if (titleHits.length === 0) return null;
+
+    const durationHits = titleHits.filter((row) =>
+        durationClose(
+            tags.durationSeconds,
+            row.length_ms != null && row.length_ms > 0 ? row.length_ms / 1000 : null,
+        ),
+    );
+    let hits = durationHits.length > 0 ? durationHits : titleHits;
+
+    const folder = albumFolderTitle(filePath);
+    if (folder) {
+        const folderHits = hits.filter((row) =>
+            albumTitleMatches(folder, row.title)
+            || videoComparableTitle(row.title) === videoComparableTitle(folder)
+        );
+        if (folderHits.length > 0) hits = folderHits;
+    }
+
+    const recordingIds = new Set(hits.map((row) => String(row.recording_mbid || "")).filter(Boolean));
+    if (recordingIds.size !== 1) {
+        const official = hits.filter((row) => {
+            const variant = String(row.video_variant || "").toLowerCase();
+            return !variant || variant === "official" || variant === "video";
+        });
+        const officialIds = new Set(official.map((row) => String(row.recording_mbid || "")).filter(Boolean));
+        if (officialIds.size === 1) {
+            hits = official;
+        } else {
+            return null;
+        }
+    }
+
+    const winner = hits.find((row) => row.provider_id) || hits[0];
+    const recordingMbid = String(winner.recording_mbid);
+    const existing = db.prepare(`
+        SELECT file_path
+        FROM TrackFiles
+        WHERE artist_id = ?
+          AND file_type = 'video'
+          AND canonical_recording_mbid = ?
+        ORDER BY verified_at DESC, id DESC
+        LIMIT 1
+    `).get(artistId, recordingMbid) as { file_path: string } | undefined;
+    const resolvedExisting = existing?.file_path || null;
+    const duplicateOfExisting = Boolean(
+        resolvedExisting && path.resolve(resolvedExisting) !== path.resolve(filePath),
+    );
+
+    return {
+        albumId: null,
+        mediaId: winner.provider_id ? String(winner.provider_id) : "",
+        provider: winner.provider || "",
+        fileType: "video",
+        quality: importedQualityForTrackedFile(filePath),
+        librarySlot: preferredSlot === "video" ? "video" : preferredSlot,
+        duplicateOfExisting,
+        existingFilePath: duplicateOfExisting ? resolvedExisting : null,
+        canonicalRecordingMbid: recordingMbid,
+    };
+}
+

@@ -174,6 +174,7 @@ function seedCatalogTrack(params: {
   editionTitle?: string;
   editionDisambiguation?: string;
   position?: number;
+  mediumPosition?: number;
   lengthMs?: number;
   slot?: string;
 }) {
@@ -182,6 +183,7 @@ function seedCatalogTrack(params: {
   const albumTitle = params.albumTitle ?? params.title;
   const editionTitle = params.editionTitle ?? albumTitle;
   const position = params.position ?? 1;
+  const mediumPosition = params.mediumPosition ?? 1;
   db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title) VALUES (?, 'artist-mbid', ?)`)
     .run(params.releaseGroupMbid, albumTitle);
   db.prepare(`
@@ -196,8 +198,8 @@ function seedCatalogTrack(params: {
     .run(params.recordingMbid, params.title, params.lengthMs ?? null);
   db.prepare(`
     INSERT OR IGNORE INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, title)
-    VALUES (?, ?, ?, 1, ?, ?)
-  `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, position, params.title);
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, mediumPosition, position, params.title);
   const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
     .get() as { id: number };
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
@@ -758,3 +760,119 @@ test("the same recording on a different album is not a duplicate leftover", () =
   assert.equal(match!.canonicalReleaseMbid, "rel-atbb");
   assert.equal(match!.duplicateOfExisting, false);
 });
+
+test("filename disc/track plus edition folder pins Things We Lost onto Bad Blood X", () => {
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-atbb",
+    trackMbid: "trk-twlitf-atbb",
+    recordingMbid: "rec-twlitf-studio",
+    title: "Things We Lost in the Fire",
+    albumTitle: "Bad Blood",
+    editionTitle: "All This Bad Blood",
+    position: 2,
+    lengthMs: 241000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-pompeii-mmxxiii",
+    recordingMbid: "rec-pompeii-mmxxiii",
+    title: "Pompeii MMXXIII",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    position: 1,
+    lengthMs: 337000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-pompeii-bbx",
+    recordingMbid: "rec-pompeii",
+    title: "Pompeii",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    position: 2,
+    lengthMs: 214000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-twlitf-bbx",
+    recordingMbid: "rec-twlitf-anniversary",
+    title: "Things We Lost in the Fire",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    position: 3,
+    lengthMs: 241000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-twlitf-abbey",
+    recordingMbid: "rec-twlitf-abbey",
+    title: "Things We Lost in the Fire (Abbey Road sessions)",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    mediumPosition: 2,
+    position: 2,
+    lengthMs: 230000,
+  });
+
+  const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
+  const studio = matchModule.matchAudioFileByMetadata(
+    `${folder}/103 - Things We Lost in the Fire.m4a`,
+    "artist-1",
+    "music",
+    {
+      title: "Things We Lost in the Fire",
+      album: "Bad Blood",
+      durationSeconds: 241,
+    },
+  );
+  assert.ok(studio, "103 must import onto the anniversary edition even when Apple tags the group title");
+  assert.equal(studio!.canonicalTrackMbid, "trk-twlitf-bbx");
+  assert.equal(studio!.canonicalReleaseMbid, "rel-bbx");
+  assert.equal(studio!.duplicateOfExisting, false);
+
+  const abbey = matchModule.matchAudioFileByMetadata(
+    `${folder}/202 - Things We Lost in the Fire (Abbey Road sessions).m4a`,
+    "artist-1",
+    "music",
+    {
+      title: "Things We Lost in the Fire (Abbey Road sessions)",
+      album: "Bad Blood",
+      durationSeconds: 230,
+    },
+  );
+  assert.ok(abbey, "202 Abbey Road sessions must import onto disc 2 of Bad Blood X");
+  assert.equal(abbey!.canonicalTrackMbid, "trk-twlitf-abbey");
+  assert.equal(abbey!.canonicalReleaseMbid, "rel-bbx");
+});
+
+test("inline video without a provider filename token matches the catalog recording", () => {
+  seedArtist();
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO Recordings (mbid, title, length_ms, is_video, artist_mbid, video_variant)
+    VALUES ('rec-living-video', 'Living', 188000, 1, 'artist-mbid', 'official')
+  `).run();
+
+  const match = matchModule.matchVideoFileByMetadata(
+    "/library/stereo-music/Bakermat/Living (2016)/01 - Living-video.mp4",
+    "artist-1",
+    "music",
+    {
+      title: "Living",
+      album: "Living",
+      durationSeconds: 188,
+    },
+  );
+  assert.ok(match, "Living-video.mp4 must match without a {TIDAL-id} token");
+  assert.equal(match!.fileType, "video");
+  assert.equal(match!.canonicalRecordingMbid, "rec-living-video");
+  assert.equal(match!.mediaId, "");
+  assert.equal(match!.duplicateOfExisting, false);
+});
+
