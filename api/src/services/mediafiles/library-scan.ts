@@ -10,6 +10,7 @@ import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
 import { matchAudioFileByMetadata, matchVideoFileByMetadata, resolveCatalogTrackFromEmbeddedMbids, videoStemComparableTitle } from "./library-scan-metadata-match.js";
+import { DUPLICATE_EXTRA_FILE_TYPE, ExtraFileService } from "../extras/files/extra-file-service.js";
 import {
     PROVIDER_RESOLVED_ALBUM_ID_SQL,
     LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL,
@@ -784,12 +785,16 @@ export class DiskScanService {
             await DiskScanService.populateEmptyArtistFolderMetadata(artistId, ensuredEmptyFolders);
         }
 
-        // Collect all existing file paths for this artist (for quick lookup)
+        // Collect all existing file paths for this artist (for quick lookup).
+        // Duplicate extras are re-evaluated every scan so a later matcher fix
+        // can promote them to TrackFiles instead of leaving a wrong extra.
         const existingPaths = new Set<string>();
         for (const table of ["TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles"] as const) {
+            const extraFilter = table === "ExtraFiles" ? " AND file_type != ?" : "";
+            const params = table === "ExtraFiles" ? [artistId, DUPLICATE_EXTRA_FILE_TYPE] : [artistId];
             const rows = db.prepare(
-                `SELECT file_path, relative_path, library_root FROM ${table} WHERE artist_id = ?`,
-            ).all(artistId) as Array<{
+                `SELECT file_path, relative_path, library_root FROM ${table} WHERE artist_id = ?${extraFilter}`,
+            ).all(...params) as Array<{
                 file_path: string;
                 relative_path: string | null;
                 library_root: string;
@@ -906,6 +911,7 @@ export class DiskScanService {
 
                 const resolved = path.resolve(filePath);
                 if (existingPaths.has(resolved)) continue;
+                ExtraFileService.releaseDuplicateForRescan(resolved);
 
                 // New file on disk — attempt to match and index
                 let match = this.matchFileToMedia(filePath, artistId, key);

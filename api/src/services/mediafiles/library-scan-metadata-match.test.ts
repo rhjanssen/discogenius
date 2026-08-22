@@ -851,6 +851,76 @@ test("filename disc/track plus edition folder pins Things We Lost onto Bad Blood
   assert.equal(abbey!.canonicalReleaseMbid, "rel-bbx");
 });
 
+test("Abbey Road sessions is not a duplicate of an already-imported studio cut", () => {
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-atbb",
+    trackMbid: "trk-twlitf-atbb",
+    recordingMbid: "rec-twlitf-studio",
+    title: "Things We Lost in the Fire",
+    albumTitle: "Bad Blood",
+    editionTitle: "All This Bad Blood",
+    position: 2,
+    lengthMs: 241000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-twlitf-bbx",
+    recordingMbid: "rec-twlitf-anniversary",
+    title: "Things We Lost in the Fire",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    position: 3,
+    lengthMs: 241000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-bad-blood",
+    releaseMbid: "rel-bbx",
+    trackMbid: "trk-twlitf-abbey",
+    recordingMbid: "rec-twlitf-abbey",
+    title: "Things We Lost in the Fire (Abbey Road sessions)",
+    albumTitle: "Bad Blood",
+    editionTitle: "Bad Blood X",
+    mediumPosition: 2,
+    position: 2,
+    lengthMs: 230000,
+  });
+
+  const { db } = dbModule;
+  const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension, duration,
+      canonical_track_mbid, canonical_recording_mbid,
+      canonical_release_mbid, canonical_release_group_mbid
+    ) VALUES (
+      'artist-1', 'apple-music', 'track', 'twlitf-103', 'track', 'stereo',
+      'music', ?, 'Bastille/Bad Blood X/103 - Things We Lost in the Fire.m4a',
+      '103 - Things We Lost in the Fire.m4a', 'm4a', 241,
+      'trk-twlitf-bbx', 'rec-twlitf-anniversary',
+      'rel-bbx', 'rg-bad-blood'
+    )
+  `).run(`${folder}/103 - Things We Lost in the Fire.m4a`);
+
+  const abbey = matchModule.matchAudioFileByMetadata(
+    `${folder}/202 - Things We Lost in the Fire (Abbey Road sessions).m4a`,
+    "artist-1",
+    "music",
+    {
+      title: "Things We Lost in the Fire (Abbey Road sessions)",
+      album: "Bad Blood",
+      durationSeconds: 241,
+    },
+  );
+  assert.ok(abbey, "202 must import as its own Abbey Road track, not as a leftover of 103");
+  assert.equal(abbey!.canonicalTrackMbid, "trk-twlitf-abbey");
+  assert.equal(abbey!.canonicalRecordingMbid, "rec-twlitf-abbey");
+  assert.equal(abbey!.duplicateOfExisting, false);
+});
+
 test("inline video without a provider filename token matches the catalog recording", () => {
   seedArtist();
   const { db } = dbModule;

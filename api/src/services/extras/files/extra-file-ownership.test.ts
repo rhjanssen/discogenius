@@ -204,3 +204,20 @@ test("duplicate leftover audio is tracked as an extra, not a mystery unmapped fi
   assert.equal(serviceModule.isMetadataExtraFileType("duplicate"), false);
   assert.equal(serviceModule.isLyricExtraFileType("duplicate"), false);
 });
+
+test("releaseDuplicateForRescan drops the extra row and leaves the file on disk", () => {
+  const { lossless } = seedLibraries();
+  const extraPath = path.join(sharedRoot, "202 - Things We Lost in the Fire (Abbey Road sessions).m4a");
+  fs.writeFileSync(extraPath, "audio");
+  const extraId = serviceModule.ExtraFileService.upsert({
+    artistId: ARTIST_ID,
+    libraryId: lossless,
+    filePath: extraPath,
+    libraryRoot: sharedRoot,
+    fileType: "duplicate",
+  });
+  assert.ok(extraId > 0);
+  serviceModule.ExtraFileService.releaseDuplicateForRescan(extraPath);
+  assert.equal(serviceModule.ExtraFileService.findIdByPath("ExtraFiles", extraPath), null);
+  assert.equal(fs.existsSync(extraPath), true);
+});
