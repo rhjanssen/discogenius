@@ -3486,16 +3486,10 @@ export class LibraryFilesService {
   }
 
   /**
-   * Housekeeping entry: when "Remove unmonitored files" is on, delete leftover
-   * files for every still-managed artist. Curation already prunes at unmonitor
-   * time; this catches editions that stayed unselected after an import or plan
-   * change (Dutch edition monitored, Bad Blood X still on disk).
-   */
-  /**
    * After an Album or Edition is unmonitored, delete its library files when
-   * "Remove unmonitored files" is on. Album-toggle, track-toggle, and edition
-   * removal all go through here so Heartache extras in that folder leave with
-   * the TrackFiles instead of surviving as orphan ExtraFiles.
+   * "Remove unmonitored files" is on. Album-toggle, track-toggle, edition
+   * removal, and housekeeping all go through here so extras in that folder
+   * leave with the TrackFiles instead of surviving as orphan ExtraFiles.
    */
   static pruneUnmonitoredForReleaseGroup(releaseGroupMbid: string): {
     deleted: number; missing: number; errors: number;
@@ -3566,7 +3560,18 @@ export class LibraryFilesService {
       metaSelectors.push("(file_type = 'cover' AND (canonical_release_group_mbid IS NOT NULL OR canonical_release_mbid IS NOT NULL OR provider_entity_type = 'album')) OR file_type = 'video_cover'");
     }
     if (!metadataConfig.save_artist_picture) {
-      metaSelectors.push("file_type = 'cover' AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL");
+      metaSelectors.push(`
+        file_type = 'cover'
+        AND canonical_release_group_mbid IS NULL
+        AND canonical_release_mbid IS NULL
+        AND canonical_track_mbid IS NULL
+        AND canonical_recording_mbid IS NULL
+        AND track_file_id IS NULL
+        AND (
+          provider_entity_type IS NULL
+          OR provider_entity_type = 'artist'
+        )
+      `);
     }
     if (!metadataConfig.save_video_thumbnail) {
       metaSelectors.push("file_type = 'video_thumbnail'");

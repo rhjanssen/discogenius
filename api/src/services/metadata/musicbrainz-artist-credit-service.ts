@@ -1,5 +1,4 @@
 import { db, runGatedChunkedWrite } from "../../database.js";
-import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
 import type { CatalogArtistCreditReleaseGroup } from "../catalog/catalog-provider.js";
 
 export type CanonicalAlbumArtist = {
@@ -45,36 +44,6 @@ function catalogReleaseGroupToMusicBrainzReleaseGroup(group: CatalogArtistCredit
   };
 }
 
-async function fetchCreditedReleaseGroupsFromMusicBrainzWeb(artistMbid: string): Promise<MusicBrainzReleaseGroup[]> {
-  const groups: MusicBrainzReleaseGroup[] = [];
-  let offset = 0;
-  let total = 0;
-
-  do {
-    const url = new URL("https://musicbrainz.org/ws/2/release-group");
-    url.searchParams.set("artist", artistMbid);
-    url.searchParams.set("release-group-status", "website-default");
-    url.searchParams.set("inc", "artist-credits");
-    url.searchParams.set("fmt", "json");
-    url.searchParams.set("limit", "100");
-    url.searchParams.set("offset", String(offset));
-
-    const page = await requestMusicBrainzJson<any>(url.toString());
-    const releaseGroups = Array.isArray(page?.["release-groups"])
-      ? page["release-groups"] as MusicBrainzReleaseGroup[]
-      : [];
-    total = Number(page?.["release-group-count"] || releaseGroups.length);
-    groups.push(...releaseGroups);
-
-    offset += releaseGroups.length;
-    if (releaseGroups.length === 0) {
-      break;
-    }
-  } while (offset < total);
-
-  return groups;
-}
-
 async function fetchCreditedReleaseGroups(artistMbid: string): Promise<MusicBrainzReleaseGroup[]> {
   const { catalogProviderRegistry } = await import("../catalog/index.js");
   const activeProvider = catalogProviderRegistry.getActive();
@@ -83,7 +52,10 @@ async function fetchCreditedReleaseGroups(artistMbid: string): Promise<MusicBrai
       .map(catalogReleaseGroupToMusicBrainzReleaseGroup);
   }
 
-  return fetchCreditedReleaseGroupsFromMusicBrainzWeb(artistMbid);
+  // Servarr has no credited-release-group browse. Do not call musicbrainz.org:
+  // a 503 there used to fail the whole RefreshArtist. Credits stay empty until
+  // the selected catalog can serve them (MusicBrainz-local).
+  return [];
 }
 
 function parseArtistCredits(rawCredits: unknown, fallbackArtistMbid?: string): MusicBrainzArtistCredit[] {

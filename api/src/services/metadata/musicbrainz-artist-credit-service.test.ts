@@ -23,28 +23,28 @@ after(() => {
 });
 
 test("credited release discovery adds visible unmonitored collaborators and preserves ordered album credits", async () => {
-  const originalGet = (await import("axios")).default.get;
-  (await import("axios")).default.get = async () => ({
-    data: {
-      "release-group-count": 1,
-      "release-groups": [{
-        id: "4977de41-d626-41ea-ae29-b6ebb29843eb",
-        title: "Happier",
-        "primary-type": "Single",
-        "artist-credit": [
-          {
-            name: "Marshmello",
-            joinphrase: " & ",
-            artist: { id: "301b45a4-b8b9-410e-8344-4b4eaf96691a", name: "Marshmello" },
-          },
-          {
-            name: "Bastille",
-            joinphrase: "",
-            artist: { id: "7808accb-6395-4b25-858c-678bbb73896b", name: "Bastille" },
-          },
-        ],
-      }],
-    },
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const originalGetActive = catalogProviderRegistry.getActive.bind(catalogProviderRegistry);
+  catalogProviderRegistry.getActive = () => ({
+    id: "test-catalog",
+    getCreditedReleaseGroupsForArtist: async () => [{
+      id: "4977de41-d626-41ea-ae29-b6ebb29843eb",
+      title: "Happier",
+      primaryType: "Single",
+      secondaryTypes: [],
+      artistCredits: [
+        {
+          artistId: "301b45a4-b8b9-410e-8344-4b4eaf96691a",
+          name: "Marshmello",
+          joinPhrase: " & ",
+        },
+        {
+          artistId: "7808accb-6395-4b25-858c-678bbb73896b",
+          name: "Bastille",
+          joinPhrase: "",
+        },
+      ],
+    }],
   }) as any;
 
   try {
@@ -52,7 +52,7 @@ test("credited release discovery adds visible unmonitored collaborators and pres
       "7808accb-6395-4b25-858c-678bbb73896b",
     );
   } finally {
-    (await import("axios")).default.get = originalGet;
+    catalogProviderRegistry.getActive = originalGetActive;
   }
 
   const marshmello = dbModule.db.prepare("SELECT name, monitored, library_origin FROM Artists WHERE id = ?")
@@ -82,5 +82,19 @@ test("credited release discovery adds visible unmonitored collaborators and pres
     WHERE artist_mbid = ? AND release_group_mbid = ?
   `).get("7808accb-6395-4b25-858c-678bbb73896b", "4977de41-d626-41ea-ae29-b6ebb29843eb");
   assert.ok(bastilleScope);
+});
+
+test("Servarr catalog without credited browse leaves credits empty instead of calling musicbrainz.org", async () => {
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const originalGetActive = catalogProviderRegistry.getActive.bind(catalogProviderRegistry);
+  catalogProviderRegistry.getActive = () => ({ id: "servarr-metadata" }) as any;
+  try {
+    const result = await creditServiceModule.MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(
+      "7808accb-6395-4b25-858c-678bbb73896b",
+    );
+    assert.deepEqual(result, { releaseGroups: 0, artists: 0, artistMbids: [] });
+  } finally {
+    catalogProviderRegistry.getActive = originalGetActive;
+  }
 });
 

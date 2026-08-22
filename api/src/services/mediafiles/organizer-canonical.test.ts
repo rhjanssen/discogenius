@@ -445,6 +445,68 @@ test("metadata pruning removes artist pictures without legacy media_id column", 
   assert.match(remaining[0].file_path, /cover\.jpg$/);
 });
 
+test("metadata pruning removes NFO files when save_nfo is disabled", async () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Canonical Artist", "artist-mbid");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("release-group-1", "artist-mbid", "Canonical Album");
+
+  const nfoDir = path.join(tempDir, "Canonical Artist", "Canonical Album");
+  fs.mkdirSync(nfoDir, { recursive: true });
+  const nfoPath = path.join(nfoDir, "album.nfo");
+  const coverPath = path.join(nfoDir, "cover.jpg");
+  fs.writeFileSync(nfoPath, "<?xml version=\"1.0\"?><album />");
+  fs.writeFileSync(coverPath, "cover");
+
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, canonical_artist_mbid, canonical_release_group_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-local",
+    "Canonical Artist/Canonical Album/album.nfo",
+    nfoPath,
+    tempDir,
+    "nfo",
+    "nfo",
+    "nfo",
+    "artist-mbid",
+    "release-group-1",
+  );
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, canonical_artist_mbid, canonical_release_group_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-local",
+    "Canonical Artist/Canonical Album/cover.jpg",
+    coverPath,
+    tempDir,
+    "jpg",
+    "cover",
+    "cover",
+    "artist-mbid",
+    "release-group-1",
+  );
+
+  const config = configModule.readConfig();
+  config.metadata.save_nfo = false;
+  configModule.writeConfig(config);
+
+  await organizerModule.OrganizerService.pruneDisabledMetadata();
+
+  assert.equal(fs.existsSync(nfoPath), false);
+  assert.equal(fs.existsSync(coverPath), true);
+  const remaining = dbModule.db.prepare(`
+    SELECT file_type FROM MetadataFiles ORDER BY file_type ASC
+  `).all() as Array<{ file_type: string }>;
+  assert.deepEqual(remaining.map((row) => row.file_type), ["cover"]);
+});
+
 test("singleton sidecar relocation uses clean metadata identity columns", () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");

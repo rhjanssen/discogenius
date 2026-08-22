@@ -914,89 +914,22 @@ export class OrganizerService {
 
   /**
    * Retroactively prune disabled metadata files (covers, NFO, lyrics, etc.)
-   * based on the current configuration.
+   * based on the current configuration. One implementation: LibraryFilesService.
    */
   public static async pruneDisabledMetadata(): Promise<void> {
-    const config = Config.getMetadataConfig();
-    console.log('[Organizer] Pruning disabled metadata files...');
+    console.log("[Organizer] Pruning disabled metadata files...");
 
-    let deletedCount = 0;
-
-    // Ensure TrackFiles contains strictly audio and video media files (Lidarr invariant).
+    // TrackFiles is audio and video only (Lidarr invariant).
     db.prepare("DELETE FROM TrackFiles WHERE file_type NOT IN ('track', 'video')").run();
 
-    // Cover/nfo/image sidecars live in MetadataFiles (with a file_type column);
-    // lyrics live in LyricFiles (no file_type — the table itself is the type).
-    const metadataSelectors: Array<string> = [];
-    if (!config.save_album_cover) {
-      metadataSelectors.push("(file_type = 'cover' AND album_id IS NOT NULL)");
-      metadataSelectors.push("file_type = 'video_cover'");
+    const artists = db.prepare(`
+      SELECT CAST(id AS TEXT) AS id FROM Artists
+    `).all() as Array<{ id: string }>;
+    let deleted = 0;
+    for (const artist of artists) {
+      deleted += LibraryFilesService.pruneDisabledMetadataFiles(artist.id).deleted;
     }
-    if (!config.save_artist_picture) {
-      metadataSelectors.push(`
-        file_type = 'cover'
-        AND canonical_release_group_mbid IS NULL
-        AND canonical_release_mbid IS NULL
-        AND canonical_track_mbid IS NULL
-        AND canonical_recording_mbid IS NULL
-        AND track_file_id IS NULL
-        AND (
-          provider_entity_type IS NULL
-          OR provider_entity_type = 'artist'
-        )
-      `);
-    }
-    if (!config.save_nfo) metadataSelectors.push("file_type = 'nfo'");
-    if (!config.save_video_thumbnail) metadataSelectors.push("file_type = 'video_thumbnail'");
-
-    type PruneRow = { id: number; file_path: string; file_type: string; library_root: string; table: "MetadataFiles" | "LyricFiles" };
-    const filesToPrune: PruneRow[] = [];
-
-    if (metadataSelectors.length > 0) {
-      const rows = db.prepare(`
-        SELECT id, file_path, file_type, library_root
-        FROM MetadataFiles
-        WHERE ${metadataSelectors.join(" OR ")}
-      `).all() as Array<Omit<PruneRow, "table">>;
-      filesToPrune.push(...rows.map((row) => ({ ...row, table: "MetadataFiles" as const })));
-    }
-
-    if (!config.save_lyrics) {
-      const rows = db.prepare(`
-        SELECT id, file_path, 'lyrics' AS file_type, library_root
-        FROM LyricFiles
-      `).all() as Array<Omit<PruneRow, "table">>;
-      filesToPrune.push(...rows.map((row) => ({ ...row, table: "LyricFiles" as const })));
-    }
-
-    if (filesToPrune.length === 0) {
-      console.log('[Organizer] No orphaned files found to prune.');
-      return;
-    }
-
-    // Process deletions against each sidecar's own table.
-    const deleteMetadata = db.prepare(`DELETE FROM MetadataFiles WHERE id = ?`);
-    const deleteLyric = db.prepare(`DELETE FROM LyricFiles WHERE id = ?`);
-
-    db.transaction(() => {
-      for (const file of filesToPrune) {
-        try {
-          const resolvedFilePath = resolveStoredLibraryPath({
-            filePath: file.file_path,
-            libraryRoot: file.library_root,
-          });
-          if (fs.existsSync(resolvedFilePath)) {
-            fs.unlinkSync(resolvedFilePath);
-          }
-          (file.table === "LyricFiles" ? deleteLyric : deleteMetadata).run(file.id);
-          deletedCount++;
-        } catch (error) {
-          console.error(`[Organizer] Failed to prune ${file.file_type} file: ${file.file_path}`, error);
-        }
-      }
-    })();
-
-    console.log(`[Organizer] Pruning complete. Deleted ${deletedCount} disabled sidecar(s).`);
+    console.log(`[Organizer] Pruned ${deleted} disabled metadata file(s).`);
   }
 
   private static ensureDir(dirPath: string) {

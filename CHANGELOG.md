@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.10.3] - 2026-08-22
+
+Metadata toggles delete the sidecars they turn off, and a Servarr artist
+refresh no longer dies because musicbrainz.org is down.
+
+### Fixed
+- **Turning off NFO/covers/lyrics in Settings did not use the same prune as
+  artist curation.** `OrganizerService.pruneDisabledMetadata` still selected
+  album covers with `album_id`, a column MetadataFiles does not have, so a
+  cover-off prune could throw before NFO rows were deleted. ConfigPrune now
+  calls `LibraryFilesService.pruneDisabledMetadataFiles` for every artist, the
+  same path CurateArtist already used.
+- **Servarr RefreshArtist failed when musicbrainz.org returned HTTP 503.**
+  Credited-release discovery fell through to the public MusicBrainz website
+  whenever the active catalog had no `getCreditedReleaseGroupsForArtist`.
+  Servarr has no such browse; credits now stay empty there. Local MusicBrainz
+  still loads them from Postgres.
+
 ## [2.10.2] - 2026-08-22
 
 Album unmonitor now deletes that album's files when Remove unmonitored files
