@@ -60,6 +60,7 @@ import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
+import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import type { Artist } from "@/hooks/useLibrary";
@@ -118,6 +119,7 @@ function videoVariantLabel(variant: string | null | undefined): string {
 
 const useStyles = makeStyles({
     container: {
+        ...compactPageTopOffset,
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalM,

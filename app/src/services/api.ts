@@ -183,6 +183,7 @@ function toApiUrl(endpoint: string): string {
  */
 export type AlbumLibraryScope = { libraryId: number } | { allLibraries: true };
 export type ArtistLibraryScope = { libraryIds: number[] } | { allLibraries: true };
+export type ArtistPolicy = "all" | "new" | "none";
 
 export interface ArtistLibraryOption {
   id: number;
@@ -1342,7 +1343,7 @@ class ApiClient {
 
   async updateArtist(
     artistId: string,
-    updates: { monitored?: boolean; policy?: "all" | "new" | "none" } & ArtistLibraryScope,
+    updates: { monitored?: boolean; policy?: ArtistPolicy } & ArtistLibraryScope,
   ) {
     return this.request(`/v1/artist/${artistId}`, {
       method: 'PATCH',
@@ -1358,7 +1359,7 @@ class ApiClient {
     return this.updateArtist(artistId, { monitored, ...scope });
   }
 
-  async setArtistPolicy(artistId: string, policy: "all" | "new" | "none", scope: ArtistLibraryScope) {
+  async setArtistPolicy(artistId: string, policy: ArtistPolicy, scope: ArtistLibraryScope) {
     return this.updateArtist(artistId, { policy, ...scope });
   }
 

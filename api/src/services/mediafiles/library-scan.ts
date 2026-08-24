@@ -43,6 +43,7 @@ import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
 import { shouldRematchUnmatchedFiles, type ScanFileFilter } from "./scan-file-filter.js";
 import { parseProviderFilenameToken } from "./path-utils.js";
 import { resolveVideoLibraryIds, selectLibraryVideo } from "../music/library-video-monitoring.js";
+import { deriveQuality, parseAudioFile } from "./audioUtils.js";
 
 // ============================================================================
 // Types
@@ -416,6 +417,13 @@ export class DiskScanService {
         const phaseC = this.updateChangedFiles(scanArtistId);
         result.filesUpdated = phaseC.updated;
 
+        // A clean database can rediscover an existing library from tags, but
+        // those files have no prior TrackFiles row from which quality can be
+        // reused. Persist facts measured from the file itself so a relinked
+        // FLAC does not show a file-info action with an empty quality badge.
+        const phaseQuality = await this.backfillMissingAudioFacts(scanArtistId);
+        result.filesUpdated += phaseQuality.updated;
+
         // Phase D/E rematch unmatched existing files. Lidarr FilterFilesType.Known
         // skips this: only new files and size/mtime changes. Matched/None rematch.
         if (shouldRematchUnmatchedFiles(options?.filter ?? "matched")) {
@@ -449,6 +457,68 @@ export class DiskScanService {
         }
 
         return result;
+    }
+
+    private static async backfillMissingAudioFacts(artistId: string): Promise<{ updated: number }> {
+        const rows = db.prepare(`
+            SELECT id, file_path, relative_path, library_root
+            FROM TrackFiles
+            WHERE artist_metadata_id = ?
+              AND file_type = 'track'
+              AND (
+                quality IS NULL OR TRIM(quality) = ''
+                OR imported_quality IS NULL OR TRIM(imported_quality) = ''
+                OR codec IS NULL OR TRIM(codec) = ''
+              )
+            ORDER BY id
+        `).all(artistId) as Array<{
+            id: number;
+            file_path: string;
+            relative_path: string | null;
+            library_root: string;
+        }>;
+
+        const update = db.prepare(`
+            UPDATE TrackFiles
+            SET quality = COALESCE(NULLIF(TRIM(quality), ''), @quality),
+                imported_quality = COALESCE(NULLIF(TRIM(imported_quality), ''), @quality),
+                bit_depth = COALESCE(@bitDepth, bit_depth),
+                sample_rate = COALESCE(@sampleRate, sample_rate),
+                bitrate = COALESCE(@bitrate, bitrate),
+                codec = COALESCE(NULLIF(TRIM(@codec), ''), codec),
+                channels = COALESCE(@channels, channels),
+                duration = COALESCE(@duration, duration),
+                verified_at = CURRENT_TIMESTAMP
+            WHERE id = @id
+        `);
+
+        let updated = 0;
+        for (let index = 0; index < rows.length; index += 1) {
+            const row = rows[index];
+            const filePath = resolveStoredLibraryPath({
+                filePath: row.file_path,
+                libraryRoot: row.library_root,
+                relativePath: row.relative_path,
+            });
+            if (!fs.existsSync(filePath)) continue;
+
+            const metrics = await parseAudioFile(filePath);
+            const derived = deriveQuality(path.extname(filePath), metrics);
+            const quality = derived === "UNKNOWN" ? null : derived;
+            const result = update.run({
+                id: row.id,
+                quality,
+                bitDepth: metrics.bitDepth ?? null,
+                sampleRate: metrics.sampleRate ?? null,
+                bitrate: metrics.bitrate ?? null,
+                codec: metrics.codec ?? null,
+                channels: metrics.channels ?? null,
+                duration: metrics.duration ?? null,
+            });
+            if (result.changes > 0) updated += 1;
+            if ((index + 1) % 10 === 0) await yieldToEventLoop();
+        }
+        return { updated };
     }
 
     /**
@@ -1108,7 +1178,17 @@ export class DiskScanService {
                                         albumId: metadataMatch.albumId,
                                         mediaId: metadataMatch.mediaId,
                                         fileType: metadataMatch.fileType,
-                                        quality: metadataMatch.quality,
+                                        quality: metadataMatch.quality || (() => {
+                                            const derived = deriveQuality(ext, {
+                                                bitDepth: metrics.bitDepth ?? undefined,
+                                                sampleRate: metrics.sampleRate ?? undefined,
+                                                bitrate: metrics.bitrate ?? undefined,
+                                                codec: metrics.codec ?? undefined,
+                                                channels: metrics.channels ?? undefined,
+                                                duration: metrics.duration ?? undefined,
+                                            });
+                                            return derived === "UNKNOWN" ? null : derived;
+                                        })(),
                                     };
                                     matchProvider = metadataMatch.provider;
                                     canonicalLink = {
@@ -1154,6 +1234,7 @@ export class DiskScanService {
                 }
 
                 if (match) {
+                    const measured = parsedForUnmapped?.metrics;
                     this.upsertLibraryFile({
                         artistId,
                         albumId: match.albumId,
@@ -1169,6 +1250,13 @@ export class DiskScanService {
                         canonicalReleaseMbid: canonicalLink?.canonicalReleaseMbid ?? null,
                         canonicalReleaseGroupMbid: canonicalLink?.canonicalReleaseGroupMbid ?? null,
                         librarySlot: canonicalLink?.librarySlot ?? null,
+                        bitDepth: measured?.bitDepth ?? null,
+                        sampleRate: measured?.sampleRate ?? null,
+                        bitrate: measured?.bitrate ?? null,
+                        codec: measured?.codec ?? null,
+                        channels: measured?.channels ?? null,
+                        duration: measured?.duration ?? null,
+                        importedQuality: match.fileType === "track" ? match.quality : null,
                     });
 
                     if (match.fileType === "track" || match.fileType === "video") {
@@ -2185,6 +2273,13 @@ export class DiskScanService {
         canonicalReleaseMbid?: string | null;
         canonicalReleaseGroupMbid?: string | null;
         librarySlot?: string | null;
+        bitDepth?: number | null;
+        sampleRate?: number | null;
+        bitrate?: number | null;
+        codec?: string | null;
+        channels?: number | null;
+        duration?: number | null;
+        importedQuality?: string | null;
     }) {
         LibraryFilesService.upsertLibraryFile({
             ...params,

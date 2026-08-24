@@ -99,6 +99,8 @@ export interface TrackRemoteOfferContract {
   selectedReleaseMbid?: string | null;
   /** Provider track id when known for this slot. */
   providerTrackId?: string | null;
+  /** Explicit-content flag reported for this exact provider track. */
+  explicit?: boolean | null;
   /** Human-facing permalink for the provider track. */
   providerTrackUrl?: string | null;
 }
@@ -427,6 +429,7 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
             matchStatus: expectOptionalString(offerRecord.matchStatus, `${offerLabel}.matchStatus`) ?? null,
             selectedReleaseMbid: expectOptionalString(offerRecord.selectedReleaseMbid, `${offerLabel}.selectedReleaseMbid`) ?? null,
             providerTrackId: expectOptionalString(offerRecord.providerTrackId, `${offerLabel}.providerTrackId`) ?? null,
+            explicit: expectOptionalBoolean(offerRecord.explicit, `${offerLabel}.explicit`) ?? null,
             providerTrackUrl: expectNullableString(offerRecord.providerTrackUrl, `${offerLabel}.providerTrackUrl`) ?? null,
           };
         }),

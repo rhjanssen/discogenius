@@ -20,13 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install tiddl (TIDAL downloader) in its own venv
 RUN python3 -m venv /opt/tiddl-venv \
     && /opt/tiddl-venv/bin/pip install --no-cache-dir tiddl==3.4.4 \
+    && /opt/tiddl-venv/bin/pip check \
+    && rm -rf /opt/tiddl-venv/lib/python3.13/site-packages/pip* /opt/tiddl-venv/bin/pip* \
     && ln -s /opt/tiddl-venv/bin/tiddl /usr/local/bin/tiddl
 
 # Core media tagging uses Mutagen to replace embedded cover atoms without
 # sacrificing MusicBrainz/freeform tags (ffmpeg's MP4 mdta mode drops `covr`).
-RUN python3 -m venv /opt/media-tags-venv \
-    && /opt/media-tags-venv/bin/pip install --no-cache-dir mutagen==1.47.0 \
-    && /opt/media-tags-venv/bin/pip check
+RUN pip install --no-cache-dir mutagen==1.47.0 \
+    && pip check
 
 # Keep every third-party provider runtime isolated. Their dependency graphs
 # intentionally overlap at incompatible versions (notably Pillow, Rich and
@@ -35,21 +36,18 @@ RUN python3 -m venv /opt/media-tags-venv \
 RUN python3 -m venv /opt/ytmusic-venv \
     && /opt/ytmusic-venv/bin/pip install --no-cache-dir \
         ytmusicapi==1.12.1 'yt-dlp[default]==2026.7.4' \
-    && /opt/ytmusic-venv/bin/pip check
+    && /opt/ytmusic-venv/bin/pip check \
+    && rm -rf /opt/ytmusic-venv/lib/python3.13/site-packages/pip* /opt/ytmusic-venv/bin/pip*
 
 RUN python3 -m venv /opt/streamrip-venv \
     && /opt/streamrip-venv/bin/pip install --no-cache-dir streamrip==2.1.0 \
-    && /opt/streamrip-venv/bin/pip check
+    && /opt/streamrip-venv/bin/pip check \
+    && rm -rf /opt/streamrip-venv/lib/python3.13/site-packages/pip* /opt/streamrip-venv/bin/pip*
 
-RUN python3 -m venv /opt/amazon-music-venv \
-    && /opt/amazon-music-venv/bin/pip install --no-cache-dir amazon-music==1.7.7 \
-    && /opt/amazon-music-venv/bin/pip check
-
-RUN python3 -m venv /opt/votify-venv \
-    && /opt/votify-venv/bin/pip install --no-cache-dir 'votify[librespot]==1.9.9' \
-    && /opt/votify-venv/bin/pip check \
-    && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python \
-        /opt/votify-venv/bin/python -c 'import librespot, pyogg, votify'
+# Spotify and Amazon remain deliberately exposed as Soon in the UI. Their
+# download backends are hard-disabled, so shipping their large Python runtimes
+# would add pull cost without providing a callable capability. Reintroduce the
+# pinned environments together with the provider enablement work.
 
 # Upstream Apple Music downloader image is currently amd64-only and provides a
 # static Go binary at /usr/local/bin/apple-music-dl. Copying just that binary
@@ -134,7 +132,11 @@ RUN --mount=type=cache,target=/usr/local/share/.cache/yarn/v6,sharing=locked \
     node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.workspaces=['api'];fs.writeFileSync('package.json',JSON.stringify(p,null,2));" \
     && yarn install --frozen-lockfile --production --ignore-optional \
     && find ./node_modules -type f \( -name '*.d.ts' -o -name '*.md' -o -name '*.map' -o -name 'README*' -o -name 'LICENSE*' -o -name 'CHANGELOG*' \) -delete \
-    && find ./node_modules -type d \( -name 'test' -o -name 'tests' -o -name '__tests__' -o -name 'docs' -o -name 'examples' -o -name '.github' \) -exec rm -rf {} + 2>/dev/null || true
+    && find ./node_modules -type d \( -name 'test' -o -name 'tests' -o -name '__tests__' -o -name 'docs' -o -name 'examples' -o -name '.github' \) -exec rm -rf {} + 2>/dev/null \
+    && rm -rf \
+        ./node_modules/better-sqlite3/deps \
+        ./node_modules/better-sqlite3/src \
+        ./node_modules/node-taglib-sharp/src
 
 # Copy built files from builder
 COPY --from=builder --chown=node:node /app/api/dist ./api/dist
@@ -151,8 +153,12 @@ RUN chmod +x /usr/local/bin/apple-music-dl \
 COPY --from=gpac_builder /tmp/gpac/bin/gcc/MP4Box /usr/local/bin/MP4Box
 COPY --from=bento4_fetcher /usr/local/bin/mp4decrypt /usr/local/bin/mp4decrypt
 
-# Copy source files needed at runtime (for ES modules)
-COPY --chown=node:node api/src ./api/src
+# Copy only the Python bridges invoked by the compiled server. TypeScript source
+# and tests are not runtime assets.
+COPY --chown=node:node api/src/services/mediafiles/mutagen-cover-bridge.py ./api/src/services/mediafiles/mutagen-cover-bridge.py
+COPY --chown=node:node api/src/services/providers/deezer/streamrip-bridge.py ./api/src/services/providers/deezer/streamrip-bridge.py
+COPY --chown=node:node api/src/services/providers/tidal/tiddl-progress-wrapper.py ./api/src/services/providers/tidal/tiddl-progress-wrapper.py
+COPY --chown=node:node api/src/services/providers/youtube-music/ytmusicapi-bridge.py ./api/src/services/providers/youtube-music/ytmusicapi-bridge.py
 RUN chmod +x ./api/src/services/providers/deezer/streamrip-bridge.py
 
 # Copy entrypoint that maps container permissions to the requested host uid/gid.
@@ -175,13 +181,6 @@ ENV APPLE_MUSIC_DL_BIN=apple-music-dl
 ENV YTMUSICAPI_PYTHON_BIN=/opt/ytmusic-venv/bin/python
 ENV YT_DLP_BIN=/opt/ytmusic-venv/bin/yt-dlp
 ENV STREAMRIP_BIN=/app/api/src/services/providers/deezer/streamrip-bridge.py
-ENV AMAZON_MUSIC_PYTHON=/opt/amazon-music-venv/bin/python
-ENV SPOTIFY_VOTIFY_BIN=/opt/votify-venv/bin/votify
-# Votify 1.9.9's librespot extra currently resolves old generated protobuf
-# descriptors alongside protobuf 6 (required by pywidevine). Protobuf's
-# documented compatibility implementation keeps that upstream combination
-# importable until librespot republishes its generated descriptors.
-ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
 # Declare volumes for persistent data
 VOLUME ["/config", "/downloads", "/library"]

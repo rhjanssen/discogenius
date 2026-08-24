@@ -34,12 +34,7 @@ import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { navigateToVideo } from "@/utils/videoNavigation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
-import { useQuery } from "@tanstack/react-query";
-import {
-    ArtistLibraryScopeDialog,
-    type ArtistLibraryAction,
-    type ArtistPolicy,
-} from "@/components/artists/ArtistLibraryScopeDialog";
+import { AUTOMATIC_ARTIST_LIBRARY_SCOPE } from "@/utils/artistMonitoring";
 
 const Add24 = bundleIcon(Add24Filled, Add24Regular);
 const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
@@ -402,21 +397,12 @@ const GlobalSearch = ({ initialQuery = "" }: GlobalSearchProps = {}) => {
     const { searchResults, isSearching, search, addItem, removeItem } = useSearch();
     const [processingItems, setProcessingItems] = useState<Set<string>>(new Set());
     const [downloadingItems, setDownloadingItems] = useState<Set<string>>(new Set());
-    const [artistLibraryDialog, setArtistLibraryDialog] = useState<{
-        item: SearchResultItem;
-        action: ArtistLibraryAction;
-    } | null>(null);
     const [resultsLayout, setResultsLayout] = useState<{ maxHeight: number; top: number; left: number; width: number } | null>(null);
     const searchRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
     const location = useLocation();
     const { toast } = useToast();
     const { addToQueue } = useQueueStatus();
-    const { data: artistLibraries = [] } = useQuery({
-        queryKey: ["artistLibraries"],
-        queryFn: () => api.getArtistLibraries(),
-        staleTime: 60_000,
-    });
     const searchActivityLabel = "Searching library...";
 
     useEffect(() => {
@@ -569,35 +555,16 @@ const GlobalSearch = ({ initialQuery = "" }: GlobalSearchProps = {}) => {
 
     const handleToggleItem = async (item: SearchResultItem, e: React.MouseEvent) => {
         e.stopPropagation();
-        if (item.type === "artist") {
-            setArtistLibraryDialog({ item, action: item.monitored ? "unmonitor" : "monitor" });
-            return;
-        }
         setProcessingItems(prev => new Set(prev).add(item.providerId));
         try {
-            // This button toggles monitoring for an item already in the library.
-            if (item.monitored) await removeItem(item);
-            else await addItem(item);
-        } finally {
-            setProcessingItems(prev => {
-                const next = new Set(prev);
-                next.delete(item.providerId);
-                return next;
-            });
-        }
-    };
-
-    const applyArtistLibraryChange = async (libraryIds: number[], policy: ArtistPolicy) => {
-        if (!artistLibraryDialog) return;
-        const { item, action } = artistLibraryDialog;
-        setProcessingItems(prev => new Set(prev).add(item.providerId));
-        try {
-            if (action === "unmonitor") {
-                await removeItem(item, { libraryIds });
+            if (item.type === "artist") {
+                if (item.monitored) await removeItem(item, AUTOMATIC_ARTIST_LIBRARY_SCOPE);
+                else await addItem(item, AUTOMATIC_ARTIST_LIBRARY_SCOPE, "all");
             } else {
-                await addItem(item, { libraryIds }, policy);
+                // This button toggles monitoring for an item already in the library.
+                if (item.monitored) await removeItem(item);
+                else await addItem(item);
             }
-            setArtistLibraryDialog(null);
         } finally {
             setProcessingItems(prev => {
                 const next = new Set(prev);
@@ -919,19 +886,6 @@ const GlobalSearch = ({ initialQuery = "" }: GlobalSearchProps = {}) => {
 
     return (
         <div ref={searchRef} className={styles.container}>
-            {artistLibraryDialog ? (
-                <ArtistLibraryScopeDialog
-                    open
-                    action={artistLibraryDialog.action}
-                    artistName={artistLibraryDialog.item.name}
-                    libraries={artistLibraries}
-                    initialLibraryIds={artistLibraries.map((library) => library.id)}
-                    initialPolicy="all"
-                    busy={processingItems.has(artistLibraryDialog.item.providerId)}
-                    onOpenChange={(open) => { if (!open) setArtistLibraryDialog(null); }}
-                    onConfirm={applyArtistLibraryChange}
-                />
-            ) : null}
             <SearchBox
                 placeholder="Search your library..."
                 aria-label="Search artists, albums, tracks, or videos"

@@ -144,6 +144,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     providerTrackId: string;
     qualityClass: "hires-lossless" | "spatial";
     quality: string;
+    explicit?: boolean;
   }) => {
     const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
       .get(options.releaseMbid) as { id: number };
@@ -157,10 +158,10 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     `).get(options.provider, options.providerEditionId) as { id: number };
     const providerTrack = db.prepare(`
       INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, 'track', ?, 'Song')
+      provider, entity_type, provider_id, title, explicit
+    ) VALUES (?, 'track', ?, 'Song', ?)
       RETURNING id
-    `).get(options.provider, options.providerTrackId) as { id: number };
+    `).get(options.provider, options.providerTrackId, options.explicit ? 1 : 0) as { id: number };
     const member = db.prepare(`
       INSERT INTO ProviderEditionMembers (
         provider_edition_item_id, member_item_id, medium_position, position
@@ -241,6 +242,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     providerTrackId: "apple-track",
     qualityClass: "spatial",
     quality: "DOLBY_ATMOS",
+    explicit: true,
   });
 
   const stereoTrack = db.prepare(`
@@ -258,7 +260,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     ) VALUES (
       '1', ?, ?, ?, ?, ?, 'tidal', 'track', 'tidal-track',
       'C:/library/Song.flac', 'Song.flac', 'C:/library', 'Song.flac',
-      'flac', 'track', 'audio', 'HIRES_LOSSLESS', 'HIRES_LOSSLESS',
+      'flac', 'track', 'audio', NULL, 'HIRES_LOSSLESS',
       'HIRES_LOSSLESS'
     )
   `).run(
@@ -277,7 +279,12 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   );
   assert.ok(detail.qualityTags?.includes("HIRES_LOSSLESS"));
   assert.ok(detail.qualityTags?.includes("DOLBY_ATMOS"));
+  assert.equal(
+    detail.remoteOffers?.find((offer) => offer.provider === "apple-music")?.explicit,
+    true,
+  );
   assert.equal(detail.files.length, 1);
+  assert.equal(detail.files[0]?.quality, "HIRES_LOSSLESS");
   assert.equal(detail.files[0]?.library_slot, "stereo");
 
   const stereo = trackQuery.listTracks({

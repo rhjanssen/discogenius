@@ -5,6 +5,7 @@ import { invalidateReleaseGroupDownloadStatus, updateArtistDownloadStatus } from
 import {
     addArtistToLibraries,
     isArtistLibraryMonitored,
+    listDefaultArtistMonitoringLibraries,
     loadArtistMetadataIdentity,
     removeArtistFromLibraries,
     resolveEnabledArtistLibraryIds,
@@ -361,10 +362,15 @@ export async function monitorArtistAndQueueIntake(options: {
     if (pendingArtistId) {
         artistId = pendingArtistId;
     } else {
-        await RefreshArtistService.refreshArtistMetadata(artistId, { monitorArtist: true });
+        // Monitoring scope is applied explicitly below. Refresh must not create
+        // memberships in optional media libraries before Settings eligibility
+        // has been resolved.
+        await RefreshArtistService.refreshArtistMetadata(artistId, { monitorArtist: false });
     }
 
-    const changes = applyArtistMonitoringState(artistId, true, options.libraryIds);
+    const libraryIds = options.libraryIds
+        ?? listDefaultArtistMonitoringLibraries().map((library) => library.id);
+    const changes = applyArtistMonitoringState(artistId, true, libraryIds);
     if (changes === 0) {
         throw new Error(`Artist ${artistId} not found`);
     }

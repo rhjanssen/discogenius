@@ -2,6 +2,7 @@ import { createDarkTheme, createLightTheme } from "@fluentui/react-components";
 import { describe, expect, it } from "vitest";
 import {
   createDiscogeniusTheme,
+  buildDiscogeniusSearchUnderlineGradient,
   discogeniusAccentKeys,
   discogeniusAuxiliaryThemes,
   discogeniusOrangeTheme,
@@ -54,5 +55,14 @@ describe("Discogenius theme semantics", () => {
   it.each(["light", "dark"] as const)("keeps %s filled brand controls readable", (mode) => {
     const theme = createDiscogeniusTheme(discogeniusOrangeTheme, mode);
     expect(contrastRatio(theme.colorNeutralForegroundOnBrand, theme.colorBrandBackground)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(["light", "dark"] as const)("keeps the %s search underline on the saturated media palette", (mode) => {
+    const gradient = buildDiscogeniusSearchUnderlineGradient(mode);
+    const accents = getDiscogeniusAccentTokens(mode);
+    expect(gradient).toContain(accents.videos.foreground);
+    expect(gradient).toContain(accents.tracks.foreground);
+    expect(gradient).toContain(accents.albums.foreground);
+    expect(gradient).toContain(accents.artists.foreground);
   });
 });

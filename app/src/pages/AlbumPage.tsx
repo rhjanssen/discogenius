@@ -57,6 +57,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
+import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import {
@@ -136,9 +137,10 @@ function albumAssociatedVideoElementId(videoId: string): string {
 
 const useStyles = makeStyles({
   container: {
+    ...compactPageTopOffset,
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
     width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
   },
@@ -477,7 +479,9 @@ const useStyles = makeStyles({
       flexShrink: 0,
       maxWidth: "min(260px, 72vw)",
     },
-    "& [role='tab'] > span:last-child": {
+    "& .fui-Tab__content, & .fui-Tab__content--reserved-space": {
+      display: "block",
+      minWidth: 0,
       overflow: "hidden",
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",

@@ -14,6 +14,7 @@ const videoTitle = 'Deterministic Video';
 
 async function setupSearchFixtures(page: Page) {
   let monitored = false;
+  let monitorPayload: Record<string, unknown> | null = null;
 
   await stubShellApis(page);
   await stubVideoDetail(page, {
@@ -188,6 +189,7 @@ async function setupSearchFixtures(page: Page) {
   });
 
   await page.route(`**/api/v1/artist/${artistId}/monitor`, async (route) => {
+    monitorPayload = route.request().postDataJSON() as Record<string, unknown>;
     monitored = true;
     await route.fulfill({
       status: 200,
@@ -204,6 +206,7 @@ async function setupSearchFixtures(page: Page) {
 
   return {
     getMonitored: () => monitored,
+    getMonitorPayload: () => monitorPayload,
   };
 
 }
@@ -249,8 +252,12 @@ test.describe('Search → monitor → navigate flow', () => {
     const monitorButton = page.getByRole('button', { name: `Add ${artistName}` }).first();
     await expect(monitorButton).toBeVisible();
     await monitorButton.click();
-    await page.getByRole('dialog').getByRole('button', { name: /^Monitor$/i }).click();
     await expect.poll(() => fixture.getMonitored()).toBe(true);
+    await expect.poll(() => fixture.getMonitorPayload()).toEqual({
+      name: artistName,
+      allLibraries: true,
+    });
+    await expect(page.getByRole('dialog').getByRole('button', { name: /^Monitor$/i })).toHaveCount(0);
 
     // Monitoring invalidates the search query and closes the result overlay.
     // Reopen it to verify that the refreshed result reflects membership.
@@ -270,8 +277,11 @@ test.describe('Search → monitor → navigate flow', () => {
     const monitorButton = page.getByRole('button', { name: `Add ${artistName}` }).first();
     await expect(monitorButton).toBeVisible();
     await monitorButton.click();
-    await page.getByRole('dialog').getByRole('button', { name: /^Monitor$/i }).click();
     await expect.poll(() => fixture.getMonitored()).toBe(true);
+    await expect.poll(() => fixture.getMonitorPayload()).toEqual({
+      name: artistName,
+      allLibraries: true,
+    });
 
     const searchBox = page.getByRole('searchbox', { name: /search/i });
     await searchBox.fill('');

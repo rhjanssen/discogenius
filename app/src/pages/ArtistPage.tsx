@@ -59,7 +59,7 @@ import {
   FolderSync24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
-import { api, type ArtistLibraryMembership } from "@/services/api";
+import { api, type ArtistPolicy } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import type { TrackListItem } from "@/types/track-list";
@@ -83,6 +83,7 @@ import { useCardStyles } from "@/components/cards/cardStyles";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
+import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
@@ -105,11 +106,6 @@ import { albumSelectedQualityOffers } from "@/utils/albumSelectedQualityOffers";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import { useAlbumTableColumns } from "@/components/library/useAlbumTableColumns";
 import {
-  ArtistLibraryScopeDialog,
-  type ArtistLibraryAction,
-  type ArtistPolicy,
-} from "@/components/artists/ArtistLibraryScopeDialog";
-import {
   RenamePreviewDialog,
   RetagPreviewDialog,
   type RenamePreviewItem,
@@ -125,6 +121,10 @@ import {
   getOptimisticMonitorState,
   type MonitorStateChangedDetail,
 } from "@/utils/appEvents";
+import {
+  buildArtistLibraryUpdate,
+  type ArtistLibraryAction,
+} from "@/utils/artistMonitoring";
 
 const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
@@ -144,9 +144,10 @@ const FolderSync24 = bundleIcon(FolderSync24Filled, FolderSync24Regular);
 
 const useStyles = makeStyles({
   container: {
+    ...compactPageTopOffset,
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
     width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
   },
@@ -156,22 +157,20 @@ const useStyles = makeStyles({
   },
   header: {
     position: "relative",
-    minHeight: "200px",
     display: "flex",
     alignItems: "flex-start",
-    padding: tokens.spacingHorizontalL,
-    paddingTop: tokens.spacingVerticalL,
-    paddingBottom: tokens.spacingVerticalL,
+    boxSizing: "border-box",
+    padding: tokens.spacingHorizontalS,
+    paddingTop: tokens.spacingVerticalXS,
+    paddingBottom: tokens.spacingVerticalS,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
     gap: tokens.spacingHorizontalL,
     "@media (min-width: 768px)": {
-      // Match AlbumPage's desktop header height so detail pages transition
-      // without the artist view leaving extra dead space below the actions.
-      minHeight: "276px",
+      minHeight: "252px",
       padding: tokens.spacingHorizontalXL,
-      paddingTop: tokens.spacingVerticalXL,
-      paddingBottom: tokens.spacingVerticalL,
+      paddingTop: tokens.spacingVerticalM,
+      paddingBottom: tokens.spacingVerticalM,
       gap: tokens.spacingHorizontalXXL,
     },
   },
@@ -547,18 +546,8 @@ const ArtistPage = () => {
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
   ));
   const [policyOverride, setPolicyOverride] = useState<"all" | "new" | "none" | null>(null);
-  const [libraryDialog, setLibraryDialog] = useState<{
-    action: ArtistLibraryAction;
-    policy: ArtistPolicy;
-  } | null>(null);
-  const [libraryDialogBusy, setLibraryDialogBusy] = useState(false);
+  const [artistLibraryActionBusy, setArtistLibraryActionBusy] = useState(false);
   const { getProgressByProviderId } = useQueueStatus();
-
-  const { data: artistLibraries = [] } = useQuery({
-    queryKey: ["artistLibraries"],
-    queryFn: () => api.getArtistLibraries(),
-    staleTime: 60_000,
-  });
 
   useDebouncedQueryInvalidation({
     queryKeys: [['artist-activity', artistId]],
@@ -683,9 +672,6 @@ const ArtistPage = () => {
   const artistName = artistInfo?.name || pageData?.artistInfo?.name || "Unknown Artist";
   const artistBio = artistInfo?.bio || null;
   const artistLocalFiles = Array.isArray(artistInfo?.files) ? artistInfo.files : [];
-  const artistMemberships: ArtistLibraryMembership[] = Array.isArray(artistInfo?.memberships)
-    ? artistInfo.memberships
-    : [];
   const hasLocalArtistPicture = artistLocalFiles.some((file: any) => file.file_type === "cover");
   const bioAttribution = formatMetadataAttribution(artistInfo?.bio_source, artistInfo?.bio_last_updated);
   const artistPictureUrl = artistInfo
@@ -800,41 +786,41 @@ const ArtistPage = () => {
   }, [artistId, refetchPage]);
 
   // Actions
-  const openArtistLibraryDialog = (
+  const applyArtistLibraryChange = async (
     action: ArtistLibraryAction,
     policy: ArtistPolicy = artistPolicy ?? "all",
   ) => {
-    setLibraryDialog({ action, policy });
-  };
-
-  const applyArtistLibraryChange = async (libraryIds: number[], policy: ArtistPolicy) => {
-    if (!artistId || !libraryDialog) return;
-    setLibraryDialogBusy(true);
+    if (!artistId || artistLibraryActionBusy) return;
+    setArtistLibraryActionBusy(true);
     try {
-      const response: any = libraryDialog.action === "monitor"
-        ? await api.updateArtist(artistId, { monitored: true, policy, libraryIds })
-        : libraryDialog.action === "policy"
-          ? await api.updateArtist(artistId, { policy, libraryIds })
-          : await api.updateArtist(artistId, { monitored: false, libraryIds });
+      const response: any = await api.updateArtist(
+        artistId,
+        buildArtistLibraryUpdate(action, policy),
+      );
       const monitored = Boolean(response?.monitored);
       setMonitorOverride(null);
       setPolicyOverride(null);
-      setLibraryDialog(null);
       dispatchMonitorStateChanged({ type: "artist", providerId: artistId, monitored });
       dispatchLibraryUpdated();
       await refetchPage();
       toast({
-        title: libraryDialog.action === "unmonitor" ? "Library membership removed" : "Artist libraries updated",
-        description: `${libraryIds.length} ${libraryIds.length === 1 ? "library" : "libraries"} updated.`,
+        title: action === "unmonitor"
+          ? "Artist unmonitored"
+          : action === "policy"
+            ? "Acquisition policy updated"
+            : "Artist monitored",
+        description: action === "monitor"
+          ? "Stereo is included, with Spatial and Video included when enabled in Settings."
+          : undefined,
       });
     } catch (error) {
       toast({
-        title: "Could not update artist libraries",
+        title: "Could not update artist",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
     } finally {
-      setLibraryDialogBusy(false);
+      setArtistLibraryActionBusy(false);
     }
   };
 
@@ -1622,12 +1608,12 @@ const ArtistPage = () => {
     ...(isMonitored
       ? [
           ...(isPaused
-            ? [{ key: 'resume', label: 'Resume in libraries…', onClick: () => openArtistLibraryDialog('policy', 'all') } satisfies OverflowAction]
-            : [{ key: 'pause', label: 'Pause in libraries…', onClick: () => openArtistLibraryDialog('policy', 'none') } satisfies OverflowAction]),
-          { key: 'new-releases', label: 'Only new releases…', onClick: () => openArtistLibraryDialog('policy', 'new') } satisfies OverflowAction,
-          { key: 'unmonitor', label: 'Unmonitor from libraries…', onClick: () => openArtistLibraryDialog('unmonitor') } satisfies OverflowAction,
+            ? [{ key: 'resume', label: 'Resume', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('policy', 'all') } satisfies OverflowAction]
+            : [{ key: 'pause', label: 'Pause', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('policy', 'none') } satisfies OverflowAction]),
+          { key: 'new-releases', label: 'Only new releases', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('policy', 'new') } satisfies OverflowAction,
+          { key: 'unmonitor', label: 'Unmonitor', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('unmonitor') } satisfies OverflowAction,
         ]
-      : [{ key: 'monitor', label: 'Monitor in libraries…', onClick: () => openArtistLibraryDialog('monitor', 'all') } satisfies OverflowAction]),
+      : [{ key: 'monitor', label: 'Monitor', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('monitor', 'all') } satisfies OverflowAction]),
     { key: 'refresh-scan', label: isScanBusy ? 'Scanning...' : 'Refresh & Scan', disabled: isScanBusy, onClick: syncArtist },
     { key: 'curate', label: isCurateBusy ? 'Running...' : 'Curate', disabled: isCurateBusy || isScanBusy || !hasAlbums, onClick: curateArtist },
     { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
@@ -1719,21 +1705,6 @@ const ArtistPage = () => {
   return (
     <DynamicBrandProvider keyColor={artistBrandColor}>
       <div className={styles.container}>
-        {libraryDialog ? (
-          <ArtistLibraryScopeDialog
-            open
-            action={libraryDialog.action}
-            artistName={artistName}
-            libraries={artistLibraries}
-            initialLibraryIds={artistMemberships.length > 0
-              ? artistMemberships.map((membership) => membership.library_id)
-              : artistLibraries.map((library) => library.id)}
-            initialPolicy={libraryDialog.policy}
-            busy={libraryDialogBusy}
-            onOpenChange={(open) => { if (!open) setLibraryDialog(null); }}
-            onConfirm={applyArtistLibraryChange}
-          />
-        ) : null}
         <RenamePreviewDialog
           open={renamePreviewOpen}
           items={renamePreviewItems}
@@ -1912,7 +1883,8 @@ const ArtistPage = () => {
                         <Button
                           appearance="primary"
                           icon={<Eye24 />}
-                          onClick={() => openArtistLibraryDialog("monitor", "all")}
+                          onClick={() => void applyArtistLibraryChange("monitor", "all")}
+                          disabled={artistLibraryActionBusy}
                           className={mergeClasses(styles.actionButton, styles.primaryButton)}
                         >
                           Monitor
@@ -1924,6 +1896,7 @@ const ArtistPage = () => {
                           <Button
                             appearance="subtle"
                             icon={isPaused ? <Pause24 /> : <Eye24 />}
+                            disabled={artistLibraryActionBusy}
                             className={mergeClasses(styles.actionButton, styles.transparentButton)}
                           >
                             {isPaused ? "Paused" : "Monitored"}
@@ -1932,19 +1905,19 @@ const ArtistPage = () => {
                         <MenuPopover>
                           <MenuList>
                             {isPaused ? (
-                              <MenuItem icon={<Eye24 />} onClick={() => openArtistLibraryDialog("policy", "all")}>
-                                All eligible releases…
+                              <MenuItem icon={<Eye24 />} onClick={() => void applyArtistLibraryChange("policy", "all")} disabled={artistLibraryActionBusy}>
+                                All eligible releases
                               </MenuItem>
                             ) : (
-                              <MenuItem icon={<Pause24 />} onClick={() => openArtistLibraryDialog("policy", "none")}>
-                                Pause in libraries…
+                              <MenuItem icon={<Pause24 />} onClick={() => void applyArtistLibraryChange("policy", "none")} disabled={artistLibraryActionBusy}>
+                                Pause
                               </MenuItem>
                             )}
-                            <MenuItem icon={<Eye24 />} onClick={() => openArtistLibraryDialog("policy", "new")}>
-                              Only new releases…
+                            <MenuItem icon={<Eye24 />} onClick={() => void applyArtistLibraryChange("policy", "new")} disabled={artistLibraryActionBusy}>
+                              Only new releases
                             </MenuItem>
-                            <MenuItem icon={<EyeOff24 />} onClick={() => openArtistLibraryDialog("unmonitor")}>
-                              Unmonitor from libraries…
+                            <MenuItem icon={<EyeOff24 />} onClick={() => void applyArtistLibraryChange("unmonitor")} disabled={artistLibraryActionBusy}>
+                              Unmonitor
                             </MenuItem>
                           </MenuList>
                         </MenuPopover>

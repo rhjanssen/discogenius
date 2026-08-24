@@ -81,6 +81,45 @@ test("managed artist listing follows LibraryArtists, not Artists.monitored", () 
   assert.equal(managed[0].monitor, 1);
 });
 
+test("default artist monitoring scope always includes stereo and gates optional media families", () => {
+  dbModule.db.prepare("UPDATE Libraries SET enabled = 1 WHERE name IN ('Stereo', 'Spatial', 'Video')").run();
+
+  assert.deepEqual(
+    managedArtistsModule.listDefaultArtistMonitoringLibraries().map((library) => library.name),
+    ["Stereo"],
+  );
+  assert.deepEqual(
+    managedArtistsModule.listDefaultArtistMonitoringLibraries({
+      includeSpatial: false,
+      includeVideos: false,
+    }).map((library) => library.name),
+    ["Stereo"],
+  );
+  assert.deepEqual(
+    managedArtistsModule.listDefaultArtistMonitoringLibraries({
+      includeSpatial: true,
+      includeVideos: false,
+    }).map((library) => library.name),
+    ["Stereo", "Spatial"],
+  );
+  assert.deepEqual(
+    managedArtistsModule.listDefaultArtistMonitoringLibraries({
+      includeSpatial: true,
+      includeVideos: true,
+    }).map((library) => library.name),
+    ["Stereo", "Spatial", "Video"],
+  );
+
+  dbModule.db.prepare("UPDATE Libraries SET enabled = 0 WHERE name = 'Spatial'").run();
+  assert.deepEqual(
+    managedArtistsModule.listDefaultArtistMonitoringLibraries({
+      includeSpatial: true,
+      includeVideos: true,
+    }).map((library) => library.name),
+    ["Stereo", "Video"],
+  );
+});
+
 test("artist completion predicate uses canonical locks instead of provider catalog locks", () => {
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)

@@ -16,6 +16,7 @@ export interface TrackRemoteOffer {
   selectedReleaseMbid?: string | null;
   providerTrackId?: string | null;
   providerTrackUrl?: string | null;
+  explicit?: boolean | null;
 }
 
 export interface TrackListItem {

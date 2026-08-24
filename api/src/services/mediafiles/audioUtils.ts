@@ -627,7 +627,7 @@ function resolveMutagenBridge(): { python: string; script: string } | null {
     if (!script) return null;
 
     const configuredPython = String(process.env.DISCOGENIUS_MEDIA_TAGS_PYTHON || '').trim();
-    const bundledPython = '/opt/media-tags-venv/bin/python';
+    const bundledPython = '/usr/local/bin/python3';
     const python = configuredPython
         || (fs.existsSync(bundledPython) ? bundledPython : (IS_WINDOWS ? 'python.exe' : 'python3'));
     return { python, script };

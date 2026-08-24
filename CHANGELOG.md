@@ -6,6 +6,52 @@ All notable changes to this project are documented in this file.
 
 No changes yet.
 
+## [2.12.1] - 2026-08-25
+
+This maintenance release tightens the 2.12 interface, monitoring flow, local
+file reporting, and container footprint. It keeps schema 46 and does not require
+another database reset for an existing 2.12.0 installation.
+
+### Added
+
+- **Track explicit markers.** When the selected provider track is known to be
+  explicit, the track title shows a larger high-contrast `E` marker before its
+  optional video action.
+- **Local audio fact repair.** Library scans probe tracked audio files that are
+  missing technical facts and restore codec, duration, bitrate, sample rate,
+  bit depth, channels, and an honestly derived local quality tier.
+
+### Changed
+
+- **One-click artist monitoring.** The redundant library picker is gone.
+  Monitoring always includes Stereo and follows the Spatial and Video feature
+  switches in Settings; pause, new-release policy, and unmonitor remain in the
+  monitored-state menu.
+- **Fluent theme and responsive polish.** Controls use the semantic Fluent brand
+  ramp while the search gradient and Dashboard accents remain vivid. Edition
+  tabs reserve selected-label width without wrapping, detail headers use tighter
+  spacing, Dashboard actions stay stable between tabs, and Settings provider
+  cards wrap actions before quality badges.
+- **Smaller runtime image.** Disabled Amazon and Spotify downloader environments,
+  redundant package-manager files, source trees, and an unnecessary Mutagen
+  virtual environment are no longer shipped. The image is about 102 MB smaller
+  while retaining every currently enabled provider backend and media tool.
+
+### Fixed
+
+- **Missing local quality badges.** Album track rows now fall back to imported
+  file quality, and a scan repairs older rows whose media facts were discarded
+  during relinking. Bastille's previously ambiguous Volume 2 track 4 is retained
+  and correctly reported as 24-bit FLAC/Max.
+- **Monitoring copy and accessibility.** Artist state consistently says
+  `Monitored`, the action no longer opens a broken scope dialog, and automated
+  browser coverage verifies the enabled-library request and absence of the old
+  confirmation step.
+- **Mobile layout stability.** Dashboard headings remain centered and its header
+  actions keep a two-line-or-shorter height when Queue and Activity change the
+  page scrollbar. Settings top spacing and narrow provider-card ordering are
+  consistent with the shared detail layout.
+
 ## [2.12.0] - 2026-08-25
 
 Discogenius now has one canonical MusicBrainz artist identity and explicit

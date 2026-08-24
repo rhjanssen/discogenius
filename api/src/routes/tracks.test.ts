@@ -279,6 +279,7 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
     matchStatus: "accepted",
     selectedReleaseMbid: "release-mbid",
     providerTrackId: "tidal-track",
+    explicit: null,
   }]);
   assert.equal(selected.body.items[0].preview_provider, "tidal");
   assert.equal(selected.body.items[0].preview_provider_track_id, "tidal-track");

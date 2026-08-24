@@ -41,6 +41,7 @@ import {
   ArrowSortDownLines24Filled,
   ArrowDownload24Filled,
   Warning24Filled,
+  Pulse24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { useQuery } from "@tanstack/react-query";
@@ -72,6 +73,7 @@ import {
     detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
+import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 
 const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
 const ChevronDown = bundleIcon(ChevronDownFilled, ChevronDownRegular);
@@ -86,6 +88,7 @@ const Warning24 = bundleIcon(Warning24Filled, Warning24Regular);
 
 const useStyles = makeStyles({
     container: {
+        ...compactPageTopOffset,
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalM,
@@ -138,8 +141,8 @@ const useStyles = makeStyles({
         flexWrap: "wrap",
         "@media (max-width: 639px)": {
             flexDirection: "column",
-            alignItems: "stretch",
-            textAlign: "left",
+            alignItems: "center",
+            textAlign: "center",
             gap: tokens.spacingVerticalS,
         },
     },
@@ -275,8 +278,23 @@ const useStyles = makeStyles({
             gap: tokens.spacingHorizontalM,
         },
         "@media (max-width: 639px)": {
-            justifyContent: "flex-start",
+            justifyContent: "center",
         },
+    },
+    dashboardTabQueueIcon: {
+        color: "var(--dg-accent-tracks)",
+    },
+    dashboardTabActivityIcon: {
+        color: "var(--dg-accent-artists)",
+    },
+    dashboardTabImportIcon: {
+        color: "var(--dg-accent-albums)",
+    },
+    dashboardTabLabel: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXS,
+        minWidth: 0,
     },
     viewTabs: {
         display: "flex",
@@ -546,15 +564,22 @@ const Dashboard = () => {
     ];
 
     const dashboardTabs = [
-        { key: 'queue', label: 'Queue' },
-        { key: 'activity', label: 'Activity' },
-        { key: 'manualImport', label: 'Unmapped Files' },
+        { key: 'queue', label: 'Queue', icon: <ArrowDownload24Filled className={styles.dashboardTabQueueIcon} /> },
+        { key: 'activity', label: 'Activity', icon: <Pulse24Filled className={styles.dashboardTabActivityIcon} /> },
+        { key: 'manualImport', label: 'Unmapped Files', icon: <FolderSearch24Filled className={styles.dashboardTabImportIcon} /> },
     ] as const;
-    const hasMobileOverflowActions = actions.length > 4;
-    const mobileVisibleActions = actions.slice(0, hasMobileOverflowActions ? 3 : 4);
-    const mobileOverflowActions = hasMobileOverflowActions ? actions.slice(3) : [];
+    // Two full actions plus More leaves enough room for two-line labels on a
+    // 320px viewport and does not change when a tab adds a page scrollbar.
+    const hasMobileOverflowActions = actions.length > 3;
+    const mobileVisibleActions = actions.slice(0, hasMobileOverflowActions ? 2 : 3);
+    const mobileOverflowActions = hasMobileOverflowActions ? actions.slice(2) : [];
     const desktopVisibleActions = actions.slice(0, 4);
     const desktopOverflowActions = actions.slice(4);
+    const mobileActionLabel = (action: OverflowAction) => {
+        if (action.key === 'refresh') return refreshBusy ? 'Refreshing...' : 'Refresh';
+        if (action.key === 'scan-files') return scanRootsBusy ? 'Scanning Files...' : 'Scan Files';
+        return action.label;
+    };
 
     return (
         <div className={styles.container}>
@@ -605,8 +630,9 @@ const Dashboard = () => {
                                 onClick={action.onClick}
                                 disabled={action.disabled}
                                 className={styles.headerActionButton}
+                                aria-label={action.label}
                             >
-                                {action.label}
+                                {mobileActionLabel(action)}
                             </Button>
                         ))}
                         {mobileOverflowActions.length > 0 ? (
@@ -671,13 +697,16 @@ const Dashboard = () => {
                             <Menu>
                                 <MenuTrigger disableButtonEnhancement>
                                     <Button appearance="subtle" iconPosition="after" icon={<ChevronDown />} className={responsiveTabsStyles.menuButton}>
-                                        {dashboardTabs.find((tab) => tab.key === mobileTab)?.label ?? "Queue"}
+                                        <span className={styles.dashboardTabLabel}>
+                                            {dashboardTabs.find((tab) => tab.key === mobileTab)?.icon}
+                                            {dashboardTabs.find((tab) => tab.key === mobileTab)?.label ?? "Queue"}
+                                        </span>
                                     </Button>
                                 </MenuTrigger>
                                 <MenuPopover>
                                     <MenuList>
                                         {dashboardTabs.map((tab) => (
-                                            <MenuItem key={tab.key} onClick={() => setMobileTab(tab.key)}>
+                                            <MenuItem key={tab.key} icon={tab.icon} onClick={() => setMobileTab(tab.key)}>
                                                 {tab.label}
                                             </MenuItem>
                                         ))}
@@ -692,7 +721,7 @@ const Dashboard = () => {
                                 onTabSelect={(_, data) => setMobileTab(data.value as "queue" | "activity" | "manualImport")}
                             >
                                 {dashboardTabs.map((tab) => (
-                                    <Tab key={tab.key} value={tab.key} aria-label={tab.label} title={tab.label}>
+                                    <Tab key={tab.key} value={tab.key} icon={tab.icon} aria-label={tab.label} title={tab.label}>
                                         {tab.label}
                                     </Tab>
                                 ))}

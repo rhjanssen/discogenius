@@ -343,6 +343,17 @@ describe("AlbumPage multi-edition navigation", () => {
     expect(getAlbumEditionTracks).not.toHaveBeenCalled();
   });
 
+  it("reserves the selected label width for every unselected edition tab", async () => {
+    ({ root, container } = renderAlbumPage());
+    await waitFor(() => tabLabels(container!).length > 0, "the tab strip to render");
+
+    const unselectedTab = container!.querySelector('[role="tab"][aria-selected="false"]');
+    expect(unselectedTab?.querySelector(".fui-Tab__content--reserved-space")).not.toBeNull();
+    expect(unselectedTab?.querySelector(".fui-Tab__content")?.textContent).toBe(
+      unselectedTab?.querySelector(".fui-Tab__content--reserved-space")?.textContent,
+    );
+  });
+
   it("fetches only the selected edition on switch and reuses initial tracks on return", async () => {
     ({ root, container } = renderAlbumPage());
     await waitFor(() => tabLabels(container!).length > 0, "the tab strip to render");

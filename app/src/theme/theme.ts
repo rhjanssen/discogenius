@@ -15,16 +15,19 @@ export const discogeniusOrangeTheme: BrandVariants = {
     40: "#581d00",
     50: "#6e2200",
     60: "#852900",
-    70: "#9b3000",
-    80: "#b03901",
-    90: "#c3450b",
-    100: "#d65318",
-    110: "#e86125",
-    120: "#fa6f32",
-    130: "#ff8751",
-    140: "#ff9f74",
-    150: "#ffb695",
-    160: "#ffcbb4"
+    // Fluent's dark theme uses step 70 for filled controls and its light theme
+    // uses step 80. Keep both dark enough for white text, but closer to the
+    // logo orange than the previous near-brown dark-theme control fill.
+    70: "#b03901",
+    80: "#c3450b",
+    90: "#e86125",
+    100: "#fa6f32",
+    110: "#ff8751",
+    120: "#ff9f74",
+    130: "#ffb695",
+    140: "#ffcbb4",
+    150: "#ffddcf",
+    160: "#ffece4"
 };
 
 export const discogeniusPurpleTheme: BrandVariants = {
@@ -107,26 +110,26 @@ export type DiscogeniusAccentTokens = Record<DiscogeniusAccentKey, Record<Discog
 
 const discogeniusAccentToneSteps: Record<DiscogeniusAccentKey, Record<DiscogeniusAccentTone, { light: BrandStep; dark: BrandStep }>> = {
     artists: {
-        foreground: { light: 60, dark: 150 },
-        background: { light: 150, dark: 40 },
+        foreground: { light: 60, dark: 100 },
+        background: { light: 150, dark: 20 },
     },
     albums: {
-        foreground: { light: 60, dark: 150 },
-        background: { light: 150, dark: 40 },
+        foreground: { light: 60, dark: 100 },
+        background: { light: 150, dark: 20 },
     },
     tracks: {
-        foreground: { light: 60, dark: 150 },
-        background: { light: 150, dark: 40 },
+        foreground: { light: 60, dark: 110 },
+        background: { light: 150, dark: 20 },
     },
     videos: {
-        foreground: { light: 60, dark: 150 },
-        background: { light: 150, dark: 40 },
+        foreground: { light: 60, dark: 120 },
+        background: { light: 150, dark: 20 },
     },
 };
 
 const dynamicDiscogeniusAccentToneSteps: Record<DiscogeniusAccentTone, { light: BrandStep; dark: BrandStep }> = {
-    foreground: { light: 60, dark: 150 },
-    background: { light: 150, dark: 40 },
+    foreground: { light: 60, dark: 100 },
+    background: { light: 150, dark: 20 },
 };
 
 export const discogeniusAccentKeys = ["artists", "albums", "tracks", "videos"] as const;
@@ -176,8 +179,12 @@ export function getDiscogeniusAccentCssVariable(
         : `--dg-accent-${accent}-background`;
 }
 
-export function buildDiscogeniusSearchUnderlineGradient(accentTokens: DiscogeniusAccentTokens): string {
-    return `linear-gradient(90deg, ${accentTokens.videos.foreground} 0%, ${accentTokens.tracks.foreground} 33%, ${accentTokens.albums.foreground} 66%, ${accentTokens.artists.foreground} 100%)`;
+export function buildDiscogeniusSearchUnderlineGradient(mode: "light" | "dark"): string {
+    // The search underline is an illustrative brand mark, not control text.
+    // Use saturated, mode-aware media accents rather than the pale foreground
+    // end of each ramp that made the dark-mode gradient look greyed out.
+    const accents = getDiscogeniusAccentTokens(mode);
+    return `linear-gradient(90deg, ${accents.videos.foreground} 0%, ${accents.tracks.foreground} 33%, ${accents.albums.foreground} 66%, ${accents.artists.foreground} 100%)`;
 }
 
 /**

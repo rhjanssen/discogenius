@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { getConfigSection } from "../config/config.js";
 import { shouldRefreshArtist } from "../config/refresh-policy.js";
 
 export type ArtistPolicy = "all" | "new" | "none";
@@ -29,6 +30,10 @@ export interface ArtistLibraryOption {
   id: number;
   name: string;
   root_path: string;
+}
+
+interface ArtistLibraryCapabilityRow extends ArtistLibraryOption {
+  allowed_source_formats: string | null;
 }
 
 export interface ManagedArtistOptions {
@@ -132,6 +137,57 @@ export function listEnabledArtistLibraries(): ArtistLibraryOption[] {
     WHERE enabled = 1
     ORDER BY id
   `).all() as ArtistLibraryOption[];
+}
+
+/**
+ * Default scope for a one-click artist monitor action.
+ *
+ * Stereo-like libraries are always included. Spatial and video libraries are
+ * included only when their corresponding Settings feature is enabled. The
+ * Libraries.enabled predicate remains authoritative for whether a library is
+ * operational; the feature flags decide whether artist intake should fan out
+ * to those optional media families.
+ *
+ * Explicit libraryIds remain supported separately for the future per-library
+ * UI. This function only defines the meaning of an allLibraries monitor scope.
+ */
+export function listDefaultArtistMonitoringLibraries(options?: {
+  includeSpatial: boolean;
+  includeVideos: boolean;
+}): ArtistLibraryOption[] {
+  const filtering = options ?? {
+    includeSpatial: getConfigSection("filtering").include_spatial === true,
+    includeVideos: getConfigSection("filtering").include_videos === true,
+  };
+  const libraries = db.prepare(`
+    SELECT
+      library.id,
+      library.name,
+      library.root_path,
+      profile.allowed_source_formats
+    FROM Libraries library
+    JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+    WHERE library.enabled = 1
+    ORDER BY library.id
+  `).all() as ArtistLibraryCapabilityRow[];
+
+  const acceptsFormat = (serialized: string | null, format: "spatial" | "video"): boolean => {
+    if (!serialized) return false;
+    try {
+      const formats = JSON.parse(serialized);
+      return Array.isArray(formats) && formats.includes(format);
+    } catch {
+      return false;
+    }
+  };
+
+  return libraries
+    .filter((library) => {
+      if (acceptsFormat(library.allowed_source_formats, "spatial")) return filtering.includeSpatial;
+      if (acceptsFormat(library.allowed_source_formats, "video")) return filtering.includeVideos;
+      return true;
+    })
+    .map(({ id, name, root_path }) => ({ id, name, root_path }));
 }
 
 export function loadArtistLibraryMembershipsByMetadataId(artistMetadataId: number): ArtistLibraryMembership[] {

@@ -16,6 +16,8 @@ interface ExplicitBadgeProps {
   className?: string;
   /** Match the quality/provider row size when sitting next to those chips. */
   size?: DiscogeniusBadgeSize;
+  /** Track titles use a neutral, high-contrast mark; offer chips keep the tinted mark. */
+  appearance?: "tint" | "contrast";
 }
 
 /**
@@ -66,7 +68,7 @@ const useStyles = makeStyles({
   },
 });
 
-export const ExplicitBadge: React.FC<ExplicitBadgeProps> = ({ className, size = "medium" }) => {
+export const ExplicitBadge: React.FC<ExplicitBadgeProps> = ({ className, size = "medium", appearance = "tint" }) => {
   const styles = useStyles();
   const { isDarkMode } = useTheme();
   const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
@@ -78,8 +80,12 @@ export const ExplicitBadge: React.FC<ExplicitBadgeProps> = ({ className, size = 
       size="medium"
       className={mergeClasses(styles.base, sizeClass, className)}
       style={{
-        backgroundColor: badgeGlassFill(palette.SpatialBackground, isDarkMode),
-        color: palette.SpatialText,
+        backgroundColor: appearance === "contrast"
+          ? tokens.colorNeutralForeground1
+          : badgeGlassFill(palette.SpatialBackground, isDarkMode),
+        color: appearance === "contrast"
+          ? tokens.colorNeutralBackground1
+          : palette.SpatialText,
       }}
       aria-label="Explicit"
     >

@@ -692,7 +692,9 @@ const TrackList = <T extends TrackListItem>({
             <Text truncate wrap={false} className={styles.titleText}>
               {getDisplayTitle(track)}
             </Text>
-            {track.explicit ? <ExplicitBadge size="small" /> : null}
+            {track.explicit || track.remoteOffers?.some((offer) => offer.explicit === true)
+              ? <ExplicitBadge size="medium" appearance="contrast" />
+              : null}
             {associatedVideoId && onAssociatedVideoClick ? (
               <AppTooltip content="Jump to associated video" relationship="label">
                 <button

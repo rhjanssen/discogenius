@@ -95,15 +95,11 @@ const useStyles = makeStyles({
         width: "100%",
         boxSizing: "border-box",
         [MEDIA.mobile]: {
-            padding: tokens.spacingVerticalS,
+            padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
             gap: tokens.spacingVerticalS,
         },
-        // Desktop: cancel Layout <main> paddingTop and this container's
-        // paddingTop so the sticky category list is already at the app-bar
-        // offset and does not jump up on first scroll.
         [MEDIA.desktop]: {
-            paddingTop: tokens.spacingVerticalNone,
-            marginTop: `calc(-1 * ${tokens.spacingVerticalM})`,
+            paddingTop: tokens.spacingVerticalM,
         },
     },
     layout: {
@@ -140,9 +136,10 @@ const useStyles = makeStyles({
             alignSelf: "flex-start",
             position: "sticky",
             paddingTop: tokens.spacingVerticalNone,
-            // Match the desktop app bar (~48px), not the 56px mobile offset.
-            top: "calc(env(safe-area-inset-top, 0px) + 48px)",
-            maxHeight: "calc(100vh - env(safe-area-inset-top, 0px) - 68px)",
+            // Preserve the same M inset above the sidebar before and after it
+            // becomes sticky, so it no longer slides upward on first scroll.
+            top: `calc(env(safe-area-inset-top, 0px) + 48px + ${tokens.spacingVerticalM})`,
+            maxHeight: `calc(100vh - env(safe-area-inset-top, 0px) - 68px - ${tokens.spacingVerticalM})`,
             overflowY: "auto",
             overflowX: "clip",
         },

@@ -119,6 +119,72 @@ function insertMissingTrackFile(
   );
 }
 
+function writePcmWav(filePath: string): void {
+  const sampleRate = 44_100;
+  const channels = 2;
+  const bitsPerSample = 16;
+  const dataSize = sampleRate * channels * (bitsPerSample / 8);
+  const wav = Buffer.alloc(44 + dataSize);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(36 + dataSize, 4);
+  wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(channels, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * channels * (bitsPerSample / 8), 28);
+  wav.writeUInt16LE(channels * (bitsPerSample / 8), 32);
+  wav.writeUInt16LE(bitsPerSample, 34);
+  wav.write("data", 36);
+  wav.writeUInt32LE(dataSize, 40);
+  fs.writeFileSync(filePath, wav);
+}
+
+test("scan backfills file-derived quality and technical facts on relinked library files", async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
+    .get() as { id: number };
+  const filePath = path.join(tempDir, "existing-library-track.wav");
+  writePcmWav(filePath);
+  const library = db.prepare(`
+    SELECT library_id AS id FROM LibraryAlbums
+    WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'release-group-1')
+    LIMIT 1
+  `).get() as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-1'").get() as { id: number };
+  const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = 'track-1'")
+    .get() as { id: number; recording_id: number };
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, album_edition_id, track_id, recording_id,
+      file_path, relative_path, library_root, filename, extension, file_type, file_class
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'wav', 'track', 'audio')
+  `).run(
+    artist.id,
+    library.id,
+    release.id,
+    track.id,
+    track.recording_id,
+    filePath,
+    path.basename(filePath),
+    tempDir,
+    path.basename(filePath),
+  );
+
+  const result = await (DiskScanService as any).backfillMissingAudioFacts(String(artist.id));
+  assert.equal(result.updated, 1);
+  const row = db.prepare(`
+    SELECT quality, imported_quality, sample_rate, bit_depth, channels, duration
+    FROM TrackFiles WHERE file_path = ?
+  `).get(filePath) as Record<string, unknown>;
+  assert.equal(row.quality, "LOSSLESS");
+  assert.equal(row.imported_quality, "LOSSLESS");
+  assert.equal(row.sample_rate, 44_100);
+  assert.equal(row.bit_depth, 16);
+  assert.equal(row.channels, 2);
+  assert.equal(row.duration, 1);
+});
+
 test("orphan removal invalidates the cached album download status (provider-linked row)", async () => {
   seedCanonicalArtistGraph();
   insertMissingTrackFile("track-1", "recording-1", "track-one.flac", "provider-track-1");

@@ -384,7 +384,8 @@ function getTrackSelectSql(whereClause: string): string {
           'quality', selected_offer.quality,
           'matchStatus', selected_offer.match_status,
           'selectedReleaseMbid', selected_offer.selected_release_mbid,
-          'providerTrackId', selected_offer.provider_track_id
+          'providerTrackId', selected_offer.provider_track_id,
+          'explicit', selected_offer.explicit
         ))
         FROM (
           SELECT
@@ -398,7 +399,8 @@ function getTrackSelectSql(whereClause: string): string {
             ${planTrackQualitySql("remote_plan_track", "remote_variant")} AS quality,
             remote_release_match.match_state AS match_status,
             remote_release.mbid AS selected_release_mbid,
-            remote_track_item.provider_id AS provider_track_id
+            remote_track_item.provider_id AS provider_track_id,
+            remote_track_item.explicit
           FROM AcquisitionPlanTracks remote_plan_track
           JOIN Tracks remote_track
             ON remote_track.id = remote_plan_track.track_id
@@ -571,6 +573,11 @@ function parseRemoteOffers(value: string | null | undefined, includeSpatial: boo
       const matchStatus = String(offer.matchStatus || "").trim() || null;
       const selectedReleaseMbid = String(offer.selectedReleaseMbid || "").trim() || null;
       const providerTrackId = String(offer.providerTrackId || "").trim() || null;
+      const explicit = offer.explicit === true || offer.explicit === 1
+        ? true
+        : offer.explicit === false || offer.explicit === 0
+          ? false
+          : null;
       if (!slot || !provider || !providerAlbumId || (!includeSpatial && slot === "spatial")) {
         return [];
       }
@@ -587,6 +594,7 @@ function parseRemoteOffers(value: string | null | undefined, includeSpatial: boo
         matchStatus,
         selectedReleaseMbid,
         providerTrackId,
+        explicit,
       }];
     });
   } catch {
@@ -626,7 +634,10 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
           FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
           WHERE allowed.value = 'spatial'
         ) THEN 'spatial' ELSE 'stereo' END AS library_slot,
-        file.quality,
+        COALESCE(
+          NULLIF(TRIM(file.imported_quality), ''),
+          NULLIF(TRIM(file.quality), '')
+        ) AS quality,
         library.root_path AS library_root,
         file.file_size,
         file.bitrate,

@@ -133,9 +133,9 @@ export function FluentThemeProvider({
         }
         root.style.setProperty(
             discogeniusSearchUnderlineGradientCssVariable,
-            buildDiscogeniusSearchUnderlineGradient(accentTokens)
+            buildDiscogeniusSearchUnderlineGradient(isDarkMode ? "dark" : "light")
         );
-    }, [accentTokens]);
+    }, [accentTokens, isDarkMode]);
 
     return (
         <ThemeProviderContext.Provider {...props} value={value}>

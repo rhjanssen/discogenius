@@ -11,3 +11,8 @@ export const collectionContentInset = {
 export const collectionActionSurfacePadding = `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`;
 export const collectionRowPadding = tokens.spacingHorizontalM;
 
+/** Pull top-level media pages one Fluent spacing step closer to the app bar. */
+export const compactPageTopOffset = {
+    marginTop: `calc(-1 * ${tokens.spacingVerticalS})`,
+} as const;
+

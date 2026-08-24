@@ -93,7 +93,7 @@ const useStyles = makeStyles({
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
-        flex: "1 1 220px",
+        flex: "1 1 320px",
         minWidth: 0,
     },
     reorderColumn: {
@@ -108,10 +108,19 @@ const useStyles = makeStyles({
         placeItems: "center",
         flexShrink: 0,
     },
-    identityText: {
+    identityDetails: {
         display: "flex",
         flexDirection: "column",
         gap: "2px",
+        flex: "1 1 auto",
+        minWidth: 0,
+    },
+    identityHeading: {
+        display: "flex",
+        alignItems: "center",
+        columnGap: tokens.spacingHorizontalS,
+        rowGap: tokens.spacingVerticalXS,
+        flexWrap: "wrap",
         minWidth: 0,
     },
     nameRow: {
@@ -120,18 +129,14 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalXS,
         minWidth: 0,
     },
-    // Capability chips sit in the middle, filling the horizontal space that used
-    // to be empty; on mobile they drop below the identity on their own row.
+    // Keep quality with the provider name. The heading wraps the badges below
+    // only when the identity itself is too narrow.
     capabilities: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalXS,
         flexWrap: "wrap",
         flex: "0 1 auto",
-        [MEDIA.mobile]: {
-            flex: "1 1 100%",
-            paddingLeft: "48px",
-        },
     },
     capabilityPlaceholder: {
         color: tokens.colorNeutralForeground3,
@@ -340,36 +345,37 @@ export const ProvidersSettingsSection = ({
                             <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
                         )}
                     </div>
-                    <div className={styles.identityText}>
-                        <div className={styles.nameRow}>
-                            <Text weight="semibold" size={400}>{provider.name}</Text>
-                            {provider.isDefault ? (
-                                <Badge appearance="tint" color="informative">Default</Badge>
-                            ) : null}
+                    <div className={styles.identityDetails}>
+                        <div className={styles.identityHeading}>
+                            <div className={styles.nameRow}>
+                                <Text weight="semibold" size={400}>{provider.name}</Text>
+                                {provider.isDefault ? (
+                                    <Badge appearance="tint" color="informative">Default</Badge>
+                                ) : null}
+                            </div>
+                            <div className={styles.capabilities}>
+                                {availableCapabilities.length > 0 ? (
+                                    availableCapabilities.map((capability) => (
+                                        <AppTooltip
+                                            key={capability.label}
+                                            relationship="description"
+                                            withArrow
+                                            content={`${capability.label}: ${capability.caption || capability.badgeQuality}`}
+                                        >
+                                            <span style={{ display: "inline-flex" }}>
+                                                <QualityBadge quality={String(capability.badgeQuality)} size="small" showTooltip={false} />
+                                            </span>
+                                        </AppTooltip>
+                                    ))
+                                ) : (
+                                    <Caption1 className={styles.capabilityPlaceholder}>No download tiers</Caption1>
+                                )}
+                            </div>
                         </div>
                         <Caption1 className={styles.mutedText}>
                             {index === 0 && reorderable ? "First priority" : "Connected"}
                         </Caption1>
                     </div>
-                </div>
-
-                <div className={styles.capabilities}>
-                    {availableCapabilities.length > 0 ? (
-                        availableCapabilities.map((capability) => (
-                            <AppTooltip
-                                key={capability.label}
-                                relationship="description"
-                                withArrow
-                                content={`${capability.label}: ${capability.caption || capability.badgeQuality}`}
-                            >
-                                <span style={{ display: "inline-flex" }}>
-                                    <QualityBadge quality={String(capability.badgeQuality)} size="small" showTooltip={false} />
-                                </span>
-                            </AppTooltip>
-                        ))
-                    ) : (
-                        <Caption1 className={styles.capabilityPlaceholder}>No download tiers</Caption1>
-                    )}
                 </div>
 
                 <div className={styles.actions}>
