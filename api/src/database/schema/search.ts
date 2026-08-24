@@ -44,19 +44,19 @@ export function createCatalogSearchIndex(db: Database.Database): void {
     );
 
     CREATE TRIGGER artist_catalog_search_insert
-    AFTER INSERT ON Artists
+    AFTER INSERT ON ArtistMetadata
     WHEN NEW.name IS NOT NULL
     BEGIN
       INSERT INTO CatalogSearch(entity_type, entity_id, title)
       VALUES ('artist', CAST(NEW.id AS TEXT), NEW.name);
     END;
     CREATE TRIGGER artist_catalog_search_delete
-    AFTER DELETE ON Artists
+    AFTER DELETE ON ArtistMetadata
     BEGIN
       DELETE FROM CatalogSearch WHERE entity_type = 'artist' AND entity_id = CAST(OLD.id AS TEXT);
     END;
     CREATE TRIGGER artist_catalog_search_update
-    AFTER UPDATE OF id, name ON Artists
+    AFTER UPDATE OF id, name ON ArtistMetadata
     BEGIN
       DELETE FROM CatalogSearch WHERE entity_type = 'artist' AND entity_id = CAST(OLD.id AS TEXT);
       INSERT INTO CatalogSearch(entity_type, entity_id, title)

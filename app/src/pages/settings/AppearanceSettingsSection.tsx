@@ -103,35 +103,45 @@ export const AppearanceSettingsSection = ({
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={theme}
+                    aria-label="Theme"
                     onChange={(_, data) => onThemeChange(data.value as ThemeMode)}
                 >
-                    <label className={styles.qualityOption} htmlFor="theme-light">
-                        <Radio value="light" id="theme-light" />
-                        <div className={styles.qualityContent}>
-                            <div className={styles.optionIconRow}>
-                                <WeatherSunny24 />
-                                <Text weight="semibold">Light</Text>
+                    <Radio
+                        className={styles.qualityOption}
+                        value="light"
+                        label={(
+                            <div className={styles.qualityContent}>
+                                <div className={styles.optionIconRow}>
+                                    <WeatherSunny24 />
+                                    <Text weight="semibold">Light</Text>
+                                </div>
                             </div>
-                        </div>
-                    </label>
-                    <label className={styles.qualityOption} htmlFor="theme-dark">
-                        <Radio value="dark" id="theme-dark" />
-                        <div className={styles.qualityContent}>
-                            <div className={styles.optionIconRow}>
-                                <WeatherMoon24 />
-                                <Text weight="semibold">Dark</Text>
+                        )}
+                    />
+                    <Radio
+                        className={styles.qualityOption}
+                        value="dark"
+                        label={(
+                            <div className={styles.qualityContent}>
+                                <div className={styles.optionIconRow}>
+                                    <WeatherMoon24 />
+                                    <Text weight="semibold">Dark</Text>
+                                </div>
                             </div>
-                        </div>
-                    </label>
-                    <label className={styles.qualityOption} htmlFor="theme-system">
-                        <Radio value="system" id="theme-system" />
-                        <div className={styles.qualityContent}>
-                            <div className={styles.optionIconRow}>
-                                <DesktopMac24 />
-                                <Text weight="semibold">System</Text>
+                        )}
+                    />
+                    <Radio
+                        className={styles.qualityOption}
+                        value="system"
+                        label={(
+                            <div className={styles.qualityContent}>
+                                <div className={styles.optionIconRow}>
+                                    <DesktopMac24 />
+                                    <Text weight="semibold">System</Text>
+                                </div>
                             </div>
-                        </div>
-                    </label>
+                        )}
+                    />
                 </RadioGroup>
             </SettingsCard>
         </SettingsSection>

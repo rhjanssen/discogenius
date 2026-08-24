@@ -82,6 +82,47 @@ test("duplicate refKey does not insert a second wait row", () => {
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
 });
 
+test("the same provider id can identify different media kinds without queue collisions", () => {
+  const track = enqueueTrack("shared-id", "Track");
+  const album = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "shared-id",
+    mediaKind: "album",
+    commandName: queueModule.CommandNames.DownloadAlbum,
+    provider: "tidal",
+    providerId: "shared-id",
+    title: "Album",
+    payload: { type: "album", provider: "tidal", providerId: "shared-id" },
+  });
+  assert.equal(track.created, true);
+  assert.equal(album.created, true);
+  assert.notEqual(track.id, album.id);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 2);
+});
+
+test("provider-native video ids are scoped by provider", () => {
+  const tidal = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "12345",
+    mediaKind: "video",
+    commandName: queueModule.CommandNames.DownloadVideo,
+    provider: "tidal",
+    providerId: "12345",
+    title: "TIDAL video",
+    payload: { type: "video", provider: "tidal", providerId: "12345" },
+  });
+  const apple = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "12345",
+    mediaKind: "video",
+    commandName: queueModule.CommandNames.DownloadVideo,
+    provider: "apple_music",
+    providerId: "12345",
+    title: "Apple video",
+    payload: { type: "video", provider: "apple_music", providerId: "12345" },
+  });
+  assert.equal(tidal.created, true);
+  assert.equal(apple.created, true);
+  assert.notEqual(tidal.id, apple.id);
+});
+
 test("manual video download and Download Missing share one wait row for the same provider video", () => {
   const fromPage = waitQueueModule.DownloadWaitQueue.enqueue({
     refKey: "64660138",

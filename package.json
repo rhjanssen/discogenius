@@ -23,11 +23,13 @@
     "release:prepare": "node .github/workflows/release/prepare-release.mjs"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.58.2",
+    "axe-core": "^4.13.0",
     "concurrently": "^9.2.1",
     "eslint": "^9.32.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
     "typescript": "^5.8.3"
   },
   "packageManager": "yarn@1.22.22"
 }
-

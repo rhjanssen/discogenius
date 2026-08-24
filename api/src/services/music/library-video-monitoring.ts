@@ -369,10 +369,6 @@ export function applyManualVideoPlacement(
     };
   }
 
-  const artist = recording.artist_mbid
-    ? db.prepare(`SELECT id FROM Artists WHERE mbid = ? LIMIT 1`).get(recording.artist_mbid) as { id?: string } | undefined
-    : undefined;
-
   for (const libraryId of videoLibraryIds) {
     selectLibraryVideo(db, {
       libraryId,
@@ -384,7 +380,8 @@ export function applyManualVideoPlacement(
     });
   }
 
-  return { artistId: artist?.id ? String(artist.id) : null };
+  // Public artist id is the MusicBrainz mbid when present.
+  return { artistId: recording.artist_mbid ? String(recording.artist_mbid) : null };
 }
 
 /**

@@ -1270,7 +1270,7 @@ export class RefreshAlbumService {
         const primaryArtistId = matchedArtistMbid
             || (isMusicBrainzMbid(scanningArtistId) ? scanningArtistId : primaryProviderArtistId);
 
-        const artistExists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(primaryArtistId);
+        const artistExists = db.prepare("SELECT id FROM ArtistMetadata WHERE id = ?").get(primaryArtistId);
         if (!artistExists) {
             if (!isMusicBrainzMbid(primaryArtistId)) {
                 throw new Error(`provider album ${album.provider_id} did not resolve to a canonical MusicBrainz artist.`);

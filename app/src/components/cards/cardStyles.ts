@@ -7,6 +7,7 @@ import { makeStyles, tokens } from "@fluentui/react-components";
 export const useCardStyles = makeStyles({
     // Card container
     card: {
+        position: "relative",
         display: "flex",
         flexDirection: "column",
         height: "100%",
@@ -17,9 +18,11 @@ export const useCardStyles = makeStyles({
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
         borderRadius: tokens.borderRadiusMedium,
         overflow: "hidden",
-        cursor: "pointer",
-        boxShadow: tokens.shadow8,
-        transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
+        cursor: "default",
+        boxShadow: tokens.shadow4,
+        transitionProperty: "background-color, border-color, box-shadow",
+        transitionDuration: tokens.durationFast,
+        transitionTimingFunction: tokens.curveEasyEase,
         padding: tokens.spacingVerticalNone,
         // Drop Fluent Card's default 12px row-gap; cardContent's own (symmetric)
         // padding owns the image→text spacing, so the gap isn't double-counted
@@ -29,19 +32,27 @@ export const useCardStyles = makeStyles({
         width: "100%",
         maxWidth: "100%",
         "&:hover": {
-            transform: "translateY(-2px)",
-            boxShadow: tokens.shadow28,
+            boxShadow: tokens.shadow8,
             backgroundColor: tokens.colorNeutralBackgroundAlpha2,
             border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
         },
         "&:active": {
-            transform: "translateY(0px)",
-            boxShadow: tokens.shadow8,
+            boxShadow: tokens.shadow4,
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+            transitionDuration: "0.01ms",
+        },
+        "@media (forced-colors: active)": {
+            backgroundColor: "Canvas",
+            border: "1px solid CanvasText",
+            backdropFilter: "none",
+            boxShadow: "none",
         },
     },
 
     // Mini card variant (e.g. compact cards) — less visual weight
     cardMini: {
+        position: "relative",
         display: "flex",
         flexDirection: "column",
         height: "100%",
@@ -50,18 +61,34 @@ export const useCardStyles = makeStyles({
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
         borderRadius: tokens.borderRadiusMedium,
         overflow: "hidden",
-        cursor: "pointer",
-        transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
+        cursor: "default",
+        boxShadow: tokens.shadow2,
+        transitionProperty: "background-color, border-color, box-shadow",
+        transitionDuration: tokens.durationFast,
+        transitionTimingFunction: tokens.curveEasyEase,
         padding: tokens.spacingVerticalNone,
         gap: tokens.spacingVerticalNone,
         minWidth: 0,
         width: "100%",
         maxWidth: "100%",
         "&:hover": {
-            transform: "translateY(-2px)",
+            boxShadow: tokens.shadow4,
             backgroundColor: tokens.colorNeutralBackgroundAlpha2,
             border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
         },
+        "@media (prefers-reduced-motion: reduce)": {
+            transitionDuration: "0.01ms",
+        },
+        "@media (forced-colors: active)": {
+            backgroundColor: "Canvas",
+            border: "1px solid CanvasText",
+            backdropFilter: "none",
+            boxShadow: "none",
+        },
+    },
+
+    cardInteractive: {
+        cursor: "pointer",
     },
 
     // Image preview area (1:1 aspect ratio)
@@ -95,6 +122,9 @@ export const useCardStyles = makeStyles({
         display: "block",
         borderRadius: tokens.borderRadiusNone,
         transition: `opacity ${tokens.durationNormal} ${tokens.curveEasyEase}`,
+        "@media (prefers-reduced-motion: reduce)": {
+            transitionDuration: "0.01ms",
+        },
     },
 
     cardImageLoading: {
@@ -134,6 +164,36 @@ export const useCardStyles = makeStyles({
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
+    },
+
+    cardPrimaryAction: {
+        position: "static",
+        display: "block",
+        width: "100%",
+        padding: 0,
+        border: 0,
+        backgroundColor: "transparent",
+        color: "inherit",
+        font: "inherit",
+        textAlign: "left",
+        textDecorationLine: "none",
+        cursor: "pointer",
+        "&::after": {
+            content: '""',
+            position: "absolute",
+            // Extend the native title action over the card without making the
+            // Card itself interactive. Overlay controls sit above this layer.
+            inset: 0,
+            zIndex: 1,
+        },
+        "&:focus-visible": {
+            outline: `2px solid ${tokens.colorStrokeFocus2}`,
+            outlineOffset: "2px",
+            borderRadius: tokens.borderRadiusSmall,
+        },
+        "@media (forced-colors: active)": {
+            color: "LinkText",
+        },
     },
 
     // Center-aligned title (for artist cards in related sections)
@@ -222,7 +282,7 @@ export const useCardStyles = makeStyles({
         position: "absolute",
         bottom: tokens.spacingVerticalS,
         right: tokens.spacingHorizontalS,
-        zIndex: 2,
+        zIndex: 4,
         width: "24px",
         height: "24px",
         display: "flex",
@@ -242,6 +302,7 @@ export const useCardStyles = makeStyles({
         top: tokens.spacingVerticalS,
         right: tokens.spacingHorizontalS,
         zIndex: 2,
+        pointerEvents: "none",
     },
 
     bottomLeftBadge: {
@@ -249,6 +310,7 @@ export const useCardStyles = makeStyles({
         bottom: tokens.spacingVerticalS,
         left: tokens.spacingHorizontalS,
         zIndex: 2,
+        pointerEvents: "none",
     },
 
     // Monitor icon styles
@@ -302,6 +364,9 @@ export const useGridStyles = makeStyles({
         gap: tokens.spacingHorizontalM,
         overflowX: "auto",
         scrollBehavior: "smooth",
+        "@media (prefers-reduced-motion: reduce)": {
+            scrollBehavior: "auto",
+        },
         paddingBottom: tokens.spacingVerticalS,
         // Scroll snap
         scrollSnapType: "x mandatory",

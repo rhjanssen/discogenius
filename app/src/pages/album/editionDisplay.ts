@@ -174,3 +174,32 @@ export function editionTabLabel(
   ].filter(Boolean) as string[];
   return parts.length > 0 ? parts.join(" · ") : (editionTitle || "Edition");
 }
+
+/**
+ * Short label for the visible tab strip. The full label remains the tab's
+ * accessible name and tooltip; this version keeps the next edition visible on
+ * narrow screens by leading with the field that actually distinguishes it.
+ */
+export function editionTabCompactLabel(
+  edition: EditionLabelSource,
+  albumTitle?: string | null,
+): string {
+  const album = String(albumTitle || "").trim().toLowerCase();
+  const editionTitle = String(edition.title || "").trim();
+  const disambiguation = String(edition.disambiguation || "").trim();
+  const titleDiffers = Boolean(editionTitle) && (!album || editionTitle.toLowerCase() !== album);
+
+  if (titleDiffers) {
+    return disambiguation && !editionTitle.toLowerCase().includes(disambiguation.toLowerCase())
+      ? `${editionTitle} (${disambiguation})`
+      : editionTitle;
+  }
+  if (disambiguation) return disambiguation;
+
+  const fallback = [
+    editionMediaLabel(edition.mediaFormats),
+    editionRegionLabel(edition.country),
+    editionCountLabel(edition.trackCount, "track", "tracks"),
+  ].filter(Boolean) as string[];
+  return fallback.length > 0 ? fallback.join(" · ") : (editionTitle || "Edition");
+}

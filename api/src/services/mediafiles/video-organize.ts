@@ -52,7 +52,7 @@ export function resolveCanonicalVideoArtistId(provider: string, providerId: stri
       ON video_match.provider_video_item_id = provider_item.id
      AND video_match.match_state = 'accepted'
     JOIN Recordings recording ON recording.id = video_match.recording_id
-    JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
+    JOIN ArtistMetadata managed_artist ON managed_artist.mbid = recording.artist_mbid
     WHERE provider_item.provider = ?
       AND provider_item.entity_type = 'video'
       AND provider_item.provider_id = ?

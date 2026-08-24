@@ -68,7 +68,7 @@ export class CatalogCandidateService {
             mbids = (db.prepare(`
                 SELECT DISTINCT al.mbid
                 FROM Albums al
-                JOIN Artists a ON a.mbid = al.artist_mbid
+                JOIN ArtistMetadata a ON a.mbid = al.artist_mbid
                 LEFT JOIN AlbumEditions e ON e.release_group_id = al.id
                 WHERE a.name LIKE ? AND (al.title LIKE ? OR e.title LIKE ?)
                 LIMIT ?
@@ -97,7 +97,7 @@ export class CatalogCandidateService {
                 mbids = (db.prepare(`
                     SELECT DISTINCT al.mbid
                     FROM Albums al
-                    LEFT JOIN Artists a ON a.mbid = al.artist_mbid
+                    LEFT JOIN ArtistMetadata a ON a.mbid = al.artist_mbid
                     LEFT JOIN AlbumEditions e ON e.release_group_id = al.id
                     WHERE ${conditions}
                     LIMIT ?
@@ -120,7 +120,7 @@ export class CatalogCandidateService {
                     WHERE rel.release_group_mbid = al.mbid
                 ) AS num_tracks
             FROM Albums al
-            LEFT JOIN Artists a ON a.mbid = al.artist_mbid
+            LEFT JOIN ArtistMetadata a ON a.mbid = al.artist_mbid
             WHERE al.mbid IN (${marks})
         `).all(...mbids) as Array<{
             id: string;

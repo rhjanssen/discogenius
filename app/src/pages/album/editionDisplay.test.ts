@@ -4,6 +4,7 @@ import {
   editionMediaRank,
   editionRegionLabel,
   editionTabLabel,
+  editionTabCompactLabel,
 } from "./editionDisplay";
 
 describe("editionRegionLabel", () => {
@@ -92,5 +93,27 @@ describe("editionTabLabel", () => {
       mediaFormats: [],
       trackCount: null,
     }, null)).toBe("Edition");
+  });
+});
+
+describe("editionTabCompactLabel", () => {
+  const base = {
+    title: "Frank",
+    disambiguation: null,
+    country: '["GB"]',
+    mediaFormats: ["CD"],
+    trackCount: 31,
+  };
+
+  it("uses an edition title or disambiguation as the primary mobile distinction", () => {
+    expect(editionTabCompactLabel({ ...base, title: "Bad Blood X" }, "Bad Blood"))
+      .toBe("Bad Blood X");
+    expect(editionTabCompactLabel({ ...base, disambiguation: "deluxe edition" }, "Frank"))
+      .toBe("deluxe edition");
+  });
+
+  it("falls back to compact format, region and track facts", () => {
+    expect(editionTabCompactLabel(base, "Frank"))
+      .toBe("CD · United Kingdom · 31 tracks");
   });
 });

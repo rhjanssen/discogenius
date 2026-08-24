@@ -22,18 +22,6 @@ export type AudioQuality = string;
 
 type BadgeSize = DiscogeniusBadgeSize;
 
-export function formatQualityForSlot(quality: string | null | undefined, isVideo = false): string {
-  const norm = String(quality || "").trim().toUpperCase();
-  if (isVideo && (!norm || !isVideoResolutionQuality(norm))) {
-    if (norm === "MAX" || norm === "HIRES" || norm === "UHD" || norm === "2160P") return "UHD";
-    if (norm === "HIGH" || norm === "LOSSLESS" || norm === "FHD" || norm === "1080P") return "FHD";
-    if (norm === "NORMAL" || norm === "HD" || norm === "720P") return "HD";
-    if (norm === "LOW" || norm === "SD" || norm === "480P") return "SD";
-    return "FHD";
-  }
-  return String(quality || "");
-}
-
 interface QualityBadgeProps {
   quality: string;
   className?: string;
@@ -176,6 +164,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({
     const nudge = ATMOS_OPTICAL_NUDGE_PX[size];
     return (
       <Badge
+        role={showTooltip ? undefined : "img"}
         shape="circular"
         appearance="tint"
         size="medium"
@@ -198,6 +187,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({
     );
   })() : (
     <Badge
+      role={showTooltip ? undefined : "img"}
       shape="circular"
       appearance="tint"
       size="medium"
@@ -216,7 +206,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({
 
   return (
     <AppTooltip content={description || badgeText} relationship="description" withArrow>
-      <span style={{ display: "inline-flex" }} aria-label={badgeText}>
+      <span style={{ display: "inline-flex" }} role="img" aria-label={badgeText}>
         {badge}
       </span>
     </AppTooltip>

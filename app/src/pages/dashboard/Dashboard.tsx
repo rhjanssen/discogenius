@@ -89,7 +89,9 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalM,
-        paddingTop: tokens.spacingVerticalM,
+        // Layout already supplies the page inset; avoid stacking a second
+        // header-only top pad on Dashboard.
+        paddingTop: tokens.spacingVerticalNone,
         paddingBottom: tokens.spacingVerticalL,
         width: "100%",
         maxWidth: "100%",
@@ -122,6 +124,7 @@ const useStyles = makeStyles({
     },
     mobileOnly: {
         display: "block",
+        width: "100%",
         "@media (min-width: 640px)": {
             display: "none",
         },
@@ -135,7 +138,9 @@ const useStyles = makeStyles({
         flexWrap: "wrap",
         "@media (max-width: 639px)": {
             flexDirection: "column",
-            textAlign: "center",
+            alignItems: "stretch",
+            textAlign: "left",
+            gap: tokens.spacingVerticalS,
         },
     },
     desktopActions: {
@@ -268,6 +273,9 @@ const useStyles = makeStyles({
         "@media (min-width: 768px)": {
             justifyContent: "flex-end",
             gap: tokens.spacingHorizontalM,
+        },
+        "@media (max-width: 639px)": {
+            justifyContent: "flex-start",
         },
     },
     viewTabs: {
@@ -552,7 +560,7 @@ const Dashboard = () => {
         <div className={styles.container}>
             {/* Header */}
             <div className={styles.header}>
-                <Title1>Dashboard</Title1>
+                <Title1 as="h1">Dashboard</Title1>
                 <div className={styles.desktopActions}>
                     <div className={styles.headerActionRow}>
                         {desktopVisibleActions.map((action) => (

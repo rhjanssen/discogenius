@@ -31,21 +31,12 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   fs.writeFileSync(audioPath, "not-a-real-audio-file");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
-
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-mbid-1", "Artist One");
   dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (foreign_artist_id, mbid, name)
-    VALUES (?, ?, ?)
-  `).run("artist-mbid-1", "artist-mbid-1", "Artist One");
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("album-artist-mbid-1", "Album Artist One");
 
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (foreign_artist_id, mbid, name)
-    VALUES (?, ?, ?)
-  `).run("album-artist-mbid-1", "album-artist-mbid-1", "Album Artist One");
 
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, review_text, genres)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -69,6 +60,15 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     INSERT INTO AlbumArtists (release_group_mbid, artist_mbid, ord, credited_name, is_primary)
     VALUES (?, ?, ?, ?, ?)
   `).run("release-group-mbid-1", "album-artist-mbid-1", 0, "Album Artist One", 1);
+
+  const releaseGroupId = (dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = ?")
+    .get("release-group-mbid-1") as { id: number }).id;
+  const albumArtistId = (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?")
+    .get("album-artist-mbid-1") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupArtistCredits (release_group_id, artist_id, ordinal, credited_name, join_phrase)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupId, albumArtistId, 0, "Album Artist One", "");
 
   dbModule.db.prepare(`
     INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, artist_credit, length_ms, copyright, credits)
@@ -141,7 +141,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id,
+      artist_metadata_id,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid,
       provider_item_id,
@@ -150,7 +150,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
       file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'tidal', 'track', 'provider-track-1', 'stereo', ?, ?, ?, ?, ?, 'track', ?)
   `).run(
-    "1",
+    (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid-1'").get() as { id: number }).id,
     "artist-mbid-1",
     "release-group-mbid-1",
     "release-mbid-1",

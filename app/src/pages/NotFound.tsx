@@ -49,7 +49,7 @@ const NotFound = () => {
     <div className={styles.root}>
       <div className={styles.content}>
         <div className={styles.code}>404</div>
-        <Title1>Page not found</Title1>
+        <Title1 as="h1">Page not found</Title1>
         <Body1 style={{ color: tokens.colorNeutralForeground2 }}>
           The page you're looking for doesn't exist or has been moved.
         </Body1>

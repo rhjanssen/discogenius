@@ -19,6 +19,7 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Albums").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -35,12 +36,12 @@ test("artwork preference refresh covers the entire canonical catalog with bounde
   insertArtist.run("artist-credited", "Credited Artist");
 
   const insertAlbum = dbModule.db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, monitored)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO Albums (mbid, artist_mbid, title)
+    VALUES (?, ?, ?)
   `);
-  insertAlbum.run("album-unmonitored-a", "artist-unmanaged", "Unmonitored A", 0);
-  insertAlbum.run("album-monitored", "artist-unmanaged", "Monitored", 1);
-  insertAlbum.run("album-unmonitored-b", "artist-credited", "Unmonitored B", 0);
+  insertAlbum.run("album-unmonitored-a", "artist-unmanaged", "Unmonitored A");
+  insertAlbum.run("album-monitored", "artist-unmanaged", "Monitored");
+  insertAlbum.run("album-unmonitored-b", "artist-credited", "Unmonitored B");
 
   const albumCalls: string[] = [];
   const artistCalls: Array<{ mbid: string; types: string[] }> = [];

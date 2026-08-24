@@ -14,26 +14,15 @@ export const useMonitoring = () => {
             currentStatus,
         }: {
             id: string;
-            type: "artist" | "album" | "track" | "video";
+            type: "album" | "video";
             currentStatus: boolean;
         }) => {
             if (type === "video") {
                 return api.updateVideo(id, { monitored: !currentStatus });
             }
 
-            if (type === "album") {
-                // A library-wide toggle: every audio library, said out loud.
-                return api.monitorAlbum(id, { allLibraries: true }, !currentStatus);
-            }
-
-            const endpoint = type === "artist"
-                ? `/v1/artist/${id}/monitor`
-                : `/v1/track/${id}/monitor`;
-
-            return api.request(endpoint, {
-                method: "POST",
-                body: JSON.stringify({ monitored: !currentStatus }),
-            });
+            // A library-wide Album toggle: every audio library, said out loud.
+            return api.monitorAlbum(id, { allLibraries: true }, !currentStatus);
         },
         onSuccess: (_, variables) => {
             const monitored = !variables.currentStatus;
@@ -66,23 +55,14 @@ export const useMonitoring = () => {
         isLocked,
     }: {
         id: string;
-        type: "artist" | "album" | "track" | "video";
+        type: "album" | "video";
         isLocked: boolean;
     }) => {
-        if (type === "artist") {
-            throw new Error("Artist lock is not supported");
-        }
-
         if (type === "video") {
             return api.updateVideo(id, { monitored_lock: !isLocked });
         }
 
-        if (type === "album") {
-            return api.updateAlbum(id, { monitored_lock: !isLocked }, { allLibraries: true });
-        }
-
-        // track
-        return api.updateTrack(id, { monitored_lock: !isLocked });
+        return api.updateAlbum(id, { monitored_lock: !isLocked }, { allLibraries: true });
     };
 
     const lockMutation = useMutation({

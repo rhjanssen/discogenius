@@ -34,7 +34,7 @@ export function relinkUnresolvedLibraryFiles(params: RelinkUnresolvedLibraryFile
     const rows = db.prepare(`
         SELECT id, file_path, relative_path, library_root, extension, file_type
         FROM TrackFiles
-        WHERE artist_id = ?
+        WHERE artist_metadata_id = ?
           AND provider_id IS NULL
           AND (
             file_type IN ('track', 'video')

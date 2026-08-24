@@ -92,7 +92,7 @@ async function resolveYouTubeCatalogArtistId(
     if (linked) return linked;
   }
 
-  const localArtist = db.prepare("SELECT name FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
+  const localArtist = db.prepare("SELECT name FROM ArtistMetadata WHERE id = ? OR mbid = ? LIMIT 1")
     .get(artistId, artistMbid) as { name?: string | null } | undefined;
   const artistName = String(localArtist?.name || "").trim();
   if (!artistName) return null;

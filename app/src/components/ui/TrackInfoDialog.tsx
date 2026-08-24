@@ -544,11 +544,13 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
 
                                     {isVideoFile(file) && (
                                         <div className={styles.previewFrame}>
+                                            {/* eslint-disable-next-line jsx-a11y/media-has-caption -- Local videos have no caption resource. */}
                                             <video
                                                 controls
                                                 preload="metadata"
                                                 className={styles.videoPreview}
                                                 src={api.getStreamUrl(file.id)}
+                                                aria-label={`${trackTitle} video preview`}
                                             >
                                                 Your browser does not support the video element.
                                             </video>

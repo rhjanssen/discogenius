@@ -22,24 +22,22 @@ import {
   AppsList24Regular,
   ArrowLeft24Filled,
   ArrowLeft24Regular,
-  CheckmarkCircle24Color,
   ChevronRight20Filled,
   ChevronRight20Regular,
   Clock24Regular,
-  DismissCircle24Color,
   Heart24Filled,
   Heart24Regular,
   MusicNote224Filled,
   MusicNote224Regular,
   PeopleTeam24Filled,
   PeopleTeam24Regular,
-  QuestionCircle24Color,
-  Warning24Color,
   bundleIcon,
   Clock24Filled
 } from "@fluentui/react-icons";
 import { ProviderMark } from "@/components/ui/ProviderMark";
+import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
+import { providerArtworkThumbnailUrl } from "@/utils/providerArtworkThumbnail";
 import {
     api,
     type ImportPreviewArtist,
@@ -109,6 +107,8 @@ const EMPTY_PROGRESS: ImportProgress = {
     unmatched: 0,
     failed: 0,
 };
+
+const ARTIST_RENDER_BATCH_SIZE = 60;
 
 const getPreviewArtistId = (artist: ImportPreviewArtist) => artist.providerId;
 
@@ -189,10 +189,10 @@ function statusIcon(status: ArtistResultStatus, styles: ReturnType<typeof useSty
     // Colored Fluent status icons match the queue/activity status icon family.
     switch (status) {
         case "running": return <Spinner size="extra-tiny" aria-label="Importing" />;
-        case "succeeded": return <CheckmarkCircle24Color />;
-        case "skipped": return <Warning24Color />;
-        case "unmatched": return <QuestionCircle24Color />;
-        case "failed": return <DismissCircle24Color />;
+        case "succeeded": return <SemanticStatusIcon status="success" size={24} />;
+        case "skipped": return <SemanticStatusIcon status="warning" size={24} />;
+        case "unmatched": return <SemanticStatusIcon status="unknown" size={24} />;
+        case "failed": return <SemanticStatusIcon status="error" size={24} />;
         default: return <Clock24 className={styles.pending} />;
     }
 }
@@ -212,6 +212,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
     const [progressArtists, setProgressArtists] = useState<ImportProgressArtist[]>([]);
     const [progress, setProgress] = useState<ImportProgress>(EMPTY_PROGRESS);
     const [runError, setRunError] = useState<string | null>(null);
+    const [visibleArtistCount, setVisibleArtistCount] = useState(ARTIST_RENDER_BATCH_SIZE);
     const streamRef = useRef<ImportStreamHandle | null>(null);
     const previewSelection = useSelectableCollection({ items: previewArtists, getItemId: getPreviewArtistId });
 
@@ -252,6 +253,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
         setProgress(EMPTY_PROGRESS);
         setRunError(null);
         setLoadError(null);
+        setVisibleArtistCount(ARTIST_RENDER_BATCH_SIZE);
         previewSelection.clearSelection();
 
         let cancelled = false;
@@ -287,6 +289,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
         setActiveSource(source);
         setActiveList(list || null);
         setPreviewArtists([]);
+        setVisibleArtistCount(ARTIST_RENDER_BATCH_SIZE);
         previewSelection.clearSelection();
         setPhase("preview");
         setLoading(true);
@@ -313,6 +316,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
     const startImport = useCallback(() => {
         if (!activeSource || !selectedProviderId || previewSelection.selectedCount === 0) return;
         const selected = previewSelection.selectedItems;
+        setVisibleArtistCount(ARTIST_RENDER_BATCH_SIZE);
         setProgressArtists(selected.map((artist) => ({ ...artist, status: "pending" })));
         setRunError(null);
         setProgress({ ...EMPTY_PROGRESS, total: selected.length, message: "Starting…" });
@@ -436,7 +440,17 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
         if (lists.length === 0) return <Text className={styles.empty}>No {activeSource?.label.toLowerCase()} found.</Text>;
         return <div className={styles.listScroll}>{lists.map((list) => (
             <button key={list.id} className={styles.sourceRow} onClick={() => activeSource && void openPreview(activeSource, list)}>
-                {list.image ? <img className={styles.thumb} src={list.image} alt="" /> : <Avatar name={list.title} shape="square" size={40} />}
+                {list.image ? (
+                    <img
+                        className={styles.thumb}
+                        src={providerArtworkThumbnailUrl(selectedProviderId, list.image)}
+                        alt=""
+                        width={40}
+                        height={40}
+                        loading="lazy"
+                        decoding="async"
+                    />
+                ) : <Avatar name={list.title} shape="square" size={40} />}
                 <span className={styles.rowText}>
                     <Text className={styles.rowTitle}>{list.title}</Text>
                     {list.subtitle ? <Text className={styles.rowSubtitle}>{list.subtitle}</Text> : null}
@@ -459,7 +473,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                     />
                     <Text size={200}>{previewSelection.selectedCount} of {previewArtists.length} selected</Text>
                 </div>
-                {previewArtists.map((artist) => (
+                {previewArtists.slice(0, visibleArtistCount).map((artist) => (
                     <div key={artist.providerId} className={styles.artistRow}>
                         <Checkbox
                             aria-label={`Select ${artist.name}`}
@@ -468,10 +482,23 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                                 range: Boolean((event.nativeEvent as MouseEvent).shiftKey),
                             })}
                         />
-                        <Avatar name={artist.name} image={artist.picture ? { src: artist.picture } : undefined} size={32} />
+                        <Avatar
+                            name={artist.name}
+                            image={artist.picture ? {
+                                src: providerArtworkThumbnailUrl(selectedProviderId, artist.picture),
+                                loading: "lazy",
+                                decoding: "async",
+                            } : undefined}
+                            size={32}
+                        />
                         <span className={styles.rowText}><Text className={styles.rowTitle}>{artist.name}</Text></span>
                     </div>
                 ))}
+                {visibleArtistCount < previewArtists.length ? (
+                    <Button appearance="subtle" onClick={() => setVisibleArtistCount((count) => count + ARTIST_RENDER_BATCH_SIZE)}>
+                        Show {Math.min(ARTIST_RENDER_BATCH_SIZE, previewArtists.length - visibleArtistCount)} more artists
+                    </Button>
+                ) : null}
             </div>
         );
     };
@@ -482,6 +509,17 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
             : ["running", "pending", "succeeded", "skipped", "unmatched", "failed"];
         return order.map((status) => ({ status, items: progressArtists.filter((artist) => artist.status === status) })).filter((group) => group.items.length > 0);
     }, [phase, progressArtists]);
+
+    const visibleProgressGroups = useMemo(() => {
+        let remaining = visibleArtistCount;
+        return groupedProgress
+            .map((group) => {
+                const items = group.items.slice(0, Math.max(0, remaining));
+                remaining -= items.length;
+                return { ...group, visibleItems: items };
+            })
+            .filter((group) => group.visibleItems.length > 0);
+    }, [groupedProgress, visibleArtistCount]);
 
     const renderProgress = () => {
         const value = progress.total > 0 ? Math.min(1, progress.processed / progress.total) : undefined;
@@ -504,16 +542,24 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                     <Badge className={styles.countBadge} appearance="outline" color="danger">{progress.failed} failed</Badge>
                 </div>
                 <div className={styles.listScroll}>
-                    {groupedProgress.map((group) => (
+                    {visibleProgressGroups.map((group) => (
                         <React.Fragment key={group.status}>
                             <div className={styles.groupHeading}>
                                 <Text weight="semibold">{labels[group.status]}</Text>
                                 <Badge appearance="outline">{group.items.length}</Badge>
                             </div>
-                            {group.items.map((artist) => (
+                            {group.visibleItems.map((artist) => (
                                 <div key={artist.providerId} className={styles.artistRow}>
                                     <span className={styles.statusCell}>{statusIcon(artist.status, styles)}</span>
-                                    <Avatar name={artist.name} image={artist.picture ? { src: artist.picture } : undefined} size={32} />
+                                    <Avatar
+                                        name={artist.name}
+                                        image={artist.picture ? {
+                                            src: providerArtworkThumbnailUrl(selectedProviderId, artist.picture),
+                                            loading: "lazy",
+                                            decoding: "async",
+                                        } : undefined}
+                                        size={32}
+                                    />
                                     <span className={styles.rowText}>
                                         <Text className={styles.rowTitle}>{artist.name}</Text>
                                         {artist.detail ? <Text className={styles.rowSubtitle}>{artist.detail}</Text> : null}
@@ -522,6 +568,11 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                             ))}
                         </React.Fragment>
                     ))}
+                    {visibleArtistCount < progressArtists.length ? (
+                        <Button appearance="subtle" onClick={() => setVisibleArtistCount((count) => count + ARTIST_RENDER_BATCH_SIZE)}>
+                            Show {Math.min(ARTIST_RENDER_BATCH_SIZE, progressArtists.length - visibleArtistCount)} more results
+                        </Button>
+                    ) : null}
                 </div>
             </>
         );

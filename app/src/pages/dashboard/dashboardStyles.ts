@@ -169,7 +169,7 @@ export const useDashboardStyles = makeStyles({
         gap: tokens.spacingHorizontalS,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        cursor: "pointer",
+        cursor: "default",
         transitionProperty: "background-color",
         transitionDuration: tokens.durationFaster,
         ":hover": {
@@ -207,7 +207,7 @@ export const useDashboardStyles = makeStyles({
         padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 20%, transparent)`,
-        cursor: "pointer",
+        cursor: "default",
         transitionProperty: "background-color",
         transitionDuration: tokens.durationFaster,
         ":hover": {
@@ -371,6 +371,19 @@ export const useDashboardStyles = makeStyles({
     downloadSubtleText: {
         color: tokens.colorNeutralForeground2,
     },
+    downloadTitleLink: {
+        color: "inherit",
+        textDecorationLine: "none",
+        borderRadius: tokens.borderRadiusSmall,
+        "&:hover": {
+            color: tokens.colorBrandForegroundLinkHover,
+            textDecorationLine: "underline",
+        },
+        "&:focus-visible": {
+            outline: `2px solid ${tokens.colorStrokeFocus2}`,
+            outlineOffset: "2px",
+        },
+    },
     downloadArtist: {
         fontSize: tokens.fontSizeBase200,
         color: tokens.colorNeutralForeground3,
@@ -464,16 +477,6 @@ export const useDashboardStyles = makeStyles({
         outlineStyle: "none",
         alignItems: "center",
         flexWrap: "wrap",
-    },
-    queueHistoryItemClickable: {
-        cursor: "pointer",
-        ":hover": {
-            backgroundColor: tokens.colorNeutralBackground1Hover,
-        },
-        ":focus-visible": {
-            outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
-            outlineOffset: `-${tokens.strokeWidthThin}`,
-        },
     },
     queueHistoryItemStatic: {
         cursor: "default",

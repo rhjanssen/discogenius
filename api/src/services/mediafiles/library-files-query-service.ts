@@ -5,7 +5,7 @@ import type { LibraryFileContract, LibraryFilesListResponseContract } from "../.
 
 type LibraryFileRow = {
   id: number;
-  artist_id?: number | string | null;
+  artist_metadata_id?: number | string | null;
   album_id?: number | string | null;
   media_id?: number | string | null;
   recording_id?: number | string | null;
@@ -84,7 +84,7 @@ function mapLibraryFileRow(item: LibraryFileRow): LibraryFileContract {
     id: item.id,
     file_type: item.file_type,
     file_path: item.file_path,
-    artist_id: item.artist_id == null ? null : String(item.artist_id),
+    artist_id: item.artist_metadata_id == null ? null : String(item.artist_metadata_id),
     album_id: item.album_id == null ? null : String(item.album_id),
     media_id: item.media_id == null ? null : String(item.media_id),
     relative_path: item.relative_path == null ? undefined : item.relative_path,
@@ -223,7 +223,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
   const params: any[] = [];
 
   if (options.artistId) {
-    where.push("lf.artist_id = ?");
+    where.push("lf.artist_metadata_id = ?");
     params.push(options.artistId);
   }
   if (options.albumId) {
@@ -258,7 +258,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       ${canonicalAlbumQualitySql} AS album_quality
     FROM (
       SELECT
-        id, artist_id, NULL AS album_id, provider_id AS media_id, recording_id, file_path, relative_path, library_root, file_type, filename, extension,
+        id, artist_metadata_id, NULL AS album_id, provider_id AS media_id, recording_id, file_path, relative_path, library_root, file_type, filename, extension,
         quality, source_quality, imported_quality, source_audio_variant_id,
         file_size, bitrate, sample_rate, bit_depth, channels, codec, video_codec, width, height, duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
@@ -269,7 +269,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
 
       UNION ALL
 
-      SELECT id + 10000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
+      SELECT id + 10000000 AS id, artist_id AS artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
         NULL AS quality, NULL AS source_quality, NULL AS imported_quality, NULL AS source_audio_variant_id,
         NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
@@ -280,7 +280,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
 
       UNION ALL
 
-      SELECT id + 20000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
+      SELECT id + 20000000 AS id, artist_id AS artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
         NULL AS quality, NULL AS source_quality, NULL AS imported_quality, NULL AS source_audio_variant_id,
         NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
@@ -291,7 +291,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
 
       UNION ALL
 
-      SELECT id + 30000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, NULL AS filename, extension AS extension,
+      SELECT id + 30000000 AS id, artist_id AS artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, NULL AS filename, extension AS extension,
         quality AS quality, NULL AS source_quality, NULL AS imported_quality, NULL AS source_audio_variant_id,
         NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,

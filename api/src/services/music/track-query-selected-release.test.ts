@@ -33,8 +33,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -52,10 +52,13 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
   const { db } = dbModule;
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('bastille-mbid', 'Bastille')").run();
   const artistMeta = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'bastille-mbid'").get() as { id: number };
+  const library = db.prepare("SELECT id FROM Libraries ORDER BY id LIMIT 1").get() as { id: number };
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES ('bastille', 'Bastille', 'bastille-mbid', 'Bastille', 1)
-  `).run();
+    INSERT INTO LibraryArtists (
+      library_id, artist_metadata_id, policy, credited_scope,
+      library_origin, metadata_status, metadata_last_checked_at
+    ) VALUES (?, ?, 'all', 'release_and_track_credit', 'test', 'verified', CURRENT_TIMESTAMP)
+  `).run(library.id, artistMeta.id);
   db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type, first_release_date)
     VALUES ('rg-bad-blood', 'bastille-mbid', ?, 'Bad Blood', 'Album', '2013-03-04')
@@ -86,7 +89,6 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
     trackIds.push(track.id);
   });
 
-  const library = db.prepare("SELECT id FROM Libraries ORDER BY id LIMIT 1").get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
       library_id, release_group_id, selection_mode, locked, reason, curation_version

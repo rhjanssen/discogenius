@@ -23,7 +23,41 @@ async function setupSearchFixtures(page: Page) {
     artistName,
   });
 
-  await page.route(`**/api/artists/${artistId}/page-db`, async (route) => {
+  await page.route('**/api/v1/artist/libraries', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 1, name: 'Stereo Library', root_path: '/library/stereo-music' },
+      ]),
+    });
+  });
+
+  await page.route(`**/api/v1/video/${videoId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: videoId,
+        title: videoTitle,
+        artist_id: artistId,
+        artist_name: artistName,
+        duration: 180,
+        release_date: '2024-01-01',
+        version: null,
+        quality: 'FHD',
+        cover: null,
+        cover_id: null,
+        cover_art_url: null,
+        is_monitored: false,
+        monitored_lock: false,
+        downloaded: false,
+        is_downloaded: false,
+      }),
+    });
+  });
+
+  await page.route(`**/api/v1/artist/${artistId}/page*`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -42,7 +76,7 @@ async function setupSearchFixtures(page: Page) {
     });
   });
 
-  await page.route(`**/api/artists/${artistId}/activity`, async (route) => {
+  await page.route(`**/api/v1/artist/${artistId}/activity`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -57,7 +91,7 @@ async function setupSearchFixtures(page: Page) {
     });
   });
 
-  await page.route('**/api/search?*', async (route) => {
+  await page.route('**/api/v1/search?*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -107,7 +141,7 @@ async function setupSearchFixtures(page: Page) {
             subtitle: artistName,
             imageId: null,
             monitored: false,
-            in_library: false,
+            in_library: true,
             quality: 'FHD',
             duration: 180,
           },
@@ -116,7 +150,7 @@ async function setupSearchFixtures(page: Page) {
     });
   });
 
-  await page.route(`**/api/artists/${artistId}`, async (route) => {
+  await page.route(`**/api/v1/artist/${artistId}`, async (route) => {
     if (route.request().method() !== 'PATCH') {
       await route.fulfill({
         status: 200,
@@ -153,7 +187,7 @@ async function setupSearchFixtures(page: Page) {
     });
   });
 
-  await page.route(`**/api/artists/${artistId}/monitor`, async (route) => {
+  await page.route(`**/api/v1/artist/${artistId}/monitor`, async (route) => {
     monitored = true;
     await route.fulfill({
       status: 200,
@@ -175,15 +209,15 @@ async function setupSearchFixtures(page: Page) {
 }
 
 async function searchForArtist(page: Page) {
-  await page.goto(`${baseURL}/search`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
 
-  const searchBox = page.getByRole('main').getByRole('searchbox', { name: /search/i });
+  const searchBox = page.getByRole('searchbox', { name: /search/i });
   await searchBox.fill(artistName);
 
   await page.waitForResponse((res) => {
     try {
       const url = new URL(res.url());
-      return url.pathname === '/api/search' && res.status() === 200;
+      return url.pathname === '/api/v1/search' && res.status() === 200;
     } catch {
       return false;
     }
@@ -212,11 +246,18 @@ test.describe('Search → monitor → navigate flow', () => {
     const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
     await artistsTab.click();
 
-    const monitorButton = page.locator('button[title="Monitor"], button[title="Unmonitor"]').first();
+    const monitorButton = page.getByRole('button', { name: `Add ${artistName}` }).first();
     await expect(monitorButton).toBeVisible();
     await monitorButton.click();
+    await page.getByRole('dialog').getByRole('button', { name: /^Monitor$/i }).click();
     await expect.poll(() => fixture.getMonitored()).toBe(true);
-    await expect(monitorButton).toHaveAttribute('title', /unmonitor/i);
+
+    // Monitoring invalidates the search query and closes the result overlay.
+    // Reopen it to verify that the refreshed result reflects membership.
+    const searchBox = page.getByRole('searchbox', { name: /search/i });
+    await searchBox.fill('');
+    await searchBox.fill(artistName);
+    await expect(page.getByRole('button', { name: `Unmonitor ${artistName}` }).first()).toBeVisible();
   });
 
   test('artist page keeps monitored state when opened immediately after monitoring from search', async ({ page }) => {
@@ -226,15 +267,20 @@ test.describe('Search → monitor → navigate flow', () => {
     const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
     await artistsTab.click();
 
-    const monitorButton = page.locator('button[title="Monitor"], button[title="Unmonitor"]').first();
+    const monitorButton = page.getByRole('button', { name: `Add ${artistName}` }).first();
     await expect(monitorButton).toBeVisible();
     await monitorButton.click();
+    await page.getByRole('dialog').getByRole('button', { name: /^Monitor$/i }).click();
     await expect.poll(() => fixture.getMonitored()).toBe(true);
-    await expect(monitorButton).toHaveAttribute('title', /unmonitor/i);
+
+    const searchBox = page.getByRole('searchbox', { name: /search/i });
+    await searchBox.fill('');
+    await searchBox.fill(artistName);
+    await expect(page.getByRole('button', { name: `Unmonitor ${artistName}` }).first()).toBeVisible();
 
     await page.getByText(artistName, { exact: true }).first().click();
     await page.waitForURL(new RegExp(`/artist/${artistId}$`), { timeout: 10_000 });
-    await expect(page.getByRole('button', { name: /^Unmonitor$/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Monitored' })).toBeVisible();
   });
 
   test('clicking artist in search navigates to artist detail', async ({ page }) => {
@@ -259,6 +305,6 @@ test.describe('Search → monitor → navigate flow', () => {
     await page.getByText(videoTitle, { exact: true }).first().click();
     await page.waitForURL(new RegExp(`/video/${videoId}$`), { timeout: 10_000 });
     await expect(page.locator('main')).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Monitor$/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start monitoring' })).toBeVisible();
   });
 });

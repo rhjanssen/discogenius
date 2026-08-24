@@ -28,7 +28,7 @@ before(async () => {
 beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM history_events").run();
-    for (const table of ["ProviderItems", "Tracks", "Recordings", "AlbumEditions", "Albums", "ArtistMetadata", "Artists"]) {
+    for (const table of ["ProviderItems", "Tracks", "Recordings", "AlbumEditions", "Albums", "ArtistMetadata"]) {
         dbModule.db.prepare(`DELETE FROM ${table}`).run();
     }
 });
@@ -193,8 +193,6 @@ test("activity page prioritizes processing downloads ahead of newer pending down
 });
 
 test("activity descriptions resolve download jobs from canonical provider items without legacy provider rows", () => {
-    dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-        .run("artist-local", "Canonical Artist", "artist-mbid", 1);
     dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
         .run("artist-mbid", "Canonical Artist");
     dbModule.db.prepare(`

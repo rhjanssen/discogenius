@@ -40,10 +40,9 @@ const APPLE_SESSION_FAILURE_PATTERN =
 export function describeAppleDownloaderFailure(code: number | null, errorDetail: string): string {
   const detail = (errorDetail || "").trim();
   if (APPLE_SESSION_FAILURE_PATTERN.test(detail)) {
-    return "Apple Music decryption failed — the wrapper session has expired or was rejected. "
+    return "Apple Music decryption failed because the wrapper session expired or Apple rejected it. "
       + "Re-authenticate Apple Music from the Auth page (enter the Apple ID 2FA code promptly; the wrapper only waits ~60s). "
-      + "If this persists, recreate the wrapper: "
-      + "`docker compose up -d --force-recreate apple-music-wrapper`."
+      + "If this persists, check the wrapper log for an Apple account playback-limit error before replacing the saved session."
       + `${detail ? ` [downloader: ${detail}]` : ""}`;
   }
   return `apple-music-downloader exited with code ${code}${detail ? `: ${detail}` : ""}`;

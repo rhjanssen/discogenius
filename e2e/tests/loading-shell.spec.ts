@@ -22,7 +22,7 @@ const mockConnectedStatus = {
 
 test.describe('Shell loading states', () => {
   const stubQueueApis = async (page: Page) => {
-    await page.route((url) => url.pathname === '/api/queue/status', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/queue/status', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -30,7 +30,7 @@ test.describe('Shell loading states', () => {
       });
     });
 
-    await page.route((url) => url.pathname === '/api/queue/details', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/queue/details', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -38,7 +38,7 @@ test.describe('Shell loading states', () => {
       });
     });
 
-    await page.route('**/api/queue/progress-stream*', async (route) => {
+    await page.route('**/api/v1/queue/progress-stream*', async (route) => {
       await route.fulfill({
         status: 200,
         headers: {
@@ -50,7 +50,7 @@ test.describe('Shell loading states', () => {
       });
     });
 
-    await page.route((url) => url.pathname === '/api/queue', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/queue', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -167,7 +167,7 @@ test.describe('Shell loading states', () => {
 
     await stubQueueApis(page);
 
-    await page.route('**/api/artists/123/activity', async (route) => {
+    await page.route('**/api/v1/artist/123/activity', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -182,7 +182,7 @@ test.describe('Shell loading states', () => {
       });
     });
 
-    await page.route('**/api/artists/123/page-db', async (route) => {
+    await page.route('**/api/v1/artist/123/page', async (route) => {
       await artistPageGate;
       await route.fulfill({
         status: 200,
@@ -223,7 +223,7 @@ test.describe('Shell loading states', () => {
 
     await stubShellApis(page);
 
-    await page.route((url) => url.pathname === '/api/queue', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/queue', async (route) => {
       const offset = Number.parseInt(route.request().url().match(/[?&]offset=(\d+)/)?.[1] || '0', 10);
       seenOffsets.push(Number.isFinite(offset) ? offset : 0);
 

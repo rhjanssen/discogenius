@@ -24,7 +24,6 @@ const VIDEO_MBID = "66666666-6666-4666-8666-666666666666";
 
 function seedCanonicalAlbum() {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, 'Bastille')").run(ARTIST_MBID);
-  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, 'Bastille', ?)").run(ARTIST_MBID, ARTIST_MBID);
   db.prepare(`
     INSERT INTO Albums (id, mbid, artist_mbid, title)
     VALUES (1, ?, ?, 'Bad Blood')

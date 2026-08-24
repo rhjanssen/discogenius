@@ -229,7 +229,7 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       recording.cover_image_url AS cover_art_url,
       provider_item.provider_url AS url,
       NULL AS path,
-      CAST(COALESCE(managed_artist.id, artist.mbid, recording.artist_mbid, recording.artist_metadata_id, artist.id) AS TEXT) AS artist_id,
+      CAST(COALESCE(recording.artist_mbid, artist.mbid, managed_artist.mbid) AS TEXT) AS artist_id,
       COALESCE(managed_artist.name, artist.name) AS artist_name,
       EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id) AS monitored,
       EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual') AS monitored_lock,
@@ -259,7 +259,7 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
     LEFT JOIN ArtistMetadata artist
       ON artist.id = recording.artist_metadata_id
       OR (recording.artist_mbid IS NOT NULL AND artist.mbid = recording.artist_mbid)
-    LEFT JOIN Artists managed_artist
+    LEFT JOIN ArtistMetadata managed_artist
       ON recording.artist_mbid IS NOT NULL
       AND managed_artist.mbid = recording.artist_mbid
     LEFT JOIN ProviderItems provider_item
@@ -574,6 +574,7 @@ type AssociatedVideoRow = {
   inline_track_id: number | null;
   inline_slot: "video" | "lyrics" | null;
   placement_selection_mode: "auto" | "manual" | null;
+  preferred_offer_key: string | null;
 };
 
 /**
@@ -679,7 +680,8 @@ function associatedVideoSelectSql(input: {
       placement.placement_library_id AS placement_library_id,
       placement.inline_track_id AS inline_track_id,
       placement.inline_slot AS inline_slot,
-      placement.placement_selection_mode AS placement_selection_mode
+      placement.placement_selection_mode AS placement_selection_mode,
+      placement.preferred_offer_key AS preferred_offer_key
   `;
 }
 
@@ -819,6 +821,8 @@ export function getAlbumAssociatedVideos(
       if (!isVideoVariantDownloadAllowed(row.video_variant, filtering)) return;
     }
     const coverArtUrl = videoCoverLocalUrl(id);
+    const availableOffers = getAvailableVideoOfferRows(id);
+    const selectedOffer = selectAssociatedVideoOffer(availableOffers, row.preferred_offer_key);
     byId.set(id, {
       id,
       title: row.title || "Unknown Video",
@@ -827,10 +831,14 @@ export function getAlbumAssociatedVideos(
       cover_art_url: coverArtUrl,
       video_variant: row.video_variant ?? null,
       release_date: row.release_date ?? null,
-      provider: row.provider ?? null,
-      quality: row.quality ?? null,
-      provider_id: row.provider_id ?? null,
-      provider_url: row.provider_url ?? null,
+      // These four fields are one atomic acquisition offer. Never combine the
+      // selected provider with quality or a URL from a different matched item.
+      // If a persisted selection is stale or malformed, fail closed instead of
+      // quietly advertising an unrelated provider as the chosen source.
+      provider: selectedOffer?.provider ?? null,
+      quality: selectedOffer?.quality ?? null,
+      provider_id: selectedOffer?.provider_id ?? null,
+      provider_url: selectedOffer?.url ?? null,
       explicit: row.explicit == null ? undefined : Boolean(row.explicit),
       is_monitored: Boolean(row.monitored),
       monitored_lock: Boolean(row.monitored_lock),
@@ -868,15 +876,18 @@ export function getAlbumAssociatedVideos(
   });
 }
 
-/** All provider VIDEO offers for the canonical recording, preference-ordered. */
-function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract[] {
+type AvailableVideoOfferRow = {
+  provider: string;
+  provider_id: string;
+  quality: string | null;
+  url: string | null;
+};
+
+function getAvailableVideoOfferRows(recordingId: string): AvailableVideoOfferRow[] {
   const rows = db.prepare(`
     SELECT
       pi.provider,
       CAST(pi.provider_id AS TEXT) AS provider_id,
-      -- Prefer an on-disk probed quality for this provider offer when present.
-      -- Catalog has4K/UHD badges are aspirational until import confirms the
-      -- longer edge; stale offer UHD must not outrank a probed FHD/UHD file.
       COALESCE(
         (
           SELECT NULLIF(TRIM(tf.quality), '')
@@ -897,19 +908,39 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
       ON video_match.provider_video_item_id = pi.id
      AND video_match.match_state = 'accepted'
     WHERE pi.entity_type = 'video'
-      -- availability is stored as text ('available') or NULL for live offers,
-      -- never the integer 1 — testing it against 1 silently dropped every video
-      -- offer and broke both preview and download (the TIDAL-only regression).
-      -- Include anything not explicitly marked unavailable so both the 'available'
-      -- string and any legacy truthy value survive.
       AND (pi.availability IS NULL
            OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
       AND CAST(video_match.recording_id AS TEXT) = CAST(? AS TEXT)
-  `).all(recordingId) as Array<{ provider: string; provider_id: string; quality: string | null; url: string | null }>;
+  `).all(recordingId) as AvailableVideoOfferRow[];
   rows.sort((a, b) => compareVideoOffersByQualityThenProvider(
     { provider: a.provider, quality: a.quality, provider_id: a.provider_id },
     { provider: b.provider, quality: b.quality, provider_id: b.provider_id },
   ));
+  return rows;
+}
+
+function selectAssociatedVideoOffer(
+  offers: readonly AvailableVideoOfferRow[],
+  preferredOfferKey: string | null,
+): AvailableVideoOfferRow | null {
+  if (!preferredOfferKey) return offers[0] ?? null;
+  try {
+    const parsed = JSON.parse(preferredOfferKey) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== 2) return null;
+    const provider = typeof parsed[0] === "string" ? parsed[0].trim().toLowerCase() : "";
+    const providerId = typeof parsed[1] === "string" ? parsed[1].trim() : "";
+    if (!provider || !providerId) return null;
+    return offers.find((offer) =>
+      offer.provider.trim().toLowerCase() === provider
+      && offer.provider_id === providerId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** All provider VIDEO offers for the canonical recording, preference-ordered. */
+function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract[] {
+  const rows = getAvailableVideoOfferRows(recordingId);
   return rows.map((row) => {
     let canPreview = false;
     let canDownload = false;

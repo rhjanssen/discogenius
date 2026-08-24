@@ -29,8 +29,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
   seedTestLibrary(db, { name: "Rebind Stereo", rootPath: path.join(tempDir, "stereo") });
 });
 
@@ -42,7 +42,6 @@ after(() => {
 test("rebind moves a scan-imported file from an unmonitored sibling onto the selected edition", () => {
   const { db } = dbModule;
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
-  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run("artist-local", "Bastille", "artist-mbid");
   db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-bbx", "artist-mbid", "Bad Blood");
   db.prepare(`
@@ -102,17 +101,17 @@ test("rebind moves a scan-imported file from an unmonitored sibling onto the sel
   const filePath = path.join(tempDir, "stereo", "Bastille", "Bad Blood X (2023)", "101 - Pompeii MMXXIII.m4a");
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, album_edition_id, track_id, file_type, library_slot,
+      artist_metadata_id, library_id, album_edition_id, track_id, file_type, library_slot,
       library_root, file_path, relative_path, filename, extension,
       canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid
     ) VALUES (
-      'artist-local', ?, ?, ?, 'track', 'stereo',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, ?, ?, 'track', 'stereo',
       ?, ?, 'Bastille/Bad Blood X/101 - Pompeii MMXXIII.m4a', '101 - Pompeii MMXXIII.m4a', 'm4a',
       'rg-bbx', 'rel-bbx-sibling', 't-mmxxiii-sibling', 'rec-mmxxiii'
     )
   `).run(library.id, siblingEdition.id, siblingTrack.id, path.join(tempDir, "stereo"), filePath);
 
-  const result = libraryFilesModule.LibraryFilesService.rebindFilesToMonitoredEditions("artist-local");
+  const result = libraryFilesModule.LibraryFilesService.rebindFilesToMonitoredEditions("artist-mbid");
   assert.equal(result.rebound, 1);
 
   const rebound = db.prepare(`

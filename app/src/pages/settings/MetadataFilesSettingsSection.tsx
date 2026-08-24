@@ -104,6 +104,7 @@ export const MetadataFilesSettingsSection = ({
                     </div>
                     <div className={styles.rowControl}>
                         <Select
+                            aria-label="Write audio tags"
                             value={writeAudioTagsPolicy}
                             onChange={(_, data) => updateMetadataSettings({
                                 write_audio_tags_policy: data.value as "no" | "new_files" | "all_files" | "sync",
@@ -134,6 +135,7 @@ export const MetadataFilesSettingsSection = ({
                     </div>
                     <div className={styles.rowControl}>
                         <Select
+                            aria-label="Preferred artwork"
                             value={metadataSettings?.artwork_preference === "provider" ? "provider" : "canonical"}
                             onChange={(_, data) => updateMetadataSettings({
                                 artwork_preference: data.value as "canonical" | "provider",

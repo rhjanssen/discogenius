@@ -22,6 +22,12 @@ const useStyles = makeStyles({
     // No CSS filter/vignette — blur + smoked dim are baked into the bitmap.
     // No overscale: that was only hiding transparent bake edges and exaggerated the edge halo.
     willChange: "opacity",
+    "@media (prefers-reduced-motion: reduce)": {
+      willChange: "auto",
+    },
+    "@media (forced-colors: active)": {
+      display: "none",
+    },
   },
 });
 
@@ -41,6 +47,8 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
 
   const frontRef = useRef<string | null>(null);
   const cleanupTimerRef = useRef<number | null>(null);
+  const reduceMotion = typeof window !== "undefined"
+    && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
   useEffect(() => {
     frontRef.current = frontUrl;
@@ -60,7 +68,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   // One-shot bake: static PNG with blur + smoked dim already in the pixels.
   const imageUrl = useMemo(
     () => renderUltraBlurDataUrl(colors, isDarkMode),
-    [colors.bottomLeft, colors.bottomRight, colors.topLeft, colors.topRight, isDarkMode],
+    [colors, isDarkMode],
   );
 
   useEffect(() => {
@@ -73,6 +81,14 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
 
       if (previousFront && previousFront !== imageUrl) {
         setBackUrl(previousFront);
+      }
+
+      if (reduceMotion) {
+        setBackUrl(null);
+        setFrontUrl(imageUrl);
+        setFrontVisible(true);
+        setSkipTransition(true);
+        return;
       }
 
       setSkipTransition(true);
@@ -120,7 +136,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
     return () => {
       cancelled = true;
     };
-  }, [imageUrl, transitionMs]);
+  }, [imageUrl, reduceMotion, transitionMs]);
 
   return (
     <div

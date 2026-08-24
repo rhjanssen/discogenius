@@ -39,7 +39,6 @@ beforeEach(() => {
     "Recordings",
     "AlbumEditions",
     "Albums",
-    "Artists",
     "ArtistMetadata",
   ]) {
     try {
@@ -64,7 +63,6 @@ after(() => {
 test("tracklist remoteOffers include stereo and spatial from different providers/releases", () => {
   const { db } = dbModule;
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-1", "Artist");
-  db.prepare(`INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)`).run("1", "Artist", "artist-1");
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'Album')`)
     .run("rg-1", "artist-1", "Album");
   db.prepare(`
@@ -253,7 +251,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   `).get() as { id: number; release_group_id: number };
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_edition_id, track_id,
+      artist_metadata_id, library_id, release_group_id, album_edition_id, track_id,
       recording_id, provider, provider_entity_type, provider_id,
       file_path, relative_path, library_root, filename, extension, file_type,
       file_class, quality, source_quality, imported_quality

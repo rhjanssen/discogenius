@@ -9,6 +9,7 @@ import {
     resolveMediaCoverProxyUrl,
     videoCoverLocalUrl,
 } from "../services/metadata/media-cover-service.js";
+import { buildLibraryArtistMonitoredExistsSql, isArtistLibraryMonitored, libraryArtistMonitoredSelectSql } from "../services/music/managed-artists.js";
 import { catalogProviderRegistry } from "../services/catalog/index.js";
 import { servarrMetadata } from "../services/metadata/servarr-metadata.js";
 import { planHeadlineQualitySql } from "../utils/display-quality-sql.js";
@@ -113,7 +114,7 @@ router.get("/", async (req, res) => {
             .includes(String(req.query.local || "").trim().toLowerCase());
         // Keep established-library search local and indexed, but give a fresh
         // installation the same canonical discovery path as the add-artist flow.
-        const libraryIsEmpty = !db.prepare("SELECT 1 FROM Artists LIMIT 1").get();
+        const libraryIsEmpty = !db.prepare("SELECT 1 FROM ArtistMetadata LIMIT 1").get();
         // Remote only when explicitly requested, or when a local search on an
         // empty library needs discovery (Lidarr Add New). A remote-only follow-up
         // must not re-run local enrichment.
@@ -158,7 +159,7 @@ router.get("/", async (req, res) => {
                 if (matchedArtistIds.length === 0 && query.trim().length > 0) {
                     const fallbackArtists = db.prepare(`
                         SELECT id
-                        FROM Artists
+                        FROM ArtistMetadata
                         WHERE name LIKE ?
                         LIMIT ?
                     `).all(`%${query}%`, limit * 2) as Array<{ id: string }>;
@@ -175,8 +176,8 @@ router.get("/", async (req, res) => {
                         `SELECT current_artist.id, current_artist.mbid, current_artist.name,
                                 current_artist.picture, current_artist.cover_image_url,
                                 artist_metadata.images AS canonical_images,
-                                current_artist.monitored AS monitor
-                         FROM Artists current_artist
+                                ${libraryArtistMonitoredSelectSql("current_artist")} AS monitor
+                         FROM ArtistMetadata current_artist
                          LEFT JOIN ArtistMetadata artist_metadata
                            ON artist_metadata.mbid = current_artist.mbid
                          WHERE current_artist.id IN (${artistMarks})
@@ -184,13 +185,13 @@ router.get("/", async (req, res) => {
                              current_artist.mbid IS NOT NULL
                              OR NOT EXISTS (
                                SELECT 1
-                               FROM Artists canonical_artist
+                               FROM ArtistMetadata canonical_artist
                                WHERE canonical_artist.mbid IS NOT NULL
                                  AND canonical_artist.name = current_artist.name COLLATE NOCASE
                              )
                            )
                          ORDER BY
-                           CASE WHEN current_artist.monitored = 1 THEN 0 ELSE 1 END,
+                           CASE WHEN ${buildLibraryArtistMonitoredExistsSql("current_artist")} THEN 0 ELSE 1 END,
                            CASE WHEN current_artist.mbid IS NOT NULL THEN 0 ELSE 1 END,
                            current_artist.popularity DESC
                          LIMIT ?`
@@ -201,7 +202,7 @@ router.get("/", async (req, res) => {
                     if (row.mbid) addedArtistMbids.add(row.mbid);
                     addedArtistIds.add(row.id.toString());
                     results.artists.push(formatSearchResult({
-                        id: row.id,
+                        id: row.mbid || String(row.id),
                         name: row.name,
                         picture: mapArtistArtworkToLocalUrl({
                             artistMbid: row.mbid,
@@ -212,7 +213,7 @@ router.get("/", async (req, res) => {
                             ],
                         }) || row.cover_image_url || row.picture,
                         monitored: !!row.monitor,
-                        in_library: true,
+                        in_library: !!row.monitor,
                     }, 'artist'));
                 }
             }
@@ -237,7 +238,7 @@ router.get("/", async (req, res) => {
                             SELECT cs.entity_id AS mbid
                             FROM CatalogSearch cs
                             JOIN Albums rg ON rg.mbid = cs.entity_id
-                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
                             WHERE cs.entity_type = 'album'
                               AND CatalogSearch MATCH ?
                               AND a.name LIKE ?
@@ -250,7 +251,7 @@ router.get("/", async (req, res) => {
                         matchedAlbumMbids = (db.prepare(`
                             SELECT DISTINCT rg.mbid
                             FROM Albums rg
-                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
                             LEFT JOIN AlbumEditions e ON e.release_group_id = rg.id
                             WHERE a.name LIKE ?
                               AND ${titleConditions}
@@ -261,7 +262,7 @@ router.get("/", async (req, res) => {
                         matchedAlbumMbids = (db.prepare(`
                             SELECT rg.mbid
                             FROM Albums rg
-                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
                             WHERE a.name LIKE ?
                             LIMIT ?
                         `).all(`%${artistParam}%`, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
@@ -284,7 +285,7 @@ router.get("/", async (req, res) => {
                         const fallbackMbids = db.prepare(`
                             SELECT DISTINCT rg.mbid
                             FROM Albums rg
-                            LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+                            LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
                             LEFT JOIN AlbumEditions e ON e.release_group_id = rg.id
                             WHERE ${likeConditions}
                             LIMIT ?
@@ -355,7 +356,7 @@ router.get("/", async (req, res) => {
                 WHERE library_group.release_group_id = rg.id
               ) THEN 1 ELSE 0 END AS monitored
             FROM Albums rg
-            LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+            LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
             WHERE rg.mbid IN (${albumMarks})
             ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC`
                     )
@@ -436,7 +437,7 @@ router.get("/", async (req, res) => {
             JOIN AlbumEditions release ON release.id = t.album_edition_id
             JOIN Albums rg ON rg.id = release.release_group_id
             JOIN ArtistMetadata artist ON artist.id = rg.artist_metadata_id
-            JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
+            JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist.mbid
             LEFT JOIN Recordings recording ON recording.id = t.recording_id
             LEFT JOIN AcquisitionPlanTracks selected_plan_track
               ON selected_plan_track.id = (
@@ -552,7 +553,7 @@ router.get("/", async (req, res) => {
               ), provider_video.video_quality) AS current_quality
             FROM Recordings recording
             LEFT JOIN ArtistMetadata artist ON artist.id = recording.artist_metadata_id
-            LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
+            LEFT JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist.mbid
             LEFT JOIN ProviderVideoMatches video_match
               ON video_match.id = (
                 SELECT preferred_match.id
@@ -599,11 +600,12 @@ router.get("/", async (req, res) => {
                     const mbid = artist.id;
                     if (mbid && !addedArtistMbids.has(mbid)) {
                         // Check if exists in local library
-                        const localArtist = db.prepare("SELECT id, monitored AS monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as any;
+                        const localArtist = db.prepare("SELECT id, picture, cover_image_url FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(mbid) as any;
                         if (localArtist) {
                             if (addedArtistIds.has(localArtist.id.toString())) {
                                 continue;
                             }
+                            const inLibrary = isArtistLibraryMonitored(String(localArtist.id));
                             const imageId = [
                                 localArtist.picture,
                                 localArtist.cover_image_url,
@@ -624,8 +626,8 @@ router.get("/", async (req, res) => {
                                 id: localArtist.id,
                                 name: artist.artistname,
                                 picture: registerMediaCoverProxyUrl(imageId) || imageId || supplementalImage || null,
-                                monitored: !!localArtist.monitor,
-                                in_library: true,
+                                monitored: inLibrary,
+                                in_library: inLibrary,
                             }, 'artist'));
                             addedArtistIds.add(localArtist.id.toString());
                         } else {

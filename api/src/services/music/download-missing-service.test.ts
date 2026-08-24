@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-missing-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.download-missing.test.db");
@@ -35,8 +36,7 @@ test("queueMonitoredItems runs its video branch on the active schema", async () 
   const { db } = dbModule;
 
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Video Artist')`).run();
-  db.prepare(`INSERT INTO Artists (id, name, mbid, monitored)
-              VALUES ('artist-id', 'Video Artist', 'artist-mbid', 1)`).run();
+seedLibraryArtistMonitoring(db, "artist-mbid");
   const video = db.prepare(`
     INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, metadata_status)
     VALUES ('video-mbid', 'artist-mbid', 'A Music Video', 210000, 1, 'musicbrainz')

@@ -99,19 +99,14 @@ export class LibraryStatsQueryService {
             ),
             monitored_artist_rows AS (
                 SELECT DISTINCT
-                    local_artist.id AS local_artist_id,
+                    canonical_artist.id AS local_artist_id,
                     canonical_artist.mbid AS artist_mbid
                 FROM LibraryArtists library_artist
                 JOIN Libraries library
                   ON library.id = library_artist.library_id
                  AND library.enabled = 1
-                JOIN ManagedArtists managed_artist
-                  ON managed_artist.id = library_artist.managed_artist_id
                 JOIN ArtistMetadata canonical_artist
-                  ON canonical_artist.id = managed_artist.artist_id
-                JOIN Artists local_artist
-                  ON local_artist.mbid = canonical_artist.mbid
-                WHERE library_artist.monitored = 1
+                  ON canonical_artist.id = library_artist.artist_metadata_id
             ),
             monitored_audio_requirements AS (
                 SELECT DISTINCT
@@ -237,7 +232,7 @@ export class LibraryStatsQueryService {
                    AND MIN(completed) = 1
             )
             SELECT
-                (SELECT COUNT(*) FROM Artists) AS artist_total,
+                (SELECT COUNT(*) FROM ArtistMetadata) AS artist_total,
                 (SELECT COUNT(*) FROM monitored_artist_rows) AS artist_monitored,
                 (SELECT COUNT(*) FROM completed_artists) AS artist_downloaded,
                 (SELECT COUNT(*) FROM Albums) AS album_total,

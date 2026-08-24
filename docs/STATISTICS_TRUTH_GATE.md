@@ -2,15 +2,15 @@
 
 This gate covers the user-visible dashboard/Library counters returned by
 `GET /api/v1/stats` and the persisted `ArtistStatistics` rows read by the Artist
-table. It boots the active production schema (`initDatabase()`, schema 42); it
-does not use the aspirational `domain-v41` fixture.
+table. It boots the active production schema (`initDatabase()`, schema 46); it
+does not use the aspirational CORE `domain-baseline` fixture.
 
 ## Authorities
 
 | Statistic | Authority |
 | --- | --- |
-| Artist/Album/Track/Video totals | canonical `Artists`, `Albums`, `Tracks`, and `Recordings` |
-| monitored Artists | `LibraryArtists.monitored = 1` in enabled Libraries |
+| Artist/Album/Track/Video totals | canonical `ArtistMetadata`, `Albums`, `Tracks`, and `Recordings` |
+| monitored Artists | `LibraryArtists` row existence in enabled Libraries (pause = `policy = none` still counts) |
 | monitored Albums/Editions | `LibraryAlbums` / `LibraryEditions` row existence in enabled audio Libraries |
 | monitored Videos | `LibraryVideos` row existence in enabled Libraries |
 | audio completion | every exact `(library_id, track_id)` requirement has an audio `TrackFiles` row |
@@ -64,8 +64,8 @@ Stereo-plus-Spatial completion.
 Run `statistics-truth-scale-seed2803` used the corrected deterministic load
 fixture:
 
-- schema 42;
-- 2,500 Artists (500 monitored);
+- schema 46;
+- 2,500 ArtistMetadata rows (500 with LibraryArtists membership);
 - 1,240 Albums, 1,792 Editions;
 - 16,036 Track rows (16,023 audio Track occurrences);
 - 14,138 Recordings;

@@ -1,4 +1,5 @@
 import fs from "fs";
+import net from "node:net";
 import path from "path";
 import { CONFIG_DIR, Config } from "../../config/config.js";
 import { configuredVideoMaxHeight } from "../provider-quality.js";
@@ -298,7 +299,7 @@ let loginStatus: "idle" | "logging_in" | "waiting_for_2fa" | "success" | "failed
 let loginMessage = "";
 
 // Bump the marker when the script changes so existing installs pick up fixes.
-const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v8";
+const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v9";
 const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
 # ${WRAPPER_ENTRYPOINT_VERSION} — managed by Discogenius, manual edits are overwritten.
 # Supervises the Apple Music decryption wrapper: serves decryption on ports
@@ -318,7 +319,8 @@ SERVER_RESTARTS=0
 SERVER_RESTART_WINDOW_START=0
 
 write_status() {
-    printf '{"status": "%s", "message": "%s"}\\n' "$1" "$2" > "$STATUS_FILE"
+    printf '{"status": "%s", "message": "%s"}\\n' "$1" "$2" > "$STATUS_FILE.tmp"
+    mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
 }
 
 start_server() {
@@ -526,19 +528,79 @@ function cleanupLegacyWrapperEntrypoint(): void {
   }
 }
 
-export function getWrapperLoginStatus(): { status: string; message: string } {
+export type AppleWrapperLoginStatus = { status: string; message: string };
+
+export function reconcileWrapperLoginStatus(
+  saved: AppleWrapperLoginStatus,
+  readiness: { decryptPortOpen: boolean; m3u8PortOpen: boolean; successAgeMs?: number },
+): AppleWrapperLoginStatus {
+  // A successful login is durable state, but it does not prove the sidecar is
+  // running now. This file survives Compose stops and app/container restarts.
+  // Reporting the saved success as live sent users into downloads that could
+  // only fail with a low-level connection error.
+  if (saved.status === "success" && (!readiness.decryptPortOpen || !readiness.m3u8PortOpen)) {
+    // The supervisor writes success immediately after forking the server. Give
+    // the two listeners one UI polling interval to bind instead of turning a
+    // healthy container restart into a false login failure.
+    if ((readiness.successAgeMs ?? Number.POSITIVE_INFINITY) < 10_000) {
+      return {
+        status: "logging_in",
+        message: "The saved Apple Music session is active and the decryption wrapper is starting...",
+      };
+    }
+    return {
+      status: "failed",
+      message: "The saved Apple Music wrapper session is present, but the decryption wrapper is not reachable. Start it with `docker compose up -d apple-music-wrapper`. Re-authenticate only if the wrapper then reports a session error.",
+    };
+  }
+  return saved;
+}
+
+function checkWrapperPort(host: string, port: number, timeoutMs = 250): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    const done = (open: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.on("connect", () => done(true));
+    socket.on("timeout", () => done(false));
+    socket.on("error", () => done(false));
+  });
+}
+
+export async function getWrapperLoginStatus(): Promise<AppleWrapperLoginStatus> {
+  let saved: AppleWrapperLoginStatus = { status: loginStatus, message: loginMessage };
+  let savedAtMs: number | null = null;
   try {
     const statusPath = path.join(WRAPPER_ROOTFS_DATA_DIR, "login_status.json");
     if (fs.existsSync(statusPath)) {
+      savedAtMs = fs.statSync(statusPath).mtimeMs;
       const parsed = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
       if (parsed && typeof parsed === "object" && "status" in parsed && "message" in parsed) {
-        return { status: String(parsed.status), message: String(parsed.message) };
+        saved = { status: String(parsed.status), message: String(parsed.message) };
       }
     }
   } catch {
     // Fall back to the in-memory state below.
   }
-  return { status: loginStatus, message: loginMessage };
+
+  // During login the wrapper deliberately stops its server while it waits for
+  // Apple and possibly 2FA, so port readiness only qualifies a claimed
+  // success. It must not turn an in-progress login into a false failure.
+  if (saved.status !== "success") return saved;
+  const host = resolveAppleWrapperHost();
+  const [decryptPortOpen, m3u8PortOpen] = await Promise.all([
+    checkWrapperPort(host, 10020),
+    checkWrapperPort(host, 20020),
+  ]);
+  return reconcileWrapperLoginStatus(saved, {
+    decryptPortOpen,
+    m3u8PortOpen,
+    successAgeMs: savedAtMs == null ? undefined : Math.max(0, Date.now() - savedAtMs),
+  });
 }
 
 /**

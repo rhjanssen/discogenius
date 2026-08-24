@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
 import {
     Badge,
     Button,
@@ -17,7 +17,6 @@ import {
 } from "@fluentui/react-components";
 import {
   CheckmarkCircle16Filled,
-  DismissCircle16Filled,
   ArrowClockwise24Regular,
   Clock16Regular,
   Delete24Regular,
@@ -40,7 +39,7 @@ import {
   ArrowDown24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { formatTrackPosition, isMultiVolumeTrackList } from "@/utils/trackPosition";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { useQueue } from "@/hooks/useQueue";
@@ -49,6 +48,7 @@ import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
+import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -59,11 +59,6 @@ import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
 import { QueueHistoryPanel } from "./QueueHistoryPanel";
-import {
-    isInteractiveElementTarget,
-    isQueueRowActivationKey,
-    stopQueueControlEvent,
-} from "./queueTabShared";
 import {
     defaultQueueHistoryFilters,
     type QueueHistoryFilters,
@@ -307,7 +302,7 @@ function renderTrackStatusIndicator(
     },
 ) {
     if (options.isFailed) {
-        return <DismissCircle16Filled className={styles.downloadStatusErrorIcon} />;
+        return <SemanticStatusIcon status="error" className={styles.downloadStatusErrorIcon} />;
     }
 
     if (options.isActive) {
@@ -316,12 +311,12 @@ function renderTrackStatusIndicator(
 
     if (options.isCompleted) {
         return options.phase === 'import'
-            ? <CheckmarkCircle16Filled className={styles.downloadStatusColorIcon} title="Downloaded and imported" />
+            ? <SemanticStatusIcon status="success" className={styles.downloadStatusColorIcon} title="Downloaded and imported" />
             : <CheckmarkCircle16Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />;
     }
 
     if (options.isSkipped) {
-        return <CheckmarkCircle16Filled className={styles.downloadStatusColorIcon} title="Already in library" />;
+        return <SemanticStatusIcon status="success" className={styles.downloadStatusColorIcon} title="Already in library" />;
     }
 
     if (options.isQueued) {
@@ -699,7 +694,6 @@ function isPendingReorderableGroup(group: { status: string; items: ReorderableQu
 
 const QueueTab = () => {
     const styles = useDashboardStyles();
-    const navigate = useNavigate();
     const {
         queueItems: downloadQueue,
         isQueueInitialLoading: loading,
@@ -1424,45 +1418,11 @@ const QueueTab = () => {
                                         ? !canMoveSelectedBottom
                                         : (isLastPendingGroup && !hasMoreQueueItems)
                                 );
-                                const isGroupRowInteractive = Boolean(groupNavPath)
-                                    || (isSelectionMode && isPendingReorderable);
-                                const groupRowRole = isSelectionMode && isPendingReorderable
-                                    ? "button"
-                                    : groupNavPath
-                                        ? "link"
-                                        : undefined;
-                                const groupRowLabel = isSelectionMode && isPendingReorderable
-                                    ? `${isGroupSelected ? "Deselect" : "Select"} ${group.title}`
-                                    : groupNavPath
-                                        ? `Open ${group.title}`
-                                        : undefined;
-
-                                const activateGroupRow = (shiftKey = false) => {
-                                    if (isSelectionMode && isPendingReorderable) {
-                                        pendingGroupSelection.toggleItem(group.id, !isGroupSelected, { range: shiftKey });
-                                        return;
-                                    }
-                                    if (groupNavPath) navigate(groupNavPath);
-                                };
-                                const handleGroupClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-                                    if (isInteractiveElementTarget(event.target)) return;
-                                    activateGroupRow(event.shiftKey);
-                                };
-                                const handleGroupKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-                                    if (
-                                        !isQueueRowActivationKey(event.key)
-                                        || isInteractiveElementTarget(event.target)
-                                    ) {
-                                        return;
-                                    }
-
-                                    event.preventDefault();
-                                    activateGroupRow(event.shiftKey);
-                                };
-
                                 return (
                                     <div key={group.id} className={styles.downloadGroup} data-queue-group-id={group.id}>
                                         <div
+                                            role="group"
+                                            aria-label={`${group.title} queue item`}
                                             className={mergeClasses(
                                                 styles.downloadItem,
                                                 isPendingReorderable ? styles.downloadItemReorderable : '',
@@ -1472,15 +1432,7 @@ const QueueTab = () => {
                                                 isDropBefore ? styles.downloadItemDropBefore : '',
                                                 isDropAfter ? styles.downloadItemDropAfter : '',
                                             )}
-                                            style={{ opacity: isFailed ? 0.9 : 1, cursor: groupNavPath ? 'pointer' : 'default' }}
-                                            onClick={isGroupRowInteractive ? handleGroupClick : undefined}
-                                            onKeyDown={isGroupRowInteractive ? handleGroupKeyDown : undefined}
-                                            role={groupRowRole}
-                                            tabIndex={isGroupRowInteractive ? 0 : undefined}
-                                            aria-label={groupRowLabel}
-                                            aria-pressed={isSelectionMode && isPendingReorderable
-                                                ? isGroupSelected
-                                                : undefined}
+                                            style={{ opacity: isFailed ? 0.9 : 1 }}
                                             onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
                                             onTouchStart={(e) => handleGroupTouchStart(e, group.id)}
                                             onTouchEnd={handleGroupTouchEnd}
@@ -1490,13 +1442,12 @@ const QueueTab = () => {
                                             onDrop={isPendingReorderable ? (event) => { void handleDrop(event, group.id); } : undefined}
                                         >
                                             {isPendingReorderable ? (
-                                                <div className={styles.downloadSelectionCell} data-queue-control="true" onClick={stopQueueControlEvent}>
+                                                <div className={styles.downloadSelectionCell} data-queue-control="true">
                                                     {isSelectionMode ? (
                                                         <Checkbox
                                                             aria-label={`Select ${group.title}`}
                                                             checked={isGroupSelected}
                                                             onClick={(event) => {
-                                                                stopQueueControlEvent(event);
                                                                 pendingQueueRangeSelectionRef.current = event.shiftKey;
                                                             }}
                                                             onChange={(event, data) => pendingGroupSelection.toggleItem(
@@ -1517,7 +1468,6 @@ const QueueTab = () => {
                                                         draggable={!isQueueMutationPending}
                                                         onDragStart={(event) => handleDragStart(event, group.id)}
                                                         onDragEnd={handleDragEnd}
-                                                        onClick={stopQueueControlEvent}
                                                         aria-hidden="true"
                                                         title="Drag to reorder"
                                                     >
@@ -1535,7 +1485,17 @@ const QueueTab = () => {
                                             <div className={styles.downloadInfo}>
                                                 <div className={mergeClasses(styles.downloadHeaderRow, styles.downloadHeaderRowInline)}>
                                                     <div className={mergeClasses(styles.downloadTitleRow, styles.downloadTitleRowInline)}>
-                                                        <Text className={styles.downloadTitle} truncate data-queue-group-title={group.title}>{group.title}</Text>
+                                                        {groupNavPath ? (
+                                                            <Link
+                                                                to={groupNavPath}
+                                                                className={mergeClasses(styles.downloadTitle, styles.downloadTitleLink)}
+                                                                data-queue-group-title={group.title}
+                                                            >
+                                                                {group.title}
+                                                            </Link>
+                                                        ) : (
+                                                            <Text className={styles.downloadTitle} truncate data-queue-group-title={group.title}>{group.title}</Text>
+                                                        )}
                                                     </div>
                                                     <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
                                                         <Text className={styles.downloadArtist} truncate>{group.artist}</Text>
@@ -1608,7 +1568,7 @@ const QueueTab = () => {
                                                         </div>
                                                      )
                                             )}
-                                            <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
+                                            <div className={styles.downloadActions} data-queue-control="true">
                                                 {isPendingReorderable ? (
                                                     <div className={styles.downloadReorderActions}>
                                                         <Button
@@ -1728,12 +1688,9 @@ const QueueTab = () => {
                                             const isItemCompleted = derivedStatus === 'completed';
                                             const isItemImportPhase = item.stage === 'import' || itemProg?.state === 'importing' || itemProg?.state === 'importPending' || prog?.state === 'importing' || prog?.state === 'importPending';
                                             const itemErrorMessage = item.error || (isItemFailed ? prog?.statusMessage : undefined);
+                                            const itemNavPath = item.album_id ? `/album/${item.album_id}` : null;
                                             return (
-                                                <div key={item.id} className={styles.downloadSubItem} data-queue-subitem-row="true" onClick={(e) => {
-                                                    if ((e.target as HTMLElement).closest('button')) return;
-                                                    const path = item.album_id ? `/album/${item.album_id}` : null;
-                                                    if (path) navigate(path);
-                                                }}>
+                                                <div key={item.id} className={styles.downloadSubItem} data-queue-subitem-row="true">
                                                     <div className={styles.downloadTrackLead}>
                                                         <div className={styles.downloadStatusLead}>
                                                             {renderTrackStatusIndicator(styles, {
@@ -1753,18 +1710,27 @@ const QueueTab = () => {
                                                         </Text>
                                                     </div>
                                                     <div className={styles.downloadInfo}>
-                                                        <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{item.title || "Unknown Track"}</Text>
+                                                        {itemNavPath ? (
+                                                            <Link
+                                                                to={itemNavPath}
+                                                                className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText, styles.downloadTitleLink)}
+                                                            >
+                                                                {item.title || "Unknown Track"}
+                                                            </Link>
+                                                        ) : (
+                                                            <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{item.title || "Unknown Track"}</Text>
+                                                        )}
                                                         {isItemFailed && itemErrorMessage && (
                                                             <Text className={styles.downloadMeta} style={{ color: tokens.colorPaletteRedForeground1 }}>
                                                                 {itemErrorMessage}
                                                             </Text>
                                                         )}
                                                     </div>
-                                                    <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
+                                                    <div className={styles.downloadActions} data-queue-control="true">
                                                         {isItemFailed && (
-                                                            <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => retryItem(item.id)} />
+                                                            <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} aria-label={`Retry ${item.title || "track"}`} onClick={() => retryItem(item.id)} />
                                                         )}
-                                                        <Button size="small" appearance="subtle" icon={<Delete24 />} onClick={() => deleteItem(item.id)} />
+                                                        <Button size="small" appearance="subtle" icon={<Delete24 />} aria-label={`Remove ${item.title || "track"} from queue`} onClick={() => deleteItem(item.id)} />
                                                     </div>
                                                 </div>
                                             );
@@ -1786,7 +1752,7 @@ const QueueTab = () => {
                                                     );
 
                                                     return (
-                                                        <div key={idx} className={styles.downloadSubItem} onClick={() => { if (groupNavPath) navigate(groupNavPath); }}>
+                                                        <div key={idx} className={styles.downloadSubItem}>
                                                             <div className={styles.downloadTrackLead}>
                                                                 <div className={styles.downloadStatusLead}>
                                                                     {renderTrackStatusIndicator(styles, {
@@ -1803,7 +1769,16 @@ const QueueTab = () => {
                                                                 </Text>
                                                             </div>
                                                             <div className={styles.downloadInfo}>
-                                                                <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{t.title || "Unknown Track"}</Text>
+                                                                {groupNavPath ? (
+                                                                    <Link
+                                                                        to={groupNavPath}
+                                                                        className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText, styles.downloadTitleLink)}
+                                                                    >
+                                                                        {t.title || "Unknown Track"}
+                                                                    </Link>
+                                                                ) : (
+                                                                    <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{t.title || "Unknown Track"}</Text>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     );

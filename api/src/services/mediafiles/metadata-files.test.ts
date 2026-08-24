@@ -30,8 +30,8 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM Tracks").run();
     dbModule.db.prepare("DELETE FROM AlbumEditions").run();
     dbModule.db.prepare("DELETE FROM Albums").run();
+    dbModule.db.prepare("DELETE FROM LibraryArtists").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
-    dbModule.db.prepare("DELETE FROM Artists").run();
     dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -42,15 +42,9 @@ after(() => {
 
 function seedMusicBrainzMetadata() {
     dbModule.db.prepare(`
-        INSERT INTO Artists(id, name, mbid, bio_text)
-        VALUES(?, ?, ?, ?)
-    `).run("100", "The Example Artist", "artist-mbid-100", "Artist bio & history");
+        INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, ?)`).run(100, "artist-mbid-100", "The Example Artist");
 
-    dbModule.db.prepare(`
-        INSERT INTO ArtistMetadata(mbid, name)
-        VALUES(?, ?)
-    `).run("artist-mbid-100", "The Example Artist");
-    dbModule.db.prepare(`
+dbModule.db.prepare(`
         INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type, review_text, genres)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album", "Album review with <markup>", JSON.stringify(["Indie Pop", "Synth-pop"]));
@@ -163,16 +157,9 @@ test("Jellyfin NFO files use canonical local metadata and include MusicBrainz ID
 
 test("lyrics cached for a stereo provider item are shared with a spatial counterpart", async () => {
     dbModule.db.prepare(`
-        INSERT INTO Artists(id, name, mbid)
-        VALUES(?, ?, ?)
-    `).run("100", "The Example Artist", "artist-mbid-100");
+        INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, ?)`).run(100, "artist-mbid-100", "The Example Artist");
 
-    dbModule.db.prepare(`
-        INSERT INTO ArtistMetadata(mbid, name)
-        VALUES(?, ?)
-    `).run("artist-mbid-100", "The Example Artist");
-
-    dbModule.db.prepare(`
+dbModule.db.prepare(`
         INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type)
         VALUES(?, ?, ?, ?, ?)
     `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album");

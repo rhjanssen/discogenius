@@ -70,7 +70,7 @@ test("the boundary's TrackFiles update prepares against the active schema", () =
 });
 
 test("provider_item_id is a real FK to ProviderItems that survives item deletion", () => {
-  db.prepare("INSERT OR IGNORE INTO Artists (id, name) VALUES ('fk-artist', 'FK Artist')").run();
+  db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('fk-artist', 'FK Artist')").run();
   const item = db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
     VALUES ('tidal', 'track', 'fk-track', 'FK Track', 'available')
@@ -79,10 +79,10 @@ test("provider_item_id is a real FK to ProviderItems that survives item deletion
 
   const file = db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, provider_item_id,
+      artist_metadata_id, provider, provider_entity_type, provider_id, provider_item_id,
       file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (
-      'fk-artist', 'tidal', 'track', 'fk-track', ?,
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'fk-artist'), 'tidal', 'track', 'fk-track', ?,
       'C:/library/fk.flac', 'fk.flac', 'C:/library', 'fk.flac', 'flac', 'track'
     )
     RETURNING id

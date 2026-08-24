@@ -4,6 +4,10 @@ import { db } from "../../database.js";
 import { RequestValidationError } from "../../utils/request-validation.js";
 import { findArtistPathConflict, normalizeArtistFolderInput } from "../music/artist-paths.js";
 import { ArtistPathBuilder } from "../music/artist-path-builder.js";
+import {
+  loadArtistMetadataIdentity,
+  stampArtistLibraryPath,
+} from "../music/managed-artists.js";
 import { Config } from "../config/config.js";
 import { LibraryFilesService, removeEmptyParents, type RenameStatusSummary } from "./library-files.js";
 import {CommandNames} from "../commands/command-names.js";
@@ -11,7 +15,7 @@ import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { RenameTrackFileService } from "./rename-track-file-service.js";
 
 type ArtistPathRow = {
-  id: number | string;
+  id: number;
   name: string | null;
   mbid: string | null;
   path: string | null;
@@ -45,8 +49,14 @@ export interface ExecuteMoveArtistJobResult {
 }
 
 function loadArtistPathRow(artistId: string): ArtistPathRow | null {
-  const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as ArtistPathRow | undefined;
-  return artist ?? null;
+  const identity = loadArtistMetadataIdentity(artistId);
+  if (!identity) return null;
+  return {
+    id: identity.id,
+    name: identity.name ?? null,
+    mbid: identity.mbid ?? null,
+    path: identity.path ?? null,
+  };
 }
 
 function resolveRequestedArtistPath(artist: ArtistPathRow, options: MoveArtistOptions): string {
@@ -126,11 +136,7 @@ export class MoveArtistService {
     const changed = currentPath !== nextPath;
 
     if (changed) {
-      db.prepare(`
-        UPDATE artists
-        SET path = ?
-        WHERE id = ?
-      `).run(nextPath, options.artistId);
+      stampArtistLibraryPath(artist.id, nextPath, true);
     }
 
     const renameStatus = RenameTrackFileService.getRenameStatus({ artistId: options.artistId }, 10);
@@ -255,11 +261,7 @@ export class MoveArtistService {
         }
       }
 
-      db.prepare(`
-        UPDATE artists
-        SET path = ?
-        WHERE id = ?
-      `).run(sourcePath, options.artistId);
+      stampArtistLibraryPath(artist.id, sourcePath, true);
 
       throw error;
     }

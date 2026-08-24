@@ -91,7 +91,7 @@ before(async () => {
                 title: "Provider Video",
                 artist: { providerId: "100", name: "The Example Artist" },
                 artists: [{ providerId: "100", name: "The Example Artist" }],
-                artist_id: "100",
+                artist_metadata_id: "100",
                 artist_name: "The Example Artist",
                 album_id: "200",
                 release_date: "2024-02-03",
@@ -145,7 +145,6 @@ beforeEach(() => {
         "AlbumEditions",
         "Albums",
         "Recordings",
-        "Artists",
         "ArtistMetadata",
     ]) {
         dbModule.db.prepare(`DELETE FROM ${table}`).run();
@@ -167,9 +166,9 @@ beforeEach(() => {
     });
     configModule.updateConfig("naming", {
         artist_folder: "{artistName}",
-        album_track_path_single: "{Album CleanTitle}/{track:00} - {Track CleanTitle}",
-        album_track_path_multi: "{Album CleanTitle}/{medium:0}{track:00} - {Track CleanTitle}",
-        video_file: "{Artist CleanName} - {Video CleanTitle} {{providerName}-{mediaId}}",
+        album_track_path_single: "{albumTitle}/{trackNumber00} - {trackTitle}",
+        album_track_path_multi: "{albumTitle}/Disc {volumeNumber0}/{trackNumber00} - {trackTitle}",
+        video_file: "{artistName} - {videoTitle} {{provider}-{mediaId}}",
     });
 });
 
@@ -181,8 +180,6 @@ after(() => {
 function seedCanonicalLibraryFiles() {
     dbModule.db.prepare("INSERT INTO ArtistMetadata(mbid, name) VALUES(?, ?)")
         .run("artist-mbid-100", "The Example Artist");
-    dbModule.db.prepare("INSERT INTO Artists(id, name, mbid, monitored) VALUES(?, ?, ?, ?)")
-        .run("100", "The Example Artist", "artist-mbid-100", 1);
     dbModule.db.prepare(`
         INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type)
         VALUES(?, ?, ?, ?, ?)
@@ -292,14 +289,17 @@ function seedCanonicalLibraryFiles() {
     const musicRoot = configModule.Config.getMusicPath();
     const albumNfoPath = libraryFilesModule.LibraryFilesService.computeExpectedPath({
         id: -1,
-        artist_id: "100" as unknown as number,
-        album_id: "200" as unknown as number,
+        artist_metadata_id: artistMetadata.id,
+        album_id: releaseGroup.id as unknown as number,
         media_id: null,
         file_path: "",
         relative_path: null,
         library_root: musicRoot,
         file_type: "nfo",
         extension: "nfo",
+        canonical_artist_mbid: "artist-mbid-100",
+        canonical_release_group_mbid: "release-group-mbid-200",
+        canonical_release_mbid: "release-mbid-200",
     }).expectedPath;
     assert.ok(albumNfoPath);
     const albumDir = path.dirname(albumNfoPath);
@@ -308,14 +308,14 @@ function seedCanonicalLibraryFiles() {
     fs.writeFileSync(trackPath, "audio");
     dbModule.db.prepare(`
         INSERT INTO TrackFiles (
-          artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+          artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
           canonical_track_mbid, canonical_recording_mbid,
           release_group_id, album_edition_id, track_id, recording_id, library_id,
           provider, provider_entity_type, provider_id, library_slot,
           file_path, relative_path, library_root, filename, extension, file_type, quality
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-        "100",
+        artistMetadata.id,
         "artist-mbid-100",
         "release-group-mbid-200",
         "release-mbid-200",
@@ -372,12 +372,12 @@ function seedCanonicalLibraryFiles() {
     fs.writeFileSync(videoPath, "video");
     dbModule.db.prepare(`
         INSERT INTO TrackFiles (
-          artist_id, library_id, canonical_artist_mbid, canonical_recording_mbid,
+          artist_metadata_id, library_id, canonical_artist_mbid, canonical_recording_mbid,
           provider, provider_entity_type, provider_id, library_slot,
           file_path, relative_path, library_root, filename, extension, file_type, quality
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-        "100",
+        artistMetadata.id,
         videoLibraryId,
         "artist-mbid-100",
         "video-recording-mbid-400",
@@ -398,7 +398,7 @@ function seedCanonicalLibraryFiles() {
 test("metadata backfill discovers album and video sidecars from canonical ProviderItems without legacy provider rows", async () => {
     seedCanonicalLibraryFiles();
 
-    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100");
 
     assert.equal(result.failed, 0);
     assert.ok(result.downloaded >= 2);
@@ -484,7 +484,7 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
         WHERE provider_entity_type = 'track'
         LIMIT 1
     `).get() as { id: number; file_path: string };
-    const artistDir = path.dirname(path.dirname(track.file_path));
+    const artistDir = path.join(musicRoot, "The Example Artist");
     const albumDir = path.dirname(track.file_path);
     const artistPicPath = path.join(artistDir, "folder.jpg");
     const albumCoverPath = path.join(albumDir, "cover.jpg");
@@ -492,12 +492,13 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
     const lyricPath = track.file_path.replace(/\.flac$/i, ".txt");
     const videoArtistPicPath = path.join(configModule.Config.getVideoPath(), "The Example Artist", "folder.jpg");
 
+    fs.mkdirSync(artistDir, { recursive: true });
     fs.writeFileSync(artistPicPath, "artist image");
     fs.writeFileSync(videoArtistPicPath, "artist image");
     fs.writeFileSync(albumCoverPath, "album image");
     fs.writeFileSync(legacyLyricPath, "plain lyrics without timestamps");
 
-    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100");
 
     assert.equal(result.failed, 0);
     assert.ok(result.skipped >= 3);
@@ -571,7 +572,7 @@ test("canonical albums without any provider match still regenerate album.nfo", a
     dbModule.db.prepare("DELETE FROM AcquisitionPlanSources").run();
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
 
-    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100");
     const track = dbModule.db.prepare(`
         SELECT file_path FROM TrackFiles WHERE file_type = 'track' LIMIT 1
     `).get() as { file_path: string };
@@ -613,14 +614,14 @@ test("metadata backfill writes album.nfo into each monitored edition folder", as
     `).get() as any;
     dbModule.db.prepare(`
         INSERT INTO TrackFiles (
-          artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+          artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
           canonical_track_mbid, canonical_recording_mbid,
           release_group_id, album_edition_id, track_id, recording_id, library_id,
           provider, provider_entity_type, provider_id, library_slot,
           file_path, relative_path, library_root, filename, extension, file_type, quality
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-        original.artist_id,
+        original.artist_metadata_id,
         original.canonical_artist_mbid,
         original.canonical_release_group_mbid,
         "release-mbid-deluxe",
@@ -644,7 +645,7 @@ test("metadata backfill writes album.nfo into each monitored edition folder", as
         "LOSSLESS",
     );
 
-    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100");
     assert.equal(result.failed, 0);
     const originalNfo = path.join(path.dirname(original.file_path), "album.nfo");
     const deluxeNfo = path.join(deluxeDir, "album.nfo");
@@ -672,7 +673,7 @@ test("a stale tracked lyric row does not block adjacent-sidecar recovery", async
     `).get() as any;
     const stalePath = path.join(path.dirname(track.file_path), "deleted-old-name.lrc");
     libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-        artistId: "100",
+        artistId: "artist-mbid-100",
         albumId: "200",
         mediaId: String(track.provider_id),
         trackFileId: track.id,
@@ -694,7 +695,7 @@ test("a stale tracked lyric row does not block adjacent-sidecar recovery", async
     const recoveredPath = track.file_path.replace(/\.flac$/i, ".lrc");
     fs.writeFileSync(recoveredPath, "[00:01.00]Recovered lyric");
 
-    await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100");
     const rows = dbModule.db.prepare(`
         SELECT file_path
         FROM LyricFiles

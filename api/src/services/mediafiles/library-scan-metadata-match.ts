@@ -307,7 +307,7 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
          AND pi.provider = tf.provider
         JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
         JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
-        WHERE tf.artist_id = ?
+        WHERE tf.artist_metadata_id = ?
           AND tf.provider_id IS NOT NULL
           AND ${comparablePathColumnSql("tf.file_path")} LIKE ? || '/%'
     `).all(artistId, normalizedFolder) as Array<{ album_id: string }>;
@@ -386,12 +386,12 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
                     ON artist_match.provider_artist_item_id = credit.artist_item_id
                    AND artist_match.match_state = 'accepted'
                   JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
-                  JOIN Artists managed_artist ON managed_artist.mbid = artist_meta.mbid
+                  JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist_meta.mbid
                   WHERE managed_artist.id = @artistId
                 )
                 OR canonical_release.artist_mbid IN (
                   SELECT managed_artist.mbid
-                  FROM Artists managed_artist
+                  FROM ArtistMetadata managed_artist
                   WHERE managed_artist.id = @artistId
                 )
               )
@@ -468,7 +468,7 @@ function folderCanonicalReleaseMbids(filePath: string, artistId: string): Set<st
     const rows = db.prepare(`
         SELECT DISTINCT tf.canonical_release_mbid AS release_mbid
         FROM TrackFiles tf
-        WHERE tf.artist_id = ?
+        WHERE tf.artist_metadata_id = ?
           AND tf.file_type = 'track'
           AND tf.canonical_release_mbid IS NOT NULL
           AND ${comparablePathColumnSql("tf.file_path")} LIKE ? || '/%'
@@ -499,7 +499,7 @@ function existingTrackFileForOffer(
     return db.prepare(`
         SELECT file_path
         FROM TrackFiles
-        WHERE artist_id = ?
+        WHERE artist_metadata_id = ?
           AND provider = ?
           AND provider_entity_type = 'track'
           AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
@@ -617,7 +617,7 @@ function findSameFolderDuplicate(
          AND pi.entity_type IN ('track', 'video')
          AND tf.provider IS NOT NULL
          AND pi.provider = tf.provider
-        WHERE tf.artist_id = ?
+        WHERE tf.artist_metadata_id = ?
           AND tf.file_type = 'track'
           AND tf.provider_id IS NOT NULL
           AND ${comparablePathColumnSql("tf.file_path")} LIKE ? || '/%'
@@ -674,7 +674,7 @@ function existingTrackFileForCanonical(
         return db.prepare(`
             SELECT file_path
             FROM TrackFiles
-            WHERE artist_id = ?
+            WHERE artist_metadata_id = ?
               AND canonical_recording_mbid = ?
               AND canonical_release_mbid = ?
               AND file_type = 'track'
@@ -686,7 +686,7 @@ function existingTrackFileForCanonical(
     return db.prepare(`
         SELECT file_path
         FROM TrackFiles
-        WHERE artist_id = ?
+        WHERE artist_metadata_id = ?
           AND canonical_recording_mbid = ?
           AND file_type = 'track'
           AND (library_slot IS NULL OR library_slot = ?)
@@ -890,7 +890,7 @@ function matchCatalogTrackByTags(
           edition.title AS edition_title,
           edition.disambiguation AS disambiguation
         FROM Albums album
-        JOIN Artists artist ON artist.mbid = album.artist_mbid
+        JOIN ArtistMetadata artist ON artist.mbid = album.artist_mbid
         JOIN AlbumEditions edition ON edition.release_group_id = album.id
         WHERE artist.id = ?
     `).all(artistId) as Array<{
@@ -1024,7 +1024,7 @@ export function matchAudioFileByMetadata(
                    tf.canonical_release_group_mbid AS album_id,
                    tf.quality, tf.library_slot, tf.file_path
             FROM TrackFiles tf
-            WHERE tf.artist_id = ?
+            WHERE tf.artist_metadata_id = ?
               AND tf.file_type = 'track'
               AND tf.canonical_recording_mbid = ?
               AND tf.canonical_release_mbid = ?
@@ -1159,7 +1159,7 @@ export function matchVideoFileByMetadata(
         || videoStemComparableTitle(String(tags.title || ""));
     if (!comparable) return null;
 
-    const artist = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string } | undefined;
+    const artist = db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as { mbid?: string } | undefined;
     const artistMbid = artist?.mbid ? String(artist.mbid) : "";
 
     type VideoRow = {
@@ -1252,7 +1252,7 @@ export function matchVideoFileByMetadata(
     const existing = db.prepare(`
         SELECT file_path
         FROM TrackFiles
-        WHERE artist_id = ?
+        WHERE artist_metadata_id = ?
           AND file_type = 'video'
           AND canonical_recording_mbid = ?
         ORDER BY verified_at DESC, id DESC

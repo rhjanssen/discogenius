@@ -187,7 +187,7 @@ function loadArtists(prepared: PreparedIdentityInput[]): Map<string, ArtistRow> 
     const marks = ids.map(() => "?").join(",");
     const rows = db.prepare(`
       SELECT CAST(id AS TEXT) AS id, mbid
-      FROM Artists
+      FROM ArtistMetadata
       WHERE id IN (${marks})
     `).all(...ids) as ArtistRow[];
     for (const row of rows) byId.set(String(row.id), row);

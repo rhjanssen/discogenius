@@ -5,14 +5,11 @@ import {
 } from "@tanstack/react-query";
 import type { ArtistContract as Artist } from "@contracts/catalog";
 import { api } from "@/services/api";
-import { useToast } from "@/hooks/useToast";
 import { useCatalogInfiniteResource, type CatalogPage } from "@/hooks/useCatalogInfiniteResource";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import {
   LIBRARY_UPDATED_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
-  dispatchLibraryUpdated,
-  dispatchMonitorStateChanged,
   type MonitorStateChangedDetail,
 } from "@/utils/appEvents";
 
@@ -69,7 +66,6 @@ function updateArtistPages(
 }
 
 export const useArtists = (options?: UseArtistsOptions) => {
-  const { toast } = useToast();
   const queryClient = useQueryClient();
   const enabled = options?.enabled ?? true;
   const queryKey = artistsQueryKey(options ?? {});
@@ -130,41 +126,6 @@ export const useArtists = (options?: UseArtistsOptions) => {
     await query.fetchNextPage();
   }, [enabled, query]);
 
-  const toggleMonitor = useCallback(async (artistId: string, nextState: boolean) => {
-    queryClient.setQueriesData<InfiniteData<ArtistsPage>>(
-      { queryKey: ["artists"] },
-      (current) => updateArtistPages(current, (artist) => (
-        artist.id === artistId
-          ? { ...artist, is_monitored: nextState }
-          : artist
-      )),
-    );
-
-    try {
-      await api.toggleArtistMonitored(artistId, nextState);
-      dispatchMonitorStateChanged({
-        type: "artist",
-        providerId: artistId,
-        monitored: nextState,
-      });
-      dispatchLibraryUpdated();
-    } catch (error) {
-      queryClient.setQueriesData<InfiniteData<ArtistsPage>>(
-        { queryKey: ["artists"] },
-        (current) => updateArtistPages(current, (artist) => (
-          artist.id === artistId
-            ? { ...artist, is_monitored: !nextState }
-            : artist
-        )),
-      );
-      toast({
-        title: "Failed to update monitoring",
-        description: error instanceof Error ? error.message : "Could not update artist monitoring",
-        variant: "destructive",
-      });
-    }
-  }, [queryClient, toast]);
-
   return {
     artists: query.items,
     loading: query.loading,
@@ -174,7 +135,6 @@ export const useArtists = (options?: UseArtistsOptions) => {
     total: query.total,
     loadMore,
     refetch: () => query.refetch(),
-    toggleMonitor,
     hasRefreshError: query.hasRefreshError,
     refreshErrorMessage: query.refreshErrorMessage,
   };

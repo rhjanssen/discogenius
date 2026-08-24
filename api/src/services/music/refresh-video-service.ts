@@ -182,8 +182,14 @@ function backfillPlaceholderVideoTitle(recordingId: number, title: string): void
 }
 
 function getArtistMusicBrainzId(artistId: string): string | null {
-    const row = db.prepare("SELECT mbid FROM Artists WHERE CAST(id AS TEXT) = CAST(? AS TEXT) LIMIT 1")
-        .get(artistId) as { mbid?: string | null } | undefined;
+    const row = db.prepare(`
+        SELECT mbid
+        FROM ArtistMetadata
+        WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+           OR mbid = ?
+           OR foreign_artist_id = ?
+        LIMIT 1
+    `).get(artistId, artistId, artistId) as { mbid?: string | null } | undefined;
     return nullableText(row?.mbid);
 }
 

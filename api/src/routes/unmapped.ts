@@ -11,6 +11,7 @@ import {
     getRequiredInteger,
     getRequiredIntegerArray,
     isRequestValidationError,
+    parseBoundedQueryInteger,
     rejectUnknownKeys,
 } from "../utils/request-validation.js";
 
@@ -67,17 +68,17 @@ function queueCanonicalUnmappedImport(canonical: {
  */
 router.get("/", async (req, res) => {
     try {
-        const limit = req.query.limit ? Number.parseInt(String(req.query.limit), 10) || 100 : undefined;
-        const offset = req.query.offset ? Number.parseInt(String(req.query.offset), 10) || 0 : undefined;
+        const limit = parseBoundedQueryInteger(req.query.limit, 100, { min: 1, max: 500 });
+        const offset = parseBoundedQueryInteger(req.query.offset, 0);
         const result = unmappedFilesService.listFiles(limit, offset);
         const candidates = await unmappedFilesService.getCandidateGuesses(result.items);
 
         res.json({
             ...result,
             candidates,
-            limit: limit ?? null,
-            offset: offset ?? 0,
-            hasMore: limit !== undefined ? (offset ?? 0) + result.items.length < result.total : false,
+            limit,
+            offset,
+            hasMore: offset + result.items.length < result.total,
         });
     } catch (e: any) {
         console.error("[Unmapped API] Error fetching unmapped files:", e);

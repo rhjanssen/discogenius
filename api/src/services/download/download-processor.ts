@@ -156,6 +156,30 @@ export function resolveFallbackProvenance(next: {
     };
 }
 
+/**
+ * Replace every provider-native field on a per-track offer after fallback.
+ * Canonical MBIDs and track positions remain attached to the requested slot,
+ * but no provider album, item, variant or plan-source id may survive from the
+ * provider that failed.
+ */
+export function applyFallbackTrackOffer(
+    current: DownloadTrackOffer,
+    next: RankedDownloadOffer,
+): DownloadTrackOffer {
+    const resolved = resolveFallbackProvenance(next);
+    return {
+        ...current,
+        provider: next.provider,
+        providerTrackId: next.providerId,
+        providerAlbumId: next.providerAlbumId ?? null,
+        providerTrackItemId: next.providerItemId ?? resolved.providerTrackItemId,
+        providerEditionItemId: next.providerAlbumItemId ?? resolved.providerEditionItemId,
+        providerAudioVariantId: next.providerAudioVariantId ?? resolved.providerAudioVariantId,
+        acquisitionPlanSourceId: null,
+        quality: next.quality ?? null,
+    };
+}
+
 export function resetTracksForImportState(
     tracks?: DownloadTrackStateEntry[],
 ): DownloadTrackStateEntry[] | undefined {
@@ -367,6 +391,28 @@ export function formatQueueTimestamp(value: unknown): string {
 
 type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
+
+export function applyFallbackOfferToPayload(
+    payload: DownloadCommand,
+    type: DownloadJobType,
+    offer: RankedDownloadOffer,
+): DownloadCommand {
+    let url: string | null = null;
+    try {
+        url = buildStreamingMediaUrl(type, offer.providerId, offer.provider);
+    } catch {
+        // A URL belongs to the provider that minted it. Clearing it is safer
+        // than describing the fallback provider with the failed provider's URL.
+    }
+    return {
+        ...payload,
+        provider: offer.provider,
+        streamingSource: offer.provider,
+        providerId: offer.providerId,
+        quality: offer.quality ?? null,
+        url,
+    } as unknown as DownloadCommand;
+}
 type DownloadOrImportCommand = DownloadCommand | ImportDownloadCommand;
 
 /** State for a single in-flight download slot (keyed by command id). */
@@ -2225,19 +2271,7 @@ export class DownloadProcessor {
         type: DownloadJobType,
         offer: RankedDownloadOffer,
     ): DownloadCommand {
-        let url: string | null | undefined = payload.url;
-        try {
-            url = buildStreamingMediaUrl(type, offer.providerId, offer.provider);
-        } catch {
-            // Keep previous URL when the provider cannot build one.
-        }
-        return {
-            ...payload,
-            provider: offer.provider,
-            providerId: offer.providerId,
-            quality: offer.quality ?? payload.quality,
-            url: url ?? payload.url,
-        } as DownloadCommand;
+        return applyFallbackOfferToPayload(payload, type, offer);
     }
 
     private markFallbackSuccessWarning(
@@ -2381,17 +2415,7 @@ export class DownloadProcessor {
                         tried.add(makeOfferAttemptKey(next.provider, next.providerId));
                         fallbackPrimary ||= primaryOfferProvider;
                         fallbackUsed = next.provider;
-                        offer = {
-                            ...offer,
-                            provider: next.provider,
-                            providerTrackId: next.providerId,
-                            providerAlbumId: next.providerAlbumId ?? offer.providerAlbumId,
-                            providerTrackItemId: next.providerItemId,
-                            providerEditionItemId: next.providerAlbumItemId ?? null,
-                            providerAudioVariantId: next.providerAudioVariantId ?? null,
-                            acquisitionPlanSourceId: null,
-                            quality: next.quality ?? offer.quality,
-                        };
+                        offer = applyFallbackTrackOffer(offer, next);
                         continue;
                     }
 
@@ -2506,20 +2530,7 @@ export class DownloadProcessor {
                         tried.add(makeOfferAttemptKey(next.provider, next.providerId));
                         fallbackPrimary ||= primaryOfferProvider;
                         fallbackUsed = next.provider;
-                        offer = {
-                            ...offer,
-                            provider: next.provider,
-                            providerTrackId: next.providerId,
-                            providerAlbumId: next.providerAlbumId ?? offer.providerAlbumId,
-                            quality: next.quality ?? offer.quality,
-                            // Provenance describes the file that was actually
-                            // downloaded, so it moves with the fallback. Carrying
-                            // the original provider's item, edition and variant
-                            // ids made the offer describe two different tracks at
-                            // once, and the import refused it — after the audio
-                            // had already been fetched and filed.
-                            ...resolveFallbackProvenance(next),
-                        };
+                        offer = applyFallbackTrackOffer(offer, next);
                         emitProgress({
                             state: "downloading",
                             statusMessage: `Falling back to ${formatProviderLabel(next.provider)}…`,

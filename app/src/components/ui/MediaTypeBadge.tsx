@@ -1,6 +1,5 @@
 import React from 'react';
 import { Badge, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
-import { useTheme } from '@/providers/themeContext';
 
 export type MediaTypeBadgeKind = 'album' | 'album-group' | 'track' | 'video';
 
@@ -58,18 +57,15 @@ export const MediaTypeBadge: React.FC<MediaTypeBadgeProps> = ({
     size = 'small',
 }) => {
     const styles = useStyles();
-    const { isDarkMode } = useTheme();
     const accent = getAccentColor(kind);
     const accentBackground = getAccentBackground(kind);
-    const badgeOpacity = isDarkMode ? 72 : 82;
-    const backgroundColor = `color-mix(in srgb, ${accentBackground} ${badgeOpacity}%, transparent)`;
 
     return (
         <Badge
             appearance="tint"
             size={size}
             className={mergeClasses(styles.base, className)}
-            style={{ backgroundColor, color: accent }}
+            style={{ backgroundColor: accentBackground, color: accent }}
         >
             {label || getDefaultLabel(kind)}
         </Badge>

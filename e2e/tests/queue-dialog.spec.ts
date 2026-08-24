@@ -31,8 +31,8 @@ async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
     },
     statusOverview: {
       activity: {
-        pending: activityItems.filter((item: any) => item?.status === 'pending').length,
-        processing: activityItems.filter((item: any) => item?.status === 'running' || item?.status === 'processing').length,
+        queued: activityItems.filter((item: any) => item?.status === 'queued').length,
+        started: activityItems.filter((item: any) => item?.status === 'started').length,
         history: historyItems.length,
       },
       taskQueueStats: [],
@@ -67,13 +67,13 @@ async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
     },
   });
 
-  await page.route('**/api/unmapped**', async (route) => {
+  await page.route('**/api/v1/unmapped**', async (route) => {
     await route.fulfill({ json: options?.unmapped || [] });
   });
 
   if (typeof options?.retryJobId === 'number') {
     await page.route(
-      `**/api/queue/${options.retryJobId}/retry`,
+      `**/api/v1/queue/${options.retryJobId}/retry`,
       async (route) => {
         await route.fulfill({ json: options?.retryResponse || { message: 'Job queued for retry' } });
       },
@@ -92,27 +92,27 @@ function createActivityFixture() {
     },
     status: {
       activity: {
-        pending: 1,
-        processing: 3,
+        queued: 1,
+        started: 3,
         history: 2,
       },
       taskQueueStats: [
-        { type: 'ImportDownload', status: 'processing', count: 1 },
-        { type: 'RefreshArtist', status: 'processing', count: 1 },
-        { type: 'MissingAlbumSearch', status: 'running', count: 1 },
-        { type: 'DownloadAlbum', status: 'pending', count: 1 },
+        { type: 'ImportDownload', status: 'started', count: 1 },
+        { type: 'RefreshArtist', status: 'started', count: 1 },
+        { type: 'MissingAlbumSearch', status: 'started', count: 1 },
+        { type: 'DownloadAlbum', status: 'queued', count: 1 },
       ],
       commandStats: {
-        downloads: { pending: 1, processing: 1, failed: 0 },
-        scans: { pending: 0, processing: 1, failed: 0 },
-        other: { pending: 0, processing: 1, failed: 0 },
+        downloads: { queued: 1, started: 1, failed: 0 },
+        scans: { queued: 0, started: 1, failed: 0 },
+        other: { queued: 0, started: 1, failed: 0 },
       },
     },
     activityItems: [
       {
         id: 1,
         type: 'ImportDownload',
-        status: 'running',
+        status: 'started',
         description: 'Album: Around the World by Daft Punk',
         startTime: now - 60_000,
         payload: { type: 'album', reason: 'upgrade', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
@@ -120,21 +120,21 @@ function createActivityFixture() {
       {
         id: 2,
         type: 'RefreshArtist',
-        status: 'processing',
+        status: 'started',
         description: 'Daft Punk',
         startTime: now - 5_000,
       },
       {
         id: 3,
         type: 'MissingAlbumSearch',
-        status: 'running',
+        status: 'started',
         description: 'Daft Punk',
         startTime: now - 30_000,
       },
       {
         id: 6,
         type: 'DownloadAlbum',
-        status: 'pending',
+        status: 'queued',
         description: 'Queued album: Discovery by Daft Punk',
         queuePosition: 1,
         startTime: now - 15_000,
@@ -162,7 +162,7 @@ function createActivityFixture() {
     historyItems: [
       {
         id: 90,
-        tidalId: 'track-history-90',
+        providerId: 'track-history-90',
         type: 'track',
         status: 'completed',
         progress: 100,
@@ -179,7 +179,7 @@ function createActivityFixture() {
       },
       {
         id: 91,
-        tidalId: 'album-history-91',
+        providerId: 'album-history-91',
         type: 'album',
         status: 'failed',
         progress: 100,
@@ -266,7 +266,7 @@ function createFailedImportSuppressedFixture() {
         error: 'Failed to move files into the library',
         payload: {
           type: 'album',
-          tidalId: 'tidal-album-123',
+          providerId: 'tidal-album-123',
           originalJobId: 120,
           resolved: { title: 'Around the World', artist: 'Daft Punk' },
         },
@@ -276,12 +276,12 @@ function createFailedImportSuppressedFixture() {
       {
         id: 178,
         type: 'DownloadAlbum',
-        status: 'pending',
+        status: 'queued',
         description: 'Queued album: Around the World by Daft Punk',
         startTime: now - 5_000,
         payload: {
           type: 'album',
-          tidalId: 'tidal-album-123',
+          providerId: 'tidal-album-123',
           title: 'Around the World',
           artist: 'Daft Punk',
         },
@@ -313,7 +313,7 @@ function createFailedAlbumQueueFixture() {
         {
           id: 501,
           url: 'https://tidal.com/album/album-501',
-          tidalId: 'album-501',
+          providerId: 'album-501',
           type: 'album',
           status: 'failed',
           progress: 62,
@@ -343,7 +343,7 @@ function createPendingPriorityQueueFixture() {
         history: 0,
       },
       taskQueueStats: [
-        { type: 'DownloadAlbum', status: 'pending', count: 2 },
+        { type: 'DownloadAlbum', status: 'queued', count: 2 },
       ],
       commandStats: {
         downloads: { pending: 2, processing: 0, failed: 0 },
@@ -354,9 +354,9 @@ function createPendingPriorityQueueFixture() {
         {
           id: 802,
           url: 'https://tidal.com/album/album-802',
-          tidalId: 'album-802',
+          providerId: 'album-802',
           type: 'album',
-          status: 'pending',
+          status: 'queued',
           progress: 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -369,9 +369,9 @@ function createPendingPriorityQueueFixture() {
         {
           id: 803,
           url: 'https://tidal.com/album/album-803',
-          tidalId: 'album-803',
+          providerId: 'album-803',
           type: 'album',
-          status: 'pending',
+          status: 'queued',
           progress: 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -398,7 +398,7 @@ function createPendingOnlyQueueFixture() {
         history: 0,
       },
       taskQueueStats: [
-        { type: 'DownloadAlbum', status: 'pending', count: 1 },
+        { type: 'DownloadAlbum', status: 'queued', count: 1 },
       ],
       commandStats: {
         downloads: { pending: 1, processing: 0, failed: 0 },
@@ -409,9 +409,9 @@ function createPendingOnlyQueueFixture() {
         {
           id: 901,
           url: 'https://tidal.com/album/album-901',
-          tidalId: 'album-901',
+          providerId: 'album-901',
           type: 'album',
-          status: 'pending',
+          status: 'queued',
           progress: 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -440,8 +440,8 @@ function createMixedLiveQueueFixture() {
         history: 1,
       },
       taskQueueStats: [
-        { type: 'DownloadAlbum', status: 'processing', count: 1 },
-        { type: 'DownloadAlbum', status: 'pending', count: 2 },
+        { type: 'DownloadAlbum', status: 'started', count: 1 },
+        { type: 'DownloadAlbum', status: 'queued', count: 2 },
       ],
       commandStats: {
         downloads: { pending: 2, processing: 1, failed: 0 },
@@ -452,7 +452,7 @@ function createMixedLiveQueueFixture() {
         {
           id: 1001,
           url: 'https://tidal.com/album/album-1001',
-          tidalId: 'album-1001',
+          providerId: 'album-1001',
           type: 'album',
           status: 'downloading',
           progress: 48,
@@ -483,9 +483,9 @@ function createMixedLiveQueueFixture() {
         {
           id: 1002,
           url: 'https://tidal.com/album/album-1002',
-          tidalId: 'album-1002',
+          providerId: 'album-1002',
           type: 'album',
-          status: 'pending',
+          status: 'queued',
           progress: 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -498,9 +498,9 @@ function createMixedLiveQueueFixture() {
         {
           id: 1003,
           url: 'https://tidal.com/album/album-1003',
-          tidalId: 'album-1003',
+          providerId: 'album-1003',
           type: 'album',
-          status: 'pending',
+          status: 'queued',
           progress: 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -517,7 +517,7 @@ function createMixedLiveQueueFixture() {
     historyItems: [
       {
         id: 190,
-        tidalId: 'album-history-190',
+        providerId: 'album-history-190',
         type: 'album',
         status: 'completed',
         progress: 100,
@@ -546,9 +546,9 @@ function createBackendOrderedMixedQueueFixture() {
         history: 0,
       },
       taskQueueStats: [
-        { type: 'DownloadAlbum', status: 'pending', count: 1 },
-        { type: 'ImportDownload', status: 'processing', count: 1 },
-        { type: 'DownloadAlbum', status: 'processing', count: 1 },
+        { type: 'DownloadAlbum', status: 'queued', count: 1 },
+        { type: 'ImportDownload', status: 'started', count: 1 },
+        { type: 'DownloadAlbum', status: 'started', count: 1 },
       ],
       commandStats: {
         downloads: { pending: 1, processing: 2, failed: 0 },
@@ -559,9 +559,9 @@ function createBackendOrderedMixedQueueFixture() {
         {
           id: 1201,
           url: 'https://tidal.com/album/album-1201',
-          tidalId: 'album-1201',
+          providerId: 'album-1201',
           type: 'album',
-          status: 'pending',
+          status: 'queued',
           progress: 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -575,9 +575,9 @@ function createBackendOrderedMixedQueueFixture() {
         {
           id: 1202,
           url: 'https://tidal.com/album/album-1202',
-          tidalId: 'album-1202',
+          providerId: 'album-1202',
           type: 'album',
-          status: 'processing',
+          status: 'started',
           stage: 'import',
           state: 'importing',
           progress: 100,
@@ -594,7 +594,7 @@ function createBackendOrderedMixedQueueFixture() {
         {
           id: 1203,
           url: 'https://tidal.com/album/album-1203',
-          tidalId: 'album-1203',
+          providerId: 'album-1203',
           type: 'album',
           status: 'downloading',
           stage: 'download',
@@ -628,8 +628,8 @@ function createImportTransitionQueueFixture() {
         history: 0,
       },
       taskQueueStats: [
-        { type: 'DownloadAlbum', status: 'processing', count: 2 },
-        { type: 'DownloadAlbum', status: 'pending', count: 1 },
+        { type: 'DownloadAlbum', status: 'started', count: 2 },
+        { type: 'DownloadAlbum', status: 'queued', count: 1 },
       ],
       commandStats: {
         downloads: { pending: 1, processing: 2, failed: 0 },
@@ -640,7 +640,7 @@ function createImportTransitionQueueFixture() {
         {
           id: 1301,
           url: 'https://tidal.com/album/album-1301',
-          tidalId: 'album-1301',
+          providerId: 'album-1301',
           type: 'album',
           status: 'downloading',
           stage: 'download',
@@ -659,7 +659,7 @@ function createImportTransitionQueueFixture() {
         {
           id: 1302,
           url: 'https://tidal.com/album/album-1302',
-          tidalId: 'album-1302',
+          providerId: 'album-1302',
           type: 'album',
           status: 'downloading',
           stage: 'download',
@@ -678,9 +678,9 @@ function createImportTransitionQueueFixture() {
         {
           id: 1303,
           url: 'https://tidal.com/album/album-1303',
-          tidalId: 'album-1303',
+          providerId: 'album-1303',
           type: 'album',
-          status: 'pending',
+          status: 'queued',
           progress: 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -709,8 +709,8 @@ function createImportSubitemFixture() {
         history: 0,
       },
       taskQueueStats: [
-        { type: 'ImportDownload', status: 'processing', count: 1 },
-        { type: 'DownloadTrack', status: 'pending', count: 1 },
+        { type: 'ImportDownload', status: 'started', count: 1 },
+        { type: 'DownloadTrack', status: 'queued', count: 1 },
       ],
       commandStats: {
         downloads: { pending: 1, processing: 1, failed: 0 },
@@ -721,9 +721,9 @@ function createImportSubitemFixture() {
         {
           id: 1401,
           url: 'https://tidal.com/track/track-1401',
-          tidalId: 'track-1401',
+          providerId: 'track-1401',
           type: 'track',
-          status: 'processing',
+          status: 'started',
           stage: 'import',
           state: 'importing',
           progress: 100,
@@ -740,9 +740,9 @@ function createImportSubitemFixture() {
         {
           id: 1402,
           url: 'https://tidal.com/track/track-1402',
-          tidalId: 'track-1402',
+          providerId: 'track-1402',
           type: 'track',
-          status: 'pending',
+          status: 'queued',
           stage: 'download',
           progress: 0,
           created_at: nowIso,
@@ -783,7 +783,7 @@ function createQueueHistoryNavigationFixture() {
     historyItems: [
       {
         id: 290,
-        tidalId: 'track-history-1',
+        providerId: 'track-history-1',
         type: 'track',
         status: 'completed',
         progress: 100,
@@ -860,7 +860,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await stubDashboardApis(page);
 
     page.on('response', (response) => {
-      if (response.url().includes('/api/status')) {
+      if (response.url().includes('/api/v1/status')) {
         statusCalls.push(response.url());
       }
     });
@@ -929,7 +929,7 @@ test.describe('Dashboard queue and activity tabs', () => {
       activityItems: fixture.activityHistoryItems,
     });
 
-    await page.route('**/api/activity**', async (route) => {
+    await page.route('**/api/v1/history/activity**', async (route) => {
       const url = new URL(route.request().url());
       const statuses = (url.searchParams.get('statuses') || '').split(',').filter(Boolean);
 
@@ -973,7 +973,7 @@ test.describe('Dashboard queue and activity tabs', () => {
         error: 'Failed to move files into the library',
         payload: {
           type: 'album',
-          tidalId: 'tidal-album-456',
+          providerId: 'tidal-album-456',
           originalJobId: 220,
           resolved: { title: 'Around the World', artist: 'Daft Punk' },
         },
@@ -993,7 +993,7 @@ test.describe('Dashboard queue and activity tabs', () => {
       },
     });
 
-    await page.route('**/api/activity**', async (route) => {
+    await page.route('**/api/v1/history/activity**', async (route) => {
       const url = new URL(route.request().url());
       const statuses = (url.searchParams.get('statuses') || '').split(',').filter(Boolean);
       const isHistoryRequest = statuses.includes('completed') || statuses.includes('failed') || statuses.includes('cancelled');
@@ -1064,14 +1064,14 @@ test.describe('Dashboard queue and activity tabs', () => {
       // @ts-expect-error test-only EventSource mock
       window.EventSource = MockEventSource;
     }, {
-      targetUrlPart: '/api/queue/progress-stream',
+      targetUrlPart: '/api/v1/queue/progress-stream',
       mockEvents: [
         { type: 'status', data: { isPaused: false, stats: [] } },
         {
           type: 'progress-batch',
           data: [{
             jobId: 501,
-            tidalId: 'album-501',
+            providerId: 'album-501',
             type: 'album',
             title: 'From A Bakermat Point Of View',
             artist: 'Bakermat',
@@ -1097,7 +1097,7 @@ test.describe('Dashboard queue and activity tabs', () => {
           type: 'failed',
           data: {
             jobId: 501,
-            tidalId: 'album-501',
+            providerId: 'album-501',
             type: 'album',
             error: 'Network timeout while downloading album',
           },
@@ -1159,14 +1159,14 @@ test.describe('Dashboard queue and activity tabs', () => {
       // @ts-expect-error test-only EventSource mock
       window.EventSource = MockEventSource;
     }, {
-      targetUrlPart: '/api/queue/progress-stream',
+      targetUrlPart: '/api/v1/queue/progress-stream',
       mockEvents: [
         { type: 'status', data: { isPaused: false, stats: [] } },
         {
           type: 'started',
           data: {
             jobId: 901,
-            tidalId: 'album-901',
+            providerId: 'album-901',
             type: 'album',
             title: 'Discovery',
             artist: 'Daft Punk',
@@ -1177,7 +1177,7 @@ test.describe('Dashboard queue and activity tabs', () => {
           type: 'progress-batch',
           data: [{
             jobId: 901,
-            tidalId: 'album-901',
+            providerId: 'album-901',
             type: 'album',
             title: 'Discovery',
             artist: 'Daft Punk',
@@ -1220,7 +1220,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('queue history row navigates to the album page when track history includes album context', async ({ page }) => {
     await stubDashboardApis(page, createQueueHistoryNavigationFixture());
 
-    await page.route('**/api/albums/album-history-1/page', async (route) => {
+    await page.route('**/api/v1/album/album-history-1/page', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -1253,7 +1253,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
-    const historyRow = page.locator('section[aria-label="Queue history"]').getByRole('link', { name: /Open Digital Love/i });
+    const historyRow = page.locator('section[aria-label="Queue history"]').getByRole('link', { name: /Digital Love/i });
 
     await expect(historyRow).toBeVisible();
     await historyRow.click();
@@ -1331,11 +1331,11 @@ test.describe('Dashboard queue and activity tabs', () => {
     const liveGroups = liveQueue.locator('[data-queue-group-id]');
 
     await expect(liveGroups).toHaveCount(3);
-    await expect(liveGroups.nth(0)).toContainText('Bravo importing');
-    await expect(liveGroups.nth(1)).toContainText('Charlie downloading');
-    await expect(liveGroups.nth(2)).toContainText('Alpha pending');
+    await expect(liveGroups.nth(0)).toContainText('Alpha pending');
+    await expect(liveGroups.nth(1)).toContainText('Bravo importing');
+    await expect(liveGroups.nth(2)).toContainText('Charlie downloading');
     await expect(liveQueue.getByRole('button', { name: /Move Alpha pending up/i })).toBeVisible();
-    await expect(liveGroups.nth(0).getByText(/^importing$/i)).toBeVisible();
+    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
   });
 
   test('queue tab keeps an importing row in place when a later item starts downloading', async ({ page }) => {
@@ -1381,7 +1381,7 @@ test.describe('Dashboard queue and activity tabs', () => {
       // @ts-expect-error test-only EventSource mock
       window.EventSource = MockEventSource;
     }, {
-      targetUrlPart: '/api/queue/progress-stream',
+      targetUrlPart: '/api/v1/queue/progress-stream',
       mockEvents: [
         { delayMs: 0, type: 'status', data: { isPaused: false, stats: [] } },
         {
@@ -1389,7 +1389,7 @@ test.describe('Dashboard queue and activity tabs', () => {
           type: 'progress-batch',
           data: [{
             jobId: 1302,
-            tidalId: 'album-1302',
+            providerId: 'album-1302',
             type: 'album',
             title: 'Import stays second',
             artist: 'Queue Order',
@@ -1403,7 +1403,7 @@ test.describe('Dashboard queue and activity tabs', () => {
           type: 'started',
           data: {
             jobId: 1303,
-            tidalId: 'album-1303',
+            providerId: 'album-1303',
             type: 'album',
             title: 'Next download',
             artist: 'Queue Order',
@@ -1415,7 +1415,7 @@ test.describe('Dashboard queue and activity tabs', () => {
           type: 'progress-batch',
           data: [{
             jobId: 1303,
-            tidalId: 'album-1303',
+            providerId: 'album-1303',
             type: 'album',
             title: 'Next download',
             artist: 'Queue Order',
@@ -1433,25 +1433,25 @@ test.describe('Dashboard queue and activity tabs', () => {
     const liveGroups = page.locator('section[aria-label="Active"] [data-queue-group-id]');
 
     await expect(liveGroups).toHaveCount(3);
-    await expect(liveGroups.nth(0)).toContainText('Import stays second');
-    await expect(liveGroups.nth(1)).toContainText('Anchor download');
+    await expect(liveGroups.nth(0)).toContainText('Anchor download');
+    await expect(liveGroups.nth(1)).toContainText('Import stays second');
     await expect(liveGroups.nth(2)).toContainText('Next download');
 
     await page.waitForTimeout(500);
 
-    await expect(liveGroups.nth(0)).toContainText('Import stays second');
-    await expect(liveGroups.nth(0).getByText(/^importing$/i)).toBeVisible();
-    await expect(liveGroups.nth(1)).toContainText('Anchor download');
+    await expect(liveGroups.nth(0)).toContainText('Anchor download');
+    await expect(liveGroups.nth(1)).toContainText('Import stays second');
+    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
     await expect(liveGroups.nth(2)).toContainText('Next download');
   });
 
-  test('queue tab marks the actively importing subitem with a spinner instead of a status label', async ({ page }) => {
+  test('queue tab marks the actively importing track row with a spinner instead of a status label', async ({ page }) => {
     await stubDashboardApis(page, createImportSubitemFixture());
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     const importTrackRow = page
-      .locator('section[aria-label="Active"] [data-queue-subitem-row="true"]')
+      .locator('section[aria-label="Active"] [data-queue-group-id]')
       .filter({ hasText: 'Import track alpha' })
       .first();
 

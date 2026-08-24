@@ -47,7 +47,8 @@ async function stubArtistPlaybackPage(
     },
   });
 
-  await page.route(`**/api/artists/${artistId}/page-db`, async (route) => {
+  await page.route(`**/api/v1/artist/${artistId}/page*`, async (route) => {
+    const section = new URL(route.request().url()).searchParams.get('section');
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -58,7 +59,7 @@ async function stubArtistPlaybackPage(
           is_monitored: true,
           files: [],
         },
-        rows: [
+        rows: section === 'tracks' ? [
           {
             modules: [
               {
@@ -70,7 +71,7 @@ async function stubArtistPlaybackPage(
               },
             ],
           },
-        ],
+        ] : [],
         album_count: 1,
         monitored_album_count: 1,
         needs_scan: false,
@@ -78,7 +79,7 @@ async function stubArtistPlaybackPage(
     });
   });
 
-  await page.route(`**/api/artists/${artistId}/activity`, async (route) => {
+  await page.route(`**/api/v1/artist/${artistId}/activity`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -113,7 +114,7 @@ test.describe('Playback', () => {
       is_monitored: true,
     });
 
-    await page.route(`**/api/tracks/${trackId}/files`, async (route) => {
+    await page.route(`**/api/v1/track/${trackId}/files`, async (route) => {
       getTrackFilesRequests += 1;
       await route.fulfill({
         status: 200,
@@ -131,7 +132,7 @@ test.describe('Playback', () => {
       });
     });
 
-    await page.route(`**/api/library-files/stream/321**`, async (route) => {
+    await page.route(`**/api/v1/mediaFile/stream/321**`, async (route) => {
       streamRequests += 1;
       await route.fulfill({
         status: 200,
@@ -160,7 +161,7 @@ test.describe('Playback', () => {
     const audio = page.locator('audio').first();
     await expect(audio).toBeAttached();
     await expect.poll(() => getTrackFilesRequests).toBe(1);
-    await expect.poll(async () => audio.evaluate((element) => (element as HTMLAudioElement).src)).toContain('/api/library-files/stream/321');
+    await expect.poll(async () => audio.evaluate((element) => (element as HTMLAudioElement).src)).toContain('/api/v1/mediaFile/stream/321');
     await expect.poll(() => signRequests).toBe(0);
     await expect.poll(() => streamRequests).toBeGreaterThan(0);
     await page.waitForTimeout(800);
@@ -199,7 +200,7 @@ test.describe('Playback', () => {
       ],
     });
 
-    await page.route('**/api/library-files/stream/654**', async (route) => {
+    await page.route('**/api/v1/mediaFile/stream/654**', async (route) => {
       await route.fulfill({
         status: 500,
         contentType: 'application/json',

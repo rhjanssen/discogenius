@@ -37,6 +37,15 @@ import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-rele
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { providerAudioVariants } from "./refresh-album-service.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
+import {
+    buildLibraryArtistMonitoredExistsSql,
+    isArtistLibraryMonitored,
+    loadArtistMetadataIdentity,
+    resolveArtistMetadataId,
+    stampArtistLibraryPath,
+    stampArtistLibraryRefresh,
+    syncLibraryArtistMonitoring,
+} from "./managed-artists.js";
 import { CurationService } from "./curation-service.js";
 import {
     completeBulkTrackList,
@@ -134,8 +143,8 @@ export function createMatchingYield(): () => Promise<void> {
 
 export class RefreshArtistService {
     private static getArtistMusicBrainzId(artistId: string): string | null {
-        const row = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
-        return row?.mbid ? String(row.mbid) : null;
+        const identity = loadArtistMetadataIdentity(artistId);
+        return identity?.mbid ? String(identity.mbid) : null;
     }
 
     private static async syncArtistMusicBrainzCatalog(
@@ -226,20 +235,35 @@ export class RefreshArtistService {
 
         const placeholders = uniqueMbids.map(() => "?").join(", ");
         const rows = db.prepare(`
-            SELECT id, mbid, name, monitored, last_scanned
-            FROM Artists
-            WHERE mbid IN (${placeholders})
+            SELECT a.id, a.mbid, a.name,
+                   (
+                     SELECT MAX(membership.metadata_last_checked_at)
+                     FROM LibraryArtists membership
+                     WHERE membership.artist_metadata_id = a.id
+                   ) AS last_scanned
+            FROM ArtistMetadata a
+            WHERE a.mbid IN (${placeholders})
+              AND NOT EXISTS (
+                SELECT 1 FROM LibraryArtists membership
+                WHERE membership.artist_metadata_id = a.id
+                  AND membership.metadata_last_checked_at IS NOT NULL
+              )
+              AND NOT ${buildLibraryArtistMonitoredExistsSql("a")}
         `).all(...uniqueMbids) as Array<{
-            id: string; mbid: string; name: string | null; monitored: number; last_scanned: string | null;
+            id: string; mbid: string; name: string | null; last_scanned: string | null;
         }>;
 
-        const pending = rows.filter((row) => !row.last_scanned && !row.monitored);
+        const pending = rows;
         if (pending.length === 0) return;
 
         try {
             const { queueCreditedArtistHydrationBatch } = await import("./artist-workflow.js");
             const result = queueCreditedArtistHydrationBatch(pending.map((row) => ({
-                artistId: String(row.id),
+                // RefreshArtist accepts a MusicBrainz identity. Passing the
+                // local ArtistMetadata integer made the provider fallback
+                // treat it as a TIDAL artist id, so Activity paired one
+                // credited artist's name with a different provider artist.
+                artistId: row.mbid,
                 artistName: row.name || row.mbid,
             })));
             console.log(
@@ -286,12 +310,10 @@ export class RefreshArtistService {
             throw new Error(`Invalid MusicBrainz artist id: ${artistMbid}`);
         }
 
-        const existing = db.prepare(
-            "SELECT id, monitored, path FROM Artists WHERE id = ? OR mbid = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
-        ).get(artistMbid, artistMbid, artistMbid) as { id: string | number; monitored?: number | null; path?: string | null } | undefined;
-        const localArtistId = existing?.id != null ? String(existing.id) : artistMbid;
-        const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitored);
-        const shouldMonitorInt = shouldMonitor ? 1 : 0;
+        const existingIdentity = loadArtistMetadataIdentity(artistMbid);
+        const shouldMonitor = options.monitorArtist === true
+            ? true
+            : (existingIdentity ? Boolean(existingIdentity.in_library) : false);
         const artistData = await servarrMetadata.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
         const providerArtworkRows = db.prepare(`
@@ -338,93 +360,48 @@ export class RefreshArtistService {
             preferredCoverTypes: ["Fanart"],
         }) || posterUrl;
         const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
-            artistId: localArtistId,
+            artistId: artistMbid,
             artistName,
             artistMbId: artistMbid,
             artistDisambiguation: artistData.disambiguation || null,
-            existingPath: existing?.path ?? null,
+            existingPath: existingIdentity?.path ?? null,
         });
 
-        if (artistName === "Various Artists" || localArtistId === "0") {
+        if (artistName === "Various Artists" || artistMbid === "0") {
             console.warn(`[RefreshArtistService] Cannot monitor 'Various Artists' (MBID: ${artistMbid}). Skipping.`);
             throw new Error("Cannot monitor 'Various Artists'. Please monitor specific compilations instead.");
         }
 
-        if (!existing) {
-            db.prepare(`
-                INSERT OR IGNORE INTO Artists (
-                    id, name, picture, cover_image_url, popularity, artist_types, artist_roles,
-                    mbid, musicbrainz_status, musicbrainz_last_checked, musicbrainz_match_method,
-                    bio_text, bio_source,
-                    monitored, monitored_at, user_date_added, path
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', CURRENT_TIMESTAMP, 'musicbrainz-metadata',
-                    ?, 'musicbrainz', ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, ?)
-            `).run(
-                localArtistId,
-                artistName,
-                posterUrl,
-                fanartUrl,
-                maxPopularity,
-                JSON.stringify([artistData.type || "Artist"]),
-                JSON.stringify([]),
-                artistMbid,
-                artistData.overview || null,
-                shouldMonitorInt,
-                shouldMonitorInt,
-                null,
-                resolvedArtistFolder.path,
-            );
-        } else {
-            db.prepare(`
-                UPDATE Artists SET
-                    name = ?,
-                    picture = COALESCE(?, picture),
-                    cover_image_url = COALESCE(?, cover_image_url),
-                    popularity = ?,
-                    artist_types = ?,
-                    artist_roles = COALESCE(artist_roles, ?),
-                    mbid = ?,
-                    musicbrainz_status = 'verified',
-                    musicbrainz_last_checked = CURRENT_TIMESTAMP,
-                    musicbrainz_match_method = 'musicbrainz-metadata',
-                    bio_text = COALESCE(NULLIF(TRIM(bio_text), ''), ?),
-                    bio_source = CASE
-                        WHEN (bio_text IS NULL OR TRIM(bio_text) = '') AND ? IS NOT NULL THEN 'musicbrainz'
-                        ELSE bio_source
-                    END,
-                    monitored = ?,
-                    monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
-                    path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END
-                WHERE id = ?
-            `).run(
-                artistName,
-                posterUrl,
-                fanartUrl,
-                maxPopularity,
-                JSON.stringify([artistData.type || "Artist"]),
-                JSON.stringify([]),
-                artistMbid,
-                artistData.overview || null,
-                artistData.overview || null,
-                shouldMonitorInt,
-                shouldMonitorInt,
-                resolvedArtistFolder.shouldReplaceExistingPath ? 1 : 0,
-                resolvedArtistFolder.path,
-                resolvedArtistFolder.path,
-                localArtistId,
-            );
-        }
-
         db.prepare(`
             UPDATE ArtistMetadata SET
+                name = ?,
                 picture = COALESCE(?, picture),
                 cover_image_url = COALESCE(?, cover_image_url),
-                popularity = ?
+                popularity = ?,
+                overview = COALESCE(NULLIF(TRIM(overview), ''), ?),
+                type = COALESCE(?, type),
+                updated_at = CURRENT_TIMESTAMP
             WHERE mbid = ?
-        `).run(posterUrl, fanartUrl, maxPopularity, artistMbid);
+        `).run(
+            artistName,
+            posterUrl,
+            fanartUrl,
+            maxPopularity,
+            artistData.overview || null,
+            artistData.type || null,
+            artistMbid,
+        );
 
-        return localArtistId;
+        const metadataId = resolveArtistMetadataId(artistMbid);
+        if (metadataId != null && resolvedArtistFolder.path) {
+            stampArtistLibraryPath(metadataId, resolvedArtistFolder.path, resolvedArtistFolder.shouldReplaceExistingPath);
+        }
+
+        if (shouldMonitor) {
+            syncLibraryArtistMonitoring(artistMbid, true);
+        }
+
+        return artistMbid;
     }
 
     private static async addSupplementalProviderOffers(
@@ -1138,29 +1115,17 @@ export class RefreshArtistService {
      */
 
     private static reapplyArtistPathAfterIdentity(artistId: string): void {
-        const artist = db.prepare(`
-            SELECT Artists.id, Artists.name, Artists.mbid, Artists.path, ArtistMetadata.disambiguation
-            FROM Artists
-            LEFT JOIN ArtistMetadata ON ArtistMetadata.mbid = Artists.mbid
-            WHERE Artists.id = ?
-        `).get(artistId) as {
-            id: number | string;
-            name: string | null;
-            mbid: string | null;
-            path: string | null;
-            disambiguation: string | null;
-        } | undefined;
-
-        if (!artist?.name || !artist.mbid) {
+        const identity = loadArtistMetadataIdentity(artistId);
+        if (!identity?.name || !identity.mbid) {
             return;
         }
 
-        const existingPath = String(artist.path || "").trim();
+        const existingPath = String(identity.path || "").trim();
         if (existingPath && !shouldReapplyArtistPathTemplate({
             artistId,
-            artistName: artist.name,
-            artistMbId: artist.mbid,
-            artistDisambiguation: artist.disambiguation,
+            artistName: identity.name,
+            artistMbId: identity.mbid,
+            artistDisambiguation: null,
             existingPath,
         })) {
             return;
@@ -1168,11 +1133,11 @@ export class RefreshArtistService {
 
         const nextPath = resolveArtistFolderFromTemplate({
             artistId,
-            artistName: artist.name,
-            artistMbId: artist.mbid,
-            artistDisambiguation: artist.disambiguation,
+            artistName: identity.name,
+            artistMbId: identity.mbid,
+            artistDisambiguation: null,
         });
-        db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(nextPath, artistId);
+        stampArtistLibraryPath(identity.id, nextPath, true);
     }
 
     /**
@@ -1184,17 +1149,14 @@ export class RefreshArtistService {
      * artist can't pile up.
      */
     static needsInitialRefresh(artistId: string): boolean {
-        const row = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?")
-            .get(artistId) as { last_scanned?: string | null } | undefined;
-        return !row || row.last_scanned == null;
+        const identity = loadArtistMetadataIdentity(artistId);
+        return !identity || identity.last_scanned == null;
     }
 
     static async refreshArtistMetadata(artistId: string, options: RefreshOptions = {}): Promise<void> {
         console.log(`[RefreshArtistService] refreshArtistMetadata for ${artistId}`);
 
-        const existing = db.prepare(
-            "SELECT id, monitored, name, mbid, last_scanned, path FROM Artists WHERE id = ?",
-        ).get(artistId) as any;
+        const existing = loadArtistMetadataIdentity(artistId);
         const shouldRefresh =
             !existing ||
             options.forceUpdate === true ||
@@ -1203,8 +1165,8 @@ export class RefreshArtistService {
                 lastScanned: existing?.last_scanned,
             });
 
-        const shouldMonitor = options.monitorArtist === true ? true : (existing?.monitored || false);
-        const shouldMonitorInt = shouldMonitor ? 1 : 0;
+        const alreadyMonitored = existing ? Boolean(existing.in_library) : false;
+        const shouldMonitor = options.monitorArtist === true ? true : alreadyMonitored;
         const provider = options.provider
             ? streamingProviderManager.getStreamingProvider(options.provider)
             : streamingProviderManager.getDefaultStreamingProvider();
@@ -1225,20 +1187,15 @@ export class RefreshArtistService {
         if (existing?.mbid && !providerCatalogAvailable) {
             await this.upsertMusicBrainzArtist(String(existing.mbid), {
                 ...options,
-                monitorArtist: options.monitorArtist === true ? true : Boolean(existing.monitored),
+                monitorArtist: options.monitorArtist === true ? true : alreadyMonitored,
             });
             console.log(`[RefreshArtistService] refreshArtistMetadata skipped provider lookup for ${artistId} (provider not connected)`);
             return;
         }
 
         if (existing && !shouldRefresh) {
-            if (options.monitorArtist === true && existing.monitored !== shouldMonitorInt) {
-                db.prepare(`
-                    UPDATE Artists SET
-                        monitored = ?,
-                        monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                    WHERE id = ?
-                `).run(shouldMonitorInt, shouldMonitorInt, artistId);
+            if (options.monitorArtist === true && !alreadyMonitored) {
+                syncLibraryArtistMonitoring(artistId, true);
             }
 
             if (!existing.mbid || options.forceUpdate === true) {
@@ -1287,12 +1244,14 @@ export class RefreshArtistService {
         options.progress?.({ kind: "status", message: `Scanning artist ${artistId}...` });
 
         const resolveArtistMbid = (): string | null =>
-            (db.prepare("SELECT mbid FROM Artists WHERE id = ?")
-                .get(artistId) as { mbid?: string | null } | undefined)?.mbid
+            loadArtistMetadataIdentity(artistId)?.mbid
+            || (db.prepare("SELECT mbid FROM ArtistMetadata WHERE CAST(id AS TEXT) = CAST(? AS TEXT) OR mbid = ?")
+                .get(artistId, artistId) as { mbid?: string | null } | undefined)?.mbid
             || (isMusicBrainzMbid(artistId) ? artistId : null);
 
-        const artistRow = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
-        const isNewArtist = !artistRow?.last_scanned;
+        const artistIdentity = loadArtistMetadataIdentity(artistId);
+        const lastScanned = artistIdentity?.last_scanned ?? null;
+        const isNewArtist = !lastScanned;
         const beforeFingerprint = artistCatalogFingerprint(resolveArtistMbid());
 
         // ShouldRefreshArtist staleness gate.
@@ -1300,10 +1259,10 @@ export class RefreshArtistService {
         // (12h-retry / 30d-hard / 2d-active / recent-release). One refresh path.
         const shouldRefresh =
             options.forceUpdate === true ||
-            !artistRow ||
+            !artistIdentity ||
             shouldRefreshArtist({
                 artistId,
-                lastScanned: artistRow?.last_scanned,
+                lastScanned,
             });
 
         if (!shouldRefresh) {
@@ -1331,9 +1290,7 @@ export class RefreshArtistService {
         let artistMbid = resolveArtistMbid();
 
         {
-            const monitoredArtist = db.prepare("SELECT monitored FROM Artists WHERE id = ?")
-                .get(artistId) as { monitored?: number | null } | undefined;
-            const isMonitored = Boolean(monitoredArtist?.monitored);
+            const isMonitored = isArtistLibraryMonitored(artistId);
             artistMbid = await this.syncArtistMusicBrainzCatalog(
                 artistId,
                 options.forceUpdate === true,
@@ -1372,16 +1329,9 @@ export class RefreshArtistService {
      * inline match.
      */
     static markArtistRefreshComplete(artistId: string): void {
-        db.prepare(`
-            UPDATE Artists
-            SET
-                last_scanned = CURRENT_TIMESTAMP,
-                library_origin = CASE
-                    WHEN library_origin = 'musicbrainz-credit' THEN 'musicbrainz-credit-hydrated'
-                    ELSE library_origin
-                END
-            WHERE id = ?
-        `).run(artistId);
+        const metadataId = resolveArtistMetadataId(artistId);
+        if (metadataId == null) return;
+        stampArtistLibraryRefresh(metadataId);
     }
 
     /**

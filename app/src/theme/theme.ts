@@ -107,26 +107,26 @@ export type DiscogeniusAccentTokens = Record<DiscogeniusAccentKey, Record<Discog
 
 const discogeniusAccentToneSteps: Record<DiscogeniusAccentKey, Record<DiscogeniusAccentTone, { light: BrandStep; dark: BrandStep }>> = {
     artists: {
-        foreground: { light: 110, dark: 130 },
-        background: { light: 150, dark: 80 },
+        foreground: { light: 60, dark: 150 },
+        background: { light: 150, dark: 40 },
     },
     albums: {
-        foreground: { light: 80, dark: 120 },
-        background: { light: 150, dark: 30 },
+        foreground: { light: 60, dark: 150 },
+        background: { light: 150, dark: 40 },
     },
     tracks: {
-        foreground: { light: 80, dark: 120 },
-        background: { light: 150, dark: 30 },
+        foreground: { light: 60, dark: 150 },
+        background: { light: 150, dark: 40 },
     },
     videos: {
-        foreground: { light: 110, dark: 140 },
-        background: { light: 150, dark: 50 },
+        foreground: { light: 60, dark: 150 },
+        background: { light: 150, dark: 40 },
     },
 };
 
 const dynamicDiscogeniusAccentToneSteps: Record<DiscogeniusAccentTone, { light: BrandStep; dark: BrandStep }> = {
-    foreground: { light: 80, dark: 140 },
-    background: { light: 160, dark: 40 },
+    foreground: { light: 60, dark: 150 },
+    background: { light: 150, dark: 40 },
 };
 
 export const discogeniusAccentKeys = ["artists", "albums", "tracks", "videos"] as const;
@@ -211,45 +211,10 @@ export const tidalBadgeColorLight = {
 } as const;
 
 export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {
-    const baseTheme = mode === "dark" ? createDarkTheme(brand) : createLightTheme(brand);
-
-    if (mode === "dark") {
-        return {
-            ...baseTheme,
-            colorBrandForeground1: brand[130],
-            colorBrandForeground2: brand[140],
-            colorBrandBackground: brand[130],
-            colorBrandBackground2: brand[120],
-            colorBrandBackgroundHover: brand[140],
-            colorBrandBackgroundPressed: brand[120],
-            colorBrandStroke1: brand[140],
-            colorBrandStroke2: brand[120],
-            colorCompoundBrandBackground: brand[130],
-            colorCompoundBrandBackgroundHover: brand[140],
-            colorCompoundBrandBackgroundPressed: brand[120],
-            colorCompoundBrandStroke: brand[140],
-            colorCompoundBrandStrokeHover: brand[150],
-            colorCompoundBrandStrokePressed: brand[120],
-        };
-    }
-
-    return {
-        ...baseTheme,
-        colorBrandForeground1: brand[120],
-        colorBrandForeground2: brand[110],
-        colorBrandBackground: brand[120],
-        colorBrandBackground2: brand[110],
-        colorBrandBackgroundHover: brand[110],
-        colorBrandBackgroundPressed: brand[130],
-        colorBrandStroke1: brand[110],
-        colorBrandStroke2: brand[130],
-        colorCompoundBrandBackground: brand[120],
-        colorCompoundBrandBackgroundHover: brand[110],
-        colorCompoundBrandBackgroundPressed: brand[130],
-        colorCompoundBrandStroke: brand[110],
-        colorCompoundBrandStrokeHover: brand[100],
-        colorCompoundBrandStrokePressed: brand[130],
-    };
+    // Fluent maps a complete brand ramp to semantic tokens with mode-specific
+    // contrast. Keep those mappings intact so Buttons, Tabs, Toggles and Badges
+    // share the same accessible interaction states in light and dark themes.
+    return mode === "dark" ? createDarkTheme(brand) : createLightTheme(brand);
 }
 
 export const lightTheme: Theme = createDiscogeniusTheme(discogeniusOrangeTheme, "light");

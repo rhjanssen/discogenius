@@ -24,8 +24,8 @@ beforeEach(() => {
     "Recordings",
     "AlbumEditions",
     "Albums",
+    "LibraryArtists",
     "ArtistMetadata",
-    "Artists",
   ]) {
     dbModule.db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -45,8 +45,6 @@ function dateDaysAgo(days: number): string {
 }
 
 function seedArtist() {
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
 }
@@ -92,14 +90,14 @@ test("artist release freshness reads canonical Albums without legacy provider ro
   seedAlbum("release-group-recent", "release-recent", dateDaysAgo(10));
 
   assert.equal(
-    refreshPolicyModule.getLatestArtistReleaseTimestamp("artist-local"),
+    refreshPolicyModule.getLatestArtistReleaseTimestamp("artist-mbid"),
     Date.parse(dateDaysAgo(10)),
   );
-  assert.equal(refreshPolicyModule.hasRecentArtistRelease("artist-local"), true);
+  assert.equal(refreshPolicyModule.hasRecentArtistRelease("artist-mbid"), true);
   assert.equal(refreshPolicyModule.hasRecentArtistRelease("artist-mbid"), true);
   assert.equal(
     refreshPolicyModule.shouldRefreshArtist({
-      artistId: "artist-local",
+      artistId: "artist-mbid",
       lastScanned: daysAgo(13),
       refreshDays: null,
     }),
@@ -111,10 +109,10 @@ test("inactive artist policy uses canonical release group dates", () => {
   seedArtist();
   seedAlbum("release-group-old", "release-old", dateDaysAgo(365 * 6));
 
-  assert.equal(refreshPolicyModule.hasInactiveArtistCatalog("artist-local"), true);
+  assert.equal(refreshPolicyModule.hasInactiveArtistCatalog("artist-mbid"), true);
   assert.equal(
     refreshPolicyModule.shouldRefreshArtist({
-      artistId: "artist-local",
+      artistId: "artist-mbid",
       lastScanned: daysAgo(13),
       refreshDays: null,
     }),
@@ -220,9 +218,9 @@ test("video refresh policy reads canonical ProviderItems for the artist", () => 
     ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
   `).run(videoItemId, recording.id);
 
-  assert.equal(refreshPolicyModule.shouldRefreshVideos({ artistId: "artist-local" }), false);
+  assert.equal(refreshPolicyModule.shouldRefreshVideos({ artistId: "artist-mbid" }), false);
 
   dbModule.db.prepare("UPDATE ProviderItems SET updated_at = ? WHERE provider_id = ?")
     .run(daysAgo(70), "provider-video");
-  assert.equal(refreshPolicyModule.shouldRefreshVideos({ artistId: "artist-local" }), true);
+  assert.equal(refreshPolicyModule.shouldRefreshVideos({ artistId: "artist-mbid" }), true);
 });

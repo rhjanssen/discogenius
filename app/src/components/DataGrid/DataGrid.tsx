@@ -539,7 +539,6 @@ function DataGridInner<T>(
             ref={ref}
             role="grid"
             aria-label={ariaLabel}
-            aria-rowcount={items.length + 1}
             style={sharedColumns ? gridStyle : undefined}
         >
             <div
@@ -603,7 +602,7 @@ function DataGridInner<T>(
                     <React.Fragment key={rowId}>
                         {beforeRow ? (
                             <div className={mergeClasses(styles.rowBefore, sharedColumns ? styles.sharedFullWidthRow : undefined)} role="row">
-                                {beforeRow}
+                                <div role="gridcell">{beforeRow}</div>
                             </div>
                         ) : null}
                         <div
@@ -670,9 +669,8 @@ function DataGridInner<T>(
                             <div
                                 className={mergeClasses(styles.rowDetail, sharedColumns ? styles.sharedFullWidthRow : undefined)}
                                 role="row"
-                                onClick={(event) => event.stopPropagation()}
                             >
-                                {rowDetail}
+                                <div role="gridcell">{rowDetail}</div>
                             </div>
                         ) : null}
                     </React.Fragment>

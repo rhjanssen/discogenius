@@ -41,7 +41,6 @@ import { MonitoringSettingsSection } from "@/pages/settings/MonitoringSettingsSe
 import { MusicVideosSettingsSection } from "@/pages/settings/MusicVideosSettingsSection";
 import { NamingSettingsSection } from "@/pages/settings/NamingSettingsSection";
 import { ProvidersSettingsSection } from "@/pages/settings/ProvidersSettingsSection";
-import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
     CatalogConfigContract,
@@ -122,49 +121,54 @@ const useStyles = makeStyles({
     },
     nav: {
         display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalS,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: tokens.spacingHorizontalS,
         flexShrink: 0,
         minWidth: 0,
-        // Keep the title + nav pinned so they never scroll away.
-        position: "sticky",
-        top: "calc(env(safe-area-inset-top, 0px) + 56px)",
-        zIndex: 1,
-        paddingTop: tokens.spacingVerticalXS,
-        // Below the x-large breakpoint the nav is a full-width bar that content
-        // scrolls under, so it needs a glass fill to mask what passes behind it.
-        // On desktop it's a separate left column with nothing behind it, so it
-        // stays fully transparent (no grey panel behind the category list).
-        backgroundColor: tokens.colorNeutralBackgroundAlpha,
-        backdropFilter: "blur(20px) saturate(120%)",
-        WebkitBackdropFilter: "blur(20px) saturate(120%)",
+        // Narrow layouts use a plain page heading + category control, not a
+        // second framed app bar beneath the primary navigation.
+        position: "static",
+        backgroundColor: "transparent",
         [MEDIA.desktop]: {
+            flexDirection: "column",
+            alignItems: "stretch",
+            justifyContent: "flex-start",
+            gap: tokens.spacingVerticalS,
             width: "240px",
             alignSelf: "flex-start",
+            position: "sticky",
             paddingTop: tokens.spacingVerticalNone,
             // Match the desktop app bar (~48px), not the 56px mobile offset.
             top: "calc(env(safe-area-inset-top, 0px) + 48px)",
             maxHeight: "calc(100vh - env(safe-area-inset-top, 0px) - 68px)",
             overflowY: "auto",
             overflowX: "clip",
-            backgroundColor: "transparent",
-            backdropFilter: "none",
-            WebkitBackdropFilter: "none",
         },
     },
     navTitle: {
-        paddingLeft: tokens.spacingHorizontalS,
+        minWidth: 0,
+        [MEDIA.desktop]: {
+            paddingLeft: tokens.spacingHorizontalS,
+        },
     },
     mobileNav: {
         display: "block",
-        width: "100%",
+        flex: "0 1 auto",
+        minWidth: 0,
         [MEDIA.desktop]: { display: "none" },
     },
     mobileNavButton: {
-        ...glassButtonStyles,
-        width: "100%",
-        justifyContent: "space-between",
+        maxWidth: "100%",
+        backgroundColor: "transparent",
+        boxShadow: "none",
         minHeight: "40px",
+        "& .fui-Button__content": {
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
     },
     desktopNav: {
         display: "none",
@@ -482,13 +486,13 @@ const SettingsPage = () => {
         <div className={styles.container}>
             <div className={styles.layout} data-testid="settings-layout">
                 <nav className={styles.nav} aria-label="Settings sections">
-                    <Title2 className={styles.navTitle}>Settings</Title2>
+                    <Title2 as="h1" className={styles.navTitle}>Settings</Title2>
 
                     <div className={styles.mobileNav}>
                         <Menu>
                             <MenuTrigger disableButtonEnhancement>
                                 <Button
-                                    appearance="outline"
+                                    appearance="subtle"
                                     icon={<ChevronDown24 />}
                                     iconPosition="after"
                                     className={styles.mobileNavButton}

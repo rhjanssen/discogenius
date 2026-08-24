@@ -10,7 +10,9 @@ import {
   queueArtistRefreshScan,
   requireArtistName,
   setArtistMonitoredState,
+  updateArtistLibraryState,
 } from "../../services/music/artist-monitoring.js";
+import { isArtistLibraryMonitored, listEnabledArtistLibraries, type ArtistPolicy } from "../../services/music/managed-artists.js";
 import { MoveArtistService } from "../../services/mediafiles/move-artist-service.js";
 import {
   deletionScopeFromRequest,
@@ -31,11 +33,17 @@ import { RefreshArtistService } from "../../services/music/refresh-artist-servic
 import {
   getObjectBody,
   getOptionalBoolean,
+  getOptionalEnumValue,
   getOptionalString,
+  getRequiredIntegerArray,
   getRequiredIdentifier,
   isRequestValidationError,
+  RequestValidationError,
   rejectUnknownKeys,
+  parseBoundedQueryInteger,
 } from "../../utils/request-validation.js";
+
+const ARTIST_POLICIES = ["all", "new", "none"] as const satisfies readonly ArtistPolicy[];
 
 const router = Router();
 
@@ -43,9 +51,39 @@ const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function parseArtistLibraryScope(body: Record<string, unknown>): number[] | undefined {
+  const allLibraries = getOptionalBoolean(body, "allLibraries");
+  const libraryIds = body.libraryIds === undefined ? undefined : getRequiredIntegerArray(body, "libraryIds");
+  if (allLibraries === true && libraryIds !== undefined) {
+    throw new RequestValidationError('Pass either "libraryIds" or "allLibraries": true, not both');
+  }
+  if (allLibraries === true) return undefined;
+  if (libraryIds !== undefined) {
+    const unique = [...new Set(libraryIds)];
+    const enabled = new Set(listEnabledArtistLibraries().map((library) => library.id));
+    const invalid = unique.filter((libraryId) => !enabled.has(libraryId));
+    if (invalid.length > 0) {
+      throw new RequestValidationError(`Unknown or disabled library: ${invalid.join(", ")}`);
+    }
+    return unique;
+  }
+  throw new RequestValidationError(
+    'A library scope is required: pass "libraryIds" or "allLibraries": true',
+  );
+}
+
+router.get("/libraries", (_req, res) => {
+  res.json(listEnabledArtistLibraries());
+});
+
 function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined {
-  return db.prepare("SELECT id, monitored AS monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as
-    { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined;
+  const row = db.prepare("SELECT id, picture, cover_image_url FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(mbid) as
+    { id: string | number; picture?: string | null; cover_image_url?: string | null } | undefined;
+  if (!row) return undefined;
+  return {
+    ...row,
+    monitor: isArtistLibraryMonitored(String(row.id)) ? 1 : 0,
+  };
 }
 
 function formatArtistLookupResult(artist: LidarrArtist) {
@@ -103,10 +141,6 @@ function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-const parseOptionalMonitored = (value: unknown): boolean => {
-  return value === undefined ? true : Boolean(value);
-};
-
 router.get("/", async (req, res) => {
   try {
     const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
@@ -114,8 +148,8 @@ router.get("/", async (req, res) => {
     const includeCounts = parseOptionalQueryBoolean(req.query.includeCounts) ?? true;
 
     res.json(await runWithAsyncBusyRetry(() => ArtistQueryService.listArtists({
-      limit: parseInt(req.query.limit as string) || 50,
-      offset: parseInt(req.query.offset as string) || 0,
+      limit: parseBoundedQueryInteger(req.query.limit, 50, { min: 1, max: 200 }),
+      offset: parseBoundedQueryInteger(req.query.offset, 0),
       search: req.query.search as string | undefined,
       sort: req.query.sort as string | undefined,
       dir: req.query.dir as string | undefined,
@@ -305,10 +339,14 @@ router.post("/import-stream", (req, res) => {
 router.post("/:artistId/monitor", async (req, res) => {
   try {
     const artistId = req.params.artistId;
+    const body = getObjectBody(req.body);
+    const libraryIds = parseArtistLibraryScope(body);
+    rejectUnknownKeys(body, ["name", "monitored", "libraryIds", "allLibraries"], "Artist monitor");
     const result = await setArtistMonitoredState({
       artistId,
-      artistName: getOptionalString(getObjectBody(req.body), "name"),
-      monitored: parseOptionalMonitored((req.body as any)?.monitored),
+      artistName: getOptionalString(body, "name"),
+      monitored: getOptionalBoolean(body, "monitored") ?? true,
+      libraryIds,
       priority: 1,
       trigger: CommandTrigger.Manual,
     });
@@ -327,6 +365,9 @@ router.post("/:artistId/monitor", async (req, res) => {
         : "Artist unmonitored",
     });
   } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
     console.error("[artists/monitor] Error:", error);
     res.status(500).json({ detail: error.message });
   }
@@ -489,25 +530,31 @@ router.patch("/:artistId", async (req, res) => {
     const artistId = req.params.artistId;
     const body = getObjectBody(req.body);
     const monitored = getOptionalBoolean(body, "monitored");
-    rejectUnknownKeys(body, ["monitored"], "Artist update");
+    const policy = getOptionalEnumValue(body, "policy", ARTIST_POLICIES);
+    rejectUnknownKeys(body, ["monitored", "policy", "libraryIds", "allLibraries"], "Artist update");
 
-    if (monitored === undefined) {
+    if (monitored === undefined && policy === undefined) {
       return res.json({ success: true });
     }
+    const libraryIds = parseArtistLibraryScope(body);
 
-    const result = await setArtistMonitoredState({
+    const result = await updateArtistLibraryState({
       artistId,
       monitored,
+      policy,
+      libraryIds,
       priority: 1,
       trigger: CommandTrigger.Manual,
     });
-    if (!result) {
-      return res.status(404).json({ detail: "Artist not found" });
+    if (!result.ok) {
+      return res.status(result.status).json({ detail: result.detail });
     }
 
     res.json({
       success: true,
       monitored: result.monitored,
+      policy: result.policy,
+      memberships: result.artist?.memberships ?? [],
       queued: result.commandId !== -1,
     });
   } catch (error: any) {
@@ -605,7 +652,10 @@ router.post("/import", async (req, res) => {
 router.put("/:artistId", async (req, res) => {
   try {
     const { artistId } = req.params;
-    const { monitored } = req.body;
+    const body = getObjectBody(req.body);
+    const monitored = getOptionalBoolean(body, "monitored");
+    const libraryIds = parseArtistLibraryScope(body);
+    rejectUnknownKeys(body, ["monitored", "libraryIds", "allLibraries"], "Artist update");
 
     if (monitored === undefined) {
       return res.status(400).json({ detail: "Missing monitored field" });
@@ -614,6 +664,7 @@ router.put("/:artistId", async (req, res) => {
     const result = await setArtistMonitoredState({
       artistId,
       monitored: Boolean(monitored),
+      libraryIds,
       priority: 1,
       trigger: CommandTrigger.Manual,
     });
@@ -627,6 +678,9 @@ router.put("/:artistId", async (req, res) => {
       queued: result.commandId !== -1,
     });
   } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
     res.status(500).json({ detail: error.message });
   }
 });
@@ -666,12 +720,14 @@ router.post("/", async (req, res) => {
     const body = getObjectBody(req.body);
     const artistId = getOptionalString(body, "mbid") ?? getRequiredIdentifier(body, "id");
     const artistName = getOptionalString(body, "name");
-    rejectUnknownKeys(body, ["id", "mbid", "name"], "Artist add");
+    const libraryIds = parseArtistLibraryScope(body);
+    rejectUnknownKeys(body, ["id", "mbid", "name", "libraryIds", "allLibraries"], "Artist add");
 
     // Ensure basic artist metadata exists and mark as monitored, then queue full scan.
     const { artist, commandId } = await monitorArtistAndQueueIntake({
       artistId,
       artistName,
+      libraryIds,
       priority: 1,
       trigger: CommandTrigger.Manual,
     });

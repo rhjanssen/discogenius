@@ -964,6 +964,7 @@ export class ServarrMetadataService {
             JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
           );
         }
+        MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
       })();
     }, "servarr:release-group-header");
 
@@ -1013,6 +1014,9 @@ export class ServarrMetadataService {
         track.DurationMs,
       );
     }, 50, "servarr:release-group-tracks");
+    await withSqliteWriteGate(() => {
+      MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
+    }, "servarr:release-group-credits");
   }
 }
 

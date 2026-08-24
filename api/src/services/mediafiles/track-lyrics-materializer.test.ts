@@ -26,8 +26,8 @@ after(() => {
 });
 
 test("import lyric materializer discovers, tracks, and reuses an adjacent sidecar", async () => {
-  dbModule.db.prepare("INSERT INTO Artists(id, name, mbid) VALUES(?, ?, ?)")
-    .run("100", "Bastille", "artist-mbid-100");
+  const artist100 = dbModule.db.prepare("INSERT INTO ArtistMetadata(id, mbid, name) VALUES(?, ?, ?) RETURNING id")
+    .get(100, "artist-mbid-100", "Bastille") as { id: number };
 
   const albumDir = path.join(tempDir, "Bastille", "Give Me The Future");
   fs.mkdirSync(albumDir, { recursive: true });
@@ -38,7 +38,7 @@ test("import lyric materializer discovers, tracks, and reuses an adjacent sideca
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles(
-      artist_id, library_id,
+      artist_metadata_id, library_id,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
@@ -46,7 +46,7 @@ test("import lyric materializer discovers, tracks, and reuses an adjacent sideca
       file_type, quality
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
   `).run(
-    "100",
+    artist100.id,
     lyricsLibraryId,
     "artist-mbid-100",
     "release-group-mbid-200",
@@ -89,8 +89,8 @@ test("import lyric materializer discovers, tracks, and reuses an adjacent sideca
 });
 
 test("import lyric materializer saves provider plain lyrics as txt and reuses them for tags", async () => {
-  dbModule.db.prepare("INSERT INTO Artists(id, name, mbid) VALUES(?, ?, ?)")
-    .run("101", "Bakermat", "artist-mbid-101");
+  const artist101 = dbModule.db.prepare("INSERT INTO ArtistMetadata(id, mbid, name) VALUES(?, ?, ?) RETURNING id")
+    .get(101, "artist-mbid-101", "Bakermat") as { id: number };
 
   const albumDir = path.join(tempDir, "Bakermat", "The Spirit");
   fs.mkdirSync(albumDir, { recursive: true });
@@ -101,7 +101,7 @@ test("import lyric materializer saves provider plain lyrics as txt and reuses th
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles(
-      artist_id, library_id,
+      artist_metadata_id, library_id,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
@@ -109,7 +109,7 @@ test("import lyric materializer saves provider plain lyrics as txt and reuses th
       file_type, quality
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
   `).run(
-    "101",
+    artist101.id,
     lyricsLibraryId,
     "artist-mbid-101",
     "release-group-mbid-201",
@@ -170,8 +170,8 @@ test("import lyric materializer saves provider plain lyrics as txt and reuses th
 });
 
 test("an unsynced tiddl sidecar does not hide catalogue timed lyrics", async () => {
-  dbModule.db.prepare("INSERT INTO Artists(id, name, mbid) VALUES(?, ?, ?)")
-    .run("102", "Bastille", "artist-mbid-102");
+  const artist102 = dbModule.db.prepare("INSERT INTO ArtistMetadata(id, mbid, name) VALUES(?, ?, ?) RETURNING id")
+    .get(102, "artist-mbid-102", "Bastille") as { id: number };
 
   const albumDir = path.join(tempDir, "Bastille", "Wild World");
   fs.mkdirSync(albumDir, { recursive: true });
@@ -183,7 +183,7 @@ test("an unsynced tiddl sidecar does not hide catalogue timed lyrics", async () 
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles(
-      artist_id, library_id,
+      artist_metadata_id, library_id,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
@@ -191,7 +191,7 @@ test("an unsynced tiddl sidecar does not hide catalogue timed lyrics", async () 
       file_type, quality
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
   `).run(
-    "102",
+    artist102.id,
     lyricsLibraryId,
     "artist-mbid-102",
     "release-group-mbid-202",

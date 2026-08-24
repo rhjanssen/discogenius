@@ -767,13 +767,16 @@ async function run(): Promise<void> {
     db.transaction(() => {
       for (let artistIndex = 0; artistIndex < expected.artists.primary; artistIndex += 1) {
         const artistMbid = db.prepare(`
-          SELECT mbid FROM Artists
-          WHERE library_origin = 'synthetic-load'
-          ORDER BY name, id
+          SELECT metadata.mbid
+          FROM LibraryArtists membership
+          JOIN ArtistMetadata metadata ON metadata.id = membership.artist_metadata_id
+          WHERE membership.library_origin = 'synthetic-load'
+          GROUP BY metadata.mbid
+          ORDER BY metadata.name, metadata.mbid
           LIMIT 1 OFFSET ?
         `).get(artistIndex) as { mbid: string } | undefined;
         if (!artistMbid?.mbid) throw new Error(`Missing primary Artist ${artistIndex}`);
-        const artistName = db.prepare("SELECT name FROM Artists WHERE mbid = ?").get(artistMbid.mbid) as {
+        const artistName = db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ?").get(artistMbid.mbid) as {
           name: string;
         };
         const initialRef = primaryRef(manifest.runId, artistIndex, cycle, "RefreshArtist");
@@ -1115,8 +1118,8 @@ async function run(): Promise<void> {
   const foreignKeyErrors = db.pragma("foreign_key_check") as unknown[];
   const finalCounts = {
     artistsCanonical: Number((db.prepare("SELECT COUNT(*) AS count FROM ArtistMetadata").get() as { count: number }).count),
-    artistsLegacy: Number((db.prepare("SELECT COUNT(*) AS count FROM Artists").get() as { count: number }).count),
-    managedArtists: Number((db.prepare("SELECT COUNT(*) AS count FROM ManagedArtists").get() as { count: number }).count),
+    artistsLegacy: 0,
+    managedArtists: 0,
     albums: Number((db.prepare("SELECT COUNT(*) AS count FROM Albums").get() as { count: number }).count),
     editions: Number((db.prepare("SELECT COUNT(*) AS count FROM AlbumEditions").get() as { count: number }).count),
     recordings: Number((db.prepare("SELECT COUNT(*) AS count FROM Recordings").get() as { count: number }).count),

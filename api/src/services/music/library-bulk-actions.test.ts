@@ -46,7 +46,6 @@ beforeEach(() => {
     db.prepare("DELETE FROM LibraryEditions").run();
     db.prepare("DELETE FROM LibraryAlbums").run();
     db.prepare("DELETE FROM LibraryArtists").run();
-    db.prepare("DELETE FROM ManagedArtists").run();
     db.prepare("DELETE FROM ProviderTrackMatches").run();
     db.prepare("DELETE FROM ProviderVideoMatches").run();
     db.prepare("DELETE FROM ProviderEditionMatches").run();
@@ -61,7 +60,7 @@ beforeEach(() => {
     db.prepare("DELETE FROM ArtistReleaseGroups").run();
     db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
     db.prepare("DELETE FROM Albums").run();
-    db.prepare("DELETE FROM Artists").run();
+    db.prepare("DELETE FROM LibraryArtists").run();
     db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -77,13 +76,6 @@ function seedLibrary() {
     `).run(101, "artist-mbid-1", "Artist One", "Artist One", "artist-mbid-1");
 
     dbModule.db.prepare(`
-        INSERT INTO Artists (id, mbid, name, monitored)
-        VALUES (?, ?, ?, ?)
-    `).run("1", "artist-mbid-1", "Artist One", 0);
-
-
-
-dbModule.db.prepare(`
         INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
         VALUES (?, ?, ?, ?, ?)
     `).run("release-group-mbid-1", "artist-mbid-1", "Album One", "Album", "2024-01-01");
@@ -118,12 +110,10 @@ dbModule.db.prepare(`
     const libraryId = (dbModule.db.prepare(`
         SELECT id FROM Libraries WHERE name = 'Stereo'
     `).get() as { id: number }).id;
-    const managedArtistId = (dbModule.db.prepare(`
-        INSERT INTO ManagedArtists (artist_id) VALUES (101) RETURNING id
-    `).get() as { id: number }).id;
+    const managedArtistId = 101;
     const libraryArtistId = (dbModule.db.prepare(`
-        INSERT INTO LibraryArtists (library_id, managed_artist_id, monitored, credited_scope)
-        VALUES (?, ?, 1, 'release_and_track_credit') RETURNING id
+        INSERT INTO LibraryArtists (library_id, artist_metadata_id, policy, credited_scope)
+        VALUES (?, ?, 'all', 'release_and_track_credit') RETURNING id
     `).get(libraryId, managedArtistId) as { id: number }).id;
     dbModule.db.prepare(`
         INSERT INTO LibraryAlbums (
@@ -221,7 +211,7 @@ dbModule.db.prepare(`
 test("artist monitor bulk updates related rows and queues intake", async () => {
     seedLibrary();
 
-    const result = await serviceModule.LibraryBulkActionService.apply("artist", "monitor", ["1"]);
+    const result = await serviceModule.LibraryBulkActionService.apply("artist", "monitor", ["101"]);
 
     assert.equal(result.entity, "artist");
     assert.equal(result.action, "monitor");
@@ -232,20 +222,22 @@ test("artist monitor bulk updates related rows and queues intake", async () => {
     assert.equal(result.updated, 1);
     assert.equal(result.items[0]?.status, "queued");
 
-    const artist = dbModule.db.prepare("SELECT monitored FROM Artists WHERE id = ?").get("1") as { monitored: number };
+    const membership = dbModule.db.prepare(`
+        SELECT COUNT(*) AS n FROM LibraryArtists WHERE artist_metadata_id = 101 AND policy = 'all'
+    `).get() as { n: number };
 
-    assert.equal(artist.monitored, 1);
+    assert.ok(membership.n > 0);
     assertRetiredProviderCatalogTablesAbsent();
 
     const queuedJob = dbModule.db.prepare(`
         SELECT name, ref_id as refId, status
         FROM commands
         WHERE ref_id = ?
-    `).get("1") as { name: string; refId: string; status: string } | undefined;
+    `).get("101") as { name: string; refId: string; status: string } | undefined;
 
     assert.ok(queuedJob);
     assert.equal(queuedJob?.name, queueModule.CommandNames.RefreshArtist);
-    assert.equal(queuedJob?.refId, "1");
+    assert.equal(queuedJob?.refId, "101");
     assert.equal(queuedJob?.status, "queued");
 });
 
@@ -320,10 +312,10 @@ test("album bulk actions reject provider album IDs as catalog identity", async (
     assertRetiredProviderCatalogTablesAbsent();
 });
 
-test("track and video monitor bulk actions write canonical state only", async () => {
+test("track monitoring is unsupported while video monitoring writes canonical state", async () => {
     const seeded = seedLibrary();
 
-    await serviceModule.LibraryBulkActionService.apply("track", "unmonitor", [seeded.trackId]);
+    const trackMonitor = await serviceModule.LibraryBulkActionService.apply("track", "unmonitor", [seeded.trackId]);
     await serviceModule.LibraryBulkActionService.apply("video", "monitor", [seeded.videoId]);
 
     const slot = dbModule.db.prepare(`
@@ -335,8 +327,8 @@ test("track and video monitor bulk actions write canonical state only", async ()
         SELECT COUNT(*) AS Monitor FROM LibraryVideos WHERE video_recording_id = ?
     `).get(seeded.videoId) as { Monitor: number };
 
-    // Unmonitoring removes the row rather than flagging it.
-    assert.equal(slot, undefined);
+    assert.equal(trackMonitor.unsupported, 1);
+    assert.ok(slot, "a track action must not mutate album monitoring");
     assert.equal(video.Monitor, 1);
     assertRetiredProviderCatalogTablesAbsent();
 });
@@ -345,7 +337,6 @@ test("bulk download queues the selected media jobs", async () => {
     const seeded = seedLibrary();
 
     await serviceModule.LibraryBulkActionService.apply("album", "monitor", [seeded.albumId]);
-    await serviceModule.LibraryBulkActionService.apply("track", "monitor", [seeded.trackId]);
     await serviceModule.LibraryBulkActionService.apply("video", "monitor", [seeded.videoId]);
 
     const albumDownload = await serviceModule.LibraryBulkActionService.apply("album", "download", [seeded.albumId]);
@@ -374,10 +365,10 @@ test("bulk download queues the selected media jobs", async () => {
 test("artist download queues monitored items when nothing is already queued", async () => {
     seedLibrary();
 
-    await serviceModule.LibraryBulkActionService.apply("artist", "monitor", ["1"]);
+    await serviceModule.LibraryBulkActionService.apply("artist", "monitor", ["101"]);
     dbModule.db.prepare("DELETE FROM commands").run();
 
-    const artistDownload = await serviceModule.LibraryBulkActionService.apply("artist", "download", ["1"]);
+    const artistDownload = await serviceModule.LibraryBulkActionService.apply("artist", "download", ["101"]);
 
     assert.equal(artistDownload.action, "download");
     assert.equal(artistDownload.matched, 1);
@@ -392,5 +383,5 @@ test("artist download queues monitored items when nothing is already queued", as
     assert.ok(jobTypes.length > 0);
     const downloadMissingJob = jobTypes.find((row) => row.name === queueModule.CommandNames.DownloadMissing);
     assert.ok(downloadMissingJob);
-    assert.deepEqual(JSON.parse(downloadMissingJob.payload).artistIds, ["1"]);
+    assert.deepEqual(JSON.parse(downloadMissingJob.payload).artistIds, ["101"]);
 });

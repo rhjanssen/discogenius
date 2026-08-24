@@ -31,9 +31,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
-  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
+  dbModule.db.prepare("DELETE FROM Recordings").run();  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -57,11 +56,7 @@ test("canVideoPlaceInline reports the placement curation stored, not its own gue
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES ('artist-mbid', 'Layout Artist')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-mbid', 'artist-mbid', 'Layout Artist')
-  `).run();
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title, primary_type)
     SELECT 'rg-inline', id, 'artist-mbid', 'Inline Album', 'album'
     FROM ArtistMetadata

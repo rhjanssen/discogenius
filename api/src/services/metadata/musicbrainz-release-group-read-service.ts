@@ -16,6 +16,7 @@ import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-select
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
 import { AlbumTrackListNavigationService } from "../music/album-track-list-navigation-service.js";
+import { libraryArtistMonitoredSelectSql } from "../music/managed-artists.js";
 import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
 import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
 
@@ -119,7 +120,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         a.name AS local_artist_name,
         a.picture AS artist_picture,
         a.cover_image_url AS artist_cover_image_url,
-        a.monitored AS artist_monitor,
+        ${libraryArtistMonitoredSelectSql("a")} AS artist_monitor,
         CASE WHEN EXISTS (
           SELECT 1
           FROM LibraryAlbums library_group
@@ -150,7 +151,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status
       FROM Albums rg
-      LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+      LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
       LEFT JOIN stereo ON 1 = 1
       LEFT JOIN spatial ON 1 = 1
       WHERE rg.mbid = ?
@@ -245,6 +246,14 @@ function listMusicBrainzReleaseVersions(
         r.track_count,
         r.barcode,
         r.disambiguation,
+        EXISTS (
+          SELECT 1
+          FROM LibraryEditions monitored_edition
+          JOIN Libraries library
+            ON library.id = monitored_edition.library_id
+           AND library.enabled = 1
+          WHERE monitored_edition.edition_id = r.id
+        ) AS is_monitored,
         CASE
           WHEN EXISTS (
             SELECT 1
@@ -414,7 +423,11 @@ function listMusicBrainzReleaseVersions(
             popularity: undefined,
             quality: null,
             // Unknown, not clean — see the track contract above.
-            is_monitored: Boolean(releaseGroup.wanted),
+            // A version is one exact Edition. Album membership alone does not
+            // monitor every version of that Album; only a LibraryEditions row
+            // does. Reporting the release-group state here made all 24 Bad
+            // Blood editions claim to be monitored after one album-level click.
+            is_monitored: Boolean(release.is_monitored),
             version: formatReleaseVersionLabel(release),
             stereo_provider_id: isStereoSelected
                 ? releaseGroup.stereo_provider_id || null
@@ -789,7 +802,7 @@ function attachCanonicalFilesToTracks(
     const rows = db.prepare(`
       SELECT
         lf.id AS file_id,
-        lf.artist_id,
+        lf.artist_metadata_id,
         NULL AS file_album_id,
         lf.provider_id AS file_media_id,
         lf.canonical_artist_mbid,
@@ -1202,7 +1215,7 @@ export class MusicBrainzReleaseGroupReadService {
                 if (detail) {
                     const artistMbid = (detail as any).artistid || (detail as any).artistId || (detail as any).ArtistId || (detail as any).Artist?.Id || (detail as any).Artist?.id || (detail as any).artists?.[0]?.id || (detail as any).artists?.[0]?.Id;
                     if (artistMbid) {
-                        const artistExists = db.prepare("SELECT 1 FROM Artists WHERE mbid = ? LIMIT 1").get(artistMbid);
+                        const artistExists = db.prepare("SELECT 1 FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(artistMbid);
                         if (!artistExists) {
                             await servarrMetadata.syncArtist(artistMbid);
                         }

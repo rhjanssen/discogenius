@@ -33,8 +33,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -126,10 +126,6 @@ test("video list and detail use canonical video recordings with provider offers"
     VALUES ('artist-mbid', 'Video Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name, picture, cover_image_url)
-    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist', '/media-cover/artist-mbid/poster.jpg', '/media-cover/artist-mbid/fanart.jpg')
-  `).run();
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -188,14 +184,14 @@ test("video list and detail use canonical video recordings with provider offers"
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      artist_metadata_id, recording_id, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (
-      'artist-mbid', ?, 'apple-music', 'video', 'apple-video-4k',
+      ?, ?, 'apple-music', 'video', 'apple-video-4k',
       'video', 'C:/library/Canonical Video.mp4', 'Canonical Video.mp4', 'C:/library',
       'Canonical Video.mp4', '.mp4', 'video'
     )
-  `).run(recording.id);
+  `).run(artist.id, recording.id);
 
   const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
 
@@ -291,10 +287,6 @@ test("video detail fails closed when two accepted matches share a provider id", 
     VALUES ('ambiguous-artist', 'Ambiguous Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('ambiguous-artist', 'ambiguous-artist', 'Ambiguous Artist')
-  `).run();
   const first = dbModule.db.prepare(`
     INSERT INTO Recordings (
       mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
@@ -328,10 +320,6 @@ test("video detail backfills null offer quality from TrackFiles", () => {
     VALUES ('file-quality-artist', 'File Quality Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('file-quality-artist', 'file-quality-artist', 'File Quality Artist')
-  `).run();
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -350,15 +338,15 @@ test("video detail backfills null offer quality from TrackFiles", () => {
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      artist_metadata_id, recording_id, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension,
       file_type, quality, width, height
     ) VALUES (
-      'file-quality-artist', ?, 'tidal', 'video', '25704375',
+      ?, ?, 'tidal', 'video', '25704375',
       'video', 'C:/library/Pompeii.mp4', 'Pompeii.mp4', 'C:/library',
       'Pompeii.mp4', '.mp4', 'video', 'FHD', 1920, 1080
     )
-  `).run(recording.id);
+  `).run(artist.id, recording.id);
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
   assert.equal(detail?.offers?.length, 1);
@@ -367,9 +355,9 @@ test("video detail backfills null offer quality from TrackFiles", () => {
 });
 
 test("video list and detail ignore legacy provider-media-only video rows", () => {
-  dbModule.db.prepare("INSERT INTO Artists (id, name) VALUES (?, ?)")
-    .run("artist-id", "Legacy Artist");
-const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("legacy-artist", "Legacy Artist");
+  const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
 
   assert.equal(list.total, 0);
   assert.equal(list.items.length, 0);
@@ -382,10 +370,6 @@ test("video downloaded state treats provider ids as provider-scoped", () => {
     VALUES ('collision-artist', 'Collision Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('collision-artist', 'collision-artist', 'Collision Artist')
-  `).run();
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
       foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
@@ -403,14 +387,14 @@ test("video downloaded state treats provider ids as provider-scoped", () => {
   // Apple's canonical video as downloaded.
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (
-      'collision-artist', 'tidal', 'video', '42', 'video',
+      ?, 'tidal', 'video', '42', 'video',
       'C:/library/Tidal 42.mp4', 'Tidal 42.mp4', 'C:/library',
       'Tidal 42.mp4', '.mp4', 'video'
     )
-  `).run();
+  `).run(artist.id);
 
   const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
   assert.equal(list.items[0]?.provider, 'apple-music');
@@ -423,10 +407,6 @@ test("video detail appears-on follows related audio via provider_video_for, not 
     VALUES ('artist-mbid', 'Video Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
-  `).run();
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES
@@ -495,10 +475,6 @@ test("video detail surfaces album track position when the video is on a release 
     RETURNING id
   `).get() as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-track-pos', 'artist-track-pos', 'Track Pos Artist')
-  `).run();
-  dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, cover_image_id)
     VALUES ('rg-track-pos', 'artist-track-pos', 'Video Album', 'album', 'cover-42')
   `).run();
@@ -548,14 +524,10 @@ test("video detail appears-on follows related audio recordings and prefers monit
     RETURNING id
   `).get() as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-affil', 'artist-affil', 'Affil Artist')
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, monitored)
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES
-      ('rg-affil-single', 'artist-affil', 'Part Two', 'single', 0),
-      ('rg-affil-album', 'artist-affil', 'Ampersand', 'album', 0)
+      ('rg-affil-single', 'artist-affil', 'Part Two', 'single'),
+      ('rg-affil-album', 'artist-affil', 'Ampersand', 'album')
   `).run();
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
@@ -618,10 +590,6 @@ test("video detail appears-on prefers studio album over larger monitored live co
     VALUES ('artist-studio-pref', 'Studio Pref Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-studio-pref', 'artist-studio-pref', 'Studio Pref Artist')
-  `).run();
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types)
     VALUES
@@ -696,10 +664,6 @@ test("video detail appears-on prefers selected multi-disc release over earliest 
     RETURNING id
   `).get() as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-multivol', 'artist-multivol', 'Multivol Artist')
-  `).run();
-  dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES ('rg-multivol', 'artist-multivol', 'Give Me The Future', 'album')
   `).run();
@@ -743,10 +707,6 @@ test("video detail prefers provider title when recording title is Unknown Video"
     VALUES ('artist-mbid', 'Video Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
-  `).run();
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -776,10 +736,6 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
     VALUES ('artist-mbid', 'Video Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
-  `).run();
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES ('rg-assoc', 'artist-mbid', 'Associated Album', 'album')
@@ -855,6 +811,75 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
   assert.equal(associated[0]?.is_monitored, true);
 });
 
+test("album associated video badges use the persisted acquisition offer atomically", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-video-offer', 'Video Offer Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-video-offer', 'artist-video-offer', 'Video Offer Album', 'album')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    VALUES ('rel-video-offer', 'rg-video-offer', 'artist-video-offer', 'Video Offer Album', 1, 1)
+  `).run();
+  const video = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-video-offer', ?, 'artist-video-offer', 'Chosen Video', 1, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    ) VALUES ('track-video-offer', 'rel-video-offer', 'rec-video-offer', ?, 1, 1, '1', 'Chosen Video')
+  `).run(video.id);
+  selectVideoInVideoLibraries(dbModule.db, video.id);
+  seedVideoOffer({
+    provider: "tidal",
+    providerId: "tidal-video-offer",
+    recordingId: video.id,
+    title: "Chosen Video",
+    videoQuality: "FHD",
+    providerUrl: "https://tidal.com/browse/video/tidal-video-offer",
+  });
+  seedVideoOffer({
+    provider: "apple-music",
+    providerId: "apple-video-offer",
+    recordingId: video.id,
+    title: "Chosen Video",
+    // TIDAL is objectively higher quality here; the persisted Apple choice is
+    // still the acquisition authority the album card must report.
+    videoQuality: "SD",
+    providerUrl: "https://music.apple.com/video/apple-video-offer",
+  });
+  dbModule.db.prepare(`
+    UPDATE LibraryVideos
+    SET preferred_offer_key = ?
+    WHERE video_recording_id = ?
+  `).run(JSON.stringify(["apple-music", "apple-video-offer"]), video.id);
+
+  const [associated] = videoQueryModule.getAlbumAssociatedVideos("rg-video-offer");
+  assert.equal(associated?.provider, "apple-music");
+  assert.equal(associated?.provider_id, "apple-video-offer");
+  assert.equal(associated?.quality, "SD");
+  assert.equal(associated?.provider_url, "https://music.apple.com/video/apple-video-offer");
+
+  dbModule.db.prepare(`
+    UPDATE LibraryVideos
+    SET preferred_offer_key = ?
+    WHERE video_recording_id = ?
+  `).run(JSON.stringify(["apple-music", "missing-offer"]), video.id);
+  const [stale] = videoQueryModule.getAlbumAssociatedVideos("rg-video-offer");
+  assert.equal(stale?.provider, null);
+  assert.equal(stale?.provider_id, null);
+  assert.equal(stale?.quality, null);
+  assert.equal(stale?.provider_url, null);
+});
+
 test("album associated videos honor monitored state and music-video type filters", async () => {
   const configModule = await import("../config/config.js");
   const config = configModule.readConfig();
@@ -866,9 +891,6 @@ test("album associated videos honor monitored state and music-video type filters
     VALUES ('artist-mbid', 'Video Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name) VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
-  `).run();
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES ('rg-filter', 'artist-mbid', 'Filter Album', 'album')
@@ -911,12 +933,12 @@ test("album associated videos honor monitored state and music-video type filters
   // A downloaded file keeps its video visible even when unmonitored / type-off.
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_slot, file_path, relative_path, library_root, filename, extension, file_type, recording_id
+      artist_metadata_id, library_slot, file_path, relative_path, library_root, filename, extension, file_type, recording_id
     ) VALUES (
-      'artist-mbid', 'video', '/library/music-videos/Downloaded Lyric.mp4', 'Downloaded Lyric.mp4',
+      ?, 'video', '/library/music-videos/Downloaded Lyric.mp4', 'Downloaded Lyric.mp4',
       '/library/music-videos', 'Downloaded Lyric', '.mp4', 'video', ?
     )
-  `).run(downloadedUnmonitored);
+  `).run(artist.id, downloadedUnmonitored);
 
   const associated = videoQueryModule.getAlbumAssociatedVideos("rg-filter");
   const ids = associated.map((video) => video.id).sort();
@@ -933,10 +955,6 @@ test("video detail appends MusicBrainz recording disambiguation", () => {
     VALUES ('artist-mbid', 'Bastille')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('artist-mbid', 'artist-mbid', 'Bastille')
-  `).run();
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
       foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,

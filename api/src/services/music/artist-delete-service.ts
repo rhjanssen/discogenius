@@ -4,6 +4,11 @@ import {
   invalidateAllDownloadState,
   invalidateArtistDownloadStatus,
 } from "../download/download-state.js";
+import {
+  loadArtistMetadataIdentity,
+  removeArtistFromLibraries,
+  resolveArtistMetadataId,
+} from "./managed-artists.js";
 
 export type DeleteArtistResult = {
   artistId: string;
@@ -14,9 +19,8 @@ export type DeleteArtistResult = {
 };
 
 /**
- * Remove an artist from the library (Lidarr Delete Artist).
- * Optionally deletes on-disk files first. Does not add import-list exclusions
- * (that feature does not exist yet).
+ * Remove an artist from every library (Lidarr Delete Artist).
+ * Optionally deletes on-disk files first. Catalog ArtistMetadata is kept.
  */
 export function deleteArtistFromLibrary(
   artistIdInput: string,
@@ -29,8 +33,8 @@ export function deleteArtistFromLibrary(
     throw error;
   }
 
-  const artist = db.prepare("SELECT id FROM Artists WHERE id = ?").get(artistId) as { id: number } | undefined;
-  if (!artist) {
+  const identity = loadArtistMetadataIdentity(artistId);
+  if (!identity) {
     const error = new Error("Artist not found") as Error & { status?: number };
     error.status = 404;
     throw error;
@@ -41,9 +45,7 @@ export function deleteArtistFromLibrary(
   let fileErrors = 0;
 
   if (options.deleteFiles === true) {
-    // Removing the artist removes them from every Library at once, so this is
-    // the explicitly named all-Library deletion rather than an omitted scope.
-    const fileResult = deleteArtistLibraryFiles(artistId, {
+    const fileResult = deleteArtistLibraryFiles(identity.mbid, {
       allLibraries: true,
       unmonitor: false,
     });
@@ -52,40 +54,40 @@ export function deleteArtistFromLibrary(
     fileErrors = fileResult.errors;
   }
 
+  const metadataId = resolveArtistMetadataId(artistId) ?? identity.id;
   const tx = db.transaction(() => {
-    // Drop remaining tracked file rows even when deleteFiles was false (DB-only remove).
     for (const table of ["MetadataFiles", "LyricFiles", "ExtraFiles"] as const) {
       try {
-        db.prepare(`DELETE FROM ${table} WHERE artist_id = ?`).run(artistId);
+        db.prepare(`DELETE FROM ${table} WHERE artist_id = ?`).run(identity.mbid);
       } catch {
         // table may be absent on older schemas
       }
     }
-    db.prepare("DELETE FROM TrackFiles WHERE artist_id = ?").run(artistId);
+    db.prepare("DELETE FROM TrackFiles WHERE artist_metadata_id = ?").run(metadataId);
     try {
-      db.prepare("DELETE FROM UnmappedFiles WHERE artist_id = ?").run(artistId);
+      db.prepare("DELETE FROM UnmappedFiles WHERE artist_metadata_id = ?").run(identity.mbid);
     } catch {
       // optional table
     }
     try {
-      db.prepare("DELETE FROM ArtistStatistics WHERE artist_id = ?").run(artistId);
+      db.prepare("DELETE FROM ArtistStatistics WHERE artist_metadata_id = ?").run(metadataId);
     } catch {
       // optional table
     }
 
-    db.prepare("DELETE FROM Artists WHERE id = ?").run(artistId);
+    removeArtistFromLibraries(metadataId);
   });
   tx();
 
   try {
-    invalidateArtistDownloadStatus(artistId);
+    invalidateArtistDownloadStatus(identity.mbid);
     invalidateAllDownloadState();
   } catch {
-    // best-effort cache bust
+    // best-effort
   }
 
   return {
-    artistId,
+    artistId: identity.mbid,
     deletedFiles,
     missingFiles,
     fileErrors,

@@ -403,7 +403,7 @@ export class UnmappedFilesService {
                 a.name AS artist_name,
                 a.mbid AS artist_mbid
             FROM Albums al
-            JOIN Artists a ON a.mbid = al.artist_mbid
+            JOIN ArtistMetadata a ON a.mbid = al.artist_mbid
             WHERE al.mbid = ? OR EXISTS (SELECT 1 FROM AlbumEditions rel WHERE rel.release_group_mbid = al.mbid AND rel.mbid = ?)
             LIMIT 1
         `).get(cleanMbid, cleanMbid) as any;

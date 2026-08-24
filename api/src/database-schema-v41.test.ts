@@ -45,6 +45,7 @@ test("schema 41 separates canonical, provider, match, curation, and acquisition 
       "LibraryArtists",
       "LibraryAlbums",
       "LibraryEditions",
+      "LibraryVideos",
       "LibraryEditionScopes",
       "AcquisitionPlans",
       "AcquisitionPlanSources",
@@ -79,6 +80,7 @@ test("schema 41 relation tables use integer authorities without MBID shadows", (
       "ProviderTrackMatches",
       "LibraryAlbums",
       "LibraryEditions",
+      "LibraryVideos",
       "AcquisitionPlanTracks",
       "TrackFiles",
     ]) {
@@ -175,6 +177,56 @@ test("schema 41 validates provider membership, credits, and track recording iden
         ) VALUES (2, 1, 1, 1, 2, 'accepted', 'automatic', 1, 'external_id', 1)
       `).run(),
       /recording disagrees/,
+    );
+  });
+});
+
+test("schema 41 catalogue tables do not store library monitoring columns", () => {
+  withSchema((db) => {
+    for (const table of ["Albums", "AlbumEditions", "Tracks", "Recordings", "LibraryAlbums", "LibraryEditions", "LibraryVideos"]) {
+      const columns = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(({ name }) => name);
+      assert.equal(columns.includes("monitored"), false, `${table}.monitored would compete with library row existence`);
+    }
+    const recordings = (db.prepare("PRAGMA table_info(Recordings)").all() as Array<{ name: string }>).map(({ name }) => name);
+    for (const column of ["monitored_lock", "monitored_at", "locked_at"]) {
+      assert.equal(recordings.includes(column), false, `Recordings.${column} is a retired library decision`);
+    }
+  });
+});
+
+test("schema 41 LibraryVideos row existence is monitoring and rejects audio recordings", () => {
+  withSchema((db) => {
+    db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-mbid', 'Artist')").run();
+    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-mbid', 1, 'Release Group')").run();
+    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-mbid', 1, 'Release')").run();
+    db.prepare("INSERT INTO Recordings (id, mbid, title, is_video) VALUES (1, 'audio-rec', 'Audio', 0), (2, 'video-rec', 'Clip', 1)").run();
+    db.prepare("INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Standard', '{}')").run();
+    db.prepare(`
+      INSERT INTO quality_profiles (
+        id, name, allowed_source_formats, preference_order, cutoff,
+        fallback_policy, output_format, transcode_policy
+      ) VALUES (1, 'Video', '["video"]', '[]', 'video', 'best', '{}', 'preserve')
+    `).run();
+    db.prepare(`
+      INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
+      VALUES (1, 'Videos', '/videos', 1, 1)
+    `).run();
+
+    db.prepare(`
+      INSERT INTO LibraryVideos (library_id, video_recording_id, selection_mode, placement_mode)
+      VALUES (1, 2, 'auto', 'separated')
+    `).run();
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM LibraryVideos").get() as { count: number }).count,
+      1,
+    );
+
+    assert.throws(
+      () => db.prepare(`
+        INSERT INTO LibraryVideos (library_id, video_recording_id, selection_mode, placement_mode)
+        VALUES (1, 1, 'auto', 'separated')
+      `).run(),
+      /canonical video recording/,
     );
   });
 });

@@ -7,18 +7,16 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowClockwise24Regular,
-  CheckmarkCircle16Filled,
   Clock16Regular,
   Clock24Regular,
-  DismissCircle16Filled,
   DismissCircle24Filled,
-  Warning16Filled,
   ArrowClockwise24Filled,
   Clock16Filled,
   Clock24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
+import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { ActivityListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { useActivityFeed } from "@/hooks/useActivityFeed";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
@@ -229,11 +227,11 @@ const ActivityTab = ({
     const getStatusIcon = (level: EventLevel, source: ActivitySource) => {
         switch (level) {
             case "success":
-                return <CheckmarkCircle16Filled className={source === "history" ? styles.statusIconSuccessHistory : styles.statusIconSuccess} />;
+                return <SemanticStatusIcon status="success" className={source === "history" ? styles.statusIconSuccessHistory : styles.statusIconSuccess} />;
             case "warning":
-                return <Warning16Filled className={styles.statusIconWarning} />;
+                return <SemanticStatusIcon status="warning" className={styles.statusIconWarning} />;
             case "error":
-                return <DismissCircle16Filled className={styles.statusIconError} />;
+                return <SemanticStatusIcon status="error" className={styles.statusIconError} />;
             default:
                 return <Clock16 className={styles.statusIconNeutral} />;
         }

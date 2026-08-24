@@ -11,7 +11,11 @@ import {
   Play24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
-import Hls from "hls.js";
+// Audio playback only needs the standard HLS pipeline. The full hls.js build
+// pulled subtitle, alternate-audio, EME, and interstitial controllers into a
+// shared lazy route chunk, adding more than 500 kB of minified code to pages
+// that never opened the player.
+import Hls from "hls.js/dist/hls.light.mjs";
 import { formatDurationSeconds } from "@/utils/format";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
@@ -387,11 +391,14 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
     return (
         <div className={styles.container} data-testid="audio-player">
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption -- Audio tracks have no caption resource. */}
             <audio
                 ref={audioRef}
                 className={styles.audioElement}
                 preload="metadata"
                 playsInline
+                aria-hidden="true"
+                tabIndex={-1}
             />
             <Button
                 appearance="subtle"

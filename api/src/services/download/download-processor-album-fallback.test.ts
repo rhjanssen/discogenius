@@ -11,7 +11,12 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { listProviderAlbumFallbackTracks, resolveFallbackProvenance } = await import("./download-processor.js");
+const {
+  applyFallbackOfferToPayload,
+  applyFallbackTrackOffer,
+  listProviderAlbumFallbackTracks,
+  resolveFallbackProvenance,
+} = await import("./download-processor.js");
 
 beforeEach(() => {
   db.prepare("DELETE FROM ProviderTrackMatches").run();
@@ -22,6 +27,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -257,4 +263,55 @@ test("unresolvable fallback provenance is cleared, not inherited", () => {
   assert.equal(moved.providerTrackItemId, undefined);
   assert.equal(moved.providerEditionItemId, null);
   assert.equal(moved.providerAudioVariantId, null);
+});
+
+test("cross-provider track fallback clears the failed provider album when the new occurrence has no album context", () => {
+  const nextTrack = providerItem("tidal", "track", "tidal-track", "Fallback Track");
+  const moved = applyFallbackTrackOffer({
+    provider: "apple-music",
+    providerTrackId: "apple-track",
+    providerAlbumId: "apple-album",
+    providerTrackItemId: 9001,
+    providerEditionItemId: 9002,
+    providerAudioVariantId: 9003,
+    acquisitionPlanSourceId: 9004,
+    canonicalTrackMbid: "canonical-track",
+    quality: "APPLE_HIRES_LOSSLESS",
+  }, {
+    provider: "tidal",
+    providerId: "tidal-track",
+    providerItemId: nextTrack,
+    quality: null,
+  });
+
+  assert.equal(moved.provider, "tidal");
+  assert.equal(moved.providerTrackId, "tidal-track");
+  assert.equal(moved.providerAlbumId, null, "an Apple album id must never survive on a TIDAL offer");
+  assert.equal(moved.providerTrackItemId, nextTrack);
+  assert.equal(moved.providerEditionItemId, null);
+  assert.equal(moved.providerAudioVariantId, null);
+  assert.equal(moved.acquisitionPlanSourceId, null);
+  assert.equal(moved.quality, null, "the failed provider's quality label must not survive");
+  assert.equal(moved.canonicalTrackMbid, "canonical-track");
+});
+
+test("generic fallback replaces persisted provider routing and clears an old provider URL", () => {
+  const moved = applyFallbackOfferToPayload({
+    type: "album",
+    provider: "apple-music",
+    providerId: "apple-album",
+    streamingSource: "apple-music",
+    url: "https://music.apple.com/album/apple-album",
+    releaseGroupMbid: "canonical-release-group",
+  } as any, "album", {
+    provider: "provider-without-url-builder",
+    providerId: "fallback-album",
+    quality: "LOSSLESS",
+  }) as any;
+
+  assert.equal(moved.provider, "provider-without-url-builder");
+  assert.equal(moved.streamingSource, "provider-without-url-builder");
+  assert.equal(moved.providerId, "fallback-album");
+  assert.equal(moved.url, null);
+  assert.equal(moved.releaseGroupMbid, "canonical-release-group");
 });

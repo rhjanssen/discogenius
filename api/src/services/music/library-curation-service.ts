@@ -184,11 +184,11 @@ export class LibraryCurationService {
     const libraryArtists = this.db.prepare(`
       SELECT
         library_artist.id AS library_artist_id,
-        managed.artist_id,
+        managed.id AS artist_id,
         library_artist.credited_scope
       FROM LibraryArtists library_artist
-      JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
-      WHERE library_artist.library_id = ? AND library_artist.monitored = 1${artistFilterSql}
+      JOIN ArtistMetadata managed ON managed.id = library_artist.artist_metadata_id
+      WHERE library_artist.library_id = ?${artistFilterSql}
       ORDER BY library_artist.id
     `).all(input.libraryId, ...artistFilterParams) as LibraryArtistRow[];
 
@@ -242,10 +242,10 @@ export class LibraryCurationService {
           library_artist.id AS library_artist_id,
           'primary' AS scope_type
         FROM LibraryArtists library_artist
-        JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
-        JOIN Albums release_group ON release_group.artist_metadata_id = managed.artist_id
+        JOIN ArtistMetadata managed ON managed.id = library_artist.artist_metadata_id
+        JOIN Albums release_group ON release_group.artist_metadata_id = managed.id
         JOIN AlbumEditions release ON release.release_group_id = release_group.id
-        WHERE library_artist.library_id = ? AND library_artist.monitored = 1${artistFilterSql}
+        WHERE library_artist.library_id = ?${artistFilterSql}
 
         UNION
 
@@ -254,11 +254,11 @@ export class LibraryCurationService {
           library_artist.id,
           'primary'
         FROM LibraryArtists library_artist
-        JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
+        JOIN ArtistMetadata managed ON managed.id = library_artist.artist_metadata_id
         JOIN ReleaseGroupArtistCredits credit
-          ON credit.artist_id = managed.artist_id AND credit.ordinal = 0
+          ON credit.artist_id = managed.id AND credit.ordinal = 0
         JOIN AlbumEditions release ON release.release_group_id = credit.release_group_id
-        WHERE library_artist.library_id = ? AND library_artist.monitored = 1${artistFilterSql}
+        WHERE library_artist.library_id = ?${artistFilterSql}
 
         UNION
 
@@ -267,10 +267,9 @@ export class LibraryCurationService {
           library_artist.id,
           'release_credit'
         FROM LibraryArtists library_artist
-        JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
-        JOIN ReleaseArtistCredits credit ON credit.artist_id = managed.artist_id
+        JOIN ArtistMetadata managed ON managed.id = library_artist.artist_metadata_id
+        JOIN ReleaseArtistCredits credit ON credit.artist_id = managed.id
         WHERE library_artist.library_id = ?
-          AND library_artist.monitored = 1
           AND library_artist.credited_scope IN ('release_credit', 'release_and_track_credit')${artistFilterSql}
 
         UNION
@@ -280,11 +279,10 @@ export class LibraryCurationService {
           library_artist.id,
           'track_credit'
         FROM LibraryArtists library_artist
-        JOIN ManagedArtists managed ON managed.id = library_artist.managed_artist_id
-        JOIN TrackArtistCredits credit ON credit.artist_id = managed.artist_id
+        JOIN ArtistMetadata managed ON managed.id = library_artist.artist_metadata_id
+        JOIN TrackArtistCredits credit ON credit.artist_id = managed.id
         JOIN Tracks track ON track.id = credit.track_id
         WHERE library_artist.library_id = ?
-          AND library_artist.monitored = 1
           AND library_artist.credited_scope = 'release_and_track_credit'${artistFilterSql}
       `).all(
         input.libraryId, ...artistFilterParams,

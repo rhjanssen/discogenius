@@ -15,7 +15,7 @@ let serviceModule: typeof import("./extra-file-service.js");
 let fixtures: typeof import("../../../test-support/library-fixtures.js");
 
 const ARTIST_MBID = "artist-mbid";
-const ARTIST_ID = "42";
+const ARTIST_ID = 42;
 const ALBUM_MBID = "album-mbid";
 
 before(async () => {
@@ -35,14 +35,11 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM TrackFiles").run();
-  db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
-  db.prepare("DELETE FROM Libraries").run();
+  db.prepare("DELETE FROM Albums").run();  db.prepare("DELETE FROM Libraries").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
+  db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare(`
-    INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, 'Artist')
-  `).run(ARTIST_MBID);
-  db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitored) VALUES (?, ?, 'Artist', 1)
+    INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, 'Artist')
   `).run(ARTIST_ID, ARTIST_MBID);
   db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
@@ -66,7 +63,7 @@ function seedTrackFile(libraryId: number, relativePath: string): number {
   const filePath = path.join(sharedRoot, relativePath);
   return (dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_type, library_slot, library_root, library_id,
+      artist_metadata_id, file_type, library_slot, library_root, library_id,
       file_path, relative_path, filename, extension, canonical_release_group_mbid
     ) VALUES (?, 'track', 'stereo', 'music', ?, ?, ?, ?, ?, ?)
     RETURNING id
@@ -85,7 +82,7 @@ function ownership(input: Partial<Parameters<
   typeof serviceModule.ExtraFileService.resolveOwningLibraryIds
 >[0]> = {}): number[] {
   return serviceModule.ExtraFileService.resolveOwningLibraryIds({
-    artistId: ARTIST_ID,
+    artistId: String(ARTIST_ID),
     filePath: path.join(sharedRoot, "Artist", "Album", "cover.jpg"),
     libraryRoot: sharedRoot,
     fileType: "cover",
@@ -189,7 +186,7 @@ test("a track-scoped extra with no evidence fails closed instead of guessing", (
   );
   assert.throws(
     () => serviceModule.ExtraFileService.upsert({
-      artistId: ARTIST_ID,
+      artistId: String(ARTIST_ID),
       filePath: lyricPath,
       libraryRoot: sharedRoot,
       fileType: "lyrics",
@@ -210,7 +207,7 @@ test("releaseDuplicateForRescan drops the extra row and leaves the file on disk"
   const extraPath = path.join(sharedRoot, "202 - Things We Lost in the Fire (Abbey Road sessions).m4a");
   fs.writeFileSync(extraPath, "audio");
   const extraId = serviceModule.ExtraFileService.upsert({
-    artistId: ARTIST_ID,
+    artistId: String(ARTIST_ID),
     libraryId: lossless,
     filePath: extraPath,
     libraryRoot: sharedRoot,

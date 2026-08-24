@@ -5,6 +5,8 @@ import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
+import { seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
+import { stampArtistLibraryPath, resolveArtistMetadataId } from "../music/managed-artists.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-move-artist-service-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -39,10 +41,10 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
   fs.writeFileSync(trackPath, "test-audio");
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-one-mbid", "Artist One");
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-one-mbid", artistPath, 1);
+  seedLibraryArtistMonitoring(dbModule.db, "artist-one-mbid");
+  const artistMetadataId = resolveArtistMetadataId("artist-one-mbid");
+  assert.ok(artistMetadataId != null);
+  stampArtistLibraryPath(artistMetadataId, artistPath, true);
 
   // Canonical graph + provider availability (naming resolves from these).
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
@@ -68,7 +70,7 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
   });
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     albumId: "10",
     mediaId: "100",
     filePath: trackPath,
@@ -105,8 +107,10 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
+  db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Libraries").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
@@ -129,7 +133,7 @@ test("moveArtist changes the stored folder and produces an artist-scoped rename 
   seedArtistTrack();
 
   const result = moveArtistServiceModule.MoveArtistService.moveArtist({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     path: "Artist One",
     moveFiles: false,
   });
@@ -141,7 +145,7 @@ test("moveArtist changes the stored folder and produces an artist-scoped rename 
   assert.equal(result?.moveFilesQueued, false);
   assert.equal(result?.renameStatus.renameNeeded, 1);
 
-  const artist = dbModule.db.prepare("SELECT path FROM Artists WHERE id = ?").get("1") as { path: string };
+  const artist = dbModule.db.prepare("SELECT path FROM LibraryArtists la JOIN ArtistMetadata am ON am.id = la.artist_metadata_id WHERE am.mbid = ?").get("artist-one-mbid") as { path: string };
   assert.equal(artist.path, "Artist One");
 
   // getRenameStatus is read-only (no expected_path writes); the plan lives on renameStatus.
@@ -154,7 +158,7 @@ test("moveArtist queues MoveArtist when moveFiles is requested", () => {
   seedArtistTrack();
 
   const result = moveArtistServiceModule.MoveArtistService.moveArtist({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     path: "Artist Prime",
     moveFiles: true,
   });
@@ -170,7 +174,7 @@ test("moveArtist queues MoveArtist when moveFiles is requested", () => {
   `).get(result?.commandId) as { name: string; refId: string };
 
   assert.equal(job.name, queueModule.CommandNames.MoveArtist);
-  assert.equal(job.refId, "1");
+  assert.equal(job.refId, "artist-one-mbid");
 });
 
 test("moveArtist can rebuild the artist path from the current naming template", () => {
@@ -178,16 +182,15 @@ test("moveArtist can rebuild the artist path from the current naming template", 
   const config = configModule.readConfig();
   config.naming.artist_folder = "{artistName} [{artistMbId}]";
   configModule.writeConfig(config);
-  dbModule.db.prepare("UPDATE Artists SET mbid = ? WHERE id = ?").run("artist-mbid-1", "1");
 
   const result = moveArtistServiceModule.MoveArtistService.moveArtist({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     applyNamingTemplate: true,
     moveFiles: true,
   });
 
   assert.ok(result);
-  assert.equal(result?.path, "Artist One [artist-mbid-1]");
+  assert.equal(result?.path, "Artist One [artist-one-mbid]");
   assert.equal(result?.moveFilesQueued, true);
   assert.ok(result?.commandId);
 });
@@ -196,13 +199,13 @@ test("executeMoveArtistJob moves the artist folder and rebases tracked file path
   const seeded = seedArtistTrack();
 
   moveArtistServiceModule.MoveArtistService.moveArtist({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     path: "Artist Prime",
     moveFiles: true,
   });
 
   const result = moveArtistServiceModule.MoveArtistService.executeMoveArtistJob({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     sourcePath: "Old Artist",
     destinationPath: "Artist Prime",
   });
@@ -237,20 +240,20 @@ test("executeMoveArtistJob rolls back the stored artist path when the destinatio
   fs.writeFileSync(path.join(conflictingDir, "keep.txt"), "existing");
 
   moveArtistServiceModule.MoveArtistService.moveArtist({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     path: "Artist Prime",
     moveFiles: true,
   });
 
   assert.throws(
     () => moveArtistServiceModule.MoveArtistService.executeMoveArtistJob({
-      artistId: "1",
+      artistId: "artist-one-mbid",
       sourcePath: "Old Artist",
       destinationPath: "Artist Prime",
     }),
   );
 
-  const artist = dbModule.db.prepare("SELECT path FROM Artists WHERE id = ?").get("1") as { path: string };
+  const artist = dbModule.db.prepare("SELECT path FROM LibraryArtists la JOIN ArtistMetadata am ON am.id = la.artist_metadata_id WHERE am.mbid = ?").get("artist-one-mbid") as { path: string };
   assert.equal(artist.path, "Old Artist");
   assert.equal(fs.existsSync(seeded.trackPath), true);
 });
@@ -260,14 +263,14 @@ test("executeMoveArtistJob atomically rolls back every file row when sidecar reb
   const sourceCoverPath = path.join(seeded.musicRoot, "Old Artist", "Album One", "cover.jpg");
   fs.writeFileSync(sourceCoverPath, "cover");
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     filePath: sourceCoverPath,
     libraryRoot: seeded.musicRoot,
     fileType: "cover",
   });
 
   moveArtistServiceModule.MoveArtistService.moveArtist({
-    artistId: "1",
+    artistId: "artist-one-mbid",
     path: "Artist Prime",
     moveFiles: true,
   });
@@ -283,7 +286,7 @@ test("executeMoveArtistJob atomically rolls back every file row when sidecar reb
   try {
     assert.throws(
       () => moveArtistServiceModule.MoveArtistService.executeMoveArtistJob({
-        artistId: "1",
+        artistId: "artist-one-mbid",
         sourcePath: "Old Artist",
         destinationPath: "Artist Prime",
       }),
@@ -303,7 +306,7 @@ test("executeMoveArtistJob atomically rolls back every file row when sidecar reb
     FROM MetadataFiles
     WHERE file_path = ?
   `).get(sourceCoverPath) as { filePath: string; relativePath: string } | undefined;
-  const artist = dbModule.db.prepare("SELECT path FROM Artists WHERE id = '1'")
+  const artist = dbModule.db.prepare("SELECT path FROM LibraryArtists la JOIN ArtistMetadata am ON am.id = la.artist_metadata_id WHERE am.mbid = 'artist-one-mbid'")
     .get() as { path: string };
 
   assert.equal(trackRow.filePath, seeded.trackPath);
@@ -322,13 +325,14 @@ test("executeMoveArtistJob atomically rolls back every file row when sidecar reb
 test("moveArtist rejects overlapping artist folders", () => {
   seedArtistTrack({ artistPath: "Artists/Artist One" });
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("2", "Artist Two", "Artists", 1);
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+  `).run("artist-two-mbid", "Artist Two");
+  seedLibraryArtistMonitoring(dbModule.db, "artist-two-mbid");
+  stampArtistLibraryPath(resolveArtistMetadataId("artist-two-mbid")!, "Artists", true);
 
   assert.throws(
     () => moveArtistServiceModule.MoveArtistService.moveArtist({
-      artistId: "1",
+      artistId: "artist-one-mbid",
       path: "Artists",
     }),
     validationModule.RequestValidationError,

@@ -15,18 +15,34 @@ export function getExistingImportedMediaConflictPath(group: LocalGroup, match: P
     const rows: LibraryRow[] = [];
 
     if (match.itemType === "video") {
-        const mediaId = match.item?.id?.toString?.() ?? match.item?.provider_id?.toString?.();
-        if (!mediaId) {
+        const recordingId = Number(match.item?.recording_id ?? match.item?.id);
+        const recordingMbid = String(match.item?.mbid ?? "").trim();
+        const provider = String(match.item?.provider ?? "").trim();
+        const providerId = String(match.item?.provider_id ?? "").trim();
+        const predicates: string[] = [];
+        const params: Array<string | number> = [];
+        if (Number.isInteger(recordingId) && recordingId > 0) {
+            predicates.push("recording_id = ?");
+            params.push(recordingId);
+        }
+        if (recordingMbid) {
+            predicates.push("canonical_recording_mbid = ?");
+            params.push(recordingMbid);
+        }
+        if (provider && providerId) {
+            predicates.push("(provider = ? AND provider_entity_type = 'video' AND provider_id = ?)");
+            params.push(provider, providerId);
+        }
+        if (predicates.length === 0) {
             return null;
         }
 
         const existingRows = db.prepare(`
             SELECT file_path, relative_path, library_root
             FROM TrackFiles
-            WHERE provider_entity_type = 'video'
-              AND provider_id = ?
-              AND file_type = 'video'
-        `).all(mediaId) as LibraryRow[];
+            WHERE file_type = 'video'
+              AND (${predicates.join(" OR ")})
+        `).all(...params) as LibraryRow[];
         rows.push(...existingRows);
     } else {
         const trackIds = Array.from(new Set(Object.values(match.trackIdsByFilePath || {}))).filter(Boolean);
@@ -39,8 +55,7 @@ export function getExistingImportedMediaConflictPath(group: LocalGroup, match: P
             SELECT file_path, relative_path, library_root
             FROM TrackFiles
             WHERE file_type = 'track'
-              AND provider_entity_type = 'track'
-              AND provider_id IN (${placeholders})
+              AND canonical_track_mbid IN (${placeholders})
         `).all(...trackIds) as LibraryRow[];
         rows.push(...existingRows);
     }

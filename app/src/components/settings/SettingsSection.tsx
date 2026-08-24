@@ -75,7 +75,7 @@ export const SettingsSection = ({
         <section id={id} className={mergeClasses(styles.section, className)}>
             <div className={styles.header}>
                 <div className={styles.heading}>
-                    <Title3 className={styles.title}>{title}</Title3>
+                    <Title3 as="h2" className={styles.title}>{title}</Title3>
                     <Caption1 className={styles.description}>{description}</Caption1>
                 </div>
                 {actions ? <div className={styles.actions}>{actions}</div> : null}

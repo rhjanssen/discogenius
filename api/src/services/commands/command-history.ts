@@ -111,7 +111,7 @@ function loadMissingArtistNames(ids: readonly string[], context: DescriptionLook
 
     for (const chunk of chunkValues(missingIds, 200)) {
         const placeholders = chunk.map(() => "?").join(",");
-        const rows = db.prepare(`SELECT id, name FROM Artists WHERE id IN (${placeholders})`).all(...chunk) as Array<{
+        const rows = db.prepare(`SELECT id, name FROM ArtistMetadata WHERE id IN (${placeholders})`).all(...chunk) as Array<{
             id: string;
             name: string | null;
         }>;
@@ -424,7 +424,7 @@ export const buildDescription = (job: CommandModel, context?: DescriptionLookupC
             }
 
             try {
-                const row = db.prepare(`SELECT name FROM Artists WHERE id = ?`).get(providerId) as any;
+                const row = db.prepare(`SELECT name FROM ArtistMetadata WHERE id = ?`).get(providerId) as any;
                 const resolved = String(row?.name || "").trim();
                 context?.artistNameById.set(providerId, resolved || null);
                 if (resolved && resolved.toLowerCase() !== "unknown artist") {

@@ -252,7 +252,7 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
   if (ids.length === 0) return result;
 
   const resolveArtistRow = db.prepare(
-    "SELECT mbid FROM Artists WHERE CAST(id AS TEXT) = ? OR mbid = ? LIMIT 1",
+    "SELECT mbid FROM ArtistMetadata WHERE CAST(id AS TEXT) = ? OR mbid = ? LIMIT 1",
   );
   const resolveMetadataByMbid = db.prepare("SELECT id, mbid FROM ArtistMetadata WHERE mbid = ? LIMIT 1");
   const resolveMetadataById = db.prepare("SELECT id, mbid FROM ArtistMetadata WHERE CAST(id AS TEXT) = ? LIMIT 1");
@@ -501,7 +501,7 @@ export function countDownloadedManagedArtists(): number {
   const completionPredicate = buildArtistCompletionPredicate("a");
   const rows = db.prepare(`
     SELECT CAST(a.id AS TEXT) AS artist_id
-    FROM Artists a
+    FROM ArtistMetadata a
     WHERE ${completionPredicate}
   `).all() as Array<{ artist_id: string }>;
   if (rows.length === 0) {
@@ -538,7 +538,7 @@ export function updateArtistDownloadStatusFromAlbum(albumId: string): void {
   const canonicalArtistIds = db.prepare(`
     SELECT DISTINCT CAST(a.id AS TEXT) AS artist_id
     FROM Albums rg
-    LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+    LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
     WHERE rg.mbid = ?
   `).all(albumId) as Array<{ artist_id: string | null }>;
 
@@ -567,7 +567,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
     JOIN Tracks track ON track.id = track_match.track_id
     JOIN AlbumEditions release ON release.id = track.album_edition_id
     JOIN Albums rg ON rg.id = release.release_group_id
-    LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+    LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
     WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
       AND pi.entity_type = 'track'
       AND (? IS NULL OR pi.provider = ?)
@@ -580,7 +580,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
       ON video_match.provider_video_item_id = pi.id
      AND video_match.match_state = 'accepted'
     JOIN Recordings recording ON recording.id = video_match.recording_id
-    LEFT JOIN Artists a ON a.mbid = recording.artist_mbid
+    LEFT JOIN ArtistMetadata a ON a.mbid = recording.artist_mbid
     WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
       AND pi.entity_type = 'video'
       AND (? IS NULL OR pi.provider = ?)
@@ -591,7 +591,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
     FROM Tracks track
     JOIN AlbumEditions release ON release.mbid = track.release_mbid
     JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
-    LEFT JOIN Artists a ON a.mbid = release_group.artist_mbid
+    LEFT JOIN ArtistMetadata a ON a.mbid = release_group.artist_mbid
     WHERE track.mbid = ?
        OR track.recording_mbid = ?
     UNION
@@ -599,7 +599,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
       CAST(a.id AS TEXT) AS artist_id,
       NULL AS release_group_mbid
     FROM Recordings recording
-    LEFT JOIN Artists a ON a.mbid = recording.artist_mbid
+    LEFT JOIN ArtistMetadata a ON a.mbid = recording.artist_mbid
     WHERE recording.mbid = ?
        OR CAST(recording.id AS TEXT) = CAST(? AS TEXT)
   `).all(

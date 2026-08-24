@@ -29,6 +29,7 @@ const { tempDir } = prepareActiveSchemaEnv("edition-monitoring-contract");
 const { ProviderReleaseIngestionService } = await import("../providers/provider-release-ingestion-service.js");
 const { AcquisitionPlanningService } = await import("./acquisition-planning-service.js");
 const { AlbumCommandService } = await import("./album-command-service.js");
+const { DownloadMissingService } = await import("./download-missing-service.js");
 const { LibraryCurationService } = await import("./library-curation-service.js");
 const { LibraryReleaseSelectionService } = await import("./library-release-selection-service.js");
 
@@ -49,7 +50,6 @@ function seedCatalog(options: { requireProviderAvailability?: boolean } = {}): v
   resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, '${ARTIST_MBID}', 'Bastille');
-    INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
     INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title, primary_type)
     VALUES (1, '${ALBUM_MBID}', 1, '${ARTIST_MBID}', 'Doom Days', 'Album');
     INSERT INTO AlbumEditions (
@@ -87,8 +87,7 @@ function seedCatalog(options: { requireProviderAvailability?: boolean } = {}): v
     );
     INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id, enabled)
     VALUES (${LIBRARY_ID}, 'Stereo', '/library/stereo', 1, 1, 1);
-    INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored)
-    VALUES (1, ${LIBRARY_ID}, 1, 1);
+    INSERT INTO LibraryArtists (id, library_id, artist_metadata_id, policy) VALUES (1, ${LIBRARY_ID}, 1, 'all');
   `);
 }
 
@@ -447,6 +446,63 @@ test("an additive click keeps the current editions and the current Primary", () 
   assert.equal(byEdition.get(STANDARD_EDITION_ID)!.representative, false,
     "the added edition is supplemental");
   assert.equal(byEdition.get(STANDARD_EDITION_ID)!.plan?.planKey, standardPlan.planKey);
+});
+
+test("manual album download queues every monitored edition", async () => {
+  seedCatalog();
+  ingestProviders();
+  planEverything();
+  const service = new LibraryReleaseSelectionService(db);
+
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
+    mode: "additive",
+  });
+
+  const result = await AlbumCommandService.addAlbum(ALBUM_MBID, true, "stereo");
+  assert.equal(result.success, true);
+  assert.equal(result.commandIds?.length, 2,
+    "the album-level action covers both monitored editions, not only the Primary");
+  assert.deepEqual(
+    db.prepare(`
+      SELECT plan.edition_id
+      FROM DownloadQueue wait
+      JOIN SelectedAcquisitionPlans plan ON plan.id = wait.plan_id
+      ORDER BY plan.edition_id
+    `).all(),
+    [{ edition_id: STANDARD_EDITION_ID }, { edition_id: DELUXE_EDITION_ID }],
+  );
+});
+
+test("Download Missing queues every monitored edition", async () => {
+  seedCatalog();
+  ingestProviders();
+  planEverything();
+  const service = new LibraryReleaseSelectionService(db);
+
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
+    mode: "additive",
+  });
+
+  const result = await DownloadMissingService.queueMonitoredItems();
+  assert.equal(result.albums, 2);
+  assert.deepEqual(
+    db.prepare(`
+      SELECT plan.edition_id
+      FROM DownloadQueue wait
+      JOIN SelectedAcquisitionPlans plan ON plan.id = wait.plan_id
+      ORDER BY plan.edition_id
+    `).all(),
+    [{ edition_id: STANDARD_EDITION_ID }, { edition_id: DELUXE_EDITION_ID }],
+    "scheduled acquisition must not collapse an album to its Primary edition",
+  );
 });
 
 test("switching a plan beneath one of several editions leaves the others alone", () => {

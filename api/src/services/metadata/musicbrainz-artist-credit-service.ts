@@ -1,4 +1,5 @@
 import { db, runGatedChunkedWrite } from "../../database.js";
+import { CanonicalCatalogRepository } from "../catalog/canonical-catalog-repository.js";
 import type { CatalogArtistCreditReleaseGroup } from "../catalog/catalog-provider.js";
 
 export type CanonicalAlbumArtist = {
@@ -82,7 +83,8 @@ function parseArtistCredits(rawCredits: unknown, fallbackArtistMbid?: string): M
     .filter(Boolean) as MusicBrainzArtistCredit[];
 }
 
-function ensureArtist(artist: MusicBrainzArtistCredit, origin = "musicbrainz-credit"): void {
+function ensureArtist(artist: MusicBrainzArtistCredit, _origin = "musicbrainz-credit"): void {
+  // Credits mint catalog rows only. Library membership is never created here.
   db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name, sort_name, updated_at)
     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
@@ -90,40 +92,92 @@ function ensureArtist(artist: MusicBrainzArtistCredit, origin = "musicbrainz-cre
       name = CASE WHEN excluded.name = excluded.mbid THEN ArtistMetadata.name ELSE excluded.name END,
       updated_at = CURRENT_TIMESTAMP
   `).run(artist.artistId, artist.name, artist.name);
-
-  db.prepare(`
-    INSERT INTO Artists (
-      id, name, mbid, musicbrainz_status, musicbrainz_match_method, library_origin, monitored
-    )
-    VALUES (?, ?, ?, 'verified', 'musicbrainz-artist-credit', ?, 0)
-    ON CONFLICT(id) DO UPDATE SET
-      name = CASE WHEN excluded.name = excluded.mbid THEN Artists.name ELSE excluded.name END,
-      mbid = excluded.mbid,
-      musicbrainz_status = excluded.musicbrainz_status,
-      musicbrainz_match_method = excluded.musicbrainz_match_method
-  `).run(artist.artistId, artist.name, artist.artistId, origin);
 }
 
 function upsertScope(artistMbid: string, releaseGroupMbid: string, relationship: string): void {
   db.prepare(`
-    INSERT INTO ArtistReleaseGroups (artist_mbid, release_group_mbid, relationship, updated_at)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO ArtistReleaseGroups (
+      artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship, updated_at
+    )
+    SELECT
+      canonical.id,
+      ?,
+      albums.id,
+      ?,
+      ?,
+      CURRENT_TIMESTAMP
+    FROM ArtistMetadata canonical
+    LEFT JOIN Albums albums ON albums.mbid = ?
+    WHERE canonical.mbid = ?
     ON CONFLICT(artist_mbid, release_group_mbid, relationship) DO UPDATE SET
+      artist_metadata_id = excluded.artist_metadata_id,
+      release_group_id = excluded.release_group_id,
       updated_at = CURRENT_TIMESTAMP
-  `).run(artistMbid, releaseGroupMbid, relationship);
+  `).run(artistMbid, releaseGroupMbid, relationship, releaseGroupMbid, artistMbid);
+}
+
+function integerCreditsForReleaseGroup(credits: MusicBrainzArtistCredit[]) {
+  return credits.flatMap((credit, index) => {
+    const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?")
+      .get(credit.artistId) as { id: number } | undefined;
+    if (!artist) return [];
+    return [{
+      artistId: artist.id,
+      ordinal: index,
+      creditedName: credit.name,
+      joinPhrase: credit.joinPhrase,
+    }];
+  });
 }
 
 function replaceAlbumArtists(releaseGroupMbid: string, credits: MusicBrainzArtistCredit[]): void {
+  const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
+    .get(releaseGroupMbid) as { id: number } | undefined;
+  const integerCredits = integerCreditsForReleaseGroup(credits);
+  if (releaseGroup && integerCredits.length > 0) {
+    const catalog = new CanonicalCatalogRepository(db);
+    catalog.replaceReleaseGroupCredits(releaseGroup.id, integerCredits);
+    const editions = db.prepare(`
+      SELECT id FROM AlbumEditions
+      WHERE release_group_id = ? OR release_group_mbid = ?
+    `).all(releaseGroup.id, releaseGroupMbid) as Array<{ id: number }>;
+    for (const edition of editions) {
+      catalog.replaceReleaseCredits(edition.id, integerCredits);
+    }
+  }
+
   db.prepare("DELETE FROM AlbumArtists WHERE release_group_mbid = ?").run(releaseGroupMbid);
   const insert = db.prepare(`
     INSERT INTO AlbumArtists (
-      release_group_mbid, artist_mbid, ord, credited_name, join_phrase, is_primary, updated_at
+      release_group_id, release_group_mbid, artist_metadata_id, artist_mbid,
+      ord, credited_name, join_phrase, is_primary, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    SELECT
+      albums.id,
+      ?,
+      canonical.id,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      CURRENT_TIMESTAMP
+    FROM ArtistMetadata canonical
+    LEFT JOIN Albums albums ON albums.mbid = ?
+    WHERE canonical.mbid = ?
   `);
 
   credits.forEach((credit, index) => {
-    insert.run(releaseGroupMbid, credit.artistId, index, credit.name, credit.joinPhrase, index === 0 ? 1 : 0);
+    insert.run(
+      releaseGroupMbid,
+      credit.artistId,
+      index,
+      credit.name,
+      credit.joinPhrase,
+      index === 0 ? 1 : 0,
+      releaseGroupMbid,
+      credit.artistId,
+    );
   });
 }
 
@@ -142,8 +196,13 @@ export class MusicBrainzArtistCreditService {
     ensureArtist(credit, "musicbrainz-primary");
     upsertScope(artistMbid, releaseGroupMbid, "primary");
 
-    const existing = db.prepare("SELECT 1 FROM AlbumArtists WHERE release_group_mbid = ? LIMIT 1")
-      .get(releaseGroupMbid);
+    const existing = db.prepare(`
+      SELECT 1
+      FROM ReleaseGroupArtistCredits credit
+      JOIN Albums release_group ON release_group.id = credit.release_group_id
+      WHERE release_group.mbid = ?
+      LIMIT 1
+    `).get(releaseGroupMbid);
     if (!existing) {
       replaceAlbumArtists(releaseGroupMbid, [credit]);
     }
@@ -184,11 +243,23 @@ export class MusicBrainzArtistCreditService {
         const owner = credits[0];
         db.prepare(`
           INSERT INTO Albums (
-            mbid, artist_mbid, title, primary_type, secondary_types,
+            mbid, artist_metadata_id, artist_mbid, title, primary_type, secondary_types,
             first_release_date, disambiguation, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          SELECT
+            ?,
+            canonical.id,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            CURRENT_TIMESTAMP
+          FROM ArtistMetadata canonical
+          WHERE canonical.mbid = ?
           ON CONFLICT(mbid) DO UPDATE SET
+            artist_metadata_id = excluded.artist_metadata_id,
             artist_mbid = excluded.artist_mbid,
             title = excluded.title,
             primary_type = excluded.primary_type,
@@ -204,6 +275,7 @@ export class MusicBrainzArtistCreditService {
           JSON.stringify(releaseGroup["secondary-types"] || []),
           releaseGroup["first-release-date"] || null,
           releaseGroup.disambiguation || null,
+          owner.artistId,
         );
 
         replaceAlbumArtists(releaseGroupMbid, credits);
@@ -222,6 +294,24 @@ export class MusicBrainzArtistCreditService {
   }
 
   static getAlbumArtists(releaseGroupMbid: string): CanonicalAlbumArtist[] {
+    const integerRows = db.prepare(`
+      SELECT
+        canonical.mbid AS artistId,
+        credit.credited_name AS name,
+        credit.join_phrase AS joinPhrase,
+        a.picture,
+        a.cover_image_url AS coverImageUrl
+      FROM ReleaseGroupArtistCredits credit
+      JOIN Albums release_group ON release_group.id = credit.release_group_id
+      JOIN ArtistMetadata canonical ON canonical.id = credit.artist_id
+      LEFT JOIN ArtistMetadata a ON a.mbid = canonical.mbid
+      WHERE release_group.mbid = ?
+      ORDER BY credit.ordinal ASC
+    `).all(releaseGroupMbid) as CanonicalAlbumArtist[];
+    if (integerRows.length > 0) {
+      return integerRows;
+    }
+
     return db.prepare(`
       SELECT
         aa.artist_mbid AS artistId,
@@ -230,7 +320,7 @@ export class MusicBrainzArtistCreditService {
         a.picture,
         a.cover_image_url AS coverImageUrl
       FROM AlbumArtists aa
-      LEFT JOIN Artists a ON a.mbid = aa.artist_mbid
+      LEFT JOIN ArtistMetadata a ON a.mbid = aa.artist_mbid
       WHERE aa.release_group_mbid = ?
       ORDER BY aa.ord ASC
     `).all(releaseGroupMbid) as CanonicalAlbumArtist[];
@@ -243,6 +333,43 @@ export class MusicBrainzArtistCreditService {
     }
 
     const marks = uniqueMbids.map(() => "?").join(", ");
+    const integerRows = db.prepare(`
+      SELECT
+        release_group.mbid AS releaseGroupMbid,
+        canonical.mbid AS artistId,
+        credit.credited_name AS name,
+        credit.join_phrase AS joinPhrase,
+        a.picture,
+        a.cover_image_url AS coverImageUrl
+      FROM ReleaseGroupArtistCredits credit
+      JOIN Albums release_group ON release_group.id = credit.release_group_id
+      JOIN ArtistMetadata canonical ON canonical.id = credit.artist_id
+      LEFT JOIN ArtistMetadata a ON a.mbid = canonical.mbid
+      WHERE release_group.mbid IN (${marks})
+      ORDER BY release_group.mbid ASC, credit.ordinal ASC
+    `).all(...uniqueMbids) as Array<CanonicalAlbumArtist & { releaseGroupMbid: string }>;
+
+    const result = new Map<string, CanonicalAlbumArtist[]>();
+    for (const row of integerRows) {
+      const artists = result.get(row.releaseGroupMbid) ?? [];
+      artists.push({
+        artistId: row.artistId,
+        name: row.name,
+        joinPhrase: row.joinPhrase,
+        picture: row.picture,
+        coverImageUrl: row.coverImageUrl,
+      });
+      result.set(row.releaseGroupMbid, artists);
+    }
+    if (result.size === uniqueMbids.length) {
+      return result;
+    }
+
+    const leftoverMbids = uniqueMbids.filter((mbid) => !result.has(mbid));
+    if (leftoverMbids.length === 0) {
+      return result;
+    }
+    const leftoverMarks = leftoverMbids.map(() => "?").join(", ");
     const rows = db.prepare(`
       SELECT
         aa.release_group_mbid AS releaseGroupMbid,
@@ -252,12 +379,11 @@ export class MusicBrainzArtistCreditService {
         a.picture,
         a.cover_image_url AS coverImageUrl
       FROM AlbumArtists aa
-      LEFT JOIN Artists a ON a.mbid = aa.artist_mbid
-      WHERE aa.release_group_mbid IN (${marks})
+      LEFT JOIN ArtistMetadata a ON a.mbid = aa.artist_mbid
+      WHERE aa.release_group_mbid IN (${leftoverMarks})
       ORDER BY aa.release_group_mbid ASC, aa.ord ASC
-    `).all(...uniqueMbids) as Array<CanonicalAlbumArtist & { releaseGroupMbid: string }>;
+    `).all(...leftoverMbids) as Array<CanonicalAlbumArtist & { releaseGroupMbid: string }>;
 
-    const result = new Map<string, CanonicalAlbumArtist[]>();
     for (const row of rows) {
       const artists = result.get(row.releaseGroupMbid) ?? [];
       artists.push({
@@ -270,5 +396,54 @@ export class MusicBrainzArtistCreditService {
       result.set(row.releaseGroupMbid, artists);
     }
     return result;
+  }
+
+  static materializeIntegerCreditsForReleaseGroup(releaseGroupMbid: string): void {
+    const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
+      .get(releaseGroupMbid) as { id: number } | undefined;
+    if (!releaseGroup) return;
+
+    db.prepare(`
+      INSERT INTO ReleaseArtistCredits (
+        edition_id, artist_id, ordinal, credited_name, join_phrase, role
+      )
+      SELECT e.id, credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role
+      FROM ReleaseGroupArtistCredits credit
+      JOIN AlbumEditions e ON e.release_group_id = credit.release_group_id
+      WHERE credit.release_group_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM ReleaseArtistCredits existing WHERE existing.edition_id = e.id
+        )
+    `).run(releaseGroup.id);
+
+    db.prepare(`
+      INSERT INTO RecordingArtistCredits (
+        recording_id, artist_id, ordinal, credited_name, join_phrase, role
+      )
+      SELECT r.id, credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role
+      FROM ReleaseGroupArtistCredits credit
+      JOIN AlbumEditions e ON e.release_group_id = credit.release_group_id
+      JOIN Tracks t ON t.album_edition_id = e.id
+      JOIN Recordings r ON r.id = t.recording_id
+      WHERE credit.release_group_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM RecordingArtistCredits existing WHERE existing.recording_id = r.id
+        )
+      GROUP BY r.id, credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role
+    `).run(releaseGroup.id);
+
+    db.prepare(`
+      INSERT INTO TrackArtistCredits (
+        track_id, artist_id, ordinal, credited_name, join_phrase, role
+      )
+      SELECT t.id, credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role
+      FROM ReleaseGroupArtistCredits credit
+      JOIN AlbumEditions e ON e.release_group_id = credit.release_group_id
+      JOIN Tracks t ON t.album_edition_id = e.id
+      WHERE credit.release_group_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM TrackArtistCredits existing WHERE existing.track_id = t.id
+        )
+    `).run(releaseGroup.id);
   }
 }

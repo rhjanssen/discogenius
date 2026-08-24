@@ -17,8 +17,7 @@ let configModule: typeof import("../config/config.js");
 let fixtures: typeof import("../../test-support/library-fixtures.js");
 
 const ARTIST_MBID = "artist-mbid";
-// Artists.id is TEXT: binding a JS number would store the REAL "42.0".
-const ARTIST_ID = "42";
+const ARTIST_ID = 42;
 
 before(async () => {
   dbModule = await import("../../database.js");
@@ -59,7 +58,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
   fs.rmSync(musicRoot, { recursive: true, force: true });
   fs.mkdirSync(musicRoot, { recursive: true });
 });
@@ -72,10 +70,8 @@ after(() => {
 function seedArtist(): void {
   const { db } = dbModule;
   db.prepare(`
-    INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, 'Artist')
-  `).run(ARTIST_MBID);
-  db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitored) VALUES (?, ?, 'Artist', 1)
+    INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, 'Artist')
+    ON CONFLICT(mbid) DO UPDATE SET name = excluded.name
   `).run(ARTIST_ID, ARTIST_MBID);
 }
 
@@ -132,7 +128,7 @@ function seedTrackFile(input: TrackFileInput): { id: number; filePath: string } 
   }
   const row = db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_type, library_slot, library_root, library_id,
+      artist_metadata_id, file_type, library_slot, library_root, library_id,
       file_path, relative_path, filename, extension,
       canonical_release_group_mbid, canonical_track_mbid, track_id,
       provider, provider_id
@@ -329,7 +325,7 @@ test("deleting an artist's files is scoped to one library", () => {
     releaseGroupMbid: "rg-artist",
   });
 
-  const result = deleteModule.deleteArtistLibraryFiles(ARTIST_ID, { libraryId: lossy });
+  const result = deleteModule.deleteArtistLibraryFiles(String(ARTIST_ID), { libraryId: lossy });
 
   assert.equal(result.deleted, 1);
   assert.equal(fs.existsSync(flac.filePath), true);
@@ -731,7 +727,7 @@ test("a row pointing outside the target library root is refused", () => {
   fs.writeFileSync(outsidePath, "audio");
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_type, library_slot, library_root, library_id,
+      artist_metadata_id, file_type, library_slot, library_root, library_id,
       file_path, relative_path, filename, extension, canonical_release_group_mbid
     ) VALUES (?, 'track', 'stereo', ?, ?, ?, 'Escaped.flac', 'Escaped.flac', 'flac', ?)
   `).run(ARTIST_ID, outsideDir, libraryId, outsidePath, "rg-outside");

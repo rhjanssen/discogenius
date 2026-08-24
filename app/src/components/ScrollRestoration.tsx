@@ -73,13 +73,14 @@ export default function ScrollRestoration() {
   // may already have clamped scroll when content height collapsed.
   useEffect(() => {
     const key = location.key;
+    const positions = positionsRef.current;
     const save = () => {
-      positionsRef.current[key] = window.scrollY;
+      positions[key] = window.scrollY;
     };
     window.addEventListener("scroll", save, { passive: true });
     return () => {
       window.removeEventListener("scroll", save);
-      writeStoredPositions(positionsRef.current);
+      writeStoredPositions(positions);
     };
   }, [location.key]);
 

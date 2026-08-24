@@ -5,12 +5,14 @@ import {
   AccordionPanel,
   Badge,
   Button,
+  Checkbox,
   Link,
   Text,
   makeStyles,
   mergeClasses,
   tokens,
 } from "@fluentui/react-components";
+import { useState } from "react";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import {
   editionCountLabel,
@@ -27,6 +29,7 @@ import {
   formatAcquisitionPlanCoverageSummary,
 } from "@/utils/acquisitionPlanCoverage";
 import type { ReleaseGroupAvailability } from "@/hooks/useAlbumPage";
+import { isSamePlanOffer } from "@/utils/providerOfferSelection";
 
 type Release = ReleaseGroupAvailability["releases"][number];
 type Library = ReleaseGroupAvailability["libraries"][number];
@@ -80,7 +83,8 @@ function releaseMeta(release: Release): string {
 }
 
 /**
- * Resolve exclusive vs additive plan selection from the click modifiers.
+ * Resolve exclusive vs additive plan selection from an explicit checkbox or
+ * an optional desktop keyboard modifier.
  *
  * - Ctrl/Cmd on an *inactive* plan or unmonitored edition: additive.
  * - Ctrl/Cmd on the *active* plan of a monitored edition: unmonitor (caller).
@@ -90,31 +94,10 @@ function releaseMeta(release: Release): string {
 function planSelectionMode(
   event: { ctrlKey?: boolean; metaKey?: boolean },
   editionAlreadyMonitored: boolean,
+  keepOtherEditions: boolean,
 ): "exclusive" | "additive" {
-  if (event.ctrlKey || event.metaKey || editionAlreadyMonitored) return "additive";
+  if (keepOtherEditions || event.ctrlKey || event.metaKey || editionAlreadyMonitored) return "additive";
   return "exclusive";
-}
-
-export function isSamePlanOffer(
-  view: ProviderQualityOffer,
-  picked: ProviderQualityOffer,
-): boolean {
-  // Plan identity when both sides are plans. Provider + quality + album ids can
-  // all coincide across two genuinely different plans of one edition, which is
-  // how a click could resolve to the wrong plan and several pills could light
-  // up as selected at once.
-  if (view.planKey || picked.planKey) {
-    return Boolean(view.planKey) && view.planKey === picked.planKey;
-  }
-  return view.provider === picked.provider
-    && view.quality === picked.quality
-    && (
-      view.providerAlbumId === picked.providerAlbumId
-      || Boolean(
-        picked.providerAlbumIds?.length
-        && view.providerAlbumIds?.join(";") === picked.providerAlbumIds.join(";"),
-      )
-    );
 }
 
 function isAvailable(value: string): boolean {
@@ -511,6 +494,12 @@ const useStyles = makeStyles({
     columnGap: tokens.spacingHorizontalXS,
     flex: "0 0 auto",
   },
+  additiveChoice: {
+    flex: "0 0 auto",
+    "& label": {
+      fontSize: tokens.fontSizeBase200,
+    },
+  },
   unavailable: {
     color: tokens.colorNeutralForeground3,
   },
@@ -536,8 +525,9 @@ export interface ReleaseSwitcherProps {
    *
    * - Plain click on an unmonitored edition: exclusive — only this edition
    *   stays monitored for the album in this library.
-   * - Ctrl/Cmd+click inactive plan: additive multi-edition monitor.
-   * - Ctrl/Cmd+click the active plan: stop monitoring this edition.
+   * - Select "Keep other editions" before choosing an inactive plan for
+   *   additive multi-edition monitoring. Ctrl/Cmd+click remains a shortcut.
+   * - Use the visible Stop monitoring action to remove one edition.
    * - Click on an already-monitored edition without Ctrl: plan switch only.
    */
   onSelectPlan?: (
@@ -547,7 +537,7 @@ export interface ReleaseSwitcherProps {
     mode: "exclusive" | "additive",
   ) => void;
   onRevertPlan?: (libraryId: number, editionId: number) => void;
-  /** Unmonitor this edition (Ctrl+click active plan). */
+  /** Unmonitor this edition from the selected library. */
   onRemoveEdition?: (libraryId: number, editionId: number) => void;
 }
 
@@ -560,6 +550,7 @@ export function ReleaseSwitcher({
   onRemoveEdition,
 }: ReleaseSwitcherProps) {
   const styles = useStyles();
+  const [keepOtherEditions, setKeepOtherEditions] = useState<Set<string>>(() => new Set());
   if (availability.releases.length === 0) return null;
 
   // Stereo first, then Spatial. API only returns enabled libraries (Spatial off
@@ -624,7 +615,11 @@ export function ReleaseSwitcher({
         if (explicitGate === "clean" && offer.explicit === true) return false;
         return true;
       });
-    if (badgeOffers.length === 0) return null;
+    const monitored = Boolean(selection?.monitored);
+    // A selected Edition can temporarily lose every usable provider offer.
+    // Keep the row and its remove action available, or the user has no way to
+    // withdraw that exact LibraryEditions row from the UI.
+    if (badgeOffers.length === 0 && !monitored) return null;
 
     // Only highlight a plan when this edition is monitored in this library.
     // Prefer a gated plan that is still chosen; never highlight a clean plan on
@@ -640,15 +635,16 @@ export function ReleaseSwitcher({
       ? planToQualityOffer(chosenPlan, release, library)
       : null;
     const rowPending = Boolean(pendingSelectionKey?.startsWith(`${library.id}:${release.id}:`));
-    const monitored = Boolean(selection?.monitored);
     const summary = chosenPlan ? selectedPlanSummary(chosenPlan, release) : null;
     const slot = librarySlot(library);
     const slotLabel = slot === "spatial" ? "Spatial" : "Stereo";
+    const additiveKey = `${library.id}:${release.id}`;
+    const keepOthers = keepOtherEditions.has(additiveKey);
     const labelHint = rowPending
       ? "Saving…"
       : monitored
         ? (selection?.planSelectionMode === "manual" ? "Chosen by you" : "Automatic")
-        : "Click a plan to monitor · Ctrl+click to add · Ctrl+click active plan to stop";
+        : "Choose a plan to monitor this edition";
 
     const tooltipBody = [
       showSlotLabels ? slotLabel : null,
@@ -669,8 +665,24 @@ export function ReleaseSwitcher({
         ) : null}
 
         <div className={styles.planInline}>
+          {!monitored && onSelectPlan ? (
+            <Checkbox
+              className={styles.additiveChoice}
+              checked={keepOthers}
+              label="Keep other editions"
+              aria-label={`Keep other monitored ${slotLabel.toLowerCase()} editions when adding ${release.title || "this edition"}`}
+              onChange={(_event, data) => {
+                setKeepOtherEditions((current) => {
+                  const next = new Set(current);
+                  if (data.checked === true) next.add(additiveKey);
+                  else next.delete(additiveKey);
+                  return next;
+                });
+              }}
+            />
+          ) : null}
           {(() => {
-            const plans = (
+            const plans = badgeOffers.length > 0 ? (
               <ProviderQualityRow
                 offers={badgeOffers}
                 size="small"
@@ -688,7 +700,9 @@ export function ReleaseSwitcher({
                       const isActive = Boolean(
                         chosenView && isSamePlanOffer(chosenView, picked),
                       );
-                      // Ctrl/Cmd + active plan on a monitored edition → unmonitor.
+                      // Keep the keyboard modifier as a desktop shortcut. The
+                      // checkbox and explicit remove button make every action
+                      // available to touch and assistive-technology users.
                       if (
                         isActive
                         && monitored
@@ -702,7 +716,7 @@ export function ReleaseSwitcher({
                         library.id,
                         release.id,
                         plan.planKey,
-                        planSelectionMode(event, monitored),
+                        planSelectionMode(event, monitored, keepOthers),
                       );
                       return;
                     }
@@ -714,6 +728,8 @@ export function ReleaseSwitcher({
                     }
                   }}
               />
+            ) : (
+              <Text size={200} className={styles.unavailable}>No current plan</Text>
             );
             // When the slot label is hidden, put the context tooltip on the plans.
             return showSlotLabels
@@ -737,6 +753,16 @@ export function ReleaseSwitcher({
                 Use automatic
               </Button>
             </div>
+          ) : null}
+          {monitored && onRemoveEdition ? (
+            <Button
+              size="small"
+              appearance="subtle"
+              onClick={() => onRemoveEdition(library.id, release.id)}
+              aria-label={`Stop monitoring ${release.title || "this edition"} in the ${slotLabel.toLowerCase()} library`}
+            >
+              Stop monitoring
+            </Button>
           ) : null}
         </div>
       </div>

@@ -5,6 +5,7 @@ import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getEnabledDownloadLibrarySlots } from "../download/download-library-slots.js";
 import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { yieldToEventLoop } from "../../utils/concurrent.js";
+import { buildLibraryArtistMonitoredExistsSql } from "./managed-artists.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 import { resolveVideoTypeSuffix } from "../mediafiles/video-naming.js";
@@ -68,7 +69,7 @@ export class DownloadMissingService {
               AND (
                 ? IS NULL
                 OR primary_artist.mbid = COALESCE(
-                  (SELECT mbid FROM Artists WHERE id = ? LIMIT 1),
+                  (SELECT mbid FROM ArtistMetadata WHERE id = ? LIMIT 1),
                   ?
                 )
               )
@@ -148,7 +149,7 @@ export class DownloadMissingService {
                     pi.video_quality as quality
                 FROM Recordings r
                 LEFT JOIN ArtistMetadata artist ON artist.mbid = r.artist_mbid
-                LEFT JOIN Artists managed_artist ON managed_artist.mbid = r.artist_mbid
+                LEFT JOIN ArtistMetadata managed_artist ON managed_artist.mbid = r.artist_mbid
                 JOIN ProviderVideoMatches video_match
                   ON video_match.recording_id = r.id
                  AND video_match.match_state = 'accepted'
@@ -176,7 +177,7 @@ export class DownloadMissingService {
                 videosQuery += " AND managed_artist.id = ?";
                 videoParams.push(artistId);
             } else {
-                videosQuery += " AND managed_artist.monitored = 1";
+                videosQuery += ` AND ${buildLibraryArtistMonitoredExistsSql("managed_artist")}`;
             }
             videosQuery += `
                 ORDER BY

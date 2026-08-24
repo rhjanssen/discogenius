@@ -73,7 +73,6 @@ test("library curation uses canonical scope and recording coverage without chang
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name)
         VALUES (1, 'bastille', 'Bastille'), (2, 'collaborator', 'Collaborator');
-      INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
       INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
         VALUES
           (1, 'bad-blood', 1, 'Bad Blood', 'Album'),
@@ -122,8 +121,8 @@ test("library curation uses canonical scope and recording coverage without chang
         id, name, root_path, metadata_profile_id, quality_profile_id
       ) VALUES (1, 'Stereo', '/library/stereo', 1, 1);
       INSERT INTO LibraryArtists (
-        id, library_id, managed_artist_id, monitored, credited_scope
-      ) VALUES (1, 1, 1, 1, 'release_and_track_credit');
+        id, library_id, artist_metadata_id, policy, credited_scope
+      ) VALUES (1, 1, 1, 'all', 'release_and_track_credit');
     `);
     seedProviderExactMatch(db, 101, [1, 2, 3, 4]);
     seedProviderExactMatch(db, 201, [5]);
@@ -194,7 +193,6 @@ test("library curation uses canonical scope and recording coverage without chang
 function seedCompositeOnlyEdition(db: Database.Database): void {
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-    INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
     INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
       VALUES (1, 'group-a', 1, 'Unplugged Single', 'Single');
     INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count)
@@ -223,8 +221,7 @@ function seedCompositeOnlyEdition(db: Database.Database): void {
     );
     INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
       VALUES (1, 'Stereo', '/library/stereo', 1, 1);
-    INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored)
-      VALUES (1, 1, 1, 1);
+    INSERT INTO LibraryArtists (id, library_id, artist_metadata_id, policy) VALUES (1, 1, 1, 'all');
   `);
 
   // The only provider release matched to the 1-track edition covers recording 1.
@@ -314,7 +311,6 @@ function seedTwoArtistLibrary(db: Database.Database): { alpha: number; beta: num
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES
       (1, 'artist-alpha', 'Alpha'), (2, 'artist-beta', 'Beta');
-    INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1), (2, 2);
     INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type) VALUES
       (1, 'alpha-album', 1, 'Alpha Album', 'Album'),
       (2, 'beta-album', 2, 'Beta Album', 'Album'),
@@ -345,9 +341,8 @@ function seedTwoArtistLibrary(db: Database.Database): { alpha: number; beta: num
     );
     INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
       VALUES (1, 'Stereo', '/library/stereo', 1, 1);
-    INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored, credited_scope) VALUES
-      (1, 1, 1, 1, 'release_and_track_credit'),
-      (2, 1, 2, 1, 'release_and_track_credit');
+    INSERT INTO LibraryArtists (id, library_id, artist_metadata_id, policy, credited_scope) VALUES (1, 1, 1, 'all', 'release_and_track_credit'),
+      (2, 1, 2, 'all', 'release_and_track_credit');
   `);
   seedProviderExactMatch(db, 101, [1]);
   seedProviderExactMatch(db, 201, [2]);

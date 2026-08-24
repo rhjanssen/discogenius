@@ -26,6 +26,10 @@ Examples:
   `tiddl`.
 - Apple Music downloader: copied as the pinned upstream static
   `apple-music-dl` binary, with `APPLE_MUSIC_DL_BIN` as the override.
+- `MP4Box` and `mp4decrypt`: bundled for Apple Music mux/decrypt. MP4Box is a
+  static binary built from the pinned GPAC 2.4.0 release tarball (not a git
+  clone). `mp4decrypt` comes from the pinned Bento4 SDK zip. Diagnostics still
+  report them as Apple prerequisites.
 
 ## 2. Provider companion services
 
@@ -49,9 +53,9 @@ Examples:
 - Apple Music decryption wrapper: `apple-music-wrapper` service in
   `docker-compose.yml` / `docker-compose.example.yml`, on its own compose
   network so Discogenius reaches `apple-music-wrapper:10020/20020`. Delete
-  the service block if you will not download from Apple Music.
-- `MP4Box`: provider prerequisite reported by diagnostics. If we later bundle
-  it, use a pinned binary/image source; do not clone GPAC at image build time.
+  the service block if you will not download from Apple Music. The mux and
+  decrypt binaries (`MP4Box`, `mp4decrypt`) are already in the core image;
+  this sidecar is the network service those tools talk to.
 
 ## 3. External catalog stacks
 

@@ -34,9 +34,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM Artists").run();
-  db.prepare("DELETE FROM ArtistMetadata").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
+  db.prepare("DELETE FROM Recordings").run();  db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -44,14 +43,13 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-function seedArtist() {
+function seedArtist(): number {
   const { db } = dbModule;
   db.prepare(`
-    INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Bastille')
+    INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Bastille')
+    ON CONFLICT(mbid) DO UPDATE SET name = excluded.name
   `).run();
-  db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitored) VALUES ('artist-1', 'artist-mbid', 'Bastille', 1)
-  `).run();
+  return (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?").get("artist-mbid") as { id: number }).id;
 }
 
 /**
@@ -273,7 +271,7 @@ function seedCatalogTrack(params: {
 }
 
 test("catalog-direct link resolves from embedded release-track MBID with no provider offer", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-itunes",
     releaseMbid: "rel-itunes",
@@ -295,7 +293,7 @@ test("catalog-direct link resolves from embedded release-track MBID with no prov
 });
 
 test("metadata rematch links a provider-free file straight to the catalog via embedded MBIDs", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-itunes",
     releaseMbid: "rel-itunes",
@@ -306,7 +304,7 @@ test("metadata rematch links a provider-free file straight to the catalog via em
 
   const match = matchModule.matchAudioFileByMetadata(
     "/library/stereo-music/Bastille/iTunes Festival - London 2013 (2013)/02 - Pompeii (live).m4a",
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Pompeii (live)",
@@ -328,7 +326,7 @@ test("metadata rematch links a provider-free file straight to the catalog via em
 });
 
 test("metadata rematch enriches a provider-offer match with canonical MBIDs", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-wild",
     releaseMbid: "rel-wild",
@@ -340,7 +338,7 @@ test("metadata rematch enriches a provider-offer match with canonical MBIDs", ()
 
   const match = matchModule.matchAudioFileByMetadata(
     "/library/stereo-music/Bastille/Wild World (2016)/01 - Good Grief.flac",
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Good Grief",
@@ -359,7 +357,7 @@ test("metadata rematch enriches a provider-offer match with canonical MBIDs", ()
 
 test("metadata rematch links missing album tracks via sibling folder offers", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedOffer({ providerId: "1001", title: "Million Pieces", albumId: "album-1", duration: 284 });
   seedOffer({ providerId: "1002", title: "Another Place", albumId: "album-1", duration: 258 });
   seedOffer({ providerId: "1003", title: "Glory", albumId: "album-1", duration: 200 });
@@ -367,17 +365,17 @@ test("metadata rematch links missing album tracks via sibling folder offers", ()
   const folder = "/library/stereo-music/Bastille/Roots of ReOrchestrated (2021)";
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
       library_root, file_path, relative_path, filename, extension
     ) VALUES (
-      'artist-1', 'tidal', 'track', '1003', 'track', 'stereo',
+      ${artistMetaId}, 'tidal', 'track', '1003', 'track', 'stereo',
       'music', ?, 'Bastille/Roots/03 - Glory.flac', '03 - Glory.flac', 'flac'
     )
   `).run(`${folder}/03 - Glory.flac`);
 
   const match = matchModule.matchAudioFileByMetadata(
     `${folder}/01 - Million Pieces.flac`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     { title: "Million Pieces", durationSeconds: 284 },
   );
@@ -390,7 +388,7 @@ test("metadata rematch links missing album tracks via sibling folder offers", ()
 
 test("metadata rematch marks rename leftovers as duplicates of an existing TrackFile", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedOffer({ providerId: "2001", title: "Good Grief", albumId: "album-2", duration: 206 });
   // Alternate edition of the same recording — must not win over the folder sibling.
   seedOffer({ providerId: "2002", title: "Good Grief", albumId: "album-2-complete", duration: 206 });
@@ -398,17 +396,17 @@ test("metadata rematch marks rename leftovers as duplicates of an existing Track
   const folder = "/library/stereo-music/Bastille/Wild World (2016)";
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
       library_root, file_path, relative_path, filename, extension, duration
     ) VALUES (
-      'artist-1', 'tidal', 'track', '2001', 'track', 'stereo',
+      ${artistMetaId}, 'tidal', 'track', '2001', 'track', 'stereo',
       'music', ?, 'Bastille/Wild World/101 - Good Grief.flac', '101 - Good Grief.flac', 'flac', 206
     )
   `).run(`${folder}/101 - Good Grief.flac`);
 
   const match = matchModule.matchAudioFileByMetadata(
     `${folder}/201 - Good Grief.flac`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     { title: "Good Grief", durationSeconds: 206 },
   );
@@ -420,7 +418,7 @@ test("metadata rematch marks rename leftovers as duplicates of an existing Track
 });
 
 test("metadata rematch does not equate studio tracks with remix variants", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedOffer({ providerId: "3001", title: "Blame", albumId: "album-3", duration: 176 });
   seedOffer({ providerId: "3002", title: "Blame (Bunker Sessions)", albumId: "album-3", duration: 183 });
 
@@ -428,17 +426,17 @@ test("metadata rematch does not equate studio tracks with remix variants", () =>
   const { db } = dbModule;
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
       library_root, file_path, relative_path, filename, extension
     ) VALUES (
-      'artist-1', 'tidal', 'track', '3002', 'track', 'stereo',
+      ${artistMetaId}, 'tidal', 'track', '3002', 'track', 'stereo',
       'music', ?, 'Bastille/Blame/02 - Blame (Bunker Sessions).flac', '02 - Blame (Bunker Sessions).flac', 'flac'
     )
   `).run(`${folder}/02 - Blame (Bunker Sessions).flac`);
 
   const match = matchModule.matchAudioFileByMetadata(
     `${folder}/01 - Blame.flac`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     { title: "Blame", durationSeconds: 176 },
   );
@@ -450,7 +448,7 @@ test("metadata rematch does not equate studio tracks with remix variants", () =>
 
 test("a provider track on several releases yields no invented album context", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedOffer({ providerId: "4001", title: "Pompeii", albumId: "album-standard", duration: 214 });
   // The SAME provider track also appears on a deluxe edition (Apple/TIDAL model).
   const trackItem = db.prepare(`
@@ -480,7 +478,7 @@ test("a provider track on several releases yields no invented album context", ()
 });
 
 test("embedded release identity survives when it is itself selected in the library", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-multi",
     releaseMbid: "rel-standard",
@@ -511,7 +509,7 @@ test("embedded release identity survives when it is itself selected in the libra
 
 test("tagged files match a catalog mixtape without a provider offer", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-oph2",
     releaseMbid: "rel-oph2",
@@ -524,7 +522,7 @@ test("tagged files match a catalog mixtape without a provider offer", () => {
 
   const match = matchModule.matchAudioFileByMetadata(
     path.join(tempDir, "06 - Dreams.mp3"),
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Dreams [ft. Gabrielle Aplin]",
@@ -541,9 +539,39 @@ test("tagged files match a catalog mixtape without a provider offer", () => {
   assert.equal(match!.duplicateOfExisting, false);
 });
 
+test("an ampersand-only album title remains matchable", () => {
+  const artistMetaId = seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-ampersand",
+    releaseMbid: "rel-ampersand",
+    trackMbid: "trk-intros-narrators",
+    recordingMbid: "rec-intros-narrators",
+    albumTitle: "&",
+    editionTitle: "&",
+    title: "Intros & Narrators",
+    lengthMs: 192_000,
+  });
+
+  const match = matchModule.matchAudioFileByMetadata(
+    path.join(tempDir, "01 - Intros & Narrators.flac"),
+    String(artistMetaId),
+    "music",
+    {
+      title: "Intros and Narrators",
+      album: "&",
+      artist: "Bastille",
+      durationSeconds: 192,
+    },
+  );
+
+  assert.ok(match, "the punctuation-only album name must not normalize to an empty title");
+  assert.equal(match!.canonicalTrackMbid, "trk-intros-narrators");
+  assert.equal(match!.canonicalReleaseGroupMbid, "rg-ampersand");
+});
+
 test("leading track numbers in tags do not block a catalog title match", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-oph1",
     releaseMbid: "rel-oph1",
@@ -555,7 +583,7 @@ test("leading track numbers in tags do not block a catalog title match", () => {
 
   const match = matchModule.matchAudioFileByMetadata(
     path.join(tempDir, "01 - Adagio for Strings.mp3"),
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "01. ADAGIO FOR STRINGS (ft. Maiday)",
@@ -570,7 +598,7 @@ test("leading track numbers in tags do not block a catalog title match", () => {
 });
 
 test("edition-titled tags match a catalog track when the release-group title differs", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-bad-blood",
     releaseMbid: "rel-bbx",
@@ -585,7 +613,7 @@ test("edition-titled tags match a catalog track when the release-group title dif
 
   const match = matchModule.matchAudioFileByMetadata(
     "/library/stereo-music/Bastille/Bad Blood X (2023)/101 - Pompeii MMXXIII.m4a",
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Pompeii MMXXIII",
@@ -604,7 +632,7 @@ test("edition-titled tags match a catalog track when the release-group title dif
 
 test("album-folder siblings pin catalog matching to that edition", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-bad-blood",
     releaseMbid: "rel-bbx",
@@ -631,11 +659,11 @@ test("album-folder siblings pin catalog matching to that edition", () => {
   const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
       library_root, file_path, relative_path, filename, extension,
       canonical_release_mbid, canonical_release_group_mbid, canonical_track_mbid, canonical_recording_mbid
     ) VALUES (
-      'artist-1', 'apple-music', 'track', '1443355207', 'track', 'stereo',
+      ${artistMetaId}, 'apple-music', 'track', '1443355207', 'track', 'stereo',
       'music', ?, 'Bastille/Bad Blood X/102 - Pompeii.m4a', '102 - Pompeii.m4a', 'm4a',
       'rel-bbx', 'rg-bad-blood', 'trk-pompeii', 'rec-pompeii'
     )
@@ -643,7 +671,7 @@ test("album-folder siblings pin catalog matching to that edition", () => {
 
   const match = matchModule.matchAudioFileByMetadata(
     `${folder}/101 - Pompeii MMXXIII.m4a`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Pompeii MMXXIII",
@@ -662,7 +690,7 @@ test("album-folder siblings pin catalog matching to that edition", () => {
 
 test("a title absent from the folder's catalog edition stays unmapped even if a single exists", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-bad-blood",
     releaseMbid: "rel-bbx",
@@ -686,11 +714,11 @@ test("a title absent from the folder's catalog edition stays unmapped even if a 
   const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
       library_root, file_path, relative_path, filename, extension,
       canonical_release_mbid, canonical_release_group_mbid
     ) VALUES (
-      'artist-1', 'apple-music', 'track', '1443355207', 'track', 'stereo',
+      ${artistMetaId}, 'apple-music', 'track', '1443355207', 'track', 'stereo',
       'music', ?, 'Bastille/Bad Blood X/102 - Pompeii.m4a', '102 - Pompeii.m4a', 'm4a',
       'rel-bbx', 'rg-bad-blood'
     )
@@ -698,7 +726,7 @@ test("a title absent from the folder's catalog edition stays unmapped even if a 
 
   const match = matchModule.matchAudioFileByMetadata(
     `${folder}/101 - Pompeii MMXXIII.m4a`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Pompeii MMXXIII",
@@ -712,7 +740,7 @@ test("a title absent from the folder's catalog edition stays unmapped even if a 
 
 test("the same recording on a different album is not a duplicate leftover", () => {
   const { db } = dbModule;
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-heartache",
     releaseMbid: "rel-heartache",
@@ -735,10 +763,10 @@ test("the same recording on a different album is not a duplicate leftover", () =
   const heartacheFolder = "/library/stereo-music/Bastille/Other People's Heartache (2012)";
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_type, library_slot, library_root, file_path, relative_path, filename, extension,
+      artist_metadata_id, file_type, library_slot, library_root, file_path, relative_path, filename, extension,
       canonical_release_mbid, canonical_release_group_mbid, canonical_track_mbid, canonical_recording_mbid
     ) VALUES (
-      'artist-1', 'track', 'stereo', 'music', ?, 'Bastille/Heartache/04 - Of the Night.mp3',
+      ${artistMetaId}, 'track', 'stereo', 'music', ?, 'Bastille/Heartache/04 - Of the Night.mp3',
       '04 - Of the Night.mp3', 'mp3',
       'rel-heartache', 'rg-heartache', 'trk-night-oph', 'rec-night'
     )
@@ -746,7 +774,7 @@ test("the same recording on a different album is not a duplicate leftover", () =
 
   const match = matchModule.matchAudioFileByMetadata(
     "/library/stereo-music/Bastille/All This Bad Blood (2012)/209 - Of the Night.m4a",
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Of the Night",
@@ -762,7 +790,7 @@ test("the same recording on a different album is not a duplicate leftover", () =
 });
 
 test("filename disc/track plus edition folder pins Things We Lost onto Bad Blood X", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-bad-blood",
     releaseMbid: "rel-atbb",
@@ -823,7 +851,7 @@ test("filename disc/track plus edition folder pins Things We Lost onto Bad Blood
   const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
   const studio = matchModule.matchAudioFileByMetadata(
     `${folder}/103 - Things We Lost in the Fire.m4a`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Things We Lost in the Fire",
@@ -838,7 +866,7 @@ test("filename disc/track plus edition folder pins Things We Lost onto Bad Blood
 
   const abbey = matchModule.matchAudioFileByMetadata(
     `${folder}/202 - Things We Lost in the Fire (Abbey Road sessions).m4a`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Things We Lost in the Fire (Abbey Road sessions)",
@@ -852,7 +880,7 @@ test("filename disc/track plus edition folder pins Things We Lost onto Bad Blood
 });
 
 test("Abbey Road sessions is not a duplicate of an already-imported studio cut", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-bad-blood",
     releaseMbid: "rel-atbb",
@@ -892,12 +920,12 @@ test("Abbey Road sessions is not a duplicate of an already-imported studio cut",
   const folder = "/library/stereo-music/Bastille/Bad Blood X (2023)";
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
       library_root, file_path, relative_path, filename, extension, duration,
       canonical_track_mbid, canonical_recording_mbid,
       canonical_release_mbid, canonical_release_group_mbid
     ) VALUES (
-      'artist-1', 'apple-music', 'track', 'twlitf-103', 'track', 'stereo',
+      ${artistMetaId}, 'apple-music', 'track', 'twlitf-103', 'track', 'stereo',
       'music', ?, 'Bastille/Bad Blood X/103 - Things We Lost in the Fire.m4a',
       '103 - Things We Lost in the Fire.m4a', 'm4a', 241,
       'trk-twlitf-bbx', 'rec-twlitf-anniversary',
@@ -907,7 +935,7 @@ test("Abbey Road sessions is not a duplicate of an already-imported studio cut",
 
   const abbey = matchModule.matchAudioFileByMetadata(
     `${folder}/202 - Things We Lost in the Fire (Abbey Road sessions).m4a`,
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Things We Lost in the Fire (Abbey Road sessions)",
@@ -922,7 +950,7 @@ test("Abbey Road sessions is not a duplicate of an already-imported studio cut",
 });
 
 test("inline video without a provider filename token matches the catalog recording", () => {
-  seedArtist();
+  const artistMetaId = seedArtist();
   const { db } = dbModule;
   db.prepare(`
     INSERT INTO Recordings (mbid, title, length_ms, is_video, artist_mbid, video_variant)
@@ -931,7 +959,7 @@ test("inline video without a provider filename token matches the catalog recordi
 
   const match = matchModule.matchVideoFileByMetadata(
     "/library/stereo-music/Bakermat/Living (2016)/01 - Living-video.mp4",
-    "artist-1",
+    String(artistMetaId),
     "music",
     {
       title: "Living",
@@ -945,4 +973,3 @@ test("inline video without a provider filename token matches the catalog recordi
   assert.equal(match!.mediaId, "");
   assert.equal(match!.duplicateOfExisting, false);
 });
-

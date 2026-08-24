@@ -646,18 +646,11 @@ async function generate(): Promise<void> {
 
   const creditedArtists: CanonicalArtistFixture[] = [];
   const creditedEdges: CreditedEdge[] = [];
-  const insertLegacyCredited = db.prepare(`
-    INSERT INTO Artists (
-      id, name, mbid, monitored, library_origin, musicbrainz_status,
-      musicbrainz_match_method
-    ) VALUES (?, ?, ?, 0, 'musicbrainz-credit', 'verified', 'synthetic')
-  `);
   for (let start = 0; start < options.creditedArtists; start += 250) {
     const end = Math.min(options.creditedArtists, start + 250);
     db.transaction(() => {
       for (let index = start; index < end; index += 1) {
         const artist = insertArtistMetadata(db, options.seed, "credited", index);
-        insertLegacyCredited.run(artist.mbid, artist.name, artist.mbid);
         creditedArtists.push(artist);
         creditedEdges.push({
           index,
@@ -669,7 +662,6 @@ async function generate(): Promise<void> {
     })();
   }
   expected.artists.canonical += creditedArtists.length;
-  expected.artists.legacy += creditedArtists.length;
   fs.writeFileSync(
     paths.creditedEdgesPath,
     creditedEdges.map((edge) => JSON.stringify(edge)).join("\n") + (creditedEdges.length ? "\n" : ""),
@@ -704,27 +696,13 @@ async function generate(): Promise<void> {
       expected.artists.canonical += 1;
       const artistPath = path.join(paths.stereoRoot, artist.name);
       assertPathWithinRoot(artistPath, paths.stereoRoot);
-      db.prepare(`
-        INSERT INTO Artists (
-          id, name, mbid, path, monitored, monitored_at, library_origin,
-          musicbrainz_status, musicbrainz_match_method
-        ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 'synthetic-load', 'verified', 'synthetic')
-      `).run(artist.mbid, artist.name, artist.mbid, artistPath);
-      expected.artists.legacy += 1;
-      const managed = db.prepare(`
-        INSERT INTO ManagedArtists (
-          artist_id, path, library_origin, metadata_status,
-          metadata_last_checked_at, metadata_match_method
-        ) VALUES (?, ?, 'synthetic-load', 'verified', CURRENT_TIMESTAMP, 'synthetic')
-      `).run(artist.metadataId, artistPath);
-      const managedArtistId = Number(managed.lastInsertRowid);
-      expected.artists.managed += 1;
       for (const library of [stereoLibrary, spatialLibrary]) {
         db.prepare(`
           INSERT INTO LibraryArtists (
-            library_id, managed_artist_id, monitored, credited_scope
-          ) VALUES (?, ?, 1, 'release_and_track_credit')
-        `).run(library.id, managedArtistId);
+            library_id, artist_metadata_id, policy, credited_scope, path,
+            library_origin, metadata_status, metadata_last_checked_at, metadata_match_method
+          ) VALUES (?, ?, 'all', 'release_and_track_credit', ?, 'synthetic-load', 'verified', CURRENT_TIMESTAMP, 'synthetic')
+        `).run(library.id, artist.metadataId, artistPath);
         expected.curation.libraryArtists += 1;
       }
 
@@ -758,8 +736,8 @@ async function generate(): Promise<void> {
           INSERT INTO Albums (
             foreign_album_id, mbid, artist_metadata_id, artist_mbid, title,
             primary_type, secondary_types, first_release_date, disambiguation,
-            content_hash, monitored
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            content_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           albumMbid,
           albumMbid,
@@ -896,8 +874,8 @@ async function generate(): Promise<void> {
             INSERT INTO AlbumEditions (
               foreign_release_id, mbid, release_group_id, release_group_mbid,
               artist_metadata_id, artist_mbid, title, status, country, date,
-              barcode, disambiguation, media_count, track_count, monitored
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Official', ?, ?, ?, ?, 1, ?, 1)
+              barcode, disambiguation, media_count, track_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Official', ?, ?, ?, ?, 1, ?)
           `).run(
             editionMbid,
             editionMbid,
@@ -931,8 +909,8 @@ async function generate(): Promise<void> {
               INSERT INTO Tracks (
                 foreign_track_id, mbid, album_edition_id, release_mbid,
                 recording_id, recording_mbid, medium_position, position,
-                number, title, length_ms, monitored
-              ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 1)
+                number, title, length_ms
+              ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             `).run(
               trackMbid,
               trackMbid,
@@ -995,8 +973,8 @@ async function generate(): Promise<void> {
               INSERT INTO Tracks (
                 foreign_track_id, mbid, album_edition_id, release_mbid,
                 recording_id, recording_mbid, medium_position, position,
-                number, title, length_ms, monitored
-              ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 210000, 0)
+                number, title, length_ms
+              ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 210000)
             `).run(
               trackMbid,
               trackMbid,
@@ -1182,7 +1160,7 @@ async function generate(): Promise<void> {
           artistFiles.push({ filePath, bytes });
           db.prepare(`
             INSERT INTO TrackFiles (
-              artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+              artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
               canonical_release_mbid, canonical_track_mbid,
               canonical_recording_mbid, release_group_id, album_edition_id,
               track_id, recording_id, provider, provider_entity_type,
@@ -1195,7 +1173,7 @@ async function generate(): Promise<void> {
                       ?, 180, 900, 44100, 16, 2, 'FLAC', 'track', 'LOSSLESS',
                       'audio', 'LOSSLESS', 'LOSSLESS', ?, CURRENT_TIMESTAMP)
           `).run(
-            artist.mbid,
+            artist.metadataId,
             artist.mbid,
             albumMbid,
             representativeEditionMbid,
@@ -1230,7 +1208,7 @@ async function generate(): Promise<void> {
           artistFiles.push({ filePath, bytes });
           db.prepare(`
             INSERT INTO TrackFiles (
-              artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+              artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
               canonical_release_mbid, canonical_track_mbid,
               canonical_recording_mbid, release_group_id, album_edition_id,
               track_id, recording_id, library_slot, library_id,
@@ -1243,7 +1221,7 @@ async function generate(): Promise<void> {
                       'DOLBY_ATMOS', 'audio', 'DOLBY_ATMOS', 'DOLBY_ATMOS', ?,
                       CURRENT_TIMESTAMP)
           `).run(
-            artist.mbid,
+            artist.metadataId,
             artist.mbid,
             albumMbid,
             representativeEditionMbid,
@@ -1367,7 +1345,7 @@ async function generate(): Promise<void> {
                 artistFiles.push({ filePath, bytes });
                 db.prepare(`
                   INSERT INTO TrackFiles (
-                    artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+                    artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
                     canonical_release_mbid, canonical_recording_mbid,
                     release_group_id, album_edition_id, recording_id,
                     provider, provider_entity_type, provider_id, provider_item_id,
@@ -1380,7 +1358,7 @@ async function generate(): Promise<void> {
                             ?, 210, 4000, 2, 'AAC', 'h264', 1920, 1080, 'video',
                             '1080P', 'video', '1080P', '1080P', ?, CURRENT_TIMESTAMP)
                 `).run(
-                  artist.mbid,
+                  artist.metadataId,
                   artist.mbid,
                   albumMbid,
                   representativeEditionMbid,
@@ -1409,12 +1387,13 @@ async function generate(): Promise<void> {
 
       db.prepare(`
         INSERT INTO ArtistStatistics (
-          artist_id, artist_mbid, album_count, monitored_album_count,
+          library_id, artist_metadata_id, artist_mbid, album_count, monitored_album_count,
           downloaded_album_count, track_count, monitored_track_count,
           track_file_count, video_count, size_on_disk
-        ) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, 0, ?, 0)
       `).run(
-        artist.mbid,
+        stereoLibrary.id,
+        artist.metadataId,
         artist.mbid,
         artistAlbumCount,
         artistAlbumCount,

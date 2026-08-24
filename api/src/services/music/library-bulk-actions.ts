@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
 import { db } from "../../database.js";
-import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
+import { applyArtistMonitoringState, queueArtistMonitoringIntake } from "./artist-monitoring.js";
 import {
     invalidateArtistDownloadStatus,
     invalidateReleaseGroupDownloadStatus,
@@ -170,65 +170,9 @@ function applyReleaseGroupWantedState(releaseGroupMbids: string[], monitored: bo
 }
 
 function applyArtistMonitorState(artistIds: string[], monitored: boolean): void {
-    const nextStatus = monitored ? 1 : 0;
-    const artistPlaceholders = buildPlaceholders(artistIds.length);
-
     const tx = db.transaction(() => {
-        db.prepare(`
-            UPDATE Artists
-            SET monitored = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE id IN (${artistPlaceholders})
-        `).run(nextStatus, nextStatus, ...artistIds);
-
-        if (!monitored) {
-            // Unmonitoring an Artist withdraws its Albums, which takes their
-            // monitored Editions with them: an Edition monitored under an
-            // unmonitored Album is the contradiction row existence prevents.
-            // A locked Album keeps both — that is what the lock is for.
-            db.prepare(`
-            DELETE FROM LibraryEditions
-            WHERE edition_id IN (
-                SELECT edition.id
-                FROM AlbumEditions edition
-                JOIN Albums release_group ON release_group.id = edition.release_group_id
-                JOIN Artists artist ON artist.mbid = release_group.artist_mbid
-                WHERE artist.id IN (${artistPlaceholders})
-            )
-              AND NOT EXISTS (
-                SELECT 1 FROM LibraryAlbums locked_album
-                JOIN AlbumEditions locked_edition
-                  ON locked_edition.release_group_id = locked_album.release_group_id
-                WHERE locked_album.library_id = LibraryEditions.library_id
-                  AND locked_edition.id = LibraryEditions.edition_id
-                  AND locked_album.locked = 1
-              )
-            `).run(...artistIds);
-
-            db.prepare(`
-            DELETE FROM LibraryAlbums
-            WHERE release_group_id IN (
-                SELECT release_group.id
-                FROM Albums release_group
-                JOIN Artists artist ON artist.mbid = release_group.artist_mbid
-                WHERE artist.id IN (${artistPlaceholders})
-            )
-              AND locked = 0
-            `).run(...artistIds);
-
-            // The artist's automatically selected videos go with it; ones the
-            // user picked by hand stay, exactly as a locked album does.
-            db.prepare(`
-                DELETE FROM LibraryVideos
-                WHERE selection_mode = 'auto'
-                  AND video_recording_id IN (
-                    SELECT id FROM Recordings
-                    WHERE is_video = 1
-                      AND artist_mbid IN (
-                        SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
-                      )
-                  )
-            `).run(...artistIds);
+        for (const artistId of artistIds) {
+            applyArtistMonitoringState(artistId, monitored);
         }
     });
 
@@ -237,19 +181,6 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
 
 function applyAlbumMonitorState(releaseGroupMbids: string[], monitored: boolean): void {
     applyReleaseGroupWantedState(releaseGroupMbids, monitored);
-}
-
-function applyTrackMonitorState(trackIds: string[], monitored: boolean): void {
-    const rows = fetchRows(`
-        SELECT DISTINCT release_group.mbid AS id
-        FROM Tracks t
-        JOIN AlbumEditions release ON release.id = t.album_edition_id
-        JOIN Albums release_group ON release_group.id = release.release_group_id
-        WHERE CAST(t.id AS TEXT) IN (${buildPlaceholders(trackIds.length)})
-           OR t.mbid IN (${buildPlaceholders(trackIds.length)})
-    `, [...trackIds, ...trackIds]);
-
-    applyReleaseGroupWantedState(rows.map((row) => String(row.id)), monitored);
 }
 
 function applyVideoMonitorState(videoIds: string[], monitored: boolean): void {
@@ -491,7 +422,7 @@ export class LibraryBulkActionService {
 
     private static async applyArtistAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): Promise<LibraryBulkActionResult> {
         const rows = fetchRows(
-            `SELECT id, name FROM Artists WHERE id IN (${buildPlaceholders(ids.length)})`,
+            `SELECT id, name FROM ArtistMetadata WHERE id IN (${buildPlaceholders(ids.length)})`,
             ids,
         );
         const rowsById = new Map(rows.map((row) => [String(row.id), row]));
@@ -553,7 +484,7 @@ export class LibraryBulkActionService {
             `
                 SELECT DISTINCT rg.mbid AS id
                 FROM Albums rg
-                JOIN Artists a ON a.mbid = rg.artist_mbid
+                JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
                 WHERE a.id IN (${buildPlaceholders(foundIds.length)})
             `,
             foundIds,
@@ -714,19 +645,11 @@ export class LibraryBulkActionService {
         }
 
         if (action === "monitor" || action === "unmonitor") {
-            applyTrackMonitorState(foundIds, action === "monitor");
-            for (const releaseGroupMbid of uniqueIds(rows.map((row) => String(row.release_group_mbid || "")))) {
-                invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
-            }
-            for (const id of foundIds) {
-                result.items.push({
-                    id,
-                    status: "updated",
-                    message: action === "monitor" ? "Track monitoring enabled" : "Track monitoring disabled",
-                });
-                result.updated += 1;
-            }
-            return result;
+            return markUnsupported(
+                result,
+                foundIds,
+                "Track monitoring is not supported; monitor the album or an exact edition instead",
+            );
         }
 
         if (action === "lock" || action === "unlock") {
@@ -747,7 +670,7 @@ export class LibraryBulkActionService {
                   artist.Id AS artist_id
                 FROM Recordings r
                 LEFT JOIN ArtistMetadata metadata ON metadata.mbid = r.artist_mbid
-                LEFT JOIN Artists artist ON artist.mbid = metadata.mbid
+                LEFT JOIN ArtistMetadata artist ON artist.mbid = metadata.mbid
                 WHERE CAST(r.id AS TEXT) IN (${buildPlaceholders(ids.length)})
                   AND r.is_video = 1
             `,

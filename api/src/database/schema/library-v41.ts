@@ -63,19 +63,6 @@ export function createCanonicalCreditSchemaV41(db: Database.Database): void {
 
 export function createLibrarySchemaV41(db: Database.Database): void {
   db.exec(`
-    CREATE TABLE ManagedArtists (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      artist_id INTEGER NOT NULL UNIQUE,
-      path TEXT,
-      library_origin TEXT NOT NULL DEFAULT 'user',
-      metadata_status TEXT,
-      metadata_last_checked_at DATETIME,
-      metadata_match_method TEXT,
-      added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(artist_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE MetadataProfiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
@@ -100,18 +87,30 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(quality_profile_id) REFERENCES quality_profiles(id)
     );
 
+    -- A row here means this catalog artist is a member of this library.
+    -- Unmonitor DELETEs the row. Policy lives only on a kept row: all = grab
+    -- passing albums, new = only albums newer than the current latest, none =
+    -- pause (stay in the library, skip download-missing and new LibraryAlbums).
+    -- Default add is policy=all. Policy never inserts a membership row.
     CREATE TABLE LibraryArtists (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
-      managed_artist_id INTEGER NOT NULL,
-      monitored BOOLEAN NOT NULL DEFAULT 1,
+      artist_metadata_id INTEGER NOT NULL,
+      policy TEXT NOT NULL DEFAULT 'all'
+        CHECK(policy IN ('all', 'new', 'none')),
       credited_scope TEXT NOT NULL DEFAULT 'primary_only'
         CHECK(credited_scope IN ('primary_only', 'release_credit', 'release_and_track_credit')),
+      path TEXT,
+      library_origin TEXT NOT NULL DEFAULT 'user',
+      metadata_status TEXT,
+      metadata_last_checked_at DATETIME,
+      metadata_match_method TEXT,
+      added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(library_id, managed_artist_id),
+      UNIQUE(library_id, artist_metadata_id),
       FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY(managed_artist_id) REFERENCES ManagedArtists(id) ON DELETE CASCADE
+      FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
     );
 
     -- A row here means exactly one thing: this Album is monitored in this
@@ -341,10 +340,11 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE
     );
 
-    CREATE INDEX idx_managed_artists_artist ON ManagedArtists(artist_id);
     CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
     CREATE INDEX idx_library_artists_library
-      ON LibraryArtists(library_id, monitored, managed_artist_id);
+      ON LibraryArtists(library_id, policy, artist_metadata_id);
+    CREATE INDEX idx_library_artists_metadata
+      ON LibraryArtists(artist_metadata_id, library_id);
     -- UNIQUE(library_id, release_group_id) covers per-library monitoring
     -- lookups. Artist-page and paged-library reads join the other way: a
     -- bounded set of release groups looking up their LibraryAlbums rows.
@@ -380,6 +380,8 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       WHERE file_class = 'video';
     CREATE INDEX idx_track_files_library_release
       ON TrackFiles(library_id, album_edition_id);
+    CREATE INDEX idx_track_files_library_artist
+      ON TrackFiles(library_id, artist_metadata_id);
 
     -- The plan that actually executes.
     --

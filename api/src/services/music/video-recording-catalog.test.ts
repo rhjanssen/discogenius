@@ -27,22 +27,20 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-1", "Bastille", "artist-mbid");
 });
 
 after(() => {
   closeActiveSchemaDb(dbModule, tempDir);
 });
 
-test("active schema carries youtube_video_id and user_version 44", () => {
+test("active schema carries youtube_video_id and user_version 46", () => {
   const columns = (dbModule.db.prepare("PRAGMA table_info(Recordings)").all() as Array<{ name: string }>)
     .map((row) => row.name);
   assert.ok(columns.includes("youtube_video_id"));
-  assert.equal(dbModule.db.pragma("user_version", { simple: true }), 44);
+  assert.equal(dbModule.db.pragma("user_version", { simple: true }), 46);
 });
 
 test("watch id is taken from provider_id when _provider marks YouTube Music", () => {
@@ -87,7 +85,7 @@ test("MusicBrainz video can also carry a YouTube watch id", () => {
 });
 
 test("Apple/TIDAL mint creates a provider_catalog recording and an accepted match", () => {
-  refreshVideo.RefreshVideoService.upsertArtistVideos("artist-1", [{
+  refreshVideo.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "tidal",
     provider_id: "tidal-video-1",
     title: "Pompeii (Official Music Video)",
@@ -111,7 +109,7 @@ test("Apple/TIDAL mint creates a provider_catalog recording and an accepted matc
 });
 
 test("later YouTube attach merges onto a TIDAL mint instead of duplicating", () => {
-  refreshVideo.RefreshVideoService.upsertArtistVideos("artist-1", [{
+  refreshVideo.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "tidal",
     provider_id: "tidal-pompeii",
     title: "Pompeii",
@@ -121,7 +119,7 @@ test("later YouTube attach merges onto a TIDAL mint instead of duplicating", () 
     SELECT id FROM Recordings WHERE is_video = 1
   `).get() as { id: number }).id);
 
-  refreshVideo.RefreshVideoService.upsertArtistVideos("artist-1", [{
+  refreshVideo.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "youtube-music",
     provider_id: "a1xFsoRYrds",
     title: "Pompeii",

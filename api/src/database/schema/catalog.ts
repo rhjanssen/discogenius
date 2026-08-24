@@ -194,7 +194,7 @@ export function createCatalogSchema(db: Database.Database): void {
       -- unchanged release group's entire tracklist. Owned by syncReleaseGroup
       -- (the only writer with the full detail); syncArtist leaves it untouched.
       content_hash TEXT,
-      monitored BOOLEAN NOT NULL DEFAULT 0,
+      -- No monitored here. LibraryAlbums row existence is the monitoring statement.
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
@@ -223,7 +223,7 @@ export function createCatalogSchema(db: Database.Database): void {
       label TEXT,
       media TEXT,
       old_foreign_ids TEXT,
-      monitored BOOLEAN NOT NULL DEFAULT 0,
+      -- No monitored here. LibraryEditions row existence is the monitoring statement.
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE,
       FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
@@ -354,7 +354,8 @@ export function createCatalogSchema(db: Database.Database): void {
       number TEXT,
       title TEXT NOT NULL,
       length_ms INT,
-      monitored BOOLEAN NOT NULL DEFAULT 0,
+      -- No monitored here. Track availability follows the monitored Edition
+      -- (LibraryEditions row existence).
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_mbid, medium_position, position),
       FOREIGN KEY(album_edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,

@@ -19,6 +19,7 @@ import {
   isRequestValidationError,
   rejectUnknownKeys,
   RequestValidationError,
+  parseBoundedQueryInteger,
 } from "../../utils/request-validation.js";
 
 const router = Router();
@@ -97,10 +98,6 @@ function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-const parseOptionalMonitored = (value: unknown): boolean => {
-  return value === undefined ? true : Boolean(value);
-};
-
 // MusicBrainz release-group album routes. provider IDs are handled as selected
 // offers by command/download services, not as catalog identity.
 router.get("/", async (req, res) => {
@@ -110,8 +107,8 @@ router.get("/", async (req, res) => {
     const lockedFilter = parseOptionalQueryBoolean(req.query.locked);
 
     res.json(await runWithAsyncBusyRetry(() => AlbumQueryService.listAlbums({
-      limit: parseInt(req.query.limit as string) || 50,
-      offset: parseInt(req.query.offset as string) || 0,
+      limit: parseBoundedQueryInteger(req.query.limit, 50, { min: 1, max: 200 }),
+      offset: parseBoundedQueryInteger(req.query.offset, 0),
       search: req.query.search as string | undefined,
       monitored: monitoredFilter,
       downloaded: downloadedFilter,
@@ -211,7 +208,7 @@ router.post("/:albumId/monitor", async (req, res) => {
     const albumId = req.params.albumId;
     const body = getObjectBody(req.body);
     rejectUnknownKeys(body, ["monitored", "libraryId", "allLibraries"], "Album monitor");
-    const monitored = parseOptionalMonitored(body.monitored);
+    const monitored = getOptionalBoolean(body, "monitored") ?? true;
     const scope = parseAlbumLibraryScope(body);
     const result = await runAlbumUserWrite(() =>
       AlbumCommandService.setAlbumMonitored(albumId, monitored, scope),
@@ -295,27 +292,6 @@ router.patch("/:albumId/libraries/:libraryId/representative", async (req, res) =
     })));
   } catch (error: any) {
     res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
-  }
-});
-
-// Monitor a single track: ensure album exists, lock + optionally queue download
-router.post("/track/:trackId/monitor", async (req, res) => {
-  try {
-    const { trackId } = req.params;
-    const shouldDownload = (req.body as any)?.download !== undefined
-      ? Boolean((req.body as any)?.download)
-      : true;
-
-    const result = await AlbumCommandService.monitorTrack(trackId, shouldDownload);
-
-    if (result.status === 404) {
-      return res.status(404).json({ detail: result.message || "Track not found" });
-    }
-
-    const { status, message, ...body } = result;
-    res.status(status || 200).json(message ? { ...body, message } : body);
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
   }
 });
 

@@ -18,8 +18,14 @@ const SETTINGS_TABS = [
 // Single-scroll (VS Code-style) settings: every section is always rendered; the
 // nav scroll-spies. Clicking a tab (or the mobile menu item) scrolls to it.
 async function selectSettingsCategory(page: import('@playwright/test').Page, label: string) {
-  const desktopTab = page.getByTestId('settings-category-tabs').getByRole('tab', { name: label, exact: true });
-  if (await desktopTab.isVisible().catch(() => false)) {
+  // Settings renders a loading state before either responsive navigation is
+  // usable. Wait for the layout instead of treating "not visible yet" as the
+  // mobile breakpoint and clicking its permanently hidden desktop counterpart.
+  await expect(page.getByTestId('settings-layout')).toBeVisible();
+  const desktopTabs = page.getByTestId('settings-category-tabs');
+  if (await desktopTabs.isVisible().catch(() => false)) {
+    const desktopTab = desktopTabs.getByRole('tab', { name: label, exact: true });
+    await desktopTab.scrollIntoViewIfNeeded();
     await desktopTab.click();
     return;
   }
@@ -117,7 +123,7 @@ test.describe('Settings page', () => {
 });
 
 test('settings about section shows current and latest version status', async ({ page }) => {
-  await page.route('**/api/config/about', async (route) => {
+  await page.route('**/api/v1/config/about', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

@@ -609,63 +609,17 @@ function ensureDownloadQueueSchema(): void {
  */
 function createBaselineSchemaV41(): void {
   // ====================================================================
-  // ARTISTS TABLE
-  // ====================================================================
-  db.exec(`
-    CREATE TABLE Artists (
-      id TEXT PRIMARY KEY,             -- Local managed artist id; MusicBrainz MBID for canonical artists
-      name TEXT NOT NULL,              -- Artist name
-      picture TEXT,                    -- Resolved or provider-native artist image reference
-      cover_image_url TEXT,            -- Resolved artist image URL used by UI pages
-      popularity INT,                  -- Optional provider popularity score
-      artist_types TEXT,               -- JSON array: ["ARTIST", "CONTRIBUTOR", ...ETC]
-      artist_roles TEXT,               -- JSON array: [{"categoryId": -1, "category": "Artist"}, {"categoryId": 2, "category": "Songwriter"}, ...ETC]
-      user_date_added DATETIME,        -- When imported from a provider's followed/favorite artists
-      mbid TEXT,                       -- MusicBrainz artist ID
-      path TEXT,                       -- Resolved library folder path (set at add/import time)
-      musicbrainz_status TEXT,         -- pending/verified/ambiguous/unmatched/error
-      musicbrainz_last_checked DATETIME,
-      musicbrainz_match_method TEXT,
-      library_origin TEXT NOT NULL DEFAULT 'user',
-      
-      -- Biography
-      bio_text TEXT,                   -- Full biography text
-      bio_source TEXT,                 -- Source of biography
-      bio_last_updated DATETIME,       -- When biography was last updated
-
-      -- Monitoring & Lock Mechanism
-      monitored BOOLEAN DEFAULT 0,       -- whether to scan, filter, and download releases from this artist, and monitor them for new releases
-      monitored_at DATETIME,           -- when monitoring was enabled
-      last_scanned DATETIME,           -- last time this artist was scanned for new releases
-      downloaded INT DEFAULT 0         -- number between 0 and 100 representing percentage of artist's monitored media downloaded
-    )
-  `);
-
-  db.exec(`
-    CREATE TABLE ArtistStatistics (
-      artist_id TEXT PRIMARY KEY REFERENCES Artists(id) ON DELETE CASCADE,
-      artist_mbid TEXT,
-      album_count INTEGER NOT NULL DEFAULT 0,
-      monitored_album_count INTEGER NOT NULL DEFAULT 0,
-      downloaded_album_count INTEGER NOT NULL DEFAULT 0,
-      track_count INTEGER NOT NULL DEFAULT 0,
-      monitored_track_count INTEGER NOT NULL DEFAULT 0,
-      track_file_count INTEGER NOT NULL DEFAULT 0,
-      video_count INTEGER NOT NULL DEFAULT 0,
-      size_on_disk INTEGER NOT NULL DEFAULT 0,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // ====================================================================
   // TRACKFILES TABLE (Local file tracking; file inventory)
+  // Catalog identity is ArtistMetadata (created below). Membership is
+  // LibraryArtists. Files keep library_id + artist_metadata_id and must
+  // not FK LibraryArtists: unmonitor/pause leave inventory in place.
   // ====================================================================
   db.exec(`
     CREATE TABLE TrackFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT, -- Internal file ID
       
-      -- Linkage
-      artist_id TEXT NOT NULL,           -- Managed artist id
+      -- Catalog artist this file belongs to. Not a LibraryArtists FK.
+      artist_metadata_id INTEGER,
 
       -- MusicBrainz identity captured when the file was imported/downloaded
       canonical_artist_mbid TEXT,
@@ -739,7 +693,7 @@ function createBaselineSchemaV41(): void {
       modified_at DATETIME,              -- File system modified time
       verified_at DATETIME,              -- Last time file existence was verified
       
-      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
+      FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
       FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
       FOREIGN KEY(provider_item_id) REFERENCES ProviderItems(id) ON DELETE SET NULL,
       FOREIGN KEY(source_audio_variant_id) REFERENCES ProviderItemAudioVariants(id) ON DELETE SET NULL
@@ -752,6 +706,27 @@ function createBaselineSchemaV41(): void {
   createCommandsSchema(db);
   createRuntimeControlSchema(db);
   createLibrarySchemaV41(db);
+
+  db.exec(`
+    CREATE TABLE ArtistStatistics (
+      library_id INTEGER NOT NULL,
+      artist_metadata_id INTEGER NOT NULL,
+      artist_mbid TEXT,
+      album_count INTEGER NOT NULL DEFAULT 0,
+      monitored_album_count INTEGER NOT NULL DEFAULT 0,
+      downloaded_album_count INTEGER NOT NULL DEFAULT 0,
+      track_count INTEGER NOT NULL DEFAULT 0,
+      monitored_track_count INTEGER NOT NULL DEFAULT 0,
+      track_file_count INTEGER NOT NULL DEFAULT 0,
+      video_count INTEGER NOT NULL DEFAULT 0,
+      size_on_disk INTEGER NOT NULL DEFAULT 0,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (library_id, artist_metadata_id),
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
+    )
+  `);
+
   createArtistTopTrackProjectionSchema(db);
   createAlbumLibraryProjectionSchema(db);
   createTrackLibraryProjectionSchema(db);
@@ -802,21 +777,9 @@ function createBaselineSchemaV41(): void {
   // ====================================================================
   // INDEXES
   // ====================================================================
-  // Artist indexes
-  db.exec(`CREATE INDEX idx_artists_monitored ON Artists(monitored)`);
-  db.exec(`CREATE INDEX idx_artists_name ON Artists(name)`);
-  db.exec(`CREATE INDEX idx_artists_popularity ON Artists(popularity)`);
-  db.exec(`CREATE INDEX idx_artists_last_scanned ON Artists(last_scanned)`);
-  db.exec(`CREATE INDEX idx_artists_user_date_added ON Artists(user_date_added)`);
-  db.exec(`CREATE INDEX idx_artists_mbid ON Artists(mbid)`);
-  db.exec(`CREATE INDEX idx_artists_mbid_monitored ON Artists(mbid, monitored)`);
-  db.exec(`CREATE INDEX idx_artists_musicbrainz_status ON Artists(musicbrainz_status)`);
-
-  // Job indexes
   createCommandsIndexes(db);
 
   // Library file indexes
-  db.exec(`CREATE INDEX idx_track_files_artist_id ON TrackFiles(artist_id)`);
   db.exec(`CREATE INDEX idx_track_files_file_type ON TrackFiles(file_type)`);
   db.exec(`CREATE INDEX idx_track_files_library_root ON TrackFiles(library_root)`);
   db.exec(`CREATE INDEX idx_track_files_needs_rename ON TrackFiles(needs_rename)`);
@@ -832,13 +795,13 @@ function createBaselineSchemaV41(): void {
   db.exec(`CREATE INDEX idx_track_files_expected_path ON TrackFiles(expected_path)`);
   db.exec(`CREATE INDEX idx_track_files_provider_id_type_slot ON TrackFiles(provider_id, file_type, library_slot)`);
   db.exec("CREATE INDEX idx_artist_statistics_mbid ON ArtistStatistics(artist_mbid)");
+  db.exec("CREATE INDEX idx_artist_statistics_metadata ON ArtistStatistics(artist_metadata_id, library_id)");
 
   db.exec(`CREATE INDEX idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);
 
   // Foreign key and lookup performance indexes
   db.exec("CREATE INDEX idx_mb_releases_artist_mbid ON AlbumEditions(artist_mbid)");
   db.exec("CREATE INDEX idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
-  db.exec("CREATE INDEX idx_artists_path ON Artists(path)");
 }
 
 function recordDatabaseVersionState() {

@@ -116,15 +116,13 @@ after(() => {
 });
 
 function insertTestAlbum(db: any, mbid: string, title: string, imagesJson: string | null = null) {
-  try {
-    db.prepare("INSERT OR IGNORE INTO Artists (id, name, mbid) VALUES (1, 'Test Artist', 'test-artist')").run();
-  } catch { /* ignore */ }
-  try {
-    db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("test-artist", "Test Artist");
-  } catch { /* ignore */ }
   db.prepare(`
-    INSERT OR IGNORE INTO Albums (mbid, title, artist_mbid, primary_type, monitored, images)
-    VALUES (?, ?, 'test-artist', 'Album', 1, ?)
+    INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'test-artist', 'Test Artist')
+    ON CONFLICT(mbid) DO UPDATE SET name = excluded.name
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO Albums (mbid, title, artist_mbid, primary_type, images)
+    VALUES (?, ?, 'test-artist', 'Album', ?)
   `).run(mbid, title, imagesJson);
 }
 
@@ -243,7 +241,7 @@ test("existing-wrong-embedded-art-is-replaced", async () => {
   fs.writeFileSync(flacPath, Buffer.from("dummy flac audio content"));
 
   db.prepare(`
-    INSERT OR REPLACE INTO TrackFiles (id, file_path, relative_path, library_root, filename, extension, quality, file_type, artist_id, canonical_release_group_mbid)
+    INSERT OR REPLACE INTO TrackFiles (id, file_path, relative_path, library_root, filename, extension, quality, file_type, artist_metadata_id, canonical_release_group_mbid)
     VALUES (?, ?, 'track.flac', '/library', 'track.flac', '.flac', 'FLAC', 'track', 1, ?)
   `).run(trackId, flacPath, mbid);
 
@@ -733,7 +731,7 @@ test("artwork-cache-update-propagates-to-sidecar-and-tags", async () => {
   fs.writeFileSync(flacPath, Buffer.from("dummy flac audio content"));
 
   db.prepare(`
-    INSERT OR REPLACE INTO TrackFiles (id, file_path, relative_path, library_root, filename, extension, quality, file_type, artist_id, canonical_release_group_mbid)
+    INSERT OR REPLACE INTO TrackFiles (id, file_path, relative_path, library_root, filename, extension, quality, file_type, artist_metadata_id, canonical_release_group_mbid)
     VALUES (?, ?, 'track.flac', '/library', 'track.flac', '.flac', 'FLAC', 'track', 1, ?)
   `).run(trackId, flacPath, mbid);
 

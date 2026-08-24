@@ -95,7 +95,7 @@ export function storeProviderArtistMatch(
 
     const updatePopularity = artist.popularity ?? 0;
     db.prepare(`
-        UPDATE Artists
+        UPDATE ArtistMetadata
         SET picture = COALESCE(?, picture),
             cover_image_url = COALESCE(?, cover_image_url),
             popularity = MAX(COALESCE(popularity, 0), ?)

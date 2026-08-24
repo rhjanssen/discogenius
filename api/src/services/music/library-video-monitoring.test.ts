@@ -46,7 +46,6 @@ function seed(): { videoId: number; otherVideoId: number; trackId: number } {
   resetActiveSchemaRows(db, ["RecordingRelations"]);
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-dire', 'Dire Straits');
-    INSERT INTO Artists (id, name, mbid) VALUES ('artist-dire', 'Dire Straits', 'artist-dire');
     INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title, primary_type)
     VALUES (1, 'rg-making-movies', 1, 'artist-dire', 'Making Movies', 'Album');
     INSERT INTO AlbumEditions (

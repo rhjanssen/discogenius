@@ -27,6 +27,11 @@ after(() => closeActiveSchemaDb(dbModule, tempDir));
 
 beforeEach(() => {
   resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('op-artist', 'Op Artist')
+    ON CONFLICT(mbid) DO UPDATE SET name = excluded.name
+  `).run();
 });
 
 function seedLibrary(): number {
@@ -50,9 +55,10 @@ function seedLibrary(): number {
 }
 
 function seedTrackFile(overrides: Record<string, unknown> = {}): number {
-  db.prepare("INSERT OR IGNORE INTO Artists (id, name) VALUES ('op-artist', 'Op Artist')").run();
+  const artistMeta = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'op-artist'")
+    .get() as { id: number };
   const row = {
-    artist_id: "op-artist",
+    artist_id: artistMeta.id,
     provider: "tidal",
     provider_entity_type: "track",
     provider_id: "prov-track-1",
@@ -67,7 +73,7 @@ function seedTrackFile(overrides: Record<string, unknown> = {}): number {
   };
   return Number((db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, library_id,
+      artist_metadata_id, provider, provider_entity_type, provider_id, library_id,
       file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (
       @artist_id, @provider, @provider_entity_type, @provider_id, @library_id,

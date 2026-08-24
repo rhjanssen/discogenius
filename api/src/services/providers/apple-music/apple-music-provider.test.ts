@@ -8,7 +8,14 @@ import path from "node:path";
 import type { FetchLike } from "./apple-music-api.js";
 import { validateAppleMusicCredentials } from "./apple-music-api.js";
 import type { AppleMusicAuthToken } from "./apple-music-auth.js";
-import { APPLE_MUSIC_DOWNLOADER_CONFIG, buildAppleMusicApiHeaders, loadStoredAppleMusicToken, resolveAppleWrapperHost, syncTokenToDownloader } from "./apple-music-auth.js";
+import {
+  APPLE_MUSIC_DOWNLOADER_CONFIG,
+  buildAppleMusicApiHeaders,
+  loadStoredAppleMusicToken,
+  reconcileWrapperLoginStatus,
+  resolveAppleWrapperHost,
+  syncTokenToDownloader,
+} from "./apple-music-auth.js";
 import {
   getAppleAlbum,
   getAppleAlbumTracks,
@@ -40,6 +47,8 @@ test("describeAppleDownloaderFailure maps decryption/session errors to a re-auth
   const eof = describeAppleDownloaderFailure(1, "Error reading response from device: EOF");
   assert.match(eof, /Re-authenticate Apple Music/i);
   assert.match(eof, /2FA/);
+  assert.doesNotMatch(eof, /force-recreate/);
+  assert.match(eof, /playback-limit/);
   // The raw downloader detail is preserved for debugging.
   assert.match(eof, /reading response from device/i);
 
@@ -393,6 +402,40 @@ test("Apple wrapper host is the compose service name inside Docker", () => {
   assert.equal(resolveAppleWrapperHost({}), "127.0.0.1");
   assert.equal(resolveAppleWrapperHost({ DOCKER: "true" }), "apple-music-wrapper");
   assert.equal(resolveAppleWrapperHost({ DOCKER: "true", APPLE_MUSIC_WRAPPER_HOST: "wrapper" }), "wrapper");
+});
+
+test("saved wrapper success is downgraded when the sidecar is not reachable", () => {
+  const saved = { status: "success", message: "Login completed." };
+  const unavailable = reconcileWrapperLoginStatus(saved, {
+    decryptPortOpen: false,
+    m3u8PortOpen: false,
+    successAgeMs: 60_000,
+  });
+  assert.equal(unavailable.status, "failed");
+  assert.match(unavailable.message, /docker compose up -d apple-music-wrapper/);
+  assert.match(unavailable.message, /Re-authenticate only if/);
+
+  assert.deepEqual(reconcileWrapperLoginStatus(saved, {
+    decryptPortOpen: true,
+    m3u8PortOpen: true,
+  }), saved);
+});
+
+test("a freshly restarted wrapper gets a short port-bind grace period", () => {
+  const starting = reconcileWrapperLoginStatus(
+    { status: "success", message: "Session found." },
+    { decryptPortOpen: false, m3u8PortOpen: false, successAgeMs: 500 },
+  );
+  assert.equal(starting.status, "logging_in");
+  assert.match(starting.message, /starting/);
+});
+
+test("wrapper reachability does not interrupt an in-progress login", () => {
+  const loggingIn = { status: "logging_in", message: "Waiting for Apple." };
+  assert.deepEqual(reconcileWrapperLoginStatus(loggingIn, {
+    decryptPortOpen: false,
+    m3u8PortOpen: false,
+  }), loggingIn);
 });
 
 test("Apple provider saveCredentials never persists wrapper Apple account fields", async () => {

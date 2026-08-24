@@ -110,6 +110,47 @@ export function selectVideoInVideoLibraries(
 }
 
 /**
+ * Attach a catalog artist to every enabled library.
+ *
+ * A LibraryArtists row is membership. Unmonitor deletes the row; pause keeps
+ * the row with policy `none`. This helper inserts policy `all` unless
+ * `monitored === false`, in which case it deletes membership and does not
+ * insert. Pause tests write policy `none` themselves.
+ */
+export function seedLibraryArtistMonitoring(
+  db: {
+    prepare: (sql: string) => {
+      get: (...args: any[]) => unknown;
+      run: (...args: any[]) => unknown;
+    };
+  },
+  artistMbid: string,
+  options: { monitored?: boolean } = {},
+): { artistMetadataId: number } {
+  const canonical = db.prepare(`
+    SELECT id FROM ArtistMetadata WHERE mbid = ?
+  `).get(artistMbid) as { id: number } | undefined;
+  if (!canonical) {
+    throw new Error(`seedLibraryArtistMonitoring: missing ArtistMetadata for ${artistMbid}`);
+  }
+  if (options.monitored === false) {
+    db.prepare(`
+      DELETE FROM LibraryArtists WHERE artist_metadata_id = ?
+    `).run(canonical.id);
+    return { artistMetadataId: canonical.id };
+  }
+  db.prepare(`
+    INSERT INTO LibraryArtists (library_id, artist_metadata_id, policy, credited_scope)
+    SELECT library.id, ?, 'all', 'release_and_track_credit'
+    FROM Libraries library
+    WHERE library.enabled = 1
+    ON CONFLICT(library_id, artist_metadata_id) DO UPDATE SET
+      policy = excluded.policy
+  `).run(canonical.id);
+  return { artistMetadataId: canonical.id };
+}
+
+/**
  * Tables whose rows are provider/library state rather than canonical catalogue
  * facts. Delete in this order between tests — children before parents, so an
  * FK-enforced database does not reject the reset.
@@ -118,6 +159,7 @@ export const PROVIDER_STATE_TABLES_IN_DELETE_ORDER = [
   "AcquisitionPlanTracks",
   "AcquisitionPlanSources",
   "AcquisitionPlans",
+  "ArtistStatistics",
   "TrackFiles",
   "ProviderTrackMatches",
   "ProviderVideoMatches",
@@ -134,13 +176,13 @@ export const CANONICAL_TABLES_IN_DELETE_ORDER = [
   "LibraryVideos",
   "LibraryEditions",
   "LibraryAlbums",
+  "LibraryArtists",
   "RecordingRelations",
   "Tracks",
   "Recordings",
   "AlbumEditions",
   "Albums",
   "ArtistMetadata",
-  "Artists",
 ] as const;
 
 /** Reset provider + canonical state, ignoring tables a given schema lacks. */

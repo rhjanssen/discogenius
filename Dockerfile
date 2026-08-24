@@ -165,6 +165,7 @@ EXPOSE 3737
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3737
+ENV DISCOGENIUS_BIND_IP=0.0.0.0
 ENV DOCKER=true
 # tiddl stores auth.json/config.toml in TIDDL_PATH, kept beside the rest of the
 # TIDAL plugin files inside the config volume. Startup migrates a pre-2.0.2

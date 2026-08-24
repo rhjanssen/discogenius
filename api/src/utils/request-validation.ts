@@ -154,6 +154,18 @@ export function getEnumValue<T extends string>(body: JsonObject, key: string, al
     return value as T;
 }
 
+export function getOptionalEnumValue<T extends string>(
+    body: JsonObject,
+    key: string,
+    allowedValues: readonly T[],
+): T | undefined {
+    if (body[key] === undefined) {
+        return undefined;
+    }
+
+    return getEnumValue(body, key, allowedValues);
+}
+
 export function getRequiredIntegerArray(body: JsonObject, key: string): number[] {
     const value = body[key];
     if (!Array.isArray(value) || value.length === 0) {
@@ -195,4 +207,15 @@ export function getRequiredIdentifierArray(body: JsonObject, key: string): strin
 
 export function isRequestValidationError(error: unknown): error is RequestValidationError {
     return error instanceof RequestValidationError;
+}
+
+export function parseBoundedQueryInteger(
+    value: unknown,
+    fallback: number,
+    options: { min?: number; max?: number } = {},
+): number {
+    const raw = Array.isArray(value) ? value[0] : value;
+    const parsed = Number.parseInt(String(raw ?? ""), 10);
+    const resolved = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.min(options.max ?? Number.MAX_SAFE_INTEGER, Math.max(options.min ?? 0, resolved));
 }

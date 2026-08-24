@@ -93,7 +93,6 @@ function seedMixedStatusLibrary(db: Database.Database): void {
   createCurrentDomainSchema(db);
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'bastille', 'Bastille');
-    INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
     INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
       VALUES (1, 'bad-blood', 1, 'Bad Blood', 'Album'),
              (2, 'translated-only', 1, 'Translated Only', 'Album');
@@ -125,8 +124,7 @@ function seedMixedStatusLibrary(db: Database.Database): void {
     );
     INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
       VALUES (1, 'Stereo', '/library/stereo', 1, 1);
-    INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored, credited_scope)
-      VALUES (1, 1, 1, 1, 'release_and_track_credit');
+    INSERT INTO LibraryArtists (id, library_id, artist_metadata_id, policy, credited_scope) VALUES (1, 1, 1, 'all', 'release_and_track_credit');
   `);
   for (const [editionId, trackId] of [[101, 1], [102, 2], [103, 3], [104, 4], [201, 5]]) {
     seedProviderExactMatch(db, editionId, [trackId]);

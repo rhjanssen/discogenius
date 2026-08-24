@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
+import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-state-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -40,8 +40,8 @@ function resetRows() {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
   writeFilteringConfig(false, false);
   downloadState.invalidateAllDownloadState();
 }
@@ -50,8 +50,6 @@ beforeEach(resetRows);
 afterEach(resetRows);
 
 function seedCanonicalArtistGraph() {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
   const artistMetadata = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?")
@@ -140,6 +138,8 @@ function seedCanonicalArtistGraph() {
     ) VALUES (?, ?, 'auto', 'test', 1)
   `).run(stereoLibrary.id, release.id);
 
+  seedLibraryArtistMonitoring(db, "artist-mbid");
+
   db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, artist_metadata_id, is_video) VALUES (?, ?, ?, ?, ?)")
     .run("video-recording-1", "Track One", "artist-mbid", artistMetadata.id, 1);
   const videoRecording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
@@ -193,15 +193,18 @@ function insertTrackFile(
   const library = db.prepare(`
     SELECT id, root_path FROM Libraries WHERE name = ?
   `).get(libraryName) as { id: number; root_path: string };
+  const artistMetadataId = (db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'",
+  ).get() as { id: number }).id;
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id,
       release_group_id, album_edition_id, track_id, recording_id, library_slot, library_id,
       file_path, relative_path, library_root, filename, extension, file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    artistMetadataId,
     "artist-mbid",
     "release-group-1",
     "release-1",
@@ -232,12 +235,12 @@ function insertVideoFile(videoRecordingMbid: string, providerId: string, filenam
   `).get(videoRecordingMbid) as { id: number };
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_recording_mbid, provider, provider_entity_type,
+      artist_metadata_id, canonical_artist_mbid, canonical_recording_mbid, provider, provider_entity_type,
       provider_id, recording_id, library_slot, file_path, relative_path, library_root,
       filename, extension, file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id,
     "artist-mbid",
     videoRecordingMbid,
     "tidal",
@@ -292,7 +295,7 @@ test("artist and release-group download stats use canonical slots, recordings, a
   assert.equal(partialAlbum.downloadedTracks, 1);
   assert.equal(partialAlbum.isDownloaded, false);
 
-  const partialArtist = downloadState.getArtistDownloadStats("artist-local");
+  const partialArtist = downloadState.getArtistDownloadStats("artist-mbid");
   assert.equal(partialArtist.totalItems, 2);
   assert.equal(partialArtist.downloadedItems, 1);
   assert.equal(partialArtist.isDownloaded, false);
@@ -306,7 +309,7 @@ test("artist and release-group download stats use canonical slots, recordings, a
   assert.equal(completeAlbum.downloadedTracks, 2);
   assert.equal(completeAlbum.isDownloaded, true);
 
-  const completeArtist = downloadState.getArtistDownloadStats("artist-local");
+  const completeArtist = downloadState.getArtistDownloadStats("artist-mbid");
   assert.equal(completeArtist.totalItems, 2);
   assert.equal(completeArtist.downloadedItems, 2);
   assert.equal(completeArtist.isDownloaded, true);
@@ -384,8 +387,8 @@ test("download completion follows enabled libraries and keeps their track identi
     },
     { totalTracks: 2, downloadedTracks: 2, isDownloaded: true },
   );
-  assert.equal(downloadState.getArtistDownloadStats("artist-local").totalItems, 1);
-  assert.equal(downloadState.getArtistDownloadStats("artist-local").downloadedItems, 1);
+  assert.equal(downloadState.getArtistDownloadStats("artist-mbid").totalItems, 1);
+  assert.equal(downloadState.getArtistDownloadStats("artist-mbid").downloadedItems, 1);
   assert.equal(downloadState.countDownloadedTracks(), 2);
   assert.equal(downloadState.countDownloadedAlbums(), 1);
 
@@ -399,8 +402,8 @@ test("download completion follows enabled libraries and keeps their track identi
     },
     { totalTracks: 4, downloadedTracks: 2, isDownloaded: false },
   );
-  assert.equal(downloadState.getArtistDownloadStats("artist-local").totalItems, 2);
-  assert.equal(downloadState.getArtistDownloadStats("artist-local").downloadedItems, 1);
+  assert.equal(downloadState.getArtistDownloadStats("artist-mbid").totalItems, 2);
+  assert.equal(downloadState.getArtistDownloadStats("artist-mbid").downloadedItems, 1);
   assert.equal(downloadState.countDownloadedTracks(), 2);
   assert.equal(downloadState.countDownloadedAlbums(), 1);
 });
@@ -411,7 +414,7 @@ test("disabled video monitoring does not make an otherwise complete artist incom
   insertTrackFile("track-2", "recording-2", "provider-track-2", "track-two.flac");
 
   writeFilteringConfig(false, false);
-  const stats = downloadState.getArtistDownloadStats("artist-local");
+  const stats = downloadState.getArtistDownloadStats("artist-mbid");
   assert.deepEqual(
     {
       totalItems: stats.totalItems,

@@ -59,7 +59,7 @@ export async function resolveProviderArtistId(
         return linkedProviderArtistId;
     }
 
-    const localArtist = db.prepare("SELECT name FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
+    const localArtist = db.prepare("SELECT name FROM ArtistMetadata WHERE id = ? OR mbid = ? LIMIT 1")
         .get(artistId, artistMbid) as { name?: string | null } | undefined;
     const artistName = String(localArtist?.name || "").trim();
     if (!artistName) {
@@ -130,13 +130,12 @@ export async function resolveProviderArtistIds(
  * remains the hole-fill fallback when no provider returns text.
  */
 export async function refreshArtistBiography(artistId: string, options: RefreshOptions = {}): Promise<void> {
-    const existing = db.prepare("SELECT bio_text, bio_source, mbid FROM Artists WHERE id = ?")
-        .get(artistId) as {
-            bio_text?: string | null;
-            bio_source?: string | null;
+    const existing = db.prepare("SELECT overview, mbid FROM ArtistMetadata WHERE mbid = ? OR CAST(id AS TEXT) = ?")
+        .get(artistId, artistId) as {
+            overview?: string | null;
             mbid?: string | null;
         } | undefined;
-    const existingBio = String(existing?.bio_text || "").trim();
+    const existingBio = String(existing?.overview || "").trim();
     const artistMbid = existing?.mbid || (isMusicBrainzMbid(artistId) ? artistId : null);
     const priority = options.provider
         ? [options.provider, ...streamingProviderManager.getProviderPriority().filter((id) => id !== options.provider)]
@@ -167,12 +166,11 @@ export async function refreshArtistBiography(artistId: string, options: RefreshO
 
         if (editorial) {
             db.prepare(`
-                UPDATE Artists SET
-                    bio_text = ?,
-                    bio_source = ?,
-                    bio_last_updated = ?
-                WHERE id = ?
-            `).run(editorial.text, editorial.source, new Date().toISOString(), artistId);
+                UPDATE ArtistMetadata SET
+                    overview = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE mbid = ? OR CAST(id AS TEXT) = ?
+            `).run(editorial.text, artistMbid || artistId, artistId);
             return;
         }
 

@@ -190,13 +190,16 @@ export const MusicVideosSettingsSection = ({
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={videoQuality || "uhd"}
+                    aria-label="Preferred video quality"
                     onChange={(_, data) => onVideoQualityChange(data.value as QualityConfigContract["video_quality"])}
                 >
                     {VIDEO_QUALITY_OPTIONS.map((option) => (
-                        <label key={option.value} className={styles.qualityOption} htmlFor={`video-quality-${option.value}`}>
-                            <Radio value={option.value} id={`video-quality-${option.value}`} />
-                            <Text weight="semibold">{option.label}</Text>
-                        </label>
+                        <Radio
+                            key={option.value}
+                            className={styles.qualityOption}
+                            value={option.value}
+                            label={<Text weight="semibold">{option.label}</Text>}
+                        />
                     ))}
                 </RadioGroup>
 
@@ -219,6 +222,7 @@ export const MusicVideosSettingsSection = ({
                     </div>
                     <div className={styles.rowControl}>
                         <Select
+                            aria-label="Video folder layout"
                             value={videoFolderLayout || "separated"}
                             onChange={(_, data) => onVideoFolderLayoutChange(
                                 data.value as PathConfigContract["video_folder_layout"],

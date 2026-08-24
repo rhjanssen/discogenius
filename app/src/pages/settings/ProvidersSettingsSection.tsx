@@ -303,6 +303,8 @@ export const ProvidersSettingsSection = ({
             <div
                 key={provider.id}
                 className={styles.providerRow}
+                role="group"
+                aria-label={`${provider.name} provider`}
                 draggable={reorderable && !savingProviderOrder}
                 onDragStart={() => setDraggingProviderId(provider.id)}
                 onDragEnd={() => setDraggingProviderId(null)}
@@ -312,7 +314,7 @@ export const ProvidersSettingsSection = ({
             >
                 <div className={styles.identity}>
                     {reorderable ? (
-                        <div className={styles.reorderColumn} aria-label={`Reorder ${provider.name}`}>
+                        <div className={styles.reorderColumn} role="group" aria-label={`Reorder ${provider.name}`}>
                             <Button
                                 appearance="subtle"
                                 size="small"

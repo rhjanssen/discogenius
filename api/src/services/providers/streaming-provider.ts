@@ -160,7 +160,7 @@ export interface StreamingProvider {
    * refine the message text).
    */
   startDownloaderLogin?(credentials: Record<string, string>): void | Promise<void>;
-  getDownloaderLoginStatus?(): { status: string; message: string };
+  getDownloaderLoginStatus?(): { status: string; message: string } | Promise<{ status: string; message: string }>;
   submitDownloaderLoginCode?(code: string): void | Promise<void>;
   loadToken?(): any;
   refreshProviderToken?(): Promise<void>;

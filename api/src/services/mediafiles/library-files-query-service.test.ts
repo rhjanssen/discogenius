@@ -16,7 +16,7 @@ const { listLibraryFiles } = await import("./library-files-query-service.js");
 function resetRows() {
   for (const table of [
     "TrackFiles", "ProviderItems", "Tracks", "Recordings",
-    "AlbumEditions", "Albums", "ArtistMetadata", "Artists",
+    "AlbumEditions", "Albums", "LibraryArtists", "ArtistMetadata",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -26,8 +26,6 @@ beforeEach(resetRows);
 afterEach(resetRows);
 
 function seedCanonicalTrackFileOnly() {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
   db.prepare(`
@@ -62,7 +60,7 @@ function seedCanonicalTrackFileOnly() {
 
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
       provider_item_id, source_audio_variant_id,
       provider, provider_entity_type, provider_id, library_slot,
@@ -70,7 +68,7 @@ function seedCanonicalTrackFileOnly() {
       file_type, quality, codec
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id,
     "artist-mbid",
     "release-group-mbid",
     "release-mbid",
@@ -106,8 +104,6 @@ test("library file listing reads source quality from canonical ProviderItems wit
 });
 
 test("library file listing resolves downloaded videos by canonical recording row id", () => {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   const artistMetadata = db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES (?, ?)
@@ -119,12 +115,12 @@ test("library file listing resolves downloaded videos by canonical recording row
   `).run(501, artistMetadata.id, "artist-mbid", "Canonical Video", 1, "provider_catalog");
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      artist_metadata_id, recording_id, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension,
       file_type, quality, codec, video_codec, width, height, bitrate
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    artistMetadata.id,
     501,
     "tidal",
     "video",

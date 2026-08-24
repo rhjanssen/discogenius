@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge,
   Button,
@@ -316,7 +316,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
     const [mappedTracks, setMappedTracks] = useState<Record<number, string>>({});
     const [decisionRejections, setDecisionRejections] = useState<string[]>([]);
 
-    const handleSelectMatch = async (result: any, releaseMbidOverride?: string) => {
+    const handleSelectMatch = useCallback(async (result: any, releaseMbidOverride?: string) => {
         setSelectedMatch(result);
 
         if (isVideoImport) {
@@ -398,7 +398,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         } finally {
             setIsLoadingTracks(false);
         }
-    };
+    }, [initialFile, isVideoImport, releaseVersions, targetFiles, toast]);
 
     const handleSelectReleaseVersion = (releaseMbid: string) => {
         setSelectedReleaseMbid(releaseMbid);
@@ -463,7 +463,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                 setHasSearched(true);
             })
             .finally(() => setIsSearching(false));
-    }, [initialFile, initialMatch, isOpen, isVideoImport, targetFiles]);
+    }, [handleSelectMatch, initialFile, initialMatch, isOpen, isVideoImport, targetFiles]);
 
     useEffect(() => {
         if (!isOpen) return;

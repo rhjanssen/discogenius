@@ -21,8 +21,8 @@ function resetRows() {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
   downloadState.invalidateAllDownloadState();
 }
 
@@ -30,8 +30,6 @@ beforeEach(resetRows);
 afterEach(resetRows);
 
 function seedCanonicalArtistGraph() {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
   db.prepare(`
@@ -94,7 +92,7 @@ function insertMissingTrackFile(
   db.prepare(`
     INSERT INTO TrackFiles (
       library_id,
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension, file_type, file_class
     ) VALUES (
@@ -102,7 +100,7 @@ function insertMissingTrackFile(
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'audio'
     )
   `).run(
-    "artist-local",
+    (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id,
     "artist-mbid",
     "release-group-1",
     "release-1",
@@ -129,7 +127,11 @@ test("orphan removal invalidates the cached album download status (provider-link
   const primed = downloadState.getAlbumDownloadStats("release-group-1");
   assert.equal(primed.downloadedTracks, 1);
 
-  await DiskScanService.scan({ artistIds: ["artist-local"] });
+  await DiskScanService.scan({
+    artistIds: [
+      String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id),
+    ],
+  });
 
   // Row is gone from the file table.
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n, 0);
@@ -148,10 +150,39 @@ test("orphan removal invalidates status for a provider-free canonical-only row",
   const primed = downloadState.getAlbumDownloadStats("release-group-1");
   assert.equal(primed.downloadedTracks, 1);
 
-  await DiskScanService.scan({ artistIds: ["artist-local"] });
+  await DiskScanService.scan({
+    artistIds: [
+      String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id),
+    ],
+  });
 
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n, 0);
 
   const afterScan = downloadState.getAlbumDownloadStats("release-group-1");
   assert.equal(afterScan.downloadedTracks, 0);
+});
+
+test("fresh active-schema full scan uses LibraryArtists paths and reconciles TrackFiles by numeric identity", async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
+    .get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryArtists (library_id, artist_metadata_id, policy, credited_scope, path)
+    SELECT id, ?, 'all', 'release_and_track_credit', 'Canonical/Artist'
+    FROM Libraries
+    WHERE enabled = 1
+    ORDER BY id
+    LIMIT 1
+  `).run(artist.id);
+  insertMissingTrackFile("track-1", "recording-1", "full-scan.flac", null);
+
+  const result = await DiskScanService.scan({ filter: "known" });
+
+  assert.equal(result.artists, 1);
+  assert.equal(result.orphansRemoved, 1);
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n,
+    0,
+    "the full scan must not bind the artist MBID to TrackFiles.artist_metadata_id",
+  );
 });

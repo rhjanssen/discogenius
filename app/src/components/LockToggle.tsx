@@ -16,7 +16,7 @@ const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 
 interface LockToggleProps {
     id: string;
-    type: "artist" | "album" | "track";
+    type: "album";
     isLocked: boolean;
     isMonitored?: boolean;
     className?: string;

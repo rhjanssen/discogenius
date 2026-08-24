@@ -1,6 +1,9 @@
 import { db } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
+import {
+  loadArtistMetadataIdentity,
+} from "./managed-artists.js";
 import { LibraryCurationService } from "./library-curation-service.js";
 import { curateArtistVideos } from "./video-curation-service.js";
 
@@ -12,28 +15,14 @@ interface ArtistCurationIdentity {
 
 export class CurationService {
   private static resolveIdentity(inputValue: string): ArtistCurationIdentity {
-    const input = String(inputValue || "").trim();
-    const row = db.prepare(`
-      SELECT
-        CAST(local.id AS TEXT) AS local_artist_id,
-        canonical.id AS canonical_artist_id,
-        canonical.mbid
-      FROM ArtistMetadata canonical
-      LEFT JOIN Artists local ON local.mbid = canonical.mbid
-      WHERE CAST(local.id AS TEXT) = ?
-         OR canonical.mbid = ?
-         OR CAST(canonical.id AS TEXT) = ?
-      ORDER BY CASE WHEN CAST(local.id AS TEXT) = ? THEN 0 ELSE 1 END
-      LIMIT 1
-    `).get(input, input, input, input) as {
-      local_artist_id: string | null;
-      canonical_artist_id: number;
-      mbid: string;
-    } | undefined;
+    const identity = loadArtistMetadataIdentity(inputValue);
+    if (!identity) {
+      return { localArtistId: null, canonicalArtistId: null, artistMbid: null };
+    }
     return {
-      localArtistId: row?.local_artist_id ?? null,
-      canonicalArtistId: row?.canonical_artist_id ?? null,
-      artistMbid: row?.mbid ?? null,
+      localArtistId: identity.mbid,
+      canonicalArtistId: identity.id,
+      artistMbid: identity.mbid,
     };
   }
 
@@ -46,33 +35,12 @@ export class CurationService {
       return { newAlbums: 0, upgradedAlbums: 0 };
     }
 
-    const managedArtistId = (db.prepare(`
-      INSERT INTO ManagedArtists (artist_id, path, metadata_status, updated_at)
-      VALUES (
-        ?,
-        (SELECT path FROM Artists WHERE mbid = ? LIMIT 1),
-        'verified',
-        CURRENT_TIMESTAMP
-      )
-      ON CONFLICT(artist_id) DO UPDATE SET
-        path = COALESCE(excluded.path, ManagedArtists.path),
-        metadata_status = excluded.metadata_status,
-        updated_at = CURRENT_TIMESTAMP
-      RETURNING id
-    `).get(identity.canonicalArtistId, identity.artistMbid) as { id: number }).id;
-    db.prepare(`
-      INSERT OR IGNORE INTO LibraryArtists (
-        library_id, managed_artist_id, monitored, credited_scope
-      )
-      SELECT
-        library.id,
-        ?,
-        CASE WHEN local_artist.monitored = 1 THEN 1 ELSE 0 END,
-        'release_and_track_credit'
-      FROM Libraries library
-      LEFT JOIN Artists local_artist ON local_artist.mbid = ?
-      WHERE library.enabled = 1
-    `).run(managedArtistId, identity.artistMbid);
+    // Catalog-only / unmonitored artists stay out of LibraryArtists. Curation
+    // never manufactures membership — that is add/monitor's job.
+    const membership = loadArtistMetadataIdentity(artistId);
+    if (!membership?.in_library) {
+      return { newAlbums: 0, upgradedAlbums: 0 };
+    }
 
     // AUDIO libraries only. A Video Library has no Albums, no Editions and no
     // acquisition plans to compose — running audio curation for one made the
@@ -85,22 +53,22 @@ export class CurationService {
       JOIN quality_profiles quality_profile
         ON quality_profile.id = library.quality_profile_id
       WHERE library.enabled = 1
-        AND library_artist.managed_artist_id = ?
-        AND library_artist.monitored = 1
+        AND library_artist.artist_metadata_id = ?
+        AND library_artist.policy IN ('all', 'new')
         AND NOT EXISTS (
           SELECT 1
           FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
           WHERE allowed.value = 'video'
         )
       ORDER BY library.id
-    `).all(managedArtistId) as Array<{ id: number }>;
+    `).all(identity.canonicalArtistId) as Array<{ id: number }>;
     const selectedBefore = Number((db.prepare(`
       SELECT COUNT(*) AS count
       FROM LibraryEditions release
       JOIN LibraryEditionScopes scope ON scope.library_edition_id = release.id
       JOIN LibraryArtists artist ON artist.id = scope.library_artist_id
-      WHERE artist.managed_artist_id = ?
-    `).get(managedArtistId) as { count: number }).count);
+      WHERE artist.artist_metadata_id = ?
+    `).get(identity.canonicalArtistId) as { count: number }).count);
     const configuredPriority = getConfigSection("streaming")?.provider_priority;
     const providerPriority = Array.isArray(configuredPriority)
       ? configuredPriority.map(String)
@@ -113,8 +81,8 @@ export class CurationService {
       // is why curating a one-album artist cost the same as curating everything.
       const libraryArtistIds = (db.prepare(`
         SELECT id FROM LibraryArtists
-        WHERE library_id = ? AND managed_artist_id = ? AND monitored = 1
-      `).all(library.id, managedArtistId) as Array<{ id: number }>).map(({ id }) => id);
+        WHERE library_id = ? AND artist_metadata_id = ?
+      `).all(library.id, identity.canonicalArtistId) as Array<{ id: number }>).map(({ id }) => id);
       if (libraryArtistIds.length === 0) continue;
       curation.curateLibrary({
         libraryId: library.id,
@@ -143,8 +111,8 @@ export class CurationService {
       FROM LibraryEditions release
       JOIN LibraryEditionScopes scope ON scope.library_edition_id = release.id
       JOIN LibraryArtists artist ON artist.id = scope.library_artist_id
-      WHERE artist.managed_artist_id = ?
-    `).get(managedArtistId) as { count: number }).count);
+      WHERE artist.artist_metadata_id = ?
+    `).get(identity.canonicalArtistId) as { count: number }).count);
 
     const cleanupArtistId = identity.localArtistId;
     if (cleanupArtistId) {

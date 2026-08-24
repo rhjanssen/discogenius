@@ -159,7 +159,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
     return (
       <div className={styles.container}>
         <div className={styles.noVideos}>
-          <Title3>No Videos Found</Title3>
+          <Title3 as="h2">No Videos Found</Title3>
           <Body1 className={styles.noVideosText}>
             Music videos will appear here when you add them to your library
           </Body1>

@@ -86,7 +86,7 @@ export function BootLoadingPage() {
           <div className={styles.logoGlow} />
           <img src={logo} alt="" className={styles.logo} />
         </div>
-        <Title3>Discogenius</Title3>
+        <Title3 as="h1">Discogenius</Title3>
         <LoadingMessage />
       </div>
     </div>

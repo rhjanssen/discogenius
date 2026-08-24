@@ -1,3 +1,4 @@
+import axe from "axe-core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -79,5 +80,37 @@ describe("DataGrid row accessibility", () => {
         render(<DataGrid ariaLabel="Artists" columns={columns} items={rows} />);
 
         expect(screen.getAllByRole("row")[1]).not.toHaveAttribute("tabindex");
+    });
+
+    it("keeps header, content, section, and detail rows structurally valid", async () => {
+        const columns: DataGridColumn<TestRow>[] = [{
+            key: "name",
+            header: "Artist",
+            width: "1fr",
+            render: (item) => item.name,
+        }];
+
+        const { container } = render(
+            <DataGrid
+                ariaLabel="Artists"
+                columns={columns}
+                items={rows}
+                renderBeforeRow={() => <span>Featured artists</span>}
+                renderRowDetail={() => <button>Play Bastille</button>}
+            />
+        );
+
+        const grid = screen.getByRole("grid", { name: "Artists" });
+        const renderedRows = screen.getAllByRole("row");
+        expect(renderedRows).toHaveLength(4);
+        expect(renderedRows[0].children[0]).toHaveAttribute("role", "columnheader");
+        for (const row of renderedRows.slice(1)) {
+            expect(Array.from(row.children).every((child) => child.getAttribute("role") === "gridcell")).toBe(true);
+        }
+
+        // The grid is not virtualized. Let assistive technology infer the count,
+        // including optional section and detail rows, from the rendered tree.
+        expect(grid).not.toHaveAttribute("aria-rowcount");
+        expect((await axe.run(container)).violations).toEqual([]);
     });
 });

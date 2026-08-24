@@ -25,6 +25,7 @@ import {
   removeEmptyParents,
 } from "./library-files.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
+import { syncLibraryArtistMonitoring } from "../music/managed-artists.js";
 import {
   resolveLibraryRootPath,
   resolveStoredLibraryPath,
@@ -44,7 +45,7 @@ export type DeleteLibraryFilesOptions = DeletionScopeInput;
 
 type TrackFileDeleteRow = {
   id: number;
-  artist_id: number;
+  artist_metadata_id: number;
   file_type: string;
   quality: string | null;
   file_path: string;
@@ -54,7 +55,7 @@ type TrackFileDeleteRow = {
 };
 
 const TRACK_FILE_DELETE_COLUMNS = `
-  id, artist_id, file_type, quality, file_path, library_root, library_id,
+  id, artist_metadata_id, file_type, quality, file_path, library_root, library_id,
   canonical_release_group_mbid
 `;
 
@@ -125,12 +126,12 @@ function deleteTrackFileRows(
 
     db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
     deletedTrackFileIds.push(row.id);
-    affectedArtistIds.add(String(row.artist_id));
+    affectedArtistIds.add(String(row.artist_metadata_id));
     storedFilePaths.push(row.file_path);
 
     LibraryFilesService.emitFileDeleted({
       libraryFileId: row.id,
-      artistId: row.artist_id,
+      artistId: row.artist_metadata_id,
       albumId: null,
       mediaId: null,
       fileType: row.file_type,
@@ -243,14 +244,14 @@ export function deleteArtistLibraryFiles(
 ): DeleteLibraryFilesResult {
   const scope = resolveDeletionScope(options);
   const artist = db.prepare(`
-    SELECT id FROM Artists WHERE id = ?
+    SELECT id FROM ArtistMetadata WHERE id = ?
   `).get(artistId) as { id?: number | string } | undefined;
   if (!artist?.id) {
     throw notFound("Artist not found");
   }
 
   const rows = selectScopedRows(
-    `SELECT ${TRACK_FILE_DELETE_COLUMNS} FROM TrackFiles WHERE artist_id = ?`,
+    `SELECT ${TRACK_FILE_DELETE_COLUMNS} FROM TrackFiles WHERE artist_metadata_id = ?`,
     [artistId],
     scope,
   );
@@ -269,9 +270,7 @@ export function deleteArtistLibraryFiles(
 
   let unmonitored = false;
   if (options.unmonitor) {
-    db.prepare(`
-      UPDATE Artists SET monitored = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-    `).run(artistId);
+    syncLibraryArtistMonitoring(artistId, false);
     unmonitored = true;
   }
 

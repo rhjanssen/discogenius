@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import { streamingProviderManager } from "../providers/index.js";
+import { buildLibraryArtistMonitoredExistsSql } from "./managed-artists.js";
 
 export const ARTIST_TOP_TRACK_LIMIT = 100;
 
@@ -13,9 +14,9 @@ function resolveArtistProjectionIdentity(artistId: string, artistMbid?: string |
   const row = db.prepare(`
     SELECT metadata.id AS artistMetadataId, metadata.mbid AS artistMbid
     FROM ArtistMetadata metadata
-    LEFT JOIN Artists artist ON artist.mbid = metadata.mbid
     WHERE metadata.mbid = @artistMbid
-       OR artist.id = @artistId
+       OR CAST(metadata.id AS TEXT) = @artistId
+       OR metadata.mbid = @artistId
     ORDER BY CASE WHEN metadata.mbid = @artistMbid THEN 0 ELSE 1 END
     LIMIT 1
   `).get({
@@ -30,10 +31,9 @@ export class ArtistTopTrackService {
   static countMissingMonitoredArtists(): number {
     const row = db.prepare(`
       SELECT COUNT(*) AS count
-      FROM Artists artist
-      JOIN ArtistMetadata metadata ON metadata.mbid = artist.mbid
+      FROM ArtistMetadata metadata
       LEFT JOIN ArtistTopTrackProjectionState state ON state.artist_metadata_id = metadata.id
-      WHERE artist.monitored = 1
+      WHERE ${buildLibraryArtistMonitoredExistsSql("metadata")}
         AND state.artist_metadata_id IS NULL
     `).get() as { count?: number } | undefined;
     return Number(row?.count || 0);
@@ -43,13 +43,17 @@ export class ArtistTopTrackService {
     onProgress?: (progress: { index: number; total: number; artistName: string; rowCount: number }) => void,
   ): { artists: number; rows: number } {
     const artists = db.prepare(`
-      SELECT artist.id AS artistId, metadata.mbid AS artistMbid, metadata.name AS artistName
-      FROM Artists artist
-      JOIN ArtistMetadata metadata ON metadata.mbid = artist.mbid
+      SELECT metadata.mbid AS artistId, metadata.mbid AS artistMbid, metadata.name AS artistName,
+             (
+               SELECT MAX(membership.metadata_last_checked_at)
+               FROM LibraryArtists membership
+               WHERE membership.artist_metadata_id = metadata.id
+             ) AS last_scanned
+      FROM ArtistMetadata metadata
       LEFT JOIN ArtistTopTrackProjectionState state ON state.artist_metadata_id = metadata.id
-      WHERE artist.monitored = 1
+      WHERE ${buildLibraryArtistMonitoredExistsSql("metadata")}
         AND state.artist_metadata_id IS NULL
-      ORDER BY (artist.last_scanned IS NULL) ASC, artist.last_scanned DESC, metadata.name ASC
+      ORDER BY (last_scanned IS NULL) ASC, last_scanned DESC, metadata.name ASC
     `).all() as Array<{ artistId: string | number; artistMbid: string; artistName: string }>;
 
     let rows = 0;
@@ -70,11 +74,10 @@ export class ArtistTopTrackService {
 
   static rebuildForReleaseGroup(releaseGroupMbid: string): number {
     const artist = db.prepare(`
-      SELECT artist.id AS artistId, metadata.mbid AS artistMbid
+      SELECT metadata.mbid AS artistId, metadata.mbid AS artistMbid
       FROM Albums album
       JOIN ArtistMetadata metadata
         ON metadata.id = album.artist_metadata_id OR metadata.mbid = album.artist_mbid
-      LEFT JOIN Artists artist ON artist.mbid = metadata.mbid
       WHERE album.mbid = ?
       LIMIT 1
     `).get(releaseGroupMbid) as { artistId?: string | number | null; artistMbid: string } | undefined;
@@ -105,9 +108,6 @@ export class ArtistTopTrackService {
         if (error?.code !== "SQLITE_BUSY") {
           throw error;
         }
-        // A worker already holds the write lock (RefreshArtist, projection
-        // rebuild). The artist page must still return; tracks stay empty until
-        // the next request can rebuild.
       }
     }
 

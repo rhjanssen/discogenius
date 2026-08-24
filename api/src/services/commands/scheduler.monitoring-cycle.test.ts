@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-task-scheduler-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.task-scheduler.test.db");
@@ -28,7 +29,8 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM scheduled_tasks").run();
     dbModule.db.prepare("DELETE FROM monitoring_runtime_state").run();
-    dbModule.db.prepare("DELETE FROM Artists").run();
+    dbModule.db.prepare("DELETE FROM LibraryArtists").run();
+    dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -36,17 +38,19 @@ after(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+function seedMonitoredArtist(mbid = "artist-mbid-1", name = "Artist One") {
+    dbModule.db.prepare(`
+        INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run(mbid, name);
+    seedLibraryArtistMonitoring(dbModule.db, mbid);
+    return mbid;
+}
+
 test("monitoring cycle is independent from the daily root scan and stamps after downloads", () => {
     const initialSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
     assert.ok(initialSnapshot);
     assert.equal(initialSnapshot.lastQueuedAt, null);
 
-    dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)").run(
-        "artist-1",
-        "Artist One",
-        "artist-mbid-1",
-        1,
-    );
+    seedMonitoredArtist();
 
     const refreshJobId = taskSchedulerModule.queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
     assert.ok(refreshJobId > 0);
@@ -237,20 +241,15 @@ test("scheduled monitoring cycle with no due artists still runs the terminal dow
 });
 
 test("scheduled monitoring excludes due artists already in an intake workflow", () => {
-    dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)").run(
-        "artist-1",
-        "Artist One",
-        "artist-mbid-1",
-        1,
-    );
+    seedMonitoredArtist();
     const intakeRefreshId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.RefreshArtist,
         workflowModule.buildRefreshArtistCommand({
-            artistId: "artist-1",
+            artistId: "artist-mbid-1",
             artistName: "Artist One",
             workflow: "monitoring-intake",
         }),
-        "artist-1",
+        "artist-mbid-1",
     );
     assert.ok(intakeRefreshId > 0);
 

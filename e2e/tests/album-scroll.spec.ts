@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { baseURL, createSearchResponse, stubShellApis } from '../utils/mockShell';
+import { baseURL, createSearchResponse, stubArtistPage, stubShellApis } from '../utils/mockShell';
 
 const artistId = 'artist-scroll';
 const artistName = 'Scroll Artist';
@@ -55,6 +55,7 @@ async function expectAlbumDeepScrolledToTargetTrack(page: Page) {
 async function seedLibraryTracksTab(page: Page) {
     await page.addInitScript(() => {
         window.localStorage.setItem('discogenius_library_settings', JSON.stringify({
+            settingsVersion: 2,
             selectedTab: 'tracks',
         }));
     });
@@ -63,7 +64,7 @@ async function seedLibraryTracksTab(page: Page) {
 async function stubLibraryTrackListFixtures(page: Page) {
     const primaryTracks = createAlbumTracks(albumId);
 
-    await page.route((url) => url.pathname === '/api/tracks', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/track', async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -79,7 +80,7 @@ async function stubLibraryTrackListFixtures(page: Page) {
 }
 
 async function stubGlobalSearchTrackFixtures(page: Page) {
-    await page.route('**/api/search**', async (route) => {
+    await page.route('**/api/v1/search**', async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -100,7 +101,7 @@ async function stubGlobalSearchTrackFixtures(page: Page) {
         });
     });
 
-    await page.route(`**/api/tracks/${targetTrackId}`, async (route) => {
+    await page.route(`**/api/v1/track/${targetTrackId}`, async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -116,6 +117,27 @@ async function stubGlobalSearchTrackFixtures(page: Page) {
     });
 }
 
+async function stubGlobalSearchAlbumFixture(page: Page) {
+    await page.route('**/api/v1/search**', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(createSearchResponse({
+                albums: [{
+                    id: relatedAlbumId,
+                    name: relatedAlbumTitle,
+                    type: 'album',
+                    subtitle: artistName,
+                    monitored: false,
+                    in_library: true,
+                    quality: 'LOSSLESS',
+                    imageId: null,
+                }],
+            })),
+        });
+    });
+}
+
 async function stubAlbumPageFixtures(page: Page) {
     const primaryTracks = createAlbumTracks(albumId);
     const relatedTracks = createAlbumTracks(relatedAlbumId, 8);
@@ -127,11 +149,18 @@ async function stubAlbumPageFixtures(page: Page) {
             artist_id: artistId,
             artist_name: artistName,
             cover_id: null,
+            cover: null,
+            cover_art_url: null,
+            provider_cover_id: null,
+            vibrant_color: null,
             release_date: '2024-01-01',
             quality: 'LOSSLESS',
             explicit: false,
             is_monitored: false,
-            files: [],
+            is_downloaded: false,
+            downloaded: 0,
+            monitored_lock: false,
+            source: 'musicbrainz',
         },
         [relatedAlbumId]: {
             id: relatedAlbumId,
@@ -139,11 +168,18 @@ async function stubAlbumPageFixtures(page: Page) {
             artist_id: artistId,
             artist_name: artistName,
             cover_id: null,
+            cover: null,
+            cover_art_url: null,
+            provider_cover_id: null,
+            vibrant_color: null,
             release_date: '2024-02-02',
             quality: 'LOSSLESS',
             explicit: false,
             is_monitored: false,
-            files: [],
+            is_downloaded: false,
+            downloaded: 0,
+            monitored_lock: false,
+            source: 'musicbrainz',
         },
     } as const;
 
@@ -152,166 +188,64 @@ async function stubAlbumPageFixtures(page: Page) {
         [relatedAlbumId]: relatedTracks,
     } as const;
 
-    await page.route(/\/api\/albums\/[^/?]+(?:\/(tracks|versions|similar|page))?$/, async (route) => {
+    await page.route(/\/api\/v1\/album\/[^/?]+\/(page|library-availability)$/, async (route) => {
         const url = new URL(route.request().url());
-        const match = url.pathname.match(/\/api\/albums\/([^/]+)(?:\/(tracks|versions|similar|page))?$/);
+        const match = url.pathname.match(/\/api\/v1\/album\/([^/]+)\/(page|library-availability)$/);
         const currentAlbumId = match?.[1];
-        const endpoint = match?.[2] ?? 'detail';
+        const endpoint = match?.[2];
 
         if (!currentAlbumId || !(currentAlbumId in albums)) {
             await route.fallback();
             return;
         }
 
-        if (endpoint === 'page') {
+        if (endpoint === 'library-availability') {
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
                 body: JSON.stringify({
-                    album: {
-                        ...albums[currentAlbumId as keyof typeof albums],
-                        is_monitored: albums[currentAlbumId as keyof typeof albums].is_monitored,
-                        monitor: albums[currentAlbumId as keyof typeof albums].is_monitored ? 1 : 0,
-                        downloaded: 0,
-                        is_downloaded: false,
-                        stereo_provider_id: null,
-                        stereo_quality: null,
-                        stereo_match_status: null,
-                        spatial_provider_id: null,
-                        spatial_quality: null,
-                        spatial_match_status: null,
-                        selected_provider_id: null,
-                        source: 'musicbrainz',
-                        tracks_count: trackLists[currentAlbumId as keyof typeof trackLists].length,
-                        monitored_tracks_count: 0,
-                    },
-                    tracks: trackLists[currentAlbumId as keyof typeof trackLists],
-                    otherVersions: [],
-                    artistPicture: null,
-                    artistCoverImageUrl: null,
+                    releaseGroupId: currentAlbumId === albumId ? 1 : 2,
+                    releaseGroupMbid: currentAlbumId,
+                    libraries: [],
+                    releases: [],
                 }),
             });
             return;
         }
 
-        if (endpoint === 'tracks') {
-            await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify(trackLists[currentAlbumId as keyof typeof trackLists]),
-            });
-            return;
-        }
-
-        if (endpoint === 'versions') {
-            await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify([]),
-            });
-            return;
-        }
-
-        if (endpoint === 'similar') {
-            await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify(
-                    currentAlbumId === albumId
-                        ? [
-                            {
-                                id: relatedAlbumId,
-                                title: relatedAlbumTitle,
-                                artist_name: artistName,
-                                cover_id: null,
-                                release_date: '2024-02-02',
-                                quality: 'LOSSLESS',
-                                explicit: false,
-                                popularity: 80,
-                            },
-                        ]
-                        : [],
-                ),
-            });
-            return;
-        }
-
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(albums[currentAlbumId as keyof typeof albums]),
-        });
-    });
-
-    await page.route(`**/api/artists/${artistId}`, async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
             body: JSON.stringify({
-                id: artistId,
-                name: artistName,
-                picture: null,
-            }),
-        });
-    });
-
-    await page.route(`**/api/artists/${artistId}/page-db`, async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                artist: {
-                    id: artistId,
-                    name: artistName,
-                    is_monitored: false,
-                    files: [],
+                album: {
+                    ...albums[currentAlbumId as keyof typeof albums],
+                    track_count: trackLists[currentAlbumId as keyof typeof trackLists].length,
                 },
-                rows: [
-                    {
-                        modules: [
-                            {
-                                type: 'TRACK_LIST',
-                                title: 'Top tracks',
-                                items: [
-                                    {
-                                        id: targetTrackId,
-                                        title: targetTrackTitle,
-                                        duration: 205,
-                                        track_number: 25,
-                                        volume_number: 1,
-                                        album_id: albumId,
-                                        album_title: albumTitle,
-                                        artist_id: artistId,
-                                        artist_name: artistName,
-                                        quality: 'LOSSLESS',
-                                        explicit: false,
-                                        files: [],
-                                    },
-                                ],
-                            },
-                        ],
-                    },
-                ],
-                album_count: 2,
-                monitored_album_count: 0,
-                needs_scan: false,
+                tracks: trackLists[currentAlbumId as keyof typeof trackLists],
+                otherVersions: [],
+                associatedVideos: [],
+                artistPicture: null,
+                artistCoverImageUrl: null,
             }),
         });
     });
 
-    await page.route(`**/api/artists/${artistId}/activity`, async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                scanning: false,
-                curating: false,
-                downloading: false,
-                libraryScan: false,
-                totalActive: 0,
-                jobs: [],
-            }),
-        });
+    await stubArtistPage(page, {
+        artistId,
+        artistName,
+        monitored: false,
+        rowsBySection: {
+            tracks: [{
+                modules: [{
+                    type: 'TRACK_LIST',
+                    title: 'Top tracks',
+                    items: [{
+                        ...primaryTracks[24],
+                        duration: 205,
+                    }],
+                }],
+            }],
+        },
     });
 }
 
@@ -319,6 +253,7 @@ test.describe('Album scroll behavior', () => {
     test('plain album navigation resets the album page to the top', async ({ page }) => {
         await stubShellApis(page);
         await stubAlbumPageFixtures(page);
+        await stubGlobalSearchAlbumFixture(page);
 
         await page.goto(`${baseURL}/album/${albumId}`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByText(albumTitle, { exact: true }).first()).toBeVisible();
@@ -328,7 +263,12 @@ test.describe('Album scroll behavior', () => {
         });
         await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
 
-        await page.getByText(relatedAlbumTitle, { exact: true }).first().click();
+        const searchBox = page.getByRole('searchbox', { name: 'Search artists, albums, tracks, or videos' });
+        await searchBox.fill(relatedAlbumTitle);
+        const searchResults = page.getByRole('dialog', { name: 'Search results' });
+        await expect(searchResults).toBeVisible();
+        await searchResults.getByRole('tab', { name: 'Albums' }).click();
+        await searchResults.getByText(relatedAlbumTitle, { exact: true }).click();
         await page.waitForURL(new RegExp(`/album/${relatedAlbumId}$`), { timeout: 10_000 });
         await expect(page.getByText(relatedAlbumTitle, { exact: true }).first()).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(32);
@@ -341,7 +281,9 @@ test.describe('Album scroll behavior', () => {
         await page.goto(`${baseURL}/artist/${artistId}`, { waitUntil: 'domcontentloaded' });
         await expect(page.locator(`[data-album-track-id="${targetTrackId}"]`).first()).toBeVisible();
 
-        await page.locator(`[data-album-track-id="${targetTrackId}"]`).first().click();
+        // Activate the row itself. A coordinate click can land on the nested
+        // album link, which intentionally performs a plain (non-deep) route.
+        await page.locator(`[data-album-track-id="${targetTrackId}"]`).first().press('Enter');
         await expectAlbumDeepScrolledToTargetTrack(page);
     });
 

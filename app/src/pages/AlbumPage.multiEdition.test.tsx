@@ -271,13 +271,13 @@ async function settle() {
 
 function tabLabels(container: HTMLElement): string[] {
   return [...container.querySelectorAll('[role="tab"]')].map(
-    (tab) => tab.textContent?.trim() ?? "",
+    (tab) => tab.getAttribute("aria-label") ?? tab.textContent?.trim() ?? "",
   );
 }
 
 function selectedTabLabel(container: HTMLElement): string | null {
   const selected = container.querySelector('[role="tab"][aria-selected="true"]');
-  return selected?.textContent?.trim() ?? null;
+  return selected?.getAttribute("aria-label") ?? selected?.textContent?.trim() ?? null;
 }
 
 function trackTitles(container: HTMLElement): string[] {
@@ -348,7 +348,7 @@ describe("AlbumPage multi-edition navigation", () => {
     await waitFor(() => tabLabels(container!).length > 0, "the tab strip to render");
 
     const deluxeTab = [...container!.querySelectorAll('[role="tab"]')].find((tab) =>
-      tab.textContent?.includes("3 tracks"),
+      tab.getAttribute("aria-label")?.includes("3 tracks"),
     ) as HTMLElement;
     expect(deluxeTab).toBeTruthy();
 
@@ -369,7 +369,7 @@ describe("AlbumPage multi-edition navigation", () => {
     expect(trackTitles(container!)).toEqual(["trk-dlx-1", "trk-dlx-2", "trk-dlx-3"]);
 
     const standardTab = [...container!.querySelectorAll('[role="tab"]')].find((tab) =>
-      tab.textContent?.includes("2 tracks"),
+      tab.getAttribute("aria-label")?.includes("2 tracks"),
     ) as HTMLElement;
     await act(async () => {
       standardTab.click();
@@ -397,7 +397,7 @@ describe("AlbumPage multi-edition navigation", () => {
     await waitFor(() => tabLabels(container!).length > 0, "the tab strip to render");
 
     const deluxeTab = [...container!.querySelectorAll('[role="tab"]')].find((tab) =>
-      tab.textContent?.includes("3 tracks"),
+      tab.getAttribute("aria-label")?.includes("3 tracks"),
     ) as HTMLElement;
     await act(async () => {
       deluxeTab.click();

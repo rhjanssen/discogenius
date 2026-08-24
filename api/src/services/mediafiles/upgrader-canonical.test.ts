@@ -38,7 +38,6 @@ afterEach(() => {
     "AlbumEditions",
     "Albums",
     "ArtistMetadata",
-    "Artists",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -50,9 +49,10 @@ after(() => {
 });
 
 function seedArtistAndRelease() {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Canonical Artist");
+  const artist = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+    RETURNING id
+  `).get("artist-mbid", "Canonical Artist") as { id: number };
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)`).run("release-group-1", "artist-mbid", "Canonical Album", "album", "2024-01-01");
   db.prepare(`INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
@@ -61,6 +61,7 @@ function seedArtistAndRelease() {
     VALUES (?, ?, ?, ?)`).run("recording-1", "Track One", "artist-mbid", 0);
   db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)`).run("track-1", "release-1", "recording-1", "Track One", 1, 1);
+  return artist;
 }
 
 /**
@@ -135,8 +136,10 @@ function seedAcceptedTrackEdge(input: {
 
 function insertTrackFile(overrides: Record<string, unknown>) {
   const legacyMediaId = overrides.media_id;
+  const artistMetadataId = overrides.artist_metadata_id
+    ?? (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number } | undefined)?.id
+    ?? null;
   const row = {
-    artist_id: "artist-local",
     track_id: null,
     canonical_artist_mbid: null,
     canonical_release_group_mbid: null,
@@ -158,18 +161,21 @@ function insertTrackFile(overrides: Record<string, unknown>) {
     bit_depth: 16,
     sample_rate: 44100,
     ...overrides,
+    artist_metadata_id: overrides.artist_metadata_id ?? artistMetadataId,
   };
+  delete (row as any).artist_id;
+  delete (row as any).media_id;
 
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
       track_id,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type,
       quality, codec, bit_depth, sample_rate
     ) VALUES (
-      @artist_id, @canonical_artist_mbid, @canonical_release_group_mbid,
+      @artist_metadata_id, @canonical_artist_mbid, @canonical_release_group_mbid,
       @canonical_release_mbid, @canonical_track_mbid, @canonical_recording_mbid,
       @track_id,
       @provider, @provider_entity_type, @provider_id, @library_slot,
@@ -207,7 +213,7 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
     provider_id: "track-provider-1",
   });
 
-  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+  const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
   assert.equal(result.tracks, 1);
   assert.equal(result.videos, 0);
@@ -230,9 +236,8 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
 });
 
 test("checkUpgrades queues canonical video upgrades without provider catalog rows", async () => {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Canonical Artist");
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
   db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     VALUES (?, ?, ?, ?)`).run("video-recording-1", "Video One", "artist-mbid", 1);
   selectVideoInVideoLibraries(
@@ -257,7 +262,7 @@ test("checkUpgrades queues canonical video upgrades without provider catalog row
     codec: "H264",
   });
 
-  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+  const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
   assert.equal(result.tracks, 0);
   assert.equal(result.videos, 1);
@@ -302,7 +307,7 @@ test("checkUpgrades does not queue Apple Music album ids as TIDAL (Grace Note)",
     filename: "grace-note.m4a",
   });
 
-  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+  const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
   assert.equal(result.tracks, 1);
   assert.equal(result.albums, 1);
@@ -359,7 +364,7 @@ test("checkUpgrades skips album-level upgrade when provider has zero album track
     extension: "m4a",
   });
 
-  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+  const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
   assert.equal(result.tracks, 1);
   assert.equal(result.albums, 0);
@@ -396,7 +401,7 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
     JSON.stringify({ type: "album", providerId: "album-provider-1", reason: "upgrade" }),
   );
 
-  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+  const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
   assert.equal(result.tracks, 0);
   assert.equal(result.videos, 0);
@@ -456,7 +461,7 @@ test("CheckUpgrades does not downconvert 24/48 when the toggle is off", {
   });
 
   await withQualityConfig({ audio_quality: "high", downconvert_existing_files: false }, async () => {
-    const result = await UpgraderService.checkUpgrades(true, "artist-local");
+    const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
     assert.equal(result.tracks, 0);
     assert.deepEqual(listDownloadJobs(), []);
   });
@@ -499,7 +504,7 @@ test("CheckUpgrades downconverts 24/48 FLAC to 16/44.1 when the toggle is on", {
   });
 
   await withQualityConfig({ audio_quality: "high", downconvert_existing_files: true }, async () => {
-    const result = await UpgraderService.checkUpgrades(true, "artist-local");
+    const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
     assert.equal(result.tracks, 1);
     assert.equal(result.details[0]?.action, "downconvert");
     assert.deepEqual(listDownloadJobs(), []);
@@ -550,7 +555,7 @@ test("CheckUpgrades downconverts FLAC to Opus 160 when Settings is NORMAL", {
   });
 
   await withQualityConfig({ audio_quality: "normal", downconvert_existing_files: true }, async () => {
-    const result = await UpgraderService.checkUpgrades(true, "artist-local");
+    const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
     assert.equal(result.tracks, 1);
     assert.equal(result.details[0]?.action, "downconvert");
     assert.deepEqual(listDownloadJobs(), []);

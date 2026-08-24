@@ -29,8 +29,7 @@ function fixture() {
   resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
 
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist')").run();
-  // TrackFiles.artist_id is NOT NULL with an FK to Artists in the ACTIVE schema.
-  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES ('artist', 'Artist', 'artist')").run();
+  // TrackFiles.artist_metadata_id is INTEGER FK to ArtistMetadata.
   db.prepare("INSERT INTO Albums (id, mbid, artist_mbid, title) VALUES (1, 'group', 'artist', 'Group')").run();
   db.prepare(`
     INSERT INTO AlbumEditions (id, mbid, release_group_id, release_group_mbid, artist_mbid, title)
@@ -85,11 +84,11 @@ test("canonical manual import pins Library, Release, Track and Recording", async
       receivedRoot = options?.libraryRootPath || "";
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class,
           source_quality, imported_quality
         ) VALUES (
-          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
+          1, 1, '/library/stereo', 'track', 1, 10, 1000, 100,
           '/library/stereo/Artist/Release A/01 Track A.flac',
           'Artist/Release A/01 Track A.flac',
           '01 Track A.flac', 'flac', 'audio', 'lossless', 'lossless'
@@ -174,10 +173,10 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
+          1, 1, '/library/stereo', 'track', 1, 10, 1000, 100,
           '/library/stereo/Artist/Release A/01 Track A.flac',
           'Artist/Release A/01 Track A.flac',
           '01 Track A.flac', 'flac', 'audio'
@@ -272,10 +271,10 @@ test("a recording shared by two selected releases keeps the release-track the us
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 'artist', '/library/stereo', 'track', 1, 20, 2100, 100,
+          1, 1, '/library/stereo', 'track', 1, 20, 2100, 100,
           '/library/stereo/Artist/Release B/02 Track A.flac',
           'Artist/Release B/02 Track A.flac',
           '02 Track A.flac', 'flac', 'audio'
@@ -316,11 +315,11 @@ test("only the newly imported row is updated when the same track exists in anoth
     `).run();
     db.prepare(`
       INSERT INTO TrackFiles (
-        id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+        id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
         canonical_track_mbid, file_path, relative_path, filename, extension, file_class,
         verified_at
       ) VALUES (
-        99, 'artist', '/library/stereo', 'track', 2, 10, 1000, 100,
+        99, 1, '/library/stereo', 'track', 2, 10, 1000, 100,
         'track-a', '/library/spatial/Artist/Release A/01 Track A.m4a',
         'Artist/Release A/01 Track A.m4a', '01 Track A.m4a', 'm4a', 'audio',
         CURRENT_TIMESTAMP
@@ -330,10 +329,10 @@ test("only the newly imported row is updated when the same track exists in anoth
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           canonical_track_mbid, file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
+          1, 1, '/library/stereo', 'track', 1, 10, 1000, 100,
           'track-a', '/library/stereo/Artist/Release A/01 Track A.flac',
           'Artist/Release A/01 Track A.flac', '01 Track A.flac', 'flac', 'audio'
         )
@@ -381,10 +380,10 @@ test("manual import monitors and custom-selects without silently locking", async
     const service = new CanonicalManualImportService(db, async (items) => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           canonical_track_mbid, file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100, 'track-a',
+          1, 1, '/library/stereo', 'track', 1, 10, 1000, 100, 'track-a',
           '/library/stereo/a.flac', 'a.flac', 'a.flac', 'flac', 'audio'
         )
       `).run();
@@ -443,10 +442,10 @@ test("a reported row outside the target library root fails closed", async () => 
       // The row exists but lives outside /library/stereo.
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          7, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
+          7, 1, '/library/stereo', 'track', 1, 10, 1000, 100,
           '/somewhere/else/01 Track A.flac', '01 Track A.flac',
           '01 Track A.flac', 'flac', 'audio'
         )
@@ -554,11 +553,11 @@ test("a retry finishes the mappings an interrupted attempt left behind", async (
       submitted.push(...items.map((item) => item.id));
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class,
           source_quality, imported_quality
         ) VALUES (
-          9001, 'artist', 'music', 'audio', 1, 10, 1001, 200,
+          9001, 1, 'music', 'audio', 1, 10, 1001, 200,
           '/library/stereo/b.flac', 'b.flac', 'b.flac', 'flac', 'audio', 'LOSSLESS', 'LOSSLESS'
         )
       `).run();

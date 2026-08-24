@@ -141,6 +141,10 @@ export function videoComparableTitle(value?: string | null): string {
 export function normalizeComparableText(input?: string | null): string {
     return (input || "")
         .toLowerCase()
+        // Preserve the semantic value of ampersands before punctuation is
+        // removed. Without this, an album titled only "&" normalizes to an
+        // empty string and can never match its identically tagged catalog row.
+        .replace(/&/g, " and ")
         .replace(/\[tidal-\d+\]/g, " ")
         .replace(/\((?:[^)]*\b(?:feat|ft|featuring)\b[^)]*)\)/g, " ")
         .replace(/\[(?:[^\]]*\b(?:feat|ft|featuring)\b[^\]]*)\]/g, " ")

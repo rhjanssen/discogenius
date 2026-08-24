@@ -4,6 +4,7 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { getConfigSection } from "../config/config.js";
 import { albumCoverLocalUrl, imageContainerFromImagesColumn } from "../metadata/media-cover-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
+import { buildLibraryArtistMonitoredExistsSql } from "./managed-artists.js";
 
 const canonicalTrackDownloadedPredicate = `
   EXISTS (
@@ -804,10 +805,10 @@ const monitoredTrackCandidateSql = `
 const unmonitoredTrackCandidateSql = `
       SELECT catalog_track.id
       FROM Albums album
-      JOIN Artists artist
+      JOIN ArtistMetadata artist
         ON artist.mbid = album.artist_mbid
        AND artist.mbid IS NOT NULL
-       AND artist.monitored = 1
+       AND ${buildLibraryArtistMonitoredExistsSql("artist")}
       JOIN AlbumEditions catalog_edition
         ON catalog_edition.release_group_id = album.id
       JOIN Tracks catalog_track

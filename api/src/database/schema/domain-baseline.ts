@@ -40,19 +40,6 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE ManagedArtists (
-      id INTEGER PRIMARY KEY,
-      artist_id INTEGER NOT NULL UNIQUE,
-      path TEXT,
-      library_origin TEXT NOT NULL DEFAULT 'user',
-      metadata_status TEXT,
-      metadata_last_checked_at TEXT,
-      metadata_match_method TEXT,
-      added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE Albums (
       id INTEGER PRIMARY KEY,
       mbid TEXT NOT NULL UNIQUE,
@@ -122,10 +109,10 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       copyright TEXT,
       popularity INTEGER,
       credits TEXT,
-      monitored INTEGER NOT NULL DEFAULT 0 CHECK (monitored IN (0, 1)),
-      monitored_lock INTEGER NOT NULL DEFAULT 0 CHECK (monitored_lock IN (0, 1)),
-      monitored_at TEXT,
-      locked_at TEXT,
+      -- No monitored / monitored_lock here. A canonical Recording is a fact
+      -- about the world, not a library decision, and a video may be selected
+      -- by one Video Library and not another. LibraryVideos row existence is
+      -- the monitoring statement.
       isrcs TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CHECK (
@@ -439,15 +426,22 @@ export function createCurrentDomainSchema(db: Database.Database): void {
     CREATE TABLE LibraryArtists (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
-      managed_artist_id INTEGER NOT NULL,
-      monitored INTEGER NOT NULL DEFAULT 1 CHECK (monitored IN (0, 1)),
+      artist_metadata_id INTEGER NOT NULL,
+      policy TEXT NOT NULL DEFAULT 'all'
+        CHECK (policy IN ('all', 'new', 'none')),
       credited_scope TEXT NOT NULL DEFAULT 'primary_only'
         CHECK (credited_scope IN ('primary_only', 'release_credit', 'release_and_track_credit')),
+      path TEXT,
+      library_origin TEXT NOT NULL DEFAULT 'user',
+      metadata_status TEXT,
+      metadata_last_checked_at TEXT,
+      metadata_match_method TEXT,
+      added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (library_id, managed_artist_id),
+      UNIQUE (library_id, artist_metadata_id),
       FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY (managed_artist_id) REFERENCES ManagedArtists(id) ON DELETE CASCADE
+      FOREIGN KEY (artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
     );
 
     -- Row existence is the monitoring decision, exactly as for LibraryEditions.
@@ -556,9 +550,47 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       FOREIGN KEY (provider_audio_variant_id) REFERENCES ProviderItemAudioVariants(id)
     );
 
+    -- The videos a Library selected. Row existence is the monitoring statement,
+    -- same as LibraryAlbums: there is no monitored column. A canonical video
+    -- Recording may be selected by one Video Library and not another.
+    CREATE TABLE LibraryVideos (
+      id INTEGER PRIMARY KEY,
+      library_id INTEGER NOT NULL,
+      video_recording_id INTEGER NOT NULL,
+      preferred_offer_key TEXT,
+      selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK (selection_mode IN ('auto', 'manual')),
+      placement_mode TEXT NOT NULL DEFAULT 'separated'
+        CHECK (placement_mode IN ('separated', 'inline')),
+      placement_library_id INTEGER,
+      inline_track_id INTEGER,
+      inline_slot TEXT CHECK (inline_slot IN ('video', 'lyrics')),
+      placement_selection_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK (placement_selection_mode IN ('auto', 'manual')),
+      reason TEXT,
+      selected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (library_id, video_recording_id),
+      CHECK (
+        (placement_mode = 'inline'
+          AND placement_library_id IS NOT NULL
+          AND inline_track_id IS NOT NULL
+          AND inline_slot IS NOT NULL)
+        OR (placement_mode = 'separated'
+          AND placement_library_id IS NULL
+          AND inline_track_id IS NULL
+          AND inline_slot IS NULL)
+      ),
+      FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY (video_recording_id) REFERENCES Recordings(id) ON DELETE CASCADE,
+      FOREIGN KEY (placement_library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY (inline_track_id) REFERENCES Tracks(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE TrackFiles (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
+      artist_metadata_id INTEGER,
       album_edition_id INTEGER NOT NULL,
       track_id INTEGER,
       recording_id INTEGER NOT NULL,
@@ -595,6 +627,7 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       modified_at TEXT,
       verified_at TEXT,
       FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY (artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
       FOREIGN KEY (album_edition_id) REFERENCES AlbumEditions(id),
       FOREIGN KEY (track_id) REFERENCES Tracks(id),
       FOREIGN KEY (recording_id) REFERENCES Recordings(id),
@@ -614,7 +647,6 @@ export function createCurrentDomainSchema(db: Database.Database): void {
   `);
 
   db.exec(`
-    CREATE INDEX idx_managed_artists_artist ON ManagedArtists(artist_id);
     CREATE INDEX idx_albums_primary_artist ON Albums(artist_metadata_id, first_release_date);
     CREATE INDEX idx_releases_group ON AlbumEditions(release_group_id, date);
     CREATE INDEX idx_tracks_release_position ON Tracks(album_edition_id, medium_position, position);
@@ -653,7 +685,15 @@ export function createCurrentDomainSchema(db: Database.Database): void {
     CREATE UNIQUE INDEX idx_recordings_youtube_video_id ON Recordings(youtube_video_id) WHERE is_video = 1 AND youtube_video_id IS NOT NULL;
 
     CREATE INDEX idx_libraries_root_path ON Libraries(root_path, enabled, id);
-    CREATE INDEX idx_library_artists_library ON LibraryArtists(library_id, monitored, managed_artist_id);
+    CREATE INDEX idx_library_artists_library ON LibraryArtists(library_id, policy, artist_metadata_id);
+    CREATE INDEX idx_library_artists_metadata ON LibraryArtists(artist_metadata_id, library_id);
+    CREATE UNIQUE INDEX idx_library_videos_inline_slot
+      ON LibraryVideos(library_id, placement_library_id, inline_track_id, inline_slot)
+      WHERE placement_mode = 'inline';
+    CREATE INDEX idx_library_videos_recording
+      ON LibraryVideos(video_recording_id, library_id);
+    CREATE INDEX idx_library_videos_inline_track
+      ON LibraryVideos(inline_track_id) WHERE placement_mode = 'inline';
     CREATE INDEX idx_library_releases_library ON LibraryEditions(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist ON LibraryEditionScopes(library_artist_id, scope_type, library_edition_id);
     CREATE INDEX idx_acquisition_sources_plan ON AcquisitionPlanSources(plan_id, sort_order);
@@ -669,6 +709,7 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       ON TrackFiles(library_id, recording_id)
       WHERE file_class = 'video';
     CREATE INDEX idx_track_files_library_release ON TrackFiles(library_id, album_edition_id);
+    CREATE INDEX idx_track_files_library_artist ON TrackFiles(library_id, artist_metadata_id);
     CREATE INDEX idx_acquisition_plans_edition ON AcquisitionPlans(library_id, edition_id, rank);
 
     -- The plan that actually executes: monitored Edition (a LibraryEditions row
@@ -780,6 +821,16 @@ export function createCurrentDomainSchema(db: Database.Database): void {
           WHERE id = NEW.recording_id AND is_video = 1
         )
           THEN RAISE(ABORT, 'provider video match target must be a canonical video recording')
+      END;
+    END;
+
+    CREATE TRIGGER library_videos_validate_insert
+    BEFORE INSERT ON LibraryVideos
+    BEGIN
+      SELECT CASE
+        WHEN NOT EXISTS (
+          SELECT 1 FROM Recordings WHERE id = NEW.video_recording_id AND is_video = 1
+        ) THEN RAISE(ABORT, 'LibraryVideos target must be a canonical video recording')
       END;
     END;
   `);

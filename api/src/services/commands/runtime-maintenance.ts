@@ -9,6 +9,7 @@ import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-f
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
+import { buildLibraryArtistMonitoredExistsSql } from "../music/managed-artists.js";
 
 interface LibraryFileRow {
   id: number;
@@ -202,7 +203,7 @@ function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
     (db.prepare("SELECT COUNT(*) AS count FROM Albums").get() as { count: number } | undefined)?.count || 0,
   );
   summary.artistStatesRefreshed = Number(
-    (db.prepare("SELECT COUNT(*) AS count FROM Artists").get() as { count: number } | undefined)?.count || 0,
+    (db.prepare("SELECT COUNT(*) AS count FROM ArtistMetadata").get() as { count: number } | undefined)?.count || 0,
   );
 
   invalidateAllDownloadState();
@@ -340,7 +341,9 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   refreshDownloadState(summary);
   const monitoredArtistIds = (db.prepare(`
-    SELECT CAST(id AS TEXT) AS id FROM Artists WHERE monitored = 1
+    SELECT CAST(a.id AS TEXT) AS id
+    FROM ArtistMetadata a
+    WHERE ${buildLibraryArtistMonitoredExistsSql("a")}
   `).all() as Array<{ id: string }>).map((row) => row.id);
   if (monitoredArtistIds.length > 0) {
     ArtistStatisticsService.refresh(monitoredArtistIds);

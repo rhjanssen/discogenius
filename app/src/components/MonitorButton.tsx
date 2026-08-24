@@ -15,7 +15,7 @@ const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
 
 interface MonitorButtonProps {
     id: string;
-    type: "artist" | "album" | "track";
+    type: "album";
     isMonitored: boolean;
     isLocked?: boolean; // If item is locked, maybe disable regular monitor toggle? Or show lock icon overlay?
     className?: string;

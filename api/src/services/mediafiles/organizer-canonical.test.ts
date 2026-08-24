@@ -46,9 +46,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
-
   const config = configModule.readConfig();
   config.metadata.save_album_cover = true;
   config.metadata.save_artist_picture = true;
@@ -67,8 +66,6 @@ after(() => {
 test("organizer resolves exact provider track ids to their linked canonical track", () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("release-group-1", "artist-mbid", "Canonical Album");
   dbModule.db.prepare(`
@@ -100,7 +97,7 @@ test("organizer resolves exact provider track ids to their linked canonical trac
     trackId: "provider-track-2",
     releaseMbid: "release-1",
     fallbackAlbumId: "provider-album-1",
-    fallbackArtistId: "artist-local",
+    fallbackArtistId: "artist-mbid",
     fallbackQuality: "LOSSLESS",
   });
 
@@ -136,7 +133,7 @@ test("resolveMatchedCanonicalAlbumTrackRow fails closed when catalog track is mi
     trackId: "provider-orphan",
     releaseMbid: "release-1",
     fallbackAlbumId: "provider-album-1",
-    fallbackArtistId: "artist-local",
+    fallbackArtistId: "artist-mbid",
     fallbackQuality: "LOSSLESS",
   });
 
@@ -146,8 +143,6 @@ test("resolveMatchedCanonicalAlbumTrackRow fails closed when catalog track is mi
 test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC when MBIDs are missing", () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Bastille", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-gmtf", "artist-mbid", "Give Me the Future");
   dbModule.db.prepare(`
@@ -180,7 +175,7 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
     trackId: "243864079",
     releaseMbid: "rel-3vol",
     fallbackAlbumId: "243864035",
-    fallbackArtistId: "artist-local",
+    fallbackArtistId: "artist-mbid",
     fallbackQuality: "HIRES_LOSSLESS",
   });
 
@@ -194,8 +189,6 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
 test("organizer matches provider-id staging filenames to materialized provider track rows", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("release-group-1", "artist-mbid", "Canonical Album");
   dbModule.db.prepare(`
@@ -238,7 +231,7 @@ test("organizer matches provider-id staging filenames to materialized provider t
     releaseMbid: "release-1",
     fallbackAlbumId: "provider-album-1",
     fallbackAlbumIds: ["provider-album-1"],
-    fallbackArtistId: "artist-local",
+    fallbackArtistId: "artist-mbid",
     fallbackQuality: "LOSSLESS",
   });
 
@@ -324,16 +317,14 @@ test("organizer returns no match when a staged provider id has no offer row", as
 });
 
 test("video imports prefer the managed MusicBrainz artist over a provider-only artist", () => {
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, path) VALUES (?, ?, ?, ?)")
-    .run("managed-artist", "Canonical Artist", "artist-mbid", "Canonical Artist {mbid-artist-mbid}");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, path) VALUES (?, ?, ?)")
-    .run("12345", "Canonical Artist", "Canonical Artist");
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+    RETURNING id
+  `).get("artist-mbid", "Canonical Artist") as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
-    VALUES (?, ?, ?, 1)
-  `).run("video-recording-mbid", "artist-mbid", "Canonical Video");
+    INSERT INTO Recordings (mbid, artist_metadata_id, artist_mbid, title, is_video)
+    VALUES (?, ?, ?, ?, 1)
+  `).run("video-recording-mbid", artist.id, "artist-mbid", "Canonical Video");
   const recordingId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-recording-mbid") as { id: number }).id;
   seedAcceptedProviderVideoMatch(dbModule.db, {
@@ -346,7 +337,7 @@ test("video imports prefer the managed MusicBrainz artist over a provider-only a
   const artistId = (organizerModule.OrganizerService as any)
     .resolveCanonicalVideoArtistId("tidal", "provider-video-1");
 
-  assert.equal(artistId, "managed-artist");
+  assert.equal(artistId, String(artist.id));
 });
 
 test("video file identity inherits canonical recording and artist from the recording FK", () => {
@@ -391,8 +382,6 @@ test("video file identity inherits canonical recording and artist from the recor
 test("metadata pruning removes artist pictures without legacy media_id column", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("release-group-1", "artist-mbid", "Canonical Album");
 
@@ -402,7 +391,7 @@ test("metadata pruning removes artist pictures without legacy media_id column", 
       type, file_type, provider_entity_type, canonical_artist_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    "artist-mbid",
     "Canonical Artist/folder.jpg",
     path.join(tempDir, "Canonical Artist", "folder.jpg"),
     tempDir,
@@ -418,7 +407,7 @@ test("metadata pruning removes artist pictures without legacy media_id column", 
       type, file_type, canonical_artist_mbid, canonical_release_group_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    "artist-mbid",
     "Canonical Artist/Canonical Album/cover.jpg",
     path.join(tempDir, "Canonical Artist", "Canonical Album", "cover.jpg"),
     tempDir,
@@ -448,8 +437,6 @@ test("metadata pruning removes artist pictures without legacy media_id column", 
 test("metadata pruning removes NFO files when save_nfo is disabled", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("release-group-1", "artist-mbid", "Canonical Album");
 
@@ -466,7 +453,7 @@ test("metadata pruning removes NFO files when save_nfo is disabled", async () =>
       type, file_type, canonical_artist_mbid, canonical_release_group_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    "artist-mbid",
     "Canonical Artist/Canonical Album/album.nfo",
     nfoPath,
     tempDir,
@@ -482,7 +469,7 @@ test("metadata pruning removes NFO files when save_nfo is disabled", async () =>
       type, file_type, canonical_artist_mbid, canonical_release_group_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    "artist-mbid",
     "Canonical Artist/Canonical Album/cover.jpg",
     coverPath,
     tempDir,
@@ -510,8 +497,6 @@ test("metadata pruning removes NFO files when save_nfo is disabled", async () =>
 test("singleton sidecar relocation uses clean metadata identity columns", () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
 
   const oldDir = path.join(tempDir, "old");
   const newDir = path.join(tempDir, "new");
@@ -527,7 +512,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
       type, file_type, provider, provider_entity_type, provider_id, library_slot
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    "artist-mbid",
     "old/cover.jpg",
     oldPath,
     tempDir,
@@ -541,7 +526,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
   );
 
   (organizerModule.OrganizerService as any).relocateSingletonSidecar({
-    artistId: "artist-local",
+    artistId: "artist-mbid",
     albumId: "provider-album-1",
     expectedPath: newPath,
     libraryRoot: tempDir,
@@ -567,10 +552,10 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
 });
 
 test("sidecar relocate copies into a sibling edition folder that still has audio", () => {
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid-sibling", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-sibling", "Canonical Artist", "artist-mbid-sibling");
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+    RETURNING id
+  `).get("artist-mbid-sibling", "Canonical Artist") as { id: number };
 
   const deluxeDir = path.join(tempDir, "All This Bad Blood (2012)");
   const anniversaryDir = path.join(tempDir, "Bad Blood X (2023)");
@@ -584,9 +569,9 @@ test("sidecar relocate copies into a sibling edition folder that still has audio
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_path, relative_path, library_root, filename, extension, file_type
+      artist_metadata_id, file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-sibling", deluxeAudio, "All This Bad Blood (2012)/201 - Poet.flac", tempDir, "201 - Poet.flac", "flac", "track");
+  `).run(artist.id, deluxeAudio, "All This Bad Blood (2012)/201 - Poet.flac", tempDir, "201 - Poet.flac", "flac", "track");
 
   dbModule.db.prepare(`
     INSERT INTO MetadataFiles (
@@ -595,7 +580,7 @@ test("sidecar relocate copies into a sibling edition folder that still has audio
       canonical_release_group_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-sibling",
+    "artist-mbid-sibling",
     "All This Bad Blood (2012)/cover.jpg",
     deluxeCover,
     tempDir,
@@ -610,7 +595,7 @@ test("sidecar relocate copies into a sibling edition folder that still has audio
   );
 
   (organizerModule.OrganizerService as any).relocateSingletonSidecar({
-    artistId: "artist-sibling",
+    artistId: "artist-mbid-sibling",
     albumId: "rg-bad-blood",
     expectedPath: anniversaryCover,
     libraryRoot: tempDir,
@@ -623,14 +608,47 @@ test("sidecar relocate copies into a sibling edition folder that still has audio
   assert.equal(fs.readFileSync(anniversaryCover, "utf8"), "canonical-cover");
 });
 
+test("artist sidecar relocation resolves numeric ArtistMetadata id to MetadataFiles.artist_id", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+    RETURNING id
+  `).get("artist-sidecar-mbid", "Sidecar Artist") as { id: number };
+  const oldDir = path.join(tempDir, "old-artist-sidecar");
+  const newDir = path.join(tempDir, "new-artist-sidecar");
+  fs.mkdirSync(oldDir, { recursive: true });
+  fs.mkdirSync(newDir, { recursive: true });
+  const oldPath = path.join(oldDir, "folder.jpg");
+  const newPath = path.join(newDir, "folder.jpg");
+  fs.writeFileSync(oldPath, "artist-cover");
+
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, library_slot
+    ) VALUES (?, ?, ?, ?, 'jpg', 'cover', 'cover', 'stereo')
+  `).run("artist-sidecar-mbid", "old-artist-sidecar/folder.jpg", oldPath, tempDir);
+
+  (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+    artistId: String(artist.id),
+    expectedPath: newPath,
+    libraryRoot: tempDir,
+    fileType: "cover",
+  });
+
+  assert.equal(fs.existsSync(oldPath), false);
+  assert.equal(fs.readFileSync(newPath, "utf8"), "artist-cover");
+  const row = dbModule.db.prepare(`
+    SELECT artist_id, file_path FROM MetadataFiles WHERE file_type = 'cover'
+  `).get() as { artist_id: string; file_path: string };
+  assert.deepEqual(row, { artist_id: "artist-sidecar-mbid", file_path: newPath });
+});
+
 test("typed plan identity maps a provider source track onto the selected canonical release", async () => {
   const { getCanonicalTrackPosition, resolveCanonicalTrackPosition } = await import("../metadata/canonical-track-position.js");
   const { getCanonicalAlbumMetadata } = await import("../metadata/canonical-album-metadata.js");
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Bastille", "artist-mbid");
 
   // Native source albums remain canonical catalog entities, but provider
   // availability is linked to the selected target release through typed edges.
@@ -847,8 +865,6 @@ test("typed plan identity maps a provider source track onto the selected canonic
 test("unmonitored sibling job release remaps onto the unique monitored edition", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Bastille", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-basket", "artist-mbid", "Basket Case");
   dbModule.db.prepare(`
@@ -954,8 +970,6 @@ test("unmonitored sibling job release remaps onto the unique monitored edition",
 test("hybrid tips with providerAlbumId on secondary albums match organize scope", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Bastille", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-hybrid-tips", "artist-mbid", "Hybrid Tips");
   dbModule.db.prepare(`
@@ -1030,7 +1044,7 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
     releaseMbid: "rel-hybrid-tips",
     fallbackAlbumId: "album-primary",
     fallbackAlbumIds: ["album-primary", "album-secondary"],
-    fallbackArtistId: "artist-local",
+    fallbackArtistId: "artist-mbid",
     fallbackQuality: "HIRES_LOSSLESS",
   });
   assert.equal(secondaryRow?.id, "trk-secondary");
@@ -1042,8 +1056,6 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
 test("an exact plan source organizes under the job release, not a same-recording single", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-amy", "Amy Winehouse");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-amy-local", "Amy Winehouse", "artist-amy");
 
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-btb", "artist-amy", "Back to Black");
@@ -1247,8 +1259,6 @@ test("an exact plan source organizes under the job release, not a same-recording
 test("album artist resolution uses the job release group when provider matches disagree", () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bakermat");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-mbid", "Bakermat", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-joy-single", "artist-mbid", "Joy single");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")

@@ -15,7 +15,6 @@ test("plan replacement is atomic and partial completion counts only imported ass
     createCurrentDomainSchema(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
-      INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
       INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group');
       INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
       INSERT INTO Recordings (id, mbid, title) VALUES (1, 'recording-1', 'One'), (2, 'recording-2', 'Two');
@@ -125,7 +124,6 @@ test("a manual plan choice is compared by exact track set, not by count", () => 
     createCurrentDomainSchema(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
-      INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
       INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group');
       INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
       INSERT INTO Recordings (id, mbid, title)

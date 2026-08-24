@@ -273,10 +273,10 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   naming: {
     artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
-    // Prefer edition (release) title so deluxe / Track-by-Track / region products
-    // get distinct folders; falls back to the album title when no edition is set.
-    album_track_path_single: "{Edition Title} ({Release Year})/{track:00} - {Track Title}",
-    album_track_path_multi: "{Edition Title} ({Release Year})/{medium:0}{track:00} - {Track Title}",
+    // The release MBID makes otherwise identical title/year editions distinct.
+    // Existing user templates stay untouched because these are fresh defaults.
+    album_track_path_single: "{Edition Title} ({Release Year}) {mbid-{Album MbId}}/{track:00} - {Track Title}",
+    album_track_path_multi: "{Edition Title} ({Release Year}) {mbid-{Album MbId}}/{medium:0}{track:00} - {Track Title}",
     // The default "separated" layout already puts video files in per-artist
     // folders, so the artist prefix in the filename is redundant. Include
     // {Video Type} so Plex/Jellyfin extras classification is template-owned

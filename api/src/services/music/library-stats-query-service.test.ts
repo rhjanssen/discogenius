@@ -70,30 +70,19 @@ function seedArtist(key: string): ArtistFixture {
     RETURNING id
   `).get(mbid, `Artist ${key}`) as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitored)
-    VALUES (?, ?, ?, 1)
-  `).run(mbid, mbid, `Artist ${key}`);
-
-  const managed = dbModule.db.prepare(`
-    INSERT INTO ManagedArtists (artist_id, metadata_status)
-    VALUES (?, 'verified')
-    RETURNING id
-  `).get(metadata.id) as { id: number };
-
   return {
     id: mbid,
     mbid,
     metadataId: metadata.id,
-    managedArtistId: managed.id,
+    managedArtistId: metadata.id,
   };
 }
 
 function monitorArtist(artist: ArtistFixture, library: LibraryFixture): void {
   dbModule.db.prepare(`
-    INSERT INTO LibraryArtists (library_id, managed_artist_id, monitored)
-    VALUES (?, ?, 1)
-  `).run(library.id, artist.managedArtistId);
+    INSERT INTO LibraryArtists (library_id, artist_metadata_id, policy)
+    VALUES (?, ?, 'all')
+  `).run(library.id, artist.metadataId);
 }
 
 function seedAlbum(
@@ -210,7 +199,7 @@ function addAudioFile(
   const relativePath = `${artist.mbid}/${album.releaseGroupMbid}/${track.mbid}-${suffix}.flac`;
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
       release_group_id, album_edition_id, track_id, recording_id,
       library_slot, library_id, file_path, relative_path, library_root,
@@ -218,7 +207,7 @@ function addAudioFile(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'flac',
       'track', 'audio', 'LOSSLESS', 100)
   `).run(
-    artist.id,
+    artist.metadataId,
     artist.mbid,
     album.releaseGroupMbid,
     album.editionMbid,
@@ -269,13 +258,13 @@ function addVideoFile(
   const relativePath = `${artist.mbid}/${video.mbid}-${suffix}.mp4`;
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_recording_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_recording_mbid,
       recording_id, library_slot, library_id, file_path, relative_path,
       library_root, filename, extension, file_type, file_class, quality, file_size
     ) VALUES (?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, 'mp4',
       'video', 'video', 'FHD', 200)
   `).run(
-    artist.id,
+    artist.metadataId,
     artist.mbid,
     video.mbid,
     video.id,
@@ -314,13 +303,13 @@ test("global stats deduplicate collaborations and require every selected Library
   // twice. Whole-library stats must not sum them.
   const insertProjection = dbModule.db.prepare(`
     INSERT INTO ArtistStatistics (
-      artist_id, artist_mbid, album_count, monitored_album_count,
+      library_id, artist_metadata_id, artist_mbid, album_count, monitored_album_count,
       downloaded_album_count, track_count, monitored_track_count,
       track_file_count
-    ) VALUES (?, ?, 1, 1, 99, 2, 2, 99)
+    ) VALUES (?, ?, ?, 1, 1, 99, 2, 2, 99)
   `);
-  insertProjection.run(firstArtist.id, firstArtist.mbid);
-  insertProjection.run(collaborator.id, collaborator.mbid);
+  insertProjection.run(stereo.id, firstArtist.metadataId, firstArtist.mbid);
+  insertProjection.run(stereo.id, collaborator.metadataId, collaborator.mbid);
 
   let snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.artists, { total: 2, monitored: 2, downloaded: 0 });

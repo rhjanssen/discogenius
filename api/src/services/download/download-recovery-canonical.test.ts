@@ -25,8 +25,8 @@ function resetRows() {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
 }
 
@@ -38,17 +38,15 @@ test("download recovery resolves existing album files through canonical provider
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, "audio");
 
-  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Artist", "artist-mbid");
   const artist = db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
     RETURNING id
   `).get("artist-mbid", "Artist") as { id: number };
   const releaseGroup = db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?, ?)
     RETURNING id
-  `).get("rg-mbid", "artist-mbid", "Album", "album") as { id: number };
+  `).get("rg-mbid", artist.id, "artist-mbid", "Album", "album") as { id: number };
   const release = db.prepare(`
     INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
@@ -114,14 +112,14 @@ test("download recovery resolves existing album files through canonical provider
   `).run(library.id, release.id);
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type,
       provider_id, release_group_id, album_edition_id, track_id, recording_id,
       library_slot, library_id, file_path, relative_path, library_root, filename,
       extension, file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "artist-local",
+    artist.id,
     "artist-mbid",
     "rg-mbid",
     "release-mbid",
@@ -178,8 +176,6 @@ test("download recovery scopes equal video IDs to the command provider", () => {
   fs.writeFileSync(tidalPath, "tidal-video");
   fs.writeFileSync(applePath, "apple-video");
 
-  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Artist", "artist-mbid");
   const artist = db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
     RETURNING id
@@ -217,17 +213,19 @@ test("download recovery scopes equal video IDs to the command provider", () => {
   );
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_recording_mbid, recording_id,
+      artist_metadata_id, canonical_artist_mbid, canonical_recording_mbid, recording_id,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type,
       file_class
     ) VALUES
-      ('artist-local', 'artist-mbid', 'tidal-recording', ?, 'tidal', 'video', '99', 'video', ?, 'tidal.mp4', ?, 'tidal.mp4', 'mp4', 'video', 'video'),
-      ('artist-local', 'artist-mbid', 'apple-recording', ?, 'apple-music', 'video', '99', 'video', ?, 'apple.mp4', ?, 'apple.mp4', 'mp4', 'video', 'video')
+      (?, 'artist-mbid', 'tidal-recording', ?, 'tidal', 'video', '99', 'video', ?, 'tidal.mp4', ?, 'tidal.mp4', 'mp4', 'video', 'video'),
+      (?, 'artist-mbid', 'apple-recording', ?, 'apple-music', 'video', '99', 'video', ?, 'apple.mp4', ?, 'apple.mp4', 'mp4', 'video', 'video')
   `).run(
+    artist.id,
     recordingByMbid.get("tidal-recording"),
     tidalPath,
     path.dirname(tidalPath),
+    artist.id,
     recordingByMbid.get("apple-recording"),
     applePath,
     path.dirname(applePath),

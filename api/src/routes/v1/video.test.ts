@@ -23,7 +23,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -130,10 +130,6 @@ test("video detail resolves a unique accepted provider video id", async () => {
     VALUES ('route-artist', 'Route Artist')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name)
-    VALUES ('route-artist', 'route-artist', 'Route Artist')
-  `).run();
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
       mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status

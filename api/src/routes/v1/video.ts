@@ -25,6 +25,7 @@ import {
   getRequiredIdentifier,
   isRequestValidationError,
   rejectUnknownKeys,
+  parseBoundedQueryInteger,
 } from "../../utils/request-validation.js";
 
 const router = Router();
@@ -54,8 +55,8 @@ function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
 
 router.get("/", (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = parseInt(req.query.offset as string) || 0;
+    const limit = parseBoundedQueryInteger(req.query.limit, 50, { min: 1, max: 200 });
+    const offset = parseBoundedQueryInteger(req.query.offset, 0);
     const search = req.query.search as string;
     const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
     const downloadedFilter = parseOptionalQueryBoolean(req.query.downloaded);

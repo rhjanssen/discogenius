@@ -181,7 +181,7 @@ function StateFrame({
             {icon}
           </div>
         ) : null}
-        {title ? <Title3 className={styles.title}>{title}</Title3> : null}
+        {title ? <Title3 as="h2" className={styles.title}>{title}</Title3> : null}
         {description ? (
           <Body1 className={mergeClasses(styles.description, align === "left" ? styles.descriptionLeft : undefined)}>
             {description}

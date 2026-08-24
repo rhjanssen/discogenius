@@ -312,7 +312,7 @@ export class UpgraderService {
                 CAST(media_item.provider_id AS TEXT),
                 CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN CAST(lf.provider_id AS TEXT) END
               ) IS NOT NULL
-          ${artistId ? "AND lf.artist_id = ?" : ""}
+          ${artistId ? "AND lf.artist_metadata_id = ?" : ""}
         ORDER BY lf.id ASC
     `);
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { isOfferSelected, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
-import { isSamePlanOffer } from "./ReleaseSwitcher";
+import type { ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
+import { isOfferSelected } from "@/utils/providerOfferSelection";
+import { isSamePlanOffer } from "@/utils/providerOfferSelection";
 
 /**
  * Two acquisition plans of one edition can be built from the same provider

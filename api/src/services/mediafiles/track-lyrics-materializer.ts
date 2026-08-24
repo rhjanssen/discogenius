@@ -99,7 +99,7 @@ function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
     SELECT
       id,
       library_id,
-      artist_id,
+      artist_metadata_id AS artist_id,
       NULL AS album_id,
       file_path,
       relative_path,
@@ -137,7 +137,7 @@ function trackRowsForMediaIds(
     SELECT
       id,
       library_id,
-      artist_id,
+      artist_metadata_id AS artist_id,
       NULL AS album_id,
       file_path,
       relative_path,

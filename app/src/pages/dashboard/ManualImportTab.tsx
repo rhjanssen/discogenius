@@ -46,6 +46,7 @@ import { api } from '@/services/api';
 import { isSpatialAudioQuality } from '@/utils/spatialAudio';
 import { mediaCoverProxySrc, renderableArtworkUrl } from '@/utils/artwork';
 import ManualImportModal from './ManualImportModal';
+import { groupUnmappedFilesForReview, normalizeComparableText } from './manualImportGrouping';
 
 const Delete24 = bundleIcon(Delete24Filled, Delete24Regular);
 
@@ -54,8 +55,6 @@ const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
 const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
 const Search24 = bundleIcon(Search24Filled, Search24Regular);
 
-const GROUP_MIN_FILES = 2;
-const GROUP_MIN_RATIO = 0.6;
 const UNMAPPED_PAGE_SIZE = 100;
 
 export type UnmappedFile = {
@@ -198,8 +197,8 @@ const useStyles = makeStyles({
     },
     tableGrid: {
         width: '100%',
-        minWidth: '100%',
-        maxWidth: '100%',
+        minWidth: '1080px',
+        maxWidth: 'none',
         boxSizing: 'border-box',
     },
     rowIgnored: {
@@ -305,6 +304,24 @@ const useStyles = makeStyles({
         alignItems: 'center',
         gap: tokens.spacingHorizontalS,
         minWidth: 0,
+        width: '100%',
+        paddingTop: tokens.spacingVerticalXXS,
+        paddingRight: tokens.spacingHorizontalXS,
+        paddingBottom: tokens.spacingVerticalXXS,
+        border: 'none',
+        borderRadius: tokens.borderRadiusMedium,
+        backgroundColor: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        textAlign: 'left',
+        cursor: 'pointer',
+        '&:hover': {
+            backgroundColor: tokens.colorNeutralBackground1Hover,
+        },
+        '&:focus-visible': {
+            outline: `2px solid ${tokens.colorStrokeFocus2}`,
+            outlineOffset: '2px',
+        },
     },
     candidateArt: {
         width: '40px',
@@ -357,16 +374,6 @@ const useStyles = makeStyles({
         ...glassDangerButtonStyles,
     },
 });
-
-function normalizeComparableText(value?: string | null): string {
-    return (value || '')
-        .toLowerCase()
-        .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
-        .replace(/[_./\\-]+/g, ' ')
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
 
 function formatBytes(bytes: number | null | undefined) {
     if (!bytes) return '0 B';
@@ -592,63 +599,9 @@ function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind, candidate
 }
 
 function buildDisplayRows(files: UnmappedFile[], candidatesMap?: Record<number, any>): DisplayRow[] {
-    const buckets = new Map<string, UnmappedFile[]>();
-
-    for (const file of files) {
-        const key = [file.library_root, getRelativeDirectory(file.relative_path || file.file_path), file.ignored ? 'ignored' : 'active'].join('::');
-        const current = buckets.get(key) || [];
-        current.push(file);
-        buckets.set(key, current);
-    }
-
-    const rows: DisplayRow[] = [];
-
-    for (const bucketFiles of buckets.values()) {
-        const orderedBucket = [...bucketFiles].sort((left, right) => left.filename.localeCompare(right.filename));
-        const albumBuckets = new Map<string, UnmappedFile[]>();
-
-        for (const file of orderedBucket) {
-            const albumKey = normalizeComparableText(file.detected_album);
-            if (!albumKey) {
-                continue;
-            }
-
-            const artistKey = normalizeComparableText(file.detected_artist);
-            const key = `${albumKey}::${artistKey}`;
-            const current = albumBuckets.get(key) || [];
-            current.push(file);
-            albumBuckets.set(key, current);
-        }
-
-        const consumedIds = new Set<number>();
-        const groupedCandidates = Array.from(albumBuckets.values())
-            .filter((candidateFiles) => {
-                if (candidateFiles.length < GROUP_MIN_FILES) {
-                    return false;
-                }
-                return candidateFiles.length / orderedBucket.length >= GROUP_MIN_RATIO;
-            })
-            .sort((left, right) => right.length - left.length);
-
-        for (const candidateFiles of groupedCandidates) {
-            const remainingFiles = candidateFiles.filter((file) => !consumedIds.has(file.id));
-            if (remainingFiles.length < GROUP_MIN_FILES) {
-                continue;
-            }
-
-            remainingFiles.forEach((file) => consumedIds.add(file.id));
-            rows.push(createDisplayRow(remainingFiles, 'group', candidatesMap));
-        }
-
-        for (const file of orderedBucket) {
-            if (consumedIds.has(file.id)) {
-                continue;
-            }
-            rows.push(createDisplayRow([file], 'file', candidatesMap));
-        }
-    }
-
-    return rows;
+    return groupUnmappedFilesForReview(files).map((group) => (
+        createDisplayRow(group, group.length > 1 ? 'group' : 'file', candidatesMap)
+    ));
 }
 
 const ManualImportTab = () => {
@@ -840,20 +793,6 @@ const ManualImportTab = () => {
         return getFileKind(row.anchorFile) === 'Video' ? 'video' as const : 'track' as const;
     }, []);
 
-    const getReasonText = useCallback((row: DisplayRow) => {
-        if (row.decisionState === 'ignored') {
-            return 'Ignored until restored.';
-        }
-
-        if (row.rejectionReasons.length > 0) {
-            return row.rejectionReasons.join(' • ');
-        }
-
-        return row.kind === 'group'
-            ? 'Ready for grouped manual import review.'
-            : 'Ready for manual import review.';
-    }, []);
-
     const renderActionButtons = useCallback((row: DisplayRow) => (
         <div className={styles.actionGroup}>
             <Button
@@ -922,8 +861,8 @@ const ManualImportTab = () => {
                     {getSortLabel('filename', 'Filename / Path')}
                 </button>
             ),
-            width: 'minmax(140px, 1.15fr)',
-            minWidth: 120,
+            width: 'minmax(250px, 1.15fr)',
+            minWidth: 250,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
@@ -946,9 +885,8 @@ const ManualImportTab = () => {
                     {getSortLabel('detected_artist', 'Identified')}
                 </button>
             ),
-            width: 'minmax(140px, 1fr)',
-            minWidth: 120,
-            hideBelowWidth: 900,
+            width: 'minmax(220px, 1fr)',
+            minWidth: 220,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
@@ -976,9 +914,8 @@ const ManualImportTab = () => {
                 </button>
             ),
             // Fit common quality strings like "24-BIT 44.1KHZ FLAC" without truncation.
-            width: 'minmax(188px, max-content)',
-            minWidth: 168,
-            hideBelowWidth: 1100,
+            width: 'minmax(200px, max-content)',
+            minWidth: 200,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
@@ -1005,9 +942,8 @@ const ManualImportTab = () => {
                     {getSortLabel('candidate', '#1 Candidate Guess')}
                 </button>
             ),
-            width: 'minmax(180px, 1.2fr)',
-            minWidth: 160,
-            hideBelowWidth: 700,
+            width: 'minmax(220px, 1.2fr)',
+            minWidth: 220,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => {
@@ -1024,10 +960,11 @@ const ManualImportTab = () => {
                     : null;
 
                 return (
-                    <div
+                    <button
+                        type="button"
                         className={styles.candidateRow}
-                        style={{ cursor: 'pointer', paddingLeft: tokens.spacingHorizontalL }}
-                        title="Click to open manual import for this candidate"
+                        style={{ paddingLeft: tokens.spacingHorizontalL }}
+                        aria-label={`Open manual import for ${title || 'catalog guess'}${artist ? ` by ${artist}` : ''}`}
                         onClick={(e) => {
                             e.stopPropagation();
                             setManualImportCandidate(candidate || null);
@@ -1050,7 +987,7 @@ const ManualImportTab = () => {
                             <Text className={styles.candidateTitle} title={title || 'Catalog Guess'}>{title || 'Catalog Guess'}</Text>
                             {artist ? <Text className={styles.candidateSubtitle} title={artist}>{artist}</Text> : null}
                         </div>
-                    </div>
+                    </button>
                 );
             },
         },
@@ -1066,10 +1003,14 @@ const ManualImportTab = () => {
     ], [
         getKindBadgeKind,
         getKindBadgeLabel,
-        getReasonText,
         getSortLabel,
         renderActionButtons,
         styles.actionCell,
+        styles.candidateArt,
+        styles.candidateMeta,
+        styles.candidateRow,
+        styles.candidateSubtitle,
+        styles.candidateTitle,
         styles.fileTitle,
         styles.identifiedInfo,
         styles.identifiedLabel,
@@ -1079,7 +1020,6 @@ const ManualImportTab = () => {
         styles.qualityLabel,
         styles.qualityLine,
         styles.qualityValue,
-        styles.reasonText,
         styles.reasonTextMuted,
         styles.sortableHeaderButton,
         styles.subtitle,

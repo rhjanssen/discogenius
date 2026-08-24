@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
 function passwordFingerprint(password: string): string {
-  return crypto.createHash("sha256").update(password).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(password).digest("hex");
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -19,9 +19,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     return next();
   }
 
-  // Try to get token from Authorization header first, then query parameter (for SSE)
-  let token = req.headers.authorization?.replace("Bearer ", "");
-  if (!token && req.query.token) {
+  // EventSource cannot set an Authorization header, so only the SSE endpoint
+  // accepts a query token. Other routes keep credentials out of URLs and logs.
+  const authorization = req.headers.authorization;
+  let token = /^Bearer\s+\S+$/i.test(authorization || "")
+    ? authorization!.replace(/^Bearer\s+/i, "")
+    : undefined;
+  const queryTokenEndpoint = /\/(?:events|queue\/progress-stream|mediaFile\/stream\/\d+)(?:[/?]|$)/.test(req.originalUrl);
+  if (!token && req.method === "GET" && queryTokenEndpoint && req.query.token) {
     token = req.query.token as string;
   }
 
@@ -37,7 +42,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   }
 
   try {
-    const decoded = jwt.verify(token, jwtSecret) as jwt.JwtPayload | string;
+    const decoded = jwt.verify(token, jwtSecret, { algorithms: ["HS256"] }) as jwt.JwtPayload | string;
 
     const payload = typeof decoded === "string" ? {} : decoded;
     const tokenFp = payload.fp as string | undefined;

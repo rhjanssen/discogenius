@@ -510,7 +510,7 @@ export class AppleMusicProvider implements StreamingProvider {
     });
   }
 
-  getDownloaderLoginStatus(): { status: string; message: string } {
+  getDownloaderLoginStatus(): Promise<{ status: string; message: string }> {
     return getWrapperLoginStatus();
   }
 

@@ -1,9 +1,14 @@
 import type { TrackListTabContract } from "@contracts/pages";
-import { editionMediaRank, editionTabLabel } from "@/pages/album/editionDisplay";
+import {
+  editionMediaRank,
+  editionTabCompactLabel,
+  editionTabLabel,
+} from "@/pages/album/editionDisplay";
 
 export interface TrackListTabPresentation {
   editionId: number;
   label: string;
+  compactLabel: string;
   default: boolean;
 }
 
@@ -36,6 +41,7 @@ export function resolveTrackListTabPresentation(
     .map((tab) => ({
       editionId: tab.editionId,
       label: editionTabLabel(tab, albumTitle),
+      compactLabel: editionTabCompactLabel(tab, albumTitle),
       default: tab.default,
     }));
 }

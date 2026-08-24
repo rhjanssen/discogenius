@@ -10,7 +10,6 @@
  *   - Spatial/Hi-Res requests fall back to browser-friendly stereo ladders
  */
 import { Router, Request, Response } from "express";
-import crypto from "crypto";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { Readable } from "stream";
@@ -21,6 +20,13 @@ import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from 
 import { materializeSegmentedPlayback, parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
 import { isKnownProviderVideoOffer, resolvePreferredVideoOffer, resolveVideoOfferForProvider } from "../services/music/video-offer-resolver.js";
 import { db } from "../database.js";
+import { fetchPublicHttpUrl } from "../security/outbound-http.js";
+import {
+    getPlaybackSigningSecret,
+    parsePlaybackExpiration,
+    playbackSignatureMatches,
+    signPlaybackValue,
+} from "../security/playback-signing.js";
 
 const streamPipeline = promisify(pipeline);
 const router = Router();
@@ -31,8 +37,14 @@ const playbackInfoCache = new Map<string, {
     promise: Promise<ProviderPlaybackInfo | null>;
 }>();
 
-// Use JWT_SECRET (same as auth) for HMAC signing
-const getSecret = () => process.env.JWT_SECRET || "discogenius-stream-secret";
+const MAX_HLS_PROXY_TARGETS = 50_000;
+const hlsProxyTargets = new Map<string, {
+    providerId: string;
+    trackId: string;
+    quality: string | null;
+    targetUrl: string;
+    expires: number;
+}>();
 
 function normalizePlaybackQuality(value: unknown): string | null {
     const normalized = String(value ?? "").trim().toUpperCase();
@@ -51,15 +63,58 @@ function resolvePlaybackProvider(providerId?: unknown) {
 }
 
 function signUrl(providerId: string, id: string, expires: number, quality?: string | null): string {
-    const hmac = crypto.createHmac("sha256", getSecret());
-    hmac.update(`${providerId}:${id}:${quality || ""}:${expires}`);
-    return hmac.digest("hex");
+    return signPlaybackValue(`${providerId}:${id}:${quality || ""}:${expires}`);
 }
 
 function signHlsProxyUrl(providerId: string, trackId: string, expires: number, quality: string | null, targetUrl: string): string {
-    const hmac = crypto.createHmac("sha256", getSecret());
-    hmac.update(`${providerId}:${trackId}:${quality || ""}:${expires}:${targetUrl}`);
-    return hmac.digest("hex");
+    return signPlaybackValue(`${providerId}:${trackId}:${quality || ""}:${expires}:${targetUrl}`);
+}
+
+function registerHlsProxyTarget(
+    providerId: string,
+    trackId: string,
+    expires: number,
+    quality: string | null,
+    targetUrl: string,
+): string {
+    const now = Math.floor(Date.now() / 1000);
+    if (hlsProxyTargets.size >= MAX_HLS_PROXY_TARGETS) {
+        for (const [signature, entry] of hlsProxyTargets) {
+            if (entry.expires <= now) hlsProxyTargets.delete(signature);
+        }
+    }
+    if (hlsProxyTargets.size >= MAX_HLS_PROXY_TARGETS) {
+        throw new Error("HLS proxy target registry is full");
+    }
+
+    const signature = signHlsProxyUrl(providerId, trackId, expires, quality, targetUrl);
+    hlsProxyTargets.set(signature, { providerId, trackId, quality, targetUrl, expires });
+    return signature;
+}
+
+function isRegisteredHlsProxyTarget(
+    signature: string,
+    providerId: string,
+    trackId: string,
+    expires: number,
+    quality: string | null,
+    targetUrl: string,
+): boolean {
+    const entry = hlsProxyTargets.get(signature);
+    return Boolean(entry
+        && entry.providerId === providerId
+        && entry.trackId === trackId
+        && entry.expires === expires
+        && entry.quality === quality
+        && entry.targetUrl === targetUrl);
+}
+
+function parseUpstreamRange(value: unknown): string | null {
+    if (value === undefined) return null;
+    if (typeof value !== "string" || value.length > 100 || !/^bytes=(?:\d+-\d*|-\d+)$/.test(value)) {
+        throw new Error("Invalid byte range");
+    }
+    return value;
 }
 
 /** Resolve a possibly-relative m3u8 URI against the playlist URL. */
@@ -99,6 +154,29 @@ function rewriteHlsPlaylistForProxy(
         out.push(segmentUri(absolute));
     }
     return out.join("\n");
+}
+
+async function readPlaylistText(response: globalThis.Response): Promise<string> {
+    const maxBytes = 2 * 1024 * 1024;
+    const declaredLength = Number(response.headers.get("content-length") || 0);
+    if (declaredLength > maxBytes) throw new Error("HLS playlist exceeds size limit");
+    if (!response.body) throw new Error("HLS playlist has no body");
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+            await reader.cancel();
+            throw new Error("HLS playlist exceeds size limit");
+        }
+        chunks.push(value);
+    }
+    const body = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+    return new TextDecoder().decode(body);
 }
 
 function getCachedPlaybackInfo(
@@ -174,7 +252,12 @@ router.get("/stream/sign/:trackId", authMiddleware, async (req: Request, res: Re
     }
 
     const expires = Math.floor(Date.now() / 1000) + 3600; // 1 h — must outlive a full album side
-    const sig = signUrl(providerId, trackId, expires, quality);
+    let sig: string;
+    try {
+        sig = signUrl(providerId, trackId, expires, quality);
+    } catch {
+        return res.status(503).json({ error: "Playback signing is unavailable" });
+    }
     const qualityQuery = quality ? `&quality=${encodeURIComponent(quality)}` : "";
     const providerQuery = `&provider=${encodeURIComponent(providerId)}`;
     const signedQuery = `?exp=${expires}&sig=${sig}${providerQuery}${qualityQuery}`;
@@ -203,11 +286,13 @@ function verifySignedPlayback(req: Request): { ok: false; status: number; error:
     if (requestedQuality !== undefined && !quality) return { ok: false, status: 400, error: "Unsupported playback quality" };
     if (!providerId) return { ok: false, status: 400, error: "Missing provider" };
 
-    const expires = parseInt(exp, 10);
-    if (Date.now() / 1000 > expires) return { ok: false, status: 403, error: "URL expired" };
+    if (!getPlaybackSigningSecret()) return { ok: false, status: 503, error: "Playback signing is unavailable" };
+    const expires = parsePlaybackExpiration(exp);
+    if (expires === null) return { ok: false, status: 403, error: "URL expired or invalid" };
 
-    const expected = signUrl(providerId, trackId, expires, quality);
-    if (sig !== expected) return { ok: false, status: 403, error: "Invalid signature" };
+    if (!playbackSignatureMatches(sig, `${providerId}:${trackId}:${quality || ""}:${expires}`)) {
+        return { ok: false, status: 403, error: "Invalid signature" };
+    }
 
     return { ok: true, providerId, quality };
 }
@@ -242,16 +327,16 @@ router.get("/stream/hls/:trackId", async (req: Request, res: Response) => {
         if (!info) return res.status(502).json({ error: "No playable quality available" });
 
         if (info.type === "hls") {
-            const upstream = await fetch(info.url, {
+            const { response: upstream, url: upstreamUrl } = await fetchPublicHttpUrl(info.url, {
                 headers: { "User-Agent": "Mozilla/5.0 (compatible; Discogenius/1.0)" },
             });
             if (!upstream.ok) {
                 return res.status(502).json({ error: `Upstream HLS playlist fetch failed (${upstream.status})` });
             }
-            const playlistText = await upstream.text();
+            const playlistText = await readPlaylistText(upstream);
             // Build per-segment signatures over the absolute target URL.
             const segmentUri = (absoluteUrl: string) => {
-                const segSig = signHlsProxyUrl(
+                const segSig = registerHlsProxyTarget(
                     verified.providerId,
                     trackId,
                     Number(req.query.exp),
@@ -265,7 +350,7 @@ router.get("/stream/hls/:trackId", async (req: Request, res: Response) => {
                     + (verified.quality ? `&quality=${encodeURIComponent(verified.quality)}` : "")
                     + `&u=${encodeURIComponent(absoluteUrl)}`;
             };
-            const rewritten = rewriteHlsPlaylistForProxy(playlistText, info.url, segmentUri);
+            const rewritten = rewriteHlsPlaylistForProxy(playlistText, upstreamUrl.toString(), segmentUri);
             res.setHeader("content-type", "application/vnd.apple.mpegurl");
             res.setHeader("cache-control", "private, max-age=60");
             return res.send(rewritten);
@@ -327,11 +412,16 @@ router.get("/stream/hls-proxy/:trackId", async (req: Request, res: Response) => 
     if (!providerId) return res.status(400).json({ error: "Missing provider" });
     if (!targetUrl) return res.status(400).json({ error: "Missing segment URL" });
 
-    const expires = parseInt(exp, 10);
-    if (Date.now() / 1000 > expires) return res.status(403).json({ error: "URL expired" });
+    if (!getPlaybackSigningSecret()) return res.status(503).json({ error: "Playback signing is unavailable" });
+    const expires = parsePlaybackExpiration(exp);
+    if (expires === null) return res.status(403).json({ error: "URL expired or invalid" });
 
-    const expected = signHlsProxyUrl(providerId, trackId, expires, quality, targetUrl);
-    if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
+    if (!playbackSignatureMatches(sig, `${providerId}:${trackId}:${quality || ""}:${expires}:${targetUrl}`)) {
+        return res.status(403).json({ error: "Invalid signature" });
+    }
+    if (!isRegisteredHlsProxyTarget(sig, providerId, trackId, expires, quality, targetUrl)) {
+        return res.status(403).json({ error: "Unknown segment URL" });
+    }
 
     let parsed: URL;
     try {
@@ -344,7 +434,7 @@ router.get("/stream/hls-proxy/:trackId", async (req: Request, res: Response) => 
     }
 
     try {
-        const upstream = await fetch(targetUrl, {
+        const { response: upstream, url: upstreamUrl } = await fetchPublicHttpUrl(targetUrl, {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; Discogenius/1.0)" },
         });
         if (!upstream.ok || !upstream.body) {
@@ -353,10 +443,10 @@ router.get("/stream/hls-proxy/:trackId", async (req: Request, res: Response) => 
 
         // Nested media playlists (master → variant) also need URI rewriting.
         const contentType = upstream.headers.get("content-type") || "";
-        if (/mpegurl|m3u8/i.test(contentType) || /\.m3u8(\?|$)/i.test(parsed.pathname)) {
-            const playlistText = await upstream.text();
-            const rewritten = rewriteHlsPlaylistForProxy(playlistText, targetUrl, (absoluteUrl) => {
-                const segSig = signHlsProxyUrl(providerId, trackId, expires, quality, absoluteUrl);
+        if (/mpegurl|m3u8/i.test(contentType) || /\.m3u8$/i.test(upstreamUrl.pathname)) {
+            const playlistText = await readPlaylistText(upstream);
+            const rewritten = rewriteHlsPlaylistForProxy(playlistText, upstreamUrl.toString(), (absoluteUrl) => {
+                const segSig = registerHlsProxyTarget(providerId, trackId, expires, quality, absoluteUrl);
                 return `/api/playback/stream/hls-proxy/${encodeURIComponent(trackId)}`
                     + `?exp=${encodeURIComponent(String(expires))}`
                     + `&sig=${encodeURIComponent(segSig)}`
@@ -401,7 +491,7 @@ router.get("/stream/seg/:trackId/:index", async (req: Request, res: Response) =>
         if (!info || info.type !== "dash") return res.status(502).json({ error: "No segmented source available" });
         if (index >= info.segments.length) return res.status(404).json({ error: "Segment out of range" });
 
-        const upstream = await fetch(info.segments[index]);
+        const { response: upstream } = await fetchPublicHttpUrl(info.segments[index]);
         if (!upstream.ok || !upstream.body) {
             return res.status(502).json({ error: `Upstream segment fetch failed (${upstream.status})` });
         }
@@ -428,21 +518,9 @@ router.get("/stream/seg/:trackId/:index", async (req: Request, res: Response) =>
  */
 router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
     const trackId = req.params.trackId as string;
-    const exp = String(req.query.exp ?? "") || undefined;
-    const sig = String(req.query.sig ?? "") || undefined;
-    const requestedQuality = req.query.quality;
-    const quality = normalizePlaybackQuality(requestedQuality);
-    const providerId = String(req.query.provider ?? "").trim();
-
-    if (!exp || !sig) return res.status(403).json({ error: "Missing signature" });
-    if (requestedQuality !== undefined && !quality) return res.status(400).json({ error: "Unsupported playback quality" });
-    if (!providerId) return res.status(400).json({ error: "Missing provider" });
-
-    const expires = parseInt(exp, 10);
-    if (Date.now() / 1000 > expires) return res.status(403).json({ error: "URL expired" });
-
-    const expected = signUrl(providerId, trackId, expires, quality);
-    if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
+    const verified = verifySignedPlayback(req);
+    if (!verified.ok) return res.status(verified.status).json({ error: verified.error });
+    const { providerId, quality } = verified;
 
     try {
         const provider = resolvePlaybackProvider(providerId);
@@ -466,8 +544,13 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
 
         if (info.type === "bts") {
             console.log(`[Playback] BTS stream for track ${trackId}`);
-            const range = typeof req.headers["range"] === "string" ? req.headers["range"] : undefined;
-            const upstream = await fetch(info.url, {
+            let range: string | null;
+            try {
+                range = parseUpstreamRange(req.headers.range);
+            } catch {
+                return res.status(416).json({ error: "Invalid byte range" });
+            }
+            const { response: upstream } = await fetchPublicHttpUrl(info.url, {
                 headers: range ? { Range: range } : {},
             });
 
@@ -598,11 +681,13 @@ router.get("/video/play/:videoId", async (req: Request, res: Response) => {
     if (!exp || !sig) return res.status(403).json({ error: "Missing signature" });
     if (!providerId) return res.status(400).json({ error: "Missing provider" });
 
-    const expires = parseInt(exp, 10);
-    if (Date.now() / 1000 > expires) return res.status(403).json({ error: "URL expired" });
+    if (!getPlaybackSigningSecret()) return res.status(503).json({ error: "Playback signing is unavailable" });
+    const expires = parsePlaybackExpiration(exp);
+    if (expires === null) return res.status(403).json({ error: "URL expired or invalid" });
 
-    const expected = signUrl(providerId, `video:${videoId}`, expires);
-    if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
+    if (!playbackSignatureMatches(sig, `${providerId}:video:${videoId}::${expires}`)) {
+        return res.status(403).json({ error: "Invalid signature" });
+    }
 
     try {
         const provider = resolvePlaybackProvider(providerId);

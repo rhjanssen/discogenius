@@ -93,7 +93,7 @@ const ErrorDisplay = ({
     <div className={styles.container}>
       <Card className={styles.card}>
         <ErrorCircle48Color className={styles.icon} />
-        <Title1 className={styles.title}>Something went wrong</Title1>
+        <Title1 as="h1" className={styles.title}>Something went wrong</Title1>
         <Body1 className={styles.message}>
           An unexpected error occurred. Please try refreshing the page.
         </Body1>

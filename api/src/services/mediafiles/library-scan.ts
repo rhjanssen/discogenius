@@ -32,7 +32,7 @@ import {
     updateAlbumDownloadStatus,
     updateArtistDownloadStatusFromMedia,
 } from "../download/download-state.js";
-import { getManagedArtists } from "../music/managed-artists.js";
+import { getManagedArtists, loadArtistMetadataIdentity, resolveArtistMetadataId, resolveArtistMbid, syncLibraryArtistMonitoring } from "../music/managed-artists.js";
 import {
     queueArtistWorkflow,
 } from "../music/artist-workflow.js";
@@ -181,7 +181,7 @@ type RootFileIndex = Map<string, Map<string, string[]>>; // rootPath → (folder
 function usesNestedArtistFolders(): boolean {
     const row = db.prepare(`
         SELECT 1
-        FROM Artists
+        FROM LibraryArtists
         WHERE path IS NOT NULL
           AND TRIM(path) != ''
           AND (path LIKE '%/%' OR path LIKE '%\\%')
@@ -370,13 +370,25 @@ export class DiskScanService {
             downloadFlagsReset: 0,
         };
 
+        // Public callers use the canonical MBID while TrackFiles stores the
+        // numeric ArtistMetadata row id. Resolve once at the boundary and use
+        // the numeric key throughout reconciliation. Passing the MBID directly
+        // to `artist_metadata_id = ?` is valid SQLite but silently matches no
+        // rows, which used to disable orphan and changed-file processing during
+        // full-library scans.
+        const artistMetadataId = resolveArtistMetadataId(artistId);
+        if (artistMetadataId == null) {
+            return result;
+        }
+        const scanArtistId = String(artistMetadataId);
+
         // Phase A: Clean orphaned records
         options?.onProgress?.({
             phase: "cleanup",
             message: "Checking tracked files against disk",
             progress: 10,
         });
-        const phaseA = this.cleanOrphanedRecords(artistId);
+        const phaseA = this.cleanOrphanedRecords(scanArtistId);
         result.orphansRemoved = phaseA.removed;
         result.downloadFlagsReset = phaseA.flagsReset;
 
@@ -386,7 +398,7 @@ export class DiskScanService {
             message: "Importing new files from disk",
             progress: 45,
         });
-        const phaseB = await this.indexNewFiles(artistId, {
+        const phaseB = await this.indexNewFiles(scanArtistId, {
             onProgress: (event) => {
                 options?.onProgress?.(event);
             },
@@ -401,14 +413,14 @@ export class DiskScanService {
             message: "Verifying tracked file changes",
             progress: 80,
         });
-        const phaseC = this.updateChangedFiles(artistId);
+        const phaseC = this.updateChangedFiles(scanArtistId);
         result.filesUpdated = phaseC.updated;
 
         // Phase D/E rematch unmatched existing files. Lidarr FilterFilesType.Known
         // skips this: only new files and size/mtime changes. Matched/None rematch.
         if (shouldRematchUnmatchedFiles(options?.filter ?? "matched")) {
             const phaseD = relinkUnresolvedLibraryFiles({
-                artistId,
+                artistId: scanArtistId,
                 fileExists: (filePath) => fs.existsSync(filePath),
                 resolveStoredLibraryPath,
                 resolveLibraryRootKey,
@@ -419,12 +431,12 @@ export class DiskScanService {
             });
             result.filesUpdated += phaseD.relinked;
 
-            const phaseE = await this.backfillCanonicalLinksFromTags(artistId);
+            const phaseE = await this.backfillCanonicalLinksFromTags(scanArtistId);
             result.filesUpdated += phaseE.healed;
         }
 
-        LibraryFilesService.pruneDuplicateTrackedAssets(artistId);
-        LibraryFilesService.rebindFilesToMonitoredEditions(artistId);
+        LibraryFilesService.pruneDuplicateTrackedAssets(scanArtistId);
+        LibraryFilesService.rebindFilesToMonitoredEditions(scanArtistId);
 
         if (result.orphansRemoved > 0 || result.filesIndexed > 0 || result.filesUpdated > 0) {
             console.log(
@@ -452,7 +464,7 @@ export class DiskScanService {
         const brokenRows = db.prepare(`
             SELECT id, file_path, relative_path, library_root, library_slot
             FROM TrackFiles
-            WHERE artist_id = ?
+            WHERE artist_metadata_id = ?
               AND file_type = 'track'
               AND canonical_track_mbid IS NULL
               AND canonical_recording_mbid IS NULL
@@ -536,7 +548,10 @@ export class DiskScanService {
         options?: { trackUnmappedFiles?: boolean; filter?: ScanFileFilter },
     ): Promise<{ artists: number; totalOrphans: number; totalFlagsReset: number; filesIndexed: number; filesUpdated: number; unmappedOrphans: number }> {
         const artists = getManagedArtists({ includeLibraryFiles: true })
-            .map((artist) => ({ id: String(artist.id), name: artist.name || String(artist.id) }));
+            .map((artist) => ({
+                artistMetadataId: artist.artist_metadata_id,
+                name: artist.name || String(artist.id),
+            }));
         let totalOrphans = 0;
         let totalFlagsReset = 0;
         let filesIndexed = 0;
@@ -573,7 +588,7 @@ export class DiskScanService {
                 progress: Math.min(65, 10 + Math.round(progressBase * 50)),
                 message: `Reconciling ${artist.name} (${index + 1}/${artists.length})`,
             });
-            const result = await this.scanArtist(String(artist.id), {
+            const result = await this.scanArtist(String(artist.artistMetadataId), {
                 onProgress: (event) => {
                     const nestedProgress = progressBase + (progressSpan * (event.progress / 100));
                     const label = event.phase === "index" && event.totalFiles !== undefined
@@ -637,7 +652,7 @@ export class DiskScanService {
              canonical_release_group_mbid,
              file_type
       FROM TrackFiles
-      WHERE artist_id = ?
+      WHERE artist_metadata_id = ?
     `).all(artistId) as Array<{
             id: number;
             file_path: string;
@@ -729,7 +744,7 @@ export class DiskScanService {
 
             const { saveArtistNfoFile } = await import("./metadata-files.js");
             const { syncCachedMediaCoverToFile } = await import("../metadata/media-cover-service.js");
-            const artist = db.prepare("SELECT mbid FROM Artists WHERE id = ? LIMIT 1")
+            const artist = db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ? LIMIT 1")
                 .get(artistId) as { mbid?: string | null } | undefined;
             const artistPicName = metadataConfig.artist_picture_name || "folder.jpg";
 
@@ -776,10 +791,14 @@ export class DiskScanService {
             trackUnmappedFiles?: boolean;
         },
     ): Promise<{ indexed: number }> {
-        const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
+        const artist = loadArtistMetadataIdentity(artistId);
         if (!artist) return { indexed: 0 };
 
-        const artistFolder = resolveArtistFolderFromRecord(artist);
+        const artistFolder = resolveArtistFolderFromRecord({
+            name: artist.name,
+            mbid: artist.mbid || null,
+            path: artist.path || null,
+        });
         const ensuredEmptyFolders = ensureEmptyArtistFoldersIfEnabled(artistFolder);
         if (ensuredEmptyFolders.length > 0) {
             await DiskScanService.populateEmptyArtistFolderMetadata(artistId, ensuredEmptyFolders);
@@ -789,11 +808,16 @@ export class DiskScanService {
         // Duplicate extras are re-evaluated every scan so a later matcher fix
         // can promote them to TrackFiles instead of leaving a wrong extra.
         const existingPaths = new Set<string>();
+        const metadataId = resolveArtistMetadataId(artistId);
+        const sidecarArtistKey = resolveArtistMbid(artistId) ?? (metadataId != null ? String(metadataId) : artistId);
+        const trackArtistKey = metadataId != null ? String(metadataId) : artistId;
         for (const table of ["TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles"] as const) {
+            const artistColumn = table === "TrackFiles" ? "artist_metadata_id" : "artist_id";
+            const artistKey = table === "TrackFiles" ? trackArtistKey : sidecarArtistKey;
             const extraFilter = table === "ExtraFiles" ? " AND file_type != ?" : "";
-            const params = table === "ExtraFiles" ? [artistId, DUPLICATE_EXTRA_FILE_TYPE] : [artistId];
+            const params = table === "ExtraFiles" ? [artistKey, DUPLICATE_EXTRA_FILE_TYPE] : [artistKey];
             const rows = db.prepare(
-                `SELECT file_path, relative_path, library_root FROM ${table} WHERE artist_id = ?${extraFilter}`,
+                `SELECT file_path, relative_path, library_root FROM ${table} WHERE ${artistColumn} = ?${extraFilter}`,
             ).all(...params) as Array<{
                 file_path: string;
                 relative_path: string | null;
@@ -969,6 +993,29 @@ export class DiskScanService {
                                 musicbrainzAlbumId = metadata.common.musicbrainz_albumid || null;
                                 isrc = metadata.common.isrc || null;
                                 metrics = getUnmappedMediaMetrics(metadata.format, ext);
+                                const {
+                                    mergeProbedAudioMetrics,
+                                    probeAudioStreamMetrics,
+                                    shouldProbeAudioMetrics,
+                                } = await import("./audioUtils.js");
+                                if (shouldProbeAudioMetrics(resolved, metrics)) {
+                                    const merged = mergeProbedAudioMetrics({
+                                        duration: metrics.duration ?? undefined,
+                                        bitrate: metrics.bitrate ?? undefined,
+                                        sampleRate: metrics.sampleRate ?? undefined,
+                                        bitDepth: metrics.bitDepth ?? undefined,
+                                        channels: metrics.channels ?? undefined,
+                                        codec: metrics.codec ?? undefined,
+                                    }, await probeAudioStreamMetrics(resolved));
+                                    metrics = getUnmappedMediaMetrics({
+                                        duration: merged.duration,
+                                        bitrate: merged.bitrate,
+                                        sampleRate: merged.sampleRate,
+                                        bitsPerSample: merged.bitDepth,
+                                        numberOfChannels: merged.channels,
+                                        codec: merged.codec,
+                                    }, ext);
+                                }
                                 if (!metrics.duration) {
                                     const { probeMediaDuration } = await import("./audioUtils.js");
                                     const durationFfprobe = await probeMediaDuration(resolved);
@@ -1244,12 +1291,7 @@ export class DiskScanService {
         }
 
         if (shouldPromoteArtist) {
-            db.prepare(`
-                UPDATE Artists
-                SET monitored = 1,
-                    monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-                WHERE id = ?
-            `).run(artistId);
+            syncLibraryArtistMonitoring(artistId, true);
         }
 
         if (totalFiles > 0) {
@@ -1272,7 +1314,7 @@ export class DiskScanService {
         const rows = db.prepare(`
       SELECT id, file_path, relative_path, library_root, file_size, modified_at, file_type
       FROM TrackFiles
-      WHERE artist_id = ?
+      WHERE artist_metadata_id = ?
     `).all(artistId) as Array<{
             id: number;
             file_path: string;
@@ -1378,14 +1420,33 @@ export class DiskScanService {
         };
 
         // Build a lookup of expected folder names for all known DB artists
-        const allArtists = db.prepare("SELECT id, name, mbid, path FROM Artists").all() as Array<{
+        const allArtists = db.prepare(`
+            SELECT
+              metadata.id,
+              metadata.name,
+              metadata.mbid,
+              (
+                SELECT membership.path
+                FROM LibraryArtists membership
+                JOIN Libraries library
+                  ON library.id = membership.library_id
+                 AND library.enabled = 1
+                WHERE membership.artist_metadata_id = metadata.id
+                ORDER BY library.id
+                LIMIT 1
+              ) AS path
+            FROM ArtistMetadata metadata
+        `).all() as Array<{
             id: number;
             name: string;
             mbid?: string | null;
             path?: string | null;
         }>;
         const managedArtistIds = new Set(
-            getManagedArtists({ includeLibraryFiles: true }).map((artist) => String(artist.id))
+            getManagedArtists({ includeLibraryFiles: true }).flatMap((artist) => [
+                String(artist.artist_metadata_id),
+                String(artist.id),
+            ]),
         );
         const knownFolderToArtistId = new Map<string, number>();
         for (const a of allArtists) {
@@ -1481,7 +1542,7 @@ export class DiskScanService {
                 });
             },
         });
-        persistRootReviewCandidates(reviewCandidates);
+        await persistRootReviewCandidates(reviewCandidates);
         const autoImported = importer.getAutoImported();
         onProgress?.({
             phase: "import",
@@ -1621,9 +1682,13 @@ export class DiskScanService {
             // Could be artist picture or album cover — check depth
             // Artist picture is directly under artist folder, album cover is under album subfolder
             const parentDir = path.basename(path.dirname(filePath));
-            const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
+            const artist = loadArtistMetadataIdentity(String(artistId));
             if (artist) {
-                const artistDirName = path.basename(resolveArtistFolderFromRecord(artist));
+                const artistDirName = path.basename(resolveArtistFolderFromRecord({
+                    name: artist.name,
+                    mbid: artist.mbid || null,
+                    path: artist.path || null,
+                }));
                 if (parentDir === artistDirName || parentDir === artist.name) {
                     return { albumId: null, mediaId: null, fileType: "cover", quality: null };
                 }
@@ -1843,7 +1908,7 @@ export class DiskScanService {
         const rows = db.prepare(`
           SELECT lf.provider, lf.provider_entity_type, lf.provider_id, lf.file_path
           FROM TrackFiles lf
-          WHERE lf.artist_id = ?
+          WHERE lf.artist_metadata_id = ?
             AND lf.provider_id IS NOT NULL
             AND lf.file_type = 'track'
         `).all(artistId) as Array<{
@@ -1969,7 +2034,7 @@ export class DiskScanService {
              AND pi.entity_type = COALESCE(lf.provider_entity_type, pi.entity_type)
              AND pi.entity_type IN ('track', 'video')
              AND (lf.provider IS NULL OR pi.provider = lf.provider)
-            WHERE lf.artist_id = ? AND lf.expected_path = ?
+            WHERE lf.artist_metadata_id = ? AND lf.expected_path = ?
             LIMIT 1
         `).get(artistId, resolved) as any;
 

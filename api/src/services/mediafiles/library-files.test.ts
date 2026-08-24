@@ -3,8 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
+import {
+  resolveArtistMetadataId,
+  stampArtistLibraryPath,
+} from "../music/managed-artists.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-files-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -20,6 +25,33 @@ let libraryScanModule: typeof import("./library-scan.js");
 let audioLibraryPathModule: typeof import("./audio-library-path.js");
 let artistStatisticsModule: typeof import("../music/artist-statistics-service.js");
 let extraFileServiceModule: typeof import("../extras/files/extra-file-service.js");
+
+
+function seedCatalogArtist(options: {
+  mbid: string;
+  name: string;
+  path?: string | null;
+  monitored?: boolean;
+}): { metadataId: number; mbid: string } {
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+    ON CONFLICT(mbid) DO UPDATE SET name = excluded.name
+  `).run(options.mbid, options.name);
+  const { artistMetadataId } = seedLibraryArtistMonitoring(dbModule.db, options.mbid, {
+    monitored: options.monitored !== false,
+  });
+  if (options.path) {
+    stampArtistLibraryPath(artistMetadataId, options.path, true);
+  }
+  return { metadataId: artistMetadataId, mbid: options.mbid };
+}
+
+function requireCatalogArtistId(mbidOrKey: string): number {
+  const id = resolveArtistMetadataId(mbidOrKey);
+  if (id == null) throw new Error(`missing ArtistMetadata for ${mbidOrKey}`);
+  return id;
+}
 
 function writeTestConfig(overrides?: {
   artistFolder?: string;
@@ -162,12 +194,13 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 
   downloadStateModule?.invalidateAllDownloadState();
@@ -214,6 +247,8 @@ test("one physical sidecar can be owned by two libraries sharing a root", () => 
     metadataProfile.id,
     qualityProfiles[1].id,
   ) as { id: number };
+
+  seedCatalogArtist({ mbid: "shared-sidecar-artist", name: "Shared Sidecar Artist" });
 
   const firstId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "shared-sidecar-artist",
@@ -270,10 +305,7 @@ test("active-schema upsert refuses media and sidecar rows outside the owning Lib
     name: "Containment gate",
     rootPath: ownedRoot,
   });
-  db.prepare(`
-    INSERT INTO Artists (id, name, monitored)
-    VALUES ('containment-artist', 'Containment Artist', 1)
-  `).run();
+  seedCatalogArtist({ mbid: "containment-artist", name: "Containment Artist" });
 
   for (const [filePath, fileType] of [
     [outsideTrack, "track"],
@@ -331,6 +363,8 @@ test("playable files fail closed when a shared root has no explicit library", ()
     qualityProfiles[1].id,
   );
 
+  seedCatalogArtist({ mbid: "ambiguous-playable-artist", name: "Ambiguous Playable Artist" });
+
   assert.throws(
     () => libraryFilesModule.LibraryFilesService.upsertLibraryFile({
       artistId: "ambiguous-playable-artist",
@@ -353,12 +387,7 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
     albumTrackPathSingle: "{albumTitle}/{trackNumber00} - {trackTitle}",
   });
 
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid-1", "Queen");
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Queen", "artist-mbid-1", "Queen (legacy-folder)", 1);
+  seedCatalogArtist({ mbid: "artist-mbid-1", name: "Queen", path: "Queen (legacy-folder)" });
 
   // Canonical graph (post-DB-alignment: naming resolves from canonical tables).
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
@@ -394,7 +423,7 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     id: 500,
-    artist_id: "1" as unknown as number,
+    artist_metadata_id: requireCatalogArtistId("artist-mbid-1"),
     album_id: "10" as unknown as number,
     media_id: "100" as unknown as number,
     canonical_artist_mbid: "artist-mbid-1",
@@ -424,10 +453,7 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
     albumTrackPathSingle: "{albumTitle}/{trackNumber00} - {trackTitle}",
   });
 
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid-1", "Queen");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, path, monitored) VALUES (?, ?, ?, ?, ?)")
-    .run("1", "Queen", "artist-mbid-1", "Queen", 1);
+  seedCatalogArtist({ mbid: "artist-mbid-1", name: "Queen", path: "Queen" });
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)")
     .run("rg-mbid-1", "artist-mbid-1", "Canonical Group Title", "Album");
   dbModule.db.prepare(`
@@ -453,7 +479,7 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     id: 500,
-    artist_id: "1" as unknown as number,
+    artist_metadata_id: requireCatalogArtistId("artist-mbid-1"),
     album_id: "10" as unknown as number,
     media_id: "100" as unknown as number,
     file_path: path.join(tempDir, "legacy.flac"),
@@ -514,10 +540,7 @@ test("unified audio roots allow different extensions and disambiguate only real 
 });
 
 test("resolveArtistFolderForPersistence disambiguates same-name artists with numeric suffixes outside the repository layer", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("1", "Phoenix", "Phoenix", 1);
+  seedCatalogArtist({ mbid: "1", name: "Phoenix", path: "Phoenix" });
 
   const resolved = artistPathsModule.resolveArtistFolderForPersistence({
     artistId: "2",
@@ -528,10 +551,7 @@ test("resolveArtistFolderForPersistence disambiguates same-name artists with num
 });
 
 test("resolveArtistFolderForPersistence prefers MusicBrainz disambiguation for same-name artist collisions", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("1", "Phoenix", "Phoenix", 1);
+  seedCatalogArtist({ mbid: "1", name: "Phoenix", path: "Phoenix" });
 
   const resolved = artistPathsModule.resolveArtistFolderForPersistence({
     artistId: "2",
@@ -616,16 +636,11 @@ test("removeEmptyParents never prunes a prefix-sibling outside the stop root", (
 test("resolveArtistFolderForPersistence reuses the canonical folder for provider rows with the same MusicBrainz artist", () => {
   writeTestConfig({ artistFolder: "{artistName} {mbid-{artistMbId}}" });
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(
-    "artist-mbid-1",
-    "Bastille",
-    "artist-mbid-1",
-    "Bastille {mbid-artist-mbid-1}",
-    1,
-  );
+  seedCatalogArtist({
+    mbid: "artist-mbid-1",
+    name: "Bastille",
+    path: "Bastille {mbid-artist-mbid-1}",
+  });
 
   const resolved = artistPathsModule.resolveArtistFolderForPersistence({
     artistId: 4526830,
@@ -639,10 +654,7 @@ test("resolveArtistFolderForPersistence reuses the canonical folder for provider
 test("resolveArtistFolderForPersistence avoids nested folder collisions for generated artist paths", () => {
   writeTestConfig({ artistFolder: "Artists/{artistName}" });
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("1", "Air", "Artists", 1);
+  seedCatalogArtist({ mbid: "1", name: "Air", path: "Artists" });
 
   const resolved = artistPathsModule.resolveArtistFolderForPersistence({
     artistId: "2",
@@ -707,10 +719,7 @@ test("resolveArtistFolderForIdentityUpdate preserves custom folders after MBID r
 });
 
 test("upsertLibraryFile stores canonical MusicBrainz and provider identity for imported tracks", () => {
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name)
-    VALUES (?, ?)
-  `).run("artist-mbid-1", "Queen");
+  seedCatalogArtist({ mbid: "artist-mbid-1", name: "Queen", path: "Queen" });
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
@@ -729,10 +738,6 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
   // Provider availability rows supply the streaming identity; TrackFiles links
   // through canonical MBIDs/catalog FKs plus provider provenance.
 
@@ -763,7 +768,7 @@ dbModule.db.prepare(`
 
   const filePath = path.join(configModule.Config.getMusicPath(), "Queen", "01 - Bohemian Rhapsody.flac");
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "1",
+    artistId: "artist-mbid-1",
     libraryId,
     albumId: "10",
     mediaId: "100",
@@ -807,14 +812,7 @@ dbModule.db.prepare(`
 });
 
 test("upsertLibraryFile uses accepted typed matches instead of provider shadow identity", () => {
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name)
-    VALUES (?, ?)
-  `).run("artist-mbid-1", "Bastille");
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
+  seedCatalogArtist({ mbid: "artist-mbid-1", name: "Bastille", path: "Bastille {mbid-artist-mbid-1}" });
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types)
     VALUES (?, ?, ?, ?, ?)
@@ -876,7 +874,7 @@ dbModule.db.prepare(`
   const root = configModule.Config.getMusicPath();
   const filePath = path.join(root, "Bastille {mbid-artist-mbid-1}", "Give Me The Future", "01 - Shut Off The Lights.flac");
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "artist-local",
+    artistId: "artist-mbid-1",
     albumId: "provider-album-1",
     mediaId: "provider-track-1",
     filePath,
@@ -899,15 +897,12 @@ dbModule.db.prepare(`
 });
 
 test("upsertLibraryFile does not invent provider ids for canonical artist assets", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
+  seedCatalogArtist({ mbid: "artist-mbid-1", name: "Bastille", path: "Bastille {mbid-artist-mbid-1}" });
 
   const root = configModule.Config.getMusicPath();
   const filePath = path.join(root, "Bastille {mbid-artist-mbid-1}", "folder.jpg");
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "artist-local",
+    artistId: "artist-mbid-1",
     albumId: null,
     mediaId: null,
     filePath,
@@ -930,10 +925,7 @@ test("upsertLibraryFile does not invent provider ids for canonical artist assets
 });
 
 test("disk scan relinks album covers and renamed lyrics to their provider album and track", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
+  seedCatalogArtist({ mbid: "artist-mbid-1", name: "Bastille", path: "Bastille {mbid-artist-mbid-1}" });
 
   const releaseItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -988,7 +980,7 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
   fs.writeFileSync(coverPath, "cover");
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "artist-local",
+    artistId: "artist-mbid-1",
     albumId: "provider-album-1",
     mediaId: "provider-track-1",
     filePath: audioPath,
@@ -998,13 +990,14 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
   });
 
   const matchFileToMedia = (libraryScanModule.DiskScanService as any).matchFileToMedia.bind(libraryScanModule.DiskScanService);
-  assert.deepEqual(matchFileToMedia(coverPath, "artist-local", "music"), {
+  const scanArtistId = String(requireCatalogArtistId("artist-mbid-1"));
+  assert.deepEqual(matchFileToMedia(coverPath, scanArtistId, "music"), {
     albumId: "provider-album-1",
     mediaId: null,
     fileType: "cover",
     quality: null,
   });
-  assert.deepEqual(matchFileToMedia(lyricPath, "artist-local", "music"), {
+  assert.deepEqual(matchFileToMedia(lyricPath, scanArtistId, "music"), {
     albumId: "provider-album-1",
     mediaId: "provider-track-1",
     fileType: "lyrics",
@@ -1013,10 +1006,7 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
 });
 
 test("upsertLibraryFile links lyric sidecars through TrackFiles provider identity", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("1", "Queen", "Queen", 1);
+  seedCatalogArtist({ mbid: "1", name: "Queen", path: "Queen" });
 
   const root = configModule.Config.getMusicPath();
   const albumDir = path.join(root, "Queen", "A Night at the Opera");
@@ -1075,10 +1065,7 @@ test("upsertLibraryFile links lyric sidecars through TrackFiles provider identit
 });
 
 test("upsertLibraryFile merges duplicate path and media identity rows during rescan", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("1", "Queen", "Queen", 1);
+  seedCatalogArtist({ mbid: "1", name: "Queen", path: "Queen" });
 
 const root = configModule.Config.getMusicPath();
   const library = dbModule.db.prepare(`
@@ -1096,12 +1083,12 @@ const root = configModule.Config.getMusicPath();
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, provider, provider_entity_type, provider_id, library_slot,
+      artist_metadata_id, library_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "1", library.id, "tidal", "track", "101", "stereo", targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "flac", 5, "track", "LOSSLESS",
-    "1", library.id, "tidal", "track", "100", "stereo", stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "flac", 5, "track", "LOSSLESS",
+    requireCatalogArtistId("1"), library.id, "tidal", "track", "101", "stereo", targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "flac", 5, "track", "LOSSLESS",
+    requireCatalogArtistId("1"), library.id, "tidal", "track", "100", "stereo", stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "flac", 5, "track", "LOSSLESS",
   );
 
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
@@ -1131,10 +1118,7 @@ const root = configModule.Config.getMusicPath();
 
 test("a provider-free path upsert returns the exact existing TrackFiles row", () => {
   const { db } = dbModule;
-  db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES ('exact-row-artist', 'Exact Row Artist', 'Exact Row Artist', 1)
-  `).run();
+  seedCatalogArtist({ mbid: "exact-row-artist", name: "Exact Row Artist", path: "Exact Row Artist" });
   const root = configModule.Config.getMusicPath();
   const libraryId = seedTestLibrary(db, {
     name: "Exact row identity",
@@ -1181,10 +1165,7 @@ test("a provider-free path upsert returns the exact existing TrackFiles row", ()
 
 test("upsertLibraryFile keeps stereo and spatial track rows separate for the same canonical track", () => {
   writeTestConfig({ includeSpatial: true });
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name)
-    VALUES (?, ?)
-  `).run("artist-mbid-1", "Queen");
+  seedCatalogArtist({ mbid: "artist-mbid-1", name: "Queen", path: "Queen" });
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
@@ -1202,13 +1183,8 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
       mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
   // Provider availability rows supply the streaming identity for both slots.
-
-dbModule.db.prepare(`
+  dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'release', '10', 'A Night at the Opera')
@@ -1251,7 +1227,7 @@ dbModule.db.prepare(`
   fs.writeFileSync(spatialPath, "spatial-audio");
 
   const stereoId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "1",
+    artistId: "artist-mbid-1",
     libraryId: stereoLibraryId,
     albumId: "10",
     mediaId: "100",
@@ -1262,7 +1238,7 @@ dbModule.db.prepare(`
     librarySlot: "stereo",
   });
   const spatialId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "1",
+    artistId: "artist-mbid-1",
     libraryId: spatialLibraryId,
     albumId: "10",
     mediaId: "100",
@@ -1304,10 +1280,7 @@ dbModule.db.prepare(`
 });
 
 test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("1", "Queen", "Queen", 1);
+  seedCatalogArtist({ mbid: "1", name: "Queen", path: "Queen" });
 const root = configModule.Config.getMusicPath();
   const targetPath = path.join(root, "Queen", "A Night at the Opera", "cover.jpg");
   const stalePath = path.join(root, "Queen", "old-cover.jpg");
@@ -1353,7 +1326,7 @@ const root = configModule.Config.getMusicPath();
     WHERE file_path = ?
   `).get(targetPath) as { artist_id?: string; releaseGroupMbid?: string; file_path?: string; file_type?: string; type?: string } | undefined;
 
-  assert.equal(metadataFile?.artist_id, "1");
+  assert.equal(metadataFile?.artist_id, "1"); // MetadataFiles.artist_id is TEXT key
   assert.equal(metadataFile?.releaseGroupMbid, "10");
   assert.equal(metadataFile?.file_type, "cover");
   assert.equal(metadataFile?.type, "AlbumImage");
@@ -1367,10 +1340,7 @@ const root = configModule.Config.getMusicPath();
 });
 
 test("tracked sidecars do not collide when providers reuse the same external ID", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitored)
-    VALUES (?, ?, ?, ?)
-  `).run("sidecar-artist", "Bastille", "Bastille", 1);
+  seedCatalogArtist({ mbid: "sidecar-artist", name: "Bastille", path: "Bastille" });
 
   const root = configModule.Config.getMusicPath();
   const tidalPath = path.join(root, "Bastille", "tidal-shared-id.lrc");
@@ -1384,7 +1354,7 @@ test("tracked sidecars do not collide when providers reuse the same external ID"
   // resolved from that file, not from root equality.
   const insertOwner = dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_type, library_slot, library_root, library_id,
+      artist_metadata_id, file_type, library_slot, library_root, library_id,
       file_path, relative_path, filename, extension,
       provider, provider_entity_type, provider_id
     ) VALUES (?, 'track', 'stereo', ?, ?, ?, ?, ?, 'flac', ?, 'track', 'shared-track-id')
@@ -1397,7 +1367,7 @@ test("tracked sidecars do not collide when providers reuse the same external ID"
   for (const [provider, filePath] of [["tidal", tidalPath], ["spotify", spotifyPath]] as const) {
     const audioPath = filePath.replace(/\.lrc$/, ".flac");
     const owner = insertOwner.get(
-      "sidecar-artist",
+      requireCatalogArtistId("sidecar-artist"),
       root,
       ownerLibraryId,
       audioPath,
@@ -1469,21 +1439,13 @@ function placeVideoInline(input: {
 }
 
 test("computeExpectedPath inline vs separated layouts for video files", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("artist-inline-test", "Bastille", "artist-mbid-bastille", "Bastille", 1);
-
-
-dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name)
-    VALUES (?, ?)
-  `).run("artist-mbid-bastille", "Bastille");
+  seedCatalogArtist({ mbid: "artist-mbid-bastille", name: "Bastille", path: "Bastille" });
 
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
-  `).run("rg-mbid-pompeii", "artist-mbid-bastille", "Bad Blood", "Album");
+  `).run(
+    "rg-mbid-pompeii", "artist-mbid-bastille", "Bad Blood", "Album");
 
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
@@ -1545,7 +1507,7 @@ dbModule.db.prepare(`
 
   const rowVideoSeparated: any = {
     id: 1000,
-    artist_id: "artist-inline-test",
+    artist_metadata_id: requireCatalogArtistId("artist-mbid-bastille"),
     album_id: "album-inline-test",
     media_id: "video-inline-test",
     provider: "tidal",
@@ -1611,13 +1573,13 @@ dbModule.db.prepare(`
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      id, artist_metadata_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
       file_type, quality, library_id, release_group_id, album_edition_id,
       recording_id, canonical_recording_mbid, canonical_release_group_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    2000, "artist-inline-test", "tidal", "track", "track-inline-test", "stereo",
+    2000, requireCatalogArtistId("artist-mbid-bastille"), "tidal", "track", "track-inline-test", "stereo",
     path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii.flac"),
     path.join("Bastille", "Bad Blood", "01 - Pompeii.flac"),
     "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
@@ -1632,7 +1594,7 @@ dbModule.db.prepare(`
 
   const rowThumbnail: any = {
     id: 1001,
-    artist_id: "artist-inline-test",
+    artist_metadata_id: requireCatalogArtistId("artist-mbid-bastille"),
     album_id: "album-inline-test",
     media_id: "video-inline-test",
     provider: "tidal",
@@ -1650,7 +1612,7 @@ dbModule.db.prepare(`
 
   const rowNfo: any = {
     id: 1002,
-    artist_id: "artist-inline-test",
+    artist_metadata_id: requireCatalogArtistId("artist-mbid-bastille"),
     album_id: "album-inline-test",
     media_id: "video-inline-test",
     provider: "tidal",
@@ -1691,11 +1653,11 @@ dbModule.db.prepare(`
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      id, artist_metadata_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    2001, "artist-inline-test", "tidal", "video", "video-inline-test", "video",
+    2001, requireCatalogArtistId("artist-mbid-bastille"), "tidal", "video", "video-inline-test", "video",
     expectedInlineMonitoredPath,
     path.relative(configModule.Config.getMusicPath(), expectedInlineMonitoredPath),
     "music", path.basename(expectedInlineMonitoredPath), "mp4", 100, "video", "MP4_1080P",
@@ -1752,12 +1714,7 @@ dbModule.db.prepare(`
 });
 
 test("computeExpectedPath inline requires a monitored nonspatial library release group", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("artist-inline-gate", "Bastille", "artist-mbid-inline-gate", "Bastille", 1);
-  dbModule.db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`)
-    .run("artist-mbid-inline-gate", "Bastille");
+  seedCatalogArtist({ mbid: "artist-mbid-inline-gate", name: "Bastille", path: "Bastille" });
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
@@ -1809,7 +1766,7 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     id: 5000,
-    artist_id: "artist-inline-gate",
+    artist_metadata_id: requireCatalogArtistId("artist-mbid-inline-gate"),
     album_id: null,
     media_id: "video-inline-gate",
     provider: "tidal",
@@ -1829,16 +1786,10 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
 });
 
 test("computeExpectedPath prefers stereo over spatial for inline videos", () => {
+  seedCatalogArtist({ mbid: "artist-mbid-stereo-pref", name: "Bastille", path: "Bastille" });
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("artist-inline-stereo-pref", "Bastille", "artist-mbid-stereo-pref", "Bastille", 1);
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
-  `).run("artist-mbid-stereo-pref", "Bastille");
-  dbModule.db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, monitored)
-    VALUES (?, ?, ?, ?, 1)
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
   `).run("rg-mbid-stereo-pref", "artist-mbid-stereo-pref", "Bad Blood", "Album");
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, date)
@@ -1903,13 +1854,13 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
   // Spatial imported first (lower id) — old ORDER BY tf.id ASC would pick it.
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      id, artist_metadata_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
       file_type, quality, library_id, release_group_id, album_edition_id,
       recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    3001, "artist-inline-stereo-pref", "apple-music", "track", "spatial-track-1", "spatial",
+    3001, requireCatalogArtistId("artist-mbid-stereo-pref"), "apple-music", "track", "spatial-track-1", "spatial",
     spatialPath, path.relative(configModule.Config.getSpatialPath(), spatialPath),
     "spatial", "01 - Pompeii.m4a", "m4a", 100, "track", "DOLBY_ATMOS",
     spatialLibraryId,
@@ -1919,13 +1870,13 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
   );
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      id, artist_metadata_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
       file_type, quality, library_id, release_group_id, album_edition_id,
       recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    3002, "artist-inline-stereo-pref", "tidal", "track", "stereo-track-1", "stereo",
+    3002, requireCatalogArtistId("artist-mbid-stereo-pref"), "tidal", "track", "stereo-track-1", "stereo",
     stereoPath, path.relative(configModule.Config.getMusicPath(), stereoPath),
     "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
     nonspatialLibraryId,
@@ -1940,7 +1891,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     id: 4000,
-    artist_id: "artist-inline-stereo-pref",
+    artist_metadata_id: requireCatalogArtistId("artist-mbid-stereo-pref"),
     album_id: null,
     media_id: "video-stereo-pref",
     file_path: path.join(tempDir, "library", "videos", "Bastille", "Pompeii.mp4"),
@@ -1958,14 +1909,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
 });
 
 test("upsertLibraryFile persists video_codec and frame size for music videos", () => {
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name)
-    VALUES (?, ?)
-  `).run("artist-mbid-video-codec", "Bastille");
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("video-artist-1", "Bastille", "artist-mbid-video-codec", "Bastille", 1);
+  seedCatalogArtist({ mbid: "artist-mbid-video-codec", name: "Bastille", path: "Bastille" });
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     VALUES (?, ?, ?, 1)
@@ -1988,7 +1932,7 @@ test("upsertLibraryFile persists video_codec and frame size for music videos", (
   fs.writeFileSync(filePath, "fake-video");
 
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "video-artist-1",
+    artistId: "artist-mbid-video-codec",
     libraryId: videoLibrary.id,
     mediaId: "video-provider-codec",
     filePath,

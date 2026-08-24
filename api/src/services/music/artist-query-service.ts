@@ -4,7 +4,11 @@ import {
     getReleaseGroupDownloadStatsMap,
 } from "../download/download-state.js";
 import { hydrateTrackRows } from "./track-query-service.js";
-import { buildManagedArtistPredicate } from "./managed-artists.js";
+import {
+    buildLibraryArtistMonitoredExistsSql,
+    buildManagedArtistPredicate,
+    loadArtistLibraryMembershipMap,
+} from "./managed-artists.js";
 import { loadArtistWithEffectiveMonitor, type ArtistMonitorRow } from "./artist-monitoring.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
@@ -564,19 +568,16 @@ const duplicateProviderArtistPredicate = `NOT (
     AND CAST(a.id AS TEXT) != CAST(a.mbid AS TEXT)
     AND EXISTS (
         SELECT 1
-        FROM Artists canonical_artist
+        FROM ArtistMetadata canonical_artist
         WHERE canonical_artist.mbid = a.mbid
           AND CAST(canonical_artist.id AS TEXT) = CAST(canonical_artist.mbid AS TEXT)
     )
 )`;
 
-// Credit/collaborator seeding can create artist rows knowing only the MBID
-// (name = mbid). Until a visit or refresh hydrates real display metadata they
-// carry nothing a library view can render, so keep them out of the listing.
+// Credit shells with no library membership stay out of the library list.
 const unhydratedArtistShellPredicate = `NOT (
     a.name = CAST(a.mbid AS TEXT)
-    AND a.path IS NULL
-    AND (a.monitored IS NULL OR a.monitored = 0)
+    AND NOT ${buildLibraryArtistMonitoredExistsSql("a")}
 )`;
 
 export class ArtistQueryService {
@@ -591,14 +592,45 @@ export class ArtistQueryService {
         const includeCounts = input.includeCounts !== false;
 
         let query = `
-      SELECT a.*,
+      SELECT
+        a.mbid AS id,
+        a.id AS artist_metadata_id,
+        a.mbid,
+        a.name,
+        a.sort_name,
+        a.picture,
+        a.cover_image_url,
+        a.popularity,
+        a.overview,
+        a.type,
+        NULL AS path,
+        (
+          SELECT MAX(membership.metadata_last_checked_at)
+          FROM LibraryArtists membership
+          JOIN Libraries library
+            ON library.id = membership.library_id AND library.enabled = 1
+          WHERE membership.artist_metadata_id = a.id
+        ) AS last_scanned,
+        (
+          SELECT MIN(membership.added_at)
+          FROM LibraryArtists membership
+          JOIN Libraries library
+            ON library.id = membership.library_id AND library.enabled = 1
+          WHERE membership.artist_metadata_id = a.id
+        ) AS user_date_added,
+        NULL AS policy,
         CASE WHEN ${managedArtistPredicate} THEN 1 ELSE 0 END as effective_monitor
-      FROM Artists a
+      FROM ArtistMetadata a
     `;
-        let countQuery = "SELECT COUNT(*) as total FROM Artists a";
+        let countQuery = "SELECT COUNT(*) as total FROM ArtistMetadata a";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
-        const where: string[] = [duplicateProviderArtistPredicate, unhydratedArtistShellPredicate];
+        // Library list defaults to membership; catalog search/add is a separate path.
+        const where: string[] = [
+          duplicateProviderArtistPredicate,
+          unhydratedArtistShellPredicate,
+          managedArtistPredicate,
+        ];
 
         if (search) {
             where.push("a.name LIKE ?");
@@ -607,8 +639,12 @@ export class ArtistQueryService {
             countParams.push(searchParam);
         }
 
-        if (monitoredFilter !== undefined) {
-            where.push(monitoredFilter ? managedArtistPredicate : `NOT ${managedArtistPredicate}`);
+        if (monitoredFilter === false) {
+            // Pause (policy none) still has a LibraryArtists row; unmonitor is absence.
+            where.length = 0;
+            where.push(duplicateProviderArtistPredicate, unhydratedArtistShellPredicate, `NOT ${managedArtistPredicate}`);
+        } else if (monitoredFilter === true) {
+            // already requiring managedArtistPredicate
         }
 
         if (where.length) {
@@ -622,10 +658,10 @@ export class ArtistQueryService {
                 case "popularity":
                     return ` ORDER BY COALESCE(a.popularity, 0) ${sortDir}, a.name ASC, a.id ASC`;
                 case "scannedAt":
-                    return ` ORDER BY (a.last_scanned IS NULL) ASC, a.last_scanned ${sortDir}, a.id ASC`;
+                    return ` ORDER BY (last_scanned IS NULL) ASC, last_scanned ${sortDir}, a.id ASC`;
                 case "addedAt":
                 case "releaseDate":
-                    return ` ORDER BY (a.user_date_added IS NULL) ASC, a.user_date_added ${sortDir}, a.id ASC`;
+                    return ` ORDER BY (user_date_added IS NULL) ASC, user_date_added ${sortDir}, a.id ASC`;
                 case "name":
                 default:
                     return ` ORDER BY a.name ${sortDir}, a.id ASC`;
@@ -636,8 +672,11 @@ export class ArtistQueryService {
         params.push(limit, offset);
 
         const artists = db.prepare(query).all(...params) as any[];
+        const membershipsByArtistId = loadArtistLibraryMembershipMap(
+            artists.map((artist) => Number(artist.artist_metadata_id)),
+        );
         const totalResult = db.prepare(countQuery).get(...countParams) as { total: number };
-        const artistIds = artists.map((artist) => String(artist.id)).filter(Boolean);
+        const artistIds = artists.map((artist) => String(artist.mbid || artist.id)).filter(Boolean);
         // Read precomputed statistics only — never compute on the request thread.
         // A missing row stays 0 until the owning artist's next worker refresh.
         // Recomputing here used to stall GET /artists long enough for the UI
@@ -648,7 +687,10 @@ export class ArtistQueryService {
 
         return {
             items: artists.map((artist) => {
-                const artistId = String(artist.id);
+                const artistId = String(artist.mbid || artist.id);
+                const memberships = membershipsByArtistId.get(Number(artist.artist_metadata_id)) ?? [];
+                const policies = [...new Set(memberships.map((membership) => membership.policy))];
+                const paths = [...new Set(memberships.map((membership) => membership.path))];
                 const statistics = artistStatisticsById.get(artistId);
                 const resolvedArtistPicture = artistArtworkUrl(artist.mbid, artist.picture);
                 const countFields = includeCounts
@@ -667,24 +709,24 @@ export class ArtistQueryService {
 
                 return {
                     ...artist,
+                    id: artistId,
                     picture: resolvedArtistPicture,
-                    cover_image_url: artistFanartUrl(artist.mbid, artist.cover_image_url),
+                    cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
+                    effective_monitor: Number(artist.effective_monitor || 0),
+                    is_monitored: Boolean(artist.effective_monitor),
+                    path: paths.length === 1 ? paths[0] : null,
+                    policy: policies.length === 1 ? policies[0] : null,
+                    memberships,
                     ...countFields,
                     downloaded: includeDownloadStats
-                        ? (monitoredAlbumCount > 0
-                            ? Math.round((downloadedAlbumCount / monitoredAlbumCount) * 100)
-                            : 0)
-                        : Number(artist.downloaded ?? 0),
-                    is_monitored: Boolean(artist.effective_monitor),
-                    is_downloaded: includeDownloadStats
-                        ? monitoredAlbumCount > 0 && downloadedAlbumCount >= monitoredAlbumCount
-                        : false,
+                        ? (monitoredAlbumCount > 0 && downloadedAlbumCount >= monitoredAlbumCount ? 1 : 0)
+                        : undefined,
                 };
             }),
-            total: totalResult.total,
+            total: Number(totalResult?.total || 0),
             limit,
             offset,
-            hasMore: offset + artists.length < totalResult.total,
+            hasMore: offset + artists.length < Number(totalResult?.total || 0),
         };
     }
 
@@ -710,9 +752,9 @@ export class ArtistQueryService {
         }
 
         const artistDownloadStats = getArtistDownloadStats(artistId);
-        const biography = artist.bio_text == null
+        const biography = artist.overview == null
             ? (artist.biography == null ? null : String(artist.biography))
-            : String(artist.bio_text);
+            : String(artist.overview);
 
         return {
             id: String(artist.id),
@@ -725,6 +767,8 @@ export class ArtistQueryService {
             album_count: Number(artist.album_count ?? 0),
             downloaded: artistDownloadStats.downloadedPercent,
             is_monitored: Boolean(artist.effective_monitor),
+            policy: artist.policy ?? null,
+            memberships: artist.memberships,
             is_downloaded: artistDownloadStats.isDownloaded,
         };
     }
@@ -1397,7 +1441,7 @@ export class ArtistQueryService {
             });
         }
 
-        const bio = artist.bio_text || null;
+        const bio = artist.overview || null;
         const artistFiles = LibraryFilesService.resolveExistingFiles(db.prepare(`
       SELECT id AS id,
         COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
@@ -1458,6 +1502,7 @@ export class ArtistQueryService {
                 files: artistFiles,
                 downloaded: artistDownloadStats.downloadedPercent,
                 is_monitored: Boolean(artist.effective_monitor),
+                policy: artist.policy ?? null,
                 is_downloaded: artistDownloadStats.isDownloaded,
             },
             rows,

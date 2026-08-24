@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api } from "@/services/api";
+import { api, type ArtistLibraryScope } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import type { SearchResponseContract, SearchResultContract } from "@contracts/catalog";
 import { formatDurationSeconds } from "@/utils/format";
@@ -236,7 +236,11 @@ export const useSearch = () => {
         }
     }, []);
 
-    const addItem = useCallback(async (item: SearchResultItem) => {
+    const addItem = useCallback(async (
+        item: SearchResultItem,
+        artistScope?: ArtistLibraryScope,
+        artistPolicy: "all" | "new" | "none" = "all",
+    ) => {
         const previousMonitored = Boolean(item.monitored);
         const previousInLibrary = Boolean(item.inLibrary);
 
@@ -264,7 +268,11 @@ export const useSearch = () => {
             // These handle fetching data + setting monitor flags in one call
             switch (item.type) {
                 case 'artist':
-                    await api.monitorArtist(item.providerId, item.name);
+                    if (!artistScope) throw new Error("Choose at least one library for this artist.");
+                    await api.monitorArtist(item.providerId, artistScope, item.name);
+                    if (artistPolicy !== "all") {
+                        await api.setArtistPolicy(item.providerId, artistPolicy, artistScope);
+                    }
                     toastRef.current({
                         title: "Artist monitored",
                         description: `${item.name} is now being monitored`,
@@ -274,17 +282,6 @@ export const useSearch = () => {
                     await api.monitorAlbum(item.providerId, { allLibraries: true });
                     toastRef.current({
                         title: "Album monitored",
-                        description: `${item.name} is now being monitored`,
-                    });
-                    break;
-                case 'track':
-                    if (item.inLibrary) {
-                        await api.updateTrack(item.providerId, { monitored: true });
-                    } else {
-                        await api.addTrack(item.providerId);
-                    }
-                    toastRef.current({
-                        title: "Track monitored",
                         description: `${item.name} is now being monitored`,
                     });
                     break;
@@ -343,11 +340,10 @@ export const useSearch = () => {
         }
     }, [reconcileMonitorQueries, syncOptimisticMonitorState]);
 
-    const removeItem = useCallback(async (item: SearchResultItem) => {
+    const removeItem = useCallback(async (item: SearchResultItem, artistScope?: ArtistLibraryScope) => {
         const previousMonitored = Boolean(item.monitored);
 
-        // Optimistically update monitored status immediately
-        // Note: We only toggle monitored=false, NOT delete. Item stays in library but unmonitored.
+        // Optimistically update monitoring while the explicit library mutation runs.
         setSearchResults(prev => {
             const updateList = (list: SearchResultItem[]) =>
                 list.map(i => i.providerId === item.providerId ? { ...i, monitored: false } : i);
@@ -367,25 +363,47 @@ export const useSearch = () => {
         syncOptimisticMonitorState(item, false);
 
         try {
-            // Toggle monitored to false instead of deleting
+            let resultingMonitored = false;
             switch (item.type) {
                 case 'artist':
-                    await api.updateArtist(item.providerId, { monitored: false });
+                    if (!artistScope) throw new Error("Choose at least one library for this artist.");
+                    resultingMonitored = Boolean((await api.updateArtist(item.providerId, {
+                        monitored: false,
+                        ...artistScope,
+                    }) as { monitored?: boolean })?.monitored);
                     break;
                 case 'album':
                     await api.updateAlbum(item.providerId, { monitored: false }, { allLibraries: true });
-                    break;
-                case 'track':
-                    await api.updateTrack(item.providerId, { monitored: false });
                     break;
                 case 'video':
                     await api.updateVideo(item.providerId, { monitored: false });
                     break;
             }
 
+            if (item.type === "artist" && resultingMonitored) {
+                setSearchResults(prev => {
+                    const updateList = (list: SearchResultItem[]) => list.map(i => (
+                        i.providerId === item.providerId ? { ...i, monitored: true, inLibrary: true } : i
+                    ));
+                    return {
+                        ...prev,
+                        artists: updateList(prev.artists),
+                        albums: updateList(prev.albums),
+                        tracks: updateList(prev.tracks),
+                        videos: updateList(prev.videos),
+                        topResult: prev.topResult?.providerId === item.providerId
+                            ? { ...prev.topResult, monitored: true, inLibrary: true }
+                            : prev.topResult,
+                    };
+                });
+                syncOptimisticMonitorState(item, true);
+            }
+
             toastRef.current({
-                title: "Item unmonitored",
-                description: `${item.name} is no longer being monitored`,
+                title: item.type === "artist" ? "Artist libraries updated" : "Item unmonitored",
+                description: resultingMonitored
+                    ? `${item.name} remains monitored in another library.`
+                    : `${item.name} is no longer being monitored.`,
             });
 
             reconcileMonitorQueries(item);

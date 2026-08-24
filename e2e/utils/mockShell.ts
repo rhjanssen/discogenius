@@ -21,8 +21,8 @@ export const mockConnectedAuthStatus = {
 
 export const mockStatusOverview = {
   activity: {
-    pending: 0,
-    processing: 0,
+    queued: 0,
+    started: 0,
     history: 0,
   },
   taskQueueStats: [],
@@ -78,7 +78,7 @@ export async function stubShellApis(
     authStatus?: Record<string, unknown>;
     statusOverview?: Record<string, unknown>;
     activityResponse?: Record<string, unknown>;
-    tasksResponse?: Record<string, unknown>;
+    tasksResponse?: unknown[];
     queueResponse?: Record<string, unknown>;
     queueHistoryResponse?: Record<string, unknown>;
     monitoringStatus?: Record<string, unknown>;
@@ -104,18 +104,35 @@ export async function stubShellApis(
     });
   });
 
-  await page.route('**/api/status', async (route) => {
+  await page.route('**/api/v1/status', async (route) => {
+    const overrides = options?.statusOverview || {};
+    const activity = (overrides.activity || mockStatusOverview.activity) as Record<string, unknown>;
+    const commandStats = (overrides.commandStats || mockStatusOverview.commandStats) as Record<string, unknown>;
+    const normalizedCommandStats = Object.fromEntries(Object.entries(commandStats).map(([key, rawBucket]) => {
+      const bucket = rawBucket && typeof rawBucket === 'object' ? rawBucket as Record<string, unknown> : {};
+      return [key, {
+        queued: bucket.queued ?? bucket.pending,
+        started: bucket.started ?? bucket.processing,
+        failed: bucket.failed,
+      }];
+    }));
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         ...mockStatusOverview,
-        ...(options?.statusOverview || {}),
+        ...overrides,
+        activity: {
+          queued: activity.queued ?? activity.pending ?? 0,
+          started: activity.started ?? activity.processing ?? 0,
+          history: activity.history ?? 0,
+        },
+        commandStats: normalizedCommandStats,
       }),
     });
   });
 
-  await page.route('**/api/activity**', async (route) => {
+  await page.route('**/api/v1/history/activity**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -126,18 +143,15 @@ export async function stubShellApis(
     });
   });
 
-  await page.route('**/api/tasks**', async (route) => {
+  await page.route('**/api/v1/system/task**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        ...mockActivityResponse,
-        ...(options?.tasksResponse || options?.activityResponse || {}),
-      }),
+      body: JSON.stringify(options?.tasksResponse || []),
     });
   });
 
-  await page.route('**/api/queue/progress-stream**', async (route) => {
+  await page.route('**/api/v1/queue/progress-stream**', async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -149,7 +163,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route('**/api/queue/progress-stream*', async (route) => {
+  await page.route('**/api/v1/queue/progress-stream*', async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -161,7 +175,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route((url) => url.pathname === '/api/queue', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/queue', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -172,7 +186,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route((url) => url.pathname === '/api/queue/status', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/queue/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -180,7 +194,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route((url) => url.pathname === '/api/queue/details', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/queue/details', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -188,7 +202,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route((url) => url.pathname === '/api/queue/history', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/queue/history', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -199,7 +213,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route('**/api/monitoring/status', async (route) => {
+  await page.route('**/api/v1/monitoring/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -210,7 +224,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route((url) => url.pathname === '/api/events', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/events', async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -222,7 +236,7 @@ export async function stubShellApis(
     });
   });
 
-  await page.route('**/api/stats', async (route) => {
+  await page.route('**/api/v1/stats', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -259,9 +273,17 @@ export async function stubArtistPage(
     artistName: string;
     monitored?: boolean;
     rows?: unknown[];
+    rowsBySection?: Partial<Record<'albums' | 'tracks' | 'videos', unknown[]>>;
   },
 ) {
-  await page.route(`**/api/artists/${options.artistId}/page-db`, async (route) => {
+  await page.route((url) => url.pathname === `/api/v1/artist/${options.artistId}/page`, async (route) => {
+    const section = new URL(route.request().url()).searchParams.get('section') || 'all';
+    const sectionRows = section === 'identity'
+      ? []
+      : options.rowsBySection?.[section as 'albums' | 'tracks' | 'videos']
+        ?? (section === 'albums' ? options.rows : undefined)
+        ?? [];
+
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -270,17 +292,32 @@ export async function stubArtistPage(
           id: options.artistId,
           name: options.artistName,
           is_monitored: options.monitored ?? false,
+          policy: options.monitored ? 'all' : null,
+          memberships: [],
+          picture: null,
+          cover_image_url: null,
+          last_scanned: null,
           files: [],
         },
-        rows: options.rows || [],
-        album_count: Array.isArray(options.rows) ? options.rows.length : 0,
+        rows: sectionRows,
+        album_count: Array.isArray(options.rowsBySection?.albums)
+          ? options.rowsBySection.albums.length
+          : Array.isArray(options.rows) ? options.rows.length : 0,
         monitored_album_count: 0,
         needs_scan: false,
       }),
     });
   });
 
-  await page.route(`**/api/artists/${options.artistId}/activity`, async (route) => {
+  await page.route('**/api/v1/artist/libraries', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.route(`**/api/v1/artist/${options.artistId}/activity`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -305,7 +342,7 @@ export async function stubVideoDetail(
     artistName: string;
   },
 ) {
-  await page.route(`**/api/videos/${options.videoId}`, async (route) => {
+  await page.route(`**/api/v1/video/${options.videoId}`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

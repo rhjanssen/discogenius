@@ -63,7 +63,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
-import { api, type StreamingProviderStatus } from "@/services/api";
+import { api, type ArtistLibraryMembership, type StreamingProviderStatus } from "@/services/api";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import {
   dispatchActivityRefresh,
@@ -80,6 +80,11 @@ import {
 } from "@/pages/library/LibraryArtistsTab";
 import { LibraryToolbar } from "@/pages/library/LibraryToolbar";
 import { useLibraryFileMaintenance } from "@/pages/library/LibraryFileTools";
+import {
+  ArtistLibraryScopeDialog,
+  type ArtistLibraryAction,
+  type ArtistPolicy,
+} from "@/components/artists/ArtistLibraryScopeDialog";
 
 const Search24 = bundleIcon(Search24Filled, Search24Regular);
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
@@ -241,12 +246,23 @@ const Library = () => {
   const [selectedTab, setSelectedTab] = useState<string>(
     persistedSettings?.selectedTab ?? "artists"
   );
+  const [artistLibraryDialog, setArtistLibraryDialog] = useState<{
+    action: ArtistLibraryAction;
+    artists: any[];
+    policy: ArtistPolicy;
+  } | null>(null);
+  const [artistLibraryDialogBusy, setArtistLibraryDialogBusy] = useState(false);
+
+  const { data: artistLibraries = [] } = useQuery({
+    queryKey: ["artistLibraries"],
+    queryFn: () => api.getArtistLibraries(),
+    staleTime: 60_000,
+  });
 
   const {
     artists,
     albums,
     loading,
-    toggleArtistMonitored,
     fetchLibrary,
     stats,
     hasMoreArtists,
@@ -537,18 +553,75 @@ const Library = () => {
     artistSelection.clearSelection();
   };
 
-  const setSelectedArtistMonitoring = async (monitored: boolean) => {
-    const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
-      await api.toggleArtistMonitored(artist.id, monitored);
-      dispatchMonitorStateChanged({ type: "artist", providerId: artist.id, monitored });
-    });
+  const openArtistLibraryDialog = (
+    action: ArtistLibraryAction,
+    selectedArtists: any[],
+    policy: ArtistPolicy = "all",
+  ) => {
+    const eligibleArtists = action === "monitor"
+      ? selectedArtists
+      : selectedArtists.filter((artist) => Array.isArray(artist.memberships) && artist.memberships.length > 0);
+    if (eligibleArtists.length === 0) {
+      toast({
+        title: "No monitored library memberships",
+        description: "Monitor the artist in a library before changing its policy or removing it.",
+      });
+      return;
+    }
+    setArtistLibraryDialog({ action, artists: eligibleArtists, policy });
+  };
 
-    if (succeeded > 0) {
-      dispatchLibraryUpdated();
+  const applyArtistLibraryChange = async (libraryIds: number[], policy: ArtistPolicy) => {
+    if (!artistLibraryDialog) return;
+    const { action, artists: selectedArtists } = artistLibraryDialog;
+    const eligibleArtists = action === "monitor"
+      ? selectedArtists
+      : selectedArtists.filter((artist) => {
+          const memberships: ArtistLibraryMembership[] = Array.isArray(artist.memberships) ? artist.memberships : [];
+          return memberships.some((membership) => libraryIds.includes(membership.library_id));
+        });
+    if (eligibleArtists.length === 0) {
+      toast({
+        title: "Nothing to update",
+        description: "None of the selected artists belongs to the chosen libraries.",
+      });
+      return;
     }
 
-    showBulkResult(monitored ? "Monitoring enabled" : "Monitoring disabled", succeeded, failed);
-    artistSelection.clearSelection();
+    setArtistLibraryDialogBusy(true);
+    try {
+      const { succeeded, failed } = await runSelectionActionWithConcurrency(eligibleArtists, async (artist: any) => {
+        const memberships: ArtistLibraryMembership[] = Array.isArray(artist.memberships) ? artist.memberships : [];
+        const scopedLibraryIds = action === "monitor"
+          ? libraryIds
+          : libraryIds.filter((libraryId) => memberships.some((membership) => membership.library_id === libraryId));
+        const response: any = action === "monitor"
+          ? await api.updateArtist(artist.id, { monitored: true, policy, libraryIds: scopedLibraryIds })
+          : action === "policy"
+            ? await api.updateArtist(artist.id, { policy, libraryIds: scopedLibraryIds })
+            : await api.updateArtist(artist.id, { monitored: false, libraryIds: scopedLibraryIds });
+        dispatchMonitorStateChanged({
+          type: "artist",
+          providerId: artist.id,
+          monitored: Boolean(response?.monitored),
+        });
+      });
+
+      if (succeeded > 0) {
+        dispatchLibraryUpdated();
+        await refetchArtists();
+      }
+      const title = action === "unmonitor"
+        ? "Library memberships removed"
+        : action === "policy"
+          ? "Acquisition policy updated"
+          : "Artists monitored";
+      showBulkResult(title, succeeded, failed);
+      artistSelection.clearSelection();
+      setArtistLibraryDialog(null);
+    } finally {
+      setArtistLibraryDialogBusy(false);
+    }
   };
 
   const queueSelectedAlbumDownload = async () => {
@@ -643,33 +716,6 @@ const Library = () => {
     }
 
     showBulkResult("Track download queued", succeeded, failed);
-    trackSelection.clearSelection();
-  };
-
-  const setSelectedTrackMonitoring = async (monitored: boolean) => {
-    const { succeeded, failed } = await runSelectionActionWithConcurrency(trackSelection.selectedItems, async (track: any) => {
-      await api.updateTrack(track.id, { monitored });
-      dispatchMonitorStateChanged({ type: "track", providerId: track.id, monitored });
-    });
-
-    if (succeeded > 0) {
-      dispatchLibraryUpdated();
-    }
-
-    showBulkResult(monitored ? "Monitoring enabled" : "Monitoring disabled", succeeded, failed);
-    trackSelection.clearSelection();
-  };
-
-  const setSelectedTrackLockState = async (locked: boolean) => {
-    const { succeeded, failed } = await runSelectionActionWithConcurrency(trackSelection.selectedItems, async (track: any) => {
-      await api.updateTrack(track.id, { monitored_lock: locked });
-    });
-
-    if (succeeded > 0) {
-      dispatchLibraryUpdated();
-    }
-
-    showBulkResult(locked ? "Tracks locked" : "Tracks unlocked", succeeded, failed);
     trackSelection.clearSelection();
   };
 
@@ -866,7 +912,11 @@ const Library = () => {
         title={artist.name}
         subtitle={typeof albumCount === "number" ? `${albumCount} ${albumCount === 1 ? "release" : "releases"}` : "Artist"}
         monitored={artist.is_monitored}
-        onMonitorToggle={() => toggleArtistMonitored(artist.id, !artist.is_monitored)}
+        onMonitorToggle={() => openArtistLibraryDialog(
+          artist.is_monitored ? "unmonitor" : "monitor",
+          [artist],
+          "all",
+        )}
         placeholder={
           <div className={cardStyles.placeholderBg}>
             <Person24 className={styles.placeholderIcon} />
@@ -932,7 +982,11 @@ const Library = () => {
     onScan: handleArtistScan,
     onCurate: handleArtistCurate,
     onDownload: handleArtistDownload,
-    onToggleMonitored: toggleArtistMonitored,
+    onToggleMonitored: (artist) => openArtistLibraryDialog(
+      artist.is_monitored ? "unmonitor" : "monitor",
+      [artist],
+      "all",
+    ),
     showVideos: musicVideosEnabled,
   });
 
@@ -1075,7 +1129,7 @@ const Library = () => {
       render: (video: any) => {
         const src = mediaCoverProxySrc(video);
         return src ? (
-          <img src={src} alt={video.title} className={dgCell.thumbnailWide} />
+          <img src={src} alt="" className={dgCell.thumbnailWide} />
         ) : (
           <div className={mergeClasses(dgCell.thumbnailWide, dgCell.thumbnailPlaceholder)}>
             <Speaker224 className={styles.compactIcon} />
@@ -1225,6 +1279,7 @@ const Library = () => {
   ) {
     return (
       <>
+        <h1 className="visually-hidden">Library</h1>
         <EmptyState
           title="Your library is empty"
           description="Add an artist from MusicBrainz, or import followed artists from a connected provider."
@@ -1349,8 +1404,10 @@ const Library = () => {
           onWriteTags={() => fileMaintenance.openRetagPreview({
             artistIds: artistSelection.selectedItems.map((artist: any) => String(artist.id)),
           })}
-          onMonitor={() => void setSelectedArtistMonitoring(true)}
-          onUnmonitor={() => void setSelectedArtistMonitoring(false)}
+          onMonitor={() => openArtistLibraryDialog("monitor", artistSelection.selectedItems, "all")}
+          onNew={() => openArtistLibraryDialog("policy", artistSelection.selectedItems, "new")}
+          onPause={() => openArtistLibraryDialog("policy", artistSelection.selectedItems, "none")}
+          onUnmonitor={() => openArtistLibraryDialog("unmonitor", artistSelection.selectedItems)}
           fileToolsBusy={fileMaintenance.busy}
           renameIcon={fileMaintenance.renameIcon}
           retagIcon={fileMaintenance.retagIcon}
@@ -1475,34 +1532,6 @@ const Library = () => {
               },
               disabled: trackSelection.selectedCount === 0 || fileMaintenance.busy,
             },
-            {
-              key: "monitor",
-              label: "Monitor",
-              icon: <Eye24 />,
-              onClick: () => void setSelectedTrackMonitoring(true),
-              disabled: trackSelection.selectedCount === 0,
-            },
-            {
-              key: "unmonitor",
-              label: "Unmonitor",
-              icon: <EyeOff24 />,
-              onClick: () => void setSelectedTrackMonitoring(false),
-              disabled: trackSelection.selectedCount === 0,
-            },
-            {
-              key: "lock",
-              label: "Lock",
-              icon: <LockClosed24 />,
-              onClick: () => void setSelectedTrackLockState(true),
-              disabled: trackSelection.selectedCount === 0,
-            },
-            {
-              key: "unlock",
-              label: "Unlock",
-              icon: <LockOpen24 />,
-              onClick: () => void setSelectedTrackLockState(false),
-              disabled: trackSelection.selectedCount === 0,
-            },
           ]}
         />
       );
@@ -1621,6 +1650,7 @@ const Library = () => {
 
   return (
     <div className={styles.container}>
+      <h1 className="visually-hidden">Library</h1>
       <div className={styles.pageBody}>
         <LibraryToolbar
           selectedTab={selectedTab}
@@ -1650,6 +1680,28 @@ const Library = () => {
           onViewModeChange={setViewMode}
         />
         {fileMaintenance.dialogs}
+        {artistLibraryDialog ? (
+          <ArtistLibraryScopeDialog
+            open
+            action={artistLibraryDialog.action}
+            artistName={artistLibraryDialog.artists.length === 1
+              ? String(artistLibraryDialog.artists[0]?.name || "Artist")
+              : `${artistLibraryDialog.artists.length} artists`}
+            libraries={artistLibraries}
+            initialLibraryIds={(() => {
+              const current = new Set<number>();
+              for (const artist of artistLibraryDialog.artists) {
+                const memberships: ArtistLibraryMembership[] = Array.isArray(artist.memberships) ? artist.memberships : [];
+                memberships.forEach((membership) => current.add(membership.library_id));
+              }
+              return current.size > 0 ? [...current] : artistLibraries.map((library) => library.id);
+            })()}
+            initialPolicy={artistLibraryDialog.policy}
+            busy={artistLibraryDialogBusy}
+            onOpenChange={(open) => { if (!open) setArtistLibraryDialog(null); }}
+            onConfirm={applyArtistLibraryChange}
+          />
+        ) : null}
 
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>

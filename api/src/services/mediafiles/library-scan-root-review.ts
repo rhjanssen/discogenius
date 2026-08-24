@@ -3,6 +3,11 @@ import path from "path";
 import { db } from "../../database.js";
 import type { ImportCandidate } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
+import {
+    mergeProbedAudioMetrics,
+    probeAudioStreamMetrics,
+    shouldProbeAudioMetrics,
+} from "./audioUtils.js";
 
 export function clearRootFolderReviewEntries(roots: Iterable<string>, folderNames: string[]) {
     const deleteByPrefix = db.prepare(`
@@ -18,7 +23,7 @@ export function clearRootFolderReviewEntries(roots: Iterable<string>, folderName
     }
 }
 
-export function persistRootReviewCandidates(candidates: ImportCandidate[]) {
+export async function persistRootReviewCandidates(candidates: ImportCandidate[]) {
     if (candidates.length === 0) {
         return;
     }
@@ -59,7 +64,25 @@ export function persistRootReviewCandidates(candidates: ImportCandidate[]) {
                 continue;
             }
 
-            const metrics = getUnmappedMediaMetrics(file.metadata?.format, file.extension);
+            let metrics = getUnmappedMediaMetrics(file.metadata?.format, file.extension);
+            if (shouldProbeAudioMetrics(file.path, metrics)) {
+                const merged = mergeProbedAudioMetrics({
+                    duration: metrics.duration ?? undefined,
+                    bitrate: metrics.bitrate ?? undefined,
+                    sampleRate: metrics.sampleRate ?? undefined,
+                    bitDepth: metrics.bitDepth ?? undefined,
+                    channels: metrics.channels ?? undefined,
+                    codec: metrics.codec ?? undefined,
+                }, await probeAudioStreamMetrics(file.path));
+                metrics = getUnmappedMediaMetrics({
+                    duration: merged.duration,
+                    bitrate: merged.bitrate,
+                    sampleRate: merged.sampleRate,
+                    bitsPerSample: merged.bitDepth,
+                    numberOfChannels: merged.channels,
+                    codec: merged.codec,
+                }, file.extension);
+            }
 
             upsertUnmappedFile.run(
                 file.path,

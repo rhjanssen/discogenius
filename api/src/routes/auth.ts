@@ -120,13 +120,13 @@ router.post("/credentials", async (req, res) => {
 // Generic external-downloader login (e.g. the Apple Music decryption
 // wrapper). The provider plugin owns the mechanics; credentials pass through
 // transiently and are never persisted by the core.
-router.get("/:providerId/downloader-login/status", (req, res) => {
+router.get("/:providerId/downloader-login/status", async (req, res) => {
   try {
     const provider = streamingProviderManager.getStreamingProvider(req.params.providerId);
     if (!provider.getDownloaderLoginStatus) {
       return res.status(501).json({ detail: `${provider.name} has no downloader login` });
     }
-    res.json(provider.getDownloaderLoginStatus());
+    res.json(await provider.getDownloaderLoginStatus());
   } catch (error: any) {
     res.status(404).json({ detail: error.message });
   }
@@ -147,7 +147,9 @@ router.post("/:providerId/downloader-login", async (req, res) => {
       return res.status(400).json({ detail: "Credentials are required." });
     }
     await provider.startDownloaderLogin(credentials);
-    res.json({ success: true, status: provider.getDownloaderLoginStatus?.() ?? { status: "logging_in", message: "" } });
+    res.json({ success: true, status: provider.getDownloaderLoginStatus
+      ? await provider.getDownloaderLoginStatus()
+      : { status: "logging_in", message: "" } });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

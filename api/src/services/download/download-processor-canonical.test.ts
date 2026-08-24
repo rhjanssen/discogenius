@@ -30,8 +30,8 @@ function resetRows() {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
 }
 
 function seedTypedRelease(input: {
@@ -49,12 +49,12 @@ function seedTypedRelease(input: {
   const releaseMbid = `release-${input.suffix}`;
   const recordingMbid = `recording-${input.suffix}`;
   const trackMbid = `track-${input.suffix}`;
-  db.prepare(`
-    INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)
-  `).run(artistMbid, input.artistName, artistMbid);
   const artist = db.prepare(`
+
     INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+
     RETURNING id
+
   `).get(artistMbid, input.artistName) as { id: number };
   const releaseGroup = db.prepare(`
     INSERT INTO Albums (
@@ -184,6 +184,7 @@ function seedTypedRelease(input: {
   `).run(plan.id, track.id, source.id, trackMatch.id, variant.id);
 
   return {
+    artistId: artist.id,
     artistMbid,
     releaseGroupMbid,
     releaseMbid,
@@ -207,12 +208,12 @@ function seedTypedVideo(input: {
   title: string;
 }) {
   const artistMbid = `video-artist-${input.suffix}`;
-  db.prepare(`
-    INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)
-  `).run(artistMbid, input.artistName, artistMbid);
   const artist = db.prepare(`
+
     INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+
     RETURNING id
+
   `).get(artistMbid, input.artistName) as { id: number };
   const recording = db.prepare(`
     INSERT INTO Recordings (
@@ -238,6 +239,7 @@ function seedTypedVideo(input: {
     ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
   `).run(providerVideo.id, recording.id);
   return {
+    artistId: artist.id,
     artistMbid,
     recordingMbid: `video-recording-${input.suffix}`,
     recordingId: recording.id,
@@ -402,12 +404,12 @@ test("download processor detects canonical track and video files without Provide
   });
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, release_group_id, album_edition_id, track_id, recording_id,
+      artist_metadata_id, release_group_id, album_edition_id, track_id, recording_id,
       library_id, file_path, relative_path, library_root, filename, extension,
       file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'track', 'audio')
   `).run(
-    graph.artistMbid,
+    graph.artistId,
     graph.releaseGroupId,
     graph.editionId,
     graph.trackId,
@@ -421,11 +423,11 @@ test("download processor detects canonical track and video files without Provide
   );
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, recording_id, file_path, relative_path, library_root, filename,
+      artist_metadata_id, recording_id, file_path, relative_path, library_root, filename,
       extension, file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'video', 'video')
   `).run(
-    video.artistMbid,
+    video.artistId,
     video.recordingId,
     "C:/Music/Media Artist/video.mp4",
     "Media Artist/video.mp4",
@@ -492,12 +494,12 @@ test("download processor scopes provider offers when services reuse the same res
   });
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, release_group_id, album_edition_id, track_id, recording_id,
+      artist_metadata_id, release_group_id, album_edition_id, track_id, recording_id,
       library_id, file_path, relative_path, library_root, filename, extension,
       file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'tidal.flac', ?, 'tidal.flac', 'flac', 'track', 'audio')
   `).run(
-    tidal.artistMbid,
+    tidal.artistId,
     tidal.releaseGroupId,
     tidal.editionId,
     tidal.trackId,

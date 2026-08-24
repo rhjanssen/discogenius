@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
+import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-prune-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -17,8 +17,9 @@ const { LibraryFilesService } = await import("./library-files.js");
 function reset() {
   for (const t of [
     "TrackFiles", "ExtraFiles", "LibraryVideos", "LibraryEditions", "LibraryAlbums",
+    "LibraryArtists",
     "ProviderVideoMatches", "ProviderItems", "Tracks", "Recordings", "AlbumEditions",
-    "Albums", "Artists", "ArtistMetadata",
+    "Albums", "ArtistMetadata",
   ]) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
@@ -29,9 +30,8 @@ afterEach(reset);
 let testLibraryId = 0;
 
 function seedArtist() {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
-    .run("art1", "Prune Artist", "artist-mbid", 1);
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Prune Artist");
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Prune Artist");
   db.prepare(`
     INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
     VALUES ('Prune Canonical', '{}')
@@ -60,6 +60,7 @@ function seedArtist() {
   testLibraryId = (db.prepare(`
     SELECT id FROM Libraries WHERE name = 'Prune Canonical'
   `).get() as { id: number }).id;
+  seedLibraryArtistMonitoring(db, "artist-mbid");
 }
 
 function seedLibraryGroup(rg: string, monitored: number, lock = 0) {
@@ -111,14 +112,14 @@ function insertFile(o: {
   tfId += 1;
   const info = db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_edition_id,
+      artist_metadata_id, library_id, release_group_id, album_edition_id,
       recording_id,
       canonical_release_group_mbid, canonical_release_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "art1",
+    (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id,
     o.rg ? testLibraryId : null,
     o.rg ? (db.prepare("SELECT id FROM Albums WHERE mbid = ?").get(o.rg) as { id: number }).id : null,
     o.albumEditionId ?? null,
@@ -162,7 +163,7 @@ test("selectUnmonitoredFileRows keeps monitored/locked anchors and selects only 
   }); // SELECT
   const fNoAnchor = insertFile({ fileType: "track", slot: "stereo" });                       // keep (unclassifiable)
 
-  const selectedIds = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id).sort((a, b) => a - b);
+  const selectedIds = LibraryFilesService.selectUnmonitoredFileRows("artist-mbid").map((r) => r.id).sort((a, b) => a - b);
 
   assert.deepEqual(selectedIds, [fUnmonAudio, fUnmonVideo].sort((a, b) => a - b));
   // Sanity: the kept ones are absent.
@@ -178,7 +179,7 @@ test("an unmonitored library release group does not affect monitored sibling rel
   const keep = insertFile({ fileType: "track", slot: "stereo", rg: "rg-a" });
   const select = insertFile({ fileType: "track", slot: "stereo", rg: "rg-b" });
 
-  const ids = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id);
+  const ids = LibraryFilesService.selectUnmonitoredFileRows("artist-mbid").map((r) => r.id);
   assert.deepEqual(ids, [select]);
   assert.equal(ids.includes(keep), false);
 });
@@ -220,7 +221,7 @@ test("files of an unmonitored edition are pruned even when the album stays monit
     releaseMbid: "ed-x",
   });
 
-  const ids = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id);
+  const ids = LibraryFilesService.selectUnmonitoredFileRows("artist-mbid").map((r) => r.id);
   assert.deepEqual(ids, [prune]);
   assert.equal(ids.includes(keep), false);
 });
@@ -310,7 +311,7 @@ test("unmonitored-edition files are pruned even when they could fill a hole on t
     quality: "LOSSLESS",
   });
 
-  const ids = LibraryFilesService.selectUnmonitoredFileRows("art1").map((r) => r.id).sort((a, b) => a - b);
+  const ids = LibraryFilesService.selectUnmonitoredFileRows("artist-mbid").map((r) => r.id).sort((a, b) => a - b);
   assert.deepEqual(ids, [keepFiller, pruneDuplicate, pruneBonus].sort((a, b) => a - b));
 });
 
@@ -359,12 +360,12 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
 
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_edition_id, recording_id,
+      artist_metadata_id, library_id, release_group_id, album_edition_id, recording_id,
       canonical_release_group_mbid, canonical_release_mbid, canonical_recording_mbid,
       library_slot, file_path, relative_path, library_root, filename, extension, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "art1",
+    (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id,
     testLibraryId,
     albumId,
     leftover.id,
@@ -388,7 +389,7 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
       extension, file_type, library_slot
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "art1",
+    "artist-mbid",
     Number((db.prepare("SELECT id FROM TrackFiles WHERE file_path = ?").get(holeFillPath) as { id: number }).id),
     path.relative(tempDir, extraMp3Path),
     extraMp3Path,
@@ -398,7 +399,7 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
     "stereo",
   );
 
-  const result = LibraryFilesService.pruneUnmonitoredFiles("art1");
+  const result = LibraryFilesService.pruneUnmonitoredFiles("artist-mbid");
   assert.equal(fs.existsSync(holeFillPath), false, "unmonitored-edition audio is removed with the folder");
   assert.equal(fs.existsSync(extraPath), false, "untracked extra in the unmonitored folder is removed");
   assert.equal(fs.existsSync(extraMp3Path), false, "duplicate ExtraFiles mp3 leaves with the unmonitored folder");

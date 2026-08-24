@@ -18,6 +18,7 @@ import {
 } from "./fingerprint.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
 import { shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
+import { loadArtistMetadataIdentity } from "../music/managed-artists.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -894,13 +895,7 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
 
 export class AudioTagService {
   private static refreshArtistPathFromTemplateIfNeeded(artistId: number) {
-    const artist = db.prepare("SELECT id, name, mbid, path FROM Artists WHERE id = ?").get(artistId) as {
-      id: number | string;
-      name: string | null;
-      mbid: string | null;
-      path: string | null;
-    } | undefined;
-
+    const artist = loadArtistMetadataIdentity(String(artistId));
     if (!artist) {
       return;
     }
@@ -930,7 +925,7 @@ export class AudioTagService {
     const params: Array<string> = [];
 
     if (options.artistId) {
-      where.push("lf.artist_id = ?");
+      where.push("lf.artist_metadata_id = ?");
       params.push(options.artistId);
     }
     if (options.albumId) {
@@ -973,7 +968,7 @@ export class AudioTagService {
     const params: Array<string | number> = [];
 
     if (options.artistId) {
-      where.push("lf.artist_id = ?");
+      where.push("lf.artist_metadata_id = ?");
       params.push(options.artistId);
     }
     if (options.albumId) {
@@ -1013,7 +1008,7 @@ export class AudioTagService {
     return `
       SELECT
         lf.id,
-        lf.artist_id,
+        lf.artist_metadata_id,
         COALESCE(lf.release_group_id, canonical_group.id, alb.id) AS album_id,
         lf.provider_id AS media_id,
         lf.file_path,
@@ -1099,7 +1094,7 @@ export class AudioTagService {
         canonical_recording.artist_credit AS recording_artist_credit,
         canonical_recording.credits AS recording_data
       FROM TrackFiles lf
-      JOIN Artists artist ON artist.id = lf.artist_id
+      JOIN ArtistMetadata artist ON artist.id = lf.artist_metadata_id
       LEFT JOIN Tracks canonical_track
         ON canonical_track.id = lf.track_id
         OR (lf.track_id IS NULL AND canonical_track.mbid = lf.canonical_track_mbid)
@@ -1229,7 +1224,7 @@ export class AudioTagService {
       LEFT JOIN ArtistMetadata am ON am.mbid = artist.mbid
       WHERE ${whereClause}
         AND (provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
-      ORDER BY lf.artist_id, COALESCE(canonical_group.mbid, alb.mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
+      ORDER BY lf.artist_metadata_id, COALESCE(canonical_group.mbid, alb.mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
     `;
   }
@@ -1268,14 +1263,25 @@ export class AudioTagService {
   private static getAlbumArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
     if (row.album_mb_release_group_id) {
       const canonicalRows = db.prepare(`
-        SELECT COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS name
-        FROM AlbumArtists aa
-        LEFT JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
-        WHERE aa.release_group_mbid = ?
-        ORDER BY aa.ord ASC
+        SELECT COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS name
+        FROM ReleaseGroupArtistCredits credit
+        JOIN Albums release_group ON release_group.id = credit.release_group_id
+        JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+        WHERE release_group.mbid = ?
+        ORDER BY credit.ordinal ASC
       `).all(row.album_mb_release_group_id) as Array<{ name?: string | null }>;
 
-      const canonicalNames = canonicalRows.map((canonicalRow) => String(canonicalRow.name || "").trim()).filter(Boolean);
+      let canonicalNames = canonicalRows.map((canonicalRow) => String(canonicalRow.name || "").trim()).filter(Boolean);
+      if (canonicalNames.length === 0) {
+        const listingRows = db.prepare(`
+          SELECT COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS name
+          FROM AlbumArtists aa
+          LEFT JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
+          WHERE aa.release_group_mbid = ?
+          ORDER BY aa.ord ASC
+        `).all(row.album_mb_release_group_id) as Array<{ name?: string | null }>;
+        canonicalNames = listingRows.map((listingRow) => String(listingRow.name || "").trim()).filter(Boolean);
+      }
       if (canonicalNames.length > 0) {
         return canonicalNames;
       }
@@ -1656,7 +1662,7 @@ export class AudioTagService {
 
         if (primaryArtistCredit?.id) {
           db.prepare(`
-            UPDATE Artists
+            UPDATE ArtistMetadata
             SET mbid = COALESCE(mbid, ?)
             WHERE id = ?
           `).run(primaryArtistCredit.id, nextRow.artist_id);
@@ -1697,7 +1703,7 @@ export class AudioTagService {
 
         if (primaryArtistCredit?.id) {
           db.prepare(`
-            UPDATE Artists
+            UPDATE ArtistMetadata
             SET mbid = COALESCE(mbid, ?)
             WHERE id = ?
           `).run(primaryArtistCredit.id, nextRow.artist_id);
@@ -1835,7 +1841,7 @@ export class AudioTagService {
 
     if (primaryArtistCredit?.id) {
       db.prepare(`
-        UPDATE Artists
+        UPDATE ArtistMetadata
         SET mbid = COALESCE(mbid, ?)
         WHERE id = ?
       `).run(primaryArtistCredit.id, nextRow.artist_id);

@@ -130,19 +130,25 @@ export class LibraryCurationRepository {
     monitored: boolean;
     creditedScope: CreditedScope;
   }): number {
+    // Unmonitor DELETEs the membership row. Policy only exists on a kept row.
+    if (!input.monitored) {
+      this.db.prepare(`
+        DELETE FROM LibraryArtists
+        WHERE library_id = ? AND artist_metadata_id = ?
+      `).run(input.libraryId, input.managedArtistId);
+      return 0;
+    }
     const row = this.db.prepare(`
       INSERT INTO LibraryArtists (
-        library_id, managed_artist_id, monitored, credited_scope, updated_at
-      ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(library_id, managed_artist_id) DO UPDATE SET
-        monitored = excluded.monitored,
+        library_id, artist_metadata_id, policy, credited_scope, updated_at
+      ) VALUES (?, ?, 'all', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(library_id, artist_metadata_id) DO UPDATE SET
         credited_scope = excluded.credited_scope,
         updated_at = CURRENT_TIMESTAMP
       RETURNING id
     `).get(
       input.libraryId,
       input.managedArtistId,
-      Number(input.monitored),
       input.creditedScope,
     ) as { id: number };
     return row.id;

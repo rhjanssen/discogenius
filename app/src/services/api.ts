@@ -182,6 +182,26 @@ function toApiUrl(endpoint: string): string {
  * audio library.
  */
 export type AlbumLibraryScope = { libraryId: number } | { allLibraries: true };
+export type ArtistLibraryScope = { libraryIds: number[] } | { allLibraries: true };
+
+export interface ArtistLibraryOption {
+  id: number;
+  name: string;
+  root_path: string;
+}
+
+export interface ArtistLibraryMembership {
+  id: number;
+  library_id: number;
+  library_name: string;
+  root_path: string;
+  policy: "all" | "new" | "none";
+  path: string | null;
+  library_origin: string;
+  metadata_status: string | null;
+  metadata_last_checked_at: string | null;
+  added_at: string;
+}
 
 type ApiRequestOptions = RequestInit & {
   timeoutMs?: number | null;
@@ -747,18 +767,18 @@ class ApiClient {
     return this.request(`/v1/artist/${artistId}/page${query}`, requestOptions);
   }
 
-  async addArtist(providerId: string, name?: string) {
+  async addArtist(providerId: string, scope: ArtistLibraryScope, name?: string) {
     return this.request(`/v1/artist`, {
       method: 'POST',
-      body: JSON.stringify(name ? { id: providerId, name } : { id: providerId }),
+      body: JSON.stringify({ id: providerId, ...(name ? { name } : {}), ...scope }),
     });
   }
 
   // Monitor endpoints - for explicit "Monitor" button action
-  async monitorArtist(artistId: string, name?: string) {
+  async monitorArtist(artistId: string, scope: ArtistLibraryScope, name?: string) {
     return this.request(`/v1/artist/${artistId}/monitor`, {
       method: 'POST',
-      body: name ? JSON.stringify({ name }) : undefined,
+      body: JSON.stringify({ ...(name ? { name } : {}), ...scope }),
     });
   }
 
@@ -927,20 +947,6 @@ class ApiClient {
 
   async getTrack(trackId: string) {
     return this.request(`/v1/track/${trackId}`);
-  }
-
-  async addTrack(providerId: string) {
-    return this.request(`/v1/track`, {
-      method: 'POST',
-      body: JSON.stringify({ id: providerId }),
-    });
-  }
-
-  async updateTrack(trackId: string, updates: any) {
-    return this.request(`/v1/track/${trackId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    });
   }
 
   async getVideos(params?: {
@@ -1330,7 +1336,14 @@ class ApiClient {
     return this.request(`/v1/artist/${artistId}/activity`, options);
   }
 
-  async updateArtist(artistId: string, updates: any) {
+  async getArtistLibraries(): Promise<ArtistLibraryOption[]> {
+    return this.request('/v1/artist/libraries');
+  }
+
+  async updateArtist(
+    artistId: string,
+    updates: { monitored?: boolean; policy?: "all" | "new" | "none" } & ArtistLibraryScope,
+  ) {
     return this.request(`/v1/artist/${artistId}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
@@ -1341,8 +1354,12 @@ class ApiClient {
     return this.request(`/v1/artist/${artistId}/curate`, { method: 'POST' });
   }
 
-  async toggleArtistMonitored(artistId: string, monitored: boolean) {
-    return this.updateArtist(artistId, { monitored });
+  async toggleArtistMonitored(artistId: string, monitored: boolean, scope: ArtistLibraryScope) {
+    return this.updateArtist(artistId, { monitored, ...scope });
+  }
+
+  async setArtistPolicy(artistId: string, policy: "all" | "new" | "none", scope: ArtistLibraryScope) {
+    return this.updateArtist(artistId, { policy, ...scope });
   }
 
   async deleteArtist(artistId: string, options?: { deleteFiles?: boolean }) {

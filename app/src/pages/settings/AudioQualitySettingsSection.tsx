@@ -148,20 +148,25 @@ export const AudioQualitySettingsSection = ({
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={audioQuality || "max"}
+                    aria-label="Preferred stereo audio quality"
                     onChange={(_, data) => onAudioQualityChange(
                         data.value as AudioQualityValue,
                     )}
                 >
                     {QUALITY_OPTIONS.map((option) => (
-                        <label key={option.value} className={styles.qualityOption} htmlFor={`quality-${option.value}`}>
-                            <Radio value={option.value} id={`quality-${option.value}`} />
-                            <div className={styles.qualityContent}>
-                                <Text weight="semibold">{option.label}</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    {option.description}
-                                </Text>
-                            </div>
-                        </label>
+                        <Radio
+                            key={option.value}
+                            className={styles.qualityOption}
+                            value={option.value}
+                            label={(
+                                <div className={styles.qualityContent}>
+                                    <Text weight="semibold">{option.label}</Text>
+                                    <Text size={200} className={styles.mutedText}>
+                                        {option.description}
+                                    </Text>
+                                </div>
+                            )}
+                        />
                     ))}
                 </RadioGroup>
                 <div className={styles.rowAfterGroup}>

@@ -126,7 +126,7 @@ export default function AdminLogin() {
     <div className={styles.container}>
       <Card className={styles.card}>
         <div className={styles.header}>
-          <Title2>
+          <Title2 as="h1">
             <span style={{ display: "inline-flex", gap: tokens.spacingHorizontalS, alignItems: "center" }}>
               <LockClosed24 /> Password Required
             </span>

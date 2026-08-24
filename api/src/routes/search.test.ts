@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedSelectedAcquisitionPlan } from "../test-support/acquisition-plan-fixture.js";
-import { selectVideoInVideoLibraries } from "../test-support/active-schema-fixture.js";
+import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-search-route-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.search.test.db");
@@ -29,6 +29,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ProviderTrackMatches").run();
   db.prepare("DELETE FROM ProviderVideoMatches").run();
   db.prepare("DELETE FROM ProviderEditionMatches").run();
@@ -38,8 +39,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -83,11 +84,6 @@ function insertCanonicalArtist() {
     RETURNING id
   `).get() as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitored)
-    VALUES ('artist-id', 'Search Artist', 'artist-mbid', 1)
-  `).run();
-
   return artist;
 }
 
@@ -99,7 +95,7 @@ test("local artist search honors canonical artwork preference", async () => {
     WHERE mbid = 'artist-mbid'
   `).run();
   dbModule.db.prepare(`
-    UPDATE Artists
+    UPDATE ArtistMetadata
     SET picture = 'https://provider.example/provider.jpg'
     WHERE mbid = 'artist-mbid'
   `).run();
@@ -117,12 +113,12 @@ test("local artist search honors canonical artwork preference", async () => {
 
 test("local artist search keeps two MusicBrainz artists that share a name", async () => {
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitored, popularity)
-    VALUES
-      ('band-id', 'Bastille', 'band-mbid', 1, 90),
-      ('alias-id', 'Bastille', 'alias-mbid', 0, 10),
-      ('provider-id', 'Bastille', NULL, 0, 50)
+    INSERT INTO ArtistMetadata (mbid, name, popularity) VALUES
+      ('band-mbid', 'Bastille', 90),
+      ('alias-mbid', 'Bastille', 10)
   `).run();
+
+seedLibraryArtistMonitoring(dbModule.db, "band-mbid");
 
   const res = createMockResponse();
   await getSearchHandler()({ query: { query: "Bastille", type: "artists", limit: "10" } }, res);
@@ -130,7 +126,7 @@ test("local artist search keeps two MusicBrainz artists that share a name", asyn
   assert.equal(res.statusCode, 200);
   assert.deepEqual(
     res.body.results.artists.map((artist: { id: string }) => artist.id),
-    ["band-id", "alias-id"],
+    ["band-mbid", "alias-mbid"],
   );
   assert.equal(res.body.results.artists[0].monitored, true);
 });
@@ -358,11 +354,7 @@ test("artist-filtered album search finds titles whose apostrophes differ from th
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name) VALUES ('bastille-mbid', 'Bastille')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitored)
-    VALUES ('bastille-id', 'Bastille', 'bastille-mbid', 1)
-  `).run();
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES ('oph2-mbid', 'bastille-mbid', 'Other People’s Heartache, Pt. 2', 'Album')
   `).run();
@@ -386,11 +378,7 @@ test("artist-filtered album search finds an edition title All This Bad Blood", a
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name) VALUES ('bastille-mbid', 'Bastille')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitored)
-    VALUES ('bastille-id', 'Bastille', 'bastille-mbid', 1)
-  `).run();
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES ('bb-mbid', 'bastille-mbid', 'Bad Blood', 'Album')
   `).run();

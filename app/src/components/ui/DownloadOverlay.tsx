@@ -21,6 +21,7 @@ const useStyles = makeStyles({
         flexDirection: 'column',
         gap: tokens.spacingVerticalXXS,
         zIndex: 5,
+        pointerEvents: 'none',
         borderBottomLeftRadius: tokens.borderRadiusMedium,
         borderBottomRightRadius: tokens.borderRadiusMedium,
     },

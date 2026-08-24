@@ -144,7 +144,7 @@ export async function finalizeImportedDirectories(params: {
                 const siblingMediaFiles = db.prepare(`
                     SELECT id AS track_file_id, library_id, provider_id AS media_id, quality, file_path
                     FROM TrackFiles
-                    WHERE artist_id = ?
+                    WHERE artist_metadata_id = ?
                       AND file_type IN ('track', 'video')
                       AND file_path LIKE ?
                 `).all(mapping.artistId, `${mapping.destDir}${path.sep}%`) as Array<{

@@ -1,9 +1,7 @@
-import { useEffect } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Badge,
-  Button,
-  Title3,
   makeStyles,
   tokens,
   mergeClasses,
@@ -15,7 +13,6 @@ import {
   Settings24Filled,
   DataUsage24Filled,
   Library24Filled,
-  bundleIcon
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
@@ -27,10 +24,6 @@ import { hexToRgb } from "@/ultrablur/color";
 import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
 import { useTheme } from "@/providers/themeContext";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
-
-const Settings24 = bundleIcon(Settings24Filled, Settings24Regular);
-const DataUsage24 = bundleIcon(DataUsage24Filled, DataUsage24Regular);
-const Library24 = bundleIcon(Library24Filled, Library24Regular);
 
 function isStandaloneDisplayMode(): boolean {
   // iOS Safari uses `navigator.standalone`, other browsers support the media query.
@@ -92,6 +85,12 @@ const useStyles = makeStyles({
     paddingLeft: "env(safe-area-inset-left)",
     paddingRight: "env(safe-area-inset-right)",
     display: "block",
+    "@media (forced-colors: active)": {
+      backdropFilter: "none",
+      WebkitBackdropFilter: "none",
+      borderBottom: "1px solid CanvasText",
+      boxShadow: "none",
+    },
   },
   // WinUI commanding layer on Mica Alt → Fluent colorNeutralBackgroundAlpha2.
   // Content cards use Alpha; UltraBlur is the opaque foundation.
@@ -131,7 +130,7 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalS,
     },
   },
-  logoButton: {
+  logoLink: {
     backgroundColor: tokens.colorTransparentBackground,
     border: "none",
     padding: tokens.spacingVerticalNone,
@@ -140,6 +139,7 @@ const useStyles = makeStyles({
     minWidth: "34px",
     color: tokens.colorNeutralForeground1,
     maxWidth: "100%",
+    textDecorationLine: "none",
     "@media (min-width: 640px)": {
       padding: tokens.spacingVerticalNone,
       minHeight: "40px",
@@ -216,6 +216,54 @@ const useStyles = makeStyles({
       paddingRight: tokens.spacingHorizontalXS,
     },
   },
+  navIconLink: {
+    ...glassButtonStyles,
+    position: "relative",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxSizing: "border-box",
+    minWidth: "36px",
+    minHeight: "36px",
+    borderRadius: tokens.borderRadiusMedium,
+    color: tokens.colorNeutralForeground1,
+    textDecorationLine: "none",
+    "& .dg-nav-icon-filled": {
+      display: "none",
+    },
+    "&:hover": {
+      color: tokens.colorBrandForeground1,
+    },
+    "&:hover .dg-nav-icon-regular": {
+      display: "none",
+    },
+    "&:hover .dg-nav-icon-filled": {
+      display: "block",
+    },
+    "&[aria-current='page'] .dg-nav-icon-regular": {
+      display: "none",
+    },
+    "&[aria-current='page'] .dg-nav-icon-filled": {
+      display: "block",
+    },
+    "&:focus-visible": {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: "2px",
+    },
+    "@media (max-width: 639px)": {
+      minWidth: "32px",
+      minHeight: "32px",
+    },
+  },
+  navIconLinkActive: {
+    color: tokens.colorBrandForeground1,
+    backgroundColor: "transparent",
+    "@media (forced-colors: active)": {
+      color: "HighlightText",
+      backgroundColor: "Highlight",
+      border: "1px solid Highlight",
+    },
+  },
   queueBadge: {
     position: "absolute",
     top: "1px",
@@ -279,12 +327,58 @@ const useStyles = makeStyles({
     minHeight: "100dvh",
     overflow: "hidden",
   },
+  skipLink: {
+    position: "fixed",
+    top: tokens.spacingVerticalS,
+    left: tokens.spacingHorizontalS,
+    zIndex: 1000,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusMedium,
+    color: tokens.colorNeutralForegroundOnBrand,
+    backgroundColor: tokens.colorBrandBackground,
+    transform: "translateY(-160%)",
+    transitionProperty: "transform",
+    transitionDuration: tokens.durationFast,
+    "&:focus": {
+      transform: "translateY(0)",
+    },
+    "@media (prefers-reduced-motion: reduce)": {
+      transitionDuration: "0.01ms",
+    },
+  },
+  visuallyHidden: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    padding: 0,
+    margin: "-1px",
+    overflow: "hidden",
+    clip: "rect(0, 0, 0, 0)",
+    whiteSpace: "nowrap",
+    border: 0,
+  },
 });
+
+function routeLabel(pathname: string): string {
+  if (pathname === "/" || pathname === "/library") return "Library";
+  if (pathname === "/dashboard") return "Dashboard";
+  if (pathname === "/settings") return "Settings";
+  if (pathname === "/system/status") return "System status";
+  if (pathname === "/auth") return "Provider authorization";
+  if (pathname === "/login") return "Sign in";
+  if (pathname.startsWith("/artist/")) return "Artist";
+  if (pathname.startsWith("/album/")) return "Album";
+  if (pathname.startsWith("/video/")) return "Video";
+  return "Page not found";
+}
 
 const Layout = () => {
   const styles = useStyles();
   const navigate = useNavigate();
   const location = useLocation();
+  const mainRef = useRef<HTMLElement | null>(null);
+  const previousPathRef = useRef<string | null>(null);
+  const [routeAnnouncement, setRouteAnnouncement] = useState("");
   const { colors, isDarkMode: ultraBlurIsDarkMode } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
   const { stats } = useQueueStatus();
@@ -307,23 +401,69 @@ const Layout = () => {
     return () => window.removeEventListener(OPEN_ACTIVITY_QUEUE_EVENT, openQueue);
   }, [navigate]);
 
+  useEffect(() => {
+    const label = routeLabel(location.pathname);
+    document.title = label === "Library" ? "Discogenius" : `${label} | Discogenius`;
+    setRouteAnnouncement(`${label} page`);
+
+    const isInitialRoute = previousPathRef.current === null;
+    previousPathRef.current = location.pathname;
+    if (isInitialRoute) return;
+
+    const main = mainRef.current;
+    if (!main) return;
+
+    let focused = false;
+    const focusPage = () => {
+      const heading = main.querySelector<HTMLElement>("h1");
+      if (!heading) return false;
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+      focused = true;
+      return true;
+    };
+
+    const observer = new MutationObserver(() => {
+      if (focusPage()) observer.disconnect();
+    });
+    observer.observe(main, { childList: true, subtree: true });
+    // Lazy routes briefly remove the old page before mounting the next one.
+    // Give that commit a chance to finish so focus never lands on a heading
+    // that is about to be detached.
+    const headingTimer = window.setTimeout(focusPage, 100);
+    const fallbackTimer = window.setTimeout(() => {
+      if (!focused) main.focus({ preventScroll: true });
+    }, 1200);
+    const observerTimer = window.setTimeout(() => observer.disconnect(), 10_000);
+
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(headingTimer);
+      window.clearTimeout(fallbackTimer);
+      window.clearTimeout(observerTimer);
+    };
+  }, [location.pathname]);
+
 
   return (
     <>
       <ScrollRestoration />
       <UltraBlurBackground colors={colors} isDarkMode={ultraBlurIsDarkMode} />
+      {!isAuthRoute ? <a className={styles.skipLink} href="#main-content">Skip to main content</a> : null}
       <div className={mergeClasses(styles.wrapper, isAuthRoute && styles.authWrapper)}>
         {!isAuthRoute ? (
-          <nav className={mergeClasses(styles.nav, styles.navSurface)}>
+          <nav className={mergeClasses(styles.nav, styles.navSurface)} aria-label="Primary navigation">
             <div className={styles.container}>
               <div className={styles.headerRow}>
-                <button
-                  className={mergeClasses(styles.logoSection, styles.logoButton)}
-                  onClick={() => navigate("/")}
+                <NavLink
+                  to="/"
+                  end
+                  className={mergeClasses(styles.logoSection, styles.logoLink)}
+                  aria-label="Discogenius library"
                 >
-                  <img src={logo} alt="Discogenius" className={styles.logo} />
-                  <Title3 className={styles.logoTitle}>Discogenius</Title3>
-                </button>
+                  <img src={logo} alt="" className={styles.logo} />
+                  <span className={styles.logoTitle}>Discogenius</span>
+                </NavLink>
               </div>
 
               <div className={styles.searchSection}>
@@ -333,14 +473,18 @@ const Layout = () => {
               </div>
 
               <div className={styles.desktopActions}>
-                <Button
-                  appearance="subtle"
-                  icon={<DataUsage24 />}
-                  onClick={() => navigate("/dashboard")}
+                <NavLink
+                  to="/dashboard"
                   title="Dashboard"
                   aria-label="Dashboard"
-                  className={mergeClasses(styles.navIconButton, styles.queueButton)}
+                  className={({ isActive }) => mergeClasses(
+                    styles.navIconLink,
+                    styles.queueButton,
+                    isActive && styles.navIconLinkActive,
+                  )}
                 >
+                  <DataUsage24Regular className="dg-nav-icon-regular" aria-hidden="true" />
+                  <DataUsage24Filled className="dg-nav-icon-filled" aria-hidden="true" />
                   {queueCount > 0 ? (
                     <Badge
                       aria-hidden="true"
@@ -353,30 +497,47 @@ const Layout = () => {
                       {queueCount}
                     </Badge>
                   ) : null}
-                </Button>
-                <Button
-                  appearance="subtle"
-                  icon={<Library24 />}
-                  onClick={() => navigate("/")}
+                </NavLink>
+                <NavLink
+                  to="/"
+                  end
                   title="Library"
                   aria-label="Library"
-                  className={styles.navIconButton}
-                />
-                <Button
-                  appearance="subtle"
-                  icon={<Settings24 />}
-                  onClick={() => navigate("/settings")}
+                  className={({ isActive }) => mergeClasses(
+                    styles.navIconLink,
+                    isActive && styles.navIconLinkActive,
+                  )}
+                >
+                  <Library24Regular className="dg-nav-icon-regular" aria-hidden="true" />
+                  <Library24Filled className="dg-nav-icon-filled" aria-hidden="true" />
+                </NavLink>
+                <NavLink
+                  to="/settings"
                   title="Settings"
                   aria-label="Settings"
-                  className={styles.navIconButton}
-                />
+                  className={({ isActive }) => mergeClasses(
+                    styles.navIconLink,
+                    isActive && styles.navIconLinkActive,
+                  )}
+                >
+                  <Settings24Regular className="dg-nav-icon-regular" aria-hidden="true" />
+                  <Settings24Filled className="dg-nav-icon-filled" aria-hidden="true" />
+                </NavLink>
               </div>
             </div>
           </nav>
         ) : null}
-        <main className={mergeClasses(styles.main, isAuthRoute && styles.authMain)}>
+        <main
+          id="main-content"
+          ref={mainRef}
+          tabIndex={-1}
+          className={mergeClasses(styles.main, isAuthRoute && styles.authMain)}
+        >
           <Outlet />
         </main>
+        <div className={styles.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">
+          {routeAnnouncement}
+        </div>
       </div>
     </>
   );

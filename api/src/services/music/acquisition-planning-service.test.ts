@@ -10,8 +10,7 @@ import { AcquisitionPlanningService, listStrandedMonitoredEditions, replanMonito
 
 function seedStandardDeluxeFixture(db: Database.Database): number {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
-  db.prepare("INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1)").run();
-  db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album A')").run();
+db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album A')").run();
   db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Album A')").run();
   db.prepare(`
     INSERT INTO Recordings (id, mbid, title) VALUES
@@ -48,8 +47,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
     VALUES (1, 'Stereo', '/library/stereo', 1, 1)
   `).run();
   db.prepare(`
-    INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored)
-    VALUES (1, 1, 1, 1)
+    INSERT INTO LibraryArtists (id, library_id, artist_metadata_id, policy) VALUES (1, 1, 1, 'all')
   `).run();
   db.prepare(`
     INSERT INTO LibraryEditions (
@@ -254,8 +252,7 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
  */
 function seedSplitRecordingIsrcFixture(db: Database.Database): void {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
-  db.prepare("INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1)").run();
-  db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album A')").run();
+db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album A')").run();
   db.prepare(`
     INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES
       (1, 'release-target', 1, 'Album A'),
@@ -293,7 +290,7 @@ function seedSplitRecordingIsrcFixture(db: Database.Database): void {
     INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
     VALUES (1, 'Stereo', '/library/stereo', 1, 1)
   `).run();
-  db.prepare("INSERT INTO LibraryArtists (id, library_id, managed_artist_id, monitored) VALUES (1, 1, 1, 1)").run();
+  db.prepare("INSERT INTO LibraryArtists (id, library_id, artist_metadata_id, policy) VALUES (1, 1, 1, 'all')").run();
   db.prepare(`
     INSERT INTO LibraryEditions (id, library_id, edition_id, selection_mode, reason, curation_version)
     VALUES (1, 1, 1, 'auto', 'fixture', 1)

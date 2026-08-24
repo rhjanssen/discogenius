@@ -134,9 +134,10 @@ test("BackupDatabase is executed by the non-download command executor", async ()
 
 test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a RefreshMetadata job", async () => {
     dbModule.db.prepare(`
-        INSERT INTO Artists (id, name, monitored)
-        VALUES (?, ?, ?), (?, ?, ?)
-    `).run(101, "Monitored Artist", 1, 202, "Ignored Artist", 0);
+        INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, ?), (?, ?, ?)
+    `).run(101, "artist-mbid-101", "Monitored Artist", 202, "artist-mbid-202", "Ignored Artist");
+    const { seedLibraryArtistMonitoring } = await import("../../test-support/active-schema-fixture.js");
+    seedLibraryArtistMonitoring(dbModule.db, "artist-mbid-101");
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.BulkRefreshArtist,

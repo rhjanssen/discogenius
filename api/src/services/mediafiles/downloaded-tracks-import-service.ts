@@ -786,7 +786,7 @@ function resolveImportHistoryContext(
             track_recording.artist_metadata_id,
             video_recording.artist_metadata_id
           )
-        LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
+        LEFT JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist.mbid
         WHERE pi.provider_id = ?
           AND pi.entity_type = ?
           AND pi.provider = ?
@@ -1180,7 +1180,7 @@ export class DownloadedTracksImportService {
             // entire artist directory and re-parse every unmapped audio file (1-5s per FLAC).
             // Instead, just verify the imported files are tracked.
             const trackedCount = (db.prepare(
-                `SELECT COUNT(*) as count FROM TrackFiles WHERE artist_id = ? AND verified_at IS NOT NULL`,
+                `SELECT COUNT(*) as count FROM TrackFiles WHERE artist_metadata_id = ? AND verified_at IS NOT NULL`,
             ).get(String(affectedArtistId)) as { count: number }).count;
 
             console.log(`[ImportDownload] Artist ${affectedArtistId}: ${trackedCount} library files tracked after import (skipped full disk scan)`);

@@ -169,9 +169,12 @@ test("provider artist import honors the ids selected in the preview", async () =
 test("followed artist import reports added when metadata sync creates the artist row", async () => {
   const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
   const { RefreshArtistService } = await import("../music/refresh-artist-service.js");
+  const { ProviderArtistIdentityService } = await import("../metadata/provider-artist-identity-service.js");
   const originalSyncArtist = servarrMetadata.syncArtist;
   const originalUpsertMusicBrainzArtist = RefreshArtistService.upsertMusicBrainzArtist;
+  const originalResolve = ProviderArtistIdentityService.resolve;
   const events: any[] = [];
+  const artistMbid = "11111111-2222-4333-8444-555555555555";
 
   providersModule.streamingProviderManager.registerStreamingProvider({
     id: "followed-status-test-provider",
@@ -233,36 +236,20 @@ test("followed artist import reports added when metadata sync creates the artist
     }),
   });
 
-  const canonicalArtist = dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name)
-    VALUES (?, ?)
-    RETURNING id
-  `).get(
-    "11111111-2222-4333-8444-555555555555",
-    "Artist Added After Sync",
-  ) as { id: number };
-  const providerArtist = dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, 'artist', ?, ?)
-    RETURNING id
-  `).get(
-    "followed-status-test-provider",
-    "artist-added-after-sync",
-    "Artist Added After Sync",
-  ) as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO ProviderArtistMatches (
-      provider_artist_item_id, artist_id, match_state, decision_source,
-      confidence, method, matcher_version
-    ) VALUES (?, ?, 'accepted', 'manual', 1, 'test', 1)
-  `).run(providerArtist.id, canonicalArtist.id);
+  ProviderArtistIdentityService.resolve = (async () => ({
+    mbid: artistMbid,
+    status: "verified" as const,
+    confidence: 1,
+    method: "test-fixture",
+  })) as typeof ProviderArtistIdentityService.resolve;
 
   servarrMetadata.syncArtist = (async (mbid: string) => {
-    dbModule.db.prepare(`
-      INSERT INTO Artists (id, mbid, name, monitored)
-      VALUES (?, ?, ?, 0)
-    `).run(mbid, mbid, "Artist Added After Sync");
+    const existing = dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?")
+      .get(mbid) as { id: number } | undefined;
+    if (!existing) {
+      dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+        .run(mbid, "Artist Added After Sync");
+    }
     return {
       id: mbid,
       artistname: "Artist Added After Sync",
@@ -272,7 +259,15 @@ test("followed artist import reports added when metadata sync creates the artist
       Albums: [],
     };
   }) as unknown as typeof servarrMetadata.syncArtist;
-  RefreshArtistService.upsertMusicBrainzArtist = (async (mbid: string) => mbid) as typeof RefreshArtistService.upsertMusicBrainzArtist;
+  RefreshArtistService.upsertMusicBrainzArtist = (async (mbid: string) => {
+    const row = dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?")
+      .get(mbid) as { id: number } | undefined;
+    if (row) return String(row.id);
+    const inserted = dbModule.db.prepare(`
+      INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?) RETURNING id
+    `).get(mbid, "Artist Added After Sync") as { id: number };
+    return String(inserted.id);
+  }) as typeof RefreshArtistService.upsertMusicBrainzArtist;
 
   try {
     const summary = await importModule.FollowedArtistsImportService.importArtists({
@@ -288,5 +283,6 @@ test("followed artist import reports added when metadata sync creates the artist
   } finally {
     servarrMetadata.syncArtist = originalSyncArtist;
     RefreshArtistService.upsertMusicBrainzArtist = originalUpsertMusicBrainzArtist;
+    ProviderArtistIdentityService.resolve = originalResolve;
   }
 });

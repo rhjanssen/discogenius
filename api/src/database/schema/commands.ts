@@ -9,7 +9,7 @@ export function createDownloadQueueSchema(
     CREATE TABLE ${ifNotExists} DownloadQueue (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       -- Stable public queue id. Cancel / reorder / SSE jobId use this, not commands.id.
-      ref_key TEXT NOT NULL UNIQUE,
+      ref_key TEXT NOT NULL,
       media_kind TEXT NOT NULL CHECK (media_kind IN ('album', 'track', 'video')),
       command_name TEXT NOT NULL,
       plan_id INTEGER,
@@ -33,7 +33,10 @@ export function createDownloadQueueSchema(
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  db.exec(`CREATE UNIQUE INDEX ${ifNotExists} idx_download_queue_ref_key ON DownloadQueue(ref_key)`);
+  db.exec(`
+    CREATE UNIQUE INDEX ${ifNotExists} idx_download_queue_typed_ref
+    ON DownloadQueue(media_kind, ref_key, COALESCE(provider, ''), COALESCE(slot, ''))
+  `);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_order ON DownloadQueue(queue_order, id)`);
   db.exec(`
     CREATE INDEX ${ifNotExists} idx_download_queue_unclaimed_order

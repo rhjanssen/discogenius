@@ -1,7 +1,13 @@
 # Recording-centric matching, coverage & deduplication
 
-Status: **design / proposal** (not yet implemented). Supersedes the ad-hoc,
-release-group-centric matching + bolted-on exceptions with one set-based method.
+Status: **per-edition set cover shipped** in
+`api/src/services/music/acquisition-plan-optimizer.ts` (minimum set cover plus
+dominance pruning). Artist-wide coverage (which release groups to keep) is still
+open; see `docs/TASKS.md`.
+
+Recording-centric matching, coverage, and dedup. This replaced ad-hoc
+release-group matching plus bolted-on exceptions with one set-based method.
+
 
 ## 0. Why
 
@@ -9,7 +15,8 @@ Today matching is a three-stage pipeline that keeps accreting special cases:
 
 1. **Match** provider albums → MusicBrainz release groups/releases (album-side,
    fuzzy special-cases baked in: version-awareness, shape-lock, title-expansion).
-2. **Select** one provider offer per release-group *slot*.
+2. **Select** sources for a library edition (acquisition plan, not a
+   stereo/spatial/video slot on the release group).
 3. **Dedup** (`CurationService.findReleaseGroupsContainedByAlbums`) — already
    recording-centric greedy containment, but sorted **largest-release-first**,
    which can keep a compilation and drop the original album.

@@ -3,13 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { BASE_SCHEMA_VERSION } from "./database/schema/version.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-database-baseline-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 44;
+const CURRENT_SCHEMA_VERSION = BASE_SCHEMA_VERSION;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -36,7 +37,7 @@ test("fresh database initializes the current development baseline", () => {
   assert.equal(userVersion, CURRENT_SCHEMA_VERSION);
 
   const coreTables = [
-    "Artists", "ArtistMetadata", "Albums", "AlbumEditions",
+    "ArtistMetadata", "Albums", "AlbumEditions",
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
     "Tracks", "Recordings", "ProviderItems",
     "ProviderEditionMembers", "ProviderItemCredits", "ProviderItemAudioVariants",
@@ -44,8 +45,8 @@ test("fresh database initializes the current development baseline", () => {
     "ProviderVideoMatches",
     "ReleaseGroupArtistCredits", "ReleaseArtistCredits",
     "TrackArtistCredits", "RecordingArtistCredits",
-    "ManagedArtists", "MetadataProfiles", "Libraries", "LibraryArtists",
-    "LibraryAlbums", "LibraryEditions", "LibraryEditionScopes",
+    "MetadataProfiles", "Libraries", "LibraryArtists",
+    "LibraryAlbums", "LibraryEditions", "LibraryVideos", "LibraryEditionScopes",
     "AcquisitionPlans", "AcquisitionPlanSources", "AcquisitionPlanTracks",
     "MediaCoverSelections",
     "RecordingRelations",
@@ -71,7 +72,7 @@ test("fresh database initializes the current development baseline", () => {
   }
 });
 
-test("re-initializing an existing schema-44 database opens it without a wipe", () => {
+test("re-initializing an existing schema-46 database opens it without a wipe", () => {
   // Seed a row so we can prove the open-only path never drops/recreates tables.
   dbModule.db
     .prepare("INSERT INTO config (key, value, description) VALUES (?, ?, ?)")
@@ -100,21 +101,21 @@ test("an older populated database fails with reset guidance", () => {
   try {
     assert.throws(
       () => dbModule.initDatabase(),
-      /Database schema 41 is not supported.*Reset the runtime database.*schema 44/s,
+      /Database schema 41 is not supported.*Reset the runtime database.*schema 46/s,
     );
   } finally {
     dbModule.db.pragma(`user_version = ${CURRENT_SCHEMA_VERSION}`);
   }
 });
 
-test("fresh schema-44 TrackFiles baseline includes video_codec and frame size columns", () => {
+test("fresh schema-46 TrackFiles baseline includes video_codec and frame size columns", () => {
   const columns = tableColumns("TrackFiles");
   assert.ok(columns.includes("video_codec"), "Expected TrackFiles.video_codec on CREATE TABLE baseline");
   assert.ok(columns.includes("width"), "Expected TrackFiles.width on CREATE TABLE baseline");
   assert.ok(columns.includes("height"), "Expected TrackFiles.height on CREATE TABLE baseline");
 });
 
-test("fresh schema-44 TrackFiles baseline indexes exact audio and video completion lookups", () => {
+test("fresh schema-46 TrackFiles baseline indexes exact audio and video completion lookups", () => {
   const indexes = tableIndexes("TrackFiles");
   assert.ok(indexes.includes("idx_track_files_audio_completion"));
   assert.ok(indexes.includes("idx_track_files_video_completion"));
@@ -179,6 +180,21 @@ test("monitoring and plan ownership have exactly one representation each", () =>
   // One Album lock, on LibraryAlbums. Two independently mutable locks drift.
   assert.equal(libraryEditions.includes("locked"), false,
     "LibraryEditions.locked would compete with the Album lock");
+
+  const libraryVideos = tableColumns("LibraryVideos");
+  assert.equal(libraryVideos.includes("monitored"), false,
+    "LibraryVideos.monitored would compete with row existence");
+
+  for (const tableName of ["Albums", "AlbumEditions", "Tracks", "Recordings"]) {
+    const columns = tableColumns(tableName);
+    assert.equal(columns.includes("monitored"), false,
+      `${tableName}.monitored would compete with library row existence`);
+  }
+  const recordings = tableColumns("Recordings");
+  for (const columnName of ["monitored_lock", "monitored_at", "locked_at"]) {
+    assert.equal(recordings.includes(columnName), false,
+      `Recordings.${columnName} is a retired library decision, not a catalogue fact`);
+  }
 
   const plans = tableColumns("AcquisitionPlans");
   // Plans belong to a Library and a canonical Edition, so they can exist for

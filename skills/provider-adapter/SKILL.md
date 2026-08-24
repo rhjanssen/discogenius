@@ -1,92 +1,50 @@
-# Streaming Provider Adapters
+# Streaming provider adapters
 
-Use this skill when adding a new streaming provider (TIDAL, Apple Music, Amazon,
-Spotify, YouTube/YT Music, Deezer, SoundCloud, …) or changing an existing one.
+Use this skill when adding or changing a streaming provider (TIDAL, Apple Music, Amazon Music, Spotify, YouTube / YouTube Music, Deezer, SoundCloud, …).
 
-Read `docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md` first — it is the contract.
-The north star (`docs/TASKS.md` → "Provider plugin modularity"): **a streaming
-service is a swappable module.** Core Discogenius — MusicBrainz catalog, library,
-command queue, curation, import — must keep working if any one provider blocks
-third-party access. Disabling or swapping a provider is a registration/config
-change, never a core rewrite.
+Read `docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md` first. Core Discogenius (MusicBrainz catalog, libraries, command queue, curation, import) must keep working if one streamer blocks third-party access. Disable or swap a provider by registration/config, not a core rewrite.
 
-## The contract
+## Contract
 
-- Implement `StreamingProvider` (`api/src/services/providers/streaming-provider.ts`;
-  public types re-exported from `api/src/providers/types.ts`). A provider exposes
-  catalog **availability**, quality mapping, import sources, and download
-  acquisition behind one shared interface — plus a `ProviderManifest`.
-- Register it in `api/src/providers/registry.ts` (compile-time). Registration
-  order is the factory-default preference.
-- Register a download backend in the `downloadBackendRegistry`
-  (`api/src/services/download/download-backend.ts`); the provider adapter calls
-  into it. **Apple Music** (`apple-music-provider.ts` + `apple-music-backend.ts`)
-  is the fullest reference implementation — auth handshake, config sync, backend.
+- Implement `StreamingProvider` (`api/src/services/providers/streaming-provider.ts`; public types from `api/src/providers/types.ts`) plus a `ProviderManifest`. Availability, quality mapping, import sources, download, behind one interface.
+- Register in `api/src/providers/registry.ts` (compile-time). Order is the default preference.
+- Register a download backend; the adapter calls it. Apple Music is the fullest handshake+backend reference. TIDAL/`tiddl` is the most exercised download path and stays under `api/src/services/providers/tidal/`.
 
-## Hard boundaries (do not cross)
+## Hard boundaries
 
-1. **MusicBrainz is canonical identity; providers are availability + download
-   only.** Never seed a parallel catalog table from provider data. Provider
-   UPC/barcode and ISRC are matching **evidence** → `ProviderItems` /
-   `ProviderItemMatches`, never `Albums`/`AlbumReleases`/`Recordings`.
-2. **Do not preserve provider-only catalog features** (similar artists, top
-   tracks, provider "discography") unless the catalog can drive them. Drop the
-   section rather than adding provider catalog tables.
-3. **Provider tooling stays inside the provider folder.** CLIs/bridges (tiddl,
-   streamrip, yt-dlp, the Apple downloader) and their auth/config live under
-   `api/src/services/providers/<id>/` and `config/providers/<id>/`. Core must not
-   `import` provider-private modules — core→provider goes through the registry +
-   shared DTOs + backend-id-keyed diagnostics. (Replacing the remaining
-   tidal-shaped `health.ts` import is tracked boundary debt.)
-4. **Steering = config (global) + args (per-job).** e.g. tiddl config is global;
-   per-job paths/quality are CLI args. Don't hardcode per-job values into global
-   config.
+1. **MusicBrainz is identity. Providers are availability + download.** Never seed a parallel catalog table. Provider UPC/ISRC are matching evidence on `ProviderItems`. Typed matches (`ProviderArtistMatches`, `ProviderEditionMatches`, `ProviderTrackMatches`, `ProviderVideoMatches`) are the only provider→canonical link. Never write those onto `Albums` / `AlbumEditions` / `Recordings` / `ArtistMetadata`. There is no `ProviderItemMatches` and no `AlbumReleases`.
+2. **Do not keep provider-only catalog features** (similar artists, top tracks, provider discography) unless the catalog can drive them. Drop the section.
+3. **Tooling stays in the provider folder.** `tiddl`, Streamrip, yt-dlp, the Apple downloader, and their auth/config live under `api/src/services/providers/<id>/` and `config/providers/<id>/`. Core does not import provider-private modules. Core→provider is registry + shared DTOs + backend-id diagnostics. (Tidal-shaped `health.ts` import is leftover debt.)
+4. **Steering = config (global) + args (per-job).** tiddl config is global; per-job path/quality are CLI args.
 
-## Quality & format gotchas (carry these forward)
+A provider match never creates `LibraryArtists`. Catalog search hits `ArtistMetadata`. Add-to-library writes membership. Credits are `*ArtistCredits`, not a library row.
 
-- **Atmos vs stereo:** TIDAL Atmos is a *separate* stream from stereo. An
-  Atmos-only release filling the stereo slot is downloaded **as** Atmos m4a and
-  organized into `stereo-music`.
-- **Hi-Res needs ffmpeg:** TIDAL ships hi-res as FLAC-in-MP4; extraction is via
-  ffmpeg.
-- **Capability matrix is optional-input:** ISRC/UPC exist on
-  TIDAL/Apple/Spotify/Deezer, are absent on YouTube Music, gated on Amazon —
-  always treat them as optional, never assumed present.
-- Surface readiness through **provider diagnostics** before a download starts;
-  don't fail deep in a job for a missing prerequisite you could report up front.
+Acquisition plans are mono-provider. Provider priority compares complete plans; it never combines TIDAL, Deezer, Apple Music, or another provider inside one plan.
 
-## Auth patterns
+## Quality
 
-- Prefer transient credential handoff over persisting secrets. Example: the Apple
-  wrapper login writes credentials to a shared file the sidecar consumes and
-  deletes; Discogenius never persists the Apple ID/password.
-- Token-paste providers (Deezer `arl`, YTM headers, SoundCloud oauth) store the
-  token under `config/providers/<id>/`, synced into the tool's own config.
-- Mark not-yet-live providers **Soon** in the manifest so the UI blocks credential
-  entry.
+- **Atmos vs stereo:** TIDAL Atmos is a separate stream. Spatial-only media never fills stereo. A spatial source may satisfy stereo only through an explicit conversion policy that produces a verified stereo file. No such policy exists today. Organize Atmos into the spatial library root.
+- **Hi-Res needs ffmpeg:** TIDAL hi-res is FLAC-in-MP4; tiddl extracts via ffmpeg.
+- ISRC/UPC are optional. Present on TIDAL/Apple/Spotify/Deezer, absent on YouTube Music, gated on Amazon.
+- Report readiness through provider diagnostics before a download starts.
 
-## Adding a provider — checklist
+## Auth
 
-1. New folder `api/src/services/providers/<id>/`: adapter (`<id>-provider.ts`),
-   catalog/search, quality mapping, auth, and a download backend.
-2. Implement `StreamingProvider` + `ProviderManifest`; map quality to the neutral
-   model; wire import sources.
-3. Register the download backend; report prerequisites via diagnostics.
-4. Register the provider in `registry.ts`.
-5. Keep all provider-private tooling inside the folder; expose nothing to core
-   beyond the contract.
-6. Validate: Auth page lists it, download backend registers, a real download on a
-   test artist succeeds, and **no new `import` from `commands/`/`music/` into
-   provider-private modules** (`yarn ci` + a grep).
+- Prefer transient credential handoff. Apple wrapper login is the pattern: sidecar consumes and deletes; Discogenius does not store the Apple ID/password.
+- Token-paste providers (Deezer `arl`, YTM headers, SoundCloud token) store under `config/providers/<id>/`.
+- Not-yet-live providers are **Soon** in the manifest (Amazon, Spotify) so the UI blocks credential entry.
 
-## Reference conventions
+## Add a provider
 
-- **Lidarr** (`.ref_lidarr`): `ThingiProvider` + `Indexers/` + `Download/Clients/`
-  are compiled-in providers behind a factory with a thin `Plugins/` surface —
-  the model for "compile-time modules, swappable by registration." Also
-  `.ref_tidarr` (a TypeScript streaming-arr) for TS-shaped provider layout.
-- **Jellyfin** (`.ref_jellyfin` → `MediaBrowser.Providers`): metadata providers
-  implement a narrow interface and are orchestrated by a manager; identity comes
-  from external ids (MBID/IMVDb), **not** a provider-owned catalog — the same
-  canonical-identity-vs-provider split we enforce.
-- Tool-boundary refs: `.ref_tiddl`, `.ref_yt-dlp`, `.ref_apple-music-downloader`.
+1. Folder `api/src/services/providers/<id>/`: adapter, catalog/search, quality map, auth, download backend.
+2. `StreamingProvider` + `ProviderManifest`; wire import sources.
+3. Register the backend; expose diagnostics.
+4. Register in `registry.ts`.
+5. Nothing provider-private leaks into `commands/` or catalog services.
+6. Auth page lists it, a real download on Bastille or Bakermat works, `yarn ci` is green, grep shows no new core→private imports.
+
+## References
+
+- Lidarr (`.ref_lidarr`): compiled-in `Indexers/` + `Download/Clients/` behind a factory. Compile-time modules, swappable by registration. Also `.ref_tidarr` for a TS streaming-arr layout.
+- Jellyfin (`.ref_jellyfin` → `MediaBrowser.Providers`): identity from external ids (MBID), not a provider-owned catalog.
+- Tool refs: `.ref_tiddl`, `.ref_yt-dlp`, `.ref_apple-music-downloader`.

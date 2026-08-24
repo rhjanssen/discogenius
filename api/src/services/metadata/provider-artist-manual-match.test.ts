@@ -24,6 +24,7 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 

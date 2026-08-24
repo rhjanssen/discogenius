@@ -4,7 +4,7 @@
  */
 import React, { memo, useCallback } from "react";
 import { Card, mergeClasses } from "@fluentui/react-components";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   CheckmarkCircle24Filled,
   Circle24Regular,
@@ -125,13 +125,12 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     onClick,
 }) {
     const styles = useCardStyles();
-    const navigate = useNavigate();
     const showExplicitBadge = explicit === true || explicit === 1 || explicit === "1" || explicit === "true";
     const [imageFailed, setImageFailed] = React.useState(false);
     const [fallbackFailed, setFallbackFailed] = React.useState(false);
     const [imageLoaded, setImageLoaded] = React.useState(false);
     const imageRef = React.useRef<HTMLImageElement | null>(null);
-    const isClickable = Boolean(onClick || to || selection);
+    const hasPrimaryAction = Boolean(onClick || to || selection);
     const longPressTimer = React.useRef<number | null>(null);
     const longPressFired = React.useRef(false);
 
@@ -153,36 +152,21 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
         markLoadedIfComplete(imageRef.current);
     }, [imageUrl, fallbackImageUrl, markLoadedIfComplete]);
 
-    const handleClick = useCallback((event?: React.MouseEvent) => {
+    const handlePrimaryClick = useCallback((event: React.MouseEvent) => {
         if (longPressFired.current) {
             // The long-press already handled this gesture; swallow the tap click.
             longPressFired.current = false;
+            event.preventDefault();
             return;
         }
         if (selection) {
-            selection.onChange(!selection.selected, Boolean(event?.shiftKey));
+            selection.onChange(!selection.selected, event.shiftKey);
             return;
         }
         if (onClick) {
             onClick();
-        } else if (to) {
-            navigate(to);
         }
-    }, [navigate, to, onClick, selection]);
-
-    const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
-        if (selection) {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            selection.onChange(!selection.selected, event.shiftKey);
-            return;
-        }
-        const activatesLink = Boolean(to) && event.key === "Enter";
-        const activatesButton = !to && Boolean(onClick) && (event.key === "Enter" || event.key === " ");
-        if (!activatesLink && !activatesButton) return;
-        event.preventDefault();
-        handleClick();
-    }, [handleClick, onClick, to, selection]);
+    }, [onClick, selection]);
 
     const handleMonitorClick = useCallback(
         (e: React.MouseEvent) => {
@@ -249,21 +233,18 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
 
     return (
         <Card
+            focusMode="off"
             className={mergeClasses(
                 mini ? styles.cardMini : styles.card,
+                hasPrimaryAction && styles.cardInteractive,
                 className
             )}
-            onClick={isClickable ? handleClick : undefined}
-            onKeyDown={isClickable ? handleKeyDown : undefined}
             onContextMenu={selection || onSelectionIntent ? handleContextMenu : undefined}
             onPointerDown={selection || onSelectionIntent ? handlePointerDown : undefined}
             onPointerUp={handlePointerEnd}
             onPointerMove={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
             onPointerLeave={handlePointerEnd}
-            role={selection ? "button" : to ? "link" : onClick ? "button" : undefined}
-            tabIndex={isClickable ? 0 : undefined}
-            aria-label={title}
         >
             <div className={previewClass}>
                 {(!activeImageUrl || !imageLoaded) && (
@@ -277,7 +258,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         key={activeImageUrl}
                         ref={handleImageRef}
                         src={activeImageUrl}
-                        alt={alt}
+                        alt={alt === title ? "" : alt}
                         className={mergeClasses(styles.cardImage, !imageLoaded && styles.cardImageLoading)}
                         loading="lazy"
                         decoding="async"
@@ -334,7 +315,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                             type="button"
                             className={styles.monitorIndicator}
                             onClick={handleMonitorClick}
-                            aria-label={monitored ? "Unmonitor" : "Monitor"}
+                            aria-label={`${monitored ? "Unmonitor" : "Monitor"} ${title}`}
                         >
                             {monitored ? (
                                 <EyeOff16 className={styles.monitorIcon} />
@@ -356,9 +337,28 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
 
             <div className={styles.cardContent}>
                 <div className={styles.cardTitleRow}>
-                    <div className={styles.cardTitle} title={title}>
-                        {title}
-                    </div>
+                    {selection || onClick ? (
+                        <button
+                            type="button"
+                            className={mergeClasses(styles.cardTitle, styles.cardPrimaryAction)}
+                            title={title}
+                            aria-pressed={selection?.selected}
+                            onClick={handlePrimaryClick}
+                        >
+                            {title}
+                        </button>
+                    ) : to ? (
+                        <Link
+                            to={to}
+                            className={mergeClasses(styles.cardTitle, styles.cardPrimaryAction)}
+                            title={title}
+                            onClick={handlePrimaryClick}
+                        >
+                            {title}
+                        </Link>
+                    ) : (
+                        <div className={styles.cardTitle} title={title}>{title}</div>
+                    )}
                     {showExplicitBadge ? (
                         <ExplicitBadge size="small" className={styles.explicitBadge} />
                     ) : null}

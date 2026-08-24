@@ -32,8 +32,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -75,11 +75,7 @@ function insertCanonicalTrackFixture() {
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES ('artist-mbid', 'Track Artist')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitored)
-    VALUES ('artist-id', 'Track Artist', 'artist-mbid', 1)
-  `).run();
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES ('rg-mbid', 'artist-mbid', 'Track Album', 'Album', '2024-01-01')
   `).run();
@@ -189,71 +185,11 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
   };
 }
 
-test("POST track monitor creates normalized library release-group selections", async () => {
-  insertCanonicalTrackFixture();
-
-  const res = createMockResponse();
-  await getRouteHandler("/", "post")({ body: { id: "track-mbid" } }, res);
-
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.body.success, true);
-
-  const selections = dbModule.db.prepare(`
-    SELECT lrg.selection_mode, lrg.reason
-    FROM LibraryAlbums lrg
-    JOIN Albums a ON a.id = lrg.release_group_id
-    WHERE a.mbid = 'rg-mbid'
-    ORDER BY lrg.library_id
-  `).all() as Array<{ selection_mode: string; reason: string }>;
-  // The rows themselves are the monitoring statement.
-  assert.ok(selections.length > 0);
-  assert.ok(selections.every((selection) => selection.selection_mode === "manual"));
-  assert.ok(selections.every((selection) => selection.reason === "track_monitor_action"));
-
-  const legacyProviderMedia = dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'")
-    .get();
-  assert.equal(legacyProviderMedia, undefined);
-});
-
-test("track monitor route rejects provider-only track IDs", async () => {
-  const res = createMockResponse();
-  getRouteHandler("/:trackId/monitor", "post")({
-    params: { trackId: "provider-track-only" },
-    body: { monitored: true },
-  }, res);
-
-  assert.equal(res.statusCode, 404);
-});
-
-test("PATCH track updates normalized library release-group wanted state", () => {
-  insertCanonicalTrackFixture();
-  dbModule.db.prepare(`
-    INSERT INTO LibraryAlbums (
-      library_id, release_group_id, selection_mode, locked, reason, curation_version
-    ) SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-mbid'), 'manual', 0, 'test', 1
-    FROM Libraries
-    WHERE enabled = 1
-  `).run();
-
-  const res = createMockResponse();
-  getRouteHandler("/:trackId", "patch")({
-    params: { trackId: "track-mbid" },
-    body: { monitored: false, monitored_lock: true },
-  }, res);
-
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.body.success, true);
-  // Unmonitoring removes the rows; there is no flag left behind saying so.
-  // The seed deliberately covers every enabled library, so the surviving row
-  // also proves the Video Library takes no part in audio Album monitoring.
-  const remaining = dbModule.db.prepare(`
-    SELECT library.name
-    FROM LibraryAlbums library_album
-    JOIN Libraries library ON library.id = library_album.library_id
-    WHERE library_album.release_group_id = (SELECT id FROM Albums WHERE mbid = 'rg-mbid')
-    ORDER BY library.name
-  `).all() as Array<{ name: string }>;
-  assert.deepEqual(remaining.map((row) => row.name), ["Video"]);
+test("track routes do not expose album-wide monitor or lock actions", () => {
+  const mutatingRoutes = (tracksRouter as any).stack
+    .filter((entry: any) => entry.route?.methods?.post || entry.route?.methods?.patch)
+    .map((entry: any) => entry.route.path);
+  assert.deepEqual(mutatingRoutes, []);
 });
 
 test("GET tracks sorts popularity by track evidence instead of artist popularity", async () => {
@@ -262,11 +198,8 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
     INSERT INTO ArtistMetadata (mbid, name, popularity)
     VALUES ('artist-mbid', 'Track Artist', 100)
   `).run();
-  db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitored)
-    VALUES ('artist-id', 'Track Artist', 'artist-mbid', 1)
-  `).run();
-  db.prepare(`
+
+db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES ('rg-mbid', 'artist-mbid', 'Track Album', 'Album', '2024-01-01')
   `).run();
@@ -289,11 +222,11 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
   `).run();
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_edition_id, track_id, recording_id,
+      artist_metadata_id, library_id, release_group_id, album_edition_id, track_id, recording_id,
       file_path, relative_path, library_root, filename, extension, file_type, file_class
     )
     SELECT
-      'artist-id', ?, release.release_group_id, release.id, track.id, track.recording_id,
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, release.release_group_id, release.id, track.id, track.recording_id,
       '/music/' || track.mbid || '.flac', track.mbid || '.flac', '/music',
       track.mbid || '.flac', '.flac', 'track', 'audio'
     FROM Tracks track
@@ -320,11 +253,11 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
   const plan = insertTidalPlan();
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_edition_id, track_id, recording_id,
+      artist_metadata_id, library_id, release_group_id, album_edition_id, track_id, recording_id,
       provider, provider_entity_type, provider_id, file_path,
       relative_path, library_root, filename, extension, file_type, quality
     ) VALUES (
-      'artist-id', ?, ?, ?, ?, ?, 'tidal', 'track', 'tidal-track',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, ?, ?, ?, ?, 'tidal', 'track', 'tidal-track',
       '/music/Canonical Track.flac', 'Canonical Track.flac', '/music',
       'Canonical Track.flac', '.flac', 'track', 'LOSSLESS'
     )

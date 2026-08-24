@@ -11,6 +11,18 @@ export interface QualityTaggedItem {
   qualityTags?: Array<string | null | undefined> | null;
 }
 
+export function formatQualityForSlot(quality: string | null | undefined, isVideo = false): string {
+  const normalized = String(quality || "").trim().toUpperCase();
+  if (isVideo && (!normalized || !isVideoResolutionQuality(normalized))) {
+    if (normalized === "MAX" || normalized === "HIRES" || normalized === "UHD" || normalized === "2160P") return "UHD";
+    if (normalized === "HIGH" || normalized === "LOSSLESS" || normalized === "FHD" || normalized === "1080P") return "FHD";
+    if (normalized === "NORMAL" || normalized === "HD" || normalized === "720P") return "HD";
+    if (normalized === "LOW" || normalized === "SD" || normalized === "480P") return "SD";
+    return "FHD";
+  }
+  return String(quality || "");
+}
+
 export const qualityDisplayKey = (quality: string): string => {
   const normalized = normalizeQualityTag(quality);
   if (isUnknownQualityTag(normalized)) {

@@ -10,6 +10,7 @@ import {
   EyeOff24Regular,
   ArrowSortDownLines24Regular,
   Search24Regular,
+  Pause24Regular,
   Tag24Regular,
   Rename24Regular,
   Video24Regular,
@@ -17,6 +18,7 @@ import {
   ArrowDownload24Filled,
   Eye24Filled,
   EyeOff24Filled,
+  Pause24Filled,
   ArrowSortDownLines24Filled,
   Search24Filled,
   Tag24Filled,
@@ -32,11 +34,13 @@ import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import { LibrarySelectionBar } from "@/components/library/LibrarySelectionBar";
 import type { DataGridColumn } from "@/components/DataGrid";
 import { useDataGridCellStyles } from "@/components/DataGrid";
+import { formatArtistLastScanned } from "@/utils/artistDisplay";
 
 const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
 const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const Pause24 = bundleIcon(Pause24Filled, Pause24Regular);
 const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
 const Search24 = bundleIcon(Search24Filled, Search24Regular);
 const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
@@ -66,18 +70,6 @@ function formatArtistType(artistTypes: unknown): string | null {
   return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
 }
 
-export function formatArtistLastScanned(date: string | null): string | null {
-  if (!date) return null;
-  const d = new Date(date);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString();
-}
-
 export function LibraryArtistsNoResults(): ReactElement {
   return (
     <EmptyState
@@ -101,6 +93,8 @@ type ArtistSelectionBarProps = {
   onRename: () => void;
   onWriteTags: () => void;
   onMonitor: () => void;
+  onNew: () => void;
+  onPause: () => void;
   onUnmonitor: () => void;
   fileToolsBusy?: boolean;
   renameIcon?: ReactNode;
@@ -120,6 +114,8 @@ export function LibraryArtistsSelectionBar({
   onRename,
   onWriteTags,
   onMonitor,
+  onNew,
+  onPause,
   onUnmonitor,
   fileToolsBusy,
   renameIcon,
@@ -176,6 +172,20 @@ export function LibraryArtistsSelectionBar({
           disabled: selectedCount === 0,
         },
         {
+          key: "new",
+          label: "Only new releases",
+          icon: <Eye24 />,
+          onClick: onNew,
+          disabled: selectedCount === 0,
+        },
+        {
+          key: "pause",
+          label: "Pause",
+          icon: <Pause24 />,
+          onClick: onPause,
+          disabled: selectedCount === 0,
+        },
+        {
           key: "unmonitor",
           label: "Unmonitor",
           icon: <EyeOff24 />,
@@ -191,7 +201,7 @@ type UseLibraryArtistColumnsOptions = {
   onScan: (event: MouseEvent, artist: any) => void;
   onCurate: (event: MouseEvent, artist: any) => void;
   onDownload: (event: MouseEvent, artist: any) => void;
-  onToggleMonitored: (artistId: string, monitored: boolean) => void;
+  onToggleMonitored: (artist: any) => void;
   /** Show the music-video counter column (gated on the music-videos setting). */
   showVideos?: boolean;
 };
@@ -216,7 +226,7 @@ export function useLibraryArtistColumns({
       render: (artist: any) => {
         const src = artist.picture || artist.cover_image_url;
         return src ? (
-          <img src={src} alt={artist.name} className={dgCell.thumbnailCircle} />
+          <img src={src} alt="" className={dgCell.thumbnailCircle} />
         ) : (
           <div className={mergeClasses(dgCell.thumbnailCircle, dgCell.thumbnailPlaceholder)}>
             {artist.name?.charAt(0)?.toUpperCase() || "?"}
@@ -361,7 +371,7 @@ export function useLibraryArtistColumns({
               icon: artist.is_monitored ? <EyeOff24 /> : <Eye24 />,
               onClick: (event) => {
                 event.stopPropagation();
-                onToggleMonitored(artist.id, !artist.is_monitored);
+                onToggleMonitored(artist);
               },
             },
           ]}

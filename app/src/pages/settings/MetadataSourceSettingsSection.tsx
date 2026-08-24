@@ -111,26 +111,33 @@ export const MetadataSourceSettingsSection = ({
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={metadataSource}
+                    aria-label="Metadata source"
                     onChange={(_, data) => onUpdateCatalog({ source: data.value as "servarr" | "musicbrainz" })}
                 >
-                    <label className={styles.qualityOption} htmlFor="metadata-source-servarr">
-                        <Radio value="servarr" id="metadata-source-servarr" />
-                        <div className={styles.qualityContent}>
-                            <Text weight="semibold">Online catalog</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Hosted MusicBrainz-based catalog — easy setup. Some releases may match less precisely.
-                            </Text>
-                        </div>
-                    </label>
-                    <label className={styles.qualityOption} htmlFor="metadata-source-musicbrainz">
-                        <Radio value="musicbrainz" id="metadata-source-musicbrainz" />
-                        <div className={styles.qualityContent}>
-                            <Text weight="semibold">MusicBrainz (local)</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Your own MusicBrainz mirror — fuller release data and better matching.
-                            </Text>
-                        </div>
-                    </label>
+                    <Radio
+                        className={styles.qualityOption}
+                        value="servarr"
+                        label={(
+                            <div className={styles.qualityContent}>
+                                <Text weight="semibold">Online catalog</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Hosted MusicBrainz-based catalog — easy setup. Some releases may match less precisely.
+                                </Text>
+                            </div>
+                        )}
+                    />
+                    <Radio
+                        className={styles.qualityOption}
+                        value="musicbrainz"
+                        label={(
+                            <div className={styles.qualityContent}>
+                                <Text weight="semibold">MusicBrainz (local)</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Your own MusicBrainz mirror — fuller release data and better matching.
+                                </Text>
+                            </div>
+                        )}
+                    />
                 </RadioGroup>
                 {metadataSource === "musicbrainz" ? (
                     <div className={styles.nestedFields}>

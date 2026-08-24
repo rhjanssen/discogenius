@@ -28,6 +28,7 @@ after(() => {
 test("syncReleaseGroup stores Servarr Metadata Server album detail release type fields", async () => {
   const { db } = dbModule;
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
 
@@ -64,11 +65,20 @@ test("syncReleaseGroup stores Servarr Metadata Server album detail release type 
   assert.equal(releaseGroup.primary_type, "Album");
   assert.deepEqual(JSON.parse(releaseGroup.secondary_types), ["Live"]);
   assert.equal(releaseGroup.first_release_date, "2023-04-22");
+
+  const rgCredits = db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM ReleaseGroupArtistCredits credit
+    JOIN Albums release_group ON release_group.id = credit.release_group_id
+    WHERE release_group.mbid = ?
+  `).get("release-group-mbid") as { n: number };
+  assert.equal(rgCredits.n, 1);
 });
 
 test("syncReleaseGroup keeps the canonical Servarr Metadata Server album owner instead of the scanning artist", async () => {
   const { db } = dbModule;
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("bastille-mbid", "Bastille");
 
@@ -140,6 +150,7 @@ function resetCatalog(): void {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
 }
@@ -327,6 +338,31 @@ test("syncReleaseGroup persists recording ISRCs when the catalog source supplies
   assert.equal(recording.isrcs, JSON.stringify(["GBUM71902200"]));
   assert.equal(recording.is_video, 1);
   assert.equal(recording.artist_mbid, "artist-mbid");
+
+  const creditCounts = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM ReleaseGroupArtistCredits credit
+        JOIN Albums release_group ON release_group.id = credit.release_group_id
+        WHERE release_group.mbid = ?) AS release_groups,
+      (SELECT COUNT(*) FROM ReleaseArtistCredits credit
+        JOIN AlbumEditions edition ON edition.id = credit.edition_id
+        WHERE edition.mbid = 'rel-1') AS editions,
+      (SELECT COUNT(*) FROM RecordingArtistCredits credit
+        JOIN Recordings recording ON recording.id = credit.recording_id
+        WHERE recording.mbid = 'rec-1') AS recordings,
+      (SELECT COUNT(*) FROM TrackArtistCredits credit
+        JOIN Tracks track ON track.id = credit.track_id
+        WHERE track.mbid = 'trk-1') AS tracks
+  `).get("rg-skip") as {
+    release_groups: number;
+    editions: number;
+    recordings: number;
+    tracks: number;
+  };
+  assert.equal(creditCounts.release_groups, 1);
+  assert.equal(creditCounts.editions, 1);
+  assert.equal(creditCounts.recordings, 1);
+  assert.equal(creditCounts.tracks, 1);
 });
 
 test("syncReleaseGroup persists typed curated release-group fields from MusicBrainz-shaped detail", async () => {

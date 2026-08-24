@@ -1,3 +1,4 @@
+import axe from "axe-core";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,39 +13,35 @@ function renderCard(props: Omit<CardProps, "alt">) {
 }
 
 describe("MediaCard accessibility", () => {
-    // Global search renders album results as onClick cards. They are exposed as
-    // buttons, so Enter and Space both have to activate them — a focusable
-    // element that only responds to a pointer is not keyboard operable.
-    it("activates an onClick card with Enter and Space", () => {
+    it("uses a native button for a custom primary action", () => {
         const onClick = vi.fn();
         renderCard({ imageUrl: null, title: "Bad Blood", onClick });
 
-        const card = screen.getByRole("button", { name: "Bad Blood" });
-        expect(card).toHaveAttribute("tabindex", "0");
+        const action = screen.getByRole("button", { name: "Bad Blood" });
+        fireEvent.click(action);
 
-        fireEvent.keyDown(card, { key: "Enter" });
-        fireEvent.keyDown(card, { key: " " });
-
-        expect(onClick).toHaveBeenCalledTimes(2);
+        expect(onClick).toHaveBeenCalledTimes(1);
     });
 
-    // A `to` card is a link, so Enter activates and Space does not, matching
-    // native anchor behaviour.
-    it("activates a link card with Enter only", () => {
+    it("uses a native link for route navigation", () => {
         renderCard({ imageUrl: null, title: "Pompeii", to: "/album/pompeii" });
 
-        const card = screen.getByRole("link", { name: "Pompeii" });
-        expect(card).toHaveAttribute("tabindex", "0");
-
-        fireEvent.keyDown(card, { key: " " });
-        expect(window.location.pathname).not.toContain("pompeii");
+        expect(screen.getByRole("link", { name: "Pompeii" })).toHaveAttribute("href", "/album/pompeii");
     });
 
-    it("exposes no nested interactive control inside the card surface", () => {
-        renderCard({ imageUrl: null, title: "Bad Blood", onClick: vi.fn() });
+    it("keeps primary and monitor actions as sibling controls", () => {
+        renderCard({
+            imageUrl: null,
+            title: "Bad Blood",
+            onClick: vi.fn(),
+            monitored: true,
+            onMonitorToggle: vi.fn(),
+        });
 
-        const card = screen.getByRole("button", { name: "Bad Blood" });
-        expect(card.querySelectorAll("button, a, [role='button'], [role='link']")).toHaveLength(0);
+        const primary = screen.getByRole("button", { name: "Bad Blood" });
+        const monitor = screen.getByRole("button", { name: "Unmonitor Bad Blood" });
+        expect(primary.contains(monitor)).toBe(false);
+        expect(monitor.contains(primary)).toBe(false);
     });
 
     it("stays non-interactive when the card has no action", () => {
@@ -52,5 +49,19 @@ describe("MediaCard accessibility", () => {
 
         expect(screen.queryByRole("button", { name: "Static" })).toBeNull();
         expect(screen.queryByRole("link", { name: "Static" })).toBeNull();
+    });
+
+    it("has no automated accessibility violations with separate actions", async () => {
+        const { container } = renderCard({
+            imageUrl: null,
+            title: "Bad Blood",
+            subtitle: "Bastille",
+            to: "/album/bad-blood",
+            monitored: false,
+            onMonitorToggle: vi.fn(),
+        });
+
+        const results = await axe.run(container);
+        expect(results.violations).toEqual([]);
     });
 });

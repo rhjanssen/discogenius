@@ -15,3 +15,8 @@ token.json
 *.sqlite
 *.sqlite-journal
 .ref_*/
+
+# Root scratch from live debugging. Anchored so app/public assets stay tracked.
+/tmp-*
+/*.png
+/artist-videos.yml

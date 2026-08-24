@@ -36,7 +36,7 @@ async function stubShellApis(page: Page) {
     });
   });
 
-  await page.route('**/api/status', async (route) => {
+  await page.route('**/api/v1/system/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -48,7 +48,7 @@ async function stubShellApis(page: Page) {
     });
   });
 
-  await page.route('**/api/activity**', async (route) => {
+  await page.route('**/api/v1/history/activity**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -62,7 +62,7 @@ async function stubShellApis(page: Page) {
     });
   });
 
-  await page.route('**/api/queue/progress-stream*', async (route) => {
+  await page.route('**/api/v1/queue/progress-stream*', async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -74,7 +74,7 @@ async function stubShellApis(page: Page) {
     });
   });
 
-  await page.route((url) => url.pathname === '/api/queue', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/queue', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -82,7 +82,7 @@ async function stubShellApis(page: Page) {
     });
   });
 
-  await page.route('**/api/monitoring/status', async (route) => {
+  await page.route('**/api/v1/monitoring/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -90,7 +90,7 @@ async function stubShellApis(page: Page) {
     });
   });
 
-  await page.route('**/api/providers', async (route) => {
+  await page.route('**/api/v1/provider', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -132,7 +132,7 @@ test.describe('Content state surfaces', () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
 
-    await page.route('**/api/artists/artist-mobile-loading/page-db', async (route) => {
+    await page.route('**/api/v1/artist/artist-mobile-loading/page*', async (route) => {
       await artistGate;
       await route.fulfill({
         status: 200,
@@ -155,7 +155,7 @@ test.describe('Content state surfaces', () => {
       });
     });
 
-    await page.route('**/api/artists/artist-mobile-loading/activity', async (route) => {
+    await page.route('**/api/v1/artist/artist-mobile-loading/activity', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -171,8 +171,8 @@ test.describe('Content state surfaces', () => {
 
     await page.goto(`${baseURL}/artist/artist-mobile-loading`, { waitUntil: 'domcontentloaded' });
 
-    const loadingStatus = page.getByRole('status');
-    await expect(loadingStatus).toContainText('Loading artist details...');
+    const loadingStatus = page.getByRole('status', { name: 'Loading artist details...' });
+    await expect(loadingStatus).toBeVisible();
 
     const mainBox = await page.locator('main').boundingBox();
     const statusBox = await loadingStatus.boundingBox();
@@ -197,7 +197,7 @@ test.describe('Content state surfaces', () => {
       releaseArtistPage = resolve;
     });
 
-    await page.route('**/api/artists/artist-loading/page-db', async (route) => {
+    await page.route('**/api/v1/artist/artist-loading/page*', async (route) => {
       await artistGate;
       await route.fulfill({
         status: 200,
@@ -220,7 +220,7 @@ test.describe('Content state surfaces', () => {
       });
     });
 
-    await page.route('**/api/artists/artist-loading/activity', async (route) => {
+    await page.route('**/api/v1/artist/artist-loading/activity', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -237,7 +237,7 @@ test.describe('Content state surfaces', () => {
     await page.goto(`${baseURL}/artist/artist-loading`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('nav')).toBeVisible();
-    await expect(page.getByRole('status')).toContainText('Loading artist details...');
+    await expect(page.getByRole('status', { name: 'Loading artist details...' })).toBeVisible();
 
     releaseArtistPage?.();
 
@@ -247,7 +247,7 @@ test.describe('Content state surfaces', () => {
   test('album page shows the shared empty state when there are no tracks', async ({ page }) => {
     await stubShellApis(page);
 
-    await page.route('**/api/albums/album-empty/page', async (route) => {
+    await page.route('**/api/v1/album/album-empty/page', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -287,7 +287,7 @@ test.describe('Content state surfaces', () => {
   test('video page shows the shared error state when the item is missing', async ({ page }) => {
     await stubShellApis(page);
 
-    await page.route('**/api/videos/video-missing', async (route) => {
+    await page.route('**/api/v1/video/video-missing', async (route) => {
       await route.fulfill({
         status: 404,
         contentType: 'application/json',
@@ -306,7 +306,7 @@ test.describe('Content state surfaces', () => {
   test('library empty state uses the shared empty view instead of an ad hoc layout', async ({ page }) => {
     await stubShellApis(page);
 
-    await page.route('**/api/stats', async (route) => {
+    await page.route('**/api/v1/stats', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -319,7 +319,7 @@ test.describe('Content state surfaces', () => {
       });
     });
 
-    await page.route('**/api/artists?*', async (route) => {
+    await page.route('**/api/v1/artist?*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -327,7 +327,7 @@ test.describe('Content state surfaces', () => {
       });
     });
 
-    await page.route('**/api/albums?*', async (route) => {
+    await page.route('**/api/v1/album?*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -335,7 +335,7 @@ test.describe('Content state surfaces', () => {
       });
     });
 
-    await page.route('**/api/tracks?*', async (route) => {
+    await page.route('**/api/v1/track?*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -343,7 +343,7 @@ test.describe('Content state surfaces', () => {
       });
     });
 
-    await page.route('**/api/videos?*', async (route) => {
+    await page.route('**/api/v1/video?*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -355,6 +355,6 @@ test.describe('Content state surfaces', () => {
 
     await expect(page.locator('nav')).toBeVisible();
     await expect(page.getByText('Your library is empty')).toBeVisible();
-    await expect(page.getByRole('button', { name: /Import Followed Artists/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Import artists/i })).toBeVisible();
   });
 });

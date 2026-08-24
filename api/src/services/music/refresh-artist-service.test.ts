@@ -27,8 +27,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM ArtistReleaseGroups").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -41,15 +41,33 @@ function seedCanonicalArtistForRefresh(options: {
   artistId: string;
   artistMbid: string;
   lastScanned: string;
-}): void {
-  dbModule.db.prepare(`
+}): { metadataId: number } {
+  const row = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES (?, 'Refresh Failure Artist')
-  `).run(options.artistMbid);
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitored, last_scanned)
-    VALUES (?, 'Refresh Failure Artist', ?, 1, ?)
-  `).run(options.artistId, options.artistMbid, options.lastScanned);
+    RETURNING id
+  `).get(options.artistMbid) as { id: number };
+  const libraries = dbModule.db.prepare(`
+    SELECT id FROM Libraries WHERE enabled = 1
+  `).all() as Array<{ id: number }>;
+  for (const library of libraries) {
+    dbModule.db.prepare(`
+      INSERT INTO LibraryArtists (
+        library_id, artist_metadata_id, policy, credited_scope,
+        library_origin, metadata_status, metadata_last_checked_at
+      ) VALUES (?, ?, 'all', 'release_and_track_credit', 'test', 'verified', ?)
+    `).run(library.id, row.id, options.lastScanned);
+  }
+  return { metadataId: row.id };
+}
+
+function artistLastScanned(metadataId: number): string | null {
+  const row = dbModule.db.prepare(`
+    SELECT MAX(metadata_last_checked_at) AS last_scanned
+    FROM LibraryArtists
+    WHERE artist_metadata_id = ?
+  `).get(metadataId) as { last_scanned: string | null } | undefined;
+  return row?.last_scanned ?? null;
 }
 
 function seedSoundCloudMixtapeCatalog() {
@@ -229,10 +247,13 @@ test("artist metadata seeding queries the explicitly requested provider", async 
 });
 
 test("required canonical sync failure rejects without stamping success or matching providers", async () => {
-  const artistId = "artist-canonical-sync-failure";
   const artistMbid = "11111111-1111-4111-8111-111111111111";
   const initialLastScanned = "2001-02-03 04:05:06";
-  seedCanonicalArtistForRefresh({ artistId, artistMbid, lastScanned: initialLastScanned });
+  const { metadataId } = seedCanonicalArtistForRefresh({
+    artistId: artistMbid,
+    artistMbid,
+    lastScanned: initialLastScanned,
+  });
 
   const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
   const service = refreshServiceModule.RefreshArtistService as any;
@@ -254,7 +275,7 @@ test("required canonical sync failure rejects without stamping success or matchi
 
   try {
     await assert.rejects(
-      () => refreshServiceModule.RefreshArtistService.refreshArtist(artistId, { forceUpdate: true }),
+      () => refreshServiceModule.RefreshArtistService.refreshArtist(artistMbid, { forceUpdate: true }),
       /required canonical artist sync failed/,
     );
   } finally {
@@ -264,18 +285,19 @@ test("required canonical sync failure rejects without stamping success or matchi
     providerManager.getProviderPriority = originalGetProviderPriority;
   }
 
-  const artist = dbModule.db.prepare("SELECT last_scanned FROM Artists WHERE id = ?")
-    .get(artistId) as { last_scanned: string | null };
-  assert.equal(artist.last_scanned, initialLastScanned);
+  assert.equal(artistLastScanned(metadataId), initialLastScanned);
   assert.equal(providerMatchCalls, 0);
 });
 
 test("required scoped release hydration failure rejects before provider matching and preserves watermark", async () => {
-  const artistId = "artist-release-hydration-failure";
   const artistMbid = "22222222-2222-4222-8222-222222222222";
   const releaseGroupMbid = "33333333-3333-4333-8333-333333333333";
   const initialLastScanned = "2002-03-04 05:06:07";
-  seedCanonicalArtistForRefresh({ artistId, artistMbid, lastScanned: initialLastScanned });
+  const { metadataId } = seedCanonicalArtistForRefresh({
+    artistId: artistMbid,
+    artistMbid,
+    lastScanned: initialLastScanned,
+  });
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title)
     VALUES (?, ?, 'Release Hydration Failure Album')
@@ -303,7 +325,7 @@ test("required scoped release hydration failure rejects before provider matching
 
   try {
     await assert.rejects(
-      () => refreshServiceModule.RefreshArtistService.refreshArtist(artistId, { forceUpdate: true }),
+      () => refreshServiceModule.RefreshArtistService.refreshArtist(artistMbid, { forceUpdate: true }),
       /required scoped release hydration failed/,
     );
   } finally {
@@ -314,9 +336,7 @@ test("required scoped release hydration failure rejects before provider matching
     providerManager.getProviderPriority = originalGetProviderPriority;
   }
 
-  const artist = dbModule.db.prepare("SELECT last_scanned FROM Artists WHERE id = ?")
-    .get(artistId) as { last_scanned: string | null };
-  assert.equal(artist.last_scanned, initialLastScanned);
+  assert.equal(artistLastScanned(metadataId), initialLastScanned);
   assert.equal(providerMatchCalls, 0);
 });
 
@@ -760,8 +780,6 @@ test("release-group-only provider evidence does not leak a guessed MusicBrainz e
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -904,8 +922,6 @@ test("connected video provider mints a provider_catalog recording when no catalo
     VALUES (?, ?)
     RETURNING id
   `).get(artistMbid, "Video Artist") as { id: number };
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored, last_scanned) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)")
-    .run("artist-local", "Video Artist", artistMbid, 1);
   const providerArtist = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
@@ -921,7 +937,7 @@ test("connected video provider mints a provider_catalog recording when no catalo
 
   try {
     await refreshServiceModule.RefreshArtistService.matchArtistProviders(
-      "artist-local",
+      artistMbid,
       artistMbid,
       {},
       false,

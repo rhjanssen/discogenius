@@ -15,9 +15,22 @@ import {
     getMetadataRewriteContainerArgs,
     getVideoThumbnailProbeArgs,
     hasEmbeddedVideoThumbnail,
+    mergeProbedAudioMetrics,
     requiresBrowserCompatibleAudioStream,
+    shouldProbeAudioMetrics,
     writeMetadata,
 } from "./audioUtils.js";
+
+test("MP4 audio metrics prefer ffprobe over implausible music-metadata values", () => {
+    const merged = mergeProbedAudioMetrics(
+        { codec: "ALAC", sampleRate: 1, bitDepth: 16, channels: 2 },
+        { codec: "alac", sampleRate: 96_000, bitDepth: 24, channels: 2 },
+    );
+
+    assert.equal(shouldProbeAudioMetrics("album/track.m4a", { sampleRate: 1, channels: 2 }), true);
+    assert.equal(merged.sampleRate, 96_000);
+    assert.equal(merged.bitDepth, 24);
+});
 
 test("deriveVideoQuality treats ultrawide near-4K masters as UHD", () => {
     assert.equal(deriveVideoQuality({ width: 3832, height: 1592 }), "UHD");

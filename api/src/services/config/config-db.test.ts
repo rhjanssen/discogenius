@@ -66,8 +66,8 @@ test("fresh installs use the production monitoring and library defaults", () => 
   assert.equal(config.path.create_empty_artist_folders, false);
   assert.equal(config.path.video_folder_layout, "separated");
   assert.equal(config.naming.video_file, "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}");
-  assert.equal(config.naming.album_track_path_single, "{Edition Title} ({Release Year})/{track:00} - {Track Title}");
-  assert.equal(config.naming.album_track_path_multi, "{Edition Title} ({Release Year})/{medium:0}{track:00} - {Track Title}");
+  assert.equal(config.naming.album_track_path_single, "{Edition Title} ({Release Year}) {mbid-{Album MbId}}/{track:00} - {Track Title}");
+  assert.equal(config.naming.album_track_path_multi, "{Edition Title} ({Release Year}) {mbid-{Album MbId}}/{medium:0}{track:00} - {Track Title}");
   assert.equal(config.naming.artist_folder, "{Artist Name} {mbid-{Artist MbId}}");
   assert.equal(config.metadata.enable_fingerprinting, true);
   assert.equal(config.metadata.artwork_preference, "canonical");

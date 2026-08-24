@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef } from "react";
 import {
     Button,
     Menu,
@@ -15,9 +15,6 @@ import {
     type MenuProps,
 } from "@fluentui/react-components";
 import {
-    CheckmarkCircle16Filled,
-    DismissCircle16Filled,
-    Warning16Filled,
     ArrowClockwise24Regular,
     Clock16Regular,
     MusicNote224Regular,
@@ -30,9 +27,10 @@ import {
     Filter24Filled,
     bundleIcon,
 } from "@fluentui/react-icons";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
+import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -41,7 +39,6 @@ import { queueProviderOffers } from "@/utils/queueProviderOffers";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useDashboardStyles } from "./dashboardStyles";
 import { formatRelativeTime } from "./dashboardUtils";
-import { isInteractiveElementTarget, stopQueueControlEvent } from "./queueTabShared";
 import {
     QUEUE_HISTORY_MEDIA_KIND_OPTIONS,
     QUEUE_HISTORY_OUTCOME_OPTIONS,
@@ -132,12 +129,13 @@ function renderHistoryStatusIndicator(
     warningMessage?: string | null,
 ) {
     if (error || status === "failed") {
-        return <DismissCircle16Filled className={styles.downloadStatusErrorIcon} />;
+        return <SemanticStatusIcon status="error" className={styles.downloadStatusErrorIcon} />;
     }
 
     if (status === "completed" && outcome === "completedWithWarning") {
         return (
-            <Warning16Filled
+            <SemanticStatusIcon
+                status="warning"
                 className={styles.downloadStatusWarningIcon}
                 title={warningMessage || "Completed with warning"}
             />
@@ -145,7 +143,7 @@ function renderHistoryStatusIndicator(
     }
 
     if (status === "completed") {
-        return <CheckmarkCircle16Filled className={styles.downloadStatusColorIcon} title="Completed" />;
+        return <SemanticStatusIcon status="success" className={styles.downloadStatusColorIcon} title="Completed" />;
     }
 
     return <Clock16 className={styles.downloadStatusPendingIcon} />;
@@ -253,7 +251,6 @@ export function QueueHistoryPanel({
     onFiltersChange,
 }: QueueHistoryPanelProps) {
     const styles = useDashboardStyles();
-    const navigate = useNavigate();
     const historySentinelRef = useRef<HTMLDivElement | null>(null);
     const hasHistoryRows = items.length > 0;
     const filtersActive = hasActiveQueueHistoryFilters(filters);
@@ -309,37 +306,14 @@ export function QueueHistoryPanel({
                             url: item.url,
                         });
 
-                        const handleHistoryRowClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-                            if (!row.navPath || isInteractiveElementTarget(event.target)) {
-                                return;
-                            }
-
-                            navigate(row.navPath);
-                        };
-                        const handleHistoryRowKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-                            if (!row.navPath || isInteractiveElementTarget(event.target)) {
-                                return;
-                            }
-
-                            if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                navigate(row.navPath);
-                            }
-                        };
-
                         return (
                             <div
                                 key={`queue-history-${String(item.id)}`}
                                 className={mergeClasses(
                                     styles.downloadItem,
                                     styles.queueHistoryItem,
-                                    row.navPath ? styles.queueHistoryItemClickable : styles.queueHistoryItemStatic,
+                                    styles.queueHistoryItemStatic,
                                 )}
-                                onClick={row.navPath ? handleHistoryRowClick : undefined}
-                                onKeyDown={row.navPath ? handleHistoryRowKeyDown : undefined}
-                                role={row.navPath ? "link" : undefined}
-                                tabIndex={row.navPath ? 0 : undefined}
-                                aria-label={row.navPath ? `Open ${row.title}` : undefined}
                             >
                                 {row.coverUrl ? (
                                     <img src={row.coverUrl} alt="" className={isVideo ? styles.downloadCoverVideo : styles.downloadCover} />
@@ -353,7 +327,13 @@ export function QueueHistoryPanel({
                                 <div className={styles.downloadInfo}>
                                     <div className={mergeClasses(styles.downloadHeaderRow, styles.downloadHeaderRowInline)}>
                                         <div className={mergeClasses(styles.downloadTitleRow, styles.downloadTitleRowInline)}>
-                                            <Text className={styles.downloadTitle} truncate>{row.title}</Text>
+                                            {row.navPath ? (
+                                                <Link to={row.navPath} className={mergeClasses(styles.downloadTitle, styles.downloadTitleLink)}>
+                                                    {row.title}
+                                                </Link>
+                                            ) : (
+                                                <Text className={styles.downloadTitle} truncate>{row.title}</Text>
+                                            )}
                                         </div>
                                         <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
                                             {row.subtitle ? (
@@ -385,8 +365,8 @@ export function QueueHistoryPanel({
                                     </div>
                                 </div>
                                 {isFailed ? (
-                                    <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
-                                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => onRetryItem(item.id)} title="Retry" />
+                                    <div className={styles.downloadActions} data-queue-control="true">
+                                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => onRetryItem(item.id)} title="Retry" aria-label={`Retry ${row.title}`} />
                                     </div>
                                 ) : null}
                                 {row.error ? (

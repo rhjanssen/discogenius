@@ -37,7 +37,7 @@ test.describe('Manual import flow', () => {
       },
     ];
 
-    await page.route('**/api/stats', async (route) => {
+    await page.route('**/api/v1/stats', async (route) => {
       await route.fulfill({
         json: {
           artists: { total: 1, monitored: 1, downloaded: 0 },
@@ -48,17 +48,17 @@ test.describe('Manual import flow', () => {
       });
     });
 
-    await page.route('**/api/status', async (route) => {
+    await page.route('**/api/v1/status', async (route) => {
       await route.fulfill({
         json: {
-          activity: { pending: 0, processing: 0, history: 0 },
+          activity: { queued: 0, started: 0, history: 0 },
           taskQueueStats: [],
           commandStats: {},
         },
       });
     });
 
-    await page.route('**/api/activity**', async (route) => {
+    await page.route('**/api/v1/history/activity**', async (route) => {
       await route.fulfill({
         json: {
           items: [],
@@ -70,7 +70,7 @@ test.describe('Manual import flow', () => {
       });
     });
 
-    await page.route('**/api/unmapped**', async (route, request) => {
+    await page.route('**/api/v1/unmapped**', async (route, request) => {
       if (request.method() === 'GET') {
         await route.fulfill({ json: unmappedFiles });
         return;
@@ -78,7 +78,7 @@ test.describe('Manual import flow', () => {
       await route.fallback();
     });
 
-    await page.route('**/api/search?*', async (route) => {
+    await page.route('**/api/v1/search?*', async (route) => {
       await route.fulfill({
         json: {
           success: true,
@@ -107,20 +107,72 @@ test.describe('Manual import flow', () => {
       });
     });
 
-    await page.route('**/api/providers/tidal/albums/555/tracks', async (route) => {
+    await page.route('**/api/v1/album/555/versions', async (route) => {
       await route.fulfill({
         json: [
-          { providerId: '9001', id: '9001', tidal_id: '9001', title: 'First Song', trackNumber: 1, track_number: 1, volume_number: 1, duration: 180 },
-          { providerId: '9002', id: '9002', tidal_id: '9002', title: 'Second Song', trackNumber: 2, track_number: 2, volume_number: 1, duration: 200 },
+          {
+            id: 777,
+            mbid: 'release-mbid-555',
+            title: 'Test Album',
+            track_count: 2,
+          },
         ],
       });
     });
 
-    await page.route('**/api/unmapped/identify', async (route) => {
+    await page.route('**/api/v1/unmapped/canonical/releases/release-mbid-555', async (route) => {
+      await route.fulfill({
+        json: {
+          id: 777,
+          mbid: 'release-mbid-555',
+          releaseGroupId: 555,
+          releaseGroupMbid: 'release-group-mbid-555',
+          title: 'Test Album',
+          disambiguation: null,
+          date: '2022-01-01',
+          country: 'US',
+          mediumFormat: 'Digital Media',
+          mediumCount: 1,
+          trackCount: 2,
+          tracks: [
+            {
+              id: 9001,
+              mbid: 'track-mbid-9001',
+              recordingId: 8001,
+              recordingMbid: 'recording-mbid-8001',
+              mediumPosition: 1,
+              position: 1,
+              number: '1',
+              title: 'First Song',
+              durationMs: 180000,
+            },
+            {
+              id: 9002,
+              mbid: 'track-mbid-9002',
+              recordingId: 8002,
+              recordingMbid: 'recording-mbid-8002',
+              mediumPosition: 1,
+              position: 2,
+              number: '2',
+              title: 'Second Song',
+              durationMs: 200000,
+            },
+          ],
+        },
+      });
+    });
+
+    await page.route('**/api/v1/unmapped/canonical/libraries', async (route) => {
+      await route.fulfill({
+        json: [{ id: 1, name: 'Stereo', rootPath: '/library/music', qualityProfile: 'Lossless' }],
+      });
+    });
+
+    await page.route('**/api/v1/unmapped/identify', async (route) => {
       await route.fulfill({
         json: {
           success: true,
-          mappedTracks: { 101: '9001', 102: '9002' },
+          mappedTracks: { 101: 'track-mbid-9001', 102: 'track-mbid-9002' },
           matchedCount: 2,
           totalFiles: 2,
           averageCost: 8,
@@ -130,7 +182,7 @@ test.describe('Manual import flow', () => {
       });
     });
 
-    await page.route('**/api/unmapped/bulk-map', async (route) => {
+    await page.route('**/api/v1/unmapped/bulk-map', async (route) => {
       unmappedFiles = [];
       await route.fulfill({ json: { success: true, message: 'Successfully mapped 2 files.' } });
     });
@@ -140,21 +192,23 @@ test.describe('Manual import flow', () => {
 
     await page.getByRole('tab', { name: /^Unmapped Files$/i }).click();
     await page.getByRole('button', { name: /Review Test Album/i }).click();
-    await expect(page.getByRole('dialog')).toContainText('Manual Import');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('Manual Import');
 
-    const albumCard = page.getByRole('link', { name: /Test Album/i }).first();
+    // Scope this to the modal. The underlying table also has a "Review Test
+    // Album" button, but the open dialog correctly makes that page inert.
+    const albumCard = dialog.getByRole('button', { name: /Test Album/i }).first();
     await expect(albumCard).toBeVisible();
     await albumCard.click();
 
-    const firstTrackSelect = page.getByRole('combobox').nth(0);
-    const secondTrackSelect = page.getByRole('combobox').nth(1);
+    const firstTrackSelect = dialog.getByRole('row').filter({ hasText: '01 - First Song.flac' }).getByRole('combobox');
+    const secondTrackSelect = dialog.getByRole('row').filter({ hasText: '02 - Second Song.flac' }).getByRole('combobox');
     await expect(firstTrackSelect).toBeVisible();
     await firstTrackSelect.selectOption('9001');
     await secondTrackSelect.selectOption('9002');
 
     await expect(firstTrackSelect).toHaveValue('9001');
     await expect(secondTrackSelect).toHaveValue('9002');
-    const dialog = page.getByRole('dialog');
     await expect(dialog.getByTitle('01 - First Song.flac')).toBeVisible();
     await expect(dialog.getByTitle('02 - Second Song.flac')).toBeVisible();
   });

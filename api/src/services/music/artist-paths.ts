@@ -27,17 +27,24 @@ function sanitizeSegment(input: string): string {
     .trim();
 }
 
-function isSameCanonicalArtist(existing: { id: number | string; mbid?: string | null }, artistId?: string | number | null, artistMbId?: string | null): boolean {
-  if (artistId != null && String(existing.id) === String(artistId)) {
-    return true;
+function isSameCanonicalArtist(existing: { metadata_id: number; mbid?: string | null }, artistId?: string | number | null, artistMbId?: string | null): boolean {
+  if (artistId != null) {
+    if (String(existing.metadata_id) === String(artistId)) return true;
+    if (existing.mbid && String(existing.mbid) === String(artistId)) return true;
   }
 
   return Boolean(artistMbId && existing.mbid && String(existing.mbid) === String(artistMbId));
 }
 
 function artistPathExistsForOtherArtist(candidatePath: string, artistId?: string | number | null, artistMbId?: string | null): boolean {
-  const existing = db.prepare("SELECT id, mbid FROM artists WHERE path = ? LIMIT 1").get(candidatePath) as
-    { id: number | string; mbid?: string | null } | undefined;
+  const existing = db.prepare(`
+    SELECT metadata.id AS metadata_id, metadata.mbid
+    FROM LibraryArtists membership
+    JOIN ArtistMetadata metadata ON metadata.id = membership.artist_metadata_id
+    WHERE membership.path = ?
+    LIMIT 1
+  `).get(candidatePath) as
+    { metadata_id: number; mbid?: string | null } | undefined;
   if (!existing) return false;
   return !isSameCanonicalArtist(existing, artistId, artistMbId);
 }
@@ -111,8 +118,17 @@ export function findArtistPathConflict(candidatePath: string, artistId?: string 
     return null;
   }
 
-  const artists = db.prepare("SELECT id, name, mbid, path FROM artists WHERE path IS NOT NULL").all() as Array<{
-    id: number | string;
+  const artists = db.prepare(`
+    SELECT
+      metadata.id AS metadata_id,
+      metadata.name,
+      metadata.mbid,
+      membership.path
+    FROM LibraryArtists membership
+    JOIN ArtistMetadata metadata ON metadata.id = membership.artist_metadata_id
+    WHERE membership.path IS NOT NULL
+  `).all() as Array<{
+    metadata_id: number;
     name: string | null;
     mbid?: string | null;
     path: string | null;
@@ -144,7 +160,7 @@ export function findArtistPathConflict(candidatePath: string, artistId?: string 
 
     if (relation) {
       return {
-        artistId: String(artist.id),
+        artistId: String(artist.mbid || artist.metadata_id),
         artistName: String(artist.name || "Unknown Artist"),
         path: existingPath,
         relation,

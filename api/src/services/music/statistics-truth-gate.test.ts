@@ -116,16 +116,7 @@ function seedCanonicalFixture(): Fixture {
     VALUES (?, 'Truth Artist')
     RETURNING id
   `).get(artistMbid) as { id: number }).id);
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitored)
-    VALUES (?, ?, 'Truth Artist', 0)
-  `).run(artistMbid, artistMbid);
-  const managedArtistId = Number((dbModule.db.prepare(`
-    INSERT INTO ManagedArtists (artist_id, metadata_status)
-    VALUES (?, 'verified')
-    RETURNING id
-  `).get(artistMetadataId) as { id: number }).id);
-
+  const managedArtistId = artistMetadataId;
   const releaseGroupMbid = "truth-release-group";
   const releaseGroupId = Number((dbModule.db.prepare(`
     INSERT INTO Albums (
@@ -249,7 +240,7 @@ function addAudioFile(
   fs.writeFileSync(filePath, bytes);
   const id = Number((dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
       release_group_id, album_edition_id, track_id, recording_id,
       library_slot, library_id, file_path, relative_path, library_root,
@@ -258,7 +249,7 @@ function addAudioFile(
       'track', 'audio', ?, ?)
     RETURNING id
   `).get(
-    fixture.artistId,
+    fixture.artistMetadataId,
     fixture.artistMbid,
     fixture.releaseGroupMbid,
     fixture.editionMbid,
@@ -298,14 +289,14 @@ function addVideoFile(fixture: Fixture, library: Library): number {
   fs.writeFileSync(filePath, bytes);
   const id = Number((dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_recording_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_recording_mbid,
       recording_id, library_slot, library_id, file_path, relative_path,
       library_root, filename, extension, file_type, file_class, quality, file_size
     ) VALUES (?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, 'mp4',
       'video', 'video', 'FHD', ?)
     RETURNING id
   `).get(
-    fixture.artistId,
+    fixture.artistMetadataId,
     fixture.artistMbid,
     fixture.videoMbid,
     fixture.videoId,
@@ -336,15 +327,14 @@ function directTruth(): TruthSnapshot {
 
   const monitoredArtists = dbModule.db.prepare(`
     SELECT DISTINCT
-      CAST(local_artist.id AS TEXT) AS artist_id,
+      CAST(canonical_artist.id AS TEXT) AS artist_id,
       canonical_artist.mbid AS artist_mbid
     FROM LibraryArtists library_artist
     JOIN Libraries library
       ON library.id = library_artist.library_id AND library.enabled = 1
-    JOIN ManagedArtists managed_artist ON managed_artist.id = library_artist.managed_artist_id
-    JOIN ArtistMetadata canonical_artist ON canonical_artist.id = managed_artist.artist_id
-    JOIN Artists local_artist ON local_artist.mbid = canonical_artist.mbid
-    WHERE library_artist.monitored = 1
+    JOIN ArtistMetadata canonical_artist
+      ON canonical_artist.id = library_artist.artist_metadata_id
+    WHERE library_artist.policy IN ('all', 'new')
   `).all() as Array<{ artist_id: string; artist_mbid: string }>;
 
   const audioRequirements = dbModule.db.prepare(`
@@ -454,7 +444,7 @@ function directTruth(): TruthSnapshot {
 
   return {
     artists: {
-      total: scalar("SELECT COUNT(*) AS value FROM Artists"),
+      total: scalar("SELECT COUNT(*) AS value FROM ArtistMetadata"),
       monitored: monitoredArtists.length,
       downloaded: completedArtists,
     },

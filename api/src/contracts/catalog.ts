@@ -4,6 +4,7 @@ import {
   expectIdentifierString,
   expectNullableString,
   expectNumber,
+  expectOneOf,
   expectOptionalBoolean,
   expectOptionalNumber,
   expectOptionalString,
@@ -12,12 +13,31 @@ import {
 } from "./runtime.js";
 import type { LibraryFileContract } from "./media.js";
 
+const ARTIST_POLICY_VALUES = ["all", "new", "none"] as const;
+
+export interface ArtistLibraryMembershipContract {
+  id: number;
+  library_id: number;
+  library_name: string;
+  root_path: string;
+  policy: "all" | "new" | "none";
+  path: string | null;
+  library_origin: string;
+  metadata_status: string | null;
+  metadata_last_checked_at: string | null;
+  added_at: string;
+}
+
 export interface ArtistContract {
   id: string;
   name: string;
   picture?: string | null;
   cover_image_url?: string | null;
   is_monitored: boolean;
+  /** Grab policy on LibraryArtists. Null when not in any library. Pause is `none`. */
+  policy?: "all" | "new" | "none" | null;
+  /** Exact per-library artist state. Singular policy is null when memberships differ. */
+  memberships?: ArtistLibraryMembershipContract[];
   last_scanned: string | null;
   album_count?: number;
   monitored_album_count?: number;
@@ -205,12 +225,40 @@ export type VideosListResponseContract = PaginatedListResponseContract<VideoCont
 function parseArtistContract(value: unknown, index: number): ArtistContract {
   const label = `artists[${index}]`;
   const record = expectRecord(value, label);
+  const policy = record.policy === undefined
+    ? undefined
+    : record.policy === null
+      ? null
+      : expectOneOf(record.policy, ARTIST_POLICY_VALUES, `${label}.policy`);
+  const memberships = record.memberships === undefined
+    ? undefined
+    : expectArray(record.memberships, `${label}.memberships`, (entry, membershipIndex) => {
+      const membershipLabel = `${label}.memberships[${membershipIndex}]`;
+      const membership = expectRecord(entry, membershipLabel);
+      return {
+        id: expectNumber(membership.id, `${membershipLabel}.id`),
+        library_id: expectNumber(membership.library_id, `${membershipLabel}.library_id`),
+        library_name: expectString(membership.library_name, `${membershipLabel}.library_name`),
+        root_path: expectString(membership.root_path, `${membershipLabel}.root_path`),
+        policy: expectOneOf(membership.policy, ARTIST_POLICY_VALUES, `${membershipLabel}.policy`),
+        path: expectNullableString(membership.path, `${membershipLabel}.path`) ?? null,
+        library_origin: expectString(membership.library_origin, `${membershipLabel}.library_origin`),
+        metadata_status: expectNullableString(membership.metadata_status, `${membershipLabel}.metadata_status`) ?? null,
+        metadata_last_checked_at: expectNullableString(
+          membership.metadata_last_checked_at,
+          `${membershipLabel}.metadata_last_checked_at`,
+        ) ?? null,
+        added_at: expectString(membership.added_at, `${membershipLabel}.added_at`),
+      };
+    });
   return {
     id: expectIdentifierString(record.id, `${label}.id`),
     name: expectString(record.name, `${label}.name`),
     picture: expectNullableString(record.picture, `${label}.picture`),
     cover_image_url: expectNullableString(record.cover_image_url, `${label}.cover_image_url`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
+    policy,
+    memberships,
     last_scanned: expectNullableString(record.last_scanned, `${label}.last_scanned`) ?? null,
     album_count: expectOptionalNumber(record.album_count, `${label}.album_count`),
     monitored_album_count: expectOptionalNumber(record.monitored_album_count, `${label}.monitored_album_count`),

@@ -20,14 +20,11 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
-  dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
-  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
+  dbModule.db.prepare("DELETE FROM Albums").run();  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-id", "Artist", "artist-mbid");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("group-mbid", "artist-mbid", "Album");
 });
@@ -83,11 +80,11 @@ test("representative release prefers releases with imported files first", () => 
   insertRelease("deluxe-release", 18);
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_path, relative_path, library_root, filename, extension,
+      artist_metadata_id, file_path, relative_path, library_root, filename, extension,
       file_type, canonical_release_mbid
     )
     VALUES (
-      'artist-id', '/library/standard.flac', 'standard.flac', 'stereo',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-id'), '/library/standard.flac', 'standard.flac', 'stereo',
       'standard.flac', '.flac', 'track', 'standard-release'
     )
   `).run();
@@ -104,11 +101,11 @@ test("local import release follows Lidarr by preferring releases with imported f
   insertRelease("deluxe-release", 18);
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, file_path, relative_path, library_root, filename, extension,
+      artist_metadata_id, file_path, relative_path, library_root, filename, extension,
       file_type, canonical_release_mbid
     )
     VALUES (
-      'artist-id', '/library/standard.flac', 'standard.flac', 'stereo',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-id'), '/library/standard.flac', 'standard.flac', 'stereo',
       'standard.flac', '.flac', 'track', 'standard-release'
     )
   `).run();

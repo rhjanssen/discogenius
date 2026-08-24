@@ -39,6 +39,7 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM Recordings").run();
     dbModule.db.prepare("DELETE FROM AlbumEditions").run();
     dbModule.db.prepare("DELETE FROM Albums").run();
+    dbModule.db.prepare("DELETE FROM LibraryArtists").run();
     dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 

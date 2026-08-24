@@ -269,14 +269,12 @@ test("audio curation never runs for a video library", async () => {
   // afterwards. The library selection excludes video libraries outright.
   seed();
   const curationModule = await import("./curation-service.js");
-  const managedArtistId = (db.prepare(`
-    INSERT INTO ManagedArtists (artist_id) VALUES (1) RETURNING id
-  `).get() as { id: number }).id;
+  const artistMetadataId = 1;
   for (const library of db.prepare("SELECT id FROM Libraries").all() as Array<{ id: number }>) {
     db.prepare(`
-      INSERT INTO LibraryArtists (library_id, managed_artist_id, monitored, credited_scope)
-      VALUES (?, ?, 1, 'primary_only')
-    `).run(library.id, managedArtistId);
+      INSERT INTO LibraryArtists (library_id, artist_metadata_id, policy, credited_scope)
+      VALUES (?, ?, 'all', 'primary_only')
+    `).run(library.id, artistMetadataId);
   }
 
   const audioLibraryIds = (db.prepare(`
@@ -285,15 +283,15 @@ test("audio curation never runs for a video library", async () => {
     JOIN LibraryArtists library_artist ON library_artist.library_id = library.id
     JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
     WHERE library.enabled = 1
-      AND library_artist.managed_artist_id = ?
-      AND library_artist.monitored = 1
+      AND library_artist.artist_metadata_id = ?
+      AND library_artist.policy IN ('all', 'new')
       AND NOT EXISTS (
         SELECT 1
         FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
         WHERE allowed.value = 'video'
       )
     ORDER BY library.id
-  `).all(managedArtistId) as Array<{ id: number }>).map((row) => row.id);
+  `).all(artistMetadataId) as Array<{ id: number }>).map((row) => row.id);
 
   const videoLibraryIds = resolveVideoLibraryIds(db);
   assert.ok(videoLibraryIds.length > 0, "the fixture has a video library to exclude");

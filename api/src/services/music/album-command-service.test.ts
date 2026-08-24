@@ -37,15 +37,23 @@ beforeEach(() => {
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-mbid-1', 'Artist One')").run();
-  db.prepare("INSERT INTO Artists (id, mbid, name, monitored) VALUES ('artist-1', 'artist-mbid-1', 'Artist One', 1)").run();
+  db.prepare(`
+    INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-mbid-1', 'Artist One')
+  `).run();
   db.prepare(`
     INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title, primary_type)
     VALUES (1, 'release-group-mbid-1', 1, 'artist-mbid-1', 'Album One', 'Album')
   `).run();
+  const stereoId = libraryId("Stereo");
+  db.prepare(`
+    INSERT INTO LibraryArtists (
+      library_id, artist_metadata_id, policy, credited_scope,
+      library_origin, metadata_status, metadata_last_checked_at
+    ) VALUES (?, 1, 'all', 'release_and_track_credit', 'test', 'verified', CURRENT_TIMESTAMP)
+  `).run(stereoId);
 });
 
 after(() => {
@@ -179,75 +187,6 @@ test("monitor-only album add succeeds without reconstructing a legacy provider p
   assert.deepEqual(result.commandIds, []);
 });
 
-test("monitor-and-download for a track enqueues a wait row, not a command", async () => {
-  const { db } = dbModule;
-  db.prepare(`
-    INSERT INTO AlbumEditions (
-      id, mbid, release_group_id, release_group_mbid, artist_mbid, title
-    ) VALUES (10, 'edition-mbid-track', 1, 'release-group-mbid-1', 'artist-mbid-1', 'Album One')
-  `).run();
-  db.prepare(`
-    INSERT INTO Recordings (id, mbid, artist_mbid, title, is_video, metadata_status)
-    VALUES (20, 'recording-mbid-1', 'artist-mbid-1', 'Pompeii', 0, 'complete')
-  `).run();
-  db.prepare(`
-    INSERT INTO Tracks (
-      id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
-      medium_position, position, number, title
-    ) VALUES (30, 'track-mbid-1', 10, 'edition-mbid-track', 20, 'recording-mbid-1', 1, 1, '1', 'Pompeii')
-  `).run();
-  const providerItem = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
-    VALUES ('tidal', 'track', 'tidal-track-1', 'Pompeii', 'available')
-    RETURNING id
-  `).get() as { id: number };
-  const releaseItem = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
-    VALUES ('tidal', 'release', 'tidal-album-1', 'Album One', 'available')
-    RETURNING id
-  `).get() as { id: number };
-  const member = db.prepare(`
-    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
-    VALUES (?, ?, 1, 1)
-    RETURNING id
-  `).get(releaseItem.id, providerItem.id) as { id: number };
-  const releaseMatch = db.prepare(`
-    INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, edition_id, relation, match_state, decision_source,
-      confidence, method, matcher_version
-    ) VALUES (?, 10, 'exact', 'accepted', 'automatic', 0.99, 'test_fixture', 1)
-    RETURNING id
-  `).get(releaseItem.id) as { id: number };
-  db.prepare(`
-    INSERT INTO ProviderTrackMatches (
-      provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
-      track_id, recording_id, match_state, decision_source, confidence, method, matcher_version
-    ) VALUES (?, ?, ?, 30, 20, 'accepted', 'automatic', 0.99, 'test_fixture', 1)
-  `).run(providerItem.id, member.id, releaseMatch.id);
-
-  const result = await serviceModule.AlbumCommandService.monitorTrack("30", true);
-  assert.equal(result.success, true);
-  assert.ok(result.commandId && result.commandId > 0);
-
-  const wait = db.prepare(`
-    SELECT id, media_kind, command_name, command_id FROM DownloadQueue WHERE id = ?
-  `).get(result.commandId) as {
-    id: number;
-    media_kind: string;
-    command_name: string;
-    command_id: number | null;
-  } | undefined;
-  assert.ok(wait);
-  assert.equal(wait.media_kind, "track");
-  assert.equal(wait.command_name, "DownloadTrack");
-  assert.equal(wait.command_id, null);
-
-  const commandCount = (db.prepare(`
-    SELECT COUNT(*) AS n FROM commands WHERE name = 'DownloadTrack'
-  `).get() as { n: number }).n;
-  assert.equal(commandCount, 0);
-});
-
 test("unmonitoring an album deletes its files and duplicate extras when cleanup is on", async () => {
   const { updateConfig } = await import("../config/config.js");
   updateConfig("monitoring", { remove_unmonitored_files: true });
@@ -280,12 +219,12 @@ test("unmonitoring an album deletes its files and duplicate extras when cleanup 
 
     db.prepare(`
       INSERT INTO TrackFiles (
-        artist_id, library_id, release_group_id, album_edition_id,
+        artist_metadata_id, library_id, release_group_id, album_edition_id,
         canonical_release_group_mbid, canonical_release_mbid,
         library_slot, file_path, relative_path, library_root, filename, extension, file_type, quality
       ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      "artist-1",
+      1,
       stereoId,
       edition.id,
       "release-group-mbid-1",
@@ -308,7 +247,7 @@ test("unmonitoring an album deletes its files and duplicate extras when cleanup 
         extension, file_type, library_slot
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      "artist-1",
+      "artist-mbid-1",
       trackFileId,
       path.relative(tempDir, mp3Path),
       mp3Path,

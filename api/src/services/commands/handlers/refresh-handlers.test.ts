@@ -34,8 +34,8 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM commands").run();
 });
 
@@ -90,13 +90,19 @@ test("provider-match completion preserves monitoring-cycle context", async () =>
 });
 
 test("deferred provider matching stamps credited artists only after a successful hydrated match", async () => {
+  const { seedLibraryArtistMonitoring } = await import("../../../test-support/active-schema-fixture.js");
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, library_origin, last_scanned)
-    VALUES ('credited-success', 'Credited success', 'credited-success-mbid', 'musicbrainz-credit', NULL)
+    INSERT INTO ArtistMetadata (mbid, name) VALUES
+      ('credited-success-mbid', 'Credited success'),
+      ('credited-failure-mbid', 'Credited failure')
   `).run();
+  seedLibraryArtistMonitoring(dbModule.db, "credited-success-mbid");
+  seedLibraryArtistMonitoring(dbModule.db, "credited-failure-mbid");
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, library_origin, last_scanned)
-    VALUES ('credited-failure', 'Credited failure', 'credited-failure-mbid', 'musicbrainz-credit', NULL)
+    UPDATE LibraryArtists SET library_origin = 'musicbrainz-credit', metadata_last_checked_at = NULL
+    WHERE artist_metadata_id IN (
+      SELECT id FROM ArtistMetadata WHERE mbid IN ('credited-success-mbid', 'credited-failure-mbid')
+    )
   `).run();
 
   const originalMatch = RefreshArtistService.matchArtistProviders;
@@ -107,15 +113,15 @@ test("deferred provider matching stamps credited artists only after a successful
     updateCommandDescription: () => undefined,
     formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
   } as any;
-  const makeJob = (artistId: string) => ({
-    id: artistId === "credited-success" ? 51 : 52,
+  const makeJob = (artistKey: string) => ({
+    id: artistKey === "credited-success" ? 51 : 52,
     name: "MatchArtistProviders",
     status: "started",
     priority: -9,
     payload: {
-      artistId,
-      artistName: artistId,
-      artistMbid: `${artistId}-mbid`,
+      artistId: `${artistKey}-mbid`,
+      artistName: artistKey,
+      artistMbid: `${artistKey}-mbid`,
       shouldHydrateCatalog: true,
       metadataChanged: true,
       isNewArtist: true,
@@ -139,27 +145,59 @@ test("deferred provider matching stamps credited artists only after a successful
   }
 
   const success = dbModule.db.prepare(`
-    SELECT last_scanned, library_origin
-    FROM Artists
-    WHERE id = 'credited-success'
+    SELECT membership.metadata_last_checked_at AS last_scanned, membership.library_origin
+    FROM LibraryArtists membership
+    JOIN ArtistMetadata metadata ON metadata.id = membership.artist_metadata_id
+    WHERE metadata.mbid = 'credited-success-mbid'
+    LIMIT 1
   `).get() as { last_scanned: string | null; library_origin: string | null };
   assert.ok(success.last_scanned);
   assert.equal(success.library_origin, "musicbrainz-credit-hydrated");
 
   const failure = dbModule.db.prepare(`
-    SELECT last_scanned, library_origin
-    FROM Artists
-    WHERE id = 'credited-failure'
+    SELECT membership.metadata_last_checked_at AS last_scanned, membership.library_origin
+    FROM LibraryArtists membership
+    JOIN ArtistMetadata metadata ON metadata.id = membership.artist_metadata_id
+    WHERE metadata.mbid = 'credited-failure-mbid'
+    LIMIT 1
   `).get() as { last_scanned: string | null; library_origin: string | null };
   assert.equal(failure.last_scanned, null);
   assert.equal(failure.library_origin, "musicbrainz-credit");
 });
 
+test("credited artist hydration queues the canonical MBID instead of the local row id", async () => {
+  const creditedMbid = "11111111-1111-4111-8111-111111111111";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, 'Canonical collaborator')
+  `).run(creditedMbid);
+
+  await (RefreshArtistService as any).queueCreditedArtistRefreshes([creditedMbid]);
+
+  const queued = dbModule.db.prepare(`
+    SELECT ref_id, payload
+    FROM commands
+    WHERE name = 'RefreshArtist'
+    LIMIT 1
+  `).get() as { ref_id: string; payload: string } | undefined;
+  assert.ok(queued);
+  assert.equal(queued.ref_id, creditedMbid);
+  assert.equal(JSON.parse(queued.payload).artistId, creditedMbid);
+  assert.equal(JSON.parse(queued.payload).artistName, "Canonical collaborator");
+});
+
 test("stored-offer-only provider matching does not re-stamp a fresh artist", async () => {
+  const { seedLibraryArtistMonitoring } = await import("../../../test-support/active-schema-fixture.js");
   const originalTimestamp = "2001-02-03 04:05:06";
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, library_origin, last_scanned)
-    VALUES ('fresh-artist', 'Fresh artist', 'fresh-artist-mbid', 'musicbrainz-credit-hydrated', ?)
+    INSERT INTO ArtistMetadata (mbid, name) VALUES ('fresh-artist-mbid', 'Fresh artist')
+  `).run();
+  seedLibraryArtistMonitoring(dbModule.db, "fresh-artist-mbid");
+  dbModule.db.prepare(`
+    UPDATE LibraryArtists
+    SET library_origin = 'musicbrainz-credit-hydrated',
+        metadata_last_checked_at = ?
+    WHERE artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'fresh-artist-mbid')
   `).run(originalTimestamp);
 
   const originalMatch = RefreshArtistService.matchArtistProviders;
@@ -174,7 +212,7 @@ test("stored-offer-only provider matching does not re-stamp a fresh artist", asy
       status: "started",
       priority: 0,
       payload: {
-        artistId: "fresh-artist",
+        artistId: "fresh-artist-mbid",
         artistName: "Fresh artist",
         artistMbid: "fresh-artist-mbid",
         shouldHydrateCatalog: false,
@@ -191,9 +229,11 @@ test("stored-offer-only provider matching does not re-stamp a fresh artist", asy
   }
 
   const row = dbModule.db.prepare(`
-    SELECT last_scanned, library_origin
-    FROM Artists
-    WHERE id = 'fresh-artist'
+    SELECT membership.metadata_last_checked_at AS last_scanned, membership.library_origin
+    FROM LibraryArtists membership
+    JOIN ArtistMetadata metadata ON metadata.id = membership.artist_metadata_id
+    WHERE metadata.mbid = 'fresh-artist-mbid'
+    LIMIT 1
   `).get() as { last_scanned: string; library_origin: string };
   assert.equal(row.last_scanned, originalTimestamp);
   assert.equal(row.library_origin, "musicbrainz-credit-hydrated");
@@ -201,7 +241,6 @@ test("stored-offer-only provider matching does not re-stamp a fresh artist", asy
 
 test("SeedVideo monitors only the requested provider offer when IDs collide", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Bastille')").run();
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES ('artist-local', 'Bastille', 'artist-mbid')").run();
   dbModule.db.prepare(`
     INSERT INTO Recordings (
       id, mbid, artist_mbid, title, is_video

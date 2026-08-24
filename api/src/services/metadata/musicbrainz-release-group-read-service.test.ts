@@ -37,9 +37,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM ArtistReleaseGroups").run();
-  dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
-  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
+  dbModule.db.prepare("DELETE FROM Albums").run();  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 function hydrateCanonicalForeignKeys(releaseGroupMbid: string): void {
@@ -179,8 +178,6 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -251,13 +248,19 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
     "tidal-expanded",
     "Give Me The Future + Dreams Of The Past",
   );
-
   const versions = await readServiceModule.MusicBrainzReleaseGroupReadService.getVersions(releaseGroupMbid);
   const providersByRelease = new Map(versions.map((version) => [version.id, version.stereo_provider_id]));
 
   assert.equal(providersByRelease.get(standardReleaseMbid), "tidal-standard");
   assert.equal(providersByRelease.get(deluxeReleaseMbid), "tidal-deluxe");
   assert.equal(providersByRelease.get(expandedReleaseMbid), "tidal-expanded");
+
+  selectLibraryRelease(releaseGroupMbid, deluxeReleaseMbid);
+  const selectedVersions = await readServiceModule.MusicBrainzReleaseGroupReadService.getVersions(releaseGroupMbid);
+  const monitoredByRelease = new Map(selectedVersions.map((version) => [version.id, version.is_monitored]));
+  assert.equal(monitoredByRelease.get(standardReleaseMbid), false);
+  assert.equal(monitoredByRelease.get(deluxeReleaseMbid), true);
+  assert.equal(monitoredByRelease.get(expandedReleaseMbid), false);
 });
 
 test("album tracks attach library files by recording MBID when track MBIDs differ across releases", async () => {
@@ -271,8 +274,6 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Amy Winehouse");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Amy Winehouse", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -316,12 +317,12 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, library_slot, file_path, relative_path,
       library_root, filename, extension, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    artistMbid,
+    (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?").get(artistMbid) as { id: number }).id,
     artistMbid,
     releaseGroupMbid,
     spatialReleaseMbid,
@@ -364,8 +365,6 @@ test("album tracks show one stereo file per recording, not every sibling edition
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -393,18 +392,18 @@ test("album tracks show one stereo file per recording, not every sibling edition
 
   const insertFile = dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, library_slot, file_path, relative_path,
       library_root, filename, extension, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   insertFile.run(
-    artistMbid, artistMbid, releaseGroupMbid, anniversaryReleaseMbid, anniversaryTrackMbid, recordingMbid,
+    (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?").get(artistMbid) as { id: number }).id, artistMbid, releaseGroupMbid, anniversaryReleaseMbid, anniversaryTrackMbid, recordingMbid,
     "stereo", "/library/stereo/Bad Blood X/Oblivion.m4a", "Bad Blood X/Oblivion.m4a",
     "/library/stereo", "Oblivion.m4a", ".m4a", "track", "LOSSLESS",
   );
   insertFile.run(
-    artistMbid, artistMbid, releaseGroupMbid, hiresReleaseMbid, hiresTrackMbid, recordingMbid,
+    (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?").get(artistMbid) as { id: number }).id, artistMbid, releaseGroupMbid, hiresReleaseMbid, hiresTrackMbid, recordingMbid,
     "stereo", "/library/stereo/All This Bad Blood/Oblivion.flac", "All This Bad Blood/Oblivion.flac",
     "/library/stereo", "Oblivion.flac", ".flac", "track", "HIRES_LOSSLESS",
   );
@@ -440,8 +439,6 @@ test("edition-scoped tracks answer for the edition asked for, complete", async (
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Dire Straits");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Dire Straits", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -520,8 +517,6 @@ test("single release group does not inherit album files by shared recording MBID
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Amy Winehouse");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Amy Winehouse", artistMbid);
 
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
@@ -580,12 +575,12 @@ test("single release group does not inherit album files by shared recording MBID
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, library_slot, file_path, relative_path,
       library_root, filename, extension, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    artistMbid,
+    (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?").get(artistMbid) as { id: number }).id,
     artistMbid,
     albumReleaseGroupMbid,
     albumReleaseMbid,
@@ -625,8 +620,6 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Amy Winehouse");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Amy Winehouse", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -746,8 +739,6 @@ test("a planned offer surfaces when the provider match was bound to another edit
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Cross Edition");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Cross Edition", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -850,8 +841,6 @@ test("an edition's tracklist shows its own plan's offers, not a sibling edition'
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Edition Scope");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Edition Scope", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -961,8 +950,6 @@ test("album page reports downloaded when the selected edition has audio files", 
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -1010,13 +997,13 @@ test("album page reports downloaded when the selected edition has audio files", 
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, release_group_id, album_edition_id,
       track_id, recording_id, library_slot, library_id, file_path, relative_path,
       library_root, filename, extension, file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    artistMbid,
+    (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?").get(artistMbid) as { id: number }).id,
     artistMbid,
     releaseGroupMbid,
     releaseMbid,

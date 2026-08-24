@@ -23,9 +23,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
-  dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
-  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
+  dbModule.db.prepare("DELETE FROM Albums").run();  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -39,7 +38,6 @@ test("artist album upsert stores allowed provider supplements on catalog album a
   const releaseMbid = "22222222-2222-4222-8222-222222222222";
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
   dbModule.db.prepare("INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(releaseMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
 
@@ -248,7 +246,6 @@ test("album track scan stores provider track offers linked to the selected canon
   });
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
   dbModule.db.prepare("INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, media) VALUES (?, ?, ?, ?, ?, ?)").run(
     releaseMbid,
@@ -349,7 +346,6 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
   const secondTrackMbid = "76666666-6666-4666-8666-666666666666";
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
     .run(releaseGroupMbid, artistMbid, "Other People's Heartache");
   dbModule.db.prepare(`
@@ -454,7 +450,6 @@ test("SoundCloud storeProviderTrackOffers keeps 6 progressive offers and drops t
   ];
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
     .run(releaseGroupMbid, artistMbid, "Other People's Heartache");
   dbModule.db.prepare(`
@@ -553,7 +548,6 @@ test("same-release provider superset maps exact-duration version tracks and clea
   ] as const;
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Lost Frequencies");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Lost Frequencies", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
     .run(releaseGroupMbid, artistMbid, "Reality");
   dbModule.db.prepare(`
@@ -672,7 +666,6 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
   const releaseMbid = "66666666-6666-4666-8666-666666666666";
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, review_text)
     VALUES (?, ?, 'Canonical Album', 'album', '')

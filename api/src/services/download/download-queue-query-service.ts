@@ -1136,7 +1136,7 @@ export class DownloadQueueQueryService {
             SELECT release_group.mbid
             FROM Albums release_group
             LEFT JOIN ArtistMetadata artist ON artist.id = release_group.artist_metadata_id
-            LEFT JOIN Artists managed ON managed.mbid = artist.mbid
+            LEFT JOIN ArtistMetadata managed ON managed.mbid = artist.mbid
             WHERE managed.id = ? OR artist.mbid = ? OR managed.mbid = ?
           )
         )`);

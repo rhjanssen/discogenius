@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge, Button, Link, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { Checkmark12Filled } from "@fluentui/react-icons";
-import { QualityBadge, formatQualityForSlot } from "./QualityBadge";
+import { QualityBadge } from "./QualityBadge";
 import { ExplicitBadge } from "./ExplicitBadge";
 import { ProviderMark } from "./ProviderMark";
 import { providerAlbumUrl, providerKey, providerMarkFor, providerTrackUrl, providerVideoUrl } from "./providerMarks";
@@ -16,6 +16,8 @@ import {
 import { badgeGlassFill } from "./badgeChrome";
 import { isUnknownQualityTag } from "@/utils/qualityTier";
 import { coverageSummaryForSelectedOffer } from "@/utils/acquisitionPlanCoverage";
+import { formatQualityForSlot } from "@/utils/qualityTags";
+import { isOfferSelected } from "@/utils/providerOfferSelection";
 
 type SlotName = "stereo" | "spatial" | "video";
 type BadgeSize = DiscogeniusBadgeSize;
@@ -92,26 +94,6 @@ interface ProviderQualityRowProps {
      * identify a plan — see `ProviderQualityOffer.planKey`.
      */
     selectedOfferPlanKey?: string | null;
-}
-
-/**
- * Whether this badge is the selected one.
- *
- * Plan identity wins when both sides have it. Only when the badge is not a plan
- * (raw provider offers on the video page and the pre-plan fallback row) does
- * this fall back to provider + provider album id.
- */
-export function isOfferSelected(
-    offer: ProviderQualityOffer,
-    selected: { planKey?: string | null; provider?: string | null; albumId?: string | null },
-): boolean {
-    const offerPlanKey = String(offer.planKey || "").trim();
-    const selectedPlanKey = String(selected.planKey || "").trim();
-    if (offerPlanKey || selectedPlanKey) {
-        return offerPlanKey.length > 0 && offerPlanKey === selectedPlanKey;
-    }
-    return providerKey(selected.provider) === providerKey(offer.provider)
-        && sameProviderAlbumIdSet(selected.albumId, offer.providerAlbumId);
 }
 
 // Provider circular marks share BADGE_HEIGHT_PX with QualityBadge chips.
@@ -319,13 +301,6 @@ function splitProviderAlbumIds(providerAlbumId?: string | null): string[] {
         .split(/[+;]/)
         .map((id) => id.trim())
         .filter(Boolean);
-}
-
-/** Whether two provider album id sets ("id1;id2" composites included) are the same selection. */
-function sameProviderAlbumIdSet(left?: string | null, right?: string | null): boolean {
-    const a = splitProviderAlbumIds(left).sort();
-    const b = splitProviderAlbumIds(right).sort();
-    return a.length > 0 && a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 /** One release entry, after merging offers that point at the same provider release. */
@@ -613,6 +588,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             <span
                 className={mergeClasses(styles.providerPill, groupIndex > 0 ? styles.groupGap : undefined)}
                 style={{ width: `${diameter}px`, height: `${diameter}px`, ...(fillsBadge ? { backgroundColor: "transparent" } : pillStyle) }}
+                role={providerHref ? undefined : "img"}
                 aria-hidden={providerHref ? true : undefined}
                 aria-label={providerHref ? undefined : `${providerName} source`}
             >

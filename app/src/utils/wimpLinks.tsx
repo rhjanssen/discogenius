@@ -30,9 +30,11 @@ export function parseWimpLinks(text: string, navigate: NavigateFn): React.ReactN
       const path = type === "artistId" ? `/artist/${id}` : `/album/${id}`;
 
       parts.push(
-        <span
+        <a
           key={`${paragraphIndex}-link-${key++}`}
+          href={path}
           onClick={(event) => {
+            event.preventDefault();
             event.stopPropagation();
             navigate(path);
           }}
@@ -43,7 +45,7 @@ export function parseWimpLinks(text: string, navigate: NavigateFn): React.ReactN
           }}
         >
           {linkText}
-        </span>
+        </a>
       );
 
       lastIndex = match.index + match[0].length;

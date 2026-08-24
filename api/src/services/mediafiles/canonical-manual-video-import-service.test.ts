@@ -19,7 +19,6 @@ const VIDEO_MBID = "22222222-2222-4222-8222-222222222222";
 function fixture() {
   resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, 'Bastille')").run(ARTIST_MBID);
-  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, 'Bastille', ?)").run(ARTIST_MBID, ARTIST_MBID);
   db.prepare(`
     INSERT INTO Recordings (
       id, mbid, title, artist_metadata_id, artist_mbid, artist_credit, is_video
@@ -66,7 +65,7 @@ test("canonical video import pins the exact TrackFiles row without provider prov
       receivedIdentity = items[0]?.providerId || "";
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_id, library_root, library_slot,
+          id, artist_metadata_id, library_id, library_root, library_slot,
           file_path, relative_path, filename, extension, file_type, file_class,
           provider, provider_entity_type, provider_id, source_quality, quality
         ) VALUES (
@@ -75,7 +74,7 @@ test("canonical video import pins the exact TrackFiles row without provider prov
           'Pompeii.mkv', 'mkv', 'video', 'video',
           'tidal', 'video', 'stale-provider-video', '1080p', '1080p'
         )
-      `).run(ARTIST_MBID);
+      `).run(1);
       return {
         requested: 1,
         imported: 1,
@@ -155,13 +154,13 @@ test("canonical video import rejects an exact importer row outside the chosen li
     const service = new CanonicalManualVideoImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_id, library_root, library_slot,
+          id, artist_metadata_id, library_id, library_root, library_slot,
           file_path, relative_path, filename, extension, file_type
         ) VALUES (
           71, ?, 3, '/library/other', 'video',
           '/library/other/Pompeii.mkv', 'Pompeii.mkv', 'Pompeii.mkv', 'mkv', 'video'
         )
-      `).run(ARTIST_MBID);
+      `).run(1);
       return {
         requested: 1,
         imported: 1,

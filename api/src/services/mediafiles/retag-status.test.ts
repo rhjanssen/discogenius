@@ -27,8 +27,10 @@ after(() => {
 test("retag status uses a bounded fast scan by default", async () => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
-  db.prepare("DELETE FROM Artists").run();
-  db.prepare("INSERT INTO Artists (id, name) VALUES (?, ?)").run("artist-1", "Bastille");
+  const artist = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+    RETURNING id
+  `).get("artist-1", "Bastille") as { id: number };
 
   configModule.updateConfig("metadata", {
     ...configModule.getConfigSection("metadata"),
@@ -37,7 +39,7 @@ test("retag status uses a bounded fast scan by default", async () => {
 
   const insertFile = db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, provider, provider_entity_type, provider_id, library_slot,
+      artist_metadata_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -52,7 +54,7 @@ test("retag status uses a bounded fast scan by default", async () => {
   for (let i = 1; i <= 5; i += 1) {
     insertProviderTrack.run("tidal", "track", String(i), `Track ${i}`, 180_000);
     insertFile.run(
-      "artist-1",
+      artist.id,
       "tidal",
       "track",
       String(i),

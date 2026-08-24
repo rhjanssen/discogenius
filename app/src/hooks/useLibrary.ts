@@ -248,65 +248,6 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     }
   }, [toast]);
 
-  const addArtist = useCallback(async (artist: Artist) => {
-    try {
-      await api.addArtist(artist.id);
-      await Promise.all([artistsQuery.refetch(), statsQuery.refetch()]);
-
-      toast({
-        title: "Artist added",
-        description: `${artist.name} has been added to your library`,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not add artist";
-      toast({
-        title: "Failed to add artist",
-        description: message,
-        variant: "destructive",
-      });
-    }
-  }, [artistsQuery, statsQuery, toast]);
-
-  const deleteArtist = useCallback(async (providerId: string, options?: { deleteFiles?: boolean }) => {
-    try {
-      await api.deleteArtist(providerId, options);
-      await Promise.all([artistsQuery.refetch(), statsQuery.refetch()]);
-
-      toast({
-        title: "Artist removed",
-        description: options?.deleteFiles
-          ? "Artist and imported files have been removed from your library"
-          : "Artist has been removed from your library",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not remove artist";
-      toast({
-        title: "Failed to remove artist",
-        description: message,
-        variant: "destructive",
-      });
-    }
-  }, [artistsQuery, statsQuery, toast]);
-
-  const updateArtist = useCallback(async (providerId: string, data: { is_monitored?: boolean }) => {
-    try {
-      await api.updateArtist(providerId, data);
-      await Promise.all([artistsQuery.refetch(), statsQuery.refetch()]);
-
-      toast({
-        title: "Artist updated",
-        description: "Artist monitoring status has been updated",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not update artist";
-      toast({
-        title: "Failed to update artist",
-        description: message,
-        variant: "destructive",
-      });
-    }
-  }, [artistsQuery, statsQuery, toast]);
-
   return {
     artists: artistsQuery.artists,
     albums: albumsQuery.albums,
@@ -336,13 +277,9 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     setSortOptions,
     setSearchQuery,
     syncArtist,
-    toggleArtistMonitored: artistsQuery.toggleMonitor,
     artistsHasRefreshError: artistsQuery.hasRefreshError,
     artistsRefreshErrorMessage: artistsQuery.refreshErrorMessage,
     albumsHasRefreshError: albumsQuery.hasRefreshError,
     albumsRefreshErrorMessage: albumsQuery.refreshErrorMessage,
-    addArtist,
-    deleteArtist,
-    updateArtist,
   };
 };

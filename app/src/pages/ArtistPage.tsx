@@ -6,7 +6,6 @@ import {
   Title1,
   Title2,
   Spinner,
-  Card,
   Badge,
   Dialog,
   DialogSurface,
@@ -19,6 +18,7 @@ import {
   MenuTrigger,
   MenuPopover,
   MenuList,
+  MenuItem,
   MenuItemRadio,
   makeStyles,
   tokens,
@@ -30,6 +30,7 @@ import {
   ArrowSync24Regular,
   Eye24Regular,
   EyeOff24Regular,
+  Pause24Regular,
   ArrowDownload24Regular,
   LockClosed24Regular,
   LockOpen24Regular,
@@ -44,6 +45,7 @@ import {
   ArrowSync24Filled,
   Eye24Filled,
   EyeOff24Filled,
+  Pause24Filled,
   ArrowDownload24Filled,
   LockClosed24Filled,
   LockOpen24Filled,
@@ -57,7 +59,7 @@ import {
   FolderSync24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
-import { api } from "@/services/api";
+import { api, type ArtistLibraryMembership } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import type { TrackListItem } from "@/types/track-list";
@@ -103,6 +105,11 @@ import { albumSelectedQualityOffers } from "@/utils/albumSelectedQualityOffers";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import { useAlbumTableColumns } from "@/components/library/useAlbumTableColumns";
 import {
+  ArtistLibraryScopeDialog,
+  type ArtistLibraryAction,
+  type ArtistPolicy,
+} from "@/components/artists/ArtistLibraryScopeDialog";
+import {
   RenamePreviewDialog,
   RetagPreviewDialog,
   type RenamePreviewItem,
@@ -122,6 +129,7 @@ import {
 const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
 const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const Pause24 = bundleIcon(Pause24Filled, Pause24Regular);
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
@@ -222,22 +230,42 @@ const useStyles = makeStyles({
   },
   artistImageOverlay: {
     position: "absolute",
-    inset: 0,
+    right: tokens.spacingHorizontalS,
+    bottom: tokens.spacingVerticalS,
+    width: "36px",
+    height: "36px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0, 0, 0, 0.45)",
+    border: `1px solid ${tokens.colorNeutralStrokeOnBrand2}`,
     borderRadius: tokens.borderRadiusCircular,
-    opacity: 0,
+    opacity: 0.82,
     transition: `opacity ${tokens.durationNormal} ${tokens.curveEasyEase}`,
     cursor: "pointer",
     "&:hover": {
       opacity: 1,
     },
+    "&:focus-visible": {
+      opacity: 1,
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: "2px",
+    },
+    "@media (prefers-reduced-motion: reduce)": {
+      transitionDuration: "0.01ms",
+    },
+    "@media (forced-colors: active)": {
+      color: "ButtonText",
+      backgroundColor: "ButtonFace",
+      border: "1px solid ButtonText",
+    },
   },
   artworkInfoIcon: {
     color: "white",
     fontSize: "32px",
+    "@media (forced-colors: active)": {
+      color: "ButtonText",
+    },
   },
   artistInfo: {
     display: "flex",
@@ -518,7 +546,19 @@ const ArtistPage = () => {
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
   ));
+  const [policyOverride, setPolicyOverride] = useState<"all" | "new" | "none" | null>(null);
+  const [libraryDialog, setLibraryDialog] = useState<{
+    action: ArtistLibraryAction;
+    policy: ArtistPolicy;
+  } | null>(null);
+  const [libraryDialogBusy, setLibraryDialogBusy] = useState(false);
   const { getProgressByProviderId } = useQueueStatus();
+
+  const { data: artistLibraries = [] } = useQuery({
+    queryKey: ["artistLibraries"],
+    queryFn: () => api.getArtistLibraries(),
+    staleTime: 60_000,
+  });
 
   useDebouncedQueryInvalidation({
     queryKeys: [['artist-activity', artistId]],
@@ -643,6 +683,9 @@ const ArtistPage = () => {
   const artistName = artistInfo?.name || pageData?.artistInfo?.name || "Unknown Artist";
   const artistBio = artistInfo?.bio || null;
   const artistLocalFiles = Array.isArray(artistInfo?.files) ? artistInfo.files : [];
+  const artistMemberships: ArtistLibraryMembership[] = Array.isArray(artistInfo?.memberships)
+    ? artistInfo.memberships
+    : [];
   const hasLocalArtistPicture = artistLocalFiles.some((file: any) => file.file_type === "cover");
   const bioAttribution = formatMetadataAttribution(artistInfo?.bio_source, artistInfo?.bio_last_updated);
   const artistPictureUrl = artistInfo
@@ -660,6 +703,11 @@ const ArtistPage = () => {
     artistPictureFailed ? null : artistPictureUrl,
   );
   const isMonitored = monitorOverride ?? Boolean(artistInfo?.is_monitored);
+  const artistPolicy = policyOverride
+    ?? (artistInfo?.policy === "all" || artistInfo?.policy === "new" || artistInfo?.policy === "none"
+      ? artistInfo.policy
+      : null);
+  const isPaused = isMonitored && artistPolicy === "none";
 
   useEffect(() => {
     setArtistPictureFailed(false);
@@ -668,11 +716,13 @@ const ArtistPage = () => {
   useEffect(() => {
     if (!artistId) {
       setMonitorOverride(null);
+      setPolicyOverride(null);
       return;
     }
 
     const optimisticState = getOptimisticMonitorState('artist', artistId);
     setMonitorOverride(optimisticState ?? null);
+    setPolicyOverride(null);
   }, [artistId]);
 
   useEffect(() => {
@@ -685,6 +735,15 @@ const ArtistPage = () => {
       setMonitorOverride(null);
     }
   }, [artistId, artistInfo?.is_monitored, monitorOverride]);
+
+  useEffect(() => {
+    if (policyOverride == null || artistInfo?.policy === undefined) {
+      return;
+    }
+    if (artistInfo.policy === policyOverride) {
+      setPolicyOverride(null);
+    }
+  }, [artistInfo?.policy, policyOverride]);
 
   const monitoredItemCount = useMemo(() => {
     if (!pageData?.rows) return undefined;
@@ -741,18 +800,41 @@ const ArtistPage = () => {
   }, [artistId, refetchPage]);
 
   // Actions
-  const toggleMonitoring = async () => {
-    if (!artistId) return;
-    const nextMonitored = !isMonitored;
-    setMonitorOverride(nextMonitored);
+  const openArtistLibraryDialog = (
+    action: ArtistLibraryAction,
+    policy: ArtistPolicy = artistPolicy ?? "all",
+  ) => {
+    setLibraryDialog({ action, policy });
+  };
+
+  const applyArtistLibraryChange = async (libraryIds: number[], policy: ArtistPolicy) => {
+    if (!artistId || !libraryDialog) return;
+    setLibraryDialogBusy(true);
     try {
-      await api.updateArtist(artistId, { monitored: nextMonitored });
-      dispatchMonitorStateChanged({ type: 'artist', providerId: artistId, monitored: nextMonitored });
+      const response: any = libraryDialog.action === "monitor"
+        ? await api.updateArtist(artistId, { monitored: true, policy, libraryIds })
+        : libraryDialog.action === "policy"
+          ? await api.updateArtist(artistId, { policy, libraryIds })
+          : await api.updateArtist(artistId, { monitored: false, libraryIds });
+      const monitored = Boolean(response?.monitored);
+      setMonitorOverride(null);
+      setPolicyOverride(null);
+      setLibraryDialog(null);
+      dispatchMonitorStateChanged({ type: "artist", providerId: artistId, monitored });
       dispatchLibraryUpdated();
-      refetchPage();
+      await refetchPage();
+      toast({
+        title: libraryDialog.action === "unmonitor" ? "Library membership removed" : "Artist libraries updated",
+        description: `${libraryIds.length} ${libraryIds.length === 1 ? "library" : "libraries"} updated.`,
+      });
     } catch (error) {
-      setMonitorOverride(!nextMonitored);
-      console.error("Error toggling monitoring:", error);
+      toast({
+        title: "Could not update artist libraries",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLibraryDialogBusy(false);
     }
   };
 
@@ -1095,24 +1177,19 @@ const ArtistPage = () => {
     const imageUrl = item.picture || item.cover_image_url || null;
 
     return (
-      <Card
+      <MediaCard
         key={providerId}
-        className={cardStyles.card}
-        onClick={() => navigate(`/artist/${providerId}`)}
-      >
-        <div className={cardStyles.cardPreview}>
-          {imageUrl ? (
-            <img src={imageUrl} alt={name} className={cardStyles.cardImage} loading="lazy" />
-          ) : (
-            <div className={styles.placeholderInitial}>
-              {name?.charAt(0)?.toUpperCase() || '?'}
-            </div>
-          )}
-        </div>
-        <div className={cardStyles.cardContent}>
-          <div className={cardStyles.cardTitleCenter} title={name}>{name}</div>
-        </div>
-      </Card>
+        to={`/artist/${providerId}`}
+        imageUrl={imageUrl}
+        alt=""
+        title={name}
+        mini
+        placeholder={(
+          <div className={styles.placeholderInitial}>
+            {name?.charAt(0)?.toUpperCase() || '?'}
+          </div>
+        )}
+      />
     );
   };
 
@@ -1287,7 +1364,7 @@ const ArtistPage = () => {
       return (
         <div key={`${module.type}-${module.title}`} className={styles.section}>
           <div className={styles.sectionHeader}>
-            <Title2>{module.title}</Title2>
+            <Title2 as="h2">{module.title}</Title2>
             {isFirst && renderMobileFilterView()}
             {filteredCount > COLLAPSED_TOP_TRACK_COUNT && (
               <Button
@@ -1329,7 +1406,7 @@ const ArtistPage = () => {
       return (
         <div key={`${module.type}-${module.title}`} className={styles.section}>
           <div className={styles.sectionHeader}>
-            <Title2>{module.title}</Title2>
+            <Title2 as="h2">{module.title}</Title2>
             {isFirst && renderMobileFilterView()}
           </div>
           <div
@@ -1407,7 +1484,7 @@ const ArtistPage = () => {
     return (
       <div key={`${module.type}-${module.title}`} className={styles.section}>
         <div className={styles.sectionHeader}>
-          <Title2>{module.title}</Title2>
+          <Title2 as="h2">{module.title}</Title2>
           {isFirst && renderMobileFilterView()}
         </div>
         {viewMode === 'list' && !isArtistModule && !isVideoModule ? renderListView() : renderGridOrCarousel()}
@@ -1481,7 +1558,13 @@ const ArtistPage = () => {
     ))
   )), [modules]);
 
-  const showIngestSkeleton = Boolean(activity?.scanning) && (modules.length === 0 || !pageData?.artist?.last_scanned);
+  // A queued, slow, or failed refresh must not hide catalog data that is
+  // already available. The old condition replaced the whole page with an
+  // endless skeleton whenever activity reported a scan and the artist had not
+  // completed its first library scan. Keep the blocking skeleton only until
+  // the identity response arrives; the normal page can then expose the busy
+  // state on its actions while section queries continue in the background.
+  const showIngestSkeleton = Boolean(activity?.scanning) && !pageData?.artist;
   // Shared delayed-loading policy: sub-second cached loads render blank
   // instead of flashing the full-page skeleton. Ingest syncs are known-long
   // waits, so they keep an immediate skeleton.
@@ -1509,6 +1592,7 @@ const ArtistPage = () => {
   if (pageError) {
     return (
       <div className={styles.stateShell}>
+        <h1 className="visually-hidden">Artist</h1>
         <ErrorState
           title="Failed to load artist"
           error={pageError as Error}
@@ -1535,7 +1619,15 @@ const ArtistPage = () => {
   const scanActionTitle = 'Refresh & Scan';
 
   const artistActions: OverflowAction[] = [
-    { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', onClick: toggleMonitoring },
+    ...(isMonitored
+      ? [
+          ...(isPaused
+            ? [{ key: 'resume', label: 'Resume in libraries…', onClick: () => openArtistLibraryDialog('policy', 'all') } satisfies OverflowAction]
+            : [{ key: 'pause', label: 'Pause in libraries…', onClick: () => openArtistLibraryDialog('policy', 'none') } satisfies OverflowAction]),
+          { key: 'new-releases', label: 'Only new releases…', onClick: () => openArtistLibraryDialog('policy', 'new') } satisfies OverflowAction,
+          { key: 'unmonitor', label: 'Unmonitor from libraries…', onClick: () => openArtistLibraryDialog('unmonitor') } satisfies OverflowAction,
+        ]
+      : [{ key: 'monitor', label: 'Monitor in libraries…', onClick: () => openArtistLibraryDialog('monitor', 'all') } satisfies OverflowAction]),
     { key: 'refresh-scan', label: isScanBusy ? 'Scanning...' : 'Refresh & Scan', disabled: isScanBusy, onClick: syncArtist },
     { key: 'curate', label: isCurateBusy ? 'Running...' : 'Curate', disabled: isCurateBusy || isScanBusy || !hasAlbums, onClick: curateArtist },
     { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
@@ -1559,7 +1651,7 @@ const ArtistPage = () => {
       setDeleteFilesUnmonitor(false);
       dispatchLibraryUpdated();
       dispatchActivityRefresh();
-      queryClient.invalidateQueries({ queryKey: ["artist-page", artistId] });
+      queryClient.invalidateQueries({ queryKey: ["artistPage", artistId] });
     } catch (error) {
       toast({
         title: "Failed to delete artist files",
@@ -1627,6 +1719,21 @@ const ArtistPage = () => {
   return (
     <DynamicBrandProvider keyColor={artistBrandColor}>
       <div className={styles.container}>
+        {libraryDialog ? (
+          <ArtistLibraryScopeDialog
+            open
+            action={libraryDialog.action}
+            artistName={artistName}
+            libraries={artistLibraries}
+            initialLibraryIds={artistMemberships.length > 0
+              ? artistMemberships.map((membership) => membership.library_id)
+              : artistLibraries.map((library) => library.id)}
+            initialPolicy={libraryDialog.policy}
+            busy={libraryDialogBusy}
+            onOpenChange={(open) => { if (!open) setLibraryDialog(null); }}
+            onConfirm={applyArtistLibraryChange}
+          />
+        ) : null}
         <RenamePreviewDialog
           open={renamePreviewOpen}
           items={renamePreviewItems}
@@ -1760,7 +1867,7 @@ const ArtistPage = () => {
                   {...ultraBlurHeroProps}
                   src={artistPictureUrl} 
                   className={styles.artistImage} 
-                  alt={artistName}
+                  alt=""
                   onError={() => setArtistPictureFailed(true)}
                 />
               ) : (
@@ -1771,18 +1878,19 @@ const ArtistPage = () => {
                 </div>
               )}
               {hasLocalArtistPicture && (
-                <div
+                <button
+                  type="button"
                   className={styles.artistImageOverlay}
                   onClick={() => setArtistInfoOpen(true)}
-                  title="Artwork info"
+                  aria-label={`Artwork information for ${artistName}`}
                 >
                   <Info24 className={styles.artworkInfoIcon} />
-                </div>
+                </button>
               )}
             </div>
             <div className={styles.artistInfo}>
               <div className={styles.titleBlock}>
-                <Title1 className={styles.artistTitle}>{artistName}</Title1>
+                <Title1 as="h1" className={styles.artistTitle}>{artistName}</Title1>
                 {artistBio && (
                   <ExpandableMetadataBlock
                     content={parseWimpLinks(artistBio, navigate)}
@@ -1793,25 +1901,55 @@ const ArtistPage = () => {
                 )}
               </div>
 
-              <Overflow minimumVisible={3}>
+              {/* At phone widths two actions plus More fit reliably. Keeping
+                  three forced the centered row wider than its container and
+                  clipped the monitored state off the left edge at 375 px. */}
+              <Overflow minimumVisible={2}>
                 <div className={styles.actions}>
                   <OverflowItem id="monitor" priority={4}>
-                    <AppTooltip
-                      content={isMonitored ? "Click to stop monitoring" : "Click to enable monitoring"}
-                      relationship="label"
-                    >
-                      <Button
-                        appearance={isMonitored ? "subtle" : "primary"}
-                        icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
-                        onClick={toggleMonitoring}
-                        className={mergeClasses(
-                          styles.actionButton,
-                          isMonitored ? styles.transparentButton : styles.primaryButton
-                        )}
-                      >
-                        {isMonitored ? "Unmonitor" : "Monitor"}
-                      </Button>
-                    </AppTooltip>
+                    {!isMonitored ? (
+                      <AppTooltip content="Add to library and monitor" relationship="label">
+                        <Button
+                          appearance="primary"
+                          icon={<Eye24 />}
+                          onClick={() => openArtistLibraryDialog("monitor", "all")}
+                          className={mergeClasses(styles.actionButton, styles.primaryButton)}
+                        >
+                          Monitor
+                        </Button>
+                      </AppTooltip>
+                    ) : (
+                      <Menu>
+                        <MenuTrigger disableButtonEnhancement>
+                          <Button
+                            appearance="subtle"
+                            icon={isPaused ? <Pause24 /> : <Eye24 />}
+                            className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                          >
+                            {isPaused ? "Paused" : "Monitored"}
+                          </Button>
+                        </MenuTrigger>
+                        <MenuPopover>
+                          <MenuList>
+                            {isPaused ? (
+                              <MenuItem icon={<Eye24 />} onClick={() => openArtistLibraryDialog("policy", "all")}>
+                                All eligible releases…
+                              </MenuItem>
+                            ) : (
+                              <MenuItem icon={<Pause24 />} onClick={() => openArtistLibraryDialog("policy", "none")}>
+                                Pause in libraries…
+                              </MenuItem>
+                            )}
+                            <MenuItem icon={<Eye24 />} onClick={() => openArtistLibraryDialog("policy", "new")}>
+                              Only new releases…
+                            </MenuItem>
+                            <MenuItem icon={<EyeOff24 />} onClick={() => openArtistLibraryDialog("unmonitor")}>
+                              Unmonitor from libraries…
+                            </MenuItem>
+                          </MenuList>
+                        </MenuPopover>
+                      </Menu>
+                    )}
                   </OverflowItem>
 
                   <OverflowItem id="refresh-scan" priority={3}>

@@ -4,6 +4,91 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+No changes yet.
+
+## [2.12.0] - 2026-08-25
+
+Discogenius now has one canonical MusicBrainz artist identity and explicit
+per-library membership. This is schema 46 with no compatibility migration:
+**stop Discogenius and wipe/recreate its SQLite database before upgrading from
+2.11.x or older.** Provider credentials and the Apple wrapper session remain in
+`config/` and do not need to be removed.
+
+### Added
+
+- **Per-library artist monitoring.** Choose the Stereo, Spatial, and other
+  applicable libraries independently, with `all`, `new`, or `none` policy per
+  membership. `none` pauses acquisition without removing the artist.
+- **Exact multi-edition navigation.** Albums monitored as non-nesting editions
+  expose accessible, compact track-list tabs. Providerless monitored editions
+  retain their Stop monitoring action.
+- **Accessibility foundations.** Route focus and announcements, skip navigation,
+  semantic headings and grids, keyboard-safe cards and overflow controls,
+  forced-colors/reduced-motion support, contrast-tested themes, and automated
+  axe browser coverage.
+- **Operational diagnostics.** Public liveness is intentionally minimal while
+  authenticated health reports database integrity, queue, paths, tools, and
+  provider readiness.
+
+### Changed
+
+- **One artist identity.** Catalog facts live on `ArtistMetadata`; library
+  membership lives on `LibraryArtists`. The retired `Artists` and
+  `ManagedArtists` tables and their dual-writer assumptions are gone.
+- **Unmonitor means absence.** Removing an artist deletes the selected
+  `LibraryArtists` row. Catalog albums, editions, tracks, and recordings remain
+  separate from per-library curation.
+- **Acquisition remains provider-coherent.** A plan may combine compatible
+  editions from one provider, but never builds a TIDAL + Deezer-style composite.
+- **Track monitor actions were removed.** Tracks inherit album/edition curation;
+  the retired track-monitor route and bulk mutation no longer silently change
+  album state.
+- **Fluent visual system.** Navigation uses filled brand icons for hover/current
+  state without a permanent outline, cards use Fluent elevation without lift,
+  brand ramps are consistent in light/dark themes, and mobile Album, Dashboard,
+  Settings, edition tabs, and manual-import tables use tighter responsive layouts.
+- **Lean playback loading.** HLS uses the light distribution and the player is
+  isolated from file-maintenance bundles.
+
+### Fixed
+
+- **Canonical identity throughout runtime workflows.** Scan, organize, import,
+  provider matching, command references, statistics, and fallback paths carry
+  MusicBrainz identities or exact typed database IDs instead of guessing from a
+  provider ID. Credited-artist refreshes no longer pair a name with an unrelated
+  numeric provider artist.
+- **Typed provider and file identity.** Every provider join includes provider +
+  entity type, edition occurrences remain contextual, queue uniqueness includes
+  media kind/provider/slot, and imports report the exact file row they produced.
+- **Exact edition monitoring.** Edition API state comes from `LibraryEditions`,
+  not the release-group wanted flag, and monitored editions stay removable when
+  their current provider offer disappears. Manual and scheduled acquisition
+  execute every current plan for every monitored edition.
+- **Selected video offers stay authoritative.** Album video cards, quality
+  badges, and downloads now use the exact persisted provider offer. Missing or
+  stale selections show no provider badge instead of falling back to an
+  unrelated higher-ranked offer.
+- **Import review correctness.** An ampersand-only album title no longer
+  normalizes to empty, so Bastille’s 14-track `&` release groups correctly.
+  M4A/ALAC files with implausible parser values are re-probed with ffprobe, fixing
+  1 Hz / 16-bit rows for genuine 96 kHz / 24-bit audio.
+- **Import and Activity usability.** Provider artwork uses compact lazy-loaded
+  thumbnails and incremental rendering; queue, activity, history, and import
+  states share semantic Fluent icons; manual-import columns remain stable and
+  horizontally scroll on narrow screens.
+- **Apple wrapper resilience.** The sidecar reuses its mounted authenticated
+  session across wrapper and Discogenius restarts, validates live ports before
+  reporting success, waits through startup grace, and writes supervisor status
+  atomically.
+- **Security hardening.** Authentication and playback tokens use strict signed
+  validation and expiry, login is throttled, HLS sessions are registered, range
+  requests are validated, CORS/headers are constrained, and remote media fetching
+  guards DNS, redirects, and private-address SSRF paths.
+- **Queue and database responsiveness.** Long reads are bounded and indexed,
+  synchronous SQLite work yields where appropriate, command ownership/leases and
+  recovery fail closed, and slow-query patterns that stalled the Node event loop
+  were removed.
+
 ## [2.11.0] - 2026-08-22
 
 Video recordings are MusicBrainz and/or YouTube catalog rows. Providers match

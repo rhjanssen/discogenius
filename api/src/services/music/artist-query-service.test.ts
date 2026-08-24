@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
-import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
+import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-artist-query-"));
@@ -37,6 +37,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryEditions").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ProviderTrackMatches").run();
   db.prepare("DELETE FROM ProviderVideoMatches").run();
   db.prepare("DELETE FROM ProviderEditionMatches").run();
@@ -48,7 +49,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM ArtistReleaseGroups").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -64,11 +65,6 @@ function seedCanonicalArtistPage() {
     VALUES ('artist-mbid-1', 'Canonical Artist', 77)
     RETURNING id
   `).get() as { id: number };
-
-  db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitored, last_scanned, bio_text, artist_types)
-    VALUES ('artist-1', 'artist-mbid-1', 'Canonical Artist', 1, CURRENT_TIMESTAMP, 'Canonical biography', '["Person"]')
-  `).run();
 
   db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, images)
@@ -100,6 +96,12 @@ function seedCanonicalArtistPage() {
       library_id, release_group_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'manual', 1, 'test', 1)
   `).run(library.id, releaseGroup.id);
+  seedLibraryArtistMonitoring(db, "artist-mbid-1");
+  db.prepare(`
+    UPDATE LibraryArtists
+    SET metadata_last_checked_at = CURRENT_TIMESTAMP
+    WHERE artist_metadata_id = ?
+  `).run(artistMetadata.id);
   db.prepare(`
     INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, reason, curation_version
@@ -214,7 +216,7 @@ function seedCanonicalArtistPage() {
   `).run(providerVideo.id);
 
 
-return { artistId: "artist-1" };
+  return { artistId: "artist-mbid-1", artistMetadataId: artistMetadata.id };
 }
 
 test("artist page uses canonical release groups, tracks, and video recordings", async () => {
@@ -595,8 +597,10 @@ test("artist list and album helper count canonical release groups and tracks", (
 
 test("artist page does not treat a due metadata refresh as needs_scan", async () => {
   const { artistId } = seedCanonicalArtistPage();
-  dbModule.db.prepare(`
-    UPDATE Artists SET last_scanned = datetime('now', '-10 days') WHERE id = ?
+  dbModule.  db.prepare(`
+    UPDATE LibraryArtists
+    SET metadata_last_checked_at = datetime('now', '-10 days')
+    WHERE artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = ?)
   `).run(artistId);
 
   const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
@@ -609,9 +613,7 @@ test("artist list excludes unhydrated mbid-named shells until they gain library 
 
   const shellMbid = "0a1b2c3d-1111-2222-3333-444455556666";
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, library_origin, monitored)
-    VALUES (?, ?, ?, 'musicbrainz-credit', 0)
-  `).run(shellMbid, shellMbid, shellMbid);
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run(shellMbid, shellMbid);
 
   const list = artistQueryModule.ArtistQueryService.listArtists({
     limit: 50,
@@ -623,7 +625,7 @@ test("artist list excludes unhydrated mbid-named shells until they gain library 
 
   // Monitoring the shell makes it a managed artist again, so it must reappear
   // even while the display name is still the MBID placeholder.
-  dbModule.db.prepare("UPDATE Artists SET monitored = 1 WHERE id = ?").run(shellMbid);
+  seedLibraryArtistMonitoring(dbModule.db, shellMbid);
   const monitoredList = artistQueryModule.ArtistQueryService.listArtists({
     limit: 50,
     offset: 0,

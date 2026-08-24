@@ -67,3 +67,8 @@ pnpm-lock.yaml
 # Generated audit/debug dumps (write these outside the repo or to ignored paths)
 provider_refs.txt
 provider-test-failures.log
+
+# Root scratch from live debugging. Anchored so app/public assets stay tracked.
+/tmp-*
+/*.png
+/artist-videos.yml

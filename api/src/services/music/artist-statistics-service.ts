@@ -3,6 +3,8 @@ import { audioLibraryPredicate } from "./library-album-monitoring.js";
 
 export interface ArtistStatisticsRow {
   artist_id: string;
+  artist_metadata_id?: number;
+  library_id?: number;
   artist_mbid: string | null;
   album_count: number;
   monitored_album_count: number;
@@ -15,9 +17,10 @@ export interface ArtistStatisticsRow {
   updated_at: string | null;
 }
 
-const STATISTICS_COLUMNS = `artist_id, artist_mbid, album_count, monitored_album_count, downloaded_album_count,
-             track_count, monitored_track_count, track_file_count, video_count,
-             size_on_disk, updated_at`;
+const STATISTICS_COLUMNS = `stats.library_id, stats.artist_metadata_id, metadata.mbid AS artist_mbid,
+             stats.album_count, stats.monitored_album_count, stats.downloaded_album_count,
+             stats.track_count, stats.monitored_track_count, stats.track_file_count, stats.video_count,
+             stats.size_on_disk, stats.updated_at`;
 
 function normalizeArtistIds(artistIds?: Array<string | number | null | undefined>): string[] {
   return Array.from(new Set((artistIds ?? [])
@@ -140,16 +143,19 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
   if (normalizedArtistIds.length === 0) {
     return [];
   }
-  const artistFilter = ` WHERE CAST(a.id AS TEXT) IN (${normalizedArtistIds.map(() => "?").join(",")})`;
+  const artistFilter = ` WHERE (
+    CAST(a.id AS TEXT) IN (${normalizedArtistIds.map(() => "?").join(",")})
+    OR a.mbid IN (${normalizedArtistIds.map(() => "?").join(",")})
+  )`;
 
   const scopedArtists = (db.prepare(`
-    SELECT CAST(a.id AS TEXT) AS artist_id,
+    SELECT
+           COALESCE(NULLIF(TRIM(CAST(a.mbid AS TEXT)), ''), CAST(a.id AS TEXT)) AS artist_id,
            NULLIF(TRIM(CAST(a.mbid AS TEXT)), '') AS artist_mbid,
-           metadata.id AS artist_metadata_id
-    FROM Artists a
-    LEFT JOIN ArtistMetadata metadata ON metadata.mbid = a.mbid
+           a.id AS artist_metadata_id
+    FROM ArtistMetadata a
     ${artistFilter}
-  `).all(...normalizedArtistIds) as Array<{
+  `).all(...normalizedArtistIds, ...normalizedArtistIds) as Array<{
     artist_id: string;
     artist_mbid: string | null;
     artist_metadata_id: number | null;
@@ -291,6 +297,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
 
     return {
       artist_id: artist.artistId,
+      artist_metadata_id: artist.artistMetadataId ?? undefined,
       artist_mbid: artist.artistMbid,
       album_count: albumCount,
       monitored_album_count: monitoredAlbumCount,
@@ -312,24 +319,48 @@ export class ArtistStatisticsService {
       return new Map();
     }
 
+    // Per-library rows stamp the same artist-level totals; MAX collapses them.
+    // SUM would multiply counts by LibraryArtists membership count.
     const rows = db.prepare(`
-      SELECT ${STATISTICS_COLUMNS}
-      FROM ArtistStatistics
-      WHERE artist_id IN (${normalizedArtistIds.map(() => "?").join(",")})
-    `).all(...normalizedArtistIds) as ArtistStatisticsRow[];
+      SELECT
+        metadata.mbid AS artist_id,
+        metadata.mbid AS artist_mbid,
+        metadata.id AS artist_metadata_id,
+        MAX(stats.album_count) AS album_count,
+        MAX(stats.monitored_album_count) AS monitored_album_count,
+        MAX(stats.downloaded_album_count) AS downloaded_album_count,
+        MAX(stats.track_count) AS track_count,
+        MAX(stats.monitored_track_count) AS monitored_track_count,
+        MAX(stats.track_file_count) AS track_file_count,
+        MAX(stats.video_count) AS video_count,
+        MAX(stats.size_on_disk) AS size_on_disk,
+        MAX(stats.updated_at) AS updated_at
+      FROM ArtistStatistics stats
+      JOIN ArtistMetadata metadata ON metadata.id = stats.artist_metadata_id
+      WHERE metadata.mbid IN (${normalizedArtistIds.map(() => "?").join(",")})
+         OR CAST(metadata.id AS TEXT) IN (${normalizedArtistIds.map(() => "?").join(",")})
+      GROUP BY metadata.id, metadata.mbid
+    `).all(...normalizedArtistIds, ...normalizedArtistIds) as ArtistStatisticsRow[];
 
-    return new Map(rows.map((row) => [String(row.artist_id), row]));
+    const map = new Map<string, ArtistStatisticsRow>();
+    for (const row of rows) {
+      const key = String(row.artist_mbid || row.artist_id);
+      map.set(key, { ...row, artist_id: key });
+    }
+    return map;
   }
 
   static refresh(artistIds?: Array<string | number | null | undefined>): ArtistStatisticsRow[] {
     const explicitIds = normalizeArtistIds(artistIds);
     const isFullRefresh = artistIds === undefined || (Array.isArray(artistIds) && artistIds.length === 0);
 
-    // Full refresh: enumerate every artist and process in bounded chunks so the
-    // per-chunk IN-lists / VALUES clauses stay well under SQLite's parameter
-    // ceiling. Scoped refresh: just chunk the caller's ids.
     const targetIds = isFullRefresh
-      ? (db.prepare("SELECT CAST(id AS TEXT) AS artist_id FROM Artists").all() as Array<{ artist_id: string }>)
+      ? (db.prepare(`
+          SELECT DISTINCT metadata.mbid AS artist_id
+          FROM ArtistMetadata metadata
+          JOIN LibraryArtists membership ON membership.artist_metadata_id = metadata.id
+          WHERE metadata.mbid IS NOT NULL
+        `).all() as Array<{ artist_id: string }>)
           .map((row) => String(row.artist_id))
       : explicitIds;
 
@@ -338,11 +369,11 @@ export class ArtistStatisticsService {
 
     const upsert = db.prepare(`
       INSERT INTO ArtistStatistics (
-        artist_id, artist_mbid, album_count, monitored_album_count, downloaded_album_count,
+        library_id, artist_metadata_id, artist_mbid, album_count, monitored_album_count, downloaded_album_count,
         track_count, monitored_track_count, track_file_count, video_count, size_on_disk, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(artist_id) DO UPDATE SET
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(library_id, artist_metadata_id) DO UPDATE SET
         artist_mbid = excluded.artist_mbid,
         album_count = excluded.album_count,
         monitored_album_count = excluded.monitored_album_count,
@@ -357,24 +388,36 @@ export class ArtistStatisticsService {
 
     db.transaction(() => {
       for (const row of rows) {
-        upsert.run(
-          row.artist_id,
-          row.artist_mbid,
-          Number(row.album_count || 0),
-          Number(row.monitored_album_count || 0),
-          Number(row.downloaded_album_count || 0),
-          Number(row.track_count || 0),
-          Number(row.monitored_track_count || 0),
-          Number(row.track_file_count || 0),
-          Number(row.video_count || 0),
-          Number(row.size_on_disk || 0),
-        );
+        const metadataId = row.artist_metadata_id;
+        if (metadataId == null) continue;
+        const memberships = db.prepare(`
+          SELECT library_id FROM LibraryArtists WHERE artist_metadata_id = ?
+        `).all(metadataId) as Array<{ library_id: number }>;
+        const libraryIds = memberships.length > 0
+          ? memberships.map((m) => m.library_id)
+          : (db.prepare(`SELECT id FROM Libraries WHERE enabled = 1 ORDER BY id LIMIT 1`).all() as Array<{ id: number }>)
+              .map((m) => m.id);
+        for (const libraryId of libraryIds) {
+          upsert.run(
+            libraryId,
+            metadataId,
+            row.artist_mbid,
+            Number(row.album_count || 0),
+            Number(row.monitored_album_count || 0),
+            Number(row.downloaded_album_count || 0),
+            Number(row.track_count || 0),
+            Number(row.monitored_track_count || 0),
+            Number(row.track_file_count || 0),
+            Number(row.video_count || 0),
+            Number(row.size_on_disk || 0),
+          );
+        }
       }
 
       if (isFullRefresh) {
         db.prepare(`
           DELETE FROM ArtistStatistics
-          WHERE artist_id NOT IN (SELECT CAST(id AS TEXT) FROM Artists)
+          WHERE artist_metadata_id NOT IN (SELECT id FROM ArtistMetadata)
         `).run();
       }
     })();
@@ -411,8 +454,8 @@ export class ArtistStatisticsService {
           FROM ArtistReleaseGroups scope
           WHERE scope.release_group_mbid IN (${placeholders})
         )
-        SELECT CAST(artist.id AS TEXT) AS artist_id
-        FROM Artists artist
+        SELECT COALESCE(NULLIF(TRIM(CAST(artist.mbid AS TEXT)), ''), CAST(artist.id AS TEXT)) AS artist_id
+        FROM ArtistMetadata artist
         JOIN affected_artist_mbids affected
           ON affected.artist_mbid = artist.mbid
       `).all(...mbidChunk, ...mbidChunk) as Array<{ artist_id: string }>;

@@ -31,7 +31,6 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM commands").run();
   dbModule.db.prepare("DELETE FROM scheduled_tasks").run();
   dbModule.db.prepare("DELETE FROM monitoring_runtime_state").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
 });
 
 after(() => {

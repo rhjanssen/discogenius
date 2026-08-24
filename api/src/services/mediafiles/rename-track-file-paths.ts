@@ -7,6 +7,10 @@ import {
   getCurrentLibraryRootPath,
   resolveLibraryRootKey,
 } from "./library-paths.js";
+import {
+  resolveArtistMetadataId,
+  resolveArtistMbid,
+} from "../music/managed-artists.js";
 import type {
   RenamePreviewItem,
   RenameScopeOptions,
@@ -17,7 +21,7 @@ export type RenameTableName = "TrackFiles" | "MetadataFiles" | "ExtraFiles" | "L
 
 export type RenameLibraryFileRow = {
   id: number;
-  artist_id: number;
+  artist_metadata_id: number;
   album_id: number | null;
   media_id: number | null;
   canonical_artist_mbid?: string | null;
@@ -112,8 +116,16 @@ export function buildRenameFilters(options: RenameScopeOptions = {}): { where: s
   const params: any[] = [];
 
   if (options.artistId) {
-    where.push("lf.artist_id = ?");
-    params.push(options.artistId);
+    // getRenameRows aliases sidecar artist_id as artist_metadata_id; match both
+    // integer metadata ids and TEXT mbids stored on sidecars.
+    const key = String(options.artistId);
+    const metaId = resolveArtistMetadataId(key);
+    const mbid = resolveArtistMbid(key);
+    const keys = Array.from(new Set(
+      [key, metaId != null ? String(metaId) : null, mbid].filter(Boolean) as string[],
+    ));
+    where.push(`CAST(lf.artist_metadata_id AS TEXT) IN (${keys.map(() => "?").join(",")})`);
+    params.push(...keys);
   }
   if (options.albumId) {
     where.push(`(
@@ -162,12 +174,12 @@ export function isScopedSidecar(row: {
 /** True when a conflicting DB row is the same artist/album-scoped sidecar artifact. */
 export function isSameScopeSidecarOccupant(
   row: {
-    artist_id?: string | number | null;
+    artist_metadata_id?: string | number | null;
     album_id?: string | number | null;
     file_type?: string | null;
   },
   occupant: {
-    artist_id?: string | number | null;
+    artist_metadata_id?: string | number | null;
     album_id?: string | number | null;
     media_id?: string | number | null;
     file_type?: string | null;
@@ -177,7 +189,7 @@ export function isSameScopeSidecarOccupant(
     occupant
     && occupant.media_id == null
     && occupant.file_type === row.file_type
-    && String(occupant.artist_id ?? "") === String(row.artist_id ?? "")
+    && String(occupant.artist_metadata_id ?? "") === String(row.artist_metadata_id ?? "")
     && String(occupant.album_id ?? "") === String(row.album_id ?? ""),
   );
 }

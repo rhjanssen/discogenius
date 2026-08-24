@@ -18,6 +18,7 @@ import {
     planQualityExpression,
     releaseGroupLibraryStateCte,
 } from "./release-group-library-state-sql.js";
+import { libraryArtistMonitoredSelectSql } from "./managed-artists.js";
 
 const releaseGroupMonitoredExpression = `
         CASE WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1 ELSE 0 END
@@ -218,7 +219,7 @@ function buildReleaseGroupDetailsSelect(wantedGroupsSql: string, selectedProvide
         a.name AS local_artist_name,
         a.picture AS artist_picture,
         a.cover_image_url AS artist_cover_image_url,
-        a.monitored AS artist_monitor,
+        ${libraryArtistMonitoredSelectSql("a")} AS artist_monitor,
         ${releaseGroupMonitoredExpression} AS wanted,
         ${releaseGroupMonitoredLockedExpression} AS monitored_lock,
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
@@ -249,7 +250,7 @@ function buildReleaseGroupDetailsSelect(wantedGroupsSql: string, selectedProvide
         ${releaseGroupPopularityExpression} AS popularity
       FROM wanted_groups
       JOIN Albums rg ON rg.id = wanted_groups.id
-      LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+      LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
       LEFT JOIN library_state stereo
         ON stereo.release_group_id = rg.id
        AND stereo.library_class = 'stereo'
@@ -387,7 +388,7 @@ export class AlbumQueryService {
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
         const where: string[] = [
-            "rg.artist_mbid IN (SELECT mbid FROM Artists WHERE mbid IS NOT NULL)",
+            "rg.artist_mbid IN (SELECT mbid FROM ArtistMetadata WHERE mbid IS NOT NULL)",
         ];
 
         if (search) {
@@ -496,13 +497,13 @@ export class AlbumQueryService {
             : "COALESCE(rg.popularity, 0)";
         const candidateFrom = needsLibraryState
             ? `FROM Albums rg
-          LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+          LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
           LEFT JOIN library_state stereo
             ON stereo.release_group_id = rg.id AND stereo.library_class = 'stereo'
           LEFT JOIN library_state spatial
             ON spatial.release_group_id = rg.id AND spatial.library_class = 'spatial'`
             : `FROM Albums rg
-          LEFT JOIN Artists a ON a.mbid = rg.artist_mbid`;
+          LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid`;
         const candidateQuery = `
           ${libraryStateCte}
           SELECT rg.id, rg.mbid, ${candidatePopularityExpression} AS popularity
@@ -629,7 +630,7 @@ export class AlbumQueryService {
           ) library_class
             ON library_class.library_id = library_group.library_id
           JOIN Albums album ON album.id = library_group.release_group_id
-          ${input.search ? "LEFT JOIN Artists artist ON artist.mbid = album.artist_mbid" : ""}
+          ${input.search ? "LEFT JOIN ArtistMetadata artist ON artist.mbid = album.artist_mbid" : ""}
         `;
         const candidates = db.prepare(`
           SELECT album.id AS id

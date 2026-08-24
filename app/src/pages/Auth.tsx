@@ -1262,7 +1262,7 @@ const Auth = () => {
               {!connecting && !userCode && refreshing && (
                 <div className={styles.infoBox}>
                   <div className={styles.stateHeader}>
-                    <Title3>Refreshing TIDAL session</Title3>
+                    <Title3 as="h1">Refreshing TIDAL session</Title3>
                     <Body1 className={styles.stateBody}>
                       Restoring your provider session before continuing.
                     </Body1>
@@ -1589,7 +1589,7 @@ const Auth = () => {
               {connecting && !userCode && (
                 <div className={styles.infoBox}>
                   <div className={styles.stateHeader}>
-                    <Title3>Starting TIDAL authorization</Title3>
+                    <Title3 as="h1">Starting TIDAL authorization</Title3>
                     <Body1 className={styles.stateBody}>
                       Requesting a device code from TIDAL...
                     </Body1>
@@ -1604,7 +1604,7 @@ const Auth = () => {
               {connecting && userCode && (
                 <div className={styles.infoBox}>
                   <div className={styles.stateHeader}>
-                    <Title3>Authorize Discogenius</Title3>
+                    <Title3 as="h1">Authorize Discogenius</Title3>
                     <Body1 className={styles.stateBody}>
                       Visit the link below and enter this code to authorize:
                     </Body1>

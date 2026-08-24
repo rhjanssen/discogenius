@@ -38,9 +38,7 @@ function seedImportedTrack(fileName = "track-one.flac") {
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-one-mbid", "Artist One");
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-one-mbid", "Artist One", 1);
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("1", "Artist One");
 
   // Legacy rows retained for TrackFiles FK during the transition (dropped Phase 5).
 
@@ -111,9 +109,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
-  db.prepare("DELETE FROM Libraries").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
+  db.prepare("DELETE FROM ArtistMetadata").run();  db.prepare("DELETE FROM Libraries").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });

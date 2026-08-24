@@ -120,7 +120,7 @@ const useStyles = makeStyles({
     container: {
         display: "flex",
         flexDirection: "column",
-        gap: tokens.spacingVerticalL,
+        gap: tokens.spacingVerticalM,
         maxWidth: "1280px",
         width: "100%",
         margin: "0 auto",
@@ -221,9 +221,9 @@ const useStyles = makeStyles({
         // Section rhythm; persona↔title uses the tighter titleBlock gap.
         // No glass card — match AlbumPage header (open on the page surface).
         gap: tokens.spacingVerticalM,
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalXXS}`,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXXS}`,
         "@media (min-width: 768px)": {
-            padding: `${tokens.spacingVerticalM} 0`,
+            padding: `${tokens.spacingVerticalS} 0`,
         },
     },
     // Related-content pair (Fluent XS / SNudge): artist byline belongs to the title.
@@ -706,6 +706,7 @@ const VideoPage = () => {
     if (error || !video) {
         return (
             <div className={styles.stateShell}>
+                <h1 className="visually-hidden">Video</h1>
                 <ErrorState
                     title="Video not found"
                     description={videoErrorDescription}
@@ -767,6 +768,7 @@ const VideoPage = () => {
                             </div>
                         </Button>
                     ) : (
+                        // eslint-disable-next-line jsx-a11y/media-has-caption -- Playback sources have no caption resource.
                         <video
                             ref={videoRef}
                             controls
@@ -776,6 +778,7 @@ const VideoPage = () => {
                             preload="metadata"
                             autoPlay
                             playsInline
+                            aria-label={`${video.title} video player`}
                             onError={() => handlePlaybackFailure(
                                 isDownloaded
                                     ? "The downloaded video file could not be played."
@@ -798,7 +801,7 @@ const VideoPage = () => {
                         ) : null}
 
                         <div className={styles.titleRow}>
-                            <Title1 className={styles.videoTitle}>{video.title}</Title1>
+                            <Title1 as="h1" className={styles.videoTitle}>{video.title}</Title1>
                             {video.explicit ? <ExplicitBadge size="small" /> : null}
                         </div>
                     </div>

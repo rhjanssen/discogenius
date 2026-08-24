@@ -5,7 +5,18 @@ import { authMiddleware } from "../middleware/auth.js";
 
 /** Derive a non-reversible fingerprint from the password so we never store the plaintext in the JWT. */
 export function passwordFingerprint(password: string): string {
-  return crypto.createHash("sha256").update(password).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(password).digest("hex");
+}
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_FAILED_LOGINS = 5;
+const MAX_LOGIN_CLIENTS = 10_000;
+const failedLogins = new Map<string, { count: number; resetAt: number }>();
+
+function passwordMatches(actual: string, expected: string): boolean {
+  const actualDigest = crypto.createHash("sha256").update(actual).digest();
+  const expectedDigest = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(actualDigest, expectedDigest);
 }
 
 const router = Router();
@@ -34,7 +45,16 @@ router.post("/", async (req: Request, res: Response) => {
     });
   }
 
-  const isAllowed = password === envPassword;
+  const clientKey = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const attempts = failedLogins.get(clientKey);
+  if (attempts && attempts.resetAt > now && attempts.count >= MAX_FAILED_LOGINS) {
+    res.setHeader("retry-after", String(Math.ceil((attempts.resetAt - now) / 1000)));
+    return res.status(429).json({ error: true, message: "Too many login attempts" });
+  }
+  if (attempts && attempts.resetAt <= now) failedLogins.delete(clientKey);
+
+  const isAllowed = typeof password === "string" && passwordMatches(password, envPassword);
 
   if (!jwtSecret) {
     return res.status(401).json({
@@ -44,11 +64,27 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   if (!isAllowed) {
+    if (!failedLogins.has(clientKey) && failedLogins.size >= MAX_LOGIN_CLIENTS) {
+      for (const [key, entry] of failedLogins) {
+        if (entry.resetAt <= now) failedLogins.delete(key);
+      }
+      if (failedLogins.size >= MAX_LOGIN_CLIENTS) {
+        const oldestKey = failedLogins.keys().next().value;
+        if (oldestKey) failedLogins.delete(oldestKey);
+      }
+    }
+    const current = failedLogins.get(clientKey);
+    failedLogins.set(clientKey, {
+      count: (current?.count ?? 0) + 1,
+      resetAt: current?.resetAt ?? now + LOGIN_WINDOW_MS,
+    });
     return res.status(401).json({
       error: true,
       message: "Invalid credentials",
     });
   }
+
+  failedLogins.delete(clientKey);
 
   // Generate token — store only a fingerprint, never the plaintext password
   const token = jwt.sign({ fp: passwordFingerprint(envPassword) }, jwtSecret, {

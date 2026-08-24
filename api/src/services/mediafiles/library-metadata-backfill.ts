@@ -3,6 +3,7 @@ import path from "path";
 import { db } from "../../database.js";
 import { Config, getConfigSection } from "../config/config.js";
 import { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext } from "../config/naming.js";
+import { loadArtistMetadataIdentity } from "../music/managed-artists.js";
 import {
     downloadAlbumVideoCover,
     downloadVideoThumbnail,
@@ -53,8 +54,12 @@ class LibraryMetadataBackfillService {
         const naming = getNamingConfig();
         const result: MetadataFillResult = { downloaded: 0, failed: 0, skipped: 0 };
 
-        const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
+        const artist = loadArtistMetadataIdentity(artistId);
         if (!artist) return result;
+
+        // TrackFiles.artist_metadata_id is the integer catalog id. Callers may
+        // pass an mbid; normalize once so every fill* query hits the index.
+        const metadataIdKey = String(artist.id);
 
         const artistFolder = resolveArtistFolderFromRecord({
             name: artist.name,
@@ -62,14 +67,14 @@ class LibraryMetadataBackfillService {
             path: artist.path || null,
         });
 
-        await this.fillArtistMetadata(artistId, artistFolder, metadataConfig, result);
-        await this.fillAlbumMetadata(artistId, artistFolder, metadataConfig, naming, result);
-        await this.fillTrackMetadata(artistId, metadataConfig, result);
-        await this.fillVideoMetadata(artistId, metadataConfig, result);
+        await this.fillArtistMetadata(metadataIdKey, artistFolder, metadataConfig, result);
+        await this.fillAlbumMetadata(metadataIdKey, artistFolder, metadataConfig, naming, result);
+        await this.fillTrackMetadata(metadataIdKey, metadataConfig, result);
+        await this.fillVideoMetadata(metadataIdKey, metadataConfig, result);
 
         if (result.downloaded > 0 || result.failed > 0) {
             console.log(
-                `[LibraryScan] Metadata backfill for artist ${artistId}: ` +
+                `[LibraryScan] Metadata backfill for artist ${metadataIdKey}: ` +
                 `${result.downloaded} downloaded, ${result.failed} failed, ${result.skipped} skipped`
             );
         }
@@ -79,16 +84,16 @@ class LibraryMetadataBackfillService {
 
     async fillMissingMetadataFilesForLibrary(): Promise<MetadataFillResult> {
         const artistRows = db.prepare(`
-      SELECT DISTINCT artist_id
+      SELECT DISTINCT artist_metadata_id
       FROM TrackFiles
-      WHERE artist_id IS NOT NULL
-      ORDER BY artist_id ASC
-    `).all() as Array<{ artist_id: number }>;
+      WHERE artist_metadata_id IS NOT NULL
+      ORDER BY artist_metadata_id ASC
+    `).all() as Array<{ artist_metadata_id: number }>;
 
         const totals: MetadataFillResult = { downloaded: 0, failed: 0, skipped: 0 };
 
         for (const row of artistRows) {
-            const result = await this.fillMissingMetadataFiles(String(row.artist_id));
+            const result = await this.fillMissingMetadataFiles(String(row.artist_metadata_id));
             totals.downloaded += result.downloaded;
             totals.failed += result.failed;
             totals.skipped += result.skipped;
@@ -103,14 +108,14 @@ class LibraryMetadataBackfillService {
         metadataConfig: any,
         result: MetadataFillResult,
     ) {
-        const hasFiles = db.prepare("SELECT 1 FROM TrackFiles WHERE artist_id = ? LIMIT 1").get(artistId);
+        const hasFiles = db.prepare("SELECT 1 FROM TrackFiles WHERE artist_metadata_id = ? LIMIT 1").get(artistId);
         if (!hasFiles) return;
 
         const libraryRoots = Array.from(new Set(
             (db.prepare(`
                 SELECT DISTINCT library_root
                 FROM TrackFiles
-                WHERE artist_id = ?
+                WHERE artist_metadata_id = ?
                   AND file_type IN ('track', 'video')
                   AND library_root IS NOT NULL
             `).all(artistId) as Array<{ library_root: string | null }>).map((row) => String(row.library_root || '').trim()).filter(Boolean),
@@ -126,7 +131,7 @@ class LibraryMetadataBackfillService {
                 const picName = metadataConfig.artist_picture_name || "folder.jpg";
                 const picPath = path.join(artistDir, picName);
                 try {
-                    const artistRow = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
+                    const artistRow = db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
                     const artistMbid = artistRow?.mbid ? String(artistRow.mbid) : artistId;
                     const syncResult = syncCachedMediaCoverToFile({
                         entityId: artistMbid,
@@ -146,6 +151,8 @@ class LibraryMetadataBackfillService {
                             libraryRoot,
                             fileType: "cover",
                             expectedPath: picPath,
+                            providerEntityType: "artist",
+                            canonicalArtistMbid: artistMbid,
                         });
                     }
                 } catch {
@@ -211,7 +218,7 @@ class LibraryMetadataBackfillService {
         ON library.id = lf.library_id
       JOIN quality_profiles quality_profile
         ON quality_profile.id = library.quality_profile_id
-      WHERE lf.artist_id = ?
+      WHERE lf.artist_metadata_id = ?
         AND lf.file_type = 'track'
         AND lf.release_group_id IS NOT NULL
         AND lf.library_id IS NOT NULL
@@ -330,7 +337,7 @@ class LibraryMetadataBackfillService {
             const libraryRootRows = (db.prepare(`
       SELECT lf.library_root, MIN(lf.file_path) AS file_path, MIN(lf.relative_path) AS relative_path
       FROM TrackFiles lf
-      WHERE lf.artist_id = ?
+      WHERE lf.artist_metadata_id = ?
         AND lf.file_type = 'track'
         AND lf.library_root IS NOT NULL
         AND lf.release_group_id = ?
@@ -352,7 +359,7 @@ class LibraryMetadataBackfillService {
                     : null;
                 const expectedAlbumNfoPath = LibraryFilesService.computeExpectedPath({
                     id: -1,
-                    artist_id: artistId as unknown as number,
+                    artist_metadata_id: artistId as unknown as number,
                     album_id: (album.id || null) as unknown as number,
                     media_id: null,
                     file_path: "",
@@ -402,7 +409,7 @@ class LibraryMetadataBackfillService {
                             const trackFileIds = (db.prepare(`
                                 SELECT id
                                 FROM TrackFiles
-                                WHERE artist_id = ?
+                                WHERE artist_metadata_id = ?
                                   AND file_type = 'track'
                                   AND release_group_id = ?
                                   AND library_id = ?
@@ -590,7 +597,7 @@ class LibraryMetadataBackfillService {
               )
             )
          )
-        WHERE lf.artist_id = ?
+        WHERE lf.artist_metadata_id = ?
           AND lf.file_type = 'track'
       )
       SELECT *
@@ -711,7 +718,7 @@ class LibraryMetadataBackfillService {
         ON video_match.provider_video_item_id = pi.id
        AND video_match.match_state = 'accepted'
       LEFT JOIN Recordings r ON r.id = video_match.recording_id
-      WHERE lf.artist_id = ?
+      WHERE lf.artist_metadata_id = ?
         AND lf.file_type = 'video'
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
     `).all(artistId) as Array<{
@@ -852,7 +859,7 @@ class LibraryMetadataBackfillService {
       LEFT JOIN Tracks related_track ON related_track.recording_id = relation.target_recording_id
       LEFT JOIN AlbumEditions related_release ON related_release.id = related_track.album_edition_id
       LEFT JOIN Albums related_group ON related_group.id = related_release.release_group_id
-      WHERE lf.artist_id = ?
+      WHERE lf.artist_metadata_id = ?
         AND lf.file_type = 'video'
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
     `).all(artistId) as Array<{
@@ -921,7 +928,7 @@ class LibraryMetadataBackfillService {
         ON video_match.provider_video_item_id = pi.id
        AND video_match.match_state = 'accepted'
       JOIN Recordings r ON r.id = video_match.recording_id
-      JOIN Artists ar ON ar.id = lf.artist_id
+      JOIN ArtistMetadata ar ON ar.id = lf.artist_metadata_id
       LEFT JOIN Albums album ON album.id = (
         SELECT CASE
           WHEN COUNT(DISTINCT canonical_release.release_group_id) = 1
@@ -934,7 +941,7 @@ class LibraryMetadataBackfillService {
         JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         WHERE member.member_item_id = pi.id
       )
-      WHERE lf.artist_id = ?
+      WHERE lf.artist_metadata_id = ?
         AND lf.file_type = 'video'
     `).all(artistId) as Array<{
                 file_path: string;

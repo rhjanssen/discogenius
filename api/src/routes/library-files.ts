@@ -13,6 +13,7 @@ import {CommandQueueManager} from "../services/commands/command-queue-manager.js
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
+import { parseBoundedQueryInteger } from "../utils/request-validation.js";
 
 const router = Router();
 const streamPipeline = promisify(pipeline);
@@ -54,8 +55,8 @@ router.get("/rename/preview", (req, res) => {
     const albumId = req.query.albumId as string | undefined;
     const libraryRoot = req.query.libraryRoot as string | undefined;
     const fileTypes = parseFileTypes(req.query.fileTypes);
-    const limit = parseInt(req.query.limit as string) || 200;
-    const offset = parseInt(req.query.offset as string) || 0;
+    const limit = parseBoundedQueryInteger(req.query.limit, 200, { min: 1, max: 500 });
+    const offset = parseBoundedQueryInteger(req.query.offset, 0);
 
     const items = RenameTrackFileService.getRenamePreviews({ artistId, albumId, libraryRoot, fileTypes, limit, offset });
     res.json({ items, limit, offset });
@@ -70,8 +71,8 @@ router.get("/rename/status", (req, res) => {
     const albumId = req.query.albumId as string | undefined;
     const libraryRoot = req.query.libraryRoot as string | undefined;
     const fileTypes = parseFileTypes(req.query.fileTypes);
-    const sampleLimit = parseInt(req.query.sampleLimit as string) || 10;
-    const scanLimit = parseInt(req.query.scanLimit as string) || 25;
+    const sampleLimit = parseBoundedQueryInteger(req.query.sampleLimit, 10, { min: 1, max: 100 });
+    const scanLimit = parseBoundedQueryInteger(req.query.scanLimit, 25, { min: 1, max: 500 });
 
     const summary = RenameTrackFileService.getRenameStatus({ artistId, albumId, libraryRoot, fileTypes, limit: scanLimit }, sampleLimit);
     res.json(summary);
@@ -321,7 +322,7 @@ router.get("/stream/:id", async (req, res) => {
 router.post("/scan/:artistId", (req, res) => {
   try {
     const { artistId } = req.params;
-    const artist = db.prepare("SELECT id, name FROM Artists WHERE id = ?").get(artistId) as any;
+    const artist = db.prepare("SELECT id, name FROM ArtistMetadata WHERE id = ?").get(artistId) as any;
     if (!artist) {
       return res.status(404).json({ detail: `Artist ${artistId} not found` });
     }

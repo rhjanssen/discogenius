@@ -386,7 +386,7 @@ const StatusPage = () => {
     return (
         <div className={styles.container}>
             <div className={styles.header}>
-                <Title1>System Status</Title1>
+                <Title1 as="h1">System Status</Title1>
                 <Text className={styles.mutedText}>
                     Cross-cutting health, download-backend, and provider connectivity diagnostics.
                 </Text>

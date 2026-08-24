@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import {
   baseURL,
   createSearchResponse,
+  stubArtistPage,
   stubShellApis,
 } from '../utils/mockShell';
 
@@ -76,19 +77,17 @@ test.describe('Restart resilience', () => {
 
     // Bottom tabs should be visible on mobile — use the bottom tab bar container
     // The bottom tabs are in a fixed-position div at the bottom
-    const bottomBar = page.locator('[style*="fixed"], [class*="bar"]').filter({ has: page.getByRole('button', { name: /^Library$/i }) });
-
     // Navigate via bottom tab Dashboard button (aria-label match)
-    const dashboardBtn = page.getByRole('button', { name: /^Dashboard$/i }).last();
+    const dashboardBtn = page.getByRole('link', { name: /^Dashboard$/i }).last();
     await dashboardBtn.click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 5_000 });
 
-    const settingsBtn = page.getByRole('button', { name: /^Settings$/i }).last();
+    const settingsBtn = page.getByRole('link', { name: /^Settings$/i }).last();
     await settingsBtn.click();
     await expect(page).toHaveURL(/\/settings/, { timeout: 5_000 });
 
     // Back to library
-    const libraryBtn = page.getByRole('button', { name: /^Library$/i }).last();
+    const libraryBtn = page.getByRole('link', { name: /^Library$/i }).last();
     await libraryBtn.click();
     await expect(page).toHaveURL(`${baseURL}/`, { timeout: 5_000 });
   });
@@ -100,7 +99,7 @@ test.describe('Restart resilience', () => {
 
     await expect(page.locator('main')).toBeVisible();
 
-    const dashboardBtn = page.getByRole('button', { name: /^Dashboard$/i }).last();
+    const dashboardBtn = page.getByRole('link', { name: /^Dashboard$/i }).last();
     await expect(dashboardBtn).toBeVisible({ timeout: 3_000 });
     await dashboardBtn.click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 5_000 });
@@ -127,9 +126,9 @@ test.describe('Restart resilience', () => {
 
     await expect(page.locator('main')).toBeVisible();
     await expect(page.locator('nav')).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Dashboard$/i }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Library$/i }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Settings$/i }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Dashboard$/i }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Library$/i }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Settings$/i }).first()).toBeVisible();
   });
 
   test('dashboard stays navigable after background updates', async ({ page }) => {
@@ -137,7 +136,7 @@ test.describe('Restart resilience', () => {
     const artistName = 'Resilience Artist';
 
     await stubShellApis(page);
-    await page.route('**/api/search?*', async (route) => {
+    await page.route('**/api/v1/search?*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -156,46 +155,19 @@ test.describe('Restart resilience', () => {
         })),
       });
     });
-    await page.route(`**/api/artists/${artistId}/page-db`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          artist: {
-            id: artistId,
-            name: artistName,
-            is_monitored: true,
-            files: [],
-          },
-          rows: [],
-          album_count: 0,
-          monitored_album_count: 0,
-          needs_scan: false,
-        }),
-      });
-    });
-    await page.route(`**/api/artists/${artistId}/activity`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          scanning: false,
-          curating: false,
-          downloading: false,
-          libraryScan: false,
-          totalActive: 0,
-          jobs: [],
-        }),
-      });
+    await stubArtistPage(page, {
+      artistId,
+      artistName,
+      monitored: true,
     });
 
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('main')).toBeVisible();
-    await page.getByRole('button', { name: /^Dashboard$/i }).first().click();
+    await page.getByRole('link', { name: /^Dashboard$/i }).first().click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 10_000 });
-    await expect(page.getByRole('button', { name: /^Library$/i }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Library$/i }).first()).toBeVisible();
 
     await page.evaluate(() => {
       window.dispatchEvent(new Event('discogenius:activity-refresh'));
@@ -203,10 +175,10 @@ test.describe('Restart resilience', () => {
     });
     await page.waitForTimeout(1_500);
 
-    await page.getByRole('button', { name: /^Settings$/i }).first().click();
+    await page.getByRole('link', { name: /^Settings$/i }).first().click();
     await expect(page).toHaveURL(/\/settings/, { timeout: 10_000 });
 
-    await page.getByRole('button', { name: /^Dashboard$/i }).first().click();
+    await page.getByRole('link', { name: /^Dashboard$/i }).first().click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 10_000 });
     await expect(page.locator('main')).toBeVisible();
 
@@ -215,7 +187,7 @@ test.describe('Restart resilience', () => {
     await page.waitForResponse((res) => {
       try {
         const url = new URL(res.url());
-        return url.pathname === '/api/search' && res.status() === 200;
+        return url.pathname === '/api/v1/search' && res.status() === 200;
       } catch {
         return false;
       }

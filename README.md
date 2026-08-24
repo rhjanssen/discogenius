@@ -63,6 +63,7 @@ services:
       - PUID=1000
       - PGID=1000
       - PORT=${PORT:-3737}
+      - DISCOGENIUS_BIND_IP=0.0.0.0
       - TZ=Etc/UTC
     ports:
       - ${DISCOGENIUS_BIND_IP:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}

@@ -14,6 +14,12 @@ import { comparablePathColumnSql, normalizeComparablePath } from "./path-utils.j
 import { getDefaultStreamingSource, getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
+import {
+  loadArtistMetadataIdentity,
+  resolveArtistMetadataId,
+  resolveArtistMbid,
+  stampArtistLibraryPath,
+} from "../music/managed-artists.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
@@ -338,13 +344,7 @@ export class OrganizerService {
   }
 
   private static refreshArtistPathFromTemplateIfNeeded(artistId: string) {
-    const artist = db.prepare("SELECT id, name, mbid, path FROM Artists WHERE id = ?").get(artistId) as {
-      id: string | number;
-      name: string | null;
-      mbid: string | null;
-      path: string | null;
-    } | undefined;
-
+    const artist = loadArtistMetadataIdentity(artistId);
     if (!artist) {
       return;
     }
@@ -380,18 +380,29 @@ export class OrganizerService {
     // and TrackFiles INSERT failing FOREIGN KEY.
     const releaseGroupMbid = String(preferredReleaseGroupMbid || album?.mb_release_group_id || "").trim();
 
+    const artistFolderSelect = `
+      a.id,
+      a.name,
+      a.mbid,
+      (
+        SELECT membership.path
+        FROM LibraryArtists membership
+        JOIN Libraries library
+          ON library.id = membership.library_id
+         AND library.enabled = 1
+        WHERE membership.artist_metadata_id = a.id
+        ORDER BY library.id
+        LIMIT 1
+      ) AS path,
+      a.disambiguation,
+      a.genres
+    `;
+
     let artist = releaseGroupMbid
       ? db.prepare(`
-          SELECT
-            a.id,
-            a.name,
-            a.mbid,
-            a.path,
-            mba.disambiguation,
-            mba.genres
+          SELECT ${artistFolderSelect}
           FROM Albums rg
-          JOIN Artists a ON a.mbid = rg.artist_mbid
-          LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
+          JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
           WHERE rg.mbid = ?
           ORDER BY CASE WHEN CAST(a.id AS TEXT) = CAST(a.mbid AS TEXT) THEN 0 ELSE 1 END
           LIMIT 1
@@ -400,30 +411,16 @@ export class OrganizerService {
 
     if (!artist && fallbackArtistId) {
       const directArtist = db.prepare(`
-        SELECT
-          a.id,
-          a.name,
-          a.mbid,
-          a.path,
-          mba.disambiguation,
-          mba.genres
-        FROM Artists a
-        LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
-        WHERE a.id = ?
+        SELECT ${artistFolderSelect}
+        FROM ArtistMetadata a
+        WHERE CAST(a.id AS TEXT) = CAST(? AS TEXT) OR a.mbid = ?
         LIMIT 1
-      `).get(fallbackArtistId) as any;
+      `).get(fallbackArtistId, fallbackArtistId) as any;
 
       if (directArtist?.mbid) {
         artist = db.prepare(`
-          SELECT
-            a.id,
-            a.name,
-            a.mbid,
-            a.path,
-            mba.disambiguation,
-            mba.genres
-          FROM Artists a
-          LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
+          SELECT ${artistFolderSelect}
+          FROM ArtistMetadata a
           WHERE a.mbid = ?
           ORDER BY CASE WHEN CAST(a.id AS TEXT) = CAST(a.mbid AS TEXT) THEN 0 ELSE 1 END
           LIMIT 1
@@ -435,7 +432,7 @@ export class OrganizerService {
 
     if (!artist?.name) {
       const fallbackArtist = fallbackArtistId
-        ? db.prepare("SELECT id FROM Artists WHERE id = ?").get(fallbackArtistId) as { id?: string } | undefined
+        ? db.prepare("SELECT id FROM ArtistMetadata WHERE id = ?").get(fallbackArtistId) as { id?: string } | undefined
         : null;
       if (fallbackArtist?.id) {
         return {
@@ -464,18 +461,18 @@ export class OrganizerService {
       });
       artistPath = resolved.path;
       if (resolved.shouldReplaceExistingPath) {
-        db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(artistPath, artistId);
+        stampArtistLibraryPath(Number(artist.id), artistPath, true);
       }
     } else if (!artistPath) {
       artistPath = resolveArtistFolderForPersistence({
         artistId,
         artistName: artist.name,
       });
-      db.prepare("UPDATE Artists SET path = ? WHERE id = ? AND (path IS NULL OR TRIM(path) = '')").run(artistPath, artistId);
+      stampArtistLibraryPath(Number(artist.id), artistPath, false);
     }
 
     return {
-      artistId,
+      artistId: artistMbId || String(artist.id),
       artistName: String(artist.name || "Unknown Artist"),
       artistMbId,
       artistPath,
@@ -783,11 +780,15 @@ export class OrganizerService {
       channels: sourceMetrics.channels || null,
     })}.mp4`;
     const separatedDest = path.join(params.videoRoot, params.artistFolder, destName);
+    const artistMetadataId = resolveArtistMetadataId(params.artistId);
+    if (artistMetadataId == null) {
+      throw new Error(`[Organizer] Cannot resolve ArtistMetadata identity for ${params.artistId}`);
+    }
     const inlineExpected = LibraryFilesService.computeExpectedPath({
       id: -1,
-      artist_id: params.artistId as unknown as number,
-      album_id: (params.releaseGroupMbid || row.release_group_mbid || null) as unknown as number | null,
-      media_id: params.providerTrackId as unknown as number,
+      artist_metadata_id: artistMetadataId,
+      album_id: params.releaseGroupMbid || row.release_group_mbid || null,
+      media_id: params.providerTrackId,
       file_path: separatedDest,
       relative_path: path.relative(params.videoRoot, separatedDest),
       library_root: params.videoRoot,
@@ -923,7 +924,7 @@ export class OrganizerService {
     db.prepare("DELETE FROM TrackFiles WHERE file_type NOT IN ('track', 'video')").run();
 
     const artists = db.prepare(`
-      SELECT CAST(id AS TEXT) AS id FROM Artists
+      SELECT CAST(id AS TEXT) AS id FROM ArtistMetadata
     `).all() as Array<{ id: string }>;
     let deleted = 0;
     for (const artist of artists) {
@@ -1017,7 +1018,7 @@ export class OrganizerService {
     }
 
     const oldFiles = db.prepare(
-      `SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, library_root, quality
+      `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, file_path, library_root, quality
        FROM TrackFiles
        WHERE provider = ?
          AND provider_entity_type = ?
@@ -1355,6 +1356,10 @@ export class OrganizerService {
     namingTemplate?: string | null;
   }): string {
     const normalizedExpectedPath = this.normalizeResolvedPath(params.expectedPath);
+    const artistMbid = resolveArtistMbid(params.artistId);
+    if (!artistMbid) {
+      throw new Error(`[Organizer] Cannot resolve canonical artist MBID for ${params.artistId}`);
+    }
     // Cover/video_cover/nfo singleton sidecars live in MetadataFiles. The clean
     // schema keys them by canonical release ids or provider_id, never by the
     // retired album_id/media_id shadow columns.
@@ -1388,7 +1393,7 @@ export class OrganizerService {
           AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_type = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
-      `).all(params.artistId, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
+      `).all(artistMbid, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
 
     let hasExpectedSidecar = fs.existsSync(params.expectedPath);
 
@@ -1497,7 +1502,7 @@ export class OrganizerService {
             AND COALESCE(library_root, '') = COALESCE(?, '')
             AND file_type = ?
             AND file_path != ?
-        `).run(params.artistId, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
+        `).run(artistMbid, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
       }
     }
 
@@ -1530,7 +1535,7 @@ export class OrganizerService {
 
       try {
         const siblingLibraryFiles = db.prepare(
-          `SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, quality
+          `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, quality
            FROM TrackFiles
            WHERE file_path = ? AND file_type = ?`
         ).all(siblingPath, fileType) as Array<{
@@ -1597,7 +1602,7 @@ export class OrganizerService {
     incomingQuality: string | null;
   }): "proceed" | "skip" {
     const existing = db.prepare(`
-      SELECT id, artist_id, NULL AS album_id, provider, CAST(provider_id AS TEXT) AS provider_id,
+      SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider, CAST(provider_id AS TEXT) AS provider_id,
              quality, file_path, library_root
       FROM TrackFiles
       WHERE file_type = 'video'
@@ -2230,7 +2235,7 @@ export class OrganizerService {
           ?? 1;
         const libraryAlbumId = canonicalIdentity.canonicalReleaseGroupMbid || String(trackRow.album_id || albumIds[0]);
         const trackArtistId = String(trackRow.artist_id || artistId);
-        const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
+        const trackArtist = db.prepare("SELECT name, mbid FROM ArtistMetadata WHERE id = ?").get(trackArtistId) as any;
         const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
         const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
         const metrics = await parseAudioFile(srcFile);
@@ -2889,7 +2894,7 @@ export class OrganizerService {
         ?? jobVolumeNumber
         ?? (Number(trackRow.volume_number || 0) > 0 ? Number(trackRow.volume_number) : 1);
       const trackArtistId = String(trackRow.artist_id || artistId);
-      const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
+      const trackArtist = db.prepare("SELECT name, mbid FROM ArtistMetadata WHERE id = ?").get(trackArtistId) as any;
       const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
       const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
 
@@ -3323,7 +3328,7 @@ export class OrganizerService {
            AND artist_match.match_state = 'accepted'
           JOIN ArtistMetadata canonical_artist
             ON canonical_artist.id = artist_match.artist_id
-          JOIN Artists managed_artist
+          JOIN ArtistMetadata managed_artist
             ON managed_artist.mbid = canonical_artist.mbid
           WHERE provider_artist.provider = ?
             AND provider_artist.entity_type = 'artist'
@@ -3369,11 +3374,23 @@ export class OrganizerService {
 
       const artistId = String(video.artist_id);
       const existingArtist = db.prepare(`
-        SELECT a.name, a.mbid, a.path, mba.genres
-        FROM Artists a
-        LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
-        WHERE a.id = ?
-      `).get(artistId) as any;
+        SELECT
+          a.name,
+          a.mbid,
+          a.genres,
+          (
+            SELECT membership.path
+            FROM LibraryArtists membership
+            JOIN Libraries library
+              ON library.id = membership.library_id
+             AND library.enabled = 1
+            WHERE membership.artist_metadata_id = a.id
+            ORDER BY library.id
+            LIMIT 1
+          ) AS path
+        FROM ArtistMetadata a
+        WHERE CAST(a.id AS TEXT) = CAST(? AS TEXT) OR a.mbid = ?
+      `).get(artistId, artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
       const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
@@ -3386,11 +3403,24 @@ export class OrganizerService {
           artistName: fetchedArtistName,
           artistMbId: artistMbId || null,
         });
-        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
-          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
+        db.prepare(`
+          INSERT INTO ArtistMetadata (mbid, name, picture, popularity)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(mbid) DO UPDATE SET
+            picture = COALESCE(ArtistMetadata.picture, excluded.picture),
+            popularity = COALESCE(ArtistMetadata.popularity, excluded.popularity),
+            name = COALESCE(NULLIF(TRIM(ArtistMetadata.name), ''), excluded.name)
+        `).run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0);
       }
       this.refreshArtistPathFromTemplateIfNeeded(artistId);
-      artistPath = String((db.prepare("SELECT path FROM Artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
+      artistPath = String((db.prepare(`
+        SELECT membership.path AS path
+        FROM ArtistMetadata metadata
+        LEFT JOIN LibraryArtists membership ON membership.artist_metadata_id = metadata.id
+        WHERE metadata.id = ? OR metadata.mbid = ?
+        ORDER BY membership.library_id
+        LIMIT 1
+      `).get(artistId, artistId) as { path?: string | null } | undefined)?.path || "").trim();
 
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
@@ -3423,11 +3453,15 @@ export class OrganizerService {
         channels: sourceMetrics.channels || null,
       })}.mp4`;
       const separatedDest = path.join(videoRoot, artistFolder, separatedDestName);
+      const artistMetadataId = resolveArtistMetadataId(artistId);
+      if (artistMetadataId == null) {
+        throw new Error(`[Organizer] Cannot resolve ArtistMetadata identity for ${artistId}`);
+      }
       const inlineExpected = LibraryFilesService.computeExpectedPath({
         id: -1,
-        artist_id: artistId as unknown as number,
-        album_id: video.album_id ? video.album_id as unknown as number : null,
-        media_id: providerId as unknown as number,
+        artist_metadata_id: artistMetadataId,
+        album_id: video.album_id ? String(video.album_id) : null,
+        media_id: providerId,
         file_path: separatedDest,
         relative_path: path.relative(videoRoot, separatedDest),
         library_root: videoRoot,

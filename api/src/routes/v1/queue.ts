@@ -1,5 +1,5 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
-import { isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
+import { db, isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
 import express, { Request, Response, Router } from 'express';
 import {AnyCommandBody, CommandStatus} from "../../services/commands/command-model.js";
 import {NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
@@ -214,25 +214,39 @@ router.post('/', async (req: Request, res: Response) => {
       : contentType === 'video'
         ? CommandNames.DownloadVideo
         : CommandNames.DownloadTrack;
-    const queued = await runQueueUserWrite(() => DownloadWaitQueue.enqueue({
-      refKey: queueRefId,
-      mediaKind: contentType,
-      commandName,
-      provider: payload.provider,
-      providerId: resolvedProviderId,
-      artistId: payload.artist_id ?? payload.artistId ?? null,
-      albumId: payload.album_id ?? payload.albumId ?? payload.releaseGroupMbid ?? null,
-      title: payload.title ?? null,
-      artist: payload.artist ?? null,
-      cover: payload.cover ?? null,
-      quality: payload.quality ?? null,
-      slot: payload.slot ?? null,
-      payload: {
-        ...payload,
-        type: contentType,
-      },
-      position: 'front',
-    }));
+    const queued = await runQueueUserWrite(() => db.transaction(() => {
+      const result = DownloadWaitQueue.enqueue({
+        refKey: queueRefId,
+        mediaKind: contentType,
+        commandName,
+        provider: payload.provider,
+        providerId: resolvedProviderId,
+        artistId: payload.artist_id ?? payload.artistId ?? null,
+        albumId: payload.album_id ?? payload.albumId ?? payload.releaseGroupMbid ?? null,
+        title: payload.title ?? null,
+        artist: payload.artist ?? null,
+        cover: payload.cover ?? null,
+        quality: payload.quality ?? null,
+        slot: payload.slot ?? null,
+        payload: {
+          ...payload,
+          type: contentType,
+        },
+        position: 'front',
+      });
+      if (contentType === 'video' && canonicalRecordingId && payload.provider) {
+        const preferredOfferKey = JSON.stringify([
+          payload.provider.trim().toLowerCase(),
+          resolvedProviderId,
+        ]);
+        db.prepare(`
+          UPDATE LibraryVideos
+          SET preferred_offer_key = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE CAST(video_recording_id AS TEXT) = CAST(? AS TEXT)
+        `).run(preferredOfferKey, canonicalRecordingId);
+      }
+      return result;
+    })());
 
     // Trigger queue processing if not already running
     downloadProcessor.processQueue().catch(err => {

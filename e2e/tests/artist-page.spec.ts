@@ -18,7 +18,7 @@ async function stubArtistSearchFlow(page: Page) {
     monitored: false,
   });
 
-  await page.route('**/api/search?*', async (route) => {
+  await page.route('**/api/v1/search?*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -45,13 +45,13 @@ test.describe('Artist page', () => {
 
     await page.goto(`${baseURL}/search`, { waitUntil: 'domcontentloaded' });
 
-    const searchBox = page.getByRole('main').getByRole('searchbox', { name: /search/i });
+    const searchBox = page.getByRole('searchbox', { name: 'Search artists, albums, tracks, or videos' });
     await searchBox.fill(artistName);
 
     await page.waitForResponse((res) => {
       try {
         const url = new URL(res.url());
-        return url.pathname === '/api/search' && res.status() === 200;
+        return url.pathname === '/api/v1/search' && res.status() === 200;
       } catch {
         return false;
       }
@@ -78,7 +78,7 @@ test.describe('Artist page', () => {
 
     await expect(page.locator('main')).toBeVisible();
     await expect(page.getByText(artistName, { exact: true }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Unmonitor$/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Monitored$/i })).toBeVisible();
   });
 
   test('artist page has no critical console errors', async ({ page }) => {

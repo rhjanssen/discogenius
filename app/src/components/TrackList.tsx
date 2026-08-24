@@ -1012,7 +1012,6 @@ const TrackList = <T extends TrackListItem>({
         const canShowInfo = isDownloaded || getTrackFiles(track).length > 0;
 
         return (
-          <div onClick={(event) => event.stopPropagation()}>
             <TrackRowActions
               className={styles.actionCellContent}
               isPlaying={playingTrackId === track.id}
@@ -1036,7 +1035,6 @@ const TrackList = <T extends TrackListItem>({
                 ? (event) => { event.stopPropagation(); onDownloadTrack(track, event); }
                 : undefined}
             />
-          </div>
         );
       },
     });

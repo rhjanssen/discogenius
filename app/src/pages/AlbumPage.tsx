@@ -148,23 +148,22 @@ const useStyles = makeStyles({
   },
   header: {
     position: "relative",
-    minHeight: "200px",
     display: "flex",
     alignItems: "flex-start",
-    padding: tokens.spacingHorizontalL,
-    paddingTop: tokens.spacingVerticalL,
-    paddingBottom: tokens.spacingVerticalXL,
+    boxSizing: "border-box",
+    padding: tokens.spacingHorizontalS,
+    paddingTop: tokens.spacingVerticalXS,
+    paddingBottom: tokens.spacingVerticalS,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
     gap: tokens.spacingHorizontalL,
     "@media (min-width: 768px)": {
-      // Common desktop detail header height. With vertical padding this lands
-      // at the same rendered height as artist pages and prevents shorter
-      // metadata stacks from collapsing above the following content.
-      minHeight: "276px",
+      // Include padding in the hero height. The previous content-box minimum
+      // added another 48 px outside 276 px and made the header look detached.
+      minHeight: "252px",
       padding: tokens.spacingHorizontalXL,
-      paddingTop: tokens.spacingVerticalXL,
-      paddingBottom: tokens.spacingVerticalL,
+      paddingTop: tokens.spacingVerticalM,
+      paddingBottom: tokens.spacingVerticalM,
       gap: tokens.spacingHorizontalXXL,
     },
   },
@@ -467,6 +466,23 @@ const useStyles = makeStyles({
   sectionHeader: {
     marginBottom: tokens.spacingVerticalM,
   },
+  trackListTabs: {
+    width: "100%",
+    maxWidth: "100%",
+    overflowX: "auto",
+    overflowY: "hidden",
+    scrollbarWidth: "thin",
+    scrollBehavior: "smooth",
+    "& [role='tab']": {
+      flexShrink: 0,
+      maxWidth: "min(260px, 72vw)",
+    },
+    "& [role='tab'] > span:last-child": {
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    },
+  },
   /** Horizontal scroll for associated videos (matches artist page carousel). */
   videoCarousel: {
     display: "flex",
@@ -576,22 +592,41 @@ const useStyles = makeStyles({
   },
   coverOverlay: {
     position: "absolute",
-    inset: "0",
+    right: tokens.spacingHorizontalS,
+    bottom: tokens.spacingVerticalS,
+    width: "36px",
+    height: "36px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    borderRadius: tokens.borderRadiusLarge,
-    opacity: 0,
+    padding: 0,
+    color: "white",
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    border: `1px solid ${tokens.colorNeutralStrokeOnBrand2}`,
+    borderRadius: tokens.borderRadiusCircular,
+    opacity: 0.82,
     transition: `opacity ${tokens.durationNormal} ${tokens.curveEasyEase}`,
     cursor: "pointer",
     "&:hover": {
       opacity: 1,
     },
+    "&:focus-visible": {
+      opacity: 1,
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: "2px",
+    },
+    "@media (prefers-reduced-motion: reduce)": {
+      transitionDuration: "0.01ms",
+    },
+    "@media (forced-colors: active)": {
+      color: "ButtonText",
+      backgroundColor: "ButtonFace",
+      border: "1px solid ButtonText",
+    },
   },
   coverInfoIcon: {
-    color: "white",
-    fontSize: tokens.fontSizeHero800,
+    color: "inherit",
+    fontSize: "28px",
   },
 });
 
@@ -930,6 +965,14 @@ const AlbumPage = () => {
     }
     return [...byEdition.values()];
   }, [releaseAvailability]);
+  const downloadButtonLabel = downloadingAlbum
+    ? "Adding..."
+    : queuedEditions.length > 1
+      ? `Download ${queuedEditions.length} editions`
+      : "Download";
+  const downloadScopeDescription = queuedEditions.length > 1
+    ? `Download all ${queuedEditions.length} monitored editions`
+    : "Download the monitored edition";
   const headerQualityBadges = useMemo(() => {
     const badges: Array<{ key: string; quality: string }> = [];
     for (const offer of headerPlanOffers) {
@@ -1459,7 +1502,7 @@ const AlbumPage = () => {
         ? 'Adding...'
         : queuedEditions.length > 1
           ? `Download all ${queuedEditions.length} editions`
-          : 'Download selected',
+          : 'Download monitored edition',
       disabled: downloadingAlbum || !hasAnyProviderOffer,
       onClick: handleDownloadPrimary,
     },
@@ -1499,6 +1542,7 @@ const AlbumPage = () => {
   if (error) {
     return (
       <div className={styles.stateShell}>
+        <h1 className="visually-hidden">Album</h1>
         <ErrorState
           title="Failed to load album"
           error={error as Error}
@@ -1512,6 +1556,7 @@ const AlbumPage = () => {
   if (!album) {
     return (
       <div className={styles.stateShell}>
+        <h1 className="visually-hidden">Album</h1>
         <EmptyState
           title="Album not found"
           description="This album may not be in your library yet."
@@ -1624,7 +1669,7 @@ const AlbumPage = () => {
                       key={albumArtworkUrl}
                       {...ultraBlurHeroProps}
                       src={albumArtworkUrl}
-                      alt={album.title}
+                      alt=""
                       className={styles.coverArt}
                       onError={() => setCoverImageFailed(true)}
                     />
@@ -1635,21 +1680,14 @@ const AlbumPage = () => {
                   )}
                   {hasCoverFile && (
                     <AppTooltip content="Artwork info" relationship="label">
-                      <div
+                      <button
+                        type="button"
                         className={styles.coverOverlay}
                         onClick={() => setCoverInfoOpen(true)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            setCoverInfoOpen(true);
-                          }
-                        }}
-                        aria-label="Artwork info"
+                        aria-label={`Artwork information for ${album.title}`}
                       >
                         <Info24 className={styles.coverInfoIcon} />
-                      </div>
+                      </button>
                     </AppTooltip>
                   )}
                 </div>
@@ -1660,7 +1698,7 @@ const AlbumPage = () => {
                 <div className={styles.artistInfo}>
                   {renderAlbumArtists()}
                 </div>
-                <Title1 className={styles.albumTitle}>{album.title}</Title1>
+                <Title1 as="h1" className={styles.albumTitle}>{album.title}</Title1>
               </div>
 
               <div className={styles.metadata}>
@@ -1770,7 +1808,7 @@ const AlbumPage = () => {
                   <OverflowItem id="download" priority={1}>
                     {hasStereoOffer && hasSpatialOffer ? (
                       <div className={styles.splitDownload}>
-                        <AppTooltip content="Download stereo and spatial audio" relationship="label">
+                        <AppTooltip content={`${downloadScopeDescription} in stereo and spatial audio`} relationship="label">
                           <Button
                             icon={<ArrowDownload24 />}
                             appearance="subtle"
@@ -1778,7 +1816,7 @@ const AlbumPage = () => {
                             disabled={downloadingAlbum}
                             className={mergeClasses(styles.actionButton, styles.transparentButton, styles.splitDownloadPrimary)}
                           >
-                            {downloadingAlbum ? "Adding..." : "Download"}
+                            {downloadButtonLabel}
                           </Button>
                         </AppTooltip>
                         <Menu>
@@ -1793,15 +1831,15 @@ const AlbumPage = () => {
                           </MenuTrigger>
                           <MenuPopover>
                             <MenuList>
-                              <MenuItem onClick={() => handleDownloadAlbum()}>Download both</MenuItem>
-                              <MenuItem onClick={() => handleDownloadAlbum('stereo')}>Download stereo only</MenuItem>
-                              <MenuItem onClick={() => handleDownloadAlbum('spatial')}>Download spatial only</MenuItem>
+                              <MenuItem onClick={() => handleDownloadAlbum()}>Download all monitored editions in stereo and spatial</MenuItem>
+                              <MenuItem onClick={() => handleDownloadAlbum('stereo')}>Download all monitored editions in stereo</MenuItem>
+                              <MenuItem onClick={() => handleDownloadAlbum('spatial')}>Download all monitored editions in spatial</MenuItem>
                             </MenuList>
                           </MenuPopover>
                         </Menu>
                       </div>
                     ) : (
-                      <AppTooltip content={hasAnyProviderOffer ? "Download album" : "No provider offer selected"} relationship="label">
+                      <AppTooltip content={hasAnyProviderOffer ? downloadScopeDescription : "No provider offer selected"} relationship="label">
                         <Button
                           icon={<ArrowDownload24 />}
                           appearance="subtle"
@@ -1809,7 +1847,7 @@ const AlbumPage = () => {
                           disabled={downloadingAlbum || !hasAnyProviderOffer}
                           className={mergeClasses(styles.actionButton, styles.transparentButton)}
                         >
-                          {downloadingAlbum ? "Adding..." : "Download"}
+                          {downloadButtonLabel}
                         </Button>
                       </AppTooltip>
                     )}
@@ -1856,12 +1894,19 @@ const AlbumPage = () => {
             TabList so the two read as the same control. */}
         {trackListTabs.length > 1 ? (
           <TabList
+            className={styles.trackListTabs}
+            aria-label="Monitored album editions"
             selectedValue={activeTabEditionId ?? undefined}
             onTabSelect={(_, data) => setSelectedTabEditionId(Number(data.value))}
           >
             {trackListTabs.map((tab) => (
-              <Tab key={tab.editionId} value={tab.editionId} title={tab.label}>
-                {tab.label}
+              <Tab
+                key={tab.editionId}
+                value={tab.editionId}
+                title={tab.label}
+                aria-label={tab.label}
+              >
+                {tab.compactLabel}
               </Tab>
             ))}
           </TabList>
@@ -1908,7 +1953,7 @@ const AlbumPage = () => {
         {associatedVideos.length > 0 ? (
           <div className={styles.sectionSpacing}>
             <div className={styles.sectionHeader}>
-              <Title2>Associated videos</Title2>
+              <Title2 as="h2">Associated videos</Title2>
             </div>
             <div
               ref={videoViewMode === "carousel" ? associatedVideoCarouselRef : undefined}
@@ -1991,7 +2036,7 @@ const AlbumPage = () => {
         {isAvailabilityLoading ? (
           <div className={styles.sectionSpacing}>
             <div className={styles.sectionHeader}>
-              <Title2>Editions</Title2>
+              <Title2 as="h2">Editions</Title2>
             </div>
             <div style={{ padding: "1rem 0", display: "flex", alignItems: "center", gap: "0.5rem", opacity: 0.7 }}>
               <Spinner size="small" label="Loading available editions..." />
@@ -2000,7 +2045,7 @@ const AlbumPage = () => {
         ) : releaseAvailability && releaseAvailability.releases.length > 0 ? (
           <div className={styles.sectionSpacing}>
             <div className={styles.sectionHeader}>
-              <Title2>Editions</Title2>
+              <Title2 as="h2">Editions</Title2>
             </div>
             <ReleaseSwitcher
               availability={releaseAvailability}

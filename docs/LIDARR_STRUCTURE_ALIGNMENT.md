@@ -1,7 +1,14 @@
-# Lidarr File/Folder Structure Alignment
+# Lidarr file/folder structure alignment
 
-Discogenius mirrors Lidarr's architecture; this tracks how our file/folder layout
-maps to Lidarr's, what we've split to match, and the remaining monoliths.
+> Historical. AGENTS.md already calls this a folder-mapping snapshot, not the
+> live architecture. Artist identity, monitoring, and libraries are in
+> [SCHEMA_41_AUTHORITY_CUTOVER.md](SCHEMA_41_AUTHORITY_CUTOVER.md) and
+> [DATA_MODEL_TARGET.md](DATA_MODEL_TARGET.md). Remaining monoliths below are
+> still large files; they are not a project to split for its own sake.
+
+Discogenius borrowed Lidarr's control plane (commands, media files, naming).
+It did not borrow Lidarr's one-library artist row. This page only tracks how
+folders map.
 
 ## Folder mapping (already aligned)
 
@@ -17,7 +24,7 @@ maps to Lidarr's, what we've split to match, and the remaining monoliths.
 | `Configuration` / `Profiles` / `Qualities` | `services/config/` |
 | `Datastore` | `database.ts` + `repositories/` |
 | `Extras` | `services/extras/` |
-| `Indexers` + `Download/Clients` + `ThingiProvider` | `services/providers/` today (adapters; 2.6 target may move to `api/src/providers/<id>/` — see `docs/TASKS.md` / plugin contract) |
+| `Indexers` + `Download/Clients` + `ThingiProvider` | `services/providers/` today (adapters; a later move to `api/src/providers/<id>/` is still open — see `docs/TASKS.md` / plugin contract) |
 
 ## Command Queue Layout
 

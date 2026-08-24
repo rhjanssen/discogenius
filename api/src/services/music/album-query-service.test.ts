@@ -35,9 +35,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
-  db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
-  db.prepare("DELETE FROM ArtistMetadata").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
+  db.prepare("DELETE FROM Albums").run();  db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -59,10 +58,6 @@ function seedAlbum(options: {
     INSERT OR IGNORE INTO ArtistMetadata (mbid, name)
     VALUES (?, 'Filter Artist')
   `).run(artistMbid);
-  db.prepare(`
-    INSERT OR IGNORE INTO Artists (id, mbid, name, monitored)
-    VALUES (?, ?, 'Filter Artist', 1)
-  `).run(artistMbid, artistMbid);
 
   const album = db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)

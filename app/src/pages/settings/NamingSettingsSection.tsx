@@ -564,6 +564,7 @@ export const NamingSettingsSection = ({
                             </Text>
                         </div>
                         <Input
+                            aria-label="Music Library Path"
                             value={pathSettings?.music_path || ""}
                             onChange={(_, data) => updatePathSettings({ music_path: data.value })}
                             className={styles.pathInput}
@@ -577,6 +578,7 @@ export const NamingSettingsSection = ({
                             </Text>
                         </div>
                         <Input
+                            aria-label="Spatial Library Path"
                             value={pathSettings?.spatial_path || ""}
                             onChange={(_, data) => updatePathSettings({ spatial_path: data.value })}
                             className={styles.pathInput}
@@ -590,6 +592,7 @@ export const NamingSettingsSection = ({
                             </Text>
                         </div>
                         <Input
+                            aria-label="Video Library Path"
                             value={pathSettings?.video_path || ""}
                             onChange={(_, data) => updatePathSettings({ video_path: data.value })}
                             className={styles.pathInput}
@@ -631,6 +634,7 @@ export const NamingSettingsSection = ({
                         </div>
                         <div className={styles.templateControl}>
                             <Input
+                                aria-label="Artist Folder"
                                 ref={setNamingInputRef("artist_folder")}
                                 value={localNaming?.artist_folder ?? ""}
                                 onChange={(_, data) => handleNamingChange("artist_folder", data.value)}
@@ -670,6 +674,7 @@ export const NamingSettingsSection = ({
                         </div>
                         <div className={styles.templateControl}>
                             <Input
+                                aria-label="Single-volume Album Track Path"
                                 ref={setNamingInputRef("album_track_path_single")}
                                 value={localNaming?.album_track_path_single ?? ""}
                                 onChange={(_, data) => handleNamingChange("album_track_path_single", data.value)}
@@ -709,6 +714,7 @@ export const NamingSettingsSection = ({
                         </div>
                         <div className={styles.templateControl}>
                             <Input
+                                aria-label="Multi-volume Album Track Path"
                                 ref={setNamingInputRef("album_track_path_multi")}
                                 value={localNaming?.album_track_path_multi ?? ""}
                                 onChange={(_, data) => handleNamingChange("album_track_path_multi", data.value)}
@@ -748,6 +754,7 @@ export const NamingSettingsSection = ({
                         </div>
                         <div className={styles.templateControl}>
                             <Input
+                                aria-label="Video File"
                                 ref={setNamingInputRef("video_file")}
                                 value={localNaming?.video_file ?? ""}
                                 onChange={(_, data) => handleNamingChange("video_file", data.value)}

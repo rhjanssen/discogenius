@@ -66,13 +66,10 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderVideoMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderArtistMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
-  dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
-  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
+  dbModule.db.prepare("DELETE FROM Recordings").run();  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(ARTIST_MBID, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-1", "Bastille", ARTIST_MBID);
 });
 
 after(() => {

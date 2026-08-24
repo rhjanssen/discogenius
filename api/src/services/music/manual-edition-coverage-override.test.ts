@@ -53,7 +53,6 @@ function seedCatalog(options: { withSingles: boolean }): void {
   resetActiveSchemaRows(db, ["Libraries", "MetadataProfiles", "quality_profiles"]);
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
-    INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
     INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title, primary_type)
     VALUES (${ALBUM_ID}, 'rg-doom-days', 1, 'artist-bastille', 'Doom Days', 'Album');
     INSERT INTO AlbumEditions (
@@ -93,8 +92,8 @@ function seedCatalog(options: { withSingles: boolean }): void {
       id, name, root_path, metadata_profile_id, quality_profile_id, enabled
     ) VALUES (${LIBRARY_ID}, 'Stereo', '/library/stereo', 1, 1, 1);
     INSERT INTO LibraryArtists (
-      id, library_id, managed_artist_id, monitored, credited_scope
-    ) VALUES (1, ${LIBRARY_ID}, 1, 1, 'primary_only');
+      id, library_id, artist_metadata_id, policy, credited_scope
+    ) VALUES (1, ${LIBRARY_ID}, 1, 'all', 'primary_only');
   `);
 
   if (options.withSingles) {

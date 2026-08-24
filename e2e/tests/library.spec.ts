@@ -29,7 +29,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route('**/api/stats', async (route) => {
+  await page.route('**/api/v1/stats', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -42,7 +42,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route('**/api/artists**', async (route) => {
+  await page.route('**/api/v1/artist**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -68,7 +68,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route('**/api/albums**', async (route) => {
+  await page.route('**/api/v1/album**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -95,7 +95,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route('**/api/tracks**', async (route) => {
+  await page.route('**/api/v1/track**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -125,7 +125,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route('**/api/videos**', async (route) => {
+  await page.route('**/api/v1/video**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -151,7 +151,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route('**/api/queue/status', async (route) => {
+  await page.route('**/api/v1/queue/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -159,7 +159,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route((url) => url.pathname === '/api/queue', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/queue', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -167,7 +167,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route((url) => url.pathname === '/api/queue/details', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/queue/details', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -175,7 +175,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route('**/api/queue/progress-stream*', async (route) => {
+  await page.route('**/api/v1/queue/progress-stream*', async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -187,7 +187,7 @@ async function stubPopulatedLibraryShell(page: Page) {
     });
   });
 
-  await page.route((url) => url.pathname === '/api/events', async (route) => {
+  await page.route((url) => url.pathname === '/api/v1/events', async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -231,7 +231,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/stats', async (route) => {
+    await page.route('**/api/v1/stats', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -244,7 +244,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route((url) => url.pathname === '/api/queue/status', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/queue/status', async (route) => {
       queueStatusRequests += 1;
       await route.fulfill({
         status: 200,
@@ -253,7 +253,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route((url) => url.pathname === '/api/queue', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/queue', async (route) => {
       queueRequests += 1;
       await route.fulfill({
         status: 200,
@@ -262,7 +262,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route((url) => url.pathname === '/api/queue/details', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/queue/details', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -270,7 +270,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/queue/progress-stream*', async (route) => {
+    await page.route('**/api/v1/queue/progress-stream*', async (route) => {
       await route.fulfill({
         status: 200,
         headers: {
@@ -282,7 +282,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route((url) => url.pathname === '/api/events', async (route) => {
+    await page.route((url) => url.pathname === '/api/v1/events', async (route) => {
       await route.fulfill({
         status: 200,
         headers: {
@@ -294,7 +294,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/artists*', async (route) => {
+    await page.route('**/api/v1/artist*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -395,9 +395,8 @@ test.describe('Library page tabs & filtering', () => {
     }
   });
 
-  test('does not flash filter empty state during overlapping artist fetches on initial load', async ({ page }) => {
+  test('does not flash filter empty state while the monitored artist fetch is pending', async ({ page }) => {
     let monitoredRequests = 0;
-    let unfilteredRequests = 0;
 
     let releaseMonitoredResponse: (() => void) | null = null;
     const monitoredResponseGate = new Promise<void>((resolve) => {
@@ -430,7 +429,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/stats', async (route) => {
+    await page.route('**/api/v1/stats', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -443,7 +442,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/queue?*', async (route) => {
+    await page.route('**/api/v1/queue?*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -451,7 +450,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/queue', async (route) => {
+    await page.route('**/api/v1/queue', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -459,7 +458,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/queue/status', async (route) => {
+    await page.route('**/api/v1/queue/status', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -467,7 +466,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/queue/progress-stream*', async (route) => {
+    await page.route('**/api/v1/queue/progress-stream*', async (route) => {
       await route.fulfill({
         status: 200,
         headers: {
@@ -479,7 +478,7 @@ test.describe('Library page tabs & filtering', () => {
       });
     });
 
-    await page.route('**/api/artists*', async (route) => {
+    await page.route('**/api/v1/artist*', async (route) => {
       const url = new URL(route.request().url());
       const monitored = url.searchParams.get('monitored');
 
@@ -511,7 +510,6 @@ test.describe('Library page tabs & filtering', () => {
         return;
       }
 
-      unfilteredRequests += 1;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -539,7 +537,6 @@ test.describe('Library page tabs & filtering', () => {
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('main')).toBeVisible();
 
-    await expect.poll(() => unfilteredRequests).toBeGreaterThan(0);
     await expect.poll(() => monitoredRequests).toBeGreaterThan(0);
 
     await expect(page.getByText(/No artists found/i)).toBeHidden();

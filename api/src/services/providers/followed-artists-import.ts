@@ -1,5 +1,11 @@
 import { db } from "../../database.js";
 import { queueArtistMonitoringIntake } from "../music/artist-monitoring.js";
+import {
+    isArtistLibraryMonitored,
+    loadArtistMetadataIdentity,
+    stampArtistLibraryPath,
+    syncLibraryArtistMonitoring,
+} from "../music/managed-artists.js";
 import { resolveArtistFolderForIdentityUpdate } from "../music/artist-paths.js";
 import { servarrMetadata } from "../metadata/servarr-metadata.js";
 import { ProviderArtistIdentityService } from "../metadata/provider-artist-identity-service.js";
@@ -55,13 +61,14 @@ function normalizeProviderArtist(artist: ProviderArtist): FollowedArtistRow {
 }
 
 function findExistingArtist(artist: FollowedArtistRow): { id: string | number; monitored: number; path: string | null } | undefined {
-    if (artist.mbid) {
-        const byMbid = db.prepare("SELECT id, monitored, path FROM artists WHERE mbid = ? OR id = ? LIMIT 1")
-            .get(artist.mbid, artist.mbid) as { id: string | number; monitored: number; path: string | null } | undefined;
-        if (byMbid) {
-            return byMbid;
-        }
-    }
+    if (!artist.mbid) return undefined;
+    const identity = loadArtistMetadataIdentity(artist.mbid);
+    if (!identity) return undefined;
+    return {
+        id: identity.id,
+        path: identity.path ?? null,
+        monitored: isArtistLibraryMonitored(String(identity.id)) ? 1 : 0,
+    };
 }
 
 type ExistingArtistRow = { id: string | number; monitored: number; path: string | null };
@@ -93,22 +100,21 @@ export async function ensureMonitoredArtist(
         artistMbId: artist.mbid,
         existingPath: existing?.path ?? null,
     });
-    db.prepare(`
-        UPDATE artists
-        SET monitored = 1,
-            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-            path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END,
-            picture = COALESCE(picture, ?),
-            popularity = COALESCE(popularity, ?)
-        WHERE id = ?
-    `).run(
-        resolvedArtistFolder.shouldReplaceExistingPath ? 1 : 0,
-        resolvedArtistFolder.path,
-        resolvedArtistFolder.path,
-        artist.picture || null,
-        artist.popularity || 0,
-        localArtistId,
-    );
+    const metadataId = Number(localArtistId);
+    if (Number.isFinite(metadataId) && metadataId > 0) {
+        stampArtistLibraryPath(
+            metadataId,
+            resolvedArtistFolder.path,
+            resolvedArtistFolder.shouldReplaceExistingPath,
+        );
+        db.prepare(`
+            UPDATE ArtistMetadata
+            SET picture = COALESCE(picture, ?),
+                popularity = COALESCE(popularity, ?)
+            WHERE id = ?
+        `).run(artist.picture || null, artist.popularity || 0, metadataId);
+    }
+    syncLibraryArtistMonitoring(localArtistId, true);
     return { status, localArtistId };
 }
 

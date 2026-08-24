@@ -18,6 +18,7 @@ services:
       - NODE_ENV=production
       - DOCKER=true
       - PORT=${PORT:-3737}
+      - DISCOGENIUS_BIND_IP=0.0.0.0
       - TZ=Etc/UTC
       - DISCOGENIUS_DISABLE_MONITORING=${DISCOGENIUS_DISABLE_MONITORING:-0}
       - DISCOGENIUS_DISABLE_SCHEDULER=${DISCOGENIUS_DISABLE_SCHEDULER:-0}
@@ -45,7 +46,7 @@ services:
       - DB_PATH=${DB_PATH:-/data/discogenius.db}
     ports:
       # Defaults to 3737. Change PORT in .env to publish Discogenius on a different port.
-      - "${PORT:-3737}:${PORT:-3737}"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}"
     volumes:
       # Persistent config directory (settings, provider tokens, backups)
       - ./config:/config
@@ -71,9 +72,11 @@ services:
   # Own network, not shared with discogenius. The supervisor binds 0.0.0.0 on
   # 10020/20020 and Discogenius reaches it as apple-music-wrapper:10020. A
   # shared netns used to kill the wrapper login whenever discogenius was
-  # recreated. Recreating the API container no longer recreates this sidecar;
-  # recreate it only when the wrapper session itself is dead:
-  #   docker compose up -d --force-recreate apple-music-wrapper
+  # recreated. Recreating the API container no longer recreates this sidecar.
+  # If it is stopped, start it without replacing its saved session:
+  #   docker compose up -d apple-music-wrapper
+  # Re-authenticate from the Auth page only when the running wrapper reports a
+  # persistent session error.
   #
   # First-time Apple ID/2FA login is done from the Auth page; Discogenius
   # provisions the supervisor script at boot into the shared data volume

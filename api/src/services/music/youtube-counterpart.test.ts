@@ -25,8 +25,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM Albums").run();
-  db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -38,14 +38,17 @@ after(() => {
 test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-scoped videos", async () => {
   const { db } = dbModule;
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-yt-cp", "Bastille");
-  db.prepare(`INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)`)
-    .run("artist-yt-cp", "Bastille", "artist-yt-cp");
-  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
-    .run("rg-yt-cp", "artist-yt-cp", "Bad Blood", "Album");
+  const artistId = (db.prepare(`SELECT id FROM ArtistMetadata WHERE mbid = ?`).get("artist-yt-cp") as { id: number }).id;
   db.prepare(`
-    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
-    VALUES (?, ?, ?, ?, 1)
-  `).run("release-yt-cp", "rg-yt-cp", "artist-yt-cp", "Bad Blood");
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title, primary_type)
+    VALUES ('rg-yt-cp', ?, 'artist-yt-cp', 'Bad Blood', 'Album')
+  `).run(artistId);
+  const releaseGroupId = (db.prepare(`SELECT id FROM Albums WHERE mbid = 'rg-yt-cp'`).get() as { id: number }).id;
+  db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id, artist_mbid, title, track_count, media_count
+    ) VALUES ('release-yt-cp', ?, 'rg-yt-cp', ?, 'artist-yt-cp', 'Bad Blood', 1, 1)
+  `).run(releaseGroupId, artistId);
   db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video) VALUES (?, ?, ?, 0)`)
     .run("rec-audio-yt-cp", "artist-yt-cp", "Pompeii");
   const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-cp") as { id: number }).id;
@@ -130,14 +133,17 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
 test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video offers", async () => {
   const { db } = dbModule;
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-yt-self", "Bastille");
-  db.prepare(`INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)`)
-    .run("artist-yt-self", "Bastille", "artist-yt-self");
-  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
-    .run("rg-yt-self", "artist-yt-self", "SAVE MY SOUL", "Single");
+  const artistId = (db.prepare(`SELECT id FROM ArtistMetadata WHERE mbid = ?`).get("artist-yt-self") as { id: number }).id;
   db.prepare(`
-    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
-    VALUES (?, ?, ?, ?, 1)
-  `).run("release-yt-self", "rg-yt-self", "artist-yt-self", "SAVE MY SOUL");
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title, primary_type)
+    VALUES ('rg-yt-self', ?, 'artist-yt-self', 'Wild World', 'Album')
+  `).run(artistId);
+  const releaseGroupId = (db.prepare(`SELECT id FROM Albums WHERE mbid = 'rg-yt-self'`).get() as { id: number }).id;
+  db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id, artist_mbid, title, track_count, media_count
+    ) VALUES ('release-yt-self', ?, 'rg-yt-self', ?, 'artist-yt-self', 'Wild World', 1, 1)
+  `).run(releaseGroupId, artistId);
   db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video) VALUES (?, ?, ?, 0)`)
     .run("rec-audio-yt-self", "artist-yt-self", "SAVE MY SOUL");
   const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-self") as { id: number }).id;
@@ -213,14 +219,17 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
 test("YouTube self-OMV with album-track duration still follows a unique music_video_for", async () => {
   const { db } = dbModule;
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-yt-mv", "Bastille");
-  db.prepare(`INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)`)
-    .run("artist-yt-mv", "Bastille", "artist-yt-mv");
-  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
-    .run("rg-yt-mv", "artist-yt-mv", "Bad Blood", "Album");
+  const artistId = (db.prepare(`SELECT id FROM ArtistMetadata WHERE mbid = ?`).get("artist-yt-mv") as { id: number }).id;
   db.prepare(`
-    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
-    VALUES (?, ?, ?, ?, 1)
-  `).run("release-yt-mv", "rg-yt-mv", "artist-yt-mv", "Bad Blood");
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title, primary_type)
+    VALUES ('rg-yt-mv', ?, 'artist-yt-mv', 'Wild World', 'Album')
+  `).run(artistId);
+  const releaseGroupId = (db.prepare(`SELECT id FROM Albums WHERE mbid = 'rg-yt-mv'`).get() as { id: number }).id;
+  db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id, artist_mbid, title, track_count, media_count
+    ) VALUES ('release-yt-mv', ?, 'rg-yt-mv', ?, 'artist-yt-mv', 'Wild World', 1, 1)
+  `).run(releaseGroupId, artistId);
   db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video) VALUES (?, ?, ?, ?, 0)`)
     .run("rec-audio-yt-mv", "artist-yt-mv", "Overjoyed", 206000);
   const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-mv") as { id: number }).id;

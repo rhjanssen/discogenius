@@ -205,7 +205,7 @@ function loadAlbumProviderItem(albumId: string, provider: string): AlbumProvider
         JOIN AlbumEditions release ON release.id = release_match.edition_id
         JOIN Albums rg ON rg.id = release.release_group_id
         LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = rg.artist_metadata_id
-        LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
+        LEFT JOIN ArtistMetadata artist ON artist.mbid = artist_metadata.mbid
         LEFT JOIN ProviderItemAudioVariants variant
           ON variant.id = (
             SELECT candidate.id
@@ -259,7 +259,7 @@ function loadVideoProviderItem(videoId: string, provider: string): VideoProvider
         LEFT JOIN ArtistMetadata artist_metadata
           ON artist_metadata.id = recording.artist_metadata_id
           OR (recording.artist_metadata_id IS NULL AND artist_metadata.mbid = recording.artist_mbid)
-        LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
+        LEFT JOIN ArtistMetadata artist ON artist.mbid = artist_metadata.mbid
         LEFT JOIN RecordingRelations relation
           ON relation.source_recording_id = recording.id
          AND relation.relation_type IN ('provider_video_for', 'music_video_for')
@@ -688,11 +688,10 @@ export async function saveArtistNfoFile(
         SELECT
             artist.id,
             artist.mbid,
-            COALESCE(NULLIF(TRIM(artist.name), ''), metadata.name) AS name,
-            COALESCE(NULLIF(TRIM(metadata.sort_name), ''), NULLIF(TRIM(artist.name), ''), metadata.name) AS sort_name,
-            COALESCE(NULLIF(TRIM(artist.bio_text), ''), NULLIF(TRIM(metadata.overview), '')) AS biography
-        FROM Artists artist
-        LEFT JOIN ArtistMetadata metadata ON metadata.mbid = artist.mbid
+            artist.name,
+            COALESCE(NULLIF(TRIM(artist.sort_name), ''), artist.name) AS sort_name,
+            NULLIF(TRIM(artist.overview), '') AS biography
+        FROM ArtistMetadata artist
         WHERE CAST(artist.id AS TEXT) = CAST(? AS TEXT)
            OR artist.mbid = ?
         ORDER BY CASE WHEN CAST(artist.id AS TEXT) = CAST(? AS TEXT) THEN 0 ELSE 1 END
@@ -897,7 +896,12 @@ export async function saveAlbumNfoFile(
             SELECT mbid
             FROM AlbumEditions
             WHERE release_group_mbid = ?
-            ORDER BY monitored DESC, CASE WHEN date IS NULL THEN 1 ELSE 0 END, date ASC, mbid ASC
+            ORDER BY
+              CASE WHEN EXISTS (
+                SELECT 1 FROM LibraryEditions library_edition
+                WHERE library_edition.edition_id = AlbumEditions.id
+              ) THEN 0 ELSE 1 END,
+              CASE WHEN date IS NULL THEN 1 ELSE 0 END, date ASC, mbid ASC
             LIMIT 1
         `).get(releaseGroupMbid) as { mbid?: string | null } | undefined)?.mbid,
     );
@@ -920,7 +924,7 @@ export async function saveAlbumNfoFile(
           ON release.mbid = ?
          AND release.release_group_mbid = release_group.mbid
         LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid
-        LEFT JOIN Artists artist ON artist.mbid = release_group.artist_mbid
+        LEFT JOIN ArtistMetadata artist ON artist.mbid = release_group.artist_mbid
         WHERE release_group.mbid = ?
         LIMIT 1
     `).get(canonicalReleaseMbid, releaseGroupMbid) as {
@@ -942,13 +946,22 @@ export async function saveAlbumNfoFile(
     }
 
     const artistCredits = db.prepare(`
-        SELECT credited_name
-        FROM AlbumArtists
-        WHERE release_group_mbid = ?
-        ORDER BY ord ASC
+        SELECT credit.credited_name
+        FROM ReleaseGroupArtistCredits credit
+        JOIN Albums release_group ON release_group.id = credit.release_group_id
+        WHERE release_group.mbid = ?
+        ORDER BY credit.ordinal ASC
     `).all(releaseGroupMbid) as Array<{ credited_name: string }>;
-    const artists = artistCredits.length > 0
-        ? artistCredits.map((entry) => entry.credited_name)
+    const listingCredits = artistCredits.length > 0
+        ? artistCredits
+        : db.prepare(`
+            SELECT credited_name
+            FROM AlbumArtists
+            WHERE release_group_mbid = ?
+            ORDER BY ord ASC
+        `).all(releaseGroupMbid) as Array<{ credited_name: string }>;
+    const artists = listingCredits.length > 0
+        ? listingCredits.map((entry) => entry.credited_name)
         : [canonicalAlbum.artist_name || "Unknown Artist"];
 
     const tracks = canonicalAlbum.release_mbid
@@ -1065,7 +1078,7 @@ export async function saveVideoNfoFile(
     const videoAlbumId = videoRecord.album_id || null;
     const videoReleaseDate = videoRecord.release_date || videoRecord.releaseDate || null;
     const artistRow = videoArtistId
-        ? db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
+        ? db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
         : undefined;
     const albumItem = videoAlbumId
         ? loadAlbumProviderItem(String(videoAlbumId), localVideo?.provider || provider.id)

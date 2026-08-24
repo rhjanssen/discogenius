@@ -85,13 +85,23 @@ function recordIdentityStatus(result: MetadataIdentityResult, provider?: string 
 
 function updateArtistIdentityColumns(artistId: string, result: MetadataIdentityResult, mbid?: string | null): void {
     db.prepare(`
-        UPDATE Artists SET
+        UPDATE ArtistMetadata SET
             mbid = COALESCE(?, mbid),
-            musicbrainz_status = ?,
-            musicbrainz_last_checked = CURRENT_TIMESTAMP,
-            musicbrainz_match_method = ?
-        WHERE id = ?
-    `).run(mbid || null, result.status, result.method, artistId);
+            status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE mbid = ? OR CAST(id AS TEXT) = ?
+    `).run(mbid || null, result.status, artistId, artistId);
+
+    db.prepare(`
+        UPDATE LibraryArtists SET
+            metadata_status = ?,
+            metadata_last_checked_at = CURRENT_TIMESTAMP,
+            metadata_match_method = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE artist_metadata_id IN (
+            SELECT id FROM ArtistMetadata WHERE mbid = ? OR CAST(id AS TEXT) = ?
+        )
+    `).run(result.status, result.method, artistId, artistId);
 }
 
 /**
@@ -194,7 +204,7 @@ export class MetadataIdentityService {
     }
 
     static async resolveArtist(artistId: string, options: { force?: boolean } = {}): Promise<MetadataIdentityResult> {
-        const artist = db.prepare("SELECT id, name, mbid FROM Artists WHERE id = ?").get(artistId) as ArtistRow | undefined;
+        const artist = db.prepare("SELECT id, name, mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as ArtistRow | undefined;
         if (!artist) {
             const result = this.result("artist", artistId, "error", 0, "local-row", "Artist is not in the Discogenius database");
             recordIdentityStatus(result);

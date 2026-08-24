@@ -31,7 +31,7 @@ export function getLatestArtistReleaseTimestamp(artistId: string | number): numb
   const row = db.prepare(`
     WITH target_artist(mbid) AS (
       SELECT mbid
-      FROM Artists
+      FROM ArtistMetadata
       WHERE CAST(id AS TEXT) = ? OR mbid = ?
       UNION
       SELECT ?
@@ -149,7 +149,7 @@ export function shouldRefreshVideos(options: {
   const row = db.prepare(`
     WITH target_artist(mbid) AS (
       SELECT mbid
-      FROM Artists
+      FROM ArtistMetadata
       WHERE CAST(id AS TEXT) = ? OR mbid = ?
       UNION
       SELECT ?

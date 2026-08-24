@@ -4,6 +4,7 @@ import {
     updateAlbumDownloadStatus,
     updateArtistDownloadStatusFromMedia,
 } from "../download/download-state.js";
+import { loadArtistMetadataIdentity } from "../music/managed-artists.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { normalizeResolvedPath } from "./path-utils.js";
 import {
@@ -169,7 +170,7 @@ export class ManualImportService {
                         FROM Tracks t
                         JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
                         JOIN Albums rg ON rg.mbid = rel.release_group_mbid
-                        JOIN Artists a ON a.mbid = rg.artist_mbid
+                        JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
                         LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
                         WHERE t.mbid = ?
                     `).get(cleanMbid) as any;
@@ -203,7 +204,7 @@ export class ManualImportService {
                             FROM Tracks t
                             JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
                             JOIN Albums rg ON rg.mbid = rel.release_group_mbid
-                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
                             LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
                             WHERE rel.release_group_mbid = ? OR rel.mbid = ?
                             ORDER BY t.medium_position ASC, t.position ASC
@@ -285,7 +286,7 @@ export class ManualImportService {
                 // Fetch artist info if needed (check DB first to avoid redundant API calls)
                 let artistInfo: CollectedItem["artistInfo"] = null;
                 if (artistId) {
-                    const existingArtist = db.prepare("SELECT id FROM Artists WHERE id = ?").get(artistId);
+                    const existingArtist = db.prepare("SELECT id FROM ArtistMetadata WHERE id = ?").get(artistId);
                     if (!existingArtist) {
                         const fallbackName = trackData.artist?.name || trackData.artist_name || "Unknown Artist";
                         if (trackData.canonicalRecordingId) {
@@ -303,7 +304,12 @@ export class ManualImportService {
 
                 // Read artist row for naming (may have been inserted in a prior iteration's commit — read fresh)
                 const artistRow = artistId
-                    ? db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any
+                    ? (() => {
+                        const identity = loadArtistMetadataIdentity(String(artistId));
+                        return identity
+                          ? { name: identity.name, mbid: identity.mbid, path: identity.path }
+                          : null;
+                      })()
                     : null;
 
                 // Refresh provider album metadata when the imported item belongs to
@@ -516,8 +522,8 @@ export class ManualImportService {
         const importedFileIds: Record<string, number> = {};
 
         // Pre-pass (outside the transaction — RefreshVideoService opens its own):
-        // ensure each video's canonical Recordings(is_video=1) + ProviderItems offer
-        // so the in-transaction Recordings.monitored flip below has a row to hit.
+        // mint canonical Recordings(is_video=1) + ProviderItems offers so the
+        // in-transaction LibraryVideos insert below has a recording to select.
         const videoEntries = collected.filter((c) => c.isVideo && !c.canonicalRecordingId);
         if (videoEntries.length > 0) {
             const { RefreshVideoService } = await import("../music/refresh-video-service.js");
@@ -535,20 +541,21 @@ export class ManualImportService {
 
         db.transaction(() => {
             for (const c of collected) {
-                // Ensure artist exists
+                // Ensure catalog artist shell exists (unmonitored — no LibraryArtists row).
                 if (c.artistId && c.artistInfo) {
+                    const artistKey = String(c.artistId);
                     db.prepare(`
-                        INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path)
-                        VALUES (?, ?, ?, ?, 0, ?)
+                        INSERT INTO ArtistMetadata (mbid, name, picture, popularity)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(mbid) DO UPDATE SET
+                          picture = COALESCE(ArtistMetadata.picture, excluded.picture),
+                          popularity = COALESCE(ArtistMetadata.popularity, excluded.popularity),
+                          name = COALESCE(NULLIF(TRIM(ArtistMetadata.name), ''), excluded.name)
                     `).run(
-                        c.artistId,
+                        artistKey,
                         c.artistInfo.name,
                         c.artistInfo.picture,
                         c.artistInfo.popularity,
-                        resolveArtistFolderForPersistence({
-                            artistId: c.artistId,
-                            artistName: c.artistInfo.name,
-                        })
                     );
                 }
 
@@ -654,7 +661,7 @@ export class ManualImportService {
                 if (existingLibraryFile && sameTrackedPath) {
                     db.prepare(`
                         UPDATE TrackFiles SET
-                            artist_id=?,
+                            artist_metadata_id=?,
                             recording_id=?, canonical_recording_mbid=?,
                             canonical_track_mbid=?, canonical_release_group_mbid=?, canonical_artist_mbid=?,
                             provider=?, provider_entity_type=?, provider_id=?, library_slot=?,
@@ -694,7 +701,7 @@ export class ManualImportService {
                 } else {
                     db.prepare(`
                         INSERT INTO TrackFiles (
-                            artist_id,
+        artist_metadata_id,
                             recording_id, canonical_recording_mbid,
                             canonical_track_mbid, canonical_release_group_mbid, canonical_artist_mbid,
                             provider, provider_entity_type, provider_id, library_slot,
@@ -730,7 +737,7 @@ export class ManualImportService {
                             provider_entity_type = COALESCE(excluded.provider_entity_type, provider_entity_type),
                             provider_id = COALESCE(excluded.provider_id, provider_id),
                             library_slot = COALESCE(excluded.library_slot, library_slot),
-                            artist_id = excluded.artist_id, needs_rename = excluded.needs_rename,
+                            artist_metadata_id = excluded.artist_metadata_id, needs_rename = excluded.needs_rename,
                             expected_path = excluded.expected_path, fingerprint = excluded.fingerprint,
                             -- Probed technical facts describe the bytes on disk, so a
                             -- re-import always refreshes them (and the quality derived

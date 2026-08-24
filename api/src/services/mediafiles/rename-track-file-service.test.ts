@@ -17,6 +17,7 @@ let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let libraryFilesModule: typeof import("./library-files.js");
 let renameTrackFileServiceModule: typeof import("./rename-track-file-service.js");
+let managedArtistsModule: typeof import("../music/managed-artists.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
   const rows = dbModule.db.prepare(`
@@ -47,11 +48,8 @@ function seedTrackedFile() {
   fs.mkdirSync(sourceDir, { recursive: true });
   fs.writeFileSync(sourcePath, "test-audio");
 
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-one-mbid", "Artist One");
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-one-mbid", "Artist One", 1);
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, ?)").run("artist-one-mbid", "Artist One");
+  managedArtistsModule.addArtistToLibraries(1, { path: "Artist One" });
 
   // Canonical graph + provider availability.
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
@@ -105,30 +103,23 @@ function seedCanonicalGraph(options: { albumTitle?: string; trackTitle?: string 
   const albumTitle = options.albumTitle || "Canonical Album";
   const trackTitle = options.trackTitle || "Canonical Song";
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, ?)").run("artist-one-mbid", "Artist One");
+  managedArtistsModule.addArtistToLibraries(1, { path: "Artist One" });
 
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (foreign_artist_id, mbid, name)
-    VALUES (?, ?, ?)
-  `).run("artist-mbid-1", "artist-mbid-1", "Artist One");
-
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run("release-group-mbid-1", "release-group-mbid-1", "artist-mbid-1", albumTitle, "Album", "2024-03-01");
+  `).run("release-group-mbid-1", "release-group-mbid-1", "artist-one-mbid", albumTitle, "Album", "2024-03-01");
 
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", albumTitle, "Official", "[\"[Worldwide]\"]", "2024-03-01", 1, 1);
+  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-one-mbid", albumTitle, "Official", "[\"[Worldwide]\"]", "2024-03-01", 1, 1);
 
   dbModule.db.prepare(`
     INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title)
     VALUES (?, ?, ?, ?)
-  `).run("recording-mbid-1", "recording-mbid-1", "artist-mbid-1", trackTitle);
+  `).run("recording-mbid-1", "recording-mbid-1", "artist-one-mbid", trackTitle);
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (foreign_track_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
@@ -154,7 +145,7 @@ function upsertCanonicalAudioFile(input: {
     fileType: "track",
     quality: input.quality || "LOSSLESS",
     librarySlot: input.librarySlot,
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalReleaseGroupMbid: "release-group-mbid-1",
     canonicalReleaseMbid: "release-mbid-1",
     canonicalTrackMbid: "track-mbid-1",
@@ -176,6 +167,7 @@ before(async () => {
   configModule = await import("../config/config.js");
   libraryFilesModule = await import("./library-files.js");
   renameTrackFileServiceModule = await import("./rename-track-file-service.js");
+  managedArtistsModule = await import("../music/managed-artists.js");
 
   writeTestConfig();
 });
@@ -193,8 +185,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM LibraryArtists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM Libraries").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
@@ -346,10 +338,8 @@ test("RenameTrackFileService keeps the stored artist path canonical until path u
   fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
   fs.writeFileSync(legacyPath, "test-audio");
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, ?)").run("artist-one-mbid", "Artist One");
+  managedArtistsModule.addArtistToLibraries(1, { path: "Artist One" });
 
 libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
@@ -365,7 +355,7 @@ libraryFilesModule.LibraryFilesService.upsertLibraryFile({
   configModule.writeConfig(config);
 
   const status = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ artistId: "1" }, 10);
-  const artist = dbModule.db.prepare("SELECT path FROM Artists WHERE id = ?").get("1") as { path: string };
+  const artist = dbModule.db.prepare("SELECT path FROM LibraryArtists WHERE artist_metadata_id = ?").get(1) as { path: string };
 
   assert.equal(artist.path, "Artist One");
   assert.equal(status.renameNeeded, 0);
@@ -379,30 +369,23 @@ test("RenameTrackFileService derives track paths from canonical MusicBrainz rows
   fs.mkdirSync(sourceDir, { recursive: true });
   fs.writeFileSync(sourcePath, "test-audio");
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-mbid-1", "artist-one", 1);
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, ?)").run("artist-one-mbid", "Artist One");
+  managedArtistsModule.addArtistToLibraries(1, { path: "Artist One" });
 
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (foreign_artist_id, mbid, name)
-    VALUES (?, ?, ?)
-  `).run("artist-mbid-1", "artist-mbid-1", "Artist One");
-
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run("release-group-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Album", "2024-03-01");
+  `).run("release-group-mbid-1", "release-group-mbid-1", "artist-one-mbid", "Canonical Album", "Album", "2024-03-01");
 
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", 1, 1);
+  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-one-mbid", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", 1, 1);
 
   dbModule.db.prepare(`
     INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title)
     VALUES (?, ?, ?, ?)
-  `).run("recording-mbid-1", "recording-mbid-1", "artist-mbid-1", "Canonical Song");
+  `).run("recording-mbid-1", "recording-mbid-1", "artist-one-mbid", "Canonical Song");
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (foreign_track_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
@@ -416,14 +399,14 @@ test("RenameTrackFileService derives track paths from canonical MusicBrainz rows
     filePath: sourcePath,
     libraryRoot: musicRoot,
     fileType: "track",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalReleaseGroupMbid: "release-group-mbid-1",
     canonicalReleaseMbid: "release-mbid-1",
     canonicalTrackMbid: "track-mbid-1",
     canonicalRecordingMbid: "recording-mbid-1",
   });
 
-  const expectedPath = path.join(musicRoot, "artist-one", "Canonical Album", "01 - Canonical Song.flac");
+  const expectedPath = path.join(musicRoot, "Artist One", "Canonical Album", "01 - Canonical Song.flac");
   const statusBefore = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ artistId: "1" }, 10);
   assert.equal(statusBefore.renameNeeded, 1);
   assert.equal(path.resolve(statusBefore.sample[0]?.expected_path || ""), path.resolve(expectedPath));
@@ -481,14 +464,14 @@ test("rename preload follows the selected-release track identity for hybrid sour
   `).run();
   dbModule.db.prepare(`
     INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, first_release_date)
-    VALUES ('source-rg', 'source-rg', 'artist-mbid-1', 'Source Single', 'Single', '2024-02-01')
+    VALUES ('source-rg', 'source-rg', 'artist-one-mbid', 'Source Single', 'Single', '2024-02-01')
   `).run();
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (
       foreign_release_id, mbid, release_group_mbid, artist_mbid, title,
       status, country, date, media_count, track_count
     ) VALUES (
-      'source-release', 'source-release', 'source-rg', 'artist-mbid-1', 'Source Single',
+      'source-release', 'source-release', 'source-rg', 'artist-one-mbid', 'Source Single',
       'Official', '["[Worldwide]"]', '2024-02-01', 1, 1
     )
   `).run();
@@ -516,7 +499,7 @@ test("rename preload follows the selected-release track identity for hybrid sour
     fileType: "track",
     quality: "LOSSLESS",
     librarySlot: "stereo",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalReleaseGroupMbid: "release-group-mbid-1",
     canonicalReleaseMbid: "source-release",
     canonicalTrackMbid: "source-track",
@@ -552,10 +535,10 @@ test("rename path cache keeps provider-scoped album folders distinct across slot
 
   const cache = libraryFilesModule.createExpectedPathCache();
   const commonRow = {
-    artist_id: "1",
+    artist_metadata_id: 1,
     album_id: null,
     media_id: null,
-    canonical_artist_mbid: "artist-mbid-1",
+    canonical_artist_mbid: "artist-one-mbid",
     canonical_release_group_mbid: "release-group-mbid-1",
     canonical_release_mbid: "release-mbid-1",
     canonical_track_mbid: null,
@@ -674,7 +657,7 @@ test("benchmark: 200-row rename preview statement shape", () => {
   seedCanonicalGraph();
   const insertRecording = dbModule.db.prepare(`
     INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title)
-    VALUES (?, ?, 'artist-mbid-1', ?)
+    VALUES (?, ?, 'artist-one-mbid', ?)
   `);
   const insertTrack = dbModule.db.prepare(`
     INSERT INTO Tracks (
@@ -699,13 +682,13 @@ test("benchmark: 200-row rename preview statement shape", () => {
   };
   const insertFile = dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension,
       file_type, quality
     ) VALUES (
-      '1', 'artist-mbid-1', 'release-group-mbid-1',
+      1, 'artist-one-mbid', 'release-group-mbid-1',
       'release-mbid-1', ?, ?, 'tidal', 'track', ?, 'stereo',
       ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS'
     )
@@ -817,21 +800,13 @@ test("RenameTrackFileService derives video paths from canonical MusicBrainz reco
   fs.mkdirSync(sourceDir, { recursive: true });
   fs.writeFileSync(sourcePath, "test-video");
 
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, ?, ?)").run("artist-one-mbid", "Artist One");
 
-  dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (foreign_artist_id, mbid, name)
-    VALUES (?, ?, ?)
-  `).run("artist-mbid-1", "artist-mbid-1", "Artist One");
-
-  const recording = dbModule.db.prepare(`
+const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, is_video, metadata_status)
     VALUES (?, ?, ?, ?, 1, 'musicbrainz')
     RETURNING Id
-  `).get("mb-video-123", "mb-video-123", "artist-mbid-1", "Canonical Video") as { id: number };
+  `).get("mb-video-123", "mb-video-123", "artist-one-mbid", "Canonical Video") as { id: number };
 
   seedAcceptedProviderVideoMatch(dbModule.db, {
     provider: "tidal", providerVideoId: "tidal-video-123",
@@ -849,7 +824,7 @@ test("RenameTrackFileService derives video paths from canonical MusicBrainz reco
     providerEntityType: "video",
     providerId: "tidal-video-123",
     librarySlot: "video",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
   });
 
   const expectedPath = path.join(videoRoot, "Artist One", "Artist One - Canonical Video.mp4");
@@ -909,7 +884,7 @@ test("RenameTrackFileService replicates canonical lyrics across separated roots 
     fileType: "lyrics",
     quality: "LOSSLESS",
     librarySlot: "stereo",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalReleaseGroupMbid: "release-group-mbid-1",
     canonicalReleaseMbid: "release-mbid-1",
     canonicalTrackMbid: "track-mbid-1",
@@ -1004,7 +979,7 @@ test("RenameTrackFileService replicates album sidecars by ProviderItems release 
     libraryRoot: musicRoot,
     fileType: "cover",
     librarySlot: "stereo",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalReleaseGroupMbid: "release-group-mbid-1",
     canonicalReleaseMbid: "release-mbid-1",
     provider: "tidal",
@@ -1068,7 +1043,7 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     VALUES (?, ?, ?, 1)
-  `).run("video-rec-pompeii", "Pompeii", "artist-mbid-1");
+  `).run("video-rec-pompeii", "Pompeii", "artist-one-mbid");
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-pompeii") as { id: number }).id;
   seedAcceptedProviderVideoMatch(dbModule.db, {
@@ -1131,7 +1106,7 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
     providerEntityType: "video",
     providerId: "video-pompeii",
     librarySlot: "video",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalRecordingMbid: "video-rec-pompeii",
   });
 
@@ -1150,7 +1125,7 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
     providerEntityType: "track",
     providerId: "track-pompeii",
     librarySlot: "stereo",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalReleaseGroupMbid: "release-group-mbid-1",
     canonicalReleaseMbid: "release-mbid-1",
     canonicalTrackMbid: "track-mbid-1",
@@ -1172,7 +1147,7 @@ test("RenameTrackFileService moves separated video to inline when association an
 
   const fixture = seedInlineVideoTransferFixture();
   const videoRow = dbModule.db.prepare(`
-    SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+    SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id,
            file_path, relative_path, library_root, file_type, extension
     FROM TrackFiles WHERE id = ?
   `).get(fixture.videoFileId) as any;
@@ -1249,7 +1224,7 @@ test("relocateRelatedInlineVideosForImportedAudio ignores unrelated imported aud
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, artist_mbid)
     VALUES (?, ?, ?)
-  `).run("recording-mbid-other", "Other Song", "artist-mbid-1");
+  `).run("recording-mbid-other", "Other Song", "artist-one-mbid");
   const otherAudioPath = path.join(configModule.Config.getMusicPath(), "Artist One", "Other.flac");
   fs.mkdirSync(path.dirname(otherAudioPath), { recursive: true });
   fs.writeFileSync(otherAudioPath, "other-audio");
@@ -1265,7 +1240,7 @@ test("relocateRelatedInlineVideosForImportedAudio ignores unrelated imported aud
     providerEntityType: "track",
     providerId: "track-other",
     librarySlot: "stereo",
-    canonicalArtistMbid: "artist-mbid-1",
+    canonicalArtistMbid: "artist-one-mbid",
     canonicalRecordingMbid: "recording-mbid-other",
   });
 
@@ -1298,8 +1273,8 @@ test("rename preview lists media files only; id-based apply co-moves the linked 
       artist_id, track_file_id, relative_path, file_path, library_root, extension, library_slot,
       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, needs_rename
-    ) VALUES ('1', ?, ?, ?, ?, 'lrc', 'stereo',
-      'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1',
+    ) VALUES ('artist-one-mbid', ?, ?, ?, ?, 'lrc', 'stereo',
+      'artist-one-mbid', 'release-group-mbid-1', 'release-mbid-1',
       'track-mbid-1', 'recording-mbid-1', 0)
   `).run(audioId, path.relative(musicRoot, lyricPath), lyricPath, musicRoot);
 
@@ -1421,8 +1396,8 @@ test("a failed duplicate-sidecar commit restores the staged source sidecar", () 
       canonical_release_mbid, canonical_track_mbid,
       canonical_recording_mbid, needs_rename
     ) VALUES (
-      '1', ?, ?, ?, ?, 'lrc', 'stereo',
-      'artist-mbid-1', 'release-group-mbid-1',
+    'artist-one-mbid', ?, ?, ?, ?, 'lrc', 'stereo',
+      'artist-one-mbid', 'release-group-mbid-1',
       'release-mbid-1', 'track-mbid-1',
       'recording-mbid-1', 1
     )

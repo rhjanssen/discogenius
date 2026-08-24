@@ -168,6 +168,72 @@ export interface AudioMetrics {
     fingerprint?: string; // Add fingerprint to metrics
 }
 
+export function shouldProbeAudioMetrics(
+    filePath: string,
+    metrics: { sampleRate?: number | null; channels?: number | null; codec?: string | null },
+): boolean {
+    const extension = path.extname(filePath).toLowerCase();
+    const sampleRate = Number(metrics.sampleRate || 0);
+    return FFMPEG_AUDIO_CONTAINER_EXTENSIONS.has(extension)
+        || isSpatialAudioCodec(metrics.codec)
+        || metrics.channels == null
+        || (sampleRate > 0 && sampleRate < 8_000);
+}
+
+export function mergeProbedAudioMetrics(metrics: AudioMetrics, probe: Partial<AudioMetrics>): AudioMetrics {
+    return {
+        ...metrics,
+        ...probe,
+        codec: probe.codec || metrics.codec,
+        sampleRate: probe.sampleRate || metrics.sampleRate,
+        bitDepth: probe.bitDepth || metrics.bitDepth,
+        bitrate: probe.bitrate || metrics.bitrate,
+        duration: probe.duration || metrics.duration,
+        channels: probe.channels || metrics.channels,
+    };
+}
+
+/** Probe the first audio stream without parsing tags or cover art again. */
+export async function probeAudioStreamMetrics(filePath: string): Promise<Partial<AudioMetrics>> {
+    const ffprobeBin = resolveFfprobeBinary();
+    return new Promise((resolve) => {
+        execFile(
+            ffprobeBin,
+            [
+                '-v', 'error',
+                '-select_streams', 'a:0',
+                '-show_entries', 'stream=codec_name,sample_rate,channels,bits_per_sample,bits_per_raw_sample,bit_rate,duration',
+                '-of', 'json',
+                filePath,
+            ],
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            (error, stdout) => {
+                if (error || !stdout) {
+                    resolve({});
+                    return;
+                }
+
+                try {
+                    const data = JSON.parse(stdout);
+                    const stream = Array.isArray(data?.streams) ? data.streams[0] : null;
+                    const rawBitDepth = Number(stream?.bits_per_raw_sample || 0);
+                    const sampleBitDepth = Number(stream?.bits_per_sample || 0);
+                    resolve({
+                        codec: stream?.codec_name || undefined,
+                        sampleRate: stream?.sample_rate == null ? undefined : Number(stream.sample_rate),
+                        channels: stream?.channels == null ? undefined : Number(stream.channels),
+                        bitDepth: rawBitDepth > 0 ? rawBitDepth : sampleBitDepth > 0 ? sampleBitDepth : undefined,
+                        bitrate: stream?.bit_rate == null ? undefined : Number(stream.bit_rate),
+                        duration: stream?.duration == null ? undefined : Number(stream.duration),
+                    });
+                } catch {
+                    resolve({});
+                }
+            },
+        );
+    });
+}
+
 export interface BrowserCompatibleAudioSource {
     fileType?: string | null;
     quality?: string | null;
@@ -199,48 +265,8 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
         };
 
         const extension = path.extname(filePath).toLowerCase();
-        if (
-            FFMPEG_AUDIO_CONTAINER_EXTENSIONS.has(extension)
-            || isSpatialAudioCodec(metrics.codec)
-            || metrics.channels == null
-        ) {
-            const ffprobeBin = resolveFfprobeBinary();
-            const audioProbe = await new Promise<Partial<AudioMetrics>>((resolve) => {
-                exec(
-                    `"${ffprobeBin}" -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels,bits_per_sample,bit_rate,duration -of json "${filePath}"`,
-                    (error, stdout) => {
-                        if (error || !stdout) {
-                            resolve({});
-                            return;
-                        }
-
-                        try {
-                            const data = JSON.parse(stdout);
-                            const stream = Array.isArray(data?.streams) ? data.streams[0] : null;
-                            resolve({
-                                codec: stream?.codec_name || undefined,
-                                sampleRate: stream?.sample_rate == null ? undefined : Number(stream.sample_rate),
-                                channels: stream?.channels == null ? undefined : Number(stream.channels),
-                                bitDepth: stream?.bits_per_sample == null || Number(stream.bits_per_sample) <= 0 ? undefined : Number(stream.bits_per_sample),
-                                bitrate: stream?.bit_rate == null ? undefined : Number(stream.bit_rate),
-                                duration: stream?.duration == null ? undefined : Number(stream.duration),
-                            });
-                        } catch {
-                            resolve({});
-                        }
-                    },
-                );
-            });
-
-            Object.assign(metrics, {
-                ...audioProbe,
-                codec: audioProbe.codec || metrics.codec,
-                sampleRate: audioProbe.sampleRate || metrics.sampleRate,
-                bitDepth: audioProbe.bitDepth || metrics.bitDepth,
-                bitrate: audioProbe.bitrate || metrics.bitrate,
-                duration: audioProbe.duration || metrics.duration,
-                channels: audioProbe.channels || metrics.channels,
-            });
+        if (shouldProbeAudioMetrics(filePath, metrics)) {
+            Object.assign(metrics, mergeProbedAudioMetrics(metrics, await probeAudioStreamMetrics(filePath)));
         }
 
         if (!VIDEO_EXTENSIONS.has(extension)) {

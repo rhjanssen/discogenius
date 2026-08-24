@@ -188,7 +188,29 @@ export class DownloadWaitQueue {
   }
 
   static getByRefKey(refKey: string): DownloadWaitRow | null {
-    const row = db.prepare(`SELECT * FROM DownloadQueue WHERE ref_key = ?`).get(refKey) as Record<string, unknown> | undefined;
+    const row = db.prepare(`
+      SELECT * FROM DownloadQueue
+      WHERE ref_key = ?
+      ORDER BY id
+      LIMIT 1
+    `).get(refKey) as Record<string, unknown> | undefined;
+    return row ? hydrateWaitRow(row) : null;
+  }
+
+  private static findExistingTypedJob(input: DownloadWaitEnqueueInput, refKey: string): DownloadWaitRow | null {
+    const row = db.prepare(`
+      SELECT * FROM DownloadQueue
+      WHERE media_kind = ?
+        AND ref_key = ?
+        AND COALESCE(provider, '') = COALESCE(?, '')
+        AND COALESCE(slot, '') = COALESCE(?, '')
+      LIMIT 1
+    `).get(
+      input.mediaKind,
+      refKey,
+      input.provider ?? null,
+      input.slot ?? null,
+    ) as Record<string, unknown> | undefined;
     return row ? hydrateWaitRow(row) : null;
   }
 
@@ -205,9 +227,10 @@ export class DownloadWaitQueue {
     const row = db.prepare(`
       SELECT * FROM DownloadQueue
       WHERE media_kind = 'video'
+        AND COALESCE(provider, '') = COALESCE(?, '')
         AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
       LIMIT 1
-    `).get(providerId) as Record<string, unknown> | undefined;
+    `).get(input.provider ?? null, providerId) as Record<string, unknown> | undefined;
     return row ? hydrateWaitRow(row) : null;
   }
 
@@ -270,7 +293,7 @@ export class DownloadWaitQueue {
       throw new Error("Download wait queue requires a refKey.");
     }
 
-    const existing = this.getByRefKey(refKey)
+    const existing = this.findExistingTypedJob(input, refKey)
       ?? this.findExistingVideoJob(input);
     if (existing) {
       return { id: existing.id, created: false, commandId: existing.command_id };

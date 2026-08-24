@@ -29,13 +29,11 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
+  dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("provider-artist-1", "Bastille", "artist-mbid");
 });
 
 after(() => {
@@ -108,7 +106,7 @@ function seedLegacyNoncanonicalVideoMatch(input: {
 }
 
 test("unmatched provider videos mint a provider_catalog recording", () => {
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "tidal",
     provider_id: "tidal-video-1",
     album_id: "tidal-release-1",
@@ -166,7 +164,7 @@ test("a provider-supplied recording MBID is evidence and cannot mint with that M
     duration: 232,
   };
 
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [providerVideo]);
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [providerVideo]);
   const minted = dbModule.db.prepare(`
     SELECT id, mbid, metadata_status AS status FROM Recordings WHERE is_video = 1
   `).get() as { id: number; mbid: string | null; status: string };
@@ -180,7 +178,7 @@ test("a provider-supplied recording MBID is evidence and cannot mint with that M
     lengthMs: 232000,
     variant: "official",
   });
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [providerVideo]);
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [providerVideo]);
   assert.equal(acceptedVideoMatch("tidal", "tidal-video-mbid")?.recordingId, canonicalId);
   assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 1);
 });
@@ -195,7 +193,7 @@ test("title matching links only the compatible cut and preserves canonical facts
     coverId: "catalog-cover",
   });
 
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "tidal",
     provider_id: "tidal-pompeii-official",
     title: "Pompeii (Official Music Video)",
@@ -246,7 +244,7 @@ test("equally strong canonical candidates fail closed instead of selecting by ro
   insertCanonicalVideo({ mbid: "mb-video-a", title: "Glory", lengthMs: 240000 });
   insertCanonicalVideo({ mbid: "mb-video-b", title: "Glory", lengthMs: 240000 });
 
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "apple-music",
     provider_id: "apple-glory",
     title: "Glory",
@@ -282,7 +280,7 @@ test("a manual accepted match to a MusicBrainz recording survives automatic reva
     SET decision_source = 'manual', method = 'manual-selection', confidence = 1
   `).run();
 
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "tidal",
     provider_id: "tidal-manual",
     title: "Completely Different Provider Title",
@@ -335,16 +333,16 @@ test("a provider-catalog mint keeps its file and match when no MusicBrainz twin 
   });
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      artist_metadata_id, recording_id, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (
-      'provider-artist-1', ?, 'tidal', 'video', 'tidal-orphan',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, 'tidal', 'video', 'tidal-orphan',
       'video', 'C:/library/orphan.mp4', 'orphan.mp4', 'C:/library',
       'orphan.mp4', '.mp4', 'video'
     )
   `).run(minted.id);
 
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "tidal",
     provider_id: "tidal-orphan",
     title: "Orphan Provider Video",
@@ -396,16 +394,16 @@ test("legacy provider-only files are re-homed when a canonical video becomes ava
   `).run();
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      artist_metadata_id, recording_id, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (
-      'provider-artist-1', ?, 'apple-music', 'video', 'apple-mej-live',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, 'apple-music', 'video', 'apple-mej-live',
       'video', 'C:/library/mej-live.mp4', 'mej-live.mp4', 'C:/library',
       'mej-live.mp4', '.mp4', 'video'
     )
   `).run(legacy.id);
 
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "apple-music",
     provider_id: "apple-mej-live",
     title: "Me & Mr. Jones (Live at Other Voices, 2006)",
@@ -450,7 +448,7 @@ test("provider audio evidence links a minted video, then follows a later MusicBr
     album_id: "apple-album-1",
     related_track_id: "apple-song-1",
   };
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [offer]);
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [offer]);
   const minted = dbModule.db.prepare(`
     SELECT id FROM Recordings WHERE is_video = 1 AND mbid IS NULL
   `).get() as { id: number };
@@ -468,7 +466,7 @@ test("provider audio evidence links a minted video, then follows a later MusicBr
     title: "Pompeii",
     lengthMs: 225000,
   });
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [offer]);
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [offer]);
   const relation = dbModule.db.prepare(`
     SELECT source_recording_id AS videoId, target_recording_id AS audioId, confidence, data
     FROM RecordingRelations WHERE relation_type = 'provider_video_for'
@@ -482,14 +480,14 @@ test("provider audio evidence links a minted video, then follows a later MusicBr
 
 test("provider refresh preserves previously probed video quality", () => {
   insertCanonicalVideo({ mbid: "mb-video-quality", title: "Pompeii", lengthMs: 232000 });
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "youtube-music",
     provider_id: "youtube-pompeii",
     title: "Pompeii",
     duration: 232,
     quality: "FHD",
   }]);
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "youtube-music",
     provider_id: "youtube-pompeii",
     title: "Pompeii",
@@ -593,7 +591,7 @@ test("Watch Listen Tell session video does not attach to studio Overjoyed audio"
     durationMs: 195000,
   });
 
-  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
     provider: "youtube-music",
     provider_id: "hm92KOlB7NE",
     title: "Overjoyed",

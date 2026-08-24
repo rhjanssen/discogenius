@@ -158,6 +158,7 @@ from. Same reason `foreign_release_id` keeps its name.
   `TrackFiles.id` it produced; callers never re-find rows by `provider_id`, and
   never position-match two lists. Missing or ambiguous identity is an error.
 - Never assume one selected edition per album.
+- Every acquisition plan is mono-provider. A composite may use several editions from one provider, never TIDAL plus Deezer (or any other cross-provider mix).
 - **MusicBrainz / the configured catalog provider is the source of truth for
   audio.** Video recordings are catalog identity with a MusicBrainz `mbid`
   and/or a YouTube `youtube_video_id`. Public YouTube listing is core catalog
@@ -177,7 +178,7 @@ from. Same reason `foreign_release_id` keeps its name.
   better-sqlite3 with `{readonly:true, fileMustExist:true}`.
 - **Two schema definitions exist and they are not the same thing.**
   `createBaselineSchemaV41()` in `api/src/database.ts` is what `initDatabase()`
-  builds and what production runs (currently `user_version` 44).
+  builds and what production runs (currently `user_version` 46).
   `api/src/database/schema/domain-baseline.ts` is the aspirational CORE schema
   (catalogue/library only) and is contract-tested but never created at runtime.
   The active schema converges onto the target; until it has, a test proving

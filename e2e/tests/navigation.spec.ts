@@ -44,15 +44,15 @@ test.describe('App shell & navigation', () => {
     await expect(searchBox).toBeVisible();
 
     // Settings button should be accessible
-    const settingsBtn = page.getByRole('button', { name: /settings/i }).first();
+    const settingsBtn = page.getByRole('link', { name: /settings/i }).first();
     await expect(settingsBtn).toBeVisible();
 
     // Dashboard button should be accessible
-    const dashboardBtn = page.getByRole('button', { name: /dashboard/i }).first();
+    const dashboardBtn = page.getByRole('link', { name: /dashboard/i }).first();
     await expect(dashboardBtn).toBeVisible();
 
     // Library button should be accessible in desktop nav
-    const libraryBtn = page.getByRole('button', { name: /library/i }).first();
+    const libraryBtn = page.getByRole('link', { name: /^library$/i }).first();
     await expect(libraryBtn).toBeVisible();
   });
 
@@ -62,7 +62,7 @@ test.describe('App shell & navigation', () => {
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth$/);
 
-    const dashboardBtn = page.getByRole('button', { name: /dashboard/i }).first();
+    const dashboardBtn = page.getByRole('link', { name: /dashboard/i }).first();
     await dashboardBtn.click();
     await expect(page).toHaveURL(/\/dashboard/);
     await expect(page.getByRole('main').getByText('Dashboard', { exact: true })).toBeVisible();
@@ -76,7 +76,7 @@ test.describe('App shell & navigation', () => {
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth$/);
 
-    const settingsBtn = page.getByRole('button', { name: /settings/i }).first();
+    const settingsBtn = page.getByRole('link', { name: /settings/i }).first();
     await settingsBtn.click();
     await expect(page).toHaveURL(/\/settings/);
     await expect(page.getByRole('main').getByText('Settings', { exact: true })).toBeVisible();
@@ -91,7 +91,7 @@ test.describe('App shell & navigation', () => {
     await expect(page).not.toHaveURL(/\/auth$/);
 
     // Click logo to go home
-    const logo = page.locator('nav img[alt="Discogenius"]');
+    const logo = page.getByRole('link', { name: 'Discogenius library' });
     await logo.click();
     await expect(page).toHaveURL(`${baseURL}/`);
     await expectLibraryRoot(page);
@@ -128,21 +128,26 @@ test.describe('App shell & navigation', () => {
     await expect(page.locator('body')).toContainText(/not found|404|page/i);
   });
 
-  test('/health endpoint reports actionable runtime health', async ({ request }) => {
-    const resp = await request.get(`${baseURL}/health`);
-    expect(resp.status()).toBe(200);
-    const data = await resp.json();
-    // /health wraps the diagnostics snapshot under preflight (plus a frozen
-    // startup snapshot), rather than returning the flat HealthDiagnosticsSnapshot.
-    expect(data.status).toBe('degraded');
-    expect(data.preflight).toBeTruthy();
-    expect(data.startup).toBeTruthy();
-    expect(data.preflight.subsystems.database.schema.status).toBe('ok');
-    expect(data.preflight.subsystems.database.deep).toMatchObject({
+  test('public health is minimal while API health reports authenticated diagnostics', async ({ request }) => {
+    const publicResponse = await request.get(`${baseURL}/health`);
+    expect(publicResponse.status()).toBe(200);
+    const publicData = await publicResponse.json();
+    expect(publicData).toEqual({ status: 'degraded' });
+
+    // E2E runs with application authentication disabled. Deployments with an
+    // admin password require the normal API bearer token for this endpoint.
+    const diagnosticsResponse = await request.get(`${baseURL}/api/health`);
+    expect(diagnosticsResponse.status()).toBe(200);
+    const diagnostics = await diagnosticsResponse.json();
+    expect(diagnostics.status).toBe('degraded');
+    expect(diagnostics.preflight).toBeTruthy();
+    expect(diagnostics.startup).toBeTruthy();
+    expect(diagnostics.preflight.subsystems.database.schema.status).toBe('ok');
+    expect(diagnostics.preflight.subsystems.database.deep).toMatchObject({
       status: 'warning',
       message: 'No completed deep database integrity check has been recorded',
     });
-    expect(data.preflight.issues).toEqual(expect.arrayContaining([
+    expect(diagnostics.preflight.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ scope: 'database.deep', status: 'warning' }),
     ]));
   });

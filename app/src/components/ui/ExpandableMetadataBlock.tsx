@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { isValidElement, useId, type ReactNode } from 'react';
 import {
   Button,
   Text,
@@ -80,6 +80,27 @@ interface ExpandableMetadataBlockProps {
     preserveWhitespace?: boolean;
 }
 
+function metadataText(node: ReactNode): string {
+    if (typeof node === 'string' || typeof node === 'number') {
+        return String(node);
+    }
+    if (Array.isArray(node)) {
+        return node.map(metadataText).join('');
+    }
+    if (isValidElement<{ children?: ReactNode }>(node)) {
+        return metadataText(node.props.children);
+    }
+    return '';
+}
+
+function collapsedPreview(node: ReactNode, maxLength = 420): string {
+    const text = metadataText(node).replace(/\s+/g, ' ').trim();
+    if (text.length <= maxLength) return text;
+    const candidate = text.slice(0, maxLength + 1);
+    const lastBreak = candidate.lastIndexOf(' ');
+    return `${candidate.slice(0, lastBreak > maxLength * 0.75 ? lastBreak : maxLength).trimEnd()}…`;
+}
+
 export function ExpandableMetadataBlock({
     content,
     attribution,
@@ -88,17 +109,19 @@ export function ExpandableMetadataBlock({
     preserveWhitespace = false,
 }: ExpandableMetadataBlockProps) {
     const styles = useStyles();
+    const contentId = useId();
 
     return (
         <div className={styles.container}>
             <div
+                id={contentId}
                 className={mergeClasses(
                     styles.content,
                     expanded ? styles.expanded : styles.collapsed,
                     preserveWhitespace && styles.preserveWhitespace,
                 )}
             >
-                {content}
+                {expanded ? content : collapsedPreview(content)}
             </div>
             {attribution && expanded && (
                 <Text block className={styles.attribution}>
@@ -110,6 +133,8 @@ export function ExpandableMetadataBlock({
                 size="small"
                 className={styles.toggleButton}
                 onClick={onToggle}
+                aria-controls={contentId}
+                aria-expanded={expanded}
                 icon={expanded ? <ChevronUp16 /> : <ChevronDown16 />}
             >
                 {expanded ? 'Show less' : 'Read more'}
