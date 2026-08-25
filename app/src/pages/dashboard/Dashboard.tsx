@@ -41,6 +41,7 @@ import {
   ArrowSortDownLines24Filled,
   ArrowDownload24Filled,
   Warning24Filled,
+  Pulse24Regular,
   Pulse24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
@@ -70,6 +71,7 @@ import type { OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 import {
     compactDetailActionButtonStyles,
     detailActionGlassButtonStyles,
+    detailActionMobileOverflowRowStyles,
     detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
@@ -85,13 +87,14 @@ const Filter24 = bundleIcon(Filter24Filled, Filter24Regular);
 const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Warning24 = bundleIcon(Warning24Filled, Warning24Regular);
+const Pulse24 = bundleIcon(Pulse24Filled, Pulse24Regular);
 
 const useStyles = makeStyles({
     container: {
         ...compactPageTopOffset,
         display: "flex",
         flexDirection: "column",
-        gap: tokens.spacingVerticalM,
+        gap: tokens.spacingVerticalS,
         // Layout already supplies the page inset; avoid stacking a second
         // header-only top pad on Dashboard.
         paddingTop: tokens.spacingVerticalNone,
@@ -258,7 +261,7 @@ const useStyles = makeStyles({
     headerActionButton: {
         ...compactDetailActionButtonStyles,
         ...detailActionGlassButtonStyles,
-        minWidth: "76px",
+        minWidth: 0,
         "@media (min-width: 768px)": {
             ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
             minWidth: "auto",
@@ -267,34 +270,20 @@ const useStyles = makeStyles({
     headerActionRow: {
         display: "flex",
         alignItems: "stretch",
-        gap: tokens.spacingHorizontalXS,
         flexWrap: "nowrap",
         justifyContent: "center",
         width: "100%",
-        minWidth: 0,
-        overflow: "visible",
+        ...detailActionMobileOverflowRowStyles,
         "@media (min-width: 768px)": {
             justifyContent: "flex-end",
             gap: tokens.spacingHorizontalM,
+            overflow: "visible",
+            paddingTop: tokens.spacingVerticalNone,
+            paddingBottom: tokens.spacingVerticalNone,
         },
         "@media (max-width: 639px)": {
             justifyContent: "center",
         },
-    },
-    dashboardTabQueueIcon: {
-        color: "var(--dg-accent-tracks)",
-    },
-    dashboardTabActivityIcon: {
-        color: "var(--dg-accent-artists)",
-    },
-    dashboardTabImportIcon: {
-        color: "var(--dg-accent-albums)",
-    },
-    dashboardTabLabel: {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: tokens.spacingHorizontalXS,
-        minWidth: 0,
     },
     viewTabs: {
         display: "flex",
@@ -309,6 +298,12 @@ const useStyles = makeStyles({
         "@media (max-width: 639px)": {
             gap: tokens.spacingHorizontalS,
         },
+    },
+    dashboardTabLabel: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXS,
+        minWidth: 0,
     },
     mainCol: {
         display: "flex",
@@ -564,20 +559,23 @@ const Dashboard = () => {
     ];
 
     const dashboardTabs = [
-        { key: 'queue', label: 'Queue', icon: <ArrowDownload24Filled className={styles.dashboardTabQueueIcon} /> },
-        { key: 'activity', label: 'Activity', icon: <Pulse24Filled className={styles.dashboardTabActivityIcon} /> },
-        { key: 'manualImport', label: 'Unmapped Files', icon: <FolderSearch24Filled className={styles.dashboardTabImportIcon} /> },
+        { key: 'queue', label: 'Queue', icon: <ArrowDownload24 /> },
+        { key: 'activity', label: 'Activity', icon: <Pulse24 /> },
+        { key: 'manualImport', label: 'Unmapped Files', icon: <FolderSearch24 /> },
     ] as const;
-    // Two full actions plus More leaves enough room for two-line labels on a
-    // 320px viewport and does not change when a tab adds a page scrollbar.
+    // Three actions plus More: four equal slots, labels wrap inside them.
     const hasMobileOverflowActions = actions.length > 3;
-    const mobileVisibleActions = actions.slice(0, hasMobileOverflowActions ? 2 : 3);
-    const mobileOverflowActions = hasMobileOverflowActions ? actions.slice(2) : [];
+    const mobileVisibleActions = actions.slice(0, 3);
+    const mobileOverflowActions = hasMobileOverflowActions ? actions.slice(3) : [];
     const desktopVisibleActions = actions.slice(0, 4);
     const desktopOverflowActions = actions.slice(4);
     const mobileActionLabel = (action: OverflowAction) => {
         if (action.key === 'refresh') return refreshBusy ? 'Refreshing...' : 'Refresh';
         if (action.key === 'scan-files') return scanRootsBusy ? 'Scanning Files...' : 'Scan Files';
+        if (action.key === 'curate') return curationBusy ? 'Curating...' : 'Curate';
+        if (action.key === 'download-missing') {
+            return (isRunningTaskId === 'download-missing') ? 'Downloading...' : 'Download';
+        }
         return action.label;
     };
 

@@ -106,6 +106,7 @@ const useStyles = makeStyles({
             borderBottom: "none",
             borderBottomLeftRadius: searchBoxRadius,
             borderBottomRightRadius: searchBoxRadius,
+            transform: "scaleX(1)",
             zIndex: 2,
             pointerEvents: "none",
         },

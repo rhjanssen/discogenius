@@ -95,11 +95,11 @@ const useStyles = makeStyles({
         width: "100%",
         boxSizing: "border-box",
         [MEDIA.mobile]: {
-            padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
+            padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
             gap: tokens.spacingVerticalS,
         },
         [MEDIA.desktop]: {
-            paddingTop: tokens.spacingVerticalM,
+            paddingTop: tokens.spacingVerticalL,
         },
     },
     layout: {
@@ -136,10 +136,10 @@ const useStyles = makeStyles({
             alignSelf: "flex-start",
             position: "sticky",
             paddingTop: tokens.spacingVerticalNone,
-            // Preserve the same M inset above the sidebar before and after it
-            // becomes sticky, so it no longer slides upward on first scroll.
-            top: `calc(env(safe-area-inset-top, 0px) + 48px + ${tokens.spacingVerticalM})`,
-            maxHeight: `calc(100vh - env(safe-area-inset-top, 0px) - 68px - ${tokens.spacingVerticalM})`,
+            // Match Layout's S page inset so the sidebar does not jump when
+            // it becomes sticky.
+            top: `calc(env(safe-area-inset-top, 0px) + 48px + ${tokens.spacingVerticalS})`,
+            maxHeight: `calc(100vh - env(safe-area-inset-top, 0px) - 68px - ${tokens.spacingVerticalS})`,
             overflowY: "auto",
             overflowX: "clip",
         },

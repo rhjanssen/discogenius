@@ -6,6 +6,37 @@ All notable changes to this project are documented in this file.
 
 No changes yet.
 
+## [2.12.2] - 2026-08-25
+
+This patch keeps schema 46. An existing 2.12.0 or 2.12.1 database does not
+need another wipe.
+
+### Changed
+
+- **Queue status checks.** Download finished still uses the filled brand
+  checkmark. Import finished uses the green Color check. Color glyphs draw one
+  pixel larger and filled glyphs one pixel smaller in the same 16px slot, so
+  mixed rows share one visual size. Activity and import-history rows use Color
+  artwork for completed, warning, failed, and waiting states.
+- **Fluent brand tokens.** Dashboard tabs use default Fluent coloring. Stats
+  still use the artist, album, track, and video accent colors, same as
+  media-type badges. The search bar keeps the four-color brand underline.
+- **Page headers.** Layout and detail pages drop a spacing step so the header
+  is not a second empty band under the app bar.
+
+### Fixed
+
+- **yt-dlp 403 on track downloads.** Audio and video jobs request
+  `www.youtube.com/watch?v=...` over IPv4, skip the android_vr client whose
+  googlevideo URLs 403, retry fragments, send the stored browser User-Agent,
+  and keep the youtube.com cookie family, including host-only
+  `music.youtube.com` cookies mirrored onto `.youtube.com`. An existing
+  cookies.txt is rewritten on the next download so this does not require a
+  re-paste.
+- **Mobile header actions.** Dashboard, artist, and album toolbars keep four
+  equal slots on a phone. Labels wrap inside the slot, extras go in More, and
+  the album Download button no longer grows with the edition count.
+
 ## [2.12.1] - 2026-08-25
 
 This maintenance release tightens the 2.12 interface, monitoring flow, local

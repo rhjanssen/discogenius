@@ -1,5 +1,5 @@
 import { Text, mergeClasses } from "@fluentui/react-components";
-import { ErrorCircle24Filled } from "@fluentui/react-icons";
+import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { useDashboardStyles } from "./dashboardStyles";
 
 interface CachedRefreshNoticeProps {
@@ -17,7 +17,7 @@ const CachedRefreshNotice = ({ visible, cachedLabel, errorMessage }: CachedRefre
 
     return (
         <div className={mergeClasses(styles.syncNotice, styles.syncNoticeError)}>
-            <ErrorCircle24Filled className={styles.statusIconError} />
+            <SemanticStatusIcon status="error" size={24} />
             <Text size={200} className={styles.syncNoticeText}>
                 {`Showing cached ${cachedLabel}${errorMessage ? ` (${errorMessage})` : ""}`}
             </Text>

@@ -25,6 +25,7 @@ import type {
 import {
   clearYouTubeMusicCredentials,
   getYouTubeMusicCredentialState,
+  rewriteStoredYouTubeMusicCookies,
   saveYouTubeMusicCredentials,
   YOUTUBE_MUSIC_COOKIES_FILE,
 } from "./youtube-music-auth.js";
@@ -364,6 +365,7 @@ export class YouTubeMusicProvider implements StreamingProvider {
     // ~256 kbps. It is probed once per session and published for the variant
     // writers, which hold only a provider id.
     try {
+      rewriteStoredYouTubeMusicCookies();
       const extraArgs = fs.existsSync(YOUTUBE_MUSIC_COOKIES_FILE)
         ? ["--cookies", YOUTUBE_MUSIC_COOKIES_FILE]
         : [];

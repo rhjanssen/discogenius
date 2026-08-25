@@ -16,11 +16,9 @@ import {
 } from "@fluentui/react-components";
 import {
     ArrowClockwise24Regular,
-    Clock16Regular,
     MusicNote224Regular,
     Video24Regular,
     ArrowClockwise24Filled,
-    Clock16Filled,
     MusicNote224Filled,
     Video24Filled,
     Filter24Regular,
@@ -51,7 +49,6 @@ import {
 import { getQueueItemNavPath } from "./queueNavigation";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
-const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
 const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
 const Video24 = bundleIcon(Video24Filled, Video24Regular);
 const Filter24 = bundleIcon(Filter24Filled, Filter24Regular);
@@ -122,31 +119,29 @@ function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
 }
 
 function renderHistoryStatusIndicator(
-    styles: ReturnType<typeof useDashboardStyles>,
     status?: string,
     error?: string | null,
     outcome?: string | null,
     warningMessage?: string | null,
 ) {
     if (error || status === "failed") {
-        return <SemanticStatusIcon status="error" className={styles.downloadStatusErrorIcon} />;
+        return <SemanticStatusIcon status="error" title="Failed" />;
     }
 
     if (status === "completed" && outcome === "completedWithWarning") {
         return (
             <SemanticStatusIcon
                 status="warning"
-                className={styles.downloadStatusWarningIcon}
                 title={warningMessage || "Completed with warning"}
             />
         );
     }
 
     if (status === "completed") {
-        return <SemanticStatusIcon status="success" className={styles.downloadStatusColorIcon} title="Completed" />;
+        return <SemanticStatusIcon status="success" title="Completed" />;
     }
 
-    return <Clock16 className={styles.downloadStatusPendingIcon} />;
+    return <SemanticStatusIcon status="info" title="Waiting" />;
 }
 
 function QueueHistoryFilterMenu({
@@ -356,7 +351,6 @@ export function QueueHistoryPanel({
                                     <Text className={styles.queueHistoryTime}>{row.timeLabel}</Text>
                                     <div className={styles.queueHistoryStatus}>
                                         {renderHistoryStatusIndicator(
-                                            styles,
                                             item.status,
                                             item.error,
                                             item.outcome,

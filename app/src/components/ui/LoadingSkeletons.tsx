@@ -520,33 +520,26 @@ const useStyles = makeStyles({
     // region sitting over the global UltraBlur background — NOT a bordered
     // glass card. (No background/border/backdrop here on purpose.)
     position: "relative",
-    minHeight: "200px",
-    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL}`,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
     "@media (min-width: 768px)": {
-      minHeight: "276px",
-      padding: `${tokens.spacingVerticalXL} ${tokens.spacingHorizontalXL} ${tokens.spacingVerticalL}`,
+      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
     },
   },
   detailHeaderRounded: {
-    paddingBottom: tokens.spacingVerticalXL,
-    "@media (min-width: 768px)": {
-      minHeight: "276px",
-      paddingTop: tokens.spacingVerticalXL,
-      paddingBottom: tokens.spacingVerticalL,
-    },
+    paddingBottom: tokens.spacingVerticalS,
   },
   detailHeaderContent: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
     width: "100%",
     "@media (min-width: 768px)": {
       flexDirection: "row",
       alignItems: "stretch",
-      gap: tokens.spacingHorizontalXXL,
+      gap: tokens.spacingHorizontalXL,
     },
   },
   detailArt: {

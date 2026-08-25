@@ -280,7 +280,7 @@ const useStyles = makeStyles({
     paddingLeft: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-left))`,
     paddingRight: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-right))`,
     paddingBottom: `max(${tokens.spacingVerticalM}, env(safe-area-inset-bottom))`,
-    paddingTop: tokens.spacingVerticalM,
+    paddingTop: tokens.spacingVerticalS,
     boxSizing: "border-box",
     width: "100%",
     // `overflow-x: hidden` forces overflow-y to compute to `auto`, which makes
@@ -289,11 +289,11 @@ const useStyles = makeStyles({
     // `clip` still suppresses horizontal bleed without creating a scrollport.
     overflowX: "clip",
     "@media (min-width: 640px)": {
-      padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
       paddingLeft: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-left))`,
       paddingRight: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-right))`,
       paddingBottom: `max(${tokens.spacingVerticalM}, env(safe-area-inset-bottom))`,
-      paddingTop: tokens.spacingVerticalM,
+      paddingTop: tokens.spacingVerticalS,
     },
   },
   authMain: {

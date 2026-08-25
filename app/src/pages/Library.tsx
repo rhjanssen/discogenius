@@ -72,7 +72,7 @@ import {
 } from "@/utils/appEvents";
 import { formatDurationSeconds } from "@/utils/format";
 import { CardGridSkeleton, DataGridSkeleton } from "@/components/ui/LoadingSkeletons";
-import { collectionContentInset } from "@/components/ui/sharedLayoutStyles";
+import { collectionContentInset, compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import {
   LibraryArtistsNoResults,
   LibraryArtistsSelectionBar,
@@ -142,6 +142,7 @@ const selectedVideoQualityOffer = (video: any): {
 
 const useStyles = makeStyles({
   container: {
+    ...compactPageTopOffset,
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalM,

@@ -99,9 +99,11 @@ import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { formatDescriptiveTrackPosition } from "@/utils/trackPosition";
 import { readArtistViewMode, type ArtistViewMode } from "@/utils/artistViewMode";
 import {
+  compactDetailActionButtonStyles,
   detailActionGlassButtonStyles,
+  detailActionMobileOverflowItemStyles,
+  detailActionMobileOverflowRowStyles,
   detailActionPrimaryButtonStyles,
-  standardDetailActionButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 import { getAlbumMonitorActionPresentation } from "@/pages/album/albumMonitorAction";
@@ -154,19 +156,16 @@ const useStyles = makeStyles({
     alignItems: "flex-start",
     boxSizing: "border-box",
     padding: tokens.spacingHorizontalS,
-    paddingTop: tokens.spacingVerticalXS,
-    paddingBottom: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalNone,
+    paddingBottom: tokens.spacingVerticalXS,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
-    gap: tokens.spacingHorizontalL,
+    gap: tokens.spacingHorizontalM,
     "@media (min-width: 768px)": {
-      // Include padding in the hero height. The previous content-box minimum
-      // added another 48 px outside 276 px and made the header look detached.
-      minHeight: "252px",
-      padding: tokens.spacingHorizontalXL,
-      paddingTop: tokens.spacingVerticalM,
-      paddingBottom: tokens.spacingVerticalM,
-      gap: tokens.spacingHorizontalXXL,
+      padding: tokens.spacingHorizontalL,
+      paddingTop: tokens.spacingVerticalS,
+      paddingBottom: tokens.spacingVerticalS,
+      gap: tokens.spacingHorizontalXL,
     },
   },
   headerContent: {
@@ -175,14 +174,14 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
     width: "100%",
     textAlign: "center",
     "@media (min-width: 768px)": {
       flexDirection: "row",
       alignItems: "stretch",
       textAlign: "left",
-      gap: tokens.spacingHorizontalXXL,
+      gap: tokens.spacingHorizontalXL,
     },
   },
   coverArt: {
@@ -228,7 +227,7 @@ const useStyles = makeStyles({
     flexDirection: "column",
     // Section rhythm (title block → metadata → actions). Persona↔title lives
     // in titleBlock with a tighter related-content gap.
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
     minWidth: 0,
     width: "100%",
     alignItems: "center",
@@ -358,23 +357,30 @@ const useStyles = makeStyles({
   },
   actions: {
     display: "flex",
-    gap: tokens.spacingHorizontalS,
     flexWrap: "nowrap",
     justifyContent: "center",
     width: "100%",
-    marginTop: tokens.spacingVerticalS,
+    marginTop: tokens.spacingVerticalXS,
     alignItems: "stretch",
-    // Glass buttons lift + cast a shadow on hover; `overflow: hidden` sliced off
-    // their rounded top edge. Keep it visible so the hover state renders fully.
-    // Horizontal fit is handled by the ActionOverflowMenu, not by clipping.
-    overflow: "visible",
+    ...detailActionMobileOverflowRowStyles,
+    "& > *": {
+      ...detailActionMobileOverflowItemStyles,
+    },
     "@media (min-width: 768px)": {
       justifyContent: "flex-start",
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
-      marginTop: tokens.spacingVerticalM,
+      marginTop: tokens.spacingVerticalS,
       flexWrap: "nowrap",
       overflow: "visible",
+      paddingTop: tokens.spacingVerticalNone,
+      paddingBottom: tokens.spacingVerticalNone,
+      "& > *": {
+        flex: "0 0 auto",
+        minWidth: "auto",
+        maxWidth: "none",
+        flexShrink: 0,
+      },
     },
   },
   // Transparent button base style
@@ -386,53 +392,50 @@ const useStyles = makeStyles({
     ...detailActionPrimaryButtonStyles,
   },
   actionButton: {
-    ...standardDetailActionButtonStyles,
-    // Content-based basis so Fluent Overflow measures real widths; grow fills
-    // leftover space after lower-priority actions collapse into More.
-    flex: "1 0 auto",
-    minWidth: "76px",
-    flexShrink: 0,
-    "@media (min-width: 768px)": {
-      ...standardDetailActionButtonStyles["@media (min-width: 768px)"],
-      flex: "0 0 auto",
-      minWidth: "auto",
-      flexShrink: 0,
-    },
+    ...compactDetailActionButtonStyles,
   },
-  // Two adjacent Buttons sharing one rounded frame. The wrapper (not the halves)
-  // owns the hover shadow + lift so the unit moves as one, and we avoid
-  // overflow:hidden so the shadow/lift aren't clipped. Each half keeps its outer
-  // corners rounded and inner corners squared so the seam stays clean.
+  // Two adjacent Buttons sharing one rounded frame. The wrapper owns hover
+  // shadow so the halves stay one unit. On mobile it fills one overflow slot.
   splitDownload: {
     display: "inline-flex",
     alignItems: "stretch",
     position: "relative",
     borderRadius: tokens.borderRadiusXLarge,
-    flex: "0 0 auto",
     minWidth: 0,
+    width: "100%",
     transitionProperty: "box-shadow, transform",
     transitionDuration: tokens.durationFast,
     transitionTimingFunction: tokens.curveEasyEase,
     "&:hover": {
       boxShadow: tokens.shadow8,
-      transform: "translateY(-1px)",
     },
     "&:active": {
       boxShadow: tokens.shadow2,
-      transform: "translateY(0)",
+    },
+    "& > *:last-child": {
+      flex: "0 0 32px",
+      width: "32px",
+      minWidth: "32px",
+      maxWidth: "32px",
+      alignSelf: "stretch",
     },
     "@media (min-width: 768px)": {
+      width: "auto",
       flex: "0 0 auto",
-      minWidth: "auto",
+      "& > *:last-child": {
+        flex: "0 0 36px",
+        width: "36px",
+        minWidth: "36px",
+        maxWidth: "36px",
+      },
     },
   },
   splitDownloadPrimary: {
     borderTopRightRadius: 0,
     borderBottomRightRadius: 0,
-    flex: "1 1 auto",
+    flex: "1 1 0",
     minWidth: 0,
-    // The wrapper handles the lift/shadow; suppress the per-half transform so the
-    // two halves don't slide independently and tear the seam.
+    maxWidth: "none",
     "&:hover": {
       boxShadow: "none",
       transform: "none",
@@ -443,13 +446,24 @@ const useStyles = makeStyles({
     },
   },
   splitDownloadMenu: {
-    minWidth: "36px",
-    flex: "0 0 36px",
-    paddingLeft: tokens.spacingHorizontalXS,
-    paddingRight: tokens.spacingHorizontalXS,
+    flex: "1 1 auto",
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "none",
+    padding: tokens.spacingHorizontalNone,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     borderTopLeftRadius: 0,
     borderBottomLeftRadius: 0,
     borderLeftColor: tokens.colorNeutralStroke2,
+    "& .fui-Button__icon": {
+      marginLeft: "0",
+      marginRight: "0",
+    },
+    "& .fui-Button__content": {
+      display: "none",
+    },
     "&:hover": {
       boxShadow: "none",
       transform: "none",
@@ -969,11 +983,7 @@ const AlbumPage = () => {
     }
     return [...byEdition.values()];
   }, [releaseAvailability]);
-  const downloadButtonLabel = downloadingAlbum
-    ? "Adding..."
-    : queuedEditions.length > 1
-      ? `Download ${queuedEditions.length} editions`
-      : "Download";
+  const downloadButtonLabel = downloadingAlbum ? "Adding..." : "Download";
   const downloadScopeDescription = queuedEditions.length > 1
     ? `Download all ${queuedEditions.length} monitored editions`
     : "Download the monitored edition";
@@ -1830,7 +1840,7 @@ const AlbumPage = () => {
                               aria-label="Choose download version"
                               icon={<ChevronDown16 />}
                               disabled={downloadingAlbum}
-                              className={mergeClasses(styles.actionButton, styles.transparentButton, styles.splitDownloadMenu)}
+                              className={mergeClasses(styles.transparentButton, styles.splitDownloadMenu)}
                             />
                           </MenuTrigger>
                           <MenuPopover>

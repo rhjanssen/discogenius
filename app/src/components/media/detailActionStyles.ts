@@ -15,6 +15,47 @@ export const detailActionPrimaryButtonStyles = {
   ...glassPrimaryButtonStyles,
 } as const;
 
+/** Three action slots plus a reserved More control. Keep in lockstep with the row gap. */
+export const detailActionMobileRowGap = tokens.spacingHorizontalXS;
+export const detailActionMobileMoreWidth = "72px";
+export const detailActionMobileSlotWidth = `calc((100% - 3 * ${tokens.spacingHorizontalXS} - ${detailActionMobileMoreWidth}) / 3)`;
+
+export const detailActionMobileOverflowRowStyles = {
+  overflow: "hidden",
+  minWidth: 0,
+  gap: detailActionMobileRowGap,
+  // Hidden overflow is required for Fluent Overflow to measure. Pad so the
+  // glass hover shadow is not sliced off the top/bottom of the row.
+  paddingTop: tokens.spacingVerticalXXS,
+  paddingBottom: tokens.spacingVerticalS,
+  // More must stay narrower than an action slot, or four actions "fit" before
+  // More is mounted and the row overflows by one control.
+  "& > *[aria-label='More actions']": {
+    flex: "0 0 auto",
+    flexShrink: 0,
+    minWidth: detailActionMobileMoreWidth,
+    maxWidth: detailActionMobileMoreWidth,
+    boxSizing: "border-box",
+  },
+} as const;
+
+export const detailActionMobileOverflowItemStyles = {
+  flex: "1 0 auto",
+  flexShrink: 0,
+  minWidth: detailActionMobileSlotWidth,
+  maxWidth: detailActionMobileSlotWidth,
+  boxSizing: "border-box",
+} as const;
+
+const mobileActionLabelStyles = {
+  fontSize: tokens.fontSizeBase100,
+  marginLeft: "0 !important",
+  textAlign: "center",
+  whiteSpace: "normal",
+  overflowWrap: "anywhere",
+  lineHeight: tokens.lineHeightBase100,
+} as const;
+
 export const standardDetailActionButtonStyles = {
   flexDirection: "column",
   alignItems: "center",
@@ -24,8 +65,7 @@ export const standardDetailActionButtonStyles = {
   padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
   gap: tokens.spacingVerticalXXS,
   "& .fui-Button__content": {
-    fontSize: tokens.fontSizeBase100,
-    marginLeft: "0 !important",
+    ...mobileActionLabelStyles,
   },
   "& .fui-Button__icon": {
     marginRight: "0",
@@ -43,6 +83,10 @@ export const standardDetailActionButtonStyles = {
       fontSize: tokens.fontSizeBase300,
       marginTop: "0",
       marginLeft: tokens.spacingHorizontalS,
+      whiteSpace: "nowrap",
+      overflowWrap: "normal",
+      lineHeight: tokens.lineHeightBase300,
+      textAlign: "left",
     },
     "& .fui-Button__icon": {
       marginRight: tokens.spacingHorizontalSNudge,
@@ -59,11 +103,7 @@ export const compactDetailActionButtonStyles = {
   padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS}`,
   gap: tokens.spacingVerticalXXS,
   "& .fui-Button__content": {
-    fontSize: tokens.fontSizeBase100,
-    marginLeft: "0 !important",
-    textAlign: "center",
-    whiteSpace: "normal",
-    lineHeight: tokens.lineHeightBase100,
+    ...mobileActionLabelStyles,
   },
   "& .fui-Button__icon": {
     marginRight: "0",
@@ -89,6 +129,7 @@ export const compactDetailActionButtonStyles = {
       marginTop: "0",
       marginLeft: tokens.spacingHorizontalS,
       whiteSpace: "nowrap",
+      overflowWrap: "normal",
       lineHeight: tokens.lineHeightBase300,
       textAlign: "left",
     },

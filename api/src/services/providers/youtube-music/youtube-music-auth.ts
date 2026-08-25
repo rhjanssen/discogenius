@@ -222,16 +222,35 @@ function normalizeNetscapeCookies(content: string): { netscape: string; cookieHe
     }
 
     const youtubeOwnedDomain = cookieDomain === "youtube.com" || cookieDomain.endsWith(".youtube.com");
-    const appliesToMusic = cookieDomain === YOUTUBE_MUSIC_COOKIE_HOST
-      || (includeSubdomains === "TRUE" && YOUTUBE_MUSIC_COOKIE_HOST.endsWith(`.${cookieDomain}`));
-    if (!youtubeOwnedDomain || !appliesToMusic) continue;
+    if (!youtubeOwnedDomain) continue;
 
     rows.push(line);
     pairs.push(`${name}=${value}`);
   }
   if (pairs.length === 0) {
-    throw new Error("YouTube Music cookies.txt does not contain any cookies for music.youtube.com.");
+    throw new Error("YouTube Music cookies.txt does not contain any cookies for youtube.com.");
   }
+
+  const namesOnDotYoutube = new Set<string>();
+  for (const line of rows) {
+    const fields = line.split("\t");
+    const domain = (fields[0] || "").replace(/^#HttpOnly_/u, "");
+    if (domain === ".youtube.com" && (fields[1] || "").trim().toUpperCase() === "TRUE") {
+      namesOnDotYoutube.add((fields[5] || "").trim());
+    }
+  }
+  for (const line of [...rows]) {
+    const fields = line.split("\t");
+    const domain = (fields[0] || "").replace(/^#HttpOnly_/u, "").replace(/^\./u, "").toLowerCase();
+    const includeSubdomains = (fields[1] || "").trim().toUpperCase();
+    const name = (fields[5] || "").trim();
+    if (domain !== YOUTUBE_MUSIC_COOKIE_HOST || includeSubdomains !== "FALSE" || !name || namesOnDotYoutube.has(name)) {
+      continue;
+    }
+    rows.push([".youtube.com", "TRUE", "/", "TRUE", COOKIE_EXPIRY, name, fields.slice(6).join("\t")].join("\t"));
+    namesOnDotYoutube.add(name);
+  }
+
   return {
     netscape: `# Netscape HTTP Cookie File\n# Managed by Discogenius. Manual edits may be overwritten.\n${rows.join("\n")}\n`,
     cookieHeader: pairs.join("; "),
@@ -367,6 +386,25 @@ export function saveYouTubeMusicCredentials(input: YouTubeMusicCredentialsInput)
   } else {
     fs.rmSync(YOUTUBE_MUSIC_COOKIES_FILE, { force: true });
   }
+}
+
+/** Rewrite cookies.txt so host-only music.youtube.com cookies also apply to .youtube.com. */
+export function rewriteStoredYouTubeMusicCookies(cookiesPath = YOUTUBE_MUSIC_COOKIES_FILE): void {
+  if (!fs.existsSync(cookiesPath)) return;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(cookiesPath, "utf8");
+  } catch {
+    return;
+  }
+  let normalized: { netscape: string; cookieHeader: string } | null;
+  try {
+    normalized = normalizeYouTubeMusicCookies(raw);
+  } catch {
+    return;
+  }
+  if (!normalized || normalized.netscape === raw) return;
+  atomicWrite(cookiesPath, normalized.netscape);
 }
 
 export function loadYouTubeMusicHeaders(): Record<string, string> | null {

@@ -48,7 +48,7 @@ import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
-import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
+import { SemanticStatusIcon, StatusIconSlot, statusIconGlyphPx, statusIconGlyphStyle } from "@/components/ui/SemanticStatusIcon";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -278,18 +278,33 @@ function inferAlbumTrackStatus(
 }
 
 function renderPendingIndicator(styles: ReturnType<typeof useDashboardStyles>) {
-    return <Clock16 className={styles.downloadStatusPendingIcon} />;
+    const glyph = statusIconGlyphPx("filled");
+    return (
+        <StatusIconSlot>
+            <Clock16
+                className={styles.downloadStatusPendingIcon}
+                fontSize={glyph}
+                style={statusIconGlyphStyle("filled")}
+                title="Waiting"
+            />
+        </StatusIconSlot>
+    );
 }
 
-/**
- * Track-row indicator scheme:
- * - actively downloading OR importing → spinner
- * - downloaded, import still ahead    → brand-orange filled checkmark
- * - download + import both complete   → green filled checkmark
- * During the import phase every track is already downloaded, so rows the
- * importer hasn't reached yet show the orange checkmark instead of a clock.
- * Glyphs are Fluent 16 icons (native size) — no CSS width/height overrides.
- */
+function renderDownloadedCheck(styles: ReturnType<typeof useDashboardStyles>) {
+    const glyph = statusIconGlyphPx("filled");
+    return (
+        <StatusIconSlot>
+            <CheckmarkCircle16Filled
+                className={styles.downloadStatusCompleteIcon}
+                fontSize={glyph}
+                style={statusIconGlyphStyle("filled")}
+                title="Downloaded"
+            />
+        </StatusIconSlot>
+    );
+}
+
 function renderTrackStatusIndicator(
     styles: ReturnType<typeof useDashboardStyles>,
     options: {
@@ -302,7 +317,7 @@ function renderTrackStatusIndicator(
     },
 ) {
     if (options.isFailed) {
-        return <SemanticStatusIcon status="error" className={styles.downloadStatusErrorIcon} />;
+        return <SemanticStatusIcon status="error" title="Failed" />;
     }
 
     if (options.isActive) {
@@ -311,17 +326,17 @@ function renderTrackStatusIndicator(
 
     if (options.isCompleted) {
         return options.phase === 'import'
-            ? <SemanticStatusIcon status="success" className={styles.downloadStatusColorIcon} title="Downloaded and imported" />
-            : <CheckmarkCircle16Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />;
+            ? <SemanticStatusIcon status="success" title="Downloaded and imported" />
+            : renderDownloadedCheck(styles);
     }
 
     if (options.isSkipped) {
-        return <SemanticStatusIcon status="success" className={styles.downloadStatusColorIcon} title="Already in library" />;
+        return <SemanticStatusIcon status="success" title="Already in library" />;
     }
 
     if (options.isQueued) {
         return options.phase === 'import'
-            ? <CheckmarkCircle16Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />
+            ? renderDownloadedCheck(styles)
             : renderPendingIndicator(styles);
     }
 

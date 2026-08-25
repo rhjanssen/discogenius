@@ -20,6 +20,7 @@ const {
   getYouTubeMusicCredentialState,
   loadYouTubeMusicHeaders,
   normalizeYouTubeMusicCookies,
+  rewriteStoredYouTubeMusicCookies,
   saveYouTubeMusicCredentials,
 } = await import("./youtube-music-auth.js");
 const { YouTubeMusicCatalog } = await import("./youtube-music-catalog.js");
@@ -465,7 +466,7 @@ test("fetch paste without Cookie can be completed with a cookies.txt export", ()
   clearYouTubeMusicCredentials();
 });
 
-test("Netscape cookies retain only domains applicable to music.youtube.com", () => {
+test("Netscape cookies keep youtube.com family cookies and drop unrelated hosts", () => {
   const netscape = [
     "# Netscape HTTP Cookie File",
     ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSAPISID\tyoutube-secret",
@@ -489,18 +490,37 @@ test("Netscape cookies retain only domains applicable to music.youtube.com", () 
 
   assert.equal(
     loadYouTubeMusicHeaders()?.Cookie,
-    "SAPISID=youtube-secret; __Secure-3PSID=http-only-secret; HOST_ONLY=host-secret",
+    "SAPISID=youtube-secret; __Secure-3PSID=http-only-secret; HOST_ONLY=host-secret; ROOT_HOST_ONLY=root-host-secret; WWW_ONLY=www-secret",
   );
   const stored = fs.readFileSync(YOUTUBE_MUSIC_COOKIES_FILE, "utf8");
   assert.match(stored, /^# Netscape HTTP Cookie File/u);
   assert.match(stored, /^#HttpOnly_\.youtube\.com\tTRUE\t\/\tTRUE\t2147483647\t__Secure-3PSID\thttp-only-secret$/mu);
-  for (const excluded of ["root-host-secret", "www-secret", "google-secret", "unrelated-secret"]) {
+  assert.match(stored, /^\.youtube\.com\tTRUE\t\/\tTRUE\t2147483647\tHOST_ONLY\thost-secret$/mu);
+  for (const excluded of ["google-secret", "unrelated-secret"]) {
     assert.doesNotMatch(stored, new RegExp(excluded, "u"));
   }
   clearYouTubeMusicCredentials();
 });
 
-test("Netscape cookies reject exports without a cookie applicable to music.youtube.com", () => {
+test("stored cookies.txt is rewritten so host-only music.youtube.com cookies reach googlevideo", () => {
+  fs.mkdirSync(path.dirname(YOUTUBE_MUSIC_COOKIES_FILE), { recursive: true });
+  fs.writeFileSync(
+    YOUTUBE_MUSIC_COOKIES_FILE,
+    [
+      "# Netscape HTTP Cookie File",
+      "music.youtube.com\tFALSE\t/\tTRUE\t2147483647\tHOST_ONLY\thost-secret",
+    ].join("\n"),
+    "utf8",
+  );
+
+  rewriteStoredYouTubeMusicCookies();
+
+  const stored = fs.readFileSync(YOUTUBE_MUSIC_COOKIES_FILE, "utf8");
+  assert.match(stored, /^\.youtube\.com\tTRUE\t\/\tTRUE\t2147483647\tHOST_ONLY\thost-secret$/mu);
+  fs.rmSync(YOUTUBE_MUSIC_COOKIES_FILE, { force: true });
+});
+
+test("Netscape cookies reject exports without a youtube.com cookie", () => {
   const unrelated = [
     "# Netscape HTTP Cookie File",
     ".google.com\tTRUE\t/\tTRUE\t2147483647\tSAPISID\tgoogle-secret",
@@ -508,7 +528,7 @@ test("Netscape cookies reject exports without a cookie applicable to music.youtu
   ].join("\n");
   assert.throws(
     () => normalizeYouTubeMusicCookies(unrelated),
-    /does not contain any cookies for music\.youtube\.com/u,
+    /does not contain any cookies for youtube\.com/u,
   );
 });
 
@@ -637,8 +657,13 @@ test("yt-dlp arguments use provider-ID filenames and select audio/video formats 
   assert.equal(audioArgs[audioArgs.indexOf("--audio-format") + 1], "best");
   assert.equal(audioArgs[audioArgs.indexOf("--format") + 1], "bestaudio/best");
   assert.ok(!audioArgs.includes("--audio-quality"), "no re-encode quality to set");
+  assert.ok(audioArgs.includes("--force-ipv4"));
+  assert.equal(
+    audioArgs[audioArgs.indexOf("--extractor-args") + 1],
+    "youtube:player_client=web_embedded,android",
+  );
   assert.ok(audioArgs.includes("--no-playlist"));
-  assert.equal(audioArgs.at(-1), `https://music.youtube.com/watch?v=${TRACK_ID}`);
+  assert.equal(audioArgs.at(-1), `https://www.youtube.com/watch?v=${TRACK_ID}`);
   assert.ok(audioArgs.some((arg) => arg.endsWith("%(id)s.%(ext)s")));
   assert.ok(!audioArgs.includes("--cookies"));
 

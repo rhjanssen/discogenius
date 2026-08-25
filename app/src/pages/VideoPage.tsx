@@ -222,10 +222,10 @@ const useStyles = makeStyles({
         flexDirection: "column",
         // Section rhythm; persona↔title uses the tighter titleBlock gap.
         // No glass card — match AlbumPage header (open on the page surface).
-        gap: tokens.spacingVerticalM,
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXXS}`,
+        gap: tokens.spacingVerticalS,
+        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXXS}`,
         "@media (min-width: 768px)": {
-            padding: `${tokens.spacingVerticalS} 0`,
+            padding: `${tokens.spacingVerticalXS} 0`,
         },
     },
     // Related-content pair (Fluent XS / SNudge): artist byline belongs to the title.

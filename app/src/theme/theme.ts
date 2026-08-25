@@ -180,9 +180,7 @@ export function getDiscogeniusAccentCssVariable(
 }
 
 export function buildDiscogeniusSearchUnderlineGradient(mode: "light" | "dark"): string {
-    // The search underline is an illustrative brand mark, not control text.
-    // Use saturated, mode-aware media accents rather than the pale foreground
-    // end of each ramp that made the dark-mode gradient look greyed out.
+    // Saturated media accents, not the pale foreground steps that grey out in dark mode.
     const accents = getDiscogeniusAccentTokens(mode);
     return `linear-gradient(90deg, ${accents.videos.foreground} 0%, ${accents.tracks.foreground} 33%, ${accents.albums.foreground} 66%, ${accents.artists.foreground} 100%)`;
 }

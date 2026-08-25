@@ -95,6 +95,8 @@ import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 import {
   compactDetailActionButtonStyles,
   detailActionGlassButtonStyles,
+  detailActionMobileOverflowItemStyles,
+  detailActionMobileOverflowRowStyles,
   detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
@@ -161,17 +163,16 @@ const useStyles = makeStyles({
     alignItems: "flex-start",
     boxSizing: "border-box",
     padding: tokens.spacingHorizontalS,
-    paddingTop: tokens.spacingVerticalXS,
-    paddingBottom: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalNone,
+    paddingBottom: tokens.spacingVerticalXS,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
-    gap: tokens.spacingHorizontalL,
+    gap: tokens.spacingHorizontalM,
     "@media (min-width: 768px)": {
-      minHeight: "252px",
-      padding: tokens.spacingHorizontalXL,
-      paddingTop: tokens.spacingVerticalM,
-      paddingBottom: tokens.spacingVerticalM,
-      gap: tokens.spacingHorizontalXXL,
+      padding: tokens.spacingHorizontalL,
+      paddingTop: tokens.spacingVerticalS,
+      paddingBottom: tokens.spacingVerticalS,
+      gap: tokens.spacingHorizontalXL,
     },
   },
   modules: {
@@ -185,14 +186,14 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
     width: "100%",
     textAlign: "center",
     "@media (min-width: 768px)": {
       flexDirection: "row",
       alignItems: "stretch",
       textAlign: "left",
-      gap: tokens.spacingHorizontalXXL,
+      gap: tokens.spacingHorizontalXL,
     },
   },
   artistImage: {
@@ -270,7 +271,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     // Section rhythm (title block → actions). Name↔bio lives in titleBlock.
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
     minWidth: 0,
     width: "100%",
     alignItems: "center",
@@ -313,19 +314,16 @@ const useStyles = makeStyles({
   },
   actions: {
     display: "flex",
-    gap: tokens.spacingHorizontalXS,
     flexWrap: "nowrap",
     justifyContent: "center",
     width: "100%",
-    // The glass buttons lift (translateY) and cast a shadow on hover; a plain
-    // `overflow: hidden` here sliced off their rounded top edge. Keep it visible
-    // so the hover state renders fully. Horizontal fit is handled by the
-    // ActionOverflowMenu collapsing extra actions rather than by clipping.
-    overflow: "visible",
+    ...detailActionMobileOverflowRowStyles,
     marginTop: tokens.spacingVerticalS,
-    // Keep action clicks out from under the sticky app bar (same as dashboard queue).
     scrollMarginTop: "72px",
     alignItems: "stretch",
+    "& > *": {
+      ...detailActionMobileOverflowItemStyles,
+    },
     "@media (min-width: 768px)": {
       justifyContent: "flex-start",
       alignItems: "center",
@@ -333,6 +331,14 @@ const useStyles = makeStyles({
       marginTop: tokens.spacingVerticalM,
       flexWrap: "nowrap",
       overflow: "visible",
+      paddingTop: tokens.spacingVerticalNone,
+      paddingBottom: tokens.spacingVerticalNone,
+      "& > *": {
+        flex: "0 0 auto",
+        minWidth: "auto",
+        maxWidth: "none",
+        flexShrink: 0,
+      },
     },
   },
   // Transparent button base style
@@ -345,16 +351,16 @@ const useStyles = makeStyles({
   },
   actionButton: {
     ...compactDetailActionButtonStyles,
-    // Content-based basis so Fluent Overflow measures real widths; grow fills
-    // leftover space after lower-priority actions collapse into More.
-    flex: "1 0 auto",
-    minWidth: "76px",
-    flexShrink: 0,
-    "@media (min-width: 768px)": {
-      ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
-      flex: "0 0 auto",
-      minWidth: "auto",
-      flexShrink: 0,
+  },
+  actionOverflowItem: {
+    display: "flex",
+    minWidth: 0,
+    width: "100%",
+    alignItems: "stretch",
+    "& > *": {
+      flex: "1 1 auto",
+      minWidth: 0,
+      width: "100%",
     },
   },
   filterViewDesktop: {
@@ -1872,12 +1878,10 @@ const ArtistPage = () => {
                 )}
               </div>
 
-              {/* At phone widths two actions plus More fit reliably. Keeping
-                  three forced the centered row wider than its container and
-                  clipped the monitored state off the left edge at 375 px. */}
-              <Overflow minimumVisible={2}>
+              <Overflow minimumVisible={3}>
                 <div className={styles.actions}>
                   <OverflowItem id="monitor" priority={4}>
+                    <div className={styles.actionOverflowItem}>
                     {!isMonitored ? (
                       <AppTooltip content="Add to library and monitor" relationship="label">
                         <Button
@@ -1923,6 +1927,7 @@ const ArtistPage = () => {
                         </MenuPopover>
                       </Menu>
                     )}
+                    </div>
                   </OverflowItem>
 
                   <OverflowItem id="refresh-scan" priority={3}>

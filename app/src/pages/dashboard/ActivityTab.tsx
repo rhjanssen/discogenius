@@ -7,12 +7,10 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowClockwise24Regular,
-  Clock16Regular,
-  Clock24Regular,
-  DismissCircle24Filled,
   ArrowClockwise24Filled,
-  Clock16Filled,
+  Clock24Regular,
   Clock24Filled,
+  DismissCircle24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
@@ -34,7 +32,6 @@ import {
 } from "./dashboardUtils";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
-const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
 const Clock24 = bundleIcon(Clock24Filled, Clock24Regular);
 
 type ActivityTabProps = {
@@ -224,16 +221,16 @@ const ActivityTab = ({
         [activityFilter, historyJobs],
     );
 
-    const getStatusIcon = (level: EventLevel, source: ActivitySource) => {
+    const getStatusIcon = (level: EventLevel) => {
         switch (level) {
             case "success":
-                return <SemanticStatusIcon status="success" className={source === "history" ? styles.statusIconSuccessHistory : styles.statusIconSuccess} />;
+                return <SemanticStatusIcon status="success" title="Completed" />;
             case "warning":
-                return <SemanticStatusIcon status="warning" className={styles.statusIconWarning} />;
+                return <SemanticStatusIcon status="warning" title="Warning" />;
             case "error":
-                return <SemanticStatusIcon status="error" className={styles.statusIconError} />;
+                return <SemanticStatusIcon status="error" title="Failed" />;
             default:
-                return <Clock16 className={styles.statusIconNeutral} />;
+                return <SemanticStatusIcon status="info" title="Queued" />;
         }
     };
 
@@ -274,7 +271,7 @@ const ActivityTab = ({
                     <div className={source === "history" ? styles.activityLeadingContent : styles.activityLeadingContentCompact}>
                         {source === "running"
                             ? <Spinner size="extra-tiny" />
-                            : getStatusIcon(level, source)}
+                            : getStatusIcon(level)}
                         <span className={styles.activityIconOffset}>{getActivityTypeIcon(job)}</span>
                     </div>
                 </div>

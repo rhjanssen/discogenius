@@ -5,7 +5,11 @@ import path from "node:path";
 import type { DownloadBackend, DownloadProgress, DownloadRequest } from "../../download/download-backend.js";
 import { Config, configuredAudioQuality } from "../../config/config.js";
 import { configuredVideoMaxHeight } from "../provider-quality.js";
-import { YOUTUBE_MUSIC_COOKIES_FILE } from "./youtube-music-auth.js";
+import {
+  loadYouTubeMusicHeaders,
+  rewriteStoredYouTubeMusicCookies,
+  YOUTUBE_MUSIC_COOKIES_FILE,
+} from "./youtube-music-auth.js";
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/u;
 const BROWSE_OR_PLAYLIST_ID = /^[A-Za-z0-9_-]{8,200}$/u;
@@ -172,7 +176,7 @@ export function buildYouTubeMusicSourceUrl(
     if (!VIDEO_ID.test(candidate)) {
       throw new Error(`Invalid YouTube video ID: ${candidate || "(empty)"}`);
     }
-    const host = entityType === "track" ? "music.youtube.com" : "www.youtube.com";
+    const host = "www.youtube.com";
     return `https://${host}/watch?v=${candidate}`;
   }
   if (!BROWSE_OR_PLAYLIST_ID.test(candidate)) {
@@ -241,6 +245,14 @@ export class YtDlpBackend implements DownloadBackend {
     const args = [
       "--ignore-config",
       "--js-runtimes", "node",
+      // YouTube 403s IPv6 and music.youtube.com player requests from Docker
+      // more often than www.youtube.com over IPv4. yt-dlp 2026.7.4 still
+      // prefers android_vr, whose googlevideo URLs 403. web_embedded returns
+      // downloadable opus; android is muxed format 18 when embedding is off.
+      "--force-ipv4",
+      "--extractor-args", "youtube:player_client=web_embedded,android",
+      "--retries", "5",
+      "--fragment-retries", "5",
       "--no-color",
       "--newline",
       "--no-simulate",
@@ -253,7 +265,12 @@ export class YtDlpBackend implements DownloadBackend {
       outputTemplate,
     ];
     const cookiesPath = this.options.cookiesPath || YOUTUBE_MUSIC_COOKIES_FILE;
+    if (cookiesPath === YOUTUBE_MUSIC_COOKIES_FILE) {
+      rewriteStoredYouTubeMusicCookies();
+    }
     if (fs.existsSync(cookiesPath)) args.push("--cookies", cookiesPath);
+    const userAgent = loadYouTubeMusicHeaders()?.["User-Agent"]?.trim();
+    if (userAgent) args.push("--user-agent", userAgent);
 
     if (request.entityType === "video") {
       const maxHeight = configuredVideoMaxHeight(Config.getQualityConfig()?.video_quality);

@@ -22,18 +22,7 @@ export const useDashboardStyles = makeStyles({
         width: "16px",
         height: "16px",
         flexShrink: 0,
-    },
-    statIconArtists: {
-        color: "var(--dg-accent-artists)",
-    },
-    statIconAlbums: {
-        color: "var(--dg-accent-albums)",
-    },
-    statIconTracks: {
-        color: "var(--dg-accent-tracks)",
-    },
-    statIconVideos: {
-        color: "var(--dg-accent-videos)",
+        color: tokens.colorBrandForeground1,
     },
     emptyState: {
         ...glassSurfaceStyles,
@@ -270,21 +259,8 @@ export const useDashboardStyles = makeStyles({
         color: tokens.colorNeutralForeground3,
         flexShrink: 0,
     },
-    // Downloaded (import still pending) — brand orange per design.
     downloadStatusCompleteIcon: {
         color: tokens.colorBrandForeground1,
-        flexShrink: 0,
-    },
-    downloadStatusColorIcon: {
-        color: tokens.colorPaletteGreenForeground1,
-        flexShrink: 0,
-    },
-    downloadStatusErrorIcon: {
-        color: tokens.colorPaletteRedForeground1,
-        flexShrink: 0,
-    },
-    downloadStatusWarningIcon: {
-        color: tokens.colorPaletteYellowForeground1,
         flexShrink: 0,
     },
     downloadCover: {
@@ -707,26 +683,6 @@ export const useDashboardStyles = makeStyles({
         fontSize: tokens.fontSizeBase100,
         color: tokens.colorNeutralForeground3,
         whiteSpace: "nowrap",
-    },
-    statusIconSuccess: {
-        color: tokens.colorPaletteGreenForeground1,
-        flexShrink: 0,
-    },
-    statusIconSuccessHistory: {
-        color: tokens.colorPaletteGreenForeground1,
-        flexShrink: 0,
-    },
-    statusIconError: {
-        color: tokens.colorPaletteRedForeground1,
-        flexShrink: 0,
-    },
-    statusIconWarning: {
-        color: tokens.colorPaletteYellowForeground1,
-        flexShrink: 0,
-    },
-    statusIconNeutral: {
-        color: tokens.colorNeutralForeground3,
-        flexShrink: 0,
     },
     loadMoreRow: {
         display: "flex",
