@@ -89,6 +89,32 @@ test("LOSSLESS file vs Settings MAX with a hi-res offer is still an upgrade", ()
   assert.equal(evaluation.targetQuality, "HIRES_LOSSLESS");
 });
 
+test("LOSSLESS 16/44.1 vs Settings MAX does not upgrade when the source is also lossless", () => {
+  const evaluation = UpgradableSpecification.evaluateAudioChange({
+    profile: profile("max"),
+    currentQuality: "LOSSLESS",
+    sourceQuality: "LOSSLESS",
+    codec: "FLAC",
+    extension: "flac",
+    bitDepth: 16,
+    sampleRate: 44100,
+  });
+  assert.equal(evaluation.needsChange, false);
+  assert.equal(evaluation.direction, "none");
+});
+
+test("LOSSLESS vs Settings MAX does not invent a hi-res offer when source quality is unknown", () => {
+  const evaluation = UpgradableSpecification.evaluateAudioChange({
+    profile: profile("max"),
+    currentQuality: "LOSSLESS",
+    codec: "FLAC",
+    extension: "flac",
+    bitDepth: 16,
+    sampleRate: 44100,
+  });
+  assert.equal(evaluation.needsChange, false);
+});
+
 test("spatial files are never a stereo downconvert", () => {
   const evaluation = UpgradableSpecification.evaluateAudioChange({
     profile: profile("low", { downconvert: true }),

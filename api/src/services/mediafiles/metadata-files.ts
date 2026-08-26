@@ -1096,9 +1096,13 @@ export async function saveVideoNfoFile(
     const videoArtists = Array.isArray(videoRecord.artists) && videoRecord.artists.length > 0
         ? videoRecord.artists
         : Array.isArray(videoRecord.raw?.artists) ? videoRecord.raw.artists : [];
+    const artistMbid = artistRow?.mbid || localVideo?.artist_mbid || null;
+    const catalogArtistName = artistMbid
+        ? (db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ?").get(artistMbid) as { name?: string } | undefined)?.name
+        : null;
     const artistNames = videoArtists.length > 0
         ? videoArtists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
-        : [videoArtistName || "Unknown Artist"];
+        : [videoArtistName || catalogArtistName || "Unknown Artist"];
 
     const elements = [
         xmlElement("title", video.title),

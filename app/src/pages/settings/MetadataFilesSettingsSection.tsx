@@ -61,11 +61,15 @@ type MetadataSettings = Partial<MetadataConfigContract> | null | undefined;
 export interface MetadataFilesSettingsSectionProps {
     metadataSettings: MetadataSettings;
     updateMetadataSettings: (updates: Partial<MetadataConfigContract>) => void | Promise<void>;
+    embedCover: boolean;
+    onEmbedCoverChange: (checked: boolean) => void | Promise<void>;
 }
 
 export const MetadataFilesSettingsSection = ({
     metadataSettings,
     updateMetadataSettings,
+    embedCover,
+    onEmbedCoverChange,
 }: MetadataFilesSettingsSectionProps) => {
     const styles = useStyles();
     const writeAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
@@ -119,6 +123,12 @@ export const MetadataFilesSettingsSection = ({
                     </div>
                 </div>
 
+                {renderToggleRow({
+                    title: "Embed album covers",
+                    description: "Write cover art into audio files when tags are written.",
+                    checked: embedCover,
+                    onChange: (checked) => void onEmbedCoverChange(checked),
+                })}
                 {renderToggleRow({
                     title: "Save album covers",
                     description: "Keep cover art in the album folder. Animated covers are kept when available.",

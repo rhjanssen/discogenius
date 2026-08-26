@@ -58,7 +58,12 @@ describe("Settings control labels", () => {
   it("names adjacent selects, switches, and path inputs", async () => {
     const { container } = renderSettings(
       <>
-        <MetadataFilesSettingsSection metadataSettings={null} updateMetadataSettings={vi.fn()} />
+        <MetadataFilesSettingsSection
+          metadataSettings={null}
+          updateMetadataSettings={vi.fn()}
+          embedCover={true}
+          onEmbedCoverChange={vi.fn()}
+        />
         <NamingSettingsSection
           pathSettings={null}
           updatePathSettings={vi.fn()}

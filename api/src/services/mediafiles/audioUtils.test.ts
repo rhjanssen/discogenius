@@ -83,6 +83,20 @@ test("requiresBrowserCompatibleAudioStream flags spatial tracks for browser-safe
     }), false);
 
     assert.equal(requiresBrowserCompatibleAudioStream({
+        fileType: "track",
+        quality: "LOSSLESS",
+        codec: "flac",
+        extension: ".flac",
+    }), true);
+
+    assert.equal(requiresBrowserCompatibleAudioStream({
+        fileType: "track",
+        quality: "LOSSLESS",
+        codec: "alac",
+        extension: ".m4a",
+    }), true);
+
+    assert.equal(requiresBrowserCompatibleAudioStream({
         fileType: "video",
         quality: "DOLBY_ATMOS",
         codec: "eac3",

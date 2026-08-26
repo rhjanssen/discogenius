@@ -2,7 +2,7 @@ import { useCallback, useRef, useState, type MouseEvent } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { isSpatialAudioQuality } from "@/utils/spatialAudio";
-import { selectTrackPlaybackSource } from "./trackPlaybackSource";
+import { isLocalAudioLibraryFile, selectTrackPlaybackSource } from "./trackPlaybackSource";
 
 interface PlayableTrackFile {
   id: number;
@@ -71,7 +71,7 @@ export function useTrackPlayback() {
   }, [trackFilesById]);
 
   const getTrackAudioFile = useCallback((track: PlayableTrack) => {
-    return getTrackFiles(track).find((file) => file.file_type === "track") ?? null;
+    return getTrackFiles(track).find((file) => isLocalAudioLibraryFile(file)) ?? null;
   }, [getTrackFiles]);
 
   const loadTrackFilesIfNeeded = useCallback(async (track: PlayableTrack) => {
@@ -199,7 +199,7 @@ export function useTrackPlayback() {
     let audioFile = getTrackAudioFile(track);
     if (!audioFile && isDownloadedTrack(track)) {
       const loadedFiles = await loadTrackFilesIfNeeded(track);
-      audioFile = loadedFiles.find((file) => file.file_type === "track") ?? null;
+      audioFile = loadedFiles.find((file) => isLocalAudioLibraryFile(file)) ?? null;
     }
 
     const needsSignedPreview = shouldUseSignedPreview(track, audioFile);
@@ -256,7 +256,7 @@ export function useTrackPlayback() {
     let audioFile = getTrackAudioFile(track);
     if (!audioFile && isDownloadedTrack(track)) {
       const loadedFiles = await loadTrackFilesIfNeeded(track);
-      audioFile = loadedFiles.find((file) => file.file_type === "track") ?? null;
+      audioFile = loadedFiles.find((file) => isLocalAudioLibraryFile(file)) ?? null;
     }
 
     const usingSignedPreview = shouldUseSignedPreview(track, audioFile);

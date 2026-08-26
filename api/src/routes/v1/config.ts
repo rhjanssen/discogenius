@@ -364,9 +364,19 @@ router.get("/path", (_, res) => {
 
 router.post("/path", async (req, res) => {
   try {
+    const previousLayout = getConfigSection("path").video_folder_layout;
     const updates = parsePathConfigUpdate(getObjectBody(req.body), getConfigSection("path"));
-    await runConfigUserWrite(() => updateConfig("path", updates));
-    res.json({ success: true });
+    const commandId = await runConfigUserWrite(() => {
+      updateConfig("path", updates);
+      if (
+        updates.video_folder_layout
+        && updates.video_folder_layout !== previousLayout
+      ) {
+        return queueCurationPass({ trigger: CommandTrigger.Manual });
+      }
+      return null;
+    });
+    res.json(commandId ? { success: true, commandId } : { success: true });
   } catch (error: any) {
     res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }

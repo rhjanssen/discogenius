@@ -174,6 +174,7 @@ router.get("/", async (req, res) => {
                 const localArtists = matchedArtistIds.length === 0 ? [] : db
                     .prepare(
                         `SELECT current_artist.id, current_artist.mbid, current_artist.name,
+                                current_artist.disambiguation,
                                 current_artist.picture, current_artist.cover_image_url,
                                 artist_metadata.images AS canonical_images,
                                 ${libraryArtistMonitoredSelectSql("current_artist")} AS monitor
@@ -204,6 +205,7 @@ router.get("/", async (req, res) => {
                     results.artists.push(formatSearchResult({
                         id: row.mbid || String(row.id),
                         name: row.name,
+                        subtitle: row.disambiguation || null,
                         picture: mapArtistArtworkToLocalUrl({
                             artistMbid: row.mbid,
                             servarrMetadataData: imageContainerFromImagesColumn(row.canonical_images),
@@ -268,15 +270,35 @@ router.get("/", async (req, res) => {
                         `).all(`%${artistParam}%`, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
                     }
                 } else {
+                    const exactArtistMbids = (db.prepare(`
+                        SELECT mbid
+                        FROM ArtistMetadata
+                        WHERE name = ? COLLATE NOCASE AND mbid IS NOT NULL
+                        LIMIT 8
+                    `).all(query.trim()) as Array<{ mbid: string }>).map((row) => row.mbid);
+                    if (exactArtistMbids.length > 0) {
+                        const artistMarks = exactArtistMbids.map(() => "?").join(", ");
+                        matchedAlbumMbids = (db.prepare(`
+                            SELECT rg.mbid
+                            FROM Albums rg
+                            WHERE rg.artist_mbid IN (${artistMarks})
+                            ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
+                            LIMIT ?
+                        `).all(...exactArtistMbids, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                    }
                     const ftsQuery = toFtsPrefixQuery(query);
-                    matchedAlbumMbids = ftsQuery
-                        ? (db.prepare(`
+                    if (matchedAlbumMbids.length < limit && ftsQuery) {
+                        const already = new Set(matchedAlbumMbids);
+                        const ftsHits = (db.prepare(`
                             SELECT entity_id AS mbid
                             FROM CatalogSearch
                             WHERE CatalogSearch MATCH ? AND entity_type = 'album'
                             LIMIT ?
-                        `).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
-                        : [];
+                        `).all(ftsQuery, limit) as Array<{ mbid: string }>)
+                            .map((row) => row.mbid)
+                            .filter((mbid) => !already.has(mbid));
+                        matchedAlbumMbids = [...matchedAlbumMbids, ...ftsHits].slice(0, limit);
+                    }
 
                     if (matchedAlbumMbids.length === 0 && query.trim().length > 0) {
                         const tokens = query.trim().split(/\s+/).filter(Boolean);

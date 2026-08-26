@@ -369,8 +369,21 @@ export function requiresBrowserCompatibleAudioStream(source: BrowserCompatibleAu
         return true;
     }
 
-    const extension = String(source.extension ?? '').trim().toLowerCase();
-    return SPATIAL_AUDIO_EXTENSIONS.has(extension);
+    const extension = String(source.extension ?? '').trim().toLowerCase().replace(/^\./, '');
+    if (SPATIAL_AUDIO_EXTENSIONS.has(`.${extension}`) || SPATIAL_AUDIO_EXTENSIONS.has(extension)) {
+        return true;
+    }
+
+    // Chromium can fail a ranged FLAC/ALAC play (MEDIA_ERR_SRC_NOT_SUPPORTED)
+    // and the UI then falls back to a provider preview. Transcode those to a
+    // progressive AAC stream the same way spatial files already do.
+    if (extension === 'flac' || extension === 'wav' || extension === 'aiff' || extension === 'aif') {
+        return true;
+    }
+    if (codec === 'flac' || codec === 'alac' || codec === 'pcm') {
+        return true;
+    }
+    return false;
 }
 
 export function deriveVideoQuality(metrics: AudioMetrics): string | null {

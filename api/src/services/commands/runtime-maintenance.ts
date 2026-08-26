@@ -349,13 +349,20 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     ArtistStatisticsService.refresh(monitoredArtistIds);
   }
 
+  // Known-fixed video retag error from schema 46 (`file.artist_id`). Keeping
+  // those rows made Activity and health look broken after the 2.13.0 join fix.
+  const staleVideoRetag = db.prepare(`
+    DELETE FROM commands
+    WHERE status = 'failed'
+      AND error LIKE '%no such column: file.artist_id%'
+  `).run();
   // Prune finished commands rows older than 1 day
   const pruneResult = db.prepare(`
     DELETE FROM commands
     WHERE status IN ('completed', 'failed', 'cancelled')
       AND COALESCE(completed_at, updated_at) < datetime('now', '-1 day')
   `).run();
-  summary.historyJobsPruned = pruneResult.changes;
+  summary.historyJobsPruned = pruneResult.changes + staleVideoRetag.changes;
 
   if (
     summary.duplicateTrackedAssetsRemoved > 0 ||

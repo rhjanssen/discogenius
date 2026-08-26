@@ -149,10 +149,14 @@ export class UpgradableSpecification {
 
         const desiredRank = AUDIO_RANKINGS[profile.audioCutoff];
         const sourceTier = normalizeAudioTier(params.sourceQuality);
-        const sourceRank = sourceTier ? AUDIO_RANKINGS[sourceTier] : desiredRank;
+        const currentRank = normalizedCurrentQuality ? AUDIO_RANKINGS[normalizedCurrentQuality] : 0;
+        // Lossy files may still try the cutoff when we have no variant row.
+        // Already-lossless files must not assume a hi-res offer exists.
+        const sourceRank = sourceTier
+          ? AUDIO_RANKINGS[sourceTier]
+          : (currentRank >= AUDIO_RANKINGS.LOSSLESS ? currentRank : desiredRank);
         const targetRank = Math.min(desiredRank, sourceRank);
         const targetQuality = RANK_TO_AUDIO_QUALITY[targetRank];
-        const currentRank = normalizedCurrentQuality ? AUDIO_RANKINGS[normalizedCurrentQuality] : 0;
         const qualityCutoffNotMet = currentRank < targetRank;
         const codec = String(params.codec || "").toUpperCase();
         const extension = String(params.extension || "").replace(/^\./, "").toLowerCase();
@@ -209,6 +213,16 @@ export class UpgradableSpecification {
         const sampleRate = params.sampleRate || 0;
         if (bitDepth > 0 && sampleRate > 0) {
             if (targetQuality === "HIRES_LOSSLESS" && (bitDepth < 24 && sampleRate <= 48000)) {
+                if (sourceRank <= currentRank) {
+                    return {
+                        needsChange: false,
+                        direction: "none",
+                        currentQuality,
+                        targetQuality,
+                        qualityCutoffNotMet: false,
+                        reason: `Existing ${bitDepth}-bit / ${sampleRate}Hz already matches the best available source`,
+                    };
+                }
                 return {
                     needsChange: profile.allowRedownloads,
                     direction: "upgrade",

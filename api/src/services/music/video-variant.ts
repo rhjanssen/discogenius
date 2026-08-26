@@ -23,6 +23,7 @@ export const VIDEO_AUDIO_STUDIO_DURATION_MATCH_MS = 20_000;
 
 const VARIANT_CLASS_RULES: Array<{ variant: VideoVariant; re: RegExp }> = [
   { variant: "audio", re: /\baudio\b/i },
+  { variant: "visualizer", re: /\bvevo\s+news\b/i },
   { variant: "lyric", re: /\blyrics?\b/i },
   // Moving artwork / visualiser cuts share the Visualizer filter — keep them
   // out of Official Audio / bare OMV buckets.

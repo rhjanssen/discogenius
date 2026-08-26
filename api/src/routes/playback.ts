@@ -619,7 +619,7 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
 
         console.error("[Playback] Stream error:", err);
         if (!res.headersSent) {
-            res.status(500).json({ error: "Internal server error" });
+            res.status(502).json({ error: "Playback source failed" });
         } else {
             res.end();
         }

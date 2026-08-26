@@ -762,7 +762,12 @@ const TrackList = <T extends TrackListItem>({
         className={styles.coverButton}
         aria-label={canPlay ? (isPlaying ? "Stop track" : "Play track") : undefined}
         disabled={!canPlay}
-        onClick={canPlay ? (event) => { event.stopPropagation(); toggleTrackPlayback(track, event); } : undefined}
+        onClick={canPlay
+          ? (event) => {
+            event.stopPropagation();
+            toggleTrackPlayback({ ...track, files: getTrackFiles(track) }, event);
+          }
+          : undefined}
       >
         {renderableCoverUrl ? (
           <img
@@ -793,6 +798,7 @@ const TrackList = <T extends TrackListItem>({
     dgCell.thumbnailSquare,
     failedCoverUrls,
     getTrackAudioFile,
+    getTrackFiles,
     markCoverFailed,
     playingTrackId,
     styles.coverButton,
@@ -834,7 +840,7 @@ const TrackList = <T extends TrackListItem>({
                 onClick={canPlay
                   ? (event) => {
                     event.stopPropagation();
-                    toggleTrackPlayback(track, event);
+                    toggleTrackPlayback({ ...track, files: getTrackFiles(track) }, event);
                   }
                   : undefined}
               >

@@ -10,6 +10,7 @@ import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
 import { matchAudioFileByMetadata, matchVideoFileByMetadata, resolveCatalogTrackFromEmbeddedMbids, videoStemComparableTitle } from "./library-scan-metadata-match.js";
+import { extractNamingMbid } from "./import-discovery.js";
 import { DUPLICATE_EXTRA_FILE_TYPE, ExtraFileService } from "../extras/files/extra-file-service.js";
 import {
     PROVIDER_RESOLVED_ALBUM_ID_SQL,
@@ -32,7 +33,7 @@ import {
     updateAlbumDownloadStatus,
     updateArtistDownloadStatusFromMedia,
 } from "../download/download-state.js";
-import { getManagedArtists, loadArtistMetadataIdentity, resolveArtistMetadataId, resolveArtistMbid, syncLibraryArtistMonitoring } from "../music/managed-artists.js";
+import { getManagedArtists, isArtistLibraryMonitored, loadArtistMetadataIdentity, resolveArtistMetadataId, resolveArtistMbid, syncLibraryArtistMonitoring } from "../music/managed-artists.js";
 import {
     queueArtistWorkflow,
 } from "../music/artist-workflow.js";
@@ -82,6 +83,80 @@ function shouldSkipScanDirectory(name: string): boolean {
 function shouldSkipScanFile(name: string): boolean {
     const normalized = name.trim().toLowerCase();
     return normalized.startsWith('._') || IGNORED_SCAN_FILES.has(normalized);
+}
+
+/**
+ * Map a top-level library folder onto an existing catalog artist. Discogenius
+ * writes `{mbid-…}` into artist folders, so a Marshmello credited-scope download
+ * sitting next to monitored Bastille is catalog we already know — not an
+ * unknown artist for Unmapped / Manual Import.
+ */
+export function resolveCatalogArtistFromFolderName(folderName: string): {
+    id: number;
+    name: string;
+    mbid: string;
+} | null {
+    const trimmed = String(folderName || "").trim();
+    if (!trimmed) return null;
+
+    const namingMbid = extractNamingMbid(trimmed);
+    if (namingMbid) {
+        const byMbid = db.prepare(`
+            SELECT id, name, mbid
+            FROM ArtistMetadata
+            WHERE mbid = ?
+            LIMIT 1
+        `).get(namingMbid) as { id: number; name: string; mbid: string } | undefined;
+        if (byMbid) return byMbid;
+    }
+
+    const artists = db.prepare(`
+        SELECT
+          metadata.id,
+          metadata.name,
+          metadata.mbid,
+          (
+            SELECT membership.path
+            FROM LibraryArtists membership
+            JOIN Libraries library
+              ON library.id = membership.library_id
+             AND library.enabled = 1
+            WHERE membership.artist_metadata_id = metadata.id
+            ORDER BY library.id
+            LIMIT 1
+          ) AS path
+        FROM ArtistMetadata metadata
+    `).all() as Array<{ id: number; name: string; mbid: string; path?: string | null }>;
+    const expected = trimmed.toLowerCase();
+    for (const artist of artists) {
+        if (resolveArtistFolderFromRecord(artist).toLowerCase() === expected) {
+            return { id: artist.id, name: artist.name, mbid: artist.mbid };
+        }
+    }
+    return null;
+}
+
+function collectOnDiskCatalogArtists(roots: Array<string | null | undefined>): Array<{
+    id: number;
+    name: string;
+    mbid: string;
+}> {
+    const byId = new Map<number, { id: number; name: string; mbid: string }>();
+    for (const root of roots) {
+        if (!root || !fs.existsSync(root)) continue;
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(root, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+        for (const entry of entries) {
+            if (!entry.isDirectory() || shouldSkipScanDirectory(entry.name)) continue;
+            const artist = resolveCatalogArtistFromFolderName(entry.name);
+            if (artist) byId.set(artist.id, artist);
+        }
+    }
+    return [...byId.values()];
 }
 
 export interface DiskScanResult {
@@ -362,6 +437,8 @@ export class DiskScanService {
             fileIndex?: RootFileIndex;
             trackUnmappedFiles?: boolean;
             filter?: ScanFileFilter;
+            /** When false, matching files do not insert LibraryArtists. */
+            promoteOnMatch?: boolean;
         },
     ): Promise<DiskScanResult> {
         const result: DiskScanResult = {
@@ -382,6 +459,8 @@ export class DiskScanService {
             return result;
         }
         const scanArtistId = String(artistMetadataId);
+        const promoteOnMatch = options?.promoteOnMatch !== false
+            && isArtistLibraryMonitored(scanArtistId);
 
         // Phase A: Clean orphaned records
         options?.onProgress?.({
@@ -405,6 +484,7 @@ export class DiskScanService {
             },
             fileIndex: options?.fileIndex,
             trackUnmappedFiles: options?.trackUnmappedFiles,
+            promoteOnMatch,
         });
         result.filesIndexed = phaseB.indexed;
 
@@ -636,6 +716,12 @@ export class DiskScanService {
         const filtering = Config.getFilteringConfig();
         const videoPath = filtering.include_videos === true ? Config.getVideoPath() : null;
         const spatialPath = filtering.include_spatial === true ? Config.getSpatialPath() : null;
+        const seenArtistIds = new Set(artists.map((artist) => artist.artistMetadataId));
+        for (const extra of collectOnDiskCatalogArtists([musicPath, videoPath, spatialPath])) {
+            if (seenArtistIds.has(extra.id)) continue;
+            artists.push({ artistMetadataId: extra.id, name: extra.name });
+            seenArtistIds.add(extra.id);
+        }
 
         if (usePrebuiltRootIndex) {
             fileIndex.set(musicPath, await this.buildRootFileIndex(musicPath));
@@ -859,6 +945,7 @@ export class DiskScanService {
             onProgress?: (event: ArtistScanProgress) => void;
             fileIndex?: RootFileIndex;
             trackUnmappedFiles?: boolean;
+            promoteOnMatch?: boolean;
         },
     ): Promise<{ indexed: number }> {
         const artist = loadArtistMetadataIdentity(artistId);
@@ -1114,7 +1201,8 @@ export class DiskScanService {
                                 isrc,
                                 musicbrainzRecordingId,
                                 musicbrainzTrackId,
-                                musicbrainzAlbumId,
+                                musicbrainzAlbumId: musicbrainzAlbumId
+                                    || extractNamingMbid(path.basename(path.dirname(resolved))),
                                 durationSeconds: metrics.duration || null,
                             };
                             if (audioExtensions.has(ext)) {
@@ -1378,7 +1466,7 @@ export class DiskScanService {
             }
         }
 
-        if (shouldPromoteArtist) {
+        if (shouldPromoteArtist && options?.promoteOnMatch !== false) {
             syncLibraryArtistMonitoring(artistId, true);
         }
 
@@ -1538,9 +1626,6 @@ export class DiskScanService {
         );
         const knownFolderToArtistId = new Map<string, number>();
         for (const a of allArtists) {
-            if (!managedArtistIds.has(String(a.id))) {
-                continue;
-            }
             const folder = resolveArtistFolderFromRecord(a);
             knownFolderToArtistId.set(folder.toLowerCase(), a.id);
         }
@@ -1583,7 +1668,7 @@ export class DiskScanService {
         // Check each folder against known artists
         const unknownFolders: string[] = [];
         for (const [lower, originalName] of seenFolders) {
-            if (knownFolderToArtistId.has(lower)) {
+            if (knownFolderToArtistId.has(lower) || resolveCatalogArtistFromFolderName(originalName)) {
                 result.knownFolders++;
             } else {
                 unknownFolders.push(originalName);

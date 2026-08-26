@@ -55,8 +55,15 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
             updated_at = CURRENT_TIMESTAMP
     `);
 
+    const alreadyImported = db.prepare(`
+        SELECT 1 FROM TrackFiles WHERE file_path = ? LIMIT 1
+    `);
+
     for (const candidate of candidates) {
         for (const file of candidate.group.files) {
+            if (alreadyImported.get(file.path) || alreadyImported.get(path.resolve(file.path))) {
+                continue;
+            }
             let stats: fs.Stats | null = null;
             try {
                 stats = fs.statSync(file.path);

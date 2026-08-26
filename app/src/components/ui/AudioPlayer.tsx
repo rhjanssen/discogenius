@@ -182,7 +182,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         ? Math.max(0, Math.min(100, (currentTime / duration) * 100))
         : 0;
 
-    const useHlsSource = Boolean(hlsSrc) && !hlsFailed && Hls.isSupported();
+    const isLocalLibraryStream = /\/mediaFile\/stream\//i.test(src);
+    const useHlsSource = Boolean(hlsSrc) && !hlsFailed && Hls.isSupported() && !isLocalLibraryStream;
 
     useEffect(() => {
         const audio = audioRef.current;

@@ -396,7 +396,7 @@ export function LibraryToolbar(props: LibraryToolbarProps): ReactElement {
               const statKey = tab.key as keyof Pick<NonNullable<typeof stats>, "artists" | "albums" | "tracks" | "videos">;
               const tabStats = stats?.[statKey];
               return (
-                <Tab key={tab.key} value={tab.key} title={tabStats ? `${tabStats.monitored} monitored, ${tabStats.total} in database` : undefined}>
+                <Tab key={tab.key} value={tab.key} title={tabStats ? `${tabStats.monitored} monitored, ${tabStats.total} catalog` : undefined}>
                   {tab.label}
                 </Tab>
               );

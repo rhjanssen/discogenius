@@ -513,6 +513,7 @@ export function initDatabase() {
   }
 
   ensureDownloadQueueSchema();
+  pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
   ensureLibraryProjectionTriggers();
   initializeDefaultData();
@@ -598,6 +599,18 @@ function ensureDownloadQueueSchema(): void {
   );
   if ((wiped.changes ?? 0) > 0) {
     console.log(`[SQLite] Wait-queue cutover removed ${wiped.changes} leftover download commands.`);
+  }
+}
+
+/** 2.13.0 fixed the video retag JOIN; leftover failures still painted Activity red. */
+function pruneStaleArtistIdCommandFailures(): void {
+  const result = db.prepare(`
+    DELETE FROM commands
+    WHERE status = 'failed'
+      AND error LIKE '%no such column: file.artist_id%'
+  `).run();
+  if ((result.changes ?? 0) > 0) {
+    console.log(`[SQLite] Removed ${result.changes} stale file.artist_id command failure(s).`);
   }
 }
 

@@ -4,6 +4,56 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-08-26
+
+Schema 46 is unchanged.
+
+### Fixed
+
+- **Local playback.** Album and artist track lists now play the imported
+  library file when one exists. The player no longer starts an Apple Music HLS
+  preview (409 then 500) for a track that already has a local HIGH/MAX copy.
+  Missing `file_type` on a TrackFile is treated as audio, matching the quality
+  column. Provider preview failures return 502 instead of a generic 500.
+- **Upgrade stampede.** Settings MAX no longer queues a re-download of a 16-bit
+  / 44.1 kHz lossless file when the provider cannot offer hi-res. Unknown source
+  quality is no longer treated as “can reach cutoff,” so a quality save cannot
+  enqueue SoundCloud lossy or Deezer against an existing FLAC.
+- **Video tags and NFO.** Video retagging left-joins artist metadata so files
+  without `artist_metadata_id` still get titles and MusicBrainz IDs. Video NFO
+  sidecars resolve the artist name from the catalog MBID instead of writing
+  `Unknown Artist`.
+- **Official Audio / VEVO News.** `VEVO News` is classified with Visualiser
+  (off by default). Official Audio already shares that filter. Changing video
+  folder layout now queues Curate Library so inline placement can actually be
+  written.
+- **Duplicate album folders.** Folder names strip `{mbid-…}` before matching.
+  Artist disk scan also reads a release MBID from the album folder when tags
+  omit it. With “Remove unmonitored files” on, housekeeping deletes leftover
+  `Title (year)` siblings once `Title (year) {mbid-…}` holds the imported copy
+  (those leftovers were UnmappedFiles, so prune never saw them).
+- **Unmapped catalog folders.** Credited-scope artist folders that already
+  match catalog metadata (`Marshmello {mbid-…}` next to monitored Bastille) are
+  scanned and imported instead of parked on Unmapped. Scan does not auto-monitor
+  those associated artists, so their discography is not queued. Truly unknown
+  folders stay on Unmapped for Manual Import. Already-imported paths are not
+  rewritten as Unmapped during a root scan.
+- **Search.** Typing an artist name prefers that artist’s own albums over
+  tribute/featured titles. Same-name MusicBrainz artists show disambiguation.
+- **Activity noise.** Failed `file.artist_id` video-retag jobs from before
+  2.13.0 are deleted on startup and during housekeeping so health is not
+  permanently degraded.
+
+### Changed
+
+- **Dashboard counts.** Artists headline is monitored membership. Detail lines
+  say `complete` and `catalog` so associated-artist catalog rows are not
+  mistaken for extra library artists.
+- **Embed album covers.** Settings → Metadata has an explicit toggle for
+  embedding cover art in files (the previous `quality.embed_cover` default was
+  not in the UI). Album reviews still embed in the comment tag when tagging
+  runs.
+
 ## [2.13.0] - 2026-08-26
 
 This release keeps schema 46. Existing 2.12.x databases do not need a reset.

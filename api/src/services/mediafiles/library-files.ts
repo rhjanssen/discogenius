@@ -20,6 +20,7 @@ import {
   resolveStoredLibraryPath,
   type CurrentLibraryRoots,
 } from "./library-paths.js";
+import { cleanPathLabel, extractNamingMbid } from "./import-discovery.js";
 import {
   comparablePathColumnSql,
   normalizeComparablePath,
@@ -3253,7 +3254,13 @@ export class LibraryFilesService {
     const prunedDirectories = new Map<string, string>();
 
     if (rows.length === 0) {
-      return this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
+      const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
+      const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
+      return {
+        deleted: untracked.deleted + renamed.deleted,
+        missing: untracked.missing + renamed.missing,
+        errors: untracked.errors + renamed.errors,
+      };
     }
 
     const linkedExtras = captureLinkedExtras(rows.map((row) => row.id));
@@ -3348,6 +3355,10 @@ export class LibraryFilesService {
     deleted += untracked.deleted;
     missing += untracked.missing;
     errors += untracked.errors;
+    const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
+    deleted += renamed.deleted;
+    missing += renamed.missing;
+    errors += renamed.errors;
 
     return { deleted, missing, errors };
   }
@@ -3442,6 +3453,119 @@ export class LibraryFilesService {
         console.warn(`[TrackFiles] Failed leftover sweep of ${directory}:`, error);
         errors += 1;
       }
+    }
+    return { deleted, missing, errors };
+  }
+
+  /**
+   * Album folders left behind when naming started embedding `{mbid-…}`: the
+   * imported copy lives in `Title (year) {mbid-…}` while the old `Title (year)`
+   * folder stays on disk, often only as UnmappedFiles. Remove-unmonitored
+   * never saw those files because they have no TrackFiles row.
+   */
+  private static pruneLeftoverRenamedAlbumFolders(
+    artistId: string,
+  ): { deleted: number; missing: number; errors: number } {
+    const artist = loadArtistMetadataIdentity(artistId);
+    if (!artist) return { deleted: 0, missing: 0, errors: 0 };
+    const artistFolder = resolveArtistFolderFromRecord({
+      name: artist.name,
+      mbid: artist.mbid || null,
+      path: artist.path || null,
+    });
+    const roots = [
+      Config.getMusicPath(),
+      Config.getSpatialPath(),
+      Config.getVideoPath(),
+    ].filter((root): root is string => Boolean(root));
+
+    let deleted = 0;
+    let missing = 0;
+    let errors = 0;
+
+    for (const root of roots) {
+      const artistDir = path.join(root, artistFolder);
+      if (!fs.existsSync(artistDir)) continue;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(artistDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      const albumDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+      const byBase = new Map<string, string[]>();
+      for (const name of albumDirs) {
+        const base = cleanPathLabel(name)
+          .replace(/\s*\((?:19|20)\d{2}\)\s*$/, "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+        if (!base) continue;
+        const group = byBase.get(base) || [];
+        group.push(name);
+        byBase.set(base, group);
+      }
+      for (const names of byBase.values()) {
+        if (names.length < 2) continue;
+        const withMbid = names.filter((name) => extractNamingMbid(name));
+        const withoutMbid = names.filter((name) => !extractNamingMbid(name));
+        if (withMbid.length === 0 || withoutMbid.length === 0) continue;
+        const imported = withMbid.some((name) => {
+          const folder = path.join(artistDir, name);
+          const row = db.prepare(`
+            SELECT 1 FROM TrackFiles
+            WHERE file_type = 'track'
+              AND (file_path = ? OR file_path LIKE ?)
+            LIMIT 1
+          `).get(folder, `${folder}${path.sep}%`);
+          return Boolean(row);
+        });
+        if (!imported) continue;
+        for (const leftoverName of withoutMbid) {
+          const leftoverDir = path.join(artistDir, leftoverName);
+          const result = this.wipeDirectoryContents(leftoverDir, root);
+          deleted += result.deleted;
+          missing += result.missing;
+          errors += result.errors;
+        }
+      }
+    }
+
+    return { deleted, missing, errors };
+  }
+
+  private static wipeDirectoryContents(
+    directory: string,
+    libraryRoot: string,
+  ): { deleted: number; missing: number; errors: number } {
+    if (!fs.existsSync(directory)) return { deleted: 0, missing: 0, errors: 0 };
+    let deleted = 0;
+    let missing = 0;
+    let errors = 0;
+    try {
+      const entries = fs.readdirSync(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(directory, entry.name);
+        try {
+          if (entry.isDirectory()) {
+            const nested = this.wipeDirectoryContents(fullPath, libraryRoot);
+            deleted += nested.deleted;
+            missing += nested.missing;
+            errors += nested.errors;
+            continue;
+          }
+          db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(fullPath);
+          if (this.deleteLeftoverPath(fullPath, libraryRoot)) deleted += 1;
+          else missing += 1;
+        } catch (error) {
+          console.warn(`[TrackFiles] Failed leftover-folder delete ${fullPath}:`, error);
+          errors += 1;
+        }
+      }
+      removeEmptyParents(directory, libraryRoot);
+    } catch (error) {
+      console.warn(`[TrackFiles] Failed leftover-folder sweep of ${directory}:`, error);
+      errors += 1;
     }
     return { deleted, missing, errors };
   }

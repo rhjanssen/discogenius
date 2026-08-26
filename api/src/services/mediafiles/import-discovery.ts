@@ -269,8 +269,15 @@ export function summarizeAutoImportedCandidate(candidate: ImportCandidate): Auto
     };
 }
 
+/** MBID Discogenius itself wrote into a folder name (`{mbid-uuid}`). */
+export function extractNamingMbid(input: string | null | undefined): string | null {
+    const match = String(input || "").match(/\{mbid-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}/i);
+    return match?.[1] ? match[1].toLowerCase() : null;
+}
+
 export function cleanPathLabel(input: string): string {
     return (input || "")
+        .replace(/\{mbid-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}/ig, " ")
         .replace(/\[tidal-\d+\]/gi, " ")
         .replace(/\[(?:\d+\s*-\s*bit[^\]]*|album|single|ep|video|explicit|clean|e|atmos|dolby atmos)\]/gi, " ")
         .replace(/\s+/g, " ")

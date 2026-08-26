@@ -531,6 +531,8 @@ const SettingsPage = () => {
                     <MetadataFilesSettingsSection
                         metadataSettings={metadataSettings}
                         updateMetadataSettings={updateMetadataSettings}
+                        embedCover={qualitySettings?.embed_cover !== false}
+                        onEmbedCoverChange={(embed_cover) => updateQualitySettings({ embed_cover })}
                     />
                     <MetadataSourceSettingsSection
                         catalogConfig={catalogConfig}
