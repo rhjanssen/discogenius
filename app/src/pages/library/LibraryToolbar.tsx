@@ -19,7 +19,6 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  ChevronDownRegular,
   Grid24Regular,
   AppsListDetail24Regular,
   TextBulletListLtr24Regular,
@@ -29,12 +28,21 @@ import {
   CheckmarkCircle24Regular,
   ArrowImport24Filled,
   ArrowImport24Regular,
-  ChevronDownFilled,
   Grid24Filled,
   AppsListDetail24Filled,
   TextBulletListLtr24Filled,
   ArrowSortUp24Filled,
   ArrowSortDown24Filled,
+  ChevronDownRegular,
+  ChevronDownFilled,
+  Person24Regular,
+  Person24Filled,
+  Album24Regular,
+  Album24Filled,
+  MusicNote224Regular,
+  MusicNote224Filled,
+  Video24Regular,
+  Video24Filled,
   bundleIcon,
 } from "@fluentui/react-icons";
 import type { ReactElement } from "react";
@@ -44,7 +52,6 @@ import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles
 import type { StatusFilters } from "@/utils/statusFilters";
 import type { StreamingProviderStatus } from "@/services/api";
 
-const ChevronDown = bundleIcon(ChevronDownFilled, ChevronDownRegular);
 const Grid24 = bundleIcon(Grid24Filled, Grid24Regular);
 const AppsListDetail24 = bundleIcon(AppsListDetail24Filled, AppsListDetail24Regular);
 const TextBulletListLtr24 = bundleIcon(TextBulletListLtr24Filled, TextBulletListLtr24Regular);
@@ -52,12 +59,17 @@ const ArrowSortUp24 = bundleIcon(ArrowSortUp24Filled, ArrowSortUp24Regular);
 const ArrowSortDown24 = bundleIcon(ArrowSortDown24Filled, ArrowSortDown24Regular);
 const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
 const CheckmarkCircle24 = bundleIcon(CheckmarkCircle24Filled, CheckmarkCircle24Regular);
+const ChevronDown = bundleIcon(ChevronDownFilled, ChevronDownRegular);
+const Person24 = bundleIcon(Person24Filled, Person24Regular);
+const Album24 = bundleIcon(Album24Filled, Album24Regular);
+const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
+const Video24 = bundleIcon(Video24Filled, Video24Regular);
 
 export const LIBRARY_TABS = [
-  { key: "artists", label: "Artists" },
-  { key: "albums", label: "Albums" },
-  { key: "tracks", label: "Tracks" },
-  { key: "videos", label: "Videos" },
+  { key: "artists", label: "Artists", icon: <Person24 /> },
+  { key: "albums", label: "Albums", icon: <Album24 /> },
+  { key: "tracks", label: "Tracks", icon: <MusicNote224 /> },
+  { key: "videos", label: "Videos", icon: <Video24 /> },
 ] as const;
 
 export type LibraryTabKey = (typeof LIBRARY_TABS)[number]["key"];
@@ -370,7 +382,7 @@ export function LibraryToolbar(props: LibraryToolbarProps): ReactElement {
             <MenuPopover>
               <MenuList>
                 {LIBRARY_TABS.map((tab) => (
-                  <MenuItem key={tab.key} onClick={() => onSelectedTabChange(tab.key)}>
+                  <MenuItem key={tab.key} icon={tab.icon} onClick={() => onSelectedTabChange(tab.key)}>
                     {tab.label}
                   </MenuItem>
                 ))}

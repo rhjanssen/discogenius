@@ -31,6 +31,7 @@ import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
+import { appBarHeightCssVariable, pageInsetTopDesktop } from "@/components/ui/sharedLayoutStyles";
 import { AppearanceSettingsSection } from "@/pages/settings/AppearanceSettingsSection";
 import { AudioQualitySettingsSection } from "@/pages/settings/AudioQualitySettingsSection";
 import { AboutSettingsSection } from "@/pages/settings/AboutSettingsSection";
@@ -89,17 +90,14 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalM,
-        padding: tokens.spacingVerticalM,
+        padding: `0 ${tokens.spacingHorizontalM} ${tokens.spacingVerticalM}`,
         maxWidth: "1120px",
         margin: "0 auto",
         width: "100%",
         boxSizing: "border-box",
         [MEDIA.mobile]: {
-            padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
+            padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
             gap: tokens.spacingVerticalS,
-        },
-        [MEDIA.desktop]: {
-            paddingTop: tokens.spacingVerticalL,
         },
     },
     layout: {
@@ -136,10 +134,8 @@ const useStyles = makeStyles({
             alignSelf: "flex-start",
             position: "sticky",
             paddingTop: tokens.spacingVerticalNone,
-            // Match Layout's S page inset so the sidebar does not jump when
-            // it becomes sticky.
-            top: `calc(env(safe-area-inset-top, 0px) + 48px + ${tokens.spacingVerticalS})`,
-            maxHeight: `calc(100vh - env(safe-area-inset-top, 0px) - 68px - ${tokens.spacingVerticalS})`,
+            top: `calc(var(${appBarHeightCssVariable}, 48px) + ${pageInsetTopDesktop})`,
+            maxHeight: `calc(100dvh - var(${appBarHeightCssVariable}, 48px) - ${pageInsetTopDesktop} - ${tokens.spacingVerticalM})`,
             overflowY: "auto",
             overflowX: "clip",
         },

@@ -65,20 +65,26 @@ services:
       - PORT=${PORT:-3737}
       - DISCOGENIUS_BIND_IP=0.0.0.0
       - TZ=Etc/UTC
+      - DB_PATH=/data/discogenius.db
     ports:
       - ${DISCOGENIUS_BIND_IP:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}
     volumes:
       - /path/to/config:/config
+      - discogenius_db:/data
       - /path/to/downloads:/downloads
       - /path/to/library:/library
     restart: unless-stopped
+
+volumes:
+  discogenius_db:
 ```
 
 Open [http://localhost:3737](http://localhost:3737).
 
 | Volume | Purpose |
 | --- | --- |
-| `/config` | Database, settings, and provider tokens |
+| `/config` | Settings, provider tokens, and backups |
+| `/data` | SQLite database on Docker-managed storage |
 | `/downloads` | Temporary download workspace |
 | `/library` | Your music library roots |
 
@@ -96,8 +102,11 @@ Prefer a pinned tag (for example `rhjanssen/discogenius:2.6.4`) on hosts that
 cache `latest` aggressively.
 
 > **Note:** Image upgrades that bump the SQLite schema currently need a fresh
-> `/config` database (library files on disk can stay). Prefer soak/test
-> deployments until schema migrations ship.
+> `/data` database volume. Library files and provider credentials in `/config`
+> can stay, but app settings, monitoring choices, match decisions, and history
+> stored in the database are lost. Back up first. `docker compose down -v`
+> removes the database volume; do not run it as part of an ordinary update.
+> Prefer soak/test deployments until schema migrations ship.
 
 ### From source
 

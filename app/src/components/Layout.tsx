@@ -24,6 +24,12 @@ import { hexToRgb } from "@/ultrablur/color";
 import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
 import { useTheme } from "@/providers/themeContext";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+import { formatCompactNumber } from "@/utils/format";
+import {
+  appBarHeightCssVariable,
+  pageInsetTop,
+  pageInsetTopDesktop,
+} from "@/components/ui/sharedLayoutStyles";
 
 function isStandaloneDisplayMode(): boolean {
   // iOS Safari uses `navigator.standalone`, other browsers support the media query.
@@ -275,12 +281,12 @@ const useStyles = makeStyles({
     marginBottom: tokens.spacingVerticalNone,
     marginLeft: "auto",
     marginRight: "auto",
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    padding: `${pageInsetTop} ${tokens.spacingHorizontalS}`,
     // Safe area insets for PWA - left/right for notch devices, bottom for home indicator
     paddingLeft: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-left))`,
     paddingRight: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-right))`,
     paddingBottom: `max(${tokens.spacingVerticalM}, env(safe-area-inset-bottom))`,
-    paddingTop: tokens.spacingVerticalS,
+    paddingTop: pageInsetTop,
     boxSizing: "border-box",
     width: "100%",
     // `overflow-x: hidden` forces overflow-y to compute to `auto`, which makes
@@ -289,11 +295,11 @@ const useStyles = makeStyles({
     // `clip` still suppresses horizontal bleed without creating a scrollport.
     overflowX: "clip",
     "@media (min-width: 640px)": {
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+      padding: `${pageInsetTopDesktop} ${tokens.spacingHorizontalM}`,
       paddingLeft: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-left))`,
       paddingRight: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-right))`,
       paddingBottom: `max(${tokens.spacingVerticalM}, env(safe-area-inset-bottom))`,
-      paddingTop: tokens.spacingVerticalS,
+      paddingTop: pageInsetTopDesktop,
     },
   },
   authMain: {
@@ -376,6 +382,7 @@ const Layout = () => {
   const styles = useStyles();
   const navigate = useNavigate();
   const location = useLocation();
+  const appBarRef = useRef<HTMLElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const previousPathRef = useRef<string | null>(null);
   const [routeAnnouncement, setRouteAnnouncement] = useState("");
@@ -385,6 +392,7 @@ const Layout = () => {
   const isAuthRoute = location.pathname === "/auth";
   const showNavSearch = !isAuthRoute;
   const queueCount = stats.downloading + stats.pending;
+  const queueBadgeLabel = queueCount > 99 ? "99+" : formatCompactNumber(queueCount);
 
   useEffect(() => {
     if (!isStandaloneDisplayMode()) return;
@@ -400,6 +408,24 @@ const Layout = () => {
     window.addEventListener(OPEN_ACTIVITY_QUEUE_EVENT, openQueue);
     return () => window.removeEventListener(OPEN_ACTIVITY_QUEUE_EVENT, openQueue);
   }, [navigate]);
+
+  useEffect(() => {
+    const el = appBarRef.current;
+    if (!el) {
+      document.documentElement.style.removeProperty(appBarHeightCssVariable);
+      return;
+    }
+    const sync = () => {
+      document.documentElement.style.setProperty(appBarHeightCssVariable, `${el.offsetHeight}px`);
+    };
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty(appBarHeightCssVariable);
+    };
+  }, [isAuthRoute]);
 
   useEffect(() => {
     const label = routeLabel(location.pathname);
@@ -452,7 +478,11 @@ const Layout = () => {
       {!isAuthRoute ? <a className={styles.skipLink} href="#main-content">Skip to main content</a> : null}
       <div className={mergeClasses(styles.wrapper, isAuthRoute && styles.authWrapper)}>
         {!isAuthRoute ? (
-          <nav className={mergeClasses(styles.nav, styles.navSurface)} aria-label="Primary navigation">
+          <nav
+            ref={appBarRef}
+            className={mergeClasses(styles.nav, styles.navSurface)}
+            aria-label="Primary navigation"
+          >
             <div className={styles.container}>
               <div className={styles.headerRow}>
                 <NavLink
@@ -476,7 +506,7 @@ const Layout = () => {
                 <NavLink
                   to="/dashboard"
                   title="Dashboard"
-                  aria-label="Dashboard"
+                  aria-label={queueCount > 0 ? `Dashboard, ${queueCount} in queue` : "Dashboard"}
                   className={({ isActive }) => mergeClasses(
                     styles.navIconLink,
                     styles.queueButton,
@@ -494,7 +524,7 @@ const Layout = () => {
                       size="small"
                       shape="circular"
                     >
-                      {queueCount}
+                      {queueBadgeLabel}
                     </Badge>
                   ) : null}
                 </NavLink>

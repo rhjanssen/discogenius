@@ -77,7 +77,7 @@ export const ExplicitBadge: React.FC<ExplicitBadgeProps> = ({ className, size = 
   return (
     <Badge
       appearance="tint"
-      size="medium"
+      size={size}
       className={mergeClasses(styles.base, sizeClass, className)}
       style={{
         backgroundColor: appearance === "contrast"

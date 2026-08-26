@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { SemanticStatusIcon, statusIconGlyphPx } from "./SemanticStatusIcon";
+import { SemanticStatusIcon } from "./SemanticStatusIcon";
+import { statusIconGlyphPx } from "./statusIconMetrics";
 
 describe("SemanticStatusIcon", () => {
     it("renders each status without applying a CSS color tint", () => {

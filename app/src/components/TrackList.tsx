@@ -161,7 +161,7 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusSmall,
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground3,
-    color: tokens.colorNeutralForegroundOnBrand,
+    color: tokens.colorNeutralForegroundInverted,
     cursor: "pointer",
     display: "block",
     ":disabled": {
@@ -197,7 +197,7 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0, 0, 0, 0.48)",
-    color: tokens.colorNeutralForegroundOnBrand,
+    color: tokens.colorNeutralForegroundInverted,
     opacity: 0,
     transitionProperty: "opacity",
     transitionDuration: tokens.durationFaster,

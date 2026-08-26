@@ -14,6 +14,7 @@ import {
     Body1,
     Caption1,
     Subtitle2,
+    Tooltip,
     mergeClasses,
 } from "@fluentui/react-components";
 import {
@@ -43,6 +44,15 @@ const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular
 const searchBoxRadius = tokens.borderRadiusCircular;
 const searchUnderlineHeight = "4px";
 const searchUnderlineOverlayHeight = "16px";
+const searchUnderlineExpandAfter = {
+    backgroundImage: "var(--dg-search-underline-gradient)",
+    transform: "scaleX(1)",
+    opacity: 1,
+    transitionProperty: "transform, opacity",
+    transitionDuration: tokens.durationNormal,
+    transitionTimingFunction: tokens.curveDecelerateMid,
+    transitionDelay: "0ms",
+};
 
 const useStyles = makeStyles({
     container: {
@@ -106,18 +116,18 @@ const useStyles = makeStyles({
             borderBottom: "none",
             borderBottomLeftRadius: searchBoxRadius,
             borderBottomRightRadius: searchBoxRadius,
-            transform: "scaleX(1)",
+            transformOrigin: "center",
+            transform: "scaleX(0)",
+            opacity: 0,
+            transitionProperty: "transform, opacity",
+            transitionDuration: tokens.durationNormal,
+            transitionTimingFunction: tokens.curveEasyEase,
+            transitionDelay: "0ms",
             zIndex: 2,
             pointerEvents: "none",
         },
-        "&:focus-within::after": {
-            backgroundImage: "var(--dg-search-underline-gradient)",
-            transform: "scaleX(1)",
-        },
-        "&:focus-within:active::after": {
-            backgroundImage: "var(--dg-search-underline-gradient)",
-            transform: "scaleX(1)",
-        },
+        "&:focus-within::after": searchUnderlineExpandAfter,
+        "&:focus-within:active::after": searchUnderlineExpandAfter,
     },
     searchBoxOpen: {
         borderBottomColor: "transparent !important",
@@ -125,10 +135,7 @@ const useStyles = makeStyles({
             borderBottomColor: "transparent !important",
             borderBottomStyle: "solid",
         },
-        "&::after": {
-            backgroundImage: "var(--dg-search-underline-gradient)",
-            transform: "scaleX(1)",
-        },
+        "&::after": searchUnderlineExpandAfter,
     },
     resultsContainer: {
         position: "fixed",
@@ -778,13 +785,15 @@ const GlobalSearch = ({ initialQuery = "" }: GlobalSearchProps = {}) => {
                 <div className={styles.rowActionsContainer}>
                     <Caption1 className={styles.rowExtraInfo}>{extraInfo}</Caption1>
                     {canDownload && (
-                        <Button
-                            appearance="subtle"
-                            icon={isDownloading ? <Spinner size="tiny" /> : <ArrowDownload24 />}
-                            onClick={(e) => handleDownloadItem(item, e)}
-                            disabled={downloadDisabled}
-                            title="Download"
-                        />
+                        <Tooltip content={`Download ${item.name}`} relationship="label">
+                            <Button
+                                appearance="subtle"
+                                aria-label={`Download ${item.name}`}
+                                icon={isDownloading ? <Spinner size="tiny" /> : <ArrowDownload24 />}
+                                onClick={(e) => handleDownloadItem(item, e)}
+                                disabled={downloadDisabled}
+                            />
+                        </Tooltip>
                     )}
                     {item.type !== "track" ? renderMonitorButton(item) : null}
                 </div>

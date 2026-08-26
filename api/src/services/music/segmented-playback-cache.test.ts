@@ -29,3 +29,10 @@ test("parsePlaybackRange accepts open, closed, and suffix byte ranges", () => {
   assert.deepEqual(parsePlaybackRange("bytes=-10", 100), { start: 90, end: 99 });
   assert.throws(() => parsePlaybackRange("bytes=100-", 100), /Invalid byte range/);
 });
+
+test("parsePlaybackRange rejects malformed Range grammar", () => {
+  assert.throws(() => parsePlaybackRange("bytes=abc-def", 100), /Invalid byte range/);
+  assert.throws(() => parsePlaybackRange("bytes=-", 100), /Invalid byte range/);
+  assert.throws(() => parsePlaybackRange("bytes=10-3", 100), /Invalid byte range/);
+  assert.throws(() => parsePlaybackRange("items=0-10", 100), /Invalid byte range/);
+});

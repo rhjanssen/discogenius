@@ -31,25 +31,20 @@ export const glassButtonStyles = {
 } as const;
 
 export const glassPrimaryButtonStyles = {
-  ...glassButtonStyles,
-  backgroundColor: "transparent",
-  ...shorthands.borderColor("transparent"),
-  color: tokens.colorBrandForeground1,
+  // Fluent's primary appearance owns fill, foreground, border, and interaction
+  // colors. Discogenius only adds a small depth transition.
+  boxShadow: tokens.shadow2,
+  transitionProperty: "box-shadow",
+  transitionDuration: tokens.durationFast,
+  transitionTimingFunction: tokens.curveEasyEase,
   "&:hover": {
-    backgroundColor: tokens.colorBrandBackground2Hover,
-    backdropFilter: "blur(14px) saturate(140%)",
-    WebkitBackdropFilter: "blur(14px) saturate(140%)",
-    ...shorthands.borderColor(tokens.colorBrandStroke2Hover),
     boxShadow: tokens.shadow8,
-    color: tokens.colorBrandForeground1,
   },
   "&:active": {
-    backgroundColor: tokens.colorBrandBackground2Pressed,
-    backdropFilter: "blur(14px) saturate(140%)",
-    WebkitBackdropFilter: "blur(14px) saturate(140%)",
-    ...shorthands.borderColor(tokens.colorBrandStroke2Pressed),
     boxShadow: tokens.shadow2,
-    color: tokens.colorBrandForeground1,
+  },
+  "&:disabled": {
+    boxShadow: "none",
   },
 } as const;
 

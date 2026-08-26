@@ -125,23 +125,24 @@ function renderHistoryStatusIndicator(
     warningMessage?: string | null,
 ) {
     if (error || status === "failed") {
-        return <SemanticStatusIcon status="error" title="Failed" />;
+        return <SemanticStatusIcon status="error" size={24} title="Failed" />;
     }
 
     if (status === "completed" && outcome === "completedWithWarning") {
         return (
             <SemanticStatusIcon
                 status="warning"
+                size={24}
                 title={warningMessage || "Completed with warning"}
             />
         );
     }
 
     if (status === "completed") {
-        return <SemanticStatusIcon status="success" title="Completed" />;
+        return <SemanticStatusIcon status="success" size={24} title="Completed" />;
     }
 
-    return <SemanticStatusIcon status="info" title="Waiting" />;
+    return <SemanticStatusIcon status="info" size={24} title="Waiting" />;
 }
 
 function QueueHistoryFilterMenu({

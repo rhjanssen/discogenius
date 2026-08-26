@@ -1,9 +1,10 @@
 import { createDarkTheme, createLightTheme } from "@fluentui/react-components";
 import { describe, expect, it } from "vitest";
 import {
+  buildDiscogeniusSearchUnderlineGradient,
   createDiscogeniusTheme,
+  discogeniusAccentKeyColor,
   discogeniusAccentKeys,
-  discogeniusAuxiliaryThemes,
   discogeniusOrangeTheme,
   getDiscogeniusAccentTokens,
 } from "./theme";
@@ -28,7 +29,7 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("Discogenius theme semantics", () => {
-  it("keeps Fluent's mode-aware brand mappings intact", () => {
+  it("keeps Fluent's complete mode-aware brand mapping intact", () => {
     expect(createDiscogeniusTheme(discogeniusOrangeTheme, "light")).toEqual(
       createLightTheme(discogeniusOrangeTheme),
     );
@@ -37,22 +38,32 @@ describe("Discogenius theme semantics", () => {
     );
   });
 
-  it.each(["light", "dark"] as const)("keeps %s media accents readable", (mode) => {
-    const accents = getDiscogeniusAccentTokens(mode);
-    for (const accent of discogeniusAccentKeys) {
-      expect(contrastRatio(accents[accent].foreground, accents[accent].background)).toBeGreaterThanOrEqual(4.5);
-    }
-  });
+  it("keeps decorative logo accents stable while badges use semantic colors", () => {
+    const lightAccents = getDiscogeniusAccentTokens("light");
+    const darkAccents = getDiscogeniusAccentTokens("dark");
 
-  it.each(["light", "dark"] as const)("keeps %s dynamic-brand accents readable", (mode) => {
-    for (const brand of Object.values(discogeniusAuxiliaryThemes)) {
-      const accent = getDiscogeniusAccentTokens(mode, brand).artists;
-      expect(contrastRatio(accent.foreground, accent.background)).toBeGreaterThanOrEqual(4.5);
+    for (const accent of discogeniusAccentKeys) {
+      expect(lightAccents[accent].foreground).toBe(discogeniusAccentKeyColor[accent]);
+      expect(lightAccents[accent].foreground).toBe(darkAccents[accent].foreground);
+      expect(contrastRatio(lightAccents[accent].badgeForeground, lightAccents[accent].badgeBackground)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(darkAccents[accent].badgeForeground, darkAccents[accent].badgeBackground)).toBeGreaterThanOrEqual(4.5);
+    }
+
+    const gradient = buildDiscogeniusSearchUnderlineGradient("dark");
+    for (const accent of discogeniusAccentKeys) {
+      expect(gradient).toContain(discogeniusAccentKeyColor[accent]);
     }
   });
 
   it.each(["light", "dark"] as const)("keeps %s filled brand controls readable", (mode) => {
     const theme = createDiscogeniusTheme(discogeniusOrangeTheme, mode);
     expect(contrastRatio(theme.colorNeutralForegroundOnBrand, theme.colorBrandBackground)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(theme.colorNeutralForegroundOnBrand, theme.colorBrandBackgroundHover)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(theme.colorNeutralForegroundOnBrand, theme.colorBrandBackgroundPressed)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(["light", "dark"] as const)("keeps %s brand foreground readable", (mode) => {
+    const theme = createDiscogeniusTheme(discogeniusOrangeTheme, mode);
+    expect(contrastRatio(theme.colorBrandForeground1, theme.colorNeutralBackground1)).toBeGreaterThanOrEqual(4.5);
   });
 });

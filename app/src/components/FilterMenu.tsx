@@ -96,6 +96,12 @@ interface FilterMenuProps {
 const useStyles = makeStyles({
     triggerButton: {
         ...glassButtonStyles,
+        flex: "0 0 auto",
+        minWidth: "max-content",
+        "& .fui-Button__content": {
+            whiteSpace: "nowrap",
+            overflowWrap: "normal",
+        },
     },
     activeTriggerButton: {
         color: tokens.colorBrandForeground1,
@@ -212,9 +218,9 @@ const FilterMenu = ({
                     icon={<Filter24 />}
                     appearance="subtle"
                     className={mergeClasses(
+                        className,
                         styles.triggerButton,
                         activeFilterCount > 0 ? styles.activeTriggerButton : undefined,
-                        className
                     )}
                     aria-label={`Filters${activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}`}
                 >

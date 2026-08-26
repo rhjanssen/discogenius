@@ -4,7 +4,82 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-No changes yet.
+## [2.13.0] - 2026-08-26
+
+This release keeps schema 46. Existing 2.12.x databases do not need a reset.
+
+### Added
+
+- **Album reviews and artist biographies.** Provider editorial text is stored
+  during matching and refresh, blank catalog responses no longer erase it, and
+  album retagging can embed the saved review.
+- **Manual-import completion feedback.** Queued imports now report their real
+  completed, failed, or cancelled result from the command worker and refresh
+  Unmapped Files and Activity only when the worker reaches a terminal state.
+
+### Changed
+
+- **Fluent theme semantics.** Tabs, toggles, buttons, focus states, and selected
+  navigation icons use Fluent v9's light/dark token mappings from one accessible
+  orange ramp. Artist, album, and video detail pages derive that ramp from their
+  artwork. The four-color search underline appears only while the field is
+  focused or open; dashboard stats keep the media-type accent colors used by
+  badges.
+- **Compact headers and mobile category menus.** Page headers stay flush with
+  the app bar. Library and Dashboard category lists collapse to a menu on
+  phones, with icons in the menu only. Album editions remain one-line,
+  scrollable tabs; Settings provider capabilities stay with the provider name
+  before actions wrap.
+- **Fluent depth and status artwork.** Interactive cards use tokenized resting
+  and hover elevation without a lift. Queue and Activity use balanced 24px
+  status/action slots, while media and quality badges follow Fluent's
+  small/medium/large metrics.
+- **Manual-import clarity and accessibility.** Destination controls stack on
+  phones, every checkbox and select has an accessible name, and normal UI copy
+  uses library, album edition, and track instead of internal identity terms.
+- **Monitoring defaults.** Published Compose deployments now run automatic
+  monitoring and the scheduler by default, matching the app's documented setup.
+- **Smaller dependency surface.** Removed unused HTTP-proxy and list-
+  virtualization packages and updated Axios, music-metadata, React Router, and
+  patched Express transitive dependencies.
+
+### Fixed
+
+- **Manual imports on schema 46.** Audio and video imports write the numeric
+  `ArtistMetadata.id` foreign key while retaining the MusicBrainz UUID as
+  canonical metadata. Imports no longer disappear from the modal before their
+  queued command actually succeeds.
+- **Video download imports.** Video retagging now joins
+  `TrackFiles.artist_metadata_id`; the stale `artist_id` column reference was
+  the cause of the failed TIDAL and Apple video imports shown in Activity.
+- **System backups.** List, create, download, and delete work in the ESM API,
+  accept only Discogenius backup filenames, and have active route coverage.
+- **Header actions and copy.** Artist actions no longer stretch off-screen,
+  album/video/artist monitoring consistently says `Monitored`, and album split
+  controls use the compact Fluent chevron.
+- **Queue badge overflow.** The dashboard nav badge caps at `99+` instead of
+  stretching the app bar when thousands of jobs are queued.
+- **Dashboard header actions.** Header buttons use short labels (Refresh, Scan,
+  Curate, Download) so the title and actions stay on one row instead of
+  overlapping. Full names remain on the tooltip and accessible name.
+- **Filter labels.** The Filters control keeps `Filters (1)` on one line instead
+  of wrapping in a squeezed action slot.
+- **Malformed media Range requests.** Local file streaming validates byte
+  ranges, returns 416 for unsatisfiable grammar, and does not write a second
+  error body after headers have already been sent.
+- **Metadata preservation.** Artist and album refreshes no longer replace saved
+  biographies or overviews with empty catalog values.
+
+### Security and deployment
+
+- Media probing, conversion, and ownership commands pass file paths as process
+  arguments instead of interpolating shell input.
+- Remote artwork proxying uses public-network DNS pinning, redirect and timeout
+  limits, a raster image allowlist, and a 10 MB streaming cap.
+- The published Compose example stores SQLite on a Docker-managed `/data`
+  volume, documents reset consequences, and digest-pins the Apple Music wrapper.
+  Rebuilding the Discogenius API leaves the wrapper's authenticated session
+  running.
 
 ## [2.12.2] - 2026-08-25
 

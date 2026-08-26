@@ -15,6 +15,7 @@ import {
     Title1,
     tokens,
     makeStyles,
+    mergeClasses,
 } from "@fluentui/react-components";
 import {
   ArrowSync24Regular,
@@ -95,8 +96,6 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
-        // Layout already supplies the page inset; avoid stacking a second
-        // header-only top pad on Dashboard.
         paddingTop: tokens.spacingVerticalNone,
         paddingBottom: tokens.spacingVerticalL,
         width: "100%",
@@ -139,7 +138,7 @@ const useStyles = makeStyles({
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        gap: tokens.spacingHorizontalM,
+        gap: tokens.spacingHorizontalL,
         minWidth: 0,
         flexWrap: "wrap",
         "@media (max-width: 639px)": {
@@ -149,13 +148,22 @@ const useStyles = makeStyles({
             gap: tokens.spacingVerticalS,
         },
     },
+    headerTitleWrap: {
+        flex: "0 1 auto",
+        minWidth: 0,
+        paddingRight: tokens.spacingHorizontalS,
+    },
+    headerTitle: {
+        margin: 0,
+        width: "auto",
+    },
     desktopActions: {
         display: "none",
         minWidth: 0,
         maxWidth: "100%",
         "@media (min-width: 640px)": {
             display: "flex",
-            flex: "1 1 520px",
+            flex: "1 1 12rem",
             justifyContent: "flex-end",
             overflow: "visible",
         },
@@ -272,8 +280,12 @@ const useStyles = makeStyles({
         alignItems: "stretch",
         flexWrap: "nowrap",
         justifyContent: "center",
-        width: "100%",
+        width: "auto",
+        maxWidth: "100%",
         ...detailActionMobileOverflowRowStyles,
+        "@media (min-width: 640px)": {
+            width: "100%",
+        },
         "@media (min-width: 768px)": {
             justifyContent: "flex-end",
             gap: tokens.spacingHorizontalM,
@@ -294,10 +306,17 @@ const useStyles = makeStyles({
         paddingTop: tokens.spacingVerticalXXS,
         paddingBottom: tokens.spacingVerticalXXS,
         marginBottom: tokens.spacingVerticalXS,
-        gap: tokens.spacingHorizontalM,
-        "@media (max-width: 639px)": {
-            gap: tokens.spacingHorizontalS,
+        gap: tokens.spacingHorizontalS,
+        "@media (min-width: 640px)": {
+            gap: tokens.spacingHorizontalM,
         },
+    },
+    viewTabSlot: {
+        flex: "1 1 auto",
+        minWidth: 0,
+        overflowX: "auto",
+        scrollbarWidth: "none",
+        "&::-webkit-scrollbar": { display: "none" },
     },
     dashboardTabLabel: {
         display: "inline-flex",
@@ -314,11 +333,23 @@ const useStyles = makeStyles({
         ...detailActionGlassButtonStyles,
         flexShrink: 0,
         whiteSpace: "nowrap",
+        "@media (max-width: 639px)": {
+            minWidth: "32px",
+            "& .fui-Button__content": {
+                display: "none",
+            },
+        },
     },
     queuePrimaryActionButton: {
         ...detailActionPrimaryButtonStyles,
         flexShrink: 0,
         whiteSpace: "nowrap",
+        "@media (max-width: 639px)": {
+            minWidth: "32px",
+            "& .fui-Button__content": {
+                display: "none",
+            },
+        },
     },
     tabContentPanel: {
         width: "100%",
@@ -357,7 +388,7 @@ function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
 
 const Dashboard = () => {
     const styles = useStyles();
-    const responsiveTabsStyles = useResponsiveTabsStyles({ collapseOnMobile: false });
+    const responsiveTabsStyles = useResponsiveTabsStyles();
     const { toast } = useToast();
     const navigate = useNavigate();
     const { setArtwork } = useUltraBlurContext();
@@ -561,7 +592,7 @@ const Dashboard = () => {
     const dashboardTabs = [
         { key: 'queue', label: 'Queue', icon: <ArrowDownload24 /> },
         { key: 'activity', label: 'Activity', icon: <Pulse24 /> },
-        { key: 'manualImport', label: 'Unmapped Files', icon: <FolderSearch24 /> },
+        { key: 'manualImport', label: 'Unmapped', icon: <FolderSearch24 /> },
     ] as const;
     // Three actions plus More: four equal slots, labels wrap inside them.
     const hasMobileOverflowActions = actions.length > 3;
@@ -569,9 +600,9 @@ const Dashboard = () => {
     const mobileOverflowActions = hasMobileOverflowActions ? actions.slice(3) : [];
     const desktopVisibleActions = actions.slice(0, 4);
     const desktopOverflowActions = actions.slice(4);
-    const mobileActionLabel = (action: OverflowAction) => {
+    const compactActionLabel = (action: OverflowAction) => {
         if (action.key === 'refresh') return refreshBusy ? 'Refreshing...' : 'Refresh';
-        if (action.key === 'scan-files') return scanRootsBusy ? 'Scanning Files...' : 'Scan Files';
+        if (action.key === 'scan-files') return scanRootsBusy ? 'Scanning...' : 'Scan';
         if (action.key === 'curate') return curationBusy ? 'Curating...' : 'Curate';
         if (action.key === 'download-missing') {
             return (isRunningTaskId === 'download-missing') ? 'Downloading...' : 'Download';
@@ -583,7 +614,9 @@ const Dashboard = () => {
         <div className={styles.container}>
             {/* Header */}
             <div className={styles.header}>
-                <Title1 as="h1">Dashboard</Title1>
+                <div className={styles.headerTitleWrap}>
+                    <Title1 as="h1" className={styles.headerTitle}>Dashboard</Title1>
+                </div>
                 <div className={styles.desktopActions}>
                     <div className={styles.headerActionRow}>
                         {desktopVisibleActions.map((action) => (
@@ -594,8 +627,10 @@ const Dashboard = () => {
                                 onClick={action.onClick}
                                 disabled={action.disabled}
                                 className={styles.headerActionButton}
+                                title={action.label}
+                                aria-label={action.label}
                             >
-                                {action.label}
+                                {compactActionLabel(action)}
                             </Button>
                         ))}
                         {desktopOverflowActions.length > 0 ? (
@@ -630,7 +665,7 @@ const Dashboard = () => {
                                 className={styles.headerActionButton}
                                 aria-label={action.label}
                             >
-                                {mobileActionLabel(action)}
+                                {compactActionLabel(action)}
                             </Button>
                         ))}
                         {mobileOverflowActions.length > 0 ? (
@@ -690,7 +725,7 @@ const Dashboard = () => {
             <div className={styles.mainCol}>
                 {/* Tab Bar */}
                 <div className={styles.viewTabs}>
-                    <div className={responsiveTabsStyles.tabSlot}>
+                    <div className={mergeClasses(responsiveTabsStyles.tabSlot, styles.viewTabSlot)}>
                         <div className={responsiveTabsStyles.mobileSelect}>
                             <Menu>
                                 <MenuTrigger disableButtonEnhancement>
@@ -719,7 +754,7 @@ const Dashboard = () => {
                                 onTabSelect={(_, data) => setMobileTab(data.value as "queue" | "activity" | "manualImport")}
                             >
                                 {dashboardTabs.map((tab) => (
-                                    <Tab key={tab.key} value={tab.key} icon={tab.icon} aria-label={tab.label} title={tab.label}>
+                                    <Tab key={tab.key} value={tab.key} aria-label={tab.label} title={tab.label}>
                                         {tab.label}
                                     </Tab>
                                 ))}
@@ -733,6 +768,8 @@ const Dashboard = () => {
                             icon={queueIsPaused ? <Play24 /> : <Pause24 />}
                             onClick={handlePauseResume}
                             size="small"
+                            aria-label={queueIsPaused ? "Resume queue" : "Pause queue"}
+                            title={queueIsPaused ? "Resume" : "Pause"}
                         >
                             {queueIsPaused ? "Resume" : "Pause"}
                         </Button>

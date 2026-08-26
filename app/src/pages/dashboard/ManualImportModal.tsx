@@ -10,6 +10,7 @@ import {
   DialogSurface,
   DialogTitle,
   Input,
+  Label,
   Select,
   Spinner,
   Table,
@@ -29,12 +30,11 @@ import {
   bundleIcon,
   ArrowImport24Filled
 } from "@fluentui/react-icons";
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import MediaCard from '@/components/cards/MediaCard';
 import { glassButtonStyles } from '@/components/ui/glassButtonStyles';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
-import { dispatchActivityRefresh } from '@/utils/appEvents';
 import { mediaCoverProxySrc, mediaCoverSrc, renderableArtworkUrl } from '@/utils/artwork';
 import { formatTrackPositionPrefix, isMultiVolumeTrackList } from '@/utils/trackPosition';
 import { type UnmappedFile } from './ManualImportTab';
@@ -192,6 +192,30 @@ const useStyles = makeStyles({
     secondaryText: {
         color: tokens.colorNeutralForeground3,
     },
+    destinationPanel: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: tokens.spacingHorizontalM,
+        padding: tokens.spacingHorizontalM,
+        marginTop: tokens.spacingVerticalS,
+        marginBottom: tokens.spacingVerticalS,
+        borderRadius: tokens.borderRadiusMedium,
+        backgroundColor: tokens.colorNeutralBackground2,
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        '@media (max-width: 639px)': {
+            gridTemplateColumns: 'minmax(0, 1fr)',
+        },
+    },
+    destinationField: {
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        gap: tokens.spacingVerticalXS,
+    },
+    destinationSelect: {
+        width: '100%',
+        minWidth: 0,
+    },
 });
 
 
@@ -277,7 +301,6 @@ interface ManualImportLibrary {
 const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, initialMatch, allFiles }) => {
     const styles = useStyles();
     const { toast } = useToast();
-    const queryClient = useQueryClient();
     const initializedFileIdRef = useRef<number | null>(null);
 
     const isVideoImport = useMemo(() => isVideoCandidate(initialFile), [initialFile]);
@@ -356,7 +379,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             const activeReleaseMbid = releaseMbidOverride
                 || String(versions[0]?.mbid || versions[0]?.id || '');
             if (!activeReleaseMbid) {
-                throw new Error('Choose a canonical MusicBrainz release before mapping files.');
+                throw new Error('Choose an album edition before mapping files.');
             }
             setSelectedReleaseMbid(activeReleaseMbid);
             const canonicalRelease = await api.getCanonicalManualImportRelease(activeReleaseMbid) as any;
@@ -513,13 +536,11 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             ? api.canonicalManualImport(payload.canonical)
             : api.canonicalManualVideoImport(payload.canonicalVideo!),
         onSuccess: (data: any) => {
-            queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
-            dispatchActivityRefresh();
-            toast({ title: 'Import Queued', description: data?.message || 'Queued manual import for selected files.' });
+            toast({ title: 'Import queued', description: data?.message || 'Queued manual import for selected files.' });
             onClose();
         },
         onError: (error: any) => {
-            toast({ title: 'Import Flow Failed', description: error.message, variant: 'destructive' });
+            toast({ title: 'Import failed', description: error.message, variant: 'destructive' });
         },
     });
 
@@ -533,10 +554,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
 
         if (payloadItems.length === 0) {
             toast({
-                title: 'No Files Chosen',
+                title: 'No files selected',
                 description: isVideoImport
-                    ? 'Select a matching canonical MusicBrainz video Recording for this file.'
-                    : 'Select at least one file and assign a canonical track to it.',
+                    ? 'Select the video that matches this file.'
+                    : 'Select at least one file and match it to a track.',
                 variant: 'destructive',
             });
             return;
@@ -545,8 +566,8 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         if (isVideoImport) {
             if (!selectedLibraryId) {
                 toast({
-                    title: 'Choose Library',
-                    description: 'Canonical video import requires an explicit destination library.',
+                    title: 'Choose a library',
+                    description: 'Choose where this video should be imported.',
                     variant: 'destructive',
                 });
                 return;
@@ -564,8 +585,8 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         }
         if (!selectedLibraryId || !selectedReleaseId) {
             toast({
-                title: 'Choose Library and Release',
-                description: 'Canonical audio import requires an explicit destination library and release.',
+                title: 'Choose a library and edition',
+                description: 'Choose where these files belong before importing them.',
                 variant: 'destructive',
             });
             return;
@@ -595,20 +616,20 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         <Dialog open={isOpen} onOpenChange={(_, data) => !data.open && onClose()}>
             <DialogSurface className={styles.dialogSurface}>
                 <DialogBody className={styles.dialogBody}>
-                    <DialogTitle>Manual Import</DialogTitle>
+                    <DialogTitle>Manual import</DialogTitle>
                     <DialogContent className={styles.dialogContent}>
                         {!selectedMatch && (
                             <>
                                 <Text style={{ display: 'block' }}>
                                     {isVideoImport
-                                        ? <>Match this local video to a canonical MusicBrainz Recording.</>
+                                        ? <>Match this local file to the correct video.</>
                                         : <>Found <strong>{targetFiles.length}</strong> files ready for manual import in <Badge appearance="outline">{initialFile ? getDirname(initialFile.relative_path) : ''}</Badge></>}
                                 </Text>
 
                                 <div className={styles.searchContainer}>
                                     <Input
                                         className={styles.searchInput}
-                                        placeholder={isVideoImport ? 'Search for the correct canonical video...' : 'Search for the correct canonical release...'}
+                                        placeholder={isVideoImport ? 'Search for the correct video...' : 'Search for the correct album edition...'}
                                         value={searchQuery}
                                         onChange={(_, data) => setSearchQuery(data.value)}
                                         onKeyDown={(event) => {
@@ -651,7 +672,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                 {isSearching ? (
                                     <div className={styles.emptyState}>
                                         <Spinner size="large" />
-                                        <Text>Searching canonical catalog...</Text>
+                                        <Text>Searching the music catalog...</Text>
                                     </div>
                                 ) : hasSearched && searchResults.length === 0 ? (
                                     <div className={styles.emptyState}>
@@ -705,7 +726,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                             setDecisionRejections([]);
                                         }}
                                     >
-                                        Change Match
+                                        Change match
                                     </Button>
                                 </div>
                                 {decisionRejections.length > 0 ? (
@@ -717,26 +738,30 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                     </div>
                                 ) : null}
 
-                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', margin: '8px 0' }}>
-                                     <Text weight="semibold" size={200}>Library:</Text>
-                                     <Select
-                                         value={selectedLibraryId == null ? '' : String(selectedLibraryId)}
-                                         onChange={(_, data) => setSelectedLibraryId(Number(data.value))}
-                                         style={{ minWidth: '180px' }}
-                                     >
-                                         {libraries.map((library) => (
-                                             <option key={library.id} value={library.id}>
-                                                 {library.name} · {library.qualityProfile}
-                                             </option>
-                                         ))}
-                                     </Select>
+                                 <div className={styles.destinationPanel}>
+                                     <div className={styles.destinationField}>
+                                         <Label htmlFor="manual-import-library" weight="semibold" size="small">Library</Label>
+                                         <Select
+                                             id="manual-import-library"
+                                             className={styles.destinationSelect}
+                                             value={selectedLibraryId == null ? '' : String(selectedLibraryId)}
+                                             onChange={(_, data) => setSelectedLibraryId(Number(data.value))}
+                                         >
+                                             {libraries.map((library) => (
+                                                 <option key={library.id} value={library.id}>
+                                                     {library.name} · {library.qualityProfile}
+                                                 </option>
+                                             ))}
+                                         </Select>
+                                     </div>
                                      {!isVideoImport ? (
-                                         <>
-                                             <Text weight="semibold" size={200}>Release:</Text>
+                                         <div className={styles.destinationField}>
+                                             <Label htmlFor="manual-import-edition" weight="semibold" size="small">Album edition</Label>
                                              <Select
+                                                 id="manual-import-edition"
+                                                 className={styles.destinationSelect}
                                                  value={selectedReleaseMbid}
                                                  onChange={(_, data) => handleSelectReleaseVersion(data.value)}
-                                                 style={{ minWidth: '280px' }}
                                              >
                                                  {releaseVersions.map((v) => (
                                                      <option key={v.mbid || v.id} value={v.mbid || v.id}>
@@ -744,7 +769,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                      </option>
                                                  ))}
                                              </Select>
-                                         </>
+                                         </div>
                                      ) : null}
                                  </div>
 
@@ -773,6 +798,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                  <TableRow>
                                                      <TableHeaderCell style={{ width: '40px' }}>
                                                          <Checkbox
+                                                             aria-label="Select all files"
                                                              checked={allSelected ? true : someSelected ? 'mixed' : false}
                                                              onChange={(_, data) => {
                                                                  const nextSelected: Record<number, boolean> = {};
@@ -783,8 +809,8 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                              }}
                                                          />
                                                      </TableHeaderCell>
-                                                     <TableHeaderCell style={{ width: '50%' }}>Local File</TableHeaderCell>
-                                                     <TableHeaderCell>Canonical Track Assignment</TableHeaderCell>
+                                                     <TableHeaderCell style={{ width: '50%' }}>Local file</TableHeaderCell>
+                                                     <TableHeaderCell>Track match</TableHeaderCell>
                                                  </TableRow>
                                              </TableHeader>
                                              <TableBody>
@@ -796,6 +822,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                          <TableRow key={file.id} style={{ opacity: isChecked ? 1 : 0.6 }}>
                                                              <TableCell>
                                                                  <Checkbox
+                                                                     aria-label={`Select ${file.filename}`}
                                                                      checked={isChecked}
                                                                      onChange={(_, data) => setSelectedFiles({ ...selectedFiles, [file.id]: !!data.checked })}
                                                                  />
@@ -810,11 +837,12 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                              </TableCell>
                                                              <TableCell>
                                                                  <Select
+                                                                     aria-label={`Track match for ${file.filename}`}
                                                                      value={mappedId || ''}
                                                                      onChange={(_, data) => setMappedTracks({ ...mappedTracks, [file.id]: data.value })}
                                                                      className={styles.mappingSelect}
                                                                  >
-                                                                     <option value="">-- Don&apos;t Map --</option>
+                                                                     <option value="">Do not import</option>
                                                                      {albumTracks.map((track) => {
                                                                          const providerId = String(track.id || '');
                                                                          const volNum = track.volumeNumber ?? track.volume_number ?? track.medium_position ?? 1;
@@ -850,7 +878,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                             disabled={!canImport || importMutation.isPending || !selectedMatch || !selectedLibraryId || (!isVideoImport && !selectedReleaseId)}
                             onClick={handleImport}
                         >
-                            {importMutation.isPending ? 'Importing...' : isVideoImport ? 'Import Video' : 'Import Selected'}
+                            {importMutation.isPending ? 'Importing...' : isVideoImport ? 'Import video' : 'Import selected'}
                         </Button>
                     </DialogActions>
                 </DialogBody>

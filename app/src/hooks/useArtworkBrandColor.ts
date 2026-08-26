@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { dominantUltraBlurColor } from "@/providers/DynamicBrandProvider";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
+import { useTheme } from "@/providers/themeContext";
 
 interface UseArtworkBrandColorOptions {
   /**
@@ -28,6 +29,7 @@ export function useArtworkBrandColor({
   ownsAmbience = false,
 }: UseArtworkBrandColorOptions): string | null {
   const { setArtwork, colors } = useUltraBlurContext();
+  const { setBrandKeyColor } = useTheme();
 
   useEffect(() => {
     if (artworkUrl) {
@@ -41,7 +43,7 @@ export function useArtworkBrandColor({
     }
   }, [artworkUrl, ownsAmbience, setArtwork]);
 
-  return useMemo(() => {
+  const resolvedBrandColor = useMemo(() => {
     if (brandKeyColor) {
       return brandKeyColor;
     }
@@ -52,4 +54,13 @@ export function useArtworkBrandColor({
 
     return null;
   }, [artworkUrl, brandKeyColor, colors, deriveBrandFromArtwork]);
+
+  useEffect(() => {
+    if (!ownsAmbience || artworkUrl === undefined) {
+      return;
+    }
+    setBrandKeyColor(resolvedBrandColor);
+  }, [artworkUrl, ownsAmbience, resolvedBrandColor, setBrandKeyColor]);
+
+  return resolvedBrandColor;
 }

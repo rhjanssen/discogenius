@@ -70,15 +70,22 @@ function resolveEditorialProvider(providerId: string): StreamingProvider | null 
   }
 }
 
+export type ProviderEditorialLookup = {
+  editorial: ProviderEditorialText | null;
+  /** How many provider bio/review endpoints were actually called. */
+  attempted: number;
+};
+
 /**
  * First non-empty editorial text among candidates, ordered by
  * `streaming.provider_priority` (settings list order).
  */
-export async function firstProviderEditorialText(opts: {
+export async function lookupProviderEditorialText(opts: {
   kind: "artistBio" | "albumReview";
   candidates: ProviderEditorialCandidate[];
-}): Promise<ProviderEditorialText | null> {
+}): Promise<ProviderEditorialLookup> {
   const ordered = sortCandidatesByProviderPriority(uniqueCandidates(opts.candidates));
+  let attempted = 0;
 
   for (const candidate of ordered) {
     const provider = resolveEditorialProvider(candidate.provider);
@@ -86,13 +93,14 @@ export async function firstProviderEditorialText(opts: {
       continue;
     }
 
+    attempted += 1;
     try {
       const raw = opts.kind === "artistBio"
         ? await provider.getArtistBio?.(candidate.providerId)
         : await provider.getAlbumReview?.(candidate.providerId);
       const text = trimEditorialText(raw);
       if (text) {
-        return { text, source: provider.id };
+        return { editorial: { text, source: provider.id }, attempted };
       }
     } catch (error) {
       console.warn(
@@ -102,7 +110,14 @@ export async function firstProviderEditorialText(opts: {
     }
   }
 
-  return null;
+  return { editorial: null, attempted };
+}
+
+export async function firstProviderEditorialText(opts: {
+  kind: "artistBio" | "albumReview";
+  candidates: ProviderEditorialCandidate[];
+}): Promise<ProviderEditorialText | null> {
+  return (await lookupProviderEditorialText(opts)).editorial;
 }
 
 /** Matched album offers for a release group, ready for priority-ordered review fetch. */

@@ -89,7 +89,7 @@ services:
   # directory in its place and the sidecar breaks until you recreate it. Mounting
   # only the data *directory* and waiting for the script self-heals a fresh deploy.
   apple-music-wrapper:
-    image: ghcr.io/itouakirai/wrapper:x86
+    image: ghcr.io/itouakirai/wrapper:x86@sha256:e47a5f42a3db65296dc641b379b48fc3752dae1d21c7e712c3dd2e7f7e0c2482
     expose:
       - "10020"
       - "20020"

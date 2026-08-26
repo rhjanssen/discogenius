@@ -35,7 +35,7 @@ import {
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
-import { providerAudioVariants } from "./refresh-album-service.js";
+import { providerAudioVariants, RefreshAlbumService } from "./refresh-album-service.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
 import {
     buildLibraryArtistMonitoredExistsSql,
@@ -1233,12 +1233,6 @@ export class RefreshArtistService {
         );
     }
 
-    /**
-     * Fetch + store artist biography from streaming providers in
-     * `provider_priority` order. First non-empty bio wins. Servarr/MB overview
-     * remains the hole-fill fallback when no provider returns text.
-     */
-
     static async refreshArtist(artistId: string, options: RefreshOptions = {}): Promise<ArtistRefreshResult> {
         console.log(`[RefreshArtistService] refreshArtist for ${artistId}`);
         options.progress?.({ kind: "status", message: `Scanning artist ${artistId}...` });
@@ -1281,10 +1275,10 @@ export class RefreshArtistService {
         // unchanged payloads so the write cost stays bounded.
         const shouldHydrateCatalog = true;
 
-        // Canonical identity + biography.
+        // Canonical identity first, then MusicBrainz/Servarr catalog, then
+        // provider biography. Catalog sync used to run after the bio write and
+        // replace ArtistMetadata.overview with a null MB mapping.
         await this.refreshArtistMetadata(artistId, options);
-        await yieldToEventLoop();
-        await refreshArtistBiography(artistId, options);
         await yieldToEventLoop();
 
         let artistMbid = resolveArtistMbid();
@@ -1303,6 +1297,9 @@ export class RefreshArtistService {
                 this.syncCatalogVideoAudioRelations(artistMbid);
             }
         }
+
+        await refreshArtistBiography(artistId, options);
+        await yieldToEventLoop();
 
         // The RefreshArtist command path defers matching to a standalone
         // MatchArtistProviders command (it enqueues one with the returned
@@ -1406,6 +1403,7 @@ export class RefreshArtistService {
                 await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
             }
             ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+            await this.refreshMissingAlbumReviews(artistMbid, options.forceUpdate === true);
             await this.precacheArtistMediaCovers(artistId, artistMbid);
             return;
         }
@@ -1820,6 +1818,7 @@ export class RefreshArtistService {
             await CurationService.processAll(artistId, { skipDownloadQueue: true });
         }
         ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+        await this.refreshMissingAlbumReviews(artistMbid, options.forceUpdate === true);
         await this.precacheArtistMediaCovers(artistId, artistMbid);
     }
 
@@ -1979,6 +1978,48 @@ export class RefreshArtistService {
             await this.precacheArtistVideoArtwork(artistId);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);
+        }
+    }
+
+    private static async refreshMissingAlbumReviews(
+        artistMbid: string | null,
+        force = false,
+    ): Promise<void> {
+        if (!artistMbid) {
+            return;
+        }
+        const rows = force
+            ? db.prepare(`
+                SELECT DISTINCT rg.mbid
+                FROM Albums rg
+                LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+                WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+                ORDER BY rg.mbid
+            `).all(artistMbid, artistMbid) as Array<{ mbid: string }>
+            : db.prepare(`
+                SELECT DISTINCT rg.mbid
+                FROM Albums rg
+                LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+                WHERE (rg.artist_mbid = ? OR scope.artist_mbid = ?)
+                  AND (rg.review_text IS NULL OR TRIM(rg.review_text) = '')
+                  AND rg.review_last_updated IS NULL
+                ORDER BY rg.mbid
+            `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
+        if (rows.length === 0) {
+            return;
+        }
+
+        const yieldReviews = createMatchingYield();
+        for (const row of rows) {
+            await yieldReviews();
+            try {
+                await RefreshAlbumService.refreshCanonicalAlbumReview(row.mbid, { force });
+            } catch (error) {
+                console.warn(
+                    `[RefreshArtistService] Failed to fetch album review for ${row.mbid}:`,
+                    error,
+                );
+            }
         }
     }
 

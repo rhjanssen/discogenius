@@ -224,13 +224,13 @@ const ActivityTab = ({
     const getStatusIcon = (level: EventLevel) => {
         switch (level) {
             case "success":
-                return <SemanticStatusIcon status="success" title="Completed" />;
+                return <SemanticStatusIcon status="success" size={24} title="Completed" />;
             case "warning":
-                return <SemanticStatusIcon status="warning" title="Warning" />;
+                return <SemanticStatusIcon status="warning" size={24} title="Warning" />;
             case "error":
-                return <SemanticStatusIcon status="error" title="Failed" />;
+                return <SemanticStatusIcon status="error" size={24} title="Failed" />;
             default:
-                return <SemanticStatusIcon status="info" title="Queued" />;
+                return <SemanticStatusIcon status="info" size={24} title="Queued" />;
         }
     };
 

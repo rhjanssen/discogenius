@@ -151,6 +151,49 @@ test("finalizeImportedDirectories applies queued renames through RenameTrackFile
   assert.equal(row.needsRename, 0);
 });
 
+test("sidecar finalization joins TrackFiles by numeric artist metadata identity", async () => {
+  const { incomingPath, libraryFileId, expectedPath } = seedImportedTrack();
+  const sourceLyrics = path.join(path.dirname(incomingPath), "track-one.lrc");
+  const targetLyrics = path.join(path.dirname(expectedPath), "01 - Track One.lrc");
+  fs.writeFileSync(sourceLyrics, "[00:00.00]Lyrics");
+
+  const trackFile = dbModule.db.prepare(`
+    SELECT artist_metadata_id FROM TrackFiles WHERE id = ?
+  `).get(libraryFileId) as { artist_metadata_id: number };
+  const trackArtist = dbModule.db.prepare(`
+    SELECT mbid FROM ArtistMetadata WHERE id = ?
+  `).get(trackFile.artist_metadata_id) as { mbid: string };
+
+  await importFinalizeModule.finalizeImportedDirectories({
+    importedFileIds: [libraryFileId],
+    dirMappings: new Map([[
+      path.dirname(incomingPath),
+      {
+        destDir: path.dirname(expectedPath),
+        artistMetadataId: trackFile.artist_metadata_id,
+        artistMbid: "artist-one-mbid",
+        albumId: "10",
+        libraryRootPath: configModule.Config.getMusicPath(),
+      },
+    ]]),
+    imageFileType: "cover",
+    explicitSidecarTargets: new Map([[sourceLyrics, targetLyrics]]),
+  });
+
+  assert.equal(fs.existsSync(targetLyrics), true);
+  const lyric = dbModule.db.prepare(`
+    SELECT artist_id, canonical_artist_mbid, track_file_id FROM LyricFiles WHERE file_path = ?
+  `).get(targetLyrics) as {
+    artist_id: string;
+    canonical_artist_mbid: string | null;
+    track_file_id: number | null;
+  } | undefined;
+  assert.ok(lyric, "the matching sidecar must remain a lyric, not fall back to an unlinked extra");
+  assert.equal(lyric.artist_id, trackArtist.mbid);
+  assert.equal(lyric.canonical_artist_mbid, "artist-one-mbid");
+  assert.equal(lyric.track_file_id, libraryFileId);
+});
+
 test("finalizeImportedDirectories refuses an explicit sidecar target outside its Library root", async () => {
   const musicRoot = configModule.Config.getMusicPath();
   const incomingDir = path.join(musicRoot, "Artist One", "Incoming");
@@ -168,7 +211,8 @@ test("finalizeImportedDirectories refuses an explicit sidecar target outside its
       incomingDir,
       {
         destDir: destinationDir,
-        artistId: "missing-artist",
+        artistMetadataId: 1,
+        artistMbid: "missing-artist",
         albumId: null,
         libraryRootPath: musicRoot,
       },

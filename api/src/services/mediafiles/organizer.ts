@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { execFileSync, execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
 import { downloadAlbumVideoCover, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
@@ -944,7 +944,8 @@ export class OrganizerService {
     const puid = process.env.PUID || "568";
     const pgid = process.env.PGID || "568";
     try {
-      execSync(`chown ${puid}:${pgid} "${dirPath}"`, { stdio: "ignore" });
+      if (!/^\d+$/.test(puid) || !/^\d+$/.test(pgid)) return;
+      execFileSync("chown", [`${puid}:${pgid}`, dirPath], { stdio: "ignore" });
     } catch {
       // Silently ignore chown failures (e.g., on non-Unix systems)
     }

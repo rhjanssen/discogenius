@@ -88,7 +88,7 @@ export class VideoTagService {
         COALESCE(file.canonical_recording_mbid, recording.mbid) AS recording_mbid,
         recording.credits AS recording_credits
       FROM TrackFiles file
-      JOIN ArtistMetadata artist ON artist.id = file.artist_id
+      JOIN ArtistMetadata artist ON artist.id = file.artist_metadata_id
       LEFT JOIN ProviderItems provider_item
         ON provider_item.rowid = (
           SELECT candidate.rowid

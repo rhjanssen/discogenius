@@ -17,8 +17,11 @@ services:
       - PORT=${PORT:-3737}
       - DISCOGENIUS_BIND_IP=0.0.0.0
       - TZ=Etc/UTC
-      - DISCOGENIUS_DISABLE_MONITORING=${DISCOGENIUS_DISABLE_MONITORING:-1}
+      - DISCOGENIUS_DISABLE_MONITORING=${DISCOGENIUS_DISABLE_MONITORING:-0}
       - DISCOGENIUS_DISABLE_SCHEDULER=${DISCOGENIUS_DISABLE_SCHEDULER:-0}
+      # Keep SQLite on Docker's native Linux volume. Host bind mounts on
+      # Docker Desktop do not provide SQLite's required locking semantics.
+      - DB_PATH=${DB_PATH:-/data/discogenius.db}
       # Catalog source factory default is online Servarr Metadata. Do not set
       # DISCOGENIUS_CATALOG_SOURCE here — when set it overrides Settings and a
       # wiped config/DB. See .env.example / docs/MB_LOCAL_MODE.md for local-MB.
@@ -26,8 +29,10 @@ services:
       # Defaults to 3737. Change PORT in .env to publish Discogenius on a different port.
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}"
     volumes:
-      # Persistent config directory (database, settings, provider tokens)
+      # Persistent config directory (settings, provider tokens, backups)
       - ./config:/config
+      # SQLite database on Docker-managed storage; never a host bind mount.
+      - db:/data
       # Transient download/import workspace (optional but recommended)
       - ./downloads:/downloads
       # Library directory
@@ -62,7 +67,7 @@ services:
   # directory in its place and the sidecar breaks until you recreate it. Mounting
   # only the data *directory* and waiting for the script self-heals a fresh deploy.
   apple-music-wrapper:
-    image: ghcr.io/itouakirai/wrapper:x86
+    image: ghcr.io/itouakirai/wrapper:x86@sha256:e47a5f42a3db65296dc641b379b48fc3752dae1d21c7e712c3dd2e7f7e0c2482
     expose:
       - "10020"
       - "20020"
@@ -76,3 +81,6 @@ services:
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data
     restart: unless-stopped
+
+volumes:
+  db:

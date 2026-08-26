@@ -24,7 +24,18 @@ describe("album monitor action presentation", () => {
       isPending: true,
     })).toMatchObject({
       disabled: true,
-      label: "Unmonitor",
+      label: "Monitored",
+    });
+  });
+
+  it("labels a monitored album as Monitored", () => {
+    expect(getAlbumMonitorActionPresentation({
+      isLocked: false,
+      isMonitored: true,
+      isPending: false,
+    })).toMatchObject({
+      disabled: false,
+      label: "Monitored",
     });
   });
 });

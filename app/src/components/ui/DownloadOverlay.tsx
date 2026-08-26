@@ -26,7 +26,7 @@ const useStyles = makeStyles({
         borderBottomRightRadius: tokens.borderRadiusMedium,
     },
     text: {
-        color: tokens.colorNeutralForegroundOnBrand,
+        color: tokens.colorNeutralForegroundInverted,
         fontSize: tokens.fontSizeBase200,
         fontWeight: tokens.fontWeightSemibold,
         textAlign: 'center',

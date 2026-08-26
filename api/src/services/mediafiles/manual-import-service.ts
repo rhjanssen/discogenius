@@ -41,6 +41,19 @@ export interface ManualImportSummary {
     importedFileIds: Record<string, number>;
 }
 
+export type ManualImportArtistIdentity = {
+    artistMetadataId: number;
+    artistMbid: string;
+};
+
+/** Resolve the two artist identifiers without crossing their authority domains. */
+export function resolveManualImportArtistIdentity(artistKey: string): ManualImportArtistIdentity | null {
+    const identity = loadArtistMetadataIdentity(artistKey);
+    return identity
+        ? { artistMetadataId: identity.id, artistMbid: identity.mbid }
+        : null;
+}
+
 export class ManualImportService {
     async bulkImportUnmapped(
         items: { id: number, providerId: string }[],
@@ -68,7 +81,12 @@ export class ManualImportService {
             providerId: string;
             file: any;
             trackData: any;
+            /** Provider/catalog lookup key used only to resolve the artist. */
             artistId: string;
+            /** Exact ArtistMetadata FK, when the artist already exists during collection. */
+            artistMetadataId: number | null;
+            /** Canonical artist identity; never substitute this for the integer FK. */
+            artistMbid: string | null;
             artistInfo: { name: string; picture: string | null; popularity: number } | null;
             artistRow: { name: string; mbid: string | null; path: string | null } | null;
             albumId: string | null;
@@ -282,12 +300,19 @@ export class ManualImportService {
                 const artistId = trackData.artist?.providerId?.toString()
                     || trackData.artist?.id?.toString()
                     || trackData.artist_id?.toString();
+                if (!artistId) {
+                    console.warn(`[Bulk Import] No artist identity resolved for ${file.filename}.`);
+                    continue;
+                }
+                const artistIdentity = loadArtistMetadataIdentity(String(artistId));
+                const resolvedArtistIdentity = artistIdentity
+                    ? { artistMetadataId: artistIdentity.id, artistMbid: artistIdentity.mbid }
+                    : null;
 
                 // Fetch artist info if needed (check DB first to avoid redundant API calls)
                 let artistInfo: CollectedItem["artistInfo"] = null;
                 if (artistId) {
-                    const existingArtist = db.prepare("SELECT id FROM ArtistMetadata WHERE id = ?").get(artistId);
-                    if (!existingArtist) {
+                    if (!artistIdentity) {
                         const fallbackName = trackData.artist?.name || trackData.artist_name || "Unknown Artist";
                         if (trackData.canonicalRecordingId) {
                             artistInfo = { name: fallbackName, picture: null, popularity: 0 };
@@ -303,13 +328,8 @@ export class ManualImportService {
                 }
 
                 // Read artist row for naming (may have been inserted in a prior iteration's commit — read fresh)
-                const artistRow = artistId
-                    ? (() => {
-                        const identity = loadArtistMetadataIdentity(String(artistId));
-                        return identity
-                          ? { name: identity.name, mbid: identity.mbid, path: identity.path }
-                          : null;
-                      })()
+                const artistRow = artistIdentity
+                    ? { name: artistIdentity.name, mbid: artistIdentity.mbid, path: artistIdentity.path }
                     : null;
 
                 // Refresh provider album metadata when the imported item belongs to
@@ -472,6 +492,9 @@ export class ManualImportService {
                     file,
                     trackData,
                     artistId,
+                    artistMetadataId: resolvedArtistIdentity?.artistMetadataId ?? null,
+                    artistMbid: resolvedArtistIdentity?.artistMbid
+                        || (isMbid ? String(trackData.artist?.id || artistId).replace(/^mbid-/, "") : null),
                     artistInfo,
                     artistRow,
                     albumId,
@@ -528,7 +551,7 @@ export class ManualImportService {
         if (videoEntries.length > 0) {
             const { RefreshVideoService } = await import("../music/refresh-video-service.js");
             for (const c of videoEntries) {
-                RefreshVideoService.upsertArtistVideos(String(c.artistId), [{
+                RefreshVideoService.upsertArtistVideos(String(c.artistMbid || c.artistId), [{
                     ...c.trackData,
                     provider_id: c.providerId,
                     album_id: c.albumId || null,
@@ -557,6 +580,17 @@ export class ManualImportService {
                         c.artistInfo.picture,
                         c.artistInfo.popularity,
                     );
+                }
+
+                // TrackFiles.artist_metadata_id is an INTEGER FK. The lookup key
+                // above is commonly a MusicBrainz UUID, so resolve the exact row
+                // after the artist shell has been inserted instead of writing the
+                // UUID into the FK column.
+                const persistedArtist = resolveManualImportArtistIdentity(String(c.artistMbid || c.artistId));
+                const artistMetadataId = persistedArtist?.artistMetadataId ?? c.artistMetadataId;
+                const artistMbid = persistedArtist?.artistMbid ?? c.artistMbid;
+                if (artistMetadataId === null || !artistMbid) {
+                    throw new Error(`[Bulk Import] Artist metadata could not be resolved for ${c.artistId}`);
                 }
 
                 if (c.isVideo) {
@@ -673,9 +707,9 @@ export class ManualImportService {
                             modified_at=?, verified_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     `).run(
-                        c.artistId,
+                        artistMetadataId,
                         c.canonicalRecordingId, c.canonicalRecordingMbid,
-                        c.canonicalTrackMbid, c.canonicalReleaseGroupMbid, c.canonicalArtistMbid,
+                        c.canonicalTrackMbid, c.canonicalReleaseGroupMbid, c.canonicalArtistMbid || artistMbid,
                         c.canonicalRecordingId ? null : provider.id,
                         c.canonicalRecordingId ? null : c.fileType,
                         c.canonicalRecordingId ? null : c.providerId,
@@ -714,7 +748,7 @@ export class ManualImportService {
                             original_filename, fingerprint,
                             modified_at, verified_at
                         ) VALUES (
-                            @artistId,
+                            @artistMetadataId,
                             @recordingId, @canonicalRecordingMbid,
                             @canonicalTrackMbid, @canonicalReleaseGroupMbid, @canonicalArtistMbid,
                             @provider, @providerEntityType, @providerIdValue, @librarySlot,
@@ -755,12 +789,12 @@ export class ManualImportService {
                             height = excluded.height,
                             verified_at = CURRENT_TIMESTAMP
                     `).run({
-                        artistId: c.artistId, albumId: c.albumId, mediaId: c.providerId,
+                        artistMetadataId, albumId: c.albumId, mediaId: c.providerId,
                         recordingId: c.canonicalRecordingId,
                         canonicalRecordingMbid: c.canonicalRecordingMbid,
                         canonicalTrackMbid: c.canonicalTrackMbid,
                         canonicalReleaseGroupMbid: c.canonicalReleaseGroupMbid,
-                        canonicalArtistMbid: c.canonicalArtistMbid,
+                        canonicalArtistMbid: c.canonicalArtistMbid || artistMbid,
                         provider: c.canonicalRecordingId ? null : provider.id,
                         providerEntityType: c.canonicalRecordingId ? null : c.fileType,
                         providerIdValue: c.canonicalRecordingId ? null : c.providerId,
@@ -813,7 +847,8 @@ export class ManualImportService {
                 targetIds.push(libraryFileId);
                 targetMappings.set(oldDir, {
                     destDir,
-                    artistId: String(c.artistId),
+                    artistMetadataId,
+                    artistMbid,
                     albumId: c.albumId ? String(c.albumId) : null,
                     libraryRootPath: c.rootPath,
                 });

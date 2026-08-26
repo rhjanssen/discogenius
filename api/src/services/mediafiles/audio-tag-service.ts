@@ -1068,7 +1068,9 @@ export class AudioTagService {
         canonical_release.label AS album_label,
         COALESCE(
           canonical_group.review_text,
-          alb.review_text
+          alb.review_text,
+          canonical_group.overview,
+          alb.overview
         ) AS album_review_text,
         canonical_recording.credits AS media_credits,
         COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid, provider_recording.mbid) AS media_mbid,

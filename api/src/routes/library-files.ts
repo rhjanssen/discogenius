@@ -14,6 +14,7 @@ import { RenameTrackFileService } from "../services/mediafiles/rename-track-file
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
 import { parseBoundedQueryInteger } from "../utils/request-validation.js";
+import { parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
 
 const router = Router();
 const streamPipeline = promisify(pipeline);
@@ -280,36 +281,55 @@ router.get("/stream/:id", async (req, res) => {
     }
 
     // Handle range requests for audio/video seeking
-    const range = req.headers.range;
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunkSize = end - start + 1;
+    const rangeHeader = Array.isArray(req.headers.range) ? req.headers.range[0] : req.headers.range;
+    if (rangeHeader) {
+      let parsed: { start: number; end: number } | null;
+      try {
+        parsed = parsePlaybackRange(rangeHeader, fileSize);
+      } catch {
+        res.status(416);
+        res.setHeader("Content-Range", `bytes */${fileSize}`);
+        res.end();
+        return;
+      }
 
+      if (!parsed) {
+        res.writeHead(200, {
+          "Content-Length": fileSize,
+          "Content-Type": contentType,
+          "Accept-Ranges": "bytes",
+        });
+        await streamPipeline(fs.createReadStream(filePath), res);
+        return;
+      }
+
+      const { start, end } = parsed;
+      const chunkSize = end - start + 1;
       res.writeHead(206, {
         "Content-Range": `bytes ${start}-${end}/${fileSize}`,
         "Accept-Ranges": "bytes",
         "Content-Length": chunkSize,
         "Content-Type": contentType,
       });
-
-      const stream = fs.createReadStream(filePath, { start, end });
-      stream.pipe(res);
-    } else {
-      res.writeHead(200, {
-        "Content-Length": fileSize,
-        "Content-Type": contentType,
-        "Accept-Ranges": "bytes",
-      });
-
-      fs.createReadStream(filePath).pipe(res);
+      await streamPipeline(fs.createReadStream(filePath, { start, end }), res);
+      return;
     }
+
+    res.writeHead(200, {
+      "Content-Length": fileSize,
+      "Content-Type": contentType,
+      "Accept-Ranges": "bytes",
+    });
+    await streamPipeline(fs.createReadStream(filePath), res);
   } catch (error: any) {
     if (error?.code === "ERR_STREAM_PREMATURE_CLOSE") {
       return;
     }
     console.error("[library-files] Stream error:", error);
+    if (res.headersSent) {
+      res.end();
+      return;
+    }
     res.status(500).json({ detail: error.message });
   }
 });

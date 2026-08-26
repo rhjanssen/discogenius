@@ -74,22 +74,9 @@ export function FluentThemeProvider({
     const isDarkMode = theme === "dark"
         || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
-    const dynamicAccentBrand = useMemo(() => {
-        if (!brandKeyColor) {
-            return null;
-        }
-
-        const hex = brandKeyColor.startsWith("#") ? brandKeyColor : `#${brandKeyColor}`;
-        if (!/^#[0-9a-fA-F]{6}$/.test(hex)) {
-            return null;
-        }
-
-        return getBrandTokensFromPalette(hex);
-    }, [brandKeyColor]);
-
     const accentTokens = useMemo(
-        () => getDiscogeniusAccentTokens(isDarkMode ? "dark" : "light", dynamicAccentBrand),
-        [dynamicAccentBrand, isDarkMode]
+        () => getDiscogeniusAccentTokens(isDarkMode ? "dark" : "light"),
+        [isDarkMode]
     );
 
     const fluentTheme = useMemo(() => {
@@ -130,6 +117,8 @@ export function FluentThemeProvider({
         for (const accent of discogeniusAccentKeys) {
             root.style.setProperty(getDiscogeniusAccentCssVariable(accent), accentTokens[accent].foreground);
             root.style.setProperty(getDiscogeniusAccentCssVariable(accent, "background"), accentTokens[accent].background);
+            root.style.setProperty(getDiscogeniusAccentCssVariable(accent, "badgeForeground"), accentTokens[accent].badgeForeground);
+            root.style.setProperty(getDiscogeniusAccentCssVariable(accent, "badgeBackground"), accentTokens[accent].badgeBackground);
         }
         root.style.setProperty(
             discogeniusSearchUnderlineGradientCssVariable,

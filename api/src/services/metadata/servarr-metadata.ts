@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { db, runGatedChunkedWrite, withSqliteWriteGate } from "../../database.js";
+import { getConfigSection } from "../config/config.js";
 import {
   RemoteOperationError,
   type RemoteOperationContext,
@@ -51,6 +52,12 @@ export function deriveServarrMetadataPopularity(rating: ServarrMetadataRating | 
     return null;
   }
   return Math.max(0, Math.min(100, Math.round(value * 10)));
+}
+
+function catalogOverview(record: Record<string, unknown> | null | undefined): string | null {
+  if (!record) return null;
+  const text = String(record.overview ?? record.Overview ?? "").trim();
+  return text || null;
 }
 
 export interface LidarrAlbum {
@@ -662,7 +669,7 @@ export class ServarrMetadataService {
           sort_name = excluded.sort_name,
           disambiguation = excluded.disambiguation,
           type = excluded.type,
-          overview = excluded.overview,
+          overview = COALESCE(NULLIF(TRIM(excluded.overview), ''), ArtistMetadata.overview),
           status = excluded.status,
           -- Keep the Servarr rating when present; otherwise preserve whatever
           -- popularity a provider sync already stored.
@@ -680,7 +687,7 @@ export class ServarrMetadataService {
         artist.sortname,
         artist.disambiguation || null,
         artist.type || null,
-        raw.overview ?? null,
+        catalogOverview(raw) ?? catalogOverview(artist as unknown as Record<string, unknown>),
         raw.status ?? null,
         popularity,
         JSON.stringify(imagesList),
@@ -853,7 +860,7 @@ export class ServarrMetadataService {
         secondary_types = excluded.secondary_types,
         first_release_date = excluded.first_release_date,
         disambiguation = excluded.disambiguation,
-        overview = excluded.overview,
+        overview = COALESCE(NULLIF(TRIM(excluded.overview), ''), Albums.overview),
         images = excluded.images,
         links = excluded.links,
         genres = excluded.genres,
@@ -917,6 +924,16 @@ export class ServarrMetadataService {
     const releases = detail.Releases || [];
 
     const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
+    const rawDetail = detail as Record<string, any>;
+    let overview = catalogOverview(rawDetail);
+    if (!overview && getConfigSection("catalog").source === "musicbrainz") {
+      try {
+        const supplemental = await this.getAlbumInfo(releaseGroupMbid);
+        overview = catalogOverview(supplemental as unknown as Record<string, unknown>);
+      } catch {
+        // MusicBrainz has no album review; Servarr Wikipedia/AllMusic is hole-fill.
+      }
+    }
 
     // Release group + its release rows are bounded and share one transaction —
     // the smallest atomic unit here, since a release row referencing an Albums
@@ -925,7 +942,6 @@ export class ServarrMetadataService {
       db.transaction(() => {
         MusicBrainzArtistCreditService.ensureArtist(ownerArtistMbid);
 
-        const rawDetail = detail as Record<string, any>;
         insertRg.run(
           releaseGroupMbid,
           ownerArtistMbid,
@@ -934,7 +950,7 @@ export class ServarrMetadataService {
           JSON.stringify(detail.secondarytypes || []),
           detail.releasedate || rawDetail.ReleaseDate || null,
           detail.disambiguation || null,
-          detail.overview ?? rawDetail.overview ?? null,
+          overview,
           JSON.stringify(albumImages),
           JSON.stringify(detail.links ?? rawDetail.links ?? []),
           JSON.stringify(detail.genres ?? rawDetail.genres ?? []),

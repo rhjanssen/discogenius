@@ -475,8 +475,25 @@ async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
         };
     }
 
-    // Page reads stay DB-only (Lidarr/Jellyfin). Live provider editorial fetches
-    // belong on refresh/curation — never on every album navigation.
+    // First visit (or first visit after matching) may fetch once and persist.
+    // Failed attempts stamp review_last_updated so we do not 404 on every GET.
+    try {
+        const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
+        const editorial = await RefreshAlbumService.refreshCanonicalAlbumReview(String(releaseGroup.mbid));
+        if (editorial) {
+            return {
+                review: editorial.text,
+                source: editorial.source,
+                updatedAt: new Date().toISOString(),
+            };
+        }
+    } catch (error) {
+        console.warn(
+            `[MusicBrainzReleaseGroupReadService] Album review lookup failed for ${releaseGroup.mbid}:`,
+            error,
+        );
+    }
+
     const overview = String(releaseGroup.overview || "").trim();
     if (overview) {
         return {

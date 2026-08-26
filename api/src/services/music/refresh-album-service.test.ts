@@ -24,7 +24,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM LibraryArtists").run();
-  dbModule.db.prepare("DELETE FROM Albums").run();  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("DELETE FROM Albums").run();
+  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -668,7 +669,7 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, review_text)
-    VALUES (?, ?, 'Canonical Album', 'album', '')
+    VALUES (?, ?, 'Canonical Album', 'album', 'Stored review')
   `).run(releaseGroupMbid, artistMbid);
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
@@ -722,6 +723,140 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
     refreshServiceModule.RefreshAlbumService.getRefreshLevel("42", "apple-music"),
     AlbumRefreshLevel.OFFER,
   );
+});
+
+test("refreshCanonicalAlbumReview stores provider text and watermarks empty attempts", async () => {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "77777777-7777-4777-8777-777777777777";
+  const releaseMbid = "88888888-8888-4888-8888-888888888888";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, 'Give Me the Future', 'album')
+  `).run(releaseGroupMbid, artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
+    VALUES (?, ?, ?, 'Give Me the Future', 'Official')
+  `).run(releaseMbid, releaseGroupMbid, artistMbid);
+  const editionId = (dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
+    .get(releaseMbid) as { id: number }).id;
+  const tidalReleaseId = (dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'release', '214357460', 'Give Me the Future', 'available')
+    RETURNING id
+  `).get() as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(tidalReleaseId, editionId);
+
+  const { streamingProviderManager } = await import("../providers/index.js");
+  const originalPriority = streamingProviderManager.getProviderPriority.bind(streamingProviderManager);
+  const originalGet = streamingProviderManager.getStreamingProvider.bind(streamingProviderManager);
+  let reviewCalls = 0;
+
+  (streamingProviderManager as any).getProviderPriority = () => ["tidal"];
+  (streamingProviderManager as any).getStreamingProvider = () => ({
+    id: "tidal",
+    isAuthenticated: () => true,
+    capabilities: { editorialMetadata: true },
+    getAlbumReview: async (providerId: string) => {
+      reviewCalls += 1;
+      assert.equal(providerId, "214357460");
+      return "The fourth studio album from Bastille.";
+    },
+  });
+
+  try {
+    const stored = await refreshServiceModule.RefreshAlbumService.refreshCanonicalAlbumReview(releaseGroupMbid);
+    assert.equal(stored?.text, "The fourth studio album from Bastille.");
+    assert.equal(stored?.source, "tidal");
+    assert.equal(reviewCalls, 1);
+
+    const row = dbModule.db.prepare(`
+      SELECT review_text, review_source, review_last_updated
+      FROM Albums WHERE mbid = ?
+    `).get(releaseGroupMbid) as {
+      review_text: string;
+      review_source: string;
+      review_last_updated: string | null;
+    };
+    assert.equal(row.review_text, "The fourth studio album from Bastille.");
+    assert.equal(row.review_source, "tidal");
+    assert.ok(row.review_last_updated);
+
+    await refreshServiceModule.RefreshAlbumService.refreshCanonicalAlbumReview(releaseGroupMbid);
+    assert.equal(reviewCalls, 1, "stored review must not refetch");
+  } finally {
+    (streamingProviderManager as any).getProviderPriority = originalPriority;
+    (streamingProviderManager as any).getStreamingProvider = originalGet;
+  }
+});
+
+test("refreshCanonicalAlbumReview timestamps a failed attempt so page reads stop retrying", async () => {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "99999999-9999-4999-8999-999999999999";
+  const releaseMbid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, 'No Review Album', 'album')
+  `).run(releaseGroupMbid, artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
+    VALUES (?, ?, ?, 'No Review Album', 'Official')
+  `).run(releaseMbid, releaseGroupMbid, artistMbid);
+  const editionId = (dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
+    .get(releaseMbid) as { id: number }).id;
+  const tidalReleaseId = (dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'release', 'no-review-id', 'No Review Album', 'available')
+    RETURNING id
+  `).get() as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(tidalReleaseId, editionId);
+
+  const { streamingProviderManager } = await import("../providers/index.js");
+  const originalPriority = streamingProviderManager.getProviderPriority.bind(streamingProviderManager);
+  const originalGet = streamingProviderManager.getStreamingProvider.bind(streamingProviderManager);
+  let reviewCalls = 0;
+
+  (streamingProviderManager as any).getProviderPriority = () => ["tidal"];
+  (streamingProviderManager as any).getStreamingProvider = () => ({
+    id: "tidal",
+    isAuthenticated: () => true,
+    capabilities: { editorialMetadata: true },
+    getAlbumReview: async () => {
+      reviewCalls += 1;
+      return null;
+    },
+  });
+
+  try {
+    const first = await refreshServiceModule.RefreshAlbumService.refreshCanonicalAlbumReview(releaseGroupMbid);
+    assert.equal(first, null);
+    assert.equal(reviewCalls, 1);
+    const row = dbModule.db.prepare(`
+      SELECT review_text, review_last_updated FROM Albums WHERE mbid = ?
+    `).get(releaseGroupMbid) as { review_text: string | null; review_last_updated: string | null };
+    assert.equal(row.review_text, null);
+    assert.ok(row.review_last_updated);
+
+    const second = await refreshServiceModule.RefreshAlbumService.refreshCanonicalAlbumReview(releaseGroupMbid);
+    assert.equal(second, null);
+    assert.equal(reviewCalls, 1, "empty watermark must not refetch");
+  } finally {
+    (streamingProviderManager as any).getProviderPriority = originalPriority;
+    (streamingProviderManager as any).getStreamingProvider = originalGet;
+  }
 });
 
 

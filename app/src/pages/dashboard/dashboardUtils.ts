@@ -323,7 +323,7 @@ export function matchesActivityFilter(job: any, filter: string): boolean {
     }
 }
 
-const iconStyle = { width: 16, height: 16, color: tokens.colorNeutralForeground3 };
+const iconStyle = { width: 24, height: 24, color: tokens.colorNeutralForeground3 };
 
 export function getActivityTypeIcon(job: any) {
     const type = job?.type || '';

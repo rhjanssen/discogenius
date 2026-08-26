@@ -1,6 +1,6 @@
 export interface AlbumMonitorActionPresentation {
   disabled: boolean;
-  label: "Monitor" | "Unmonitor";
+  label: "Monitor" | "Monitored";
   tooltip: string;
 }
 
@@ -17,7 +17,7 @@ export function getAlbumMonitorActionPresentation({
   isMonitored: boolean;
   isPending: boolean;
 }): AlbumMonitorActionPresentation {
-  const label = isMonitored ? "Unmonitor" : "Monitor";
+  const label = isMonitored ? "Monitored" : "Monitor";
   const action = isMonitored ? "Stop monitoring" : "Start monitoring";
 
   return {

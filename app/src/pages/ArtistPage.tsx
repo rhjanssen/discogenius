@@ -82,11 +82,10 @@ import { MediaCard } from "@/components/cards/MediaCard";
 import { useCardStyles } from "@/components/cards/cardStyles";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
-import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
-import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
+import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import { getAlbumPath, navigateToAlbumTrack } from "@/utils/albumNavigation";
@@ -281,10 +280,9 @@ const useStyles = makeStyles({
       alignItems: "flex-start",
       justifyContent: "flex-end",
       textAlign: "left",
+      gap: tokens.spacingVerticalM,
     },
   },
-  // Fluent related-content pair: name + bio share XS/SNudge (same as album
-  // persona↔title), not the section M gap.
   titleBlock: {
     display: "flex",
     flexDirection: "column",
@@ -299,6 +297,7 @@ const useStyles = makeStyles({
   },
   artistTitle: {
     width: "100%",
+    margin: 0,
     textAlign: "center",
     whiteSpace: "normal",
     wordBreak: "break-word",
@@ -318,7 +317,7 @@ const useStyles = makeStyles({
     justifyContent: "center",
     width: "100%",
     ...detailActionMobileOverflowRowStyles,
-    marginTop: tokens.spacingVerticalS,
+    marginTop: tokens.spacingVerticalNone,
     scrollMarginTop: "72px",
     alignItems: "stretch",
     "& > *": {
@@ -328,7 +327,7 @@ const useStyles = makeStyles({
       justifyContent: "flex-start",
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
-      marginTop: tokens.spacingVerticalM,
+      marginTop: tokens.spacingVerticalNone,
       flexWrap: "nowrap",
       overflow: "visible",
       paddingTop: tokens.spacingVerticalNone,
@@ -361,6 +360,15 @@ const useStyles = makeStyles({
       flex: "1 1 auto",
       minWidth: 0,
       width: "100%",
+    },
+    "@media (min-width: 768px)": {
+      width: "auto",
+      flex: "0 0 auto",
+      "& > *": {
+        flex: "0 0 auto",
+        width: "auto",
+        minWidth: "auto",
+      },
     },
   },
   filterViewDesktop: {
@@ -686,7 +694,7 @@ const ArtistPage = () => {
       }) || null)
     : undefined;
   const [artistPictureFailed, setArtistPictureFailed] = useState(false);
-  const artistBrandColor = useArtworkBrandColor({
+  useArtworkBrandColor({
     artworkUrl: artistPictureFailed ? null : artistPictureUrl,
     deriveBrandFromArtwork: true,
     ownsAmbience: true,
@@ -1709,8 +1717,7 @@ const ArtistPage = () => {
   mobileFilterViewRendered.current = false;
 
   return (
-    <DynamicBrandProvider keyColor={artistBrandColor}>
-      <div className={styles.container}>
+    <div className={styles.container}>
         <RenamePreviewDialog
           open={renamePreviewOpen}
           items={renamePreviewItems}
@@ -2058,8 +2065,7 @@ const ArtistPage = () => {
             files={artistLocalFiles}
           />
         )}
-      </div>
-    </DynamicBrandProvider>
+    </div>
   );
 };
 

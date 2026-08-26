@@ -7,9 +7,9 @@ export type DiscogeniusBadgeSize = "small" | "medium" | "large";
  * TIDAL mark and a MAX chip line up in the same ProviderQualityRow.
  */
 export const BADGE_HEIGHT_PX: Record<DiscogeniusBadgeSize, number> = {
-  small: 20,
-  medium: 24,
-  large: 28,
+  small: 16,
+  medium: 20,
+  large: 24,
 };
 
 /** Glyph size inside a circular provider mark (slightly inset from the pill). */

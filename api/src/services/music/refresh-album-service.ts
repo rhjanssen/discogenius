@@ -10,8 +10,10 @@ import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from 
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
 import {
-    firstProviderEditorialText,
+    lookupProviderEditorialText,
     listReleaseGroupAlbumOfferCandidates,
+    type ProviderEditorialCandidate,
+    type ProviderEditorialText,
 } from "../providers/provider-editorial-text.js";
 import {
     matchPlaylistTracksToCanonical,
@@ -275,13 +277,26 @@ export class RefreshAlbumService {
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE item.provider = ?
               AND item.entity_type = 'release'
-              AND item.provider_id = ?
+              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
         `).get(providerId, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
         return {
             releaseGroupMbid: providerItem?.release_group_mbid || null,
             releaseMbid: providerItem?.release_mbid || null,
         };
+    }
+
+    private static resolveReleaseGroupMbid(providerId: string, albumId: string): string | null {
+        const linked = this.getCanonicalAlbumLink(providerId, albumId).releaseGroupMbid;
+        if (linked) {
+            return linked;
+        }
+        if (!isMusicBrainzMbid(albumId)) {
+            return null;
+        }
+        const row = db.prepare("SELECT mbid FROM Albums WHERE mbid = ?")
+            .get(albumId) as { mbid?: string | null } | undefined;
+        return row?.mbid || null;
     }
 
     private static storeCanonicalAlbumSupplements(input: {
@@ -348,6 +363,77 @@ export class RefreshAlbumService {
             textOrNull(input.reviewLastUpdated),
             releaseGroupMbid,
         );
+    }
+
+    private static markEmptyAlbumReviewAttempt(releaseGroupMbid: string): void {
+        db.prepare(`
+            UPDATE Albums SET
+                review_last_updated = COALESCE(review_last_updated, ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE mbid = ?
+              AND (review_text IS NULL OR TRIM(review_text) = '')
+        `).run(new Date().toISOString(), releaseGroupMbid);
+    }
+
+    /**
+     * Fetch provider editorial text for a release group and store it on
+     * `Albums.review_text`. Empty attempts are timestamped so page reads and
+     * later refreshes do not keep hitting 404s.
+     */
+    static async refreshCanonicalAlbumReview(
+        releaseGroupMbid: string,
+        options: {
+            force?: boolean;
+            extraCandidates?: ProviderEditorialCandidate[];
+        } = {},
+    ): Promise<ProviderEditorialText | null> {
+        const mbid = textOrNull(releaseGroupMbid);
+        if (!mbid) {
+            return null;
+        }
+
+        const existing = db.prepare(`
+            SELECT review_text, review_source, review_last_updated
+            FROM Albums
+            WHERE mbid = ?
+        `).get(mbid) as {
+            review_text?: string | null;
+            review_source?: string | null;
+            review_last_updated?: string | null;
+        } | undefined;
+        if (!existing) {
+            return null;
+        }
+
+        const stored = String(existing.review_text || "").trim();
+        if (stored && options.force !== true) {
+            return {
+                text: stored,
+                source: String(existing.review_source || "provider").trim() || "provider",
+            };
+        }
+        if (options.force !== true && existing.review_last_updated && !stored) {
+            return null;
+        }
+
+        const extra = options.extraCandidates ?? [];
+        const lookup = await lookupProviderEditorialText({
+            kind: "albumReview",
+            candidates: [...extra, ...listReleaseGroupAlbumOfferCandidates(mbid)],
+        });
+        if (lookup.editorial) {
+            this.storeCanonicalAlbumReview({
+                releaseGroupMbid: mbid,
+                reviewText: lookup.editorial.text,
+                reviewSource: lookup.editorial.source,
+                reviewLastUpdated: new Date().toISOString(),
+            });
+            return lookup.editorial;
+        }
+        if (lookup.attempted > 0) {
+            this.markEmptyAlbumReviewAttempt(mbid);
+        }
+        return null;
     }
 
     private static storeCanonicalTrackSupplements(recordingId: number | null | undefined, track: any): void {
@@ -521,7 +607,7 @@ export class RefreshAlbumService {
             FROM ProviderEditionMembers
             WHERE provider_edition_item_id = ?
         `).get(offer.id) as { c?: number } | undefined)?.c || 0);
-        if (reviewText !== null && reviewText !== undefined && trackCount > 0) {
+        if (String(reviewText || "").trim() && trackCount > 0) {
             return AlbumRefreshLevel.METADATA;
         }
 
@@ -682,29 +768,20 @@ export class RefreshAlbumService {
 
         if (shouldRefreshReview) {
             try {
-                const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
-                const releaseGroupMbid = canonicalLink.releaseGroupMbid;
-                const candidates = releaseGroupMbid
-                    ? listReleaseGroupAlbumOfferCandidates(releaseGroupMbid)
-                    : [{ provider: provider.id, providerId: String(albumId) }];
-
-                // Always include the album currently being refreshed.
-                candidates.unshift({ provider: provider.id, providerId: String(albumId) });
-
-                const editorial = await firstProviderEditorialText({
-                    kind: "albumReview",
-                    candidates,
-                });
-
-                if (editorial) {
-                    this.storeCanonicalAlbumReview({
-                        releaseGroupMbid,
-                        reviewText: editorial.text,
-                        reviewSource: editorial.source,
-                        reviewLastUpdated: new Date().toISOString(),
+                const releaseGroupMbid = this.resolveReleaseGroupMbid(provider.id, albumId);
+                if (releaseGroupMbid) {
+                    const extraCandidates = isMusicBrainzMbid(albumId)
+                        ? []
+                        : [{ provider: provider.id, providerId: String(albumId) }];
+                    const editorial = await this.refreshCanonicalAlbumReview(releaseGroupMbid, {
+                        force: options.forceUpdate === true,
+                        extraCandidates,
                     });
-                } else if (!String(existing?.review_text || "").trim()) {
-                    console.log(`[RefreshAlbumService] No provider review found for album ${albumId}`);
+                    if (!editorial && !String(existing?.review_text || "").trim()) {
+                        console.log(`[RefreshAlbumService] No provider review found for album ${albumId}`);
+                    }
+                } else {
+                    console.log(`[RefreshAlbumService] No canonical album for review store (${provider.id}:${albumId})`);
                 }
             } catch (error) {
                 console.warn(`[RefreshAlbumService] Failed to fetch review for album ${albumId}:`, error);

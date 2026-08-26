@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
     CheckmarkCircle16Color,
     CheckmarkCircle24Color,
@@ -9,9 +9,9 @@ import {
     Warning16Color,
     Warning24Color,
 } from "@fluentui/react-icons";
+import { statusIconGlyphPx, statusIconGlyphStyle } from "./statusIconMetrics";
 
 export type SemanticStatus = "success" | "warning" | "error" | "unknown" | "info";
-export type StatusIconWeight = "color" | "filled";
 
 type SemanticStatusIconProps = {
     status: SemanticStatus;
@@ -26,25 +26,6 @@ type StatusIconSlotProps = {
     className?: string;
     children: ReactNode;
 };
-
-/**
- * Color artwork sits inside the viewBox, so a 16 Color glyph reads smaller
- * than a 16 Filled glyph. Draw Color one pixel larger and Filled one pixel
- * smaller in the same slot so mixed rows share one visual weight.
- */
-const GLYPH_PX = {
-    color: { 16: 17, 24: 25 },
-    filled: { 16: 15, 24: 22 },
-} as const;
-
-export function statusIconGlyphPx(weight: StatusIconWeight, size: 16 | 24 = 16): number {
-    return GLYPH_PX[weight][size];
-}
-
-export function statusIconGlyphStyle(weight: StatusIconWeight, size: 16 | 24 = 16): CSSProperties {
-    const px = statusIconGlyphPx(weight, size);
-    return { width: px, height: px };
-}
 
 export function StatusIconSlot({ size = 16, className, children }: StatusIconSlotProps) {
     return (

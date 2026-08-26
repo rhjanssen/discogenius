@@ -1,5 +1,9 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Router } from "express";
 import { collectHealthDiagnosticsSnapshot } from "../services/commands/health.js";
+import { executeDatabaseBackup } from "../services/commands/runtime-maintenance.js";
+import { CONFIG_DIR } from "../services/config/config.js";
 import { ProviderArtistIdentityService } from "../services/metadata/provider-artist-identity-service.js";
 import {
   applyManualArtistMatch,
@@ -61,28 +65,35 @@ router.post("/unmatched-artists/:provider/:providerId/ignore", (req, res) => {
   }
 });
 
-// Backup & Restore endpoints (matching Lidarr system backup/restore semantics)
+const backupFilePattern = /^discogenius_backup_[A-Za-z0-9._-]+\.db$/;
+
+function resolveBackupFile(fileNameValue: unknown): { fileName: string; filePath: string } | null {
+  const fileName = path.basename(String(fileNameValue));
+  if (!backupFilePattern.test(fileName)) {
+    return null;
+  }
+  return { fileName, filePath: path.join(CONFIG_DIR, "Backups", fileName) };
+}
+
+// Backup endpoints (matching Lidarr's list/create/download/delete workflow).
 router.get("/backups", (_req, res) => {
   try {
-    const fsModule = require("fs");
-    const pathModule = require("path");
-    const { CONFIG_DIR } = require("../services/config/config.js");
-    const backupsDir = pathModule.join(CONFIG_DIR, "Backups");
-    if (!fsModule.existsSync(backupsDir)) {
+    const backupsDir = path.join(CONFIG_DIR, "Backups");
+    if (!fs.existsSync(backupsDir)) {
       return res.json([]);
     }
-    const files = fsModule.readdirSync(backupsDir)
-      .filter((f: string) => f.startsWith("discogenius_backup_") && f.endsWith(".db"))
-      .map((f: string) => {
-        const filePath = pathModule.join(backupsDir, f);
-        const stat = fsModule.statSync(filePath);
+    const files = fs.readdirSync(backupsDir)
+      .filter((fileName) => backupFilePattern.test(fileName))
+      .map((fileName) => {
+        const filePath = path.join(backupsDir, fileName);
+        const stat = fs.statSync(filePath);
         return {
-          name: f,
+          name: fileName,
           size: stat.size,
           time: stat.mtime.toISOString(),
         };
       })
-      .sort((a: any, b: any) => new Date(b.time).getTime() - new Date(a.time).getTime());
+      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
     res.json(files);
   } catch (error: any) {
@@ -92,12 +103,10 @@ router.get("/backups", (_req, res) => {
 
 router.post("/backups", async (_req, res) => {
   try {
-    const pathModule = require("path");
-    const { executeDatabaseBackup } = require("../services/commands/runtime-maintenance.js");
     const result = await executeDatabaseBackup();
     res.json({
       success: true,
-      fileName: pathModule.basename(result.backupPath),
+      fileName: path.basename(result.backupPath),
       backupPath: result.backupPath,
       prunedCount: result.prunedCount,
     });
@@ -108,15 +117,11 @@ router.post("/backups", async (_req, res) => {
 
 router.get("/backups/:fileName/download", (req, res) => {
   try {
-    const fsModule = require("fs");
-    const pathModule = require("path");
-    const { CONFIG_DIR } = require("../services/config/config.js");
-    const fileName = pathModule.basename(String(req.params.fileName));
-    const filePath = pathModule.join(CONFIG_DIR, "Backups", fileName);
-    if (!fsModule.existsSync(filePath)) {
+    const backupFile = resolveBackupFile(req.params.fileName);
+    if (!backupFile || !fs.existsSync(backupFile.filePath)) {
       return res.status(404).json({ detail: "Backup file not found" });
     }
-    res.download(filePath, fileName);
+    res.download(backupFile.filePath, backupFile.fileName);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
@@ -124,15 +129,11 @@ router.get("/backups/:fileName/download", (req, res) => {
 
 router.delete("/backups/:fileName", (req, res) => {
   try {
-    const fsModule = require("fs");
-    const pathModule = require("path");
-    const { CONFIG_DIR } = require("../services/config/config.js");
-    const fileName = pathModule.basename(String(req.params.fileName));
-    const filePath = pathModule.join(CONFIG_DIR, "Backups", fileName);
-    if (!fsModule.existsSync(filePath)) {
+    const backupFile = resolveBackupFile(req.params.fileName);
+    if (!backupFile || !fs.existsSync(backupFile.filePath)) {
       return res.status(404).json({ detail: "Backup file not found" });
     }
-    fsModule.rmSync(filePath, { force: true });
+    fs.rmSync(backupFile.filePath, { force: true });
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

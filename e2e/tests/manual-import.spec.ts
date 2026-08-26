@@ -4,7 +4,8 @@ const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT
 
 test.describe('Manual import flow', () => {
   test('lets the user choose a release and assign tracks in the manual import modal', async ({ page }) => {
-    let unmappedFiles = [
+    let submittedImport: unknown = null;
+    const unmappedFiles = [
       {
         id: 101,
         file_path: '/library/music/Test Artist/Test Album/01 - First Song.flac',
@@ -182,9 +183,12 @@ test.describe('Manual import flow', () => {
       });
     });
 
-    await page.route('**/api/v1/unmapped/bulk-map', async (route) => {
-      unmappedFiles = [];
-      await route.fulfill({ json: { success: true, message: 'Successfully mapped 2 files.' } });
+    await page.route('**/api/v1/unmapped/canonical-import', async (route, request) => {
+      submittedImport = request.postDataJSON();
+      await route.fulfill({
+        status: 202,
+        json: { success: true, commandId: 42, message: 'Manual import queued.' },
+      });
     });
 
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
@@ -193,7 +197,7 @@ test.describe('Manual import flow', () => {
     await page.getByRole('tab', { name: /^Unmapped Files$/i }).click();
     await page.getByRole('button', { name: /Review Test Album/i }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog).toContainText('Manual Import');
+    await expect(dialog).toContainText('Manual import');
 
     // Scope this to the modal. The underlying table also has a "Review Test
     // Album" button, but the open dialog correctly makes that page inert.
@@ -211,5 +215,18 @@ test.describe('Manual import flow', () => {
     await expect(secondTrackSelect).toHaveValue('9002');
     await expect(dialog.getByTitle('01 - First Song.flac')).toBeVisible();
     await expect(dialog.getByTitle('02 - Second Song.flac')).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Import selected' }).click();
+    await expect(dialog).toBeHidden();
+    expect(submittedImport).toEqual({
+      libraryId: 1,
+      editionId: 777,
+      mappings: [
+        { unmappedFileId: 101, trackId: 9001 },
+        { unmappedFileId: 102, trackId: 9002 },
+      ],
+    });
+    await expect(page.getByText('Import queued', { exact: true })).toBeVisible();
+    expect(unmappedFiles).toHaveLength(2);
   });
 });

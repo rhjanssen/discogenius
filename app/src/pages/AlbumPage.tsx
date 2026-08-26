@@ -34,7 +34,6 @@ import { MediaCard } from "@/components/cards/MediaCard";
 import {
   ArrowDownload24Regular,
   Eye24Regular,
-  EyeOff24Regular,
   LockClosed24Regular,
   LockOpen24Regular,
   Info24Regular,
@@ -46,7 +45,6 @@ import {
   Play24Filled,
   ArrowDownload24Filled,
   Eye24Filled,
-  EyeOff24Filled,
   LockClosed24Filled,
   LockOpen24Filled,
   Info24Filled,
@@ -56,7 +54,6 @@ import {
   FolderSync24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
-import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -123,7 +120,6 @@ import {
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
-const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
 const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 const Info24 = bundleIcon(Info24Filled, Info24Regular);
@@ -225,8 +221,6 @@ const useStyles = makeStyles({
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    // Section rhythm (title block → metadata → actions). Persona↔title lives
-    // in titleBlock with a tighter related-content gap.
     gap: tokens.spacingVerticalS,
     minWidth: 0,
     width: "100%",
@@ -238,8 +232,6 @@ const useStyles = makeStyles({
       textAlign: "left",
     },
   },
-  // Fluent related-content pair: byline + title share XS/SNudge, not the
-  // section M gap — so the persona reads as belonging to the title.
   titleBlock: {
     display: "flex",
     flexDirection: "column",
@@ -254,6 +246,7 @@ const useStyles = makeStyles({
   },
   albumTitle: {
     width: "100%",
+    margin: 0,
     textAlign: "center",
     whiteSpace: "normal",
     wordBreak: "break-word",
@@ -360,7 +353,7 @@ const useStyles = makeStyles({
     flexWrap: "nowrap",
     justifyContent: "center",
     width: "100%",
-    marginTop: tokens.spacingVerticalXS,
+    marginTop: tokens.spacingVerticalNone,
     alignItems: "stretch",
     ...detailActionMobileOverflowRowStyles,
     "& > *": {
@@ -370,7 +363,7 @@ const useStyles = makeStyles({
       justifyContent: "flex-start",
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
-      marginTop: tokens.spacingVerticalS,
+      marginTop: tokens.spacingVerticalNone,
       flexWrap: "nowrap",
       overflow: "visible",
       paddingTop: tokens.spacingVerticalNone,
@@ -413,21 +406,12 @@ const useStyles = makeStyles({
       boxShadow: tokens.shadow2,
     },
     "& > *:last-child": {
-      flex: "0 0 32px",
-      width: "32px",
-      minWidth: "32px",
-      maxWidth: "32px",
+      flex: "0 0 auto",
       alignSelf: "stretch",
     },
     "@media (min-width: 768px)": {
       width: "auto",
       flex: "0 0 auto",
-      "& > *:last-child": {
-        flex: "0 0 36px",
-        width: "36px",
-        minWidth: "36px",
-        maxWidth: "36px",
-      },
     },
   },
   splitDownloadPrimary: {
@@ -446,23 +430,18 @@ const useStyles = makeStyles({
     },
   },
   splitDownloadMenu: {
-    flex: "1 1 auto",
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "none",
+    flex: "0 0 auto",
     padding: tokens.spacingHorizontalNone,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    alignSelf: "stretch",
     borderTopLeftRadius: 0,
     borderBottomLeftRadius: 0,
     borderLeftColor: tokens.colorNeutralStroke2,
     "& .fui-Button__icon": {
       marginLeft: "0",
       marginRight: "0",
-    },
-    "& .fui-Button__content": {
-      display: "none",
     },
     "&:hover": {
       boxShadow: "none",
@@ -813,7 +792,7 @@ const AlbumPage = () => {
   const albumArtworkUrl = album
     ? (albumCanonicalArtworkUrl && !coverImageFailed ? albumCanonicalArtworkUrl : null)
     : undefined;
-  const albumBrandColor = useArtworkBrandColor({
+  useArtworkBrandColor({
     artworkUrl: albumArtworkUrl,
     brandKeyColor: album?.vibrant_color ?? null,
     // MusicBrainz-canonical albums have no provider vibrant_color, so derive
@@ -1583,8 +1562,7 @@ const AlbumPage = () => {
 
 
   return (
-    <DynamicBrandProvider keyColor={albumBrandColor}>
-      <div className={styles.container}>
+    <div className={styles.container}>
         <RenamePreviewDialog
           open={renamePreviewOpen}
           items={renamePreviewItems}
@@ -1780,7 +1758,6 @@ const AlbumPage = () => {
 
               <Overflow minimumVisible={3}>
                 <div className={styles.actions}>
-                  {/* Monitor Button — icon shows action (what clicking will do) */}
                   <OverflowItem id="monitor" priority={3}>
                     <AppTooltip
                       content={monitorAction.tooltip}
@@ -1788,7 +1765,7 @@ const AlbumPage = () => {
                     >
                       <Button
                         appearance={isMonitored ? "subtle" : "primary"}
-                        icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
+                        icon={<Eye24 />}
                         onClick={handleToggleMonitor}
                         disabled={monitorAction.disabled}
                         className={mergeClasses(
@@ -1837,6 +1814,7 @@ const AlbumPage = () => {
                           <MenuTrigger disableButtonEnhancement>
                             <Button
                               appearance="subtle"
+                              size="small"
                               aria-label="Choose download version"
                               icon={<ChevronDown16 />}
                               disabled={downloadingAlbum}
@@ -2072,8 +2050,7 @@ const AlbumPage = () => {
             />
           </div>
         ) : null}
-      </div >
-    </DynamicBrandProvider>
+    </div >
   );
 };
 

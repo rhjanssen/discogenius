@@ -13,8 +13,6 @@ interface MediaTypeBadgeProps {
 const useStyles = makeStyles({
     base: {
         fontWeight: tokens.fontWeightSemibold,
-        paddingLeft: tokens.spacingHorizontalS,
-        paddingRight: tokens.spacingHorizontalS,
         minWidth: "max-content",
         ...shorthands.border("0"),
         boxShadow: "none",
@@ -25,15 +23,15 @@ const useStyles = makeStyles({
 });
 
 function getAccentColor(kind: MediaTypeBadgeKind): string {
-    if (kind === 'album' || kind === 'album-group') return 'var(--dg-accent-albums)';
-    if (kind === 'video') return 'var(--dg-accent-videos)';
-    return 'var(--dg-accent-tracks)';
+    if (kind === 'album' || kind === 'album-group') return 'var(--dg-accent-albums-badge-foreground)';
+    if (kind === 'video') return 'var(--dg-accent-videos-badge-foreground)';
+    return 'var(--dg-accent-tracks-badge-foreground)';
 }
 
 function getAccentBackground(kind: MediaTypeBadgeKind): string {
-    if (kind === 'album' || kind === 'album-group') return 'var(--dg-accent-albums-background)';
-    if (kind === 'video') return 'var(--dg-accent-videos-background)';
-    return 'var(--dg-accent-tracks-background)';
+    if (kind === 'album' || kind === 'album-group') return 'var(--dg-accent-albums-badge-background)';
+    if (kind === 'video') return 'var(--dg-accent-videos-badge-background)';
+    return 'var(--dg-accent-tracks-badge-background)';
 }
 
 function getDefaultLabel(kind: MediaTypeBadgeKind): string {

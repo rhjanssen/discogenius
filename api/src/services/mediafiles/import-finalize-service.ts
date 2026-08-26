@@ -10,7 +10,10 @@ import { resolvedPathIsInsideRoot } from "./path-utils.js";
 
 export type ImportedDirectoryMapping = {
     destDir: string;
-    artistId: string;
+    /** Exact FK used by TrackFiles and sidecar queries. */
+    artistMetadataId: number;
+    /** Canonical identity used for MusicBrainz-aware resolution and tags. */
+    artistMbid: string;
     albumId: string | null;
     libraryRootPath: string;
 };
@@ -147,7 +150,7 @@ export async function finalizeImportedDirectories(params: {
                     WHERE artist_metadata_id = ?
                       AND file_type IN ('track', 'video')
                       AND file_path LIKE ?
-                `).all(mapping.artistId, `${mapping.destDir}${path.sep}%`) as Array<{
+                `).all(mapping.artistMetadataId, `${mapping.destDir}${path.sep}%`) as Array<{
                     track_file_id: number;
                     library_id: number | null;
                     media_id: string | null;
@@ -166,18 +169,19 @@ export async function finalizeImportedDirectories(params: {
                 }
 
                 const sidecarIdentity = resolveLibraryFileIdentity({
-                    artistId: mapping.artistId,
+                    artistId: mapping.artistMetadataId,
                     albumId: mapping.albumId,
                     mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
                     fileType,
                     quality: linkedMedia?.quality || null,
                     libraryRoot: mapping.libraryRootPath,
+                    canonicalArtistMbid: mapping.artistMbid,
                 });
 
 
 
                 LibraryFilesService.upsertLibraryFile({
-                    artistId: mapping.artistId,
+                    artistId: String(mapping.artistMetadataId),
                     libraryId: linkedMedia?.library_id ?? null,
                     albumId: mapping.albumId,
                     mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
@@ -203,7 +207,7 @@ export async function finalizeImportedDirectories(params: {
 
                 if (fileType !== "other") {
                     LibraryFilesService.enforceTrackedAssetIdentity({
-                        artistId: mapping.artistId,
+                        artistId: String(mapping.artistMetadataId),
                         albumId: mapping.albumId,
                         mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
                         fileType,

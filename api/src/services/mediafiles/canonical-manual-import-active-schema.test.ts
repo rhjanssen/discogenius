@@ -17,6 +17,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
+const { resolveManualImportArtistIdentity } = await import("./manual-import-service.js");
 
 /** Columns the canonical manual import boundary writes on TrackFiles. */
 const REQUIRED_TRACK_FILE_COLUMNS = [
@@ -67,6 +68,45 @@ test("the boundary's TrackFiles update prepares against the active schema", () =
       WHERE id = @fileId
     `);
   });
+});
+
+test("manual import resolves a MusicBrainz artist UUID to the integer TrackFiles FK", () => {
+  const artistMbid = "0fb267f4-2c7c-4717-85bf-06a849a4e655";
+  const inserted = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, 'Manual Import Artist')
+    RETURNING id
+  `).get(artistMbid) as { id: number };
+
+  const identity = resolveManualImportArtistIdentity(artistMbid);
+  assert.deepEqual(identity, {
+    artistMetadataId: inserted.id,
+    artistMbid,
+  });
+
+  assert.doesNotThrow(() => {
+    db.prepare(`
+      INSERT INTO TrackFiles (
+        artist_metadata_id, canonical_artist_mbid, file_path, relative_path,
+        library_root, filename, extension, file_type
+      ) VALUES (?, ?, ?, ?, ?, ?, 'flac', 'track')
+    `).run(
+      identity!.artistMetadataId,
+      identity!.artistMbid,
+      "C:/library/manual-import.flac",
+      "manual-import.flac",
+      "C:/library",
+      "manual-import.flac",
+    );
+  });
+
+  const stored = db.prepare(`
+    SELECT artist_metadata_id, canonical_artist_mbid
+    FROM TrackFiles
+    WHERE file_path = 'C:/library/manual-import.flac'
+  `).get() as { artist_metadata_id: number; canonical_artist_mbid: string };
+  assert.equal(stored.artist_metadata_id, inserted.id);
+  assert.equal(stored.canonical_artist_mbid, artistMbid);
 });
 
 test("provider_item_id is a real FK to ProviderItems that survives item deletion", () => {

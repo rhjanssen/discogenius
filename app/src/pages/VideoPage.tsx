@@ -30,14 +30,12 @@ import { VideoDetailSkeleton } from "@/components/ui/LoadingSkeletons";
 import {
   ArrowDownload24Regular,
   Eye24Regular,
-  EyeOff24Regular,
   LockClosed24Regular,
   LockOpen24Regular,
   Play24Filled,
   Video24Regular,
   ArrowDownload24Filled,
   Eye24Filled,
-  EyeOff24Filled,
   LockClosed24Filled,
   LockOpen24Filled,
   Video24Filled,
@@ -59,7 +57,6 @@ import {
 import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
-import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
@@ -89,7 +86,6 @@ import {
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
-const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
 const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 const Video24 = bundleIcon(Video24Filled, Video24Regular);
@@ -220,7 +216,6 @@ const useStyles = makeStyles({
     infoSection: {
         display: "flex",
         flexDirection: "column",
-        // Section rhythm; persona↔title uses the tighter titleBlock gap.
         // No glass card — match AlbumPage header (open on the page surface).
         gap: tokens.spacingVerticalS,
         padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXXS}`,
@@ -228,7 +223,6 @@ const useStyles = makeStyles({
             padding: `${tokens.spacingVerticalXS} 0`,
         },
     },
-    // Related-content pair (Fluent XS / SNudge): artist byline belongs to the title.
     titleBlock: {
         display: "flex",
         flexDirection: "column",
@@ -250,6 +244,7 @@ const useStyles = makeStyles({
         flexWrap: "wrap",
     },
     videoTitle: {
+        margin: 0,
         whiteSpace: "normal",
         wordBreak: "break-word",
         fontSize: tokens.fontSizeHero700,
@@ -396,7 +391,7 @@ const VideoPage = () => {
         return files.find((file) => file.file_type === "video");
     }, [filesData]);
     const coverUrl = video ? (mediaCoverSrc(video) || null) : undefined;
-    const videoBrandColor = useArtworkBrandColor({
+    useArtworkBrandColor({
         artworkUrl: coverUrl,
         deriveBrandFromArtwork: true,
         ownsAmbience: true,
@@ -720,7 +715,7 @@ const VideoPage = () => {
     }
 
     return (
-        <DynamicBrandProvider keyColor={videoBrandColor}>
+        <>
             <div className={styles.container}>
                 {/* Player Wrapper directly at top */}
                 <div className={styles.playerWrapper}>
@@ -865,11 +860,11 @@ const VideoPage = () => {
                             >
                                 <Button
                                     appearance={isMonitored ? "subtle" : "primary"}
-                                    icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
+                                    icon={<Eye24 />}
                                     onClick={() => toggleMonitor.mutate(!isMonitored)}
                                     className={mergeClasses(styles.actionButton, isMonitored ? styles.transparentButton : styles.primaryButton)}
                                 >
-                                    {isMonitored ? "Unmonitor" : "Monitor"}
+                                    {isMonitored ? "Monitored" : "Monitor"}
                                 </Button>
                             </AppTooltip>
 
@@ -995,7 +990,7 @@ const VideoPage = () => {
                     </DialogBody>
                 </DialogSurface>
             </Dialog>
-        </DynamicBrandProvider>
+        </>
     );
 };
 

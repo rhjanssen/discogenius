@@ -491,3 +491,52 @@ test("searchAll ranks the substantial exact-name artist ahead of same-name colli
   assert.equal(results[0].artist.id, "indie-pop-band");
   assert.equal(results[1].artist.id, "metal-band");
 });
+
+test("syncArtist keeps an existing biography when the catalog payload has no overview", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  fetchReturning({
+    id: "artist-mbid",
+    artistname: "Bastille",
+    sortname: "Bastille",
+    images: [{ url: "https://example.test/poster.jpg", coverType: "Poster" }],
+    overview: "Originally a solo project.",
+    Albums: [],
+  });
+  await servarrMetadataModule.servarrMetadata.syncArtist("artist-mbid");
+
+  fetchReturning({
+    id: "artist-mbid",
+    artistname: "Bastille",
+    sortname: "Bastille, The",
+    images: [{ url: "https://example.test/poster.jpg", coverType: "Poster" }],
+    Albums: [],
+  });
+  await servarrMetadataModule.servarrMetadata.syncArtist("artist-mbid");
+
+  const row = db.prepare("SELECT overview, sort_name FROM ArtistMetadata WHERE mbid = ?")
+    .get("artist-mbid") as { overview: string; sort_name: string };
+  assert.equal(row.overview, "Originally a solo project.");
+  assert.equal(row.sort_name, "Bastille, The");
+});
+
+test("syncReleaseGroup keeps an existing overview when MusicBrainz sends none", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  fetchReturning({
+    ...DOOM_DAYS_PAYLOAD,
+    overview: "A review of Doom Days.",
+  });
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+
+  fetchReturning({
+    ...DOOM_DAYS_PAYLOAD,
+    title: "Doom Days (Deluxe)",
+  });
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+
+  const row = db.prepare("SELECT title, overview FROM Albums WHERE mbid = ?")
+    .get("rg-skip") as { title: string; overview: string | null };
+  assert.equal(row.title, "Doom Days (Deluxe)");
+  assert.equal(row.overview, "A review of Doom Days.");
+});

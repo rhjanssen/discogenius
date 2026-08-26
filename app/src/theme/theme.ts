@@ -13,17 +13,17 @@ export const discogeniusOrangeTheme: BrandVariants = {
     20: "#271100",
     30: "#421800",
     40: "#581d00",
-    50: "#6e2200",
-    60: "#852900",
-    // Fluent's dark theme uses step 70 for filled controls and its light theme
-    // uses step 80. Keep both dark enough for white text, but closer to the
-    // logo orange than the previous near-brown dark-theme control fill.
-    70: "#b03901",
-    80: "#c3450b",
-    90: "#e86125",
-    100: "#fa6f32",
-    110: "#ff8751",
-    120: "#ff9f74",
+    50: "#6e2800",
+    60: "#873500",
+    // Fluent uses 80 for light filled controls and 70 for dark filled
+    // controls. These stay recognisably orange while retaining white-text
+    // contrast in both modes.
+    70: "#a94300",
+    80: "#c45100",
+    90: "#d85c08",
+    100: "#e7701c",
+    110: "#f47f34",
+    120: "#ff955a",
     130: "#ffb695",
     140: "#ffcbb4",
     150: "#ffddcf",
@@ -103,68 +103,26 @@ export const discogeniusAuxiliaryThemes: Record<DiscogeniusAccentKey, BrandVaria
     videos: discogeniusTealTheme,
 };
 
-type BrandStep = 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 | 100 | 110 | 120 | 130 | 140 | 150 | 160;
-type DiscogeniusAccentTone = "foreground" | "background";
+type DiscogeniusAccentTone = "foreground" | "background" | "badgeForeground" | "badgeBackground";
 
 export type DiscogeniusAccentTokens = Record<DiscogeniusAccentKey, Record<DiscogeniusAccentTone, string>>;
-
-const discogeniusAccentToneSteps: Record<DiscogeniusAccentKey, Record<DiscogeniusAccentTone, { light: BrandStep; dark: BrandStep }>> = {
-    artists: {
-        foreground: { light: 60, dark: 100 },
-        background: { light: 150, dark: 20 },
-    },
-    albums: {
-        foreground: { light: 60, dark: 100 },
-        background: { light: 150, dark: 20 },
-    },
-    tracks: {
-        foreground: { light: 60, dark: 110 },
-        background: { light: 150, dark: 20 },
-    },
-    videos: {
-        foreground: { light: 60, dark: 120 },
-        background: { light: 150, dark: 20 },
-    },
-};
-
-const dynamicDiscogeniusAccentToneSteps: Record<DiscogeniusAccentTone, { light: BrandStep; dark: BrandStep }> = {
-    foreground: { light: 60, dark: 100 },
-    background: { light: 150, dark: 20 },
-};
 
 export const discogeniusAccentKeys = ["artists", "albums", "tracks", "videos"] as const;
 
 export const discogeniusSearchUnderlineGradientCssVariable = "--dg-search-underline-gradient";
 
-function getDiscogeniusAccentTone(
-    brand: BrandVariants,
-    accent: DiscogeniusAccentKey,
-    tone: DiscogeniusAccentTone,
-    mode: "light" | "dark"
-): string {
-    const step = discogeniusAccentToneSteps[accent][tone][mode];
-    return brand[step];
-}
-
-function getDynamicDiscogeniusAccentTone(
-    brand: BrandVariants,
-    tone: DiscogeniusAccentTone,
-    mode: "light" | "dark"
-): string {
-    const step = dynamicDiscogeniusAccentToneSteps[tone][mode];
-    return brand[step];
-}
-
-export function getDiscogeniusAccentTokens(mode: "light" | "dark", dynamicBrand?: BrandVariants | null): DiscogeniusAccentTokens {
+export function getDiscogeniusAccentTokens(mode: "light" | "dark"): DiscogeniusAccentTokens {
     return discogeniusAccentKeys.reduce((map, accent) => {
-        const brand = dynamicBrand ?? discogeniusAuxiliaryThemes[accent];
+        const brand = discogeniusAuxiliaryThemes[accent];
+        const theme = createDiscogeniusTheme(brand, mode);
         map[accent] = {
-            foreground: dynamicBrand
-                ? getDynamicDiscogeniusAccentTone(brand, "foreground", mode)
-                : getDiscogeniusAccentTone(brand, accent, "foreground", mode),
-            background: dynamicBrand
-                ? getDynamicDiscogeniusAccentTone(brand, "background", mode)
-                : getDiscogeniusAccentTone(brand, accent, "background", mode),
+            // Search and dashboard illustrations are decorative brand artwork.
+            foreground: discogeniusAccentKeyColor[accent],
+            background: theme.colorBrandBackground2,
+            // Badge text is semantic content and follows Fluent's accessible,
+            // mode-aware tint mapping instead of the decorative logo color.
+            badgeForeground: theme.colorBrandForeground2,
+            badgeBackground: theme.colorBrandBackground2,
         };
         return map;
     }, {} as DiscogeniusAccentTokens);
@@ -172,15 +130,15 @@ export function getDiscogeniusAccentTokens(mode: "light" | "dark", dynamicBrand?
 
 export function getDiscogeniusAccentCssVariable(
     accent: DiscogeniusAccentKey,
-    tone: "foreground" | "background" = "foreground"
+    tone: DiscogeniusAccentTone = "foreground"
 ) {
-    return tone === "foreground"
-        ? `--dg-accent-${accent}`
-        : `--dg-accent-${accent}-background`;
+    if (tone === "foreground") return `--dg-accent-${accent}`;
+    if (tone === "background") return `--dg-accent-${accent}-background`;
+    if (tone === "badgeForeground") return `--dg-accent-${accent}-badge-foreground`;
+    return `--dg-accent-${accent}-badge-background`;
 }
 
 export function buildDiscogeniusSearchUnderlineGradient(mode: "light" | "dark"): string {
-    // Saturated media accents, not the pale foreground steps that grey out in dark mode.
     const accents = getDiscogeniusAccentTokens(mode);
     return `linear-gradient(90deg, ${accents.videos.foreground} 0%, ${accents.tracks.foreground} 33%, ${accents.albums.foreground} 66%, ${accents.artists.foreground} 100%)`;
 }
@@ -216,9 +174,6 @@ export const tidalBadgeColorLight = {
 } as const;
 
 export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {
-    // Fluent maps a complete brand ramp to semantic tokens with mode-specific
-    // contrast. Keep those mappings intact so Buttons, Tabs, Toggles and Badges
-    // share the same accessible interaction states in light and dark themes.
     return mode === "dark" ? createDarkTheme(brand) : createLightTheme(brand);
 }
 

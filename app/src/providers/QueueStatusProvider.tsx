@@ -10,6 +10,7 @@ import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { useGlobalEvents, type GlobalEventPayload, type CommandStatusRaw } from "@/hooks/useGlobalEvents";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
+import { getManualImportTerminalNotice } from "@/providers/manualImportCommandEvent";
 import {
   QueueStatusContext,
   type AddToQueueOptions,
@@ -295,7 +296,14 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       invalidateQueueQueries();
       dispatchActivityRefresh();
     }
-  }, [invalidateQueueQueries, lastGlobalEvent, scheduleStatusRefresh]);
+
+    const manualImportNotice = getManualImportTerminalNotice(lastGlobalEvent);
+    if (manualImportNotice) {
+      void queryClient.invalidateQueries({ queryKey: ["unmapped-files"] });
+      dispatchActivityRefresh();
+      toastRef.current(manualImportNotice);
+    }
+  }, [invalidateQueueQueries, lastGlobalEvent, queryClient, scheduleStatusRefresh]);
 
   useEffect(() => {
     let sseReconnectTimer: ReturnType<typeof setTimeout> | null = null;

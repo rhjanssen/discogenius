@@ -5,7 +5,7 @@ import path from 'path';
 import axios from 'axios';
 import { type Readable } from 'stream';
 import { Config } from '../config/config.js';
-import { exec, execFile, spawn, type ChildProcessByStdio } from 'child_process';
+import { execFile, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
@@ -275,8 +275,10 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
 
         const ffprobeBin = resolveFfprobeBinary();
         const videoProbe = await new Promise<Partial<AudioMetrics>>((resolve) => {
-            exec(
-                `"${ffprobeBin}" -v error -select_streams v:0 -show_entries stream=width,height,codec_name -of json "${filePath}"`,
+            execFile(
+                ffprobeBin,
+                ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,codec_name', '-of', 'json', filePath],
+                { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
                 (error, stdout) => {
                     if (error || !stdout) {
                         resolve({});
@@ -1026,16 +1028,16 @@ export async function writeVideoTags(filePath: string, tags: VideoTagSet): Promi
 export async function convertToMp4(inputPath: string, outputPath: string): Promise<boolean> {
     const args = [
         '-y',
-        '-i', `"${inputPath}"`,
+        '-i', inputPath,
         '-c:v', 'copy', // Copy video stream (Tidal uses h264/h265 usually)
         '-c:a', 'aac',  // Convert audio to AAC for max browser compatibility
         '-strict', 'experimental',
-        `"${outputPath}"`
+        outputPath
     ];
 
     return new Promise((resolve) => {
         const ffmpegBin = resolveFfmpegBinary();
-        exec(`"${ffmpegBin}" ${args.join(' ')}`, (error) => {
+        execFile(ffmpegBin, args, { windowsHide: true }, (error) => {
             if (error) {
                 console.error(`MP4 Conversion failed for ${inputPath}:`, error);
                 resolve(false);
