@@ -6,15 +6,15 @@ import {
     Text,
 } from "@fluentui/react-components";
 import {
-  ArrowClockwise24Regular,
-  ArrowClockwise24Filled,
+  ArrowClockwise20Regular,
+  ArrowClockwise20Filled,
   Clock24Regular,
   Clock24Filled,
   DismissCircle24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
-import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
+import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { ActivityListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { useActivityFeed } from "@/hooks/useActivityFeed";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
@@ -31,7 +31,7 @@ import {
     matchesActivityFilter,
 } from "./dashboardUtils";
 
-const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
+const ArrowClockwise20 = bundleIcon(ArrowClockwise20Filled, ArrowClockwise20Regular);
 const Clock24 = bundleIcon(Clock24Filled, Clock24Regular);
 
 type ActivityTabProps = {
@@ -230,7 +230,7 @@ const ActivityTab = ({
             case "error":
                 return <SemanticStatusIcon status="error" size={24} title="Failed" />;
             default:
-                return <SemanticStatusIcon status="info" size={24} title="Queued" />;
+                return <QueuedStatusIcon size={24} aria-label="Queued" />;
         }
     };
 
@@ -299,8 +299,9 @@ const ActivityTab = ({
                                 <Button
                                     size="small"
                                     appearance="subtle"
-                                    icon={<ArrowClockwise24 />}
-                                    title="Retry Job"
+                                    icon={<ArrowClockwise20 />}
+                                    aria-label="Retry job"
+                                    title="Retry job"
                                     onClick={() => retryItem(retryJobId)}
                                 />
                             ) : null}

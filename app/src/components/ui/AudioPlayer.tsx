@@ -392,7 +392,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
     return (
         <div className={styles.container} data-testid="audio-player">
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption -- Audio tracks have no caption resource. */}
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption -- Music playback has no timed-text resource. */}
             <audio
                 ref={audioRef}
                 className={styles.audioElement}

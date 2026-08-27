@@ -28,8 +28,6 @@ import {
     resolveAlbumArtwork,
     resolveArtistArtwork,
     resolveVideoArtwork,
-    hasCachedMediaCover,
-    isMediaCoverSourceCacheCurrent,
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
@@ -2103,25 +2101,17 @@ export class RefreshArtistService {
             id: number;
             cover_image_url?: string | null;
         }>;
-        const needingArtwork = videoIds.filter(
-            (video) => (
-                !hasCachedMediaCover(video.id, "Video", "Cover")
-                || (
-                    Boolean(String(video.cover_image_url || "").trim())
-                    && !isMediaCoverSourceCacheCurrent(
-                        video.id,
-                        "Video",
-                        "Cover",
-                        video.cover_image_url,
-                    )
-                )
-            ),
-        );
-        if (needingArtwork.length === 0) {
+        if (videoIds.length === 0) {
             return;
         }
+        // Always ask the resolver to validate the source marker. This remains
+        // cheap when the cache is current, but lets it replace legacy covers
+        // whose stored URL points at a related YouTube video. Filtering here
+        // by recording.cover_image_url previously prevented the resolver's
+        // watch-id correction from ever running when the bad cache and bad
+        // stored URL agreed with each other.
         const limit = pLimit(6);
-        await Promise.all(needingArtwork.map((video) => limit(async () => {
+        await Promise.all(videoIds.map((video) => limit(async () => {
             try {
                 await resolveVideoArtwork({ videoId: video.id });
             } catch (error) {

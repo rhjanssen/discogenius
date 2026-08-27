@@ -2,14 +2,23 @@ import type { ReactNode } from "react";
 import {
     CheckmarkCircle16Color,
     CheckmarkCircle24Color,
+    Clock16Filled,
+    Clock16Regular,
+    Clock24Filled,
+    Clock24Regular,
     DismissCircle16Color,
     DismissCircle24Color,
     QuestionCircle16Color,
     QuestionCircle24Color,
     Warning16Color,
     Warning24Color,
+    bundleIcon,
 } from "@fluentui/react-icons";
+import { tokens } from "@fluentui/react-components";
 import { statusIconGlyphPx, statusIconGlyphStyle } from "./statusIconMetrics";
+
+const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
+const Clock24 = bundleIcon(Clock24Filled, Clock24Regular);
 
 export type SemanticStatus = "success" | "warning" | "error" | "unknown" | "info";
 
@@ -69,6 +78,24 @@ export function SemanticStatusIcon({ status, size = 16, className, ...props }: S
                 fontSize: glyph,
                 style: statusIconGlyphStyle("color", size),
             })}
+        </StatusIconSlot>
+    );
+}
+
+export function QueuedStatusIcon({ size = 16, className, ...props }: Omit<SemanticStatusIconProps, "status">) {
+    const glyph = statusIconGlyphPx("filled", size);
+    const Clock = size === 24 ? Clock24 : Clock16;
+
+    return (
+        <StatusIconSlot size={size} className={className}>
+            <Clock
+                {...props}
+                fontSize={glyph}
+                style={{
+                    ...statusIconGlyphStyle("filled", size),
+                    color: tokens.colorNeutralForeground3,
+                }}
+            />
         </StatusIconSlot>
     );
 }

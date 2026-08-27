@@ -773,4 +773,26 @@ test("artist activity tracks canonical queued work and ignores provider catalog 
   );
 });
 
+test("artist activity keeps Refresh & Scan busy through provider matching and its disk scan", () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
 
+  db.prepare(`
+    INSERT INTO commands (name, ref_id, payload, status)
+    VALUES
+      ('MatchArtistProviders', ?, '{"workflow":"refresh-scan"}', 'started'),
+      ('RescanFolders', ?, '{"artistIds":["artist-mbid-1"],"workflow":"refresh-scan"}', 'queued')
+  `).run(artistId, artistId);
+
+  const activity = artistQueryModule.ArtistQueryService.getArtistActivity(artistId);
+
+  assert.equal(activity.scanning, true);
+  assert.equal(activity.libraryScan, true);
+  assert.deepEqual(
+    activity.jobs
+      .map((job) => job.type)
+      .filter((type) => type === "MatchArtistProviders" || type === "RescanFolders")
+      .sort(),
+    ["MatchArtistProviders", "RescanFolders"],
+  );
+});

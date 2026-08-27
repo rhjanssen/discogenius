@@ -118,15 +118,10 @@ export class CurationService {
     if (cleanupArtistId) {
       // Disk scan runs before this curation pass, so existing files may have
       // bound to an unmonitored sibling (Bad Blood X Oct 13 vs the selected
-      // Jan 1 edition). Rebind onto the unique monitored edition first;
-      // prune then only deletes files that still have nowhere to live.
+      // Jan 1 edition). Rebind onto the unique monitored edition so curation's
+      // new selection is reflected in the file rows. File and sidecar cleanup
+      // belongs to explicit removal actions and the housekeeping command.
       LibraryFilesService.rebindFilesToMonitoredEditions(cleanupArtistId);
-    }
-    if (cleanupArtistId && getConfigSection("monitoring")?.remove_unmonitored_files === true) {
-      LibraryFilesService.pruneUnmonitoredFiles(cleanupArtistId);
-    }
-    if (cleanupArtistId) {
-      LibraryFilesService.pruneDisabledMetadataFiles(cleanupArtistId);
     }
     if (options.skipDownloadQueue !== undefined || options.forceDownloadQueue !== undefined) {
       console.log(

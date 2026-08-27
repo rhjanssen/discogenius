@@ -107,7 +107,7 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
   assert.equal(audioMatch.match_state, "accepted");
 
   const videoOffer = db.prepare(`
-    SELECT item.id, match.recording_id
+    SELECT item.id, item.video_quality, match.recording_id
     FROM ProviderItems item
     JOIN ProviderVideoMatches match
       ON match.provider_video_item_id = item.id
@@ -117,9 +117,11 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
       AND item.provider_id = 'omv-pompeii'
   `).get() as {
     id: number;
+    video_quality: string | null;
     recording_id: number;
   };
   assert.ok(videoOffer.recording_id);
+  assert.equal(videoOffer.video_quality, null, "audio quality is not copied onto the video counterpart");
   const relation = db.prepare(`
     SELECT target_recording_id, confidence, data
     FROM RecordingRelations

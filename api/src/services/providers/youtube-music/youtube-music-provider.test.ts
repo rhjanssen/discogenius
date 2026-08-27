@@ -23,7 +23,7 @@ const {
   rewriteStoredYouTubeMusicCookies,
   saveYouTubeMusicCredentials,
 } = await import("./youtube-music-auth.js");
-const { YouTubeMusicCatalog } = await import("./youtube-music-catalog.js");
+const { YouTubeMusicCatalog, mapYouTubeMusicVideo } = await import("./youtube-music-catalog.js");
 const { youtubeMusicQualityMapping } = await import("./youtube-music-quality.js");
 const {
   YouTubeMusicProvider,
@@ -74,6 +74,18 @@ test("YouTube Music origin artwork requests uncapped Google and max-res video so
     }),
     "https://lh3.googleusercontent.com/music-cover=s0",
   );
+});
+
+test("YouTube video cover is the watch-id still, not a related-video thumbnail", () => {
+  const mapped = mapYouTubeMusicVideo({
+    videoId: "08AUS7lfXCU",
+    title: "Distorted Light Beam",
+    thumbnails: [
+      { url: "https://i.ytimg.com/vi/foXqHUopCJU/hq720.jpg", width: 1280, height: 720 },
+      { url: "https://i.ytimg.com/vi/08AUS7lfXCU/hqdefault.jpg", width: 480, height: 360 },
+    ],
+  });
+  assert.equal(mapped.cover, "https://i.ytimg.com/vi/08AUS7lfXCU/hq720.jpg");
 });
 
 const artistFixture = {

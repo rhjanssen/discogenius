@@ -61,8 +61,8 @@ function seed(): { videoId: number; otherVideoId: number; trackId: number } {
       medium_position, position, title
     ) VALUES (1000, 'track-tunnel', 10, 100, 'edition-making-movies', 'rec-audio-tunnel', 1, 1, 'Tunnel of Love');
     INSERT INTO RecordingRelations (
-      source_recording_id, target_recording_id, relation_type, source
-    ) VALUES (200, 100, 'music_video_for', 'musicbrainz');
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (200, 100, 'music_video_for', 'musicbrainz', 0.95);
   `);
   db.prepare(`
     INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, curation_version)
@@ -176,7 +176,11 @@ test("applyManualVideoPlacement selects the video and stamps placement as manual
   const { videoId, trackId } = seed();
   const [videoLibraryId] = resolveVideoLibraryIds(db);
 
-  const applied = applyManualVideoPlacement(db, videoId, { mode: "inline", inlineTrackId: trackId });
+  const applied = applyManualVideoPlacement(db, videoId, {
+    mode: "inline",
+    inlineTrackId: trackId,
+    placementLibraryId: stereoLibraryId(),
+  });
   assert.equal(applied.artistId, "artist-dire");
 
   assert.deepEqual(videoPlacement(db, videoLibraryId, videoId), {
@@ -200,7 +204,11 @@ test("applyManualVideoPlacement selects the video and stamps placement as manual
 test("applyManualVideoPlacement can move a video back to the Video Library", () => {
   const { videoId, trackId } = seed();
   const [videoLibraryId] = resolveVideoLibraryIds(db);
-  applyManualVideoPlacement(db, videoId, { mode: "inline", inlineTrackId: trackId });
+  applyManualVideoPlacement(db, videoId, {
+    mode: "inline",
+    inlineTrackId: trackId,
+    placementLibraryId: stereoLibraryId(),
+  });
   applyManualVideoPlacement(db, videoId, { mode: "separated" });
   assert.deepEqual(videoPlacement(db, videoLibraryId, videoId), { mode: "separated" });
 });
@@ -208,8 +216,101 @@ test("applyManualVideoPlacement can move a video back to the Video Library", () 
 test("applyManualVideoPlacement rejects an unknown inline track", () => {
   const { videoId } = seed();
   assert.throws(
-    () => applyManualVideoPlacement(db, videoId, { mode: "inline", inlineTrackId: 999999 }),
-    /Inline track not found/i,
+    () => applyManualVideoPlacement(db, videoId, {
+      mode: "inline",
+      inlineTrackId: 999999,
+      placementLibraryId: stereoLibraryId(),
+    }),
+    /not a monitored album placement/i,
+  );
+});
+
+test("manual placement moves the prior same-slot video to the Video Library", () => {
+  const { videoId, otherVideoId, trackId } = seed();
+  const [videoLibraryId] = resolveVideoLibraryIds(db);
+  db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, 100, 'provider_video_for', 'tidal', 0.9)
+  `).run(otherVideoId);
+
+  applyManualVideoPlacement(db, videoId, {
+    mode: "inline",
+    inlineTrackId: trackId,
+    placementLibraryId: stereoLibraryId(),
+  });
+  applyManualVideoPlacement(db, otherVideoId, {
+    mode: "inline",
+    inlineTrackId: trackId,
+    placementLibraryId: stereoLibraryId(),
+  });
+
+  assert.deepEqual(videoPlacement(db, videoLibraryId, otherVideoId), {
+    mode: "inline",
+    placementLibraryId: stereoLibraryId(),
+    inlineTrackId: trackId,
+    inlineSlot: "video",
+  });
+  assert.deepEqual(videoPlacement(db, videoLibraryId, videoId), { mode: "separated" });
+  const prior = db.prepare(`
+    SELECT selection_mode, placement_selection_mode, reason
+    FROM LibraryVideos
+    WHERE library_id = ? AND video_recording_id = ?
+  `).get(videoLibraryId, videoId) as {
+    selection_mode: string;
+    placement_selection_mode: string;
+    reason: string;
+  };
+  assert.equal(prior.selection_mode, "manual", "the prior video remains selected");
+  assert.equal(prior.placement_selection_mode, "manual");
+  assert.equal(prior.reason, "manual_slot_replaced");
+});
+
+test("manual slot replacement rolls back when the new placement fails", () => {
+  const { videoId, otherVideoId, trackId } = seed();
+  const [videoLibraryId] = resolveVideoLibraryIds(db);
+  db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, 100, 'provider_video_for', 'tidal', 0.9)
+  `).run(otherVideoId);
+  applyManualVideoPlacement(db, videoId, {
+    mode: "inline",
+    inlineTrackId: trackId,
+    placementLibraryId: stereoLibraryId(),
+  });
+  db.exec(`
+    CREATE TRIGGER fail_replacement_insert
+    BEFORE INSERT ON LibraryVideos
+    WHEN NEW.video_recording_id = ${otherVideoId}
+    BEGIN
+      SELECT RAISE(ABORT, 'simulated replacement failure');
+    END;
+  `);
+
+  assert.throws(() => applyManualVideoPlacement(db, otherVideoId, {
+    mode: "inline",
+    inlineTrackId: trackId,
+    placementLibraryId: stereoLibraryId(),
+  }), /simulated replacement failure/i);
+  assert.deepEqual(videoPlacement(db, videoLibraryId, videoId), {
+    mode: "inline",
+    placementLibraryId: stereoLibraryId(),
+    inlineTrackId: trackId,
+    inlineSlot: "video",
+  }, "the incumbent remains in place when its replacement cannot be written");
+  db.exec("DROP TRIGGER fail_replacement_insert");
+});
+
+test("applyManualVideoPlacement rejects an unrelated monitored track", () => {
+  const { otherVideoId, trackId } = seed();
+  assert.throws(
+    () => applyManualVideoPlacement(db, otherVideoId, {
+      mode: "inline",
+      inlineTrackId: trackId,
+      placementLibraryId: stereoLibraryId(),
+    }),
+    /not a monitored album placement/i,
   );
 });
 
@@ -224,7 +325,7 @@ test("listRelatedInlineTracks offers only exact related audio tracks in a librar
     "a video with no exact recording relation does not offer a studio track");
 });
 
-test("listRelatedInlineTracks offers one File location option per album", () => {
+test("listRelatedInlineTracks preserves every monitored Edition as a placement target", () => {
   const { videoId, trackId } = seed();
   db.exec(`
     INSERT INTO AlbumEditions (
@@ -242,13 +343,44 @@ test("listRelatedInlineTracks offers one File location option per album", () => 
   `).run(stereoLibraryId());
 
   const related = listRelatedInlineTracks(db, videoId);
-  assert.equal(related.length, 1);
-  assert.equal(related[0].id, trackId, "the representative edition is the one File location option");
+  assert.equal(related.length, 2);
+  assert.equal(related[0].id, trackId, "the representative edition is listed first");
+  assert.equal(related[1].id, 1001, "the other monitored Edition remains selectable");
+  assert.equal(related[1].albumId, "rg-making-movies");
+  assert.equal(related[1].editionId, 11);
+});
+
+test("listRelatedInlineTracks offers one target per monitored Edition and library", () => {
+  const { videoId, trackId } = seed();
+  db.exec(`
+    INSERT INTO Recordings (id, mbid, title, artist_mbid, is_video)
+    VALUES (101, 'rec-audio-tunnel-reprise', 'Tunnel of Love (reprise)', 'artist-dire', 0);
+    INSERT INTO Tracks (
+      id, mbid, album_edition_id, recording_id, release_mbid, recording_mbid,
+      medium_position, position, title
+    ) VALUES (
+      1002, 'track-tunnel-reprise', 10, 101, 'edition-making-movies',
+      'rec-audio-tunnel-reprise', 1, 4, 'Tunnel of Love (reprise)'
+    );
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (200, 101, 'provider_video_for', 'tidal', 0.8);
+  `);
+
+  const related = listRelatedInlineTracks(db, videoId);
+  assert.equal(related.length, 1, "two related tracks in one Edition are one placement choice");
+  assert.equal(related[0].id, trackId, "the strongest relation supplies the exact track slot");
 });
 
 test("relatedTracksForVideoDetail still names the current inline track", () => {
   const { otherVideoId, trackId } = seed();
-  applyManualVideoPlacement(db, otherVideoId, { mode: "inline", inlineTrackId: trackId });
+  // Simulate a persisted placement that predates the exact-relation validator.
+  keepLibraryVideo(db, otherVideoId);
+  db.prepare(`
+    UPDATE LibraryVideos
+    SET placement_mode = 'inline', placement_library_id = ?, inline_track_id = ?, inline_slot = 'video'
+    WHERE video_recording_id = ?
+  `).run(stereoLibraryId(), trackId, otherVideoId);
   const related = relatedTracksForVideoDetail(db, otherVideoId, trackId);
   assert.equal(related.length, 1);
   assert.equal(related[0].id, trackId);

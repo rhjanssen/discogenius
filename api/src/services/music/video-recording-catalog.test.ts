@@ -136,6 +136,47 @@ test("later YouTube attach merges onto a TIDAL mint instead of duplicating", () 
   assert.equal(videos[0].yt, "a1xFsoRYrds");
 });
 
+test("coalescing recordings preserves an accepted edge over a rejected survivor edge", () => {
+  const canonical = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_mbid, title, length_ms, is_video, video_variant, metadata_status
+    ) VALUES ('mb-video-merge', 'artist-mbid', 'Pompeii', 232000, 1, 'video', 'musicbrainz')
+    RETURNING id
+  `).get() as { id: number };
+  const duplicate = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status
+    ) VALUES ('artist-mbid', 'Pompeii', 232000, 1, 'video', 'provider_catalog')
+    RETURNING id
+  `).get() as { id: number };
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal",
+    providerVideoId: "tidal-merge",
+    recordingId: duplicate.id,
+    title: "Pompeii",
+    durationMs: 232000,
+  });
+  const providerItem = dbModule.db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = 'tidal-merge'
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'rejected', 'automatic', 0, 'superseded', 1)
+  `).run(providerItem.id, canonical.id);
+
+  assert.equal(catalog.coalesceVideoRecordings(canonical.id, duplicate.id), canonical.id);
+  const match = dbModule.db.prepare(`
+    SELECT recording_id AS recordingId, match_state AS matchState
+    FROM ProviderVideoMatches
+    WHERE provider_video_item_id = ? AND match_state = 'accepted'
+  `).get(providerItem.id);
+  assert.deepEqual(match, { recordingId: canonical.id, matchState: "accepted" });
+  assert.equal(dbModule.db.prepare("SELECT id FROM Recordings WHERE id = ?").get(duplicate.id), undefined);
+});
+
 test("later MusicBrainz attach merges onto a YouTube-only row", () => {
   const ytOnly = catalog.mintVideoRecording({
     artistMbid: "artist-mbid",

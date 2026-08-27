@@ -60,7 +60,15 @@ function durationSeconds(raw: UnknownRecord): number {
   return parseDuration(raw.duration_seconds ?? raw.lengthSeconds ?? raw.duration);
 }
 
-function imageFrom(raw: UnknownRecord): string | null {
+function youtubeStillUrl(videoId: string | null | undefined): string | null {
+  const id = String(videoId || "").trim();
+  if (!/^[A-Za-z0-9_-]{11}$/u.test(id)) return null;
+  return `https://i.ytimg.com/vi/${id}/hq720.jpg`;
+}
+
+function imageFrom(raw: UnknownRecord, watchId?: string | null): string | null {
+  const ownedStill = youtubeStillUrl(watchId);
+  if (ownedStill) return ownedStill;
   const direct = nullableText(raw.picture, raw.cover, raw.image, raw.thumbnailUrl);
   if (direct) return normalizeYouTubeThumb(direct);
   const thumbnailContainer = record(raw.thumbnail);
@@ -294,7 +302,7 @@ export function mapYouTubeMusicVideo(rawValue: unknown, fallbackArtist?: Provide
     artists,
     duration: durationSeconds(merged) || durationSeconds(videoDetails) || null,
     releaseDate: releaseDate(merged) || releaseDate(microformat),
-    cover: imageFrom(merged) || imageFrom(videoDetails),
+    cover: youtubeStillUrl(providerId) || imageFrom(merged, providerId) || imageFrom(videoDetails, providerId),
     // Prefer Innertube streamingData height (catalog); never invent TIDAL MP4_*.
     quality: youtubeVideoQualityTagFromHeight(probedHeight),
     explicit: typeof merged.isExplicit === "boolean" ? merged.isExplicit : null,

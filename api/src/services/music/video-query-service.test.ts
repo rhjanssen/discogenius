@@ -456,9 +456,10 @@ test("video detail appears-on follows related audio via provider_video_for, not 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
 
   assert.deepEqual(detail?.albums, [{
-    id: "rg-apple",
-    title: "Apple Album",
-    cover_id: "/media-cover/Albums/rg-apple/cover.jpg?source=canonical",
+      id: "rg-apple",
+      title: "Apple Album",
+      is_monitored: false,
+      cover_id: "/media-cover/Albums/rg-apple/cover.jpg?source=canonical",
     cover_art_url: "/media-cover/Albums/rg-apple/cover.jpg?source=canonical",
     track_mbid: "track-apple-1",
     track_number: 1,

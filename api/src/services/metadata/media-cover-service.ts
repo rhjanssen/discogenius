@@ -14,6 +14,7 @@ import {
   MediaCoverSelectionRepository,
   type MediaCoverSourceKind,
 } from "./media-cover-selection-repository.js";
+import { parseYouTubeWatchId } from "../music/video-recording-catalog.js";
 
 export type ServarrMetadataImage = {
   Url?: string | null;
@@ -2478,6 +2479,7 @@ export async function resolveVideoArtwork(options: {
         SELECT
           recording.cover_image_url,
           recording.cover_image_id,
+          recording.youtube_video_id,
           provider_item.provider,
           provider_item.provider_id,
           provider_item.cover_id AS provider_asset_id,
@@ -2504,6 +2506,28 @@ export async function resolveVideoArtwork(options: {
       `).get(normalizedVideoId) as Record<string, any> | undefined;
 
       storedSource = normalizeArtworkUrl(row?.cover_image_url) || null;
+      const watchId = parseYouTubeWatchId(row?.youtube_video_id)
+        || ((String(row?.provider || "").includes("youtube")
+          ? parseYouTubeWatchId(row?.provider_id)
+          : null));
+      if (watchId) {
+        const youtubeStill = `https://i.ytimg.com/vi/${watchId}/maxresdefault.jpg`;
+        const storedWatch = storedSource?.match(/i\.ytimg\.com\/vi\/([^/?#]+)/i)?.[1];
+        if (storedWatch !== watchId) {
+          storedSource = youtubeStill;
+          // The public contract carries a source-derived revision query. Keep
+          // the stored source aligned with the corrected cache so browsers
+          // that previously received an immutable local URL fetch the new
+          // bytes instead of displaying the old related-video thumbnail for a
+          // year from cache.
+          db.prepare(`
+            UPDATE Recordings
+            SET cover_image_url = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+              AND is_video = 1
+          `).run(youtubeStill, normalizedVideoId);
+        }
+      }
       if (row) {
         providerCandidates = [
           ...videoProviderArtworkCandidatesFromRow(row),

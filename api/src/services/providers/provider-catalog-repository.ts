@@ -285,11 +285,37 @@ export class ProviderCatalogRepository {
         spatial_format, provider_quality_label, availability,
         availability_reason, verified_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider_item_id, variant_key) DO UPDATE SET
+        quality_class = excluded.quality_class,
+        codec = excluded.codec,
+        container = excluded.container,
+        lossless = excluded.lossless,
+        bit_depth = excluded.bit_depth,
+        sample_rate = excluded.sample_rate,
+        bitrate = excluded.bitrate,
+        channel_count = excluded.channel_count,
+        channel_layout = excluded.channel_layout,
+        spatial_format = excluded.spatial_format,
+        provider_quality_label = excluded.provider_quality_label,
+        availability = excluded.availability,
+        availability_reason = excluded.availability_reason,
+        verified_at = excluded.verified_at,
+        updated_at = CURRENT_TIMESTAMP
       RETURNING id
     `);
     return this.db.transaction(() => {
-      this.db.prepare("DELETE FROM ProviderItemAudioVariants WHERE provider_item_id = ?")
-        .run(providerItemId);
+      // Variant ids are durable provenance. Acquisition plans and imported files
+      // retain the exact source row, so deleting and recreating an unchanged tier
+      // both breaks identity and violates the plan foreign key. Retire the old
+      // snapshot first, then reactivate/upsert everything the provider reports.
+      this.db.prepare(`
+        UPDATE ProviderItemAudioVariants
+        SET availability = 'unavailable',
+            availability_reason = 'Not reported by the latest provider refresh',
+            verified_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE provider_item_id = ?
+      `).run(providerItemId);
       return variants.map((variant) => {
         const expectedFacts = expectedFactsForProviderTier(
           context?.provider,

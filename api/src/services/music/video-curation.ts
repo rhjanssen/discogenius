@@ -35,6 +35,17 @@ export interface VideoCandidate {
   canonicalType: CanonicalVideoType;
   /** The exact audio Recording this video is a video OF, when a relation exists. */
   audioRecordingId: number | null;
+  /**
+   * Every exact audio relation known for this video, keyed by canonical audio
+   * Recording. A provider video can legitimately point at equivalent
+   * Recordings from several releases. Placement must not discard a monitored
+   * target merely because an equally strong unmonitored relation has a lower
+   * database id.
+   */
+  audioRelations?: ReadonlyMap<number, {
+    confidence: number;
+    accepted: boolean;
+  }>;
   /** 0..1 relation strength; 0 when there is no relation. */
   relationConfidence: number;
   /** The relation was accepted or entered by hand rather than inferred. */
@@ -47,6 +58,19 @@ export interface VideoCandidate {
   providerQualityRank: number;
   /** The user picked this one; automation may not demote it. */
   manuallySelected: boolean;
+}
+
+function relationForTrack(
+  candidate: VideoCandidate,
+  track: InlinePlacementCandidate,
+): { confidence: number; accepted: boolean } | null {
+  const relation = candidate.audioRelations?.get(track.audioRecordingId);
+  if (relation) return relation;
+  if (candidate.audioRecordingId !== track.audioRecordingId) return null;
+  return {
+    confidence: candidate.relationConfidence,
+    accepted: candidate.relationAccepted,
+  };
 }
 
 /**
@@ -113,8 +137,7 @@ export function candidateFitsTrack(
   // Either the video IS a track of that Edition, or it is a video of the exact
   // audio Recording the Track carries. Nothing weaker qualifies.
   return candidate.directEditionIds.has(track.editionId)
-    || (candidate.audioRecordingId != null
-      && candidate.audioRecordingId === track.audioRecordingId);
+    || relationForTrack(candidate, track) != null;
 }
 
 /**
@@ -130,17 +153,20 @@ export function compareInlineCandidates(
   track: InlinePlacementCandidate,
 ): number {
   const exactRelation = (candidate: VideoCandidate): number =>
-    candidate.audioRecordingId != null
-      && candidate.audioRecordingId === track.audioRecordingId ? 0 : 1;
+    relationForTrack(candidate, track) ? 0 : 1;
   const directMembership = (candidate: VideoCandidate): number =>
     candidate.directEditionIds.has(track.editionId) ? 0 : 1;
+  const relationAccepted = (candidate: VideoCandidate): number =>
+    Number(relationForTrack(candidate, track)?.accepted ?? candidate.relationAccepted);
+  const relationConfidence = (candidate: VideoCandidate): number =>
+    relationForTrack(candidate, track)?.confidence ?? candidate.relationConfidence;
 
   return exactRelation(left) - exactRelation(right)
     || directMembership(left) - directMembership(right)
     || releaseContextRank(left.canonicalType, track.releaseKind)
       - releaseContextRank(right.canonicalType, track.releaseKind)
-    || Number(right.relationAccepted) - Number(left.relationAccepted)
-    || right.relationConfidence - left.relationConfidence
+    || relationAccepted(right) - relationAccepted(left)
+    || relationConfidence(right) - relationConfidence(left)
     || Number(right.providerAvailable) - Number(left.providerAvailable)
     || left.providerQualityRank - right.providerQualityRank
     || left.videoRecordingId - right.videoRecordingId;
@@ -161,8 +187,7 @@ export function comparePlacementCandidates(
   const directMembership = (track: InlinePlacementCandidate): number =>
     candidate.directEditionIds.has(track.editionId) ? 0 : 1;
   const exactRelation = (track: InlinePlacementCandidate): number =>
-    candidate.audioRecordingId != null
-      && candidate.audioRecordingId === track.audioRecordingId ? 0 : 1;
+    relationForTrack(candidate, track) ? 0 : 1;
 
   return directMembership(left) - directMembership(right)
     || exactRelation(left) - exactRelation(right)

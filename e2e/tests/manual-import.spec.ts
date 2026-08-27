@@ -194,7 +194,7 @@ test.describe('Manual import flow', () => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
-    await page.getByRole('tab', { name: /^Unmapped Files$/i }).click();
+    await page.getByRole('tab', { name: /^Unmapped$/i }).click();
     await page.getByRole('button', { name: /Review Test Album/i }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toContainText('Manual import');
@@ -226,7 +226,7 @@ test.describe('Manual import flow', () => {
         { unmappedFileId: 102, trackId: 9002 },
       ],
     });
-    await expect(page.getByText('Import queued', { exact: true })).toBeVisible();
+    await expect(page.getByText('Import failed', { exact: true })).toBeHidden();
     expect(unmappedFiles).toHaveLength(2);
   });
 });

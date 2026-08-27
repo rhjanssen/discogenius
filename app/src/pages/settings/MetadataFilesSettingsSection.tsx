@@ -115,10 +115,10 @@ export const MetadataFilesSettingsSection = ({
                             })}
                             className={styles.control}
                         >
-                            <option value="no">Off</option>
+                            <option value="no">Never</option>
                             <option value="new_files">New downloads only</option>
-                            <option value="all_files">All files</option>
-                            <option value="sync">New files, and after metadata refresh</option>
+                            <option value="all_files">All files, at import</option>
+                            <option value="sync">All files, keep in sync with MusicBrainz</option>
                         </Select>
                     </div>
                 </div>
@@ -189,8 +189,8 @@ export const MetadataFilesSettingsSection = ({
                     onChange: (checked) => void updateMetadataSettings({ embed_video_thumbnail: checked }),
                 })}
                 {renderToggleRow({
-                    title: "Fingerprint imported files",
-                    description: "For files you already have, use audio fingerprinting to confirm the correct track before tagging.",
+                    title: "Fingerprint unidentified files",
+                    description: "During retagging, use AcoustID for imported audio that still has no MusicBrainz recording ID. This setting does not control Unmapped review.",
                     checked: metadataSettings?.enable_fingerprinting === true,
                     onChange: (checked) => void updateMetadataSettings({ enable_fingerprinting: checked }),
                 })}

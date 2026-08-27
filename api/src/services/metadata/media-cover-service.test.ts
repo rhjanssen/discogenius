@@ -767,6 +767,58 @@ test("ensureCachedMediaCover falls back to a lower-res YouTube thumbnail when hq
   }
 });
 
+test("video artwork replaces a related-video cache with the recording's YouTube still", async () => {
+  const watchId = "08AUS7lfXCU";
+  const wrongWatchId = "foXqHUopCJU";
+  const image = jpeg.encode({
+    width: 1280,
+    height: 720,
+    data: Buffer.alloc(1280 * 720 * 4, 140),
+  }, 92).data;
+  const requests: string[] = [];
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("video-watch-owner", "Video Watch Owner");
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, is_video, metadata_status, youtube_video_id, cover_image_url
+    ) VALUES (?, ?, 1, 'youtube', ?, ?)
+    RETURNING id
+  `).get(
+    "video-watch-owner",
+    "Distorted Light Beam",
+    watchId,
+    `https://i.ytimg.com/vi/${wrongWatchId}/hq720.jpg`,
+  ) as { id: number };
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    requests.push(String(url));
+    return new Response(image, { status: 200, headers: { "content-type": "image/jpeg" } });
+  }) as typeof fetch;
+
+  try {
+    const cached = await mediaCoverServiceModule.resolveVideoArtwork({ videoId: recording.id });
+    assert.equal(cached, `/media-cover/Videos/${recording.id}/cover.jpg`);
+    assert.equal(requests[0], `https://i.ytimg.com/vi/${watchId}/maxresdefault.jpg`);
+
+    const markerPath = path.join(
+      tempDir,
+      "media-cover",
+      "Videos",
+      String(recording.id),
+      ".cover.source.json",
+    );
+    const marker = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
+    assert.equal(marker.url, `https://i.ytimg.com/vi/${watchId}/maxresdefault.jpg`);
+    assert.deepEqual(
+      dbModule.db.prepare("SELECT cover_image_url FROM Recordings WHERE id = ?").get(recording.id),
+      { cover_image_url: `https://i.ytimg.com/vi/${watchId}/maxresdefault.jpg` },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("provider video artwork can resolve from provider id when no image id is stored", async () => {
   const providerModule = await import("../providers/index.js");
   const image = jpeg.encode({

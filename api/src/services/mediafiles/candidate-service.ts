@@ -3,9 +3,10 @@ import { db } from "../../database.js";
 /**
  * A catalog-only candidate release group discovered for a group of local files.
  *
- * Mirrors the shape Lidarr's identification pipeline consumes from
- * CandidateService.GetDbCandidatesFromTags — a candidate album (release group)
- * resolved purely from the local database, never a streaming provider. The
+ * Mirrors the shape Lidarr's local-candidate stage consumes from
+ * CandidateService.GetDbCandidatesFromTags: a candidate album (release group)
+ * resolved purely from the local database. Lidarr also has a separate metadata-
+ * server fallback; Discogenius does not yet implement that stage here. The
  * fields intentionally match what IdentificationService.getAlbumScore reads
  * (title/name, artist_name/artist.name, num_tracks) so these candidates can be
  * scored by the existing Munkres pipeline unchanged.
@@ -40,14 +41,13 @@ function toFtsPrefixQuery(value: string): string | null {
 }
 
 /**
- * Catalog-only candidate discovery (Lidarr: CandidateService).
+ * Local-catalog candidate discovery (Lidarr: CandidateService.GetDbCandidates).
  *
  * Given the artist/album tags detected for a folder group of local files, this
  * returns candidate release groups drawn exclusively from the local catalog
  * (Albums = release groups, Artists, AlbumEditions, CatalogSearch FTS). It never
- * calls a streaming provider — the streaming provider is only ever used to
- * *download* audio, not to identify local files, exactly like Lidarr identifies
- * against its own MusicBrainz-synced database.
+ * calls a streaming provider. A future remote fallback must use the configured
+ * canonical catalog source, not a streaming provider.
  */
 export class CatalogCandidateService {
     static getReleaseGroupCandidates(opts: {

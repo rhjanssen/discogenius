@@ -578,7 +578,9 @@ export const useDashboardStyles = makeStyles({
         },
     },
     activityLeading: {
-        width: "28px",
+        // Two 24 px Fluent icons plus the 4 px XS gap. The previous 28 px
+        // column centered 52 px of content and the list's overflow clipped it.
+        width: "52px",
         textAlign: "center",
         flexShrink: 0,
         paddingTop: 0,
@@ -586,13 +588,13 @@ export const useDashboardStyles = makeStyles({
     activityLeadingContent: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "flex-start",
         gap: tokens.spacingHorizontalXS,
     },
     activityLeadingContentCompact: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "flex-start",
         gap: tokens.spacingHorizontalXS,
     },
     activityIconOffset: {

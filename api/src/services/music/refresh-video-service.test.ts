@@ -183,6 +183,383 @@ test("a provider-supplied recording MBID is evidence and cannot mint with that M
   assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 1);
 });
 
+test("Apple and TIDAL Distorted Light Beam attach to the YouTube catalog row even when yt duration is 4s short", () => {
+  const youtubeId = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status, youtube_video_id
+    ) VALUES ('artist-mbid', 'Distorted Light Beam', 178000, 1, 'video', 'youtube', '08AUS7lfXCU')
+    RETURNING id
+  `).get() as { id: number };
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "apple-music",
+    provider_id: "1573569906",
+    title: "Distorted Light Beam",
+    artist_name: "Bastille",
+    duration: 182,
+  }, {
+    provider: "tidal",
+    provider_id: "188763691",
+    title: "Distorted Light Beam",
+    artist_name: "Bastille",
+    duration: 182,
+  }]);
+
+  assert.equal(acceptedVideoMatch("apple-music", "1573569906")?.recordingId, youtubeId.id);
+  assert.equal(acceptedVideoMatch("tidal", "188763691")?.recordingId, youtubeId.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 1);
+});
+
+test("repair coalesces legacy Apple and TIDAL twins onto YouTube while preserving the second TIDAL cut", () => {
+  const apple = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status
+    ) VALUES ('artist-mbid', 'Distorted Light Beam', 182000, 1, 'video', 'provider_catalog')
+    RETURNING id
+  `).get() as { id: number };
+  const tidalTwin = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status
+    ) VALUES ('artist-mbid', 'Distorted Light Beam', 182000, 1, 'video', 'provider_catalog')
+    RETURNING id
+  `).get() as { id: number };
+  const tidalCut = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status
+    ) VALUES ('artist-mbid', 'Distorted Light Beam', 181000, 1, 'video', 'provider_catalog')
+    RETURNING id
+  `).get() as { id: number };
+  const youtube = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status, youtube_video_id
+    ) VALUES ('artist-mbid', 'Distorted Light Beam', 178000, 1, 'video', 'youtube', '08AUS7lfXCU')
+    RETURNING id
+  `).get() as { id: number };
+  seedLegacyNoncanonicalVideoMatch({
+    provider: "apple-music",
+    providerVideoId: "1573569906",
+    recordingId: apple.id,
+    title: "Distorted Light Beam",
+    durationMs: 182000,
+  });
+  seedLegacyNoncanonicalVideoMatch({
+    provider: "tidal",
+    providerVideoId: "188763691",
+    recordingId: tidalTwin.id,
+    title: "Distorted Light Beam",
+    durationMs: 182000,
+  });
+  seedLegacyNoncanonicalVideoMatch({
+    provider: "tidal",
+    providerVideoId: "192184461",
+    recordingId: tidalCut.id,
+    title: "Distorted Light Beam",
+    durationMs: 181000,
+  });
+  seedLegacyNoncanonicalVideoMatch({
+    provider: "youtube-music",
+    providerVideoId: "08AUS7lfXCU",
+    recordingId: youtube.id,
+    title: "Distorted Light Beam",
+    durationMs: 178000,
+  });
+
+  // An artist refresh invokes the same stored-assignment repair pass used by
+  // Refresh & Scan, even when this provider response contains no new videos.
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", []);
+
+  assert.equal(acceptedVideoMatch("apple-music", "1573569906")?.recordingId, youtube.id);
+  assert.equal(acceptedVideoMatch("tidal", "188763691")?.recordingId, youtube.id);
+  assert.equal(acceptedVideoMatch("youtube-music", "08AUS7lfXCU")?.recordingId, youtube.id);
+  assert.equal(acceptedVideoMatch("tidal", "192184461")?.recordingId, tidalCut.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+});
+
+test("repair moves Apple live offer off the YouTube official video onto the provider live cut", () => {
+  const official = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant,
+      metadata_status, youtube_video_id, release_date
+    ) VALUES (
+      'artist-mbid', 'Distorted Light Beam', 178000, 1, 'video',
+      'youtube', '08AUS7lfXCU', '2021-06-23'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  const live = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant,
+      metadata_status, release_date
+    ) VALUES (
+      'artist-mbid', 'Distorted Light Beam', 181000, 1, 'video',
+      'provider_catalog', '2021-06-23'
+    )
+    RETURNING id
+  `).get() as { id: number };
+
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music",
+    providerVideoId: "08AUS7lfXCU",
+    recordingId: official.id,
+    title: "Distorted Light Beam",
+    durationMs: 178000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal",
+    providerVideoId: "192184461",
+    recordingId: live.id,
+    title: "Distorted Light Beam",
+    durationMs: 181000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "apple-music",
+    providerVideoId: "1578311154",
+    recordingId: official.id,
+    title: "Distorted Light Beam (Live)",
+    durationMs: 181000,
+  });
+  dbModule.db.prepare(`
+    UPDATE ProviderItems
+    SET release_date = '2021-06-23'
+    WHERE entity_type = 'video'
+      AND provider_id IN ('192184461', '1578311154')
+  `).run();
+
+  // Refresh re-evaluates every stored automatic edge. The explicit Apple Live
+  // title can pair with the same-date, same-duration bare TIDAL performance,
+  // but not the three-second-short YouTube official cut.
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", []);
+
+  assert.equal(acceptedVideoMatch("apple-music", "1578311154")?.recordingId, live.id);
+  assert.equal(acceptedVideoMatch("tidal", "192184461")?.recordingId, live.id);
+  assert.equal(acceptedVideoMatch("youtube-music", "08AUS7lfXCU")?.recordingId, official.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+  const repairedLive = dbModule.db.prepare(`
+    SELECT title, video_variant AS variant
+    FROM Recordings
+    WHERE id = ?
+  `).get(live.id) as { title: string; variant: string };
+  assert.deepEqual(repairedLive, {
+    title: "Distorted Light Beam (Live)",
+    variant: "live",
+  });
+});
+
+test("one repair pass untangles displaced official and live provider video offers", () => {
+  const official = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant,
+      metadata_status, youtube_video_id, release_date
+    ) VALUES (
+      'artist-mbid', 'Distorted Light Beam', 178000, 1, 'video',
+      'youtube', '08AUS7lfXCU', '2022-01-01'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  const bareLive = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant,
+      metadata_status, release_date
+    ) VALUES (
+      'artist-mbid', 'Distorted Light Beam', 181000, 1, 'video',
+      'provider_catalog', '2021-06-23'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  const explicitLive = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant,
+      metadata_status, release_date
+    ) VALUES (
+      'artist-mbid', 'Distorted Light Beam (Live)', 181000, 1, 'live',
+      'provider_catalog', '2021-06-23'
+    )
+    RETURNING id
+  `).get() as { id: number };
+
+  const offers = [
+    ["youtube-music", "08AUS7lfXCU", official.id, "Distorted Light Beam", 178000],
+    ["tidal", "188763691", official.id, "Distorted Light Beam", 182000],
+    ["tidal", "192184461", bareLive.id, "Distorted Light Beam", 181000],
+    // This is the final wrong live state observed in production: Apple official
+    // is stranded with the bare TIDAL performance and Apple Live is separate.
+    ["apple-music", "1573569906", bareLive.id, "Distorted Light Beam", 182000],
+    ["apple-music", "1578311154", explicitLive.id, "Distorted Light Beam (Live)", 181000],
+  ] as const;
+  for (const [provider, providerVideoId, recordingId, title, durationMs] of offers) {
+    seedAcceptedProviderVideoMatch(dbModule.db, {
+      provider,
+      providerVideoId,
+      recordingId,
+      title,
+      durationMs,
+    });
+  }
+  dbModule.db.prepare(`
+    UPDATE ProviderItems
+    SET release_date = '2021-06-23'
+    WHERE entity_type = 'video'
+      AND provider != 'youtube-music'
+  `).run();
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", []);
+
+  assert.equal(acceptedVideoMatch("apple-music", "1573569906")?.recordingId, official.id);
+  assert.equal(acceptedVideoMatch("tidal", "188763691")?.recordingId, official.id);
+  assert.equal(acceptedVideoMatch("youtube-music", "08AUS7lfXCU")?.recordingId, official.id);
+  assert.equal(acceptedVideoMatch("apple-music", "1578311154")?.recordingId, bareLive.id);
+  assert.equal(acceptedVideoMatch("tidal", "192184461")?.recordingId, bareLive.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+  const repairedLive = dbModule.db.prepare(`
+    SELECT title, video_variant AS variant
+    FROM Recordings
+    WHERE id = ?
+  `).get(bareLive.id) as { title: string; variant: string };
+  assert.deepEqual(repairedLive, {
+    title: "Distorted Light Beam (Live)",
+    variant: "live",
+  });
+
+  const matchRowsAfterRepair = countRows("SELECT COUNT(*) AS count FROM ProviderVideoMatches");
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", []);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM ProviderVideoMatches"), matchRowsAfterRepair);
+  assert.equal(acceptedVideoMatch("apple-music", "1573569906")?.recordingId, official.id);
+  assert.equal(acceptedVideoMatch("apple-music", "1578311154")?.recordingId, bareLive.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+});
+
+test("repair separates two Apple cuts initially attached to the official video", () => {
+  const official = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant,
+      metadata_status, youtube_video_id, release_date
+    ) VALUES (
+      'artist-mbid', 'Distorted Light Beam', 178000, 1, 'video',
+      'youtube', '08AUS7lfXCU', '2022-01-01'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  const live = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant,
+      metadata_status, release_date
+    ) VALUES (
+      'artist-mbid', 'Distorted Light Beam', 181000, 1, 'video',
+      'provider_catalog', '2021-06-23'
+    )
+    RETURNING id
+  `).get() as { id: number };
+
+  // Deliberately insert in the reverse of provider-id order. Repair ordering is
+  // based on catalog authority and explicit variant evidence, not insertion or
+  // provider-item timestamps.
+  const offers = [
+    ["apple-music", "1578311154", official.id, "Distorted Light Beam (Live)", 181000],
+    ["youtube-music", "08AUS7lfXCU", official.id, "Distorted Light Beam", 178000],
+    ["tidal", "192184461", live.id, "Distorted Light Beam", 181000],
+    ["tidal", "188763691", official.id, "Distorted Light Beam", 182000],
+    ["apple-music", "1573569906", official.id, "Distorted Light Beam", 182000],
+  ] as const;
+  for (const [provider, providerVideoId, recordingId, title, durationMs] of offers) {
+    seedAcceptedProviderVideoMatch(dbModule.db, {
+      provider,
+      providerVideoId,
+      recordingId,
+      title,
+      durationMs,
+    });
+  }
+  dbModule.db.prepare(`
+    UPDATE ProviderItems
+    SET release_date = CASE provider
+      WHEN 'youtube-music' THEN '2022-01-01'
+      ELSE '2021-06-23'
+    END
+    WHERE entity_type = 'video'
+  `).run();
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", []);
+
+  assert.equal(acceptedVideoMatch("apple-music", "1573569906")?.recordingId, official.id);
+  assert.equal(acceptedVideoMatch("tidal", "188763691")?.recordingId, official.id);
+  assert.equal(acceptedVideoMatch("youtube-music", "08AUS7lfXCU")?.recordingId, official.id);
+  assert.equal(acceptedVideoMatch("apple-music", "1578311154")?.recordingId, live.id);
+  assert.equal(acceptedVideoMatch("tidal", "192184461")?.recordingId, live.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+});
+
+test("repair splits a later-dated same-provider alternate from its canonical video", () => {
+  const canonicalId = insertCanonicalVideo({
+    mbid: "mb-send-them-off",
+    title: "Send Them Off!",
+    lengthMs: 225000,
+    releaseDate: "2016-09-07",
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal",
+    providerVideoId: "65489061",
+    recordingId: canonicalId,
+    title: "Send Them Off!",
+    durationMs: 224000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal",
+    providerVideoId: "65933630",
+    recordingId: canonicalId,
+    title: "Send Them Off!",
+    durationMs: 226000,
+  });
+  dbModule.db.prepare(`
+    UPDATE ProviderItems
+    SET release_date = CASE provider_id
+      WHEN '65489061' THEN '2016-09-07'
+      WHEN '65933630' THEN '2016-10-14'
+    END
+    WHERE provider = 'tidal'
+      AND entity_type = 'video'
+      AND provider_id IN ('65489061', '65933630')
+  `).run();
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", []);
+
+  assert.equal(acceptedVideoMatch("tidal", "65489061")?.recordingId, canonicalId);
+  assert.notEqual(acceptedVideoMatch("tidal", "65933630")?.recordingId, canonicalId);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+});
+
+test("same-title 181s and 182s provider cuts do not mint a third recording for a 182s offer", () => {
+  const first = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status
+    ) VALUES ('artist-mbid', 'Distorted Light Beam', 182000, 1, 'video', 'provider_catalog')
+    RETURNING id
+  `).get() as { id: number };
+  const second = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status
+    ) VALUES ('artist-mbid', 'Distorted Light Beam', 181000, 1, 'video', 'provider_catalog')
+    RETURNING id
+  `).get() as { id: number };
+  seedLegacyNoncanonicalVideoMatch({
+    provider: "tidal",
+    providerVideoId: "tidal-dlb-181",
+    recordingId: second.id,
+    title: "Distorted Light Beam",
+    durationMs: 181000,
+  });
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "apple-music",
+    provider_id: "apple-dlb",
+    title: "Distorted Light Beam",
+    artist_name: "Bastille",
+    duration: 182,
+  }]);
+
+  assert.equal(acceptedVideoMatch("apple-music", "apple-dlb")?.recordingId, first.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 2);
+});
+
 test("title matching links only the compatible cut and preserves canonical facts", () => {
   const canonicalId = insertCanonicalVideo({
     mbid: "mb-video-pompeii",
@@ -521,6 +898,13 @@ test("missing quality backfill probes only accepted video offers", async () => {
     recordingId: canonicalId,
     title: "Pompeii",
   });
+  dbModule.db.prepare(`
+    UPDATE ProviderItems
+    SET video_quality = 'YOUTUBE_LOSSY'
+    WHERE provider = 'youtube-music'
+      AND entity_type = 'video'
+      AND provider_id = 'youtube-backfill'
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
     VALUES ('youtube-music', 'video', 'youtube-unmatched', 'Unknown Provider Cut')

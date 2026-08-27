@@ -4,6 +4,71 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.13.2] - 2026-08-28
+
+Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a
+reset.
+
+### Added
+
+- **Album-aware video placement.** The video page now keeps one card per
+  release group in "Appears on". The folder action selects the exact monitored
+  edition and stereo-library root, and opens a radio menu only when that album
+  has several valid destinations. Unmonitored albums stay behind an explicit
+  reveal instead of flooding the page. Placement considers every exact audio
+  relation, and manually taking an occupied album slot moves the previous video
+  to the Video Library without unmonitoring it.
+
+### Changed
+
+- **Mobile Library controls.** Artists, albums, tracks, and videos remain
+  visible as compact Fluent tabs. Import, selection, sorting, filters, and view
+  options move into one actions menu instead of forming a second toolbar row.
+- **Artist actions.** Monitoring policy stays under the Monitored button. The
+  mobile overflow no longer duplicates those controls or presents "Delete
+  artist" as a second name for unmonitoring. File deletion remains an explicit
+  action.
+- **Metadata copy.** Tag-writing choices now say when they apply. The sync
+  policy also tags manually imported files, and fingerprinting copy states that
+  AcoustID runs only for audio still missing a MusicBrainz recording ID.
+
+### Fixed
+
+- **Video offer identity and ranking.** YouTube album-track counterparts no
+  longer copy the audio-only `YOUTUBE_LOSSY` tier into video resolution. Refresh
+  repairs existing rows by probing the real height, so FHD YouTube AV1/VP9
+  offers rank above equal-resolution H.264 offers. Distinct same-provider IDs
+  with incompatible known release dates stay separate instead of hiding a
+  remix or alternate cut behind the main video. Provider matching now compares
+  sibling offers directly, uses stable provider evidence instead of write order,
+  and iterates specific variants before generic titles. Refresh converges legacy
+  official/live mix-ups into the correct cross-provider recording clusters.
+- **Video artwork.** YouTube stills are derived from each video's own watch ID.
+  Refresh corrects legacy related-video thumbnails, replaces the cached source,
+  and makes stable cover aliases revalidate rather than caching wrong artwork
+  for a year. Video-recording merges also preserve the stronger accepted match
+  decision.
+- **Artwork and playback proxies.** The SSRF-safe pinned DNS lookup now follows
+  Node 22's `all: true` callback contract. HLS segments and remote artwork no
+  longer fail with `Invalid IP address: undefined`.
+- **Manual import and cleanup.** Curation no longer deletes files or sidecars as
+  a side effect. Cleanup stays in explicit removal and housekeeping workflows,
+  while manual imports keep the configured tags and file identity.
+- **Provider refresh provenance.** Audio capability refreshes now update stable
+  variant rows and retire missing tiers instead of deleting rows referenced by
+  acquisition plans. Live artist refreshes no longer hit a foreign-key failure.
+- **Refresh workflow state.** Artist pages remain busy through provider
+  matching and the artist-scoped disk scan, preventing a second overlapping
+  Refresh & Scan run.
+- **Concurrent database writes.** SQLite statements that write through
+  `get()` or `all()` (including `INSERT ... RETURNING`) now use the same
+  cross-worker mutex as `run()`. Metadata backfill no longer exhausts retries
+  when provider refreshes are writing concurrently.
+- **Dashboard Activity.** Status and command icons have a full-width Fluent
+  leading slot, queued work uses the same neutral clock in Activity and Queue,
+  and retry buttons use the matching 20-pixel action size. Mobile and desktop
+  rows no longer clip the icons.
+
 ## [2.13.1] - 2026-08-26
 
 Schema 46 is unchanged.

@@ -38,6 +38,7 @@ import {
   CloudArrowDown24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
+import type { ReactElement } from "react";
 import type { StatusFilters } from "@/utils/statusFilters";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
@@ -91,6 +92,8 @@ interface FilterMenuProps {
     // Styling
     className?: string;  // Optional className for the trigger button
     hideLabelOnMobile?: boolean;
+    /** Optional nested-menu trigger, such as a MenuItem in an overflow menu. */
+    trigger?: ReactElement;
 }
 
 const useStyles = makeStyles({
@@ -133,6 +136,7 @@ const FilterMenu = ({
     onOpenChange,
     className,
     hideLabelOnMobile = false,
+    trigger,
 }: FilterMenuProps) => {
     const styles = useStyles();
     const sectionLabelStyle = {
@@ -213,21 +217,23 @@ const FilterMenu = ({
             onCheckedValueChange={handleCheckedChange}
             {...(controlledOpen !== undefined ? { open: controlledOpen, onOpenChange: (_e: any, data: any) => onOpenChange?.(data.open) } : {})}
         >
-            <MenuTrigger>
-                <Button
-                    icon={<Filter24 />}
-                    appearance="subtle"
-                    className={mergeClasses(
-                        className,
-                        styles.triggerButton,
-                        activeFilterCount > 0 ? styles.activeTriggerButton : undefined,
-                    )}
-                    aria-label={`Filters${activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}`}
-                >
-                    <span className={hideLabelOnMobile ? styles.mobileHiddenLabel : undefined}>
-                        Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
-                    </span>
-                </Button>
+            <MenuTrigger disableButtonEnhancement={Boolean(trigger)}>
+                {trigger ?? (
+                    <Button
+                        icon={<Filter24 />}
+                        appearance="subtle"
+                        className={mergeClasses(
+                            className,
+                            styles.triggerButton,
+                            activeFilterCount > 0 ? styles.activeTriggerButton : undefined,
+                        )}
+                        aria-label={`Filters${activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}`}
+                    >
+                        <span className={hideLabelOnMobile ? styles.mobileHiddenLabel : undefined}>
+                            Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+                        </span>
+                    </Button>
+                )}
             </MenuTrigger>
             <MenuPopover>
                 <MenuList>

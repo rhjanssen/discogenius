@@ -450,11 +450,10 @@ export class UnmappedFilesService {
             return this.findBestVideoCandidate(files, mode);
         }
 
-        // Catalog-only discovery (Lidarr: CandidateService → IdentificationService).
-        // We match local files against the local catalog release groups by their
-        // detected artist/album tags and score each with the same Munkres pipeline
-        // used everywhere else. The streaming provider is never consulted to
-        // identify files — only to download them.
+        // Local-catalog discovery, equivalent to Lidarr's first candidate stage.
+        // The configured canonical-catalog fallback Lidarr performs after this
+        // stage is not implemented here yet. Streaming providers remain download-
+        // only and must never become an identity fallback.
         const artist = mostCommonNonEmpty(files.map((file) => file.detected_artist));
         const album = mostCommonNonEmpty(files.map((file) => file.detected_album));
         const candidates = CatalogCandidateService.getReleaseGroupCandidates({ artist, album });

@@ -149,7 +149,7 @@ export const MonitoringSettingsSection = ({
                 })}
                 {renderToggleRow({
                     title: "Remove unmonitored files",
-                    description: "Delete files for releases you no longer monitor.",
+                    description: "Delete release files when you stop monitoring them and during housekeeping.",
                     checked: monitoringConfig?.removeUnmonitoredFiles || false,
                     onChange: (checked) => void onUpdateMonitoring({ removeUnmonitoredFiles: checked }),
                 })}

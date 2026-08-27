@@ -57,9 +57,38 @@ export function isPrivateNetworkAddress(address: string): boolean {
 
 export type LookupAddress = { address: string; family: number };
 export type LookupAll = (hostname: string) => Promise<LookupAddress[]>;
+type NodeLookupCallback = (...args: unknown[]) => void;
 
 async function defaultLookup(hostname: string): Promise<LookupAddress[]> {
   return dns.lookup(hostname, { all: true, verbatim: true });
+}
+
+/**
+ * Return only the address that passed the SSRF checks. Recent Node releases
+ * request `all: true` while auto-selecting an address family, so the callback
+ * must use the array form in that mode. Returning the older scalar form there
+ * makes Node try to connect to `undefined` and breaks artwork and HLS proxies.
+ */
+export function createPinnedLookup(resolved: LookupAddress) {
+  return (
+    _hostname: string,
+    optionsOrCallback: unknown,
+    possibleCallback?: NodeLookupCallback,
+  ): void => {
+    const callback = typeof optionsOrCallback === "function"
+      ? optionsOrCallback as NodeLookupCallback
+      : possibleCallback;
+    if (!callback) throw new Error("Pinned DNS lookup callback is required");
+
+    const options = typeof optionsOrCallback === "object" && optionsOrCallback != null
+      ? optionsOrCallback as { all?: boolean }
+      : {};
+    if (options.all) {
+      callback(null, [resolved]);
+      return;
+    }
+    callback(null, resolved.address, resolved.family);
+  };
 }
 
 async function resolvePublicHttpUrl(rawUrl: string, lookup: LookupAll): Promise<{
@@ -117,9 +146,7 @@ function requestPinned(
     const request = transport.request(parsed, {
       method: init.method || "GET",
       headers,
-      lookup: ((_hostname: string, _options: unknown, callback: (...args: any[]) => void) => {
-        callback(null, resolved.address, resolved.family);
-      }) as any,
+      lookup: createPinnedLookup(resolved) as any,
     }, (upstream) => {
       clearTimeout(timer);
       if (init.signal) init.signal.removeEventListener("abort", abortRequest);

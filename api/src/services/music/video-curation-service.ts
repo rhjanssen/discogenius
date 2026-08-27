@@ -74,6 +74,55 @@ function qualityRank(label: string | null): number {
   return VIDEO_QUALITY_RANK[normalized] ?? 9;
 }
 
+function loadAudioRelations(
+  db: Database.Database,
+  artistMbid: string,
+): Map<number, Map<number, { confidence: number; accepted: boolean }>> {
+  const relations = new Map<number, Map<number, { confidence: number; accepted: boolean }>>();
+  const rows = db.prepare(`
+    SELECT
+      relation.source_recording_id AS video_recording_id,
+      relation.target_recording_id AS audio_recording_id,
+      relation.confidence,
+      relation.source
+    FROM RecordingRelations relation
+    JOIN Recordings video
+      ON video.id = relation.source_recording_id
+     AND video.is_video = 1
+    JOIN Recordings audio
+      ON audio.id = relation.target_recording_id
+     AND audio.is_video = 0
+    WHERE video.artist_mbid = ?
+      AND relation.relation_type IN ('provider_video_for', 'music_video_for')
+    ORDER BY
+      relation.source_recording_id,
+      CASE relation.source WHEN 'musicbrainz' THEN 0 ELSE 1 END,
+      relation.confidence DESC,
+      relation.id
+  `).all(artistMbid) as Array<{
+    video_recording_id: number;
+    audio_recording_id: number;
+    confidence: number | null;
+    source: string | null;
+  }>;
+
+  for (const row of rows) {
+    let byAudio = relations.get(row.video_recording_id);
+    if (!byAudio) {
+      byAudio = new Map();
+      relations.set(row.video_recording_id, byAudio);
+    }
+    // The SQL order puts the strongest statement for one exact target first.
+    if (!byAudio.has(row.audio_recording_id)) {
+      byAudio.set(row.audio_recording_id, {
+        confidence: row.confidence == null ? 0 : Number(row.confidence),
+        accepted: row.source === "musicbrainz",
+      });
+    }
+  }
+  return relations;
+}
+
 /** Every canonical video for an artist, with the evidence curation ranks on. */
 function loadCandidates(db: Database.Database, artistMbid: string): VideoCandidate[] {
   const rows = db.prepare(`
@@ -138,6 +187,7 @@ function loadCandidates(db: Database.Database, artistMbid: string): VideoCandida
   }
 
   const filtering = getConfigSection("filtering");
+  const audioRelations = loadAudioRelations(db, artistMbid);
   return rows
     // A video type the user turned off is not a candidate at all.
     .filter((row) => isVideoVariantDownloadAllowed(row.video_variant, filtering))
@@ -145,6 +195,7 @@ function loadCandidates(db: Database.Database, artistMbid: string): VideoCandida
       videoRecordingId: row.video_recording_id,
       canonicalType: canonicalVideoType(row.video_variant),
       audioRecordingId: row.audio_recording_id,
+      audioRelations: audioRelations.get(row.video_recording_id),
       relationConfidence: row.relation_confidence == null ? 0 : Number(row.relation_confidence),
       // MusicBrainz states the relation outright; everything else inferred it.
       relationAccepted: row.relation_source === "musicbrainz",

@@ -151,6 +151,27 @@ test("inline places one regular and one lyrics winner beside the exact track", (
     "the live cut lost the regular slot beside a studio track and is stored separately");
 });
 
+test("inline placement considers every exact audio relation, not only the global best", () => {
+  seed();
+  setLayout("inline");
+  db.exec(`
+    INSERT INTO Recordings (id, mbid, title, artist_mbid, is_video, length_ms)
+    VALUES (110, 'rec-audio-unmonitored', 'Pompeii', '${ARTIST_MBID}', 0, 214000);
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (${OFFICIAL_VIDEO}, 110, 'provider_video_for', 'tidal', 0.99);
+  `);
+
+  curateArtistVideos(db, ARTIST_MBID);
+
+  const official = selections().find((row) => row.video_recording_id === OFFICIAL_VIDEO);
+  assert.deepEqual(
+    [official?.placement_mode, official?.inline_track_id],
+    ["inline", STUDIO_TRACK],
+    "an unmonitored higher-confidence relation must not hide a valid monitored target",
+  );
+});
+
 test("inline_only monitors the winners and leaves the loser a visible candidate", () => {
   seed();
   setLayout("inline_only");

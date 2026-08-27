@@ -843,7 +843,7 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     const queueTab = page.getByRole('tab', { name: /^Queue$/i });
     const activityTab = page.getByRole('tab', { name: /^Activity$/i });
-    const manualImportTab = page.getByRole('tab', { name: /^Unmapped Files$/i });
+    const manualImportTab = page.getByRole('tab', { name: /^Unmapped$/i });
 
     await activityTab.click();
     await expect(page.getByText('No active jobs')).toBeVisible();

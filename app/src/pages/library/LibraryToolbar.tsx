@@ -33,8 +33,6 @@ import {
   TextBulletListLtr24Filled,
   ArrowSortUp24Filled,
   ArrowSortDown24Filled,
-  ChevronDownRegular,
-  ChevronDownFilled,
   Person24Regular,
   Person24Filled,
   Album24Regular,
@@ -43,12 +41,15 @@ import {
   MusicNote224Filled,
   Video24Regular,
   Video24Filled,
+  Filter24Regular,
+  Filter24Filled,
+  MoreHorizontal24Regular,
+  MoreHorizontal24Filled,
   bundleIcon,
 } from "@fluentui/react-icons";
 import type { ReactElement } from "react";
 import FilterMenu, { type ProviderFilterOption } from "@/components/FilterMenu";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
-import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import type { StatusFilters } from "@/utils/statusFilters";
 import type { StreamingProviderStatus } from "@/services/api";
 
@@ -59,11 +60,12 @@ const ArrowSortUp24 = bundleIcon(ArrowSortUp24Filled, ArrowSortUp24Regular);
 const ArrowSortDown24 = bundleIcon(ArrowSortDown24Filled, ArrowSortDown24Regular);
 const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
 const CheckmarkCircle24 = bundleIcon(CheckmarkCircle24Filled, CheckmarkCircle24Regular);
-const ChevronDown = bundleIcon(ChevronDownFilled, ChevronDownRegular);
 const Person24 = bundleIcon(Person24Filled, Person24Regular);
 const Album24 = bundleIcon(Album24Filled, Album24Regular);
 const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
 const Video24 = bundleIcon(Video24Filled, Video24Regular);
+const Filter24 = bundleIcon(Filter24Filled, Filter24Regular);
+const MoreHorizontal24 = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24Regular);
 
 export const LIBRARY_TABS = [
   { key: "artists", label: "Artists", icon: <Person24 /> },
@@ -92,7 +94,7 @@ const useStyles = makeStyles({
     },
     "@media (max-width: 639px)": {
       alignItems: "center",
-      rowGap: tokens.spacingVerticalXS,
+      flexWrap: "nowrap",
     },
   },
   desktopControlsRow: {
@@ -113,6 +115,20 @@ const useStyles = makeStyles({
     flex: "0 0 auto",
     "@media (min-width: 640px)": {
       display: "none",
+    },
+  },
+  tabSlot: {
+    minWidth: 0,
+    flex: "1 1 auto",
+  },
+  mobileTabs: {
+    width: "100%",
+    minWidth: 0,
+    justifyContent: "space-between",
+    "& .fui-Tab": {
+      minWidth: 0,
+      paddingLeft: tokens.spacingHorizontalXS,
+      paddingRight: tokens.spacingHorizontalXS,
     },
   },
   compactActions: {
@@ -183,10 +199,11 @@ function LibrarySortMenu({
   onSortDirectionChange,
   className,
   mobileHiddenLabelClassName,
+  trigger,
 }: Pick<
   LibraryToolbarProps,
   "selectedTab" | "sortBy" | "sortDirection" | "onSortByChange" | "onSortDirectionChange"
-> & { className?: string; mobileHiddenLabelClassName?: string }) {
+> & { className?: string; mobileHiddenLabelClassName?: string; trigger?: ReactElement }) {
   const sortDirectionOptions: LibrarySortDirection[] = sortBy === "name" ? ["asc", "desc"] : ["desc", "asc"];
   const getSortDirectionLabel = (dir: LibrarySortDirection) => {
     if (sortBy === "name") return dir === "asc" ? "A → Z" : "Z → A";
@@ -196,16 +213,18 @@ function LibrarySortMenu({
 
   return (
     <Menu>
-      <MenuTrigger disableButtonEnhancement>
-        <Button
-          appearance="subtle"
-          icon={sortDirection === "asc" ? <ArrowSortUp24 /> : <ArrowSortDown24 />}
-          className={className}
-          aria-label="Sort library"
-          title="Sort library"
-        >
-          <span className={mobileHiddenLabelClassName}>Sort</span>
-        </Button>
+      <MenuTrigger disableButtonEnhancement={Boolean(trigger)}>
+        {trigger ?? (
+          <Button
+            appearance="subtle"
+            icon={sortDirection === "asc" ? <ArrowSortUp24 /> : <ArrowSortDown24 />}
+            className={className}
+            aria-label="Sort library"
+            title="Sort library"
+          >
+            <span className={mobileHiddenLabelClassName}>Sort</span>
+          </Button>
+        )}
       </MenuTrigger>
       <MenuPopover>
         <MenuList
@@ -247,6 +266,105 @@ function LibrarySortMenu({
               </MenuItemRadio>
             ))}
           </MenuGroup>
+        </MenuList>
+      </MenuPopover>
+    </Menu>
+  );
+}
+
+function LibraryMobileActionsMenu(props: LibraryToolbarProps) {
+  const styles = useStyles();
+  const {
+    selectedTab,
+    importProvider,
+    onOpenImport,
+    isSelectionMode,
+    onToggleSelectionMode,
+    sortBy,
+    sortDirection,
+    onSortByChange,
+    onSortDirectionChange,
+    libraryFilter,
+    onLibraryFilterChange,
+    albumProviderFilter,
+    onAlbumProviderFilterChange,
+    providerFilterOptions,
+    albumQualityTierFilter,
+    onAlbumQualityTierFilterChange,
+    statusFilters,
+    onStatusFiltersChange,
+    showDownloadFilter,
+    showLockFilter,
+    canToggleView,
+    viewMode,
+    onViewModeChange,
+  } = props;
+  const showProviderFilters = selectedTab === "albums" || selectedTab === "tracks" || selectedTab === "videos";
+  const showQualityTierFilter = selectedTab === "albums" || selectedTab === "tracks";
+  const switchingToList = viewMode === "grid";
+  const targetLabel = switchingToList ? (selectedTab === "artists" ? "Table" : "List") : "Grid";
+  const targetIcon = switchingToList
+    ? (selectedTab === "artists" ? <TextBulletListLtr24 /> : <AppsListDetail24 />)
+    : <Grid24 />;
+
+  return (
+    <Menu>
+      <MenuTrigger disableButtonEnhancement>
+        <Button
+          appearance="subtle"
+          icon={<MoreHorizontal24 />}
+          className={styles.menuButtonIconOnly}
+          aria-label="Library actions"
+          title="Library actions"
+        />
+      </MenuTrigger>
+      <MenuPopover>
+        <MenuList>
+          {importProvider ? (
+            <MenuItem icon={<ArrowImport24 />} onClick={onOpenImport}>
+              Import artists
+            </MenuItem>
+          ) : null}
+          <MenuItem icon={<CheckmarkCircle24 />} onClick={onToggleSelectionMode}>
+            {isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
+          </MenuItem>
+          <LibrarySortMenu
+            selectedTab={selectedTab}
+            sortBy={sortBy}
+            sortDirection={sortDirection}
+            onSortByChange={onSortByChange}
+            onSortDirectionChange={onSortDirectionChange}
+            trigger={(
+              <MenuItem icon={sortDirection === "asc" ? <ArrowSortUp24 /> : <ArrowSortDown24 />}>
+                Sort
+              </MenuItem>
+            )}
+          />
+          <FilterMenu
+            libraryFilter={libraryFilter}
+            onLibraryFilterChange={onLibraryFilterChange}
+            providerFilter={showProviderFilters ? albumProviderFilter : undefined}
+            onProviderFilterChange={showProviderFilters ? onAlbumProviderFilterChange : undefined}
+            providerOptions={showProviderFilters ? providerFilterOptions : undefined}
+            qualityTierFilter={showQualityTierFilter ? albumQualityTierFilter : undefined}
+            onQualityTierFilterChange={showQualityTierFilter ? onAlbumQualityTierFilterChange : undefined}
+            statusFilters={statusFilters}
+            onStatusFiltersChange={onStatusFiltersChange}
+            showDownloadFilter={showDownloadFilter}
+            showLockFilter={showLockFilter}
+            trigger={<MenuItem icon={<Filter24 />}>Filters</MenuItem>}
+          />
+          {canToggleView ? (
+            <>
+              <MenuDivider />
+              <MenuItem
+                icon={targetIcon}
+                onClick={() => onViewModeChange(switchingToList ? "list" : "grid")}
+              >
+                Switch to {targetLabel.toLowerCase()} view
+              </MenuItem>
+            </>
+          ) : null}
         </MenuList>
       </MenuPopover>
     </Menu>
@@ -366,32 +484,16 @@ function LibraryControlActions(props: LibraryToolbarProps & { className?: string
 
 export function LibraryToolbar(props: LibraryToolbarProps): ReactElement {
   const styles = useStyles();
-  const responsiveTabsStyles = useResponsiveTabsStyles();
   const { selectedTab, onSelectedTabChange, stats } = props;
 
   return (
     <div className={styles.toolbar}>
-      <div className={responsiveTabsStyles.tabSlot}>
-        <div className={responsiveTabsStyles.mobileSelect}>
-          <Menu>
-            <MenuTrigger disableButtonEnhancement>
-              <Button appearance="subtle" iconPosition="after" icon={<ChevronDown />} className={responsiveTabsStyles.menuButton}>
-                {LIBRARY_TABS.find((tab) => tab.key === selectedTab)?.label ?? "Artists"}
-              </Button>
-            </MenuTrigger>
-            <MenuPopover>
-              <MenuList>
-                {LIBRARY_TABS.map((tab) => (
-                  <MenuItem key={tab.key} icon={tab.icon} onClick={() => onSelectedTabChange(tab.key)}>
-                    {tab.label}
-                  </MenuItem>
-                ))}
-              </MenuList>
-            </MenuPopover>
-          </Menu>
-        </div>
-        <div className={responsiveTabsStyles.desktopTabs}>
-          <TabList selectedValue={selectedTab} onTabSelect={(_, data) => onSelectedTabChange(data.value as string)}>
+      <div className={styles.tabSlot}>
+          <TabList
+            className={styles.mobileTabs}
+            selectedValue={selectedTab}
+            onTabSelect={(_, data) => onSelectedTabChange(data.value as string)}
+          >
             {LIBRARY_TABS.map((tab) => {
               const statKey = tab.key as keyof Pick<NonNullable<typeof stats>, "artists" | "albums" | "tracks" | "videos">;
               const tabStats = stats?.[statKey];
@@ -402,15 +504,10 @@ export function LibraryToolbar(props: LibraryToolbarProps): ReactElement {
               );
             })}
           </TabList>
-        </div>
       </div>
 
       <div className={styles.mobileControlsRow}>
-        <LibraryControlActions
-          {...props}
-          className={styles.menuButtonIconOnly}
-          mobileHiddenLabelClassName={styles.mobileHiddenLabel}
-        />
+        <LibraryMobileActionsMenu {...props} />
       </div>
 
       <div className={styles.desktopControlsRow}>

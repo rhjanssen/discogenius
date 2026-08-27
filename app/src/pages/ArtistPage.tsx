@@ -99,6 +99,7 @@ import {
   detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
+import { buildArtistOverflowActions } from "@/pages/artist/artistOverflowActions";
 import { DataGrid } from "@/components/DataGrid";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -552,9 +553,6 @@ const ArtistPage = () => {
   const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
   const [stripTagsOpen, setStripTagsOpen] = useState(false);
   const [stripTagsApplying, setStripTagsApplying] = useState(false);
-  const [deleteArtistOpen, setDeleteArtistOpen] = useState(false);
-  const [deleteArtistAlsoFiles, setDeleteArtistAlsoFiles] = useState(false);
-  const [deleteArtistApplying, setDeleteArtistApplying] = useState(false);
   const [bioExpanded, setBioExpanded] = useState(false);
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
@@ -1618,25 +1616,27 @@ const ArtistPage = () => {
       : 'Download missing releases';
   const scanActionTitle = 'Refresh & Scan';
 
-  const artistActions: OverflowAction[] = [
-    ...(isMonitored
-      ? [
-          ...(isPaused
-            ? [{ key: 'resume', label: 'Resume', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('policy', 'all') } satisfies OverflowAction]
-            : [{ key: 'pause', label: 'Pause', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('policy', 'none') } satisfies OverflowAction]),
-          { key: 'new-releases', label: 'Only new releases', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('policy', 'new') } satisfies OverflowAction,
-          { key: 'unmonitor', label: 'Unmonitor', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('unmonitor') } satisfies OverflowAction,
-        ]
-      : [{ key: 'monitor', label: 'Monitor', disabled: artistLibraryActionBusy, onClick: () => void applyArtistLibraryChange('monitor', 'all') } satisfies OverflowAction]),
-    { key: 'refresh-scan', label: isScanBusy ? 'Scanning...' : 'Refresh & Scan', disabled: isScanBusy, onClick: syncArtist },
-    { key: 'curate', label: isCurateBusy ? 'Running...' : 'Curate', disabled: isCurateBusy || isScanBusy || !hasAlbums, onClick: curateArtist },
-    { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
-    { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
-    { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
-    { key: 'strip-tags', label: stripTagsApplying ? 'Queueing…' : 'Strip Tags…', disabled: stripTagsApplying, onClick: () => setStripTagsOpen(true) },
-    { key: 'delete-files', label: 'Delete files…', disabled: deleteFilesApplying || deleteArtistApplying, onClick: () => setDeleteFilesOpen(true) },
-    { key: 'delete-artist', label: 'Delete artist…', disabled: deleteFilesApplying || deleteArtistApplying, onClick: () => setDeleteArtistOpen(true) },
-  ];
+  const artistActions: OverflowAction[] = buildArtistOverflowActions(
+    {
+      isScanBusy,
+      isCurateBusy,
+      hasAlbums,
+      downloadActionDisabled,
+      renameApplying,
+      retagApplying,
+      stripTagsApplying,
+      deleteFilesApplying,
+    },
+    {
+      syncArtist,
+      curateArtist,
+      startDownloads,
+      openRenamePreview,
+      openRetagPreview,
+      openStripTags: () => setStripTagsOpen(true),
+      openDeleteFiles: () => setDeleteFilesOpen(true),
+    },
+  );
 
   const handleDeleteArtistFiles = async () => {
     if (!artistId) return;
@@ -1682,34 +1682,6 @@ const ArtistPage = () => {
       });
     } finally {
       setStripTagsApplying(false);
-    }
-  };
-
-  const handleDeleteArtist = async () => {
-    if (!artistId) return;
-    setDeleteArtistApplying(true);
-    try {
-      const result: any = await api.deleteArtist(artistId, { deleteFiles: deleteArtistAlsoFiles });
-      toast({
-        title: "Artist deleted",
-        description: deleteArtistAlsoFiles
-          ? `Removed ${artistName || "artist"} from the library and deleted ${result?.deletedFiles ?? 0} file(s).`
-          : `Removed ${artistName || "artist"} from the library. Files on disk were kept.`,
-      });
-      setDeleteArtistOpen(false);
-      setDeleteArtistAlsoFiles(false);
-      dispatchLibraryUpdated();
-      dispatchActivityRefresh();
-      queryClient.invalidateQueries({ queryKey: ["artists"] });
-      navigate("/library");
-    } catch (error) {
-      toast({
-        title: "Failed to delete artist",
-        description: error instanceof Error ? error.message : "Could not delete artist.",
-        variant: "destructive",
-      });
-    } finally {
-      setDeleteArtistApplying(false);
     }
   };
 
@@ -1795,47 +1767,6 @@ const ArtistPage = () => {
                 </Button>
                 <Button appearance="primary" disabled={stripTagsApplying} onClick={() => void handleStripArtistTags()}>
                   {stripTagsApplying ? "Queueing…" : "Strip tags"}
-                </Button>
-              </DialogActions>
-            </DialogBody>
-          </DialogSurface>
-        </Dialog>
-        <Dialog
-          open={deleteArtistOpen}
-          onOpenChange={(_, data) => {
-            if (!data.open && !deleteArtistApplying) {
-              setDeleteArtistOpen(false);
-              setDeleteArtistAlsoFiles(false);
-            }
-          }}
-        >
-          <DialogSurface>
-            <DialogBody>
-              <DialogTitle>Delete artist</DialogTitle>
-              <DialogContent>
-                Remove <strong>{artistName || "this artist"}</strong> from your Discogenius library.
-                Catalog metadata for MusicBrainz stays available for re-import.
-                <div style={{ marginTop: 12 }}>
-                  <Checkbox
-                    checked={deleteArtistAlsoFiles}
-                    onChange={(_, data) => setDeleteArtistAlsoFiles(Boolean(data.checked))}
-                    label="Also delete imported files from disk"
-                  />
-                </div>
-              </DialogContent>
-              <DialogActions>
-                <Button
-                  appearance="secondary"
-                  disabled={deleteArtistApplying}
-                  onClick={() => {
-                    setDeleteArtistOpen(false);
-                    setDeleteArtistAlsoFiles(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button appearance="primary" disabled={deleteArtistApplying} onClick={() => void handleDeleteArtist()}>
-                  {deleteArtistApplying ? "Deleting…" : "Delete artist"}
                 </Button>
               </DialogActions>
             </DialogBody>

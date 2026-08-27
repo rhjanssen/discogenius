@@ -153,3 +153,57 @@ test("one Apple item stores several library-selectable audio variants", () => {
     );
   });
 });
+
+test("refreshing an audio variant preserves the row identity held by acquisition provenance", () => {
+  fixture((db, repository) => {
+    const track = repository.upsertItem({ provider: "tidal", entityType: "track", providerId: "song" });
+    const [originalId] = repository.replaceAudioVariants(track, [
+      { variantKey: "lossless", qualityClass: "lossless", availability: "available", bitrate: 1_411 },
+    ]);
+    db.exec(`
+      CREATE TABLE VariantConsumer (
+        variant_id INTEGER NOT NULL REFERENCES ProviderItemAudioVariants(id)
+      )
+    `);
+    db.prepare("INSERT INTO VariantConsumer (variant_id) VALUES (?)").run(originalId);
+
+    const [refreshedId] = repository.replaceAudioVariants(track, [
+      { variantKey: "lossless", qualityClass: "lossless", availability: "available", bitrate: 1_536 },
+    ]);
+
+    assert.equal(refreshedId, originalId);
+    assert.deepEqual(db.prepare(`
+      SELECT id, availability, bitrate
+      FROM ProviderItemAudioVariants
+      WHERE provider_item_id = ? AND variant_key = 'lossless'
+    `).get(track), {
+      id: originalId,
+      availability: "available",
+      bitrate: 1_536,
+    });
+  });
+});
+
+test("variants missing from a refresh are retired without deleting their provenance", () => {
+  fixture((db, repository) => {
+    const track = repository.upsertItem({ provider: "apple-music", entityType: "track", providerId: "song" });
+    const [stereoId, spatialId] = repository.replaceAudioVariants(track, [
+      { variantKey: "stereo-lossless", qualityClass: "lossless", availability: "available" },
+      { variantKey: "atmos", qualityClass: "spatial", availability: "available" },
+    ]);
+
+    repository.replaceAudioVariants(track, [
+      { variantKey: "stereo-lossless", qualityClass: "lossless", availability: "available" },
+    ]);
+
+    assert.deepEqual(db.prepare(`
+      SELECT id, availability
+      FROM ProviderItemAudioVariants
+      WHERE provider_item_id = ?
+      ORDER BY id
+    `).all(track), [
+      { id: stereoId, availability: "available" },
+      { id: spatialId, availability: "unavailable" },
+    ]);
+  });
+});

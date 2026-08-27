@@ -174,13 +174,18 @@ router.patch("/:videoId", async (req, res) => {
       return res.json({ success: true });
     }
 
-    let placementInput: { mode: "separated" } | { mode: "inline"; inlineTrackId: number } | undefined;
+    let placementInput: { mode: "separated" } | {
+      mode: "inline";
+      inlineTrackId: number;
+      placementLibraryId: number;
+    } | undefined;
     if (placementBody !== undefined) {
       if (!placementBody || typeof placementBody !== "object" || Array.isArray(placementBody)) {
         return res.status(400).json({ detail: "placement must be an object" });
       }
       const mode = (placementBody as { mode?: unknown }).mode;
       const inlineTrackId = (placementBody as { inlineTrackId?: unknown }).inlineTrackId;
+      const placementLibraryId = (placementBody as { placementLibraryId?: unknown }).placementLibraryId;
       if (mode !== "separated" && mode !== "inline") {
         return res.status(400).json({ detail: "placement.mode must be separated or inline" });
       }
@@ -188,7 +193,10 @@ router.patch("/:videoId", async (req, res) => {
         if (typeof inlineTrackId !== "number" || !Number.isInteger(inlineTrackId) || inlineTrackId <= 0) {
           return res.status(400).json({ detail: "placement.inlineTrackId must be a positive integer" });
         }
-        placementInput = { mode: "inline", inlineTrackId };
+        if (typeof placementLibraryId !== "number" || !Number.isInteger(placementLibraryId) || placementLibraryId <= 0) {
+          return res.status(400).json({ detail: "placement.placementLibraryId must be a positive integer" });
+        }
+        placementInput = { mode: "inline", inlineTrackId, placementLibraryId };
       } else {
         placementInput = { mode: "separated" };
       }

@@ -223,6 +223,8 @@ export interface VideoProviderOfferContract {
 export interface VideoAlbumRefContract {
   id: string;
   title: string;
+  /** At least one enabled audio Library monitors this release group. */
+  is_monitored?: boolean;
   /** Local /media-cover URL (alias of cover_art_url for older clients). */
   cover_id?: string | null;
   cover_art_url?: string | null;
@@ -327,6 +329,18 @@ export interface VideoDetailContract {
     id: number;
     title: string;
     album_title?: string | null;
+    album_id?: string | null;
+    edition_id?: number | null;
+    release_mbid?: string | null;
+    edition_title?: string | null;
+    edition_disambiguation?: string | null;
+    edition_date?: string | null;
+    edition_country?: string | null;
+    edition_media_formats?: string[];
+    edition_track_count?: number | null;
+    placement_library_id?: number | null;
+    library_name?: string | null;
+    representative?: boolean;
     track_number?: number | null;
     volume_number?: number | null;
   }>;
@@ -339,6 +353,7 @@ export interface VideoUpdateContract {
   placement?: {
     mode: "separated" | "inline";
     inlineTrackId?: number;
+    placementLibraryId?: number;
   };
 }
 
@@ -729,6 +744,24 @@ export function parseVideoDetailContract(value: unknown): VideoDetailContract {
           id: expectNumber(related.id, `video.related_tracks[${index}].id`),
           title: expectString(related.title, `video.related_tracks[${index}].title`),
           album_title: expectNullableString(related.album_title, `video.related_tracks[${index}].album_title`),
+          album_id: expectNullableString(related.album_id, `video.related_tracks[${index}].album_id`),
+          edition_id: expectOptionalNumber(related.edition_id, `video.related_tracks[${index}].edition_id`) ?? null,
+          release_mbid: expectNullableString(related.release_mbid, `video.related_tracks[${index}].release_mbid`),
+          edition_title: expectNullableString(related.edition_title, `video.related_tracks[${index}].edition_title`),
+          edition_disambiguation: expectNullableString(related.edition_disambiguation, `video.related_tracks[${index}].edition_disambiguation`),
+          edition_date: expectNullableString(related.edition_date, `video.related_tracks[${index}].edition_date`),
+          edition_country: expectNullableString(related.edition_country, `video.related_tracks[${index}].edition_country`),
+          edition_media_formats: related.edition_media_formats === undefined
+            ? []
+            : expectArray(
+              related.edition_media_formats,
+              `video.related_tracks[${index}].edition_media_formats`,
+              (format) => String(format),
+            ),
+          edition_track_count: expectOptionalNumber(related.edition_track_count, `video.related_tracks[${index}].edition_track_count`) ?? null,
+          placement_library_id: expectOptionalNumber(related.placement_library_id, `video.related_tracks[${index}].placement_library_id`) ?? null,
+          library_name: expectNullableString(related.library_name, `video.related_tracks[${index}].library_name`),
+          representative: expectOptionalBoolean(related.representative, `video.related_tracks[${index}].representative`) ?? false,
           track_number: expectOptionalNumber(related.track_number, `video.related_tracks[${index}].track_number`) ?? null,
           volume_number: expectOptionalNumber(related.volume_number, `video.related_tracks[${index}].volume_number`) ?? null,
         };
@@ -754,6 +787,7 @@ function parseVideoAlbumRefContract(value: unknown, indexLabel: string): VideoAl
   return {
     id: expectString(record.id, `${indexLabel}.id`),
     title: expectString(record.title, `${indexLabel}.title`),
+    is_monitored: expectOptionalBoolean(record.is_monitored, `${indexLabel}.is_monitored`) ?? false,
     cover_id: expectNullableString(record.cover_id, `${indexLabel}.cover_id`),
     cover_art_url: expectNullableString(record.cover_art_url, `${indexLabel}.cover_art_url`),
     track_mbid: expectNullableString(record.track_mbid, `${indexLabel}.track_mbid`),

@@ -125,10 +125,18 @@ function resolveUiMediaCoverFilePath(
   return resolveUiMediaCoverProxyFilePath(folder, filename);
 }
 
-function sendMediaCover(res: any, filePath: string): void {
-  // Lidarr/Jellyfin: revisioned local URLs are long-lived. `?rev=` already
-  // busts when the source changes, so immutable caching is safe and fast.
-  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+function sendMediaCover(req: any, res: any, filePath: string): void {
+  // Revisioned URLs are content-addressed and can be immutable. Stable aliases
+  // must revalidate: refresh can replace their bytes, and marking `/cover.jpg`
+  // immutable left browsers showing a corrected video's old thumbnail for a
+  // year even after the server cache had changed.
+  const revisioned = typeof req.query?.rev === "string" && req.query.rev.trim() !== "";
+  res.setHeader(
+    "Cache-Control",
+    revisioned
+      ? "public, max-age=31536000, immutable"
+      : "public, max-age=0, must-revalidate",
+  );
   res.sendFile(path.resolve(filePath), {
     acceptRanges: true,
     cacheControl: false,
@@ -149,7 +157,7 @@ router.get("/Albums/:albumId/:filename", async (req, res) => {
   if (!filePath) {
     return res.status(404).end();
   }
-  return sendMediaCover(res, filePath);
+  return sendMediaCover(req, res, filePath);
 });
 
 router.get("/Videos/:videoId/:filename", async (req, res) => {
@@ -164,7 +172,7 @@ router.get("/Videos/:videoId/:filename", async (req, res) => {
   if (!filePath) {
     return res.status(404).end();
   }
-  return sendMediaCover(res, filePath);
+  return sendMediaCover(req, res, filePath);
 });
 
 router.get("/:artistId/:filename", async (req, res) => {
@@ -179,7 +187,7 @@ router.get("/:artistId/:filename", async (req, res) => {
   if (!filePath) {
     return res.status(404).end();
   }
-  return sendMediaCover(res, filePath);
+  return sendMediaCover(req, res, filePath);
 });
 
 export default router;

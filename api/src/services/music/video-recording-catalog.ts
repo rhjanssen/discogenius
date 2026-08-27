@@ -208,6 +208,37 @@ export function mergeVideoRecordings(keeperId: number, duplicateId: number): num
     keeper.id,
   );
 
+  // The same provider item can already have a rejected edge to the keeper and
+  // an accepted edge to the duplicate. Preserve the stronger decision before
+  // collapsing the unique (provider item, recording) pair. The old code kept
+  // whichever row happened to belong to the keeper, which could silently turn
+  // a valid accepted offer into a rejected one.
+  db.prepare(`
+    DELETE FROM ProviderVideoMatches
+    WHERE id IN (
+      SELECT keeper_match.id
+      FROM ProviderVideoMatches keeper_match
+      JOIN ProviderVideoMatches duplicate_match
+        ON duplicate_match.provider_video_item_id = keeper_match.provider_video_item_id
+       AND duplicate_match.recording_id = ?
+      WHERE keeper_match.recording_id = ?
+        AND (
+          (CASE duplicate_match.match_state
+             WHEN 'accepted' THEN 8
+             WHEN 'ambiguous' THEN 6
+             WHEN 'candidate' THEN 4
+             ELSE 2
+           END + CASE duplicate_match.decision_source WHEN 'manual' THEN 1 ELSE 0 END)
+          >
+          (CASE keeper_match.match_state
+             WHEN 'accepted' THEN 8
+             WHEN 'ambiguous' THEN 6
+             WHEN 'candidate' THEN 4
+             ELSE 2
+           END + CASE keeper_match.decision_source WHEN 'manual' THEN 1 ELSE 0 END)
+        )
+    )
+  `).run(duplicate.id, keeper.id);
   db.prepare(`
     DELETE FROM ProviderVideoMatches
     WHERE recording_id = ?

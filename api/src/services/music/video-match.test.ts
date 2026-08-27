@@ -231,6 +231,30 @@ test("isExactVideoTwin allows ±2s catalog rounding but rejects farther cuts", (
   }), false);
 });
 
+test("isExactVideoTwin rejects same-provider alternates with different known dates", () => {
+  assert.equal(isExactVideoTwin({
+    titleA: "Send Them Off!",
+    titleB: "Send Them Off!",
+    lengthMsA: 226_000,
+    lengthMsB: 225_000,
+    releaseDateA: "2016-10-14",
+    releaseDateB: "2016-09-07",
+  }), false);
+});
+
+test("isExactVideoTwin rejects different known provider ISRCs", () => {
+  assert.equal(isExactVideoTwin({
+    titleA: "Distorted Light Beam",
+    titleB: "Distorted Light Beam",
+    lengthMsA: 181000,
+    lengthMsB: 182000,
+    releaseDateA: "2021-06-23",
+    releaseDateB: "2021-06-23",
+    isrcsA: "GBUV72101394",
+    isrcsB: "GBUV72101029",
+  }), false);
+});
+
 test("a MusicBrainz video without duration still matches the official provider title", () => {
   const match = scoreVideoIdentityMatch({
     titleA: "Living",

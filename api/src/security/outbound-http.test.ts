@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isPrivateNetworkAddress, validatePublicHttpUrl, type LookupAll } from "./outbound-http.js";
+import {
+  createPinnedLookup,
+  isPrivateNetworkAddress,
+  validatePublicHttpUrl,
+  type LookupAll,
+} from "./outbound-http.js";
 
 test("private, loopback, link-local, documentation, and mapped addresses are blocked", () => {
   for (const address of [
@@ -33,4 +38,18 @@ test("outbound URL validation rejects local names, credentials, and unsafe DNS a
 
   const parsed = await validatePublicHttpUrl("https://cdn.example/a", publicLookup);
   assert.equal(parsed.hostname, "cdn.example");
+});
+
+test("pinned lookup follows Node's scalar and all-address callback contracts", () => {
+  const resolved = { address: "1.1.1.1", family: 4 };
+  const lookup = createPinnedLookup(resolved);
+  const calls: unknown[][] = [];
+
+  lookup("cdn.example", {}, (...args) => calls.push(args));
+  lookup("cdn.example", { all: true }, (...args) => calls.push(args));
+
+  assert.deepEqual(calls, [
+    [null, "1.1.1.1", 4],
+    [null, [resolved]],
+  ]);
 });

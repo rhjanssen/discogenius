@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { audioLibraryPredicate } from "./library-album-monitoring.js";
 import { canonicalVideoType, inlineVideoSlot } from "./canonical-video-type.js";
+import { parseMediaFormats } from "./media-formats.js";
 
 /**
  * Selecting a canonical video into a Video Library, and where its one file goes.
@@ -197,6 +198,18 @@ export type RelatedInlineTrack = {
   id: number;
   title: string;
   albumTitle: string | null;
+  albumId: string | null;
+  editionId: number | null;
+  releaseMbid: string | null;
+  editionTitle: string | null;
+  editionDisambiguation: string | null;
+  editionDate: string | null;
+  editionCountry: string | null;
+  editionMediaFormats: string[];
+  editionTrackCount: number | null;
+  placementLibraryId: number | null;
+  libraryName: string | null;
+  representative: boolean;
   trackNumber: number | null;
   volumeNumber: number | null;
 };
@@ -210,38 +223,35 @@ export class VideoPlacementError extends Error {
   }
 }
 
-function resolveStereoPlacementLibraryId(db: Database.Database): number | null {
-  const row = db.prepare(`
-    SELECT library.id
-    FROM Libraries library
-    JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-    WHERE library.enabled = 1
-      AND ${audioLibraryPredicate("library")}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-        WHERE allowed.value = 'spatial'
-      )
-    ORDER BY library.id
-  `).get() as { id?: number } | undefined;
-  return row?.id ?? null;
-}
-
 /**
  * Audio tracks this video may sit beside. Exact recording relations only —
  * the same rule association uses, so a live cut never offers a studio track.
- * Two monitored editions of the same album share a File location option
- * (the representative edition) so the menu does not list "Beside X (Album)" twice.
+ * Every monitored Edition remains a distinct placement target. The library id
+ * is part of that target because two stereo roots may monitor the same Edition.
  */
 export function listRelatedInlineTracks(
   db: Database.Database,
   videoRecordingId: number,
 ): RelatedInlineTrack[] {
-  return db.prepare(`
+  const rows = db.prepare(`
     SELECT
       track.id AS id,
       COALESCE(NULLIF(TRIM(track.title), ''), audio.title) AS title,
       album.title AS albumTitle,
+      album.mbid AS albumId,
+      edition.id AS editionId,
+      edition.mbid AS releaseMbid,
+      edition.title AS editionTitle,
+      edition.disambiguation AS editionDisambiguation,
+      edition.date AS editionDate,
+      edition.country AS editionCountry,
+      edition.media AS editionMedia,
+      edition.track_count AS editionTrackCount,
+      library.id AS placementLibraryId,
+      library.name AS libraryName,
+      MAX(library_release.representative) AS representative,
+      MAX(CASE relation.source WHEN 'musicbrainz' THEN 1 ELSE 0 END) AS relationAccepted,
+      MAX(COALESCE(relation.confidence, 0)) AS relationConfidence,
       track.position AS trackNumber,
       track.medium_position AS volumeNumber
     FROM RecordingRelations relation
@@ -258,24 +268,68 @@ export function listRelatedInlineTracks(
      AND library.enabled = 1
     WHERE relation.source_recording_id = ?
       AND relation.relation_type IN ('provider_video_for', 'music_video_for')
-      AND track.id = (
-        SELECT preferred.id
-        FROM Tracks preferred
-        JOIN AlbumEditions preferred_edition
-          ON preferred_edition.id = preferred.album_edition_id
-        JOIN LibraryEditions preferred_library_release
-          ON preferred_library_release.edition_id = preferred_edition.id
-        JOIN Libraries preferred_library
-          ON preferred_library.id = preferred_library_release.library_id
-         AND preferred_library.enabled = 1
-        WHERE preferred.recording_id = audio.id
-          AND preferred_edition.release_group_id = album.id
-        ORDER BY preferred_library_release.representative DESC, preferred.id ASC
-        LIMIT 1
+      AND ${audioLibraryPredicate("library")}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM quality_profiles placement_profile
+        JOIN json_each(COALESCE(placement_profile.allowed_source_formats, '[]')) placement_format
+        WHERE placement_profile.id = library.quality_profile_id
+          AND placement_format.value = 'spatial'
       )
-    GROUP BY track.id
-    ORDER BY album.title COLLATE NOCASE, track.medium_position, track.position, track.id
-  `).all(videoRecordingId) as RelatedInlineTrack[];
+    GROUP BY track.id, library.id
+    ORDER BY
+      album.title COLLATE NOCASE,
+      representative DESC,
+      edition.date,
+      edition.id,
+      library.name COLLATE NOCASE,
+      relationAccepted DESC,
+      relationConfidence DESC,
+      track.medium_position,
+      track.position,
+      track.id
+  `).all(videoRecordingId) as Array<{
+    id: number;
+    title: string;
+    albumTitle: string | null;
+    albumId: string | null;
+    editionId: number | null;
+    releaseMbid: string | null;
+    editionTitle: string | null;
+    editionDisambiguation: string | null;
+    editionDate: string | null;
+    editionCountry: string | null;
+    editionMedia: string | null;
+    editionTrackCount: number | null;
+    placementLibraryId: number | null;
+    libraryName: string | null;
+    representative: number;
+    relationAccepted: number;
+    relationConfidence: number;
+    trackNumber: number | null;
+    volumeNumber: number | null;
+  }>;
+  const editions = new Set<string>();
+  return rows.flatMap(({
+    editionMedia,
+    representative,
+    relationAccepted: _relationAccepted,
+    relationConfidence: _relationConfidence,
+    ...row
+  }) => {
+    // Placement is an edition decision. Several accepted relations can point
+    // at different tracks in the same Edition, but showing each occurrence as
+    // an "edition" option is both misleading and unsafe. The query puts the
+    // strongest exact relation first, so retain one target per Edition/Library.
+    const key = `${row.editionId ?? ""}:${row.placementLibraryId ?? ""}`;
+    if (editions.has(key)) return [];
+    editions.add(key);
+    return [{
+      ...row,
+      editionMediaFormats: parseMediaFormats(editionMedia),
+      representative: Boolean(representative),
+    }];
+  });
 }
 
 /** One audio track by id — used so a persisted inline placement still labels the File location menu. */
@@ -291,15 +345,58 @@ export function describeRelatedInlineTrack(
       track.id AS id,
       COALESCE(NULLIF(TRIM(track.title), ''), recording.title) AS title,
       album.title AS albumTitle,
+      album.mbid AS albumId,
+      edition.id AS editionId,
+      edition.mbid AS releaseMbid,
+      edition.title AS editionTitle,
+      edition.disambiguation AS editionDisambiguation,
+      edition.date AS editionDate,
+      edition.country AS editionCountry,
+      edition.media AS editionMedia,
+      edition.track_count AS editionTrackCount,
+      selected.placement_library_id AS placementLibraryId,
+      library.name AS libraryName,
+      COALESCE(library_release.representative, 0) AS representative,
       track.position AS trackNumber,
       track.medium_position AS volumeNumber
     FROM Tracks track
     JOIN Recordings recording ON recording.id = track.recording_id
     JOIN AlbumEditions edition ON edition.id = track.album_edition_id
     JOIN Albums album ON album.id = edition.release_group_id
+    LEFT JOIN LibraryVideos selected ON selected.inline_track_id = track.id
+    LEFT JOIN Libraries library ON library.id = selected.placement_library_id
+    LEFT JOIN LibraryEditions library_release
+      ON library_release.library_id = selected.placement_library_id
+     AND library_release.edition_id = edition.id
     WHERE track.id = ?
-  `).get(trackId) as RelatedInlineTrack | undefined;
-  return row ?? null;
+    ORDER BY selected.id
+    LIMIT 1
+  `).get(trackId) as {
+    id: number;
+    title: string;
+    albumTitle: string | null;
+    albumId: string | null;
+    editionId: number | null;
+    releaseMbid: string | null;
+    editionTitle: string | null;
+    editionDisambiguation: string | null;
+    editionDate: string | null;
+    editionCountry: string | null;
+    editionMedia: string | null;
+    editionTrackCount: number | null;
+    placementLibraryId: number | null;
+    libraryName: string | null;
+    representative: number;
+    trackNumber: number | null;
+    volumeNumber: number | null;
+  } | undefined;
+  if (!row) return null;
+  const { editionMedia, representative, ...track } = row;
+  return {
+    ...track,
+    editionMediaFormats: parseMediaFormats(editionMedia),
+    representative: Boolean(representative),
+  };
 }
 
 /**
@@ -316,7 +413,12 @@ export function relatedTracksForVideoDetail(
     return related;
   }
   const current = describeRelatedInlineTrack(db, inlineTrackId);
-  return current ? [current, ...related] : related;
+  if (!current) return related;
+  const sameEdition = related.findIndex((track) =>
+    track.editionId === current.editionId
+      && track.placementLibraryId === current.placementLibraryId);
+  if (sameEdition < 0) return [current, ...related];
+  return related.map((track, index) => index === sameEdition ? current : track);
 }
 
 /**
@@ -327,7 +429,11 @@ export function relatedTracksForVideoDetail(
 export function applyManualVideoPlacement(
   db: Database.Database,
   videoRecordingId: number,
-  input: { mode: "separated" } | { mode: "inline"; inlineTrackId: number },
+  input: { mode: "separated" } | {
+    mode: "inline";
+    inlineTrackId: number;
+    placementLibraryId: number;
+  },
 ): { artistId: string | null } {
   const videoLibraryIds = resolveVideoLibraryIds(db);
   if (videoLibraryIds.length === 0) {
@@ -351,34 +457,62 @@ export function applyManualVideoPlacement(
   if (input.mode === "separated") {
     placement = { mode: "separated" };
   } else {
-    const track = db.prepare(`
-      SELECT id FROM Tracks WHERE id = ?
-    `).get(input.inlineTrackId) as { id?: number } | undefined;
-    if (!track?.id) {
-      throw new VideoPlacementError("Inline track not found");
-    }
-    const placementLibraryId = resolveStereoPlacementLibraryId(db);
-    if (placementLibraryId == null) {
-      throw new VideoPlacementError("No stereo library is enabled for inline video placement");
+    const target = listRelatedInlineTracks(db, videoRecordingId).find(
+      (candidate) => candidate.id === input.inlineTrackId
+        && candidate.placementLibraryId === input.placementLibraryId,
+    );
+    if (!target) {
+      throw new VideoPlacementError(
+        "Inline target is not a monitored album placement for this video",
+      );
     }
     placement = {
       mode: "inline",
-      placementLibraryId,
+      placementLibraryId: input.placementLibraryId,
       inlineTrackId: input.inlineTrackId,
       inlineSlot: inlineVideoSlot(canonicalVideoType(recording.video_variant)),
     };
   }
 
-  for (const libraryId of videoLibraryIds) {
-    selectLibraryVideo(db, {
-      libraryId,
-      videoRecordingId,
-      placement,
-      selectionMode: "manual",
-      placementSelectionMode: "manual",
-      reason: "user",
-    });
-  }
+  db.transaction(() => {
+    for (const libraryId of videoLibraryIds) {
+      if (placement.mode === "inline") {
+        // One Plex role beside one track can hold one video. A manual
+        // replacement keeps the prior video selected and moves its file to the
+        // Video Library; deleting that selection would lose user intent.
+        db.prepare(`
+          UPDATE LibraryVideos
+          SET placement_mode = 'separated',
+              placement_library_id = NULL,
+              inline_track_id = NULL,
+              inline_slot = NULL,
+              placement_selection_mode = 'manual',
+              reason = 'manual_slot_replaced',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE library_id = ?
+            AND video_recording_id <> ?
+            AND placement_mode = 'inline'
+            AND placement_library_id = ?
+            AND inline_track_id = ?
+            AND inline_slot = ?
+        `).run(
+          libraryId,
+          videoRecordingId,
+          placement.placementLibraryId,
+          placement.inlineTrackId,
+          placement.inlineSlot,
+        );
+      }
+      selectLibraryVideo(db, {
+        libraryId,
+        videoRecordingId,
+        placement,
+        selectionMode: "manual",
+        placementSelectionMode: "manual",
+        reason: "user",
+      });
+    }
+  })();
 
   // Public artist id is the MusicBrainz mbid when present.
   return { artistId: recording.artist_mbid ? String(recording.artist_mbid) : null };

@@ -866,7 +866,17 @@ export class ArtistQueryService {
         const jobs = Array.from(allJobs.values());
 
         return {
-            scanning: jobs.some((job) => job.name === "RefreshArtist" || job.name === "RefreshAlbum" || job.name === "ScanAlbum"),
+            // Refresh & Scan is a queued workflow, not just its entry command.
+            // Keep the page busy while provider matching and the artist-scoped
+            // disk scan are still running so users cannot accidentally start a
+            // second overlapping workflow after RefreshArtist hands off.
+            scanning: jobs.some((job) =>
+                job.name === "RefreshArtist"
+                || job.name === "MatchArtistProviders"
+                || job.name === "RescanFolders"
+                || job.name === "RefreshAlbum"
+                || job.name === "ScanAlbum"
+            ),
             curating: jobs.some((job) => job.name === "CurateArtist"),
             downloading: jobs.some((job) => job.name.startsWith("Download") || job.name === "ImportDownload"),
             libraryScan: jobs.some((job) => job.name === "RescanFolders"),

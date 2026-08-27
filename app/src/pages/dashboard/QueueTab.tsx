@@ -18,7 +18,6 @@ import {
 import {
   CheckmarkCircle16Filled,
   ArrowClockwise24Regular,
-  Clock16Regular,
   Delete24Regular,
   MusicNote224Regular,
   Video24Regular,
@@ -28,7 +27,6 @@ import {
   ArrowUp24Regular,
   ArrowDown24Regular,
   ArrowClockwise24Filled,
-  Clock16Filled,
   Delete24Filled,
   MusicNote224Filled,
   Video24Filled,
@@ -48,7 +46,7 @@ import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
-import { SemanticStatusIcon, StatusIconSlot } from "@/components/ui/SemanticStatusIcon";
+import { QueuedStatusIcon, SemanticStatusIcon, StatusIconSlot } from "@/components/ui/SemanticStatusIcon";
 import { statusIconGlyphPx, statusIconGlyphStyle } from "@/components/ui/statusIconMetrics";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
@@ -77,7 +75,6 @@ import {
 } from "./queueReorder";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
-const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
 const Delete24 = bundleIcon(Delete24Filled, Delete24Regular);
 const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
 const Video24 = bundleIcon(Video24Filled, Video24Regular);
@@ -279,17 +276,7 @@ function inferAlbumTrackStatus(
 }
 
 function renderPendingIndicator(styles: ReturnType<typeof useDashboardStyles>) {
-    const glyph = statusIconGlyphPx("filled");
-    return (
-        <StatusIconSlot>
-            <Clock16
-                className={styles.downloadStatusPendingIcon}
-                fontSize={glyph}
-                style={statusIconGlyphStyle("filled")}
-                title="Waiting"
-            />
-        </StatusIconSlot>
-    );
+    return <QueuedStatusIcon className={styles.downloadStatusPendingIcon} aria-label="Waiting" />;
 }
 
 function renderDownloadedCheck(styles: ReturnType<typeof useDashboardStyles>) {

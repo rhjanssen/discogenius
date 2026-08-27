@@ -202,6 +202,17 @@ function canMergeBareLiveMainTwin(input: VideoIdentitySignals): boolean {
 export function isExactVideoTwin(input: VideoIdentitySignals): boolean {
   const match = scoreVideoIdentityMatch(input);
   if (!match.matched) return false;
+  const leftIsrcs = parseIsrcValues(input.isrcsA);
+  const rightIsrcs = parseIsrcValues(input.isrcsB);
+  if (
+    leftIsrcs.length > 0
+    && rightIsrcs.length > 0
+    && !leftIsrcs.some((isrc) => rightIsrcs.includes(isrc))
+  ) return false;
+  // Distinct ids from one provider need stronger evidence than a fuzzy merge.
+  // When both provider dates are known, a different date is evidence for an
+  // alternate cut or reissue and must not be hidden as a second offer.
+  if (!releaseDatesCompatibleWhenKnown(input.releaseDateA, input.releaseDateB)) return false;
   const lengthMsA = input.lengthMsA == null ? null : Number(input.lengthMsA);
   const lengthMsB = input.lengthMsB == null ? null : Number(input.lengthMsB);
   if (lengthMsA == null || lengthMsB == null) return false;

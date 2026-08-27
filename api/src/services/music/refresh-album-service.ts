@@ -1267,7 +1267,12 @@ export class RefreshAlbumService {
                         title: textOrNull(track.title) || "Unknown video",
                         duration: positiveNumberOrNull(track.duration),
                         releaseDate: textOrNull(track.release_date),
-                        quality: textOrNull(track.quality),
+                        // This row describes the OMV counterpart, not the audio
+                        // track. Audio tiers such as YOUTUBE_LOSSY are invalid
+                        // video-resolution facts and would make the offer rank
+                        // below lower-resolution provider videos. Leave the
+                        // value empty until the video provider probes it.
+                        quality: null,
                         cover: textOrNull(track.cover, track.image_id, track.imageId),
                         url: textOrNull(track.url),
                         audioRecordingId,

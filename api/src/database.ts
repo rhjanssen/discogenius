@@ -222,11 +222,24 @@ export const db = new Proxy({} as any, {
         stmt.run = ((...args: unknown[]) => withSqliteWriteMutexSync(
           () => runWithSqliteBusyRetry(() => originalRun(...args)),
         )) as typeof stmt.run;
-        // Only wrap reads when profiling is on AND we're on the event loop —
-        // otherwise leave .get/.all untouched for zero hot-path overhead.
-        if (READ_PROFILE_MS && isMainThread) {
-          const originalGet = stmt.get.bind(stmt);
-          const originalAll = stmt.all.bind(stmt);
+        const originalGet = stmt.get.bind(stmt);
+        const originalAll = stmt.all.bind(stmt);
+        if (!stmt.readonly) {
+          // `INSERT/UPDATE/DELETE ... RETURNING` execute through `.get()` or
+          // `.all()`, not `.run()`. Leaving those methods unwrapped let metadata
+          // backfill writes race long provider-refresh transactions on another
+          // worker connection, which repeatedly failed RescanFolders with
+          // SQLITE_BUSY. The statement's SQLite-provided `readonly` flag is the
+          // authoritative distinction; parsing SQL text would miss CTEs.
+          stmt.get = ((...args: unknown[]) => withSqliteWriteMutexSync(
+            () => runWithSqliteBusyRetry(() => originalGet(...args)),
+          )) as typeof stmt.get;
+          stmt.all = ((...args: unknown[]) => withSqliteWriteMutexSync(
+            () => runWithSqliteBusyRetry(() => originalAll(...args)),
+          )) as typeof stmt.all;
+        } else if (READ_PROFILE_MS && isMainThread) {
+          // Only wrap reads when profiling is on AND we're on the event loop;
+          // otherwise leave them untouched for zero hot-path overhead.
           stmt.get = ((...args: unknown[]) => profileRead(source, () => originalGet(...args))) as typeof stmt.get;
           stmt.all = ((...args: unknown[]) => profileRead(source, () => originalAll(...args))) as typeof stmt.all;
         }

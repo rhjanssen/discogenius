@@ -130,7 +130,7 @@ test("local covers expose validators, content length, HEAD, and conditional 304"
   assert.ok(first.headers.get("last-modified"));
   assert.ok(first.headers.get("etag"));
   assert.equal(first.headers.get("accept-ranges"), "bytes");
-  assert.equal(first.headers.get("cache-control"), "public, max-age=31536000, immutable");
+  assert.equal(first.headers.get("cache-control"), "public, max-age=0, must-revalidate");
   await first.arrayBuffer();
 
   const conditional = await rawRequest(url, {
@@ -143,6 +143,9 @@ test("local covers expose validators, content length, HEAD, and conditional 304"
   assert.equal(head.status, 200);
   assert.equal(head.headers.get("content-length"), "64");
   assert.equal((await head.arrayBuffer()).byteLength, 0);
+
+  const revisioned = await fetch(`${url}?rev=content-revision`);
+  assert.equal(revisioned.headers.get("cache-control"), "public, max-age=31536000, immutable");
 });
 
 test("a true cache miss returns 404 without acquiring artwork on the delivery route", async () => {

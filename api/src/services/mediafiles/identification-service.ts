@@ -322,8 +322,9 @@ export class IdentificationService {
             }
         }
 
-        // Catalog-only: if the release group is not in the local catalog we
-        // cannot identify against it — we never fall back to a streaming provider.
+        // This scorer currently needs a locally hydrated release tracklist. A
+        // remote catalog candidate therefore has to be hydrated before reaching
+        // this method; streaming providers are never an identity fallback.
         return this.solveAssignments(files, tracks);
     }
 
