@@ -14,6 +14,7 @@ let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let libraryFilesModule: typeof import("./library-files.js");
 let backfillModule: typeof import("./library-metadata-backfill.js");
+let diskScanModule: typeof import("./library-scan.js");
 let providersModule: typeof import("../providers/index.js");
 
 const providerCapabilities = {
@@ -40,6 +41,7 @@ before(async () => {
     configModule = await import("../config/config.js");
     libraryFilesModule = await import("./library-files.js");
     backfillModule = await import("./library-metadata-backfill.js");
+    diskScanModule = await import("./library-scan.js");
     providersModule = await import("../providers/index.js");
     dbModule.initDatabase();
     providersModule.streamingProviderManager.registerStreamingProvider({
@@ -117,6 +119,23 @@ before(async () => {
             };
         },
     } as any);
+});
+
+test("disk scan metadata repair never rewrites embedded media metadata", async () => {
+    const originalFill = backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles;
+    let receivedOptions: import("./library-metadata-backfill.js").MetadataFillOptions | undefined;
+    backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles = (async (_artistId, options) => {
+        receivedOptions = options;
+        return { downloaded: 0, failed: 0, skipped: 0 };
+    }) as typeof originalFill;
+
+    try {
+        await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+    } finally {
+        backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles = originalFill;
+    }
+
+    assert.equal(receivedOptions?.writeEmbeddedMediaMetadata, false);
 });
 
 beforeEach(() => {

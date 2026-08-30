@@ -88,6 +88,7 @@ const Delete24 = bundleIcon(Delete24Filled, Delete24Regular);
 /** Human label for Recordings.video_variant (Discogenius catalog class). */
 function videoVariantLabel(variant: string | null | undefined): string {
     switch (String(variant || "").trim().toLowerCase()) {
+        case "video":
         case "official":
             return "Official";
         case "lyric":

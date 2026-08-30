@@ -19,6 +19,7 @@ export enum AppEvent {
     // Scanner Events — "refresh" = metadata refresh, "scan" = disk scan.
     ARTIST_REFRESH_COMPLETE = 'artist.refresh.complete',
     ARTIST_SCANNED = 'artist.scanned',
+    ARTIST_CURATED = 'artist.curated',
 
     // Config Events
     CONFIG_UPDATED = 'config.updated',
@@ -59,7 +60,6 @@ export interface ArtistRefreshCompleteEventPayload {
     scanLibrary: boolean;
     metadataChanged: boolean;
     isNewArtist: boolean;
-    forceDownloadQueue: boolean;
     trigger: number;
     priority: number;
 }
@@ -72,10 +72,19 @@ export interface ArtistScannedEventPayload {
     artistName: string;
     workflow?: ArtistWorkflow;
     monitoringCycle?: MonitoringPassWorkflowValue;
-    skipDownloadQueue: boolean;
     skipCuration: boolean;
     skipMetadataBackfill: boolean;
-    forceDownloadQueue: boolean;
+    trigger: number;
+    priority: number;
+}
+
+export interface ArtistCuratedEventPayload {
+    commandId?: number;
+    workerId?: string;
+    artistId: string;
+    artistName: string;
+    workflow?: ArtistWorkflow;
+    monitoringCycle?: MonitoringPassWorkflowValue;
     trigger: number;
     priority: number;
 }
@@ -120,6 +129,7 @@ export interface AppEventPayloadMap {
     [AppEvent.HISTORY_ADDED]: Record<string, unknown>;
     [AppEvent.ARTIST_REFRESH_COMPLETE]: ArtistRefreshCompleteEventPayload;
     [AppEvent.ARTIST_SCANNED]: ArtistScannedEventPayload;
+    [AppEvent.ARTIST_CURATED]: ArtistCuratedEventPayload;
     [AppEvent.CONFIG_UPDATED]: Record<string, unknown>;
     [AppEvent.LIBRARY_UPDATED]: LibraryUpdatedEventPayload;
     [AppEvent.FILE_ADDED]: FileChangeEventPayload;

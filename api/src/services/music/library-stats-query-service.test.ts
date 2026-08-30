@@ -409,7 +409,6 @@ test("snapshot caching is stable and mutation events invalidate it", () => {
     scanLibrary: false,
     metadataChanged: true,
     isNewArtist: true,
-    forceDownloadQueue: false,
     trigger: 0,
     priority: 0,
   });

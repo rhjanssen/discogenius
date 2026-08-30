@@ -17,7 +17,8 @@ import { resolveVideoTypeSuffix } from "./library-files.js";
 
 // Manually-imported files are a user's own pre-existing library files, not a
 // fresh Discogenius download ("not a new download" case) — only
-// tag them when the policy covers all files, either once or kept in sync.
+// tag them when the policy covers all files. `sync` is retained as a legacy
+// configuration alias; metadata refresh itself never rewrites media files.
 export function shouldTagManuallyImportedFiles(config: MetadataConfig): boolean {
     return config.write_audio_tags_policy === "all_files"
         || config.write_audio_tags_policy === "sync";

@@ -87,7 +87,6 @@ test("metadata regenerate queues tag and sidecar regeneration instead of running
   const rescanPayload = JSON.parse(commands[1].payload);
   assert.equal(rescanPayload.artistId, "artist-one");
   assert.equal(rescanPayload.skipCuration, true);
-  assert.equal(rescanPayload.skipDownloadQueue, true);
   assert.equal(rescanPayload.trackUnmappedFiles, false);
 });
 

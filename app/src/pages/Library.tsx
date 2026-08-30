@@ -1638,7 +1638,7 @@ const Library = () => {
         />
         {fileMaintenance.dialogs}
         {selectedTab === "artists" && (
-          <div className={styles.virtuosoContainer}>
+          <div id="library-panel-artists" role="tabpanel" aria-labelledby="library-tab-artists" className={styles.virtuosoContainer}>
             {loading ? renderPane({
               sentinelRef: activeSentinelRef,
               isFetching: false,
@@ -1678,7 +1678,7 @@ const Library = () => {
         )}
 
         {selectedTab === "albums" && (
-          <div className={styles.virtuosoContainer}>
+          <div id="library-panel-albums" role="tabpanel" aria-labelledby="library-tab-albums" className={styles.virtuosoContainer}>
             {loading ? renderPane({
               sentinelRef: activeSentinelRef,
               isFetching: false,
@@ -1719,7 +1719,7 @@ const Library = () => {
         )}
 
         {selectedTab === "tracks" && (
-          <div className={styles.virtuosoContainer}>
+          <div id="library-panel-tracks" role="tabpanel" aria-labelledby="library-tab-tracks" className={styles.virtuosoContainer}>
             {tracksLoading ? renderPane({
               sentinelRef: activeSentinelRef,
               isFetching: false,
@@ -1765,7 +1765,7 @@ const Library = () => {
         )}
 
         {selectedTab === "videos" && (
-          <div className={styles.virtuosoContainer}>
+          <div id="library-panel-videos" role="tabpanel" aria-labelledby="library-tab-videos" className={styles.virtuosoContainer}>
             {videosLoading ? renderPane({
               sentinelRef: activeSentinelRef,
               isFetching: false,

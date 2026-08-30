@@ -551,7 +551,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
   assert.equal(rows[0].file_path, newPath);
 });
 
-test("sidecar relocate copies into a sibling edition folder that still has audio", () => {
+test("sidecar relocate never copies artwork into a sibling edition folder", () => {
   const artist = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
     RETURNING id
@@ -602,10 +602,9 @@ test("sidecar relocate copies into a sibling edition folder that still has audio
     fileType: "cover",
   });
 
-  assert.equal(fs.existsSync(anniversaryCover), true);
+  assert.equal(fs.existsSync(anniversaryCover), false, "sibling edition must resolve its own cover");
   assert.equal(fs.existsSync(deluxeCover), true, "sibling edition cover must stay");
   assert.equal(fs.readFileSync(deluxeCover, "utf8"), "canonical-cover");
-  assert.equal(fs.readFileSync(anniversaryCover, "utf8"), "canonical-cover");
 });
 
 test("artist sidecar relocation resolves numeric ArtistMetadata id to MetadataFiles.artist_id", () => {

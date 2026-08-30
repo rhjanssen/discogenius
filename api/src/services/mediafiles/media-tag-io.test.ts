@@ -246,3 +246,23 @@ test("a failed TagLib write leaves the original file byte-for-byte intact", asyn
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("TagLib work files do not exceed the filesystem name limit for long media names", {
+  skip: !hasFfmpeg,
+}, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-taglib-long-name-"));
+  const filePath = path.join(tempDir, `${"long-title-".repeat(20)}video.m4a`);
+  try {
+    generateAudio(filePath, ["-c:a", "aac", "-f", "mp4"]);
+    const beforeHash = decodedAudioHash(filePath);
+
+    assert.deepEqual(
+      await writeMediaTagsWithTagLib(filePath, { title: "Long but valid title" }),
+      { handled: true, success: true, backend: "taglib" },
+    );
+    assert.equal(decodedAudioHash(filePath), beforeHash);
+    assert.deepEqual(fs.readdirSync(tempDir), [path.basename(filePath)]);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

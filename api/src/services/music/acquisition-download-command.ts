@@ -7,6 +7,7 @@ import {
   type DownloadTrackStateEntry,
 } from "../commands/command-bodies.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { formatTrackDisplayTitle } from "../../utils/display-title.js";
 
 interface PlanHeader {
   plan_id: number;
@@ -35,6 +36,8 @@ interface PlanTrack {
   track_mbid: string;
   recording_mbid: string;
   title: string;
+  recording_disambiguation: string | null;
+  provider_version: string | null;
   medium_position: number;
   position: number;
   provider_track_id: string;
@@ -122,6 +125,8 @@ export function buildAcquisitionDownloadCommand(
       track.mbid AS track_mbid,
       recording.mbid AS recording_mbid,
       track.title,
+      recording.disambiguation AS recording_disambiguation,
+      member_item.version AS provider_version,
       track.medium_position,
       track.position,
       member_item.provider_id AS provider_track_id,
@@ -177,13 +182,13 @@ export function buildAcquisitionDownloadCommand(
     acquisitionPlanSourceId: track.acquisition_plan_source_id,
     canonicalTrackMbid: track.track_mbid,
     canonicalRecordingMbid: track.recording_mbid,
-    title: track.title,
+    title: formatTrackDisplayTitle(track.title, track.recording_disambiguation, track.provider_version),
     quality: sourceQuality(track.source_quality_snapshot),
     trackNum: track.position,
     volumeNum: track.medium_position,
   }));
   const trackStates: DownloadTrackStateEntry[] = tracks.map((track) => ({
-    title: track.title,
+    title: formatTrackDisplayTitle(track.title, track.recording_disambiguation, track.provider_version),
     trackNum: track.position,
     volumeNum: track.medium_position,
     status: track.complete ? "skipped" : "queued",

@@ -1422,8 +1422,11 @@ export class OrganizerService {
           && this.directoryHasTrackedAudio(sourceDir);
 
         if (siblingEditionFolder) {
-          // One folder per monitored edition. Copy the canonical sidecar into
-          // the destination; never steal it from a folder that still has audio.
+          // Artwork belongs to an exact edition. A sibling folder's cover can
+          // be different even when both folders share one release group.
+          if (params.fileType === "cover" || params.fileType === "video_cover") {
+            continue;
+          }
           if (!hasExpectedSidecar) {
             this.ensureDir(destDir);
             fs.copyFileSync(resolvedFilePath, params.expectedPath);
@@ -2515,8 +2518,8 @@ export class OrganizerService {
         // This path neither chooses a provider nor performs network I/O.
         try {
           syncCachedMediaCoverToFile({
-            entityId: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid,
-            coverEntity: "Album",
+            entityId: jobReleaseMbid || canonicalContext?.releaseMbid,
+            coverEntity: "Edition",
             coverTypes: "cover",
             outputPath: albumCoverPath,
           });
@@ -3130,8 +3133,8 @@ export class OrganizerService {
         // Materialize only the canonical album's cached full-resolution master.
         // This path neither chooses a provider nor performs network I/O.
         syncCachedMediaCoverToFile({
-          entityId: trackIdentity.canonicalReleaseGroupMbid,
-          coverEntity: "Album",
+          entityId: trackIdentity.canonicalReleaseMbid,
+          coverEntity: "Edition",
           coverTypes: "cover",
           outputPath: albumCoverPath,
         });

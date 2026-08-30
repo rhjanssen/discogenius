@@ -1,7 +1,7 @@
 import { RefreshArtistService } from "../../music/refresh-artist-service.js";
 import { RefreshAlbumService } from "../../music/refresh-album-service.js";
 import { MediaSeedService } from "../../music/media-seed-service.js";
-import { getManagedArtists } from "../../music/managed-artists.js";
+import { getManagedArtists, isArtistLibraryMonitored } from "../../music/managed-artists.js";
 import { db } from "../../../database.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import {
@@ -9,14 +9,11 @@ import {
     buildMatchArtistProvidersCommand,
     nextArtistWorkflowPriority,
     queueArtistWorkflow,
-    queueCreditedArtistHydrationBatch,
-    workflowQueuesCuration,
 } from "../../music/artist-workflow.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import { CommandNames } from "../command-names.js";
 import { CommandQueueManager } from "../command-queue-manager.js";
-import { getConfigSection } from "../../config/config.js";
 import type { CommandHandler } from "./handler-context.js";
 
 export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, ctx) => {
@@ -25,10 +22,17 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         description: ctx.formatArtistPhaseDescription(job, "preparing artist refresh"),
     });
     // Metadata intake only — provider matching is deferred to a standalone
-    // MatchArtistProviders command enqueued below (RefreshArtist →
-    // MatchArtistProviders → RescanFolders → CurateArtist). refreshArtist returns
-    // the context that command needs to stay faithful to the old inline path.
-    const { artistMbid, shouldHydrateCatalog, metadataChanged, isNewArtist } = await RefreshArtistService.refreshArtist(job.payload.artistId, {
+    // MatchArtistProviders command. The selected workflow decides whether that
+    // is followed by a disk scan and curation; Refresh & Scan deliberately ends
+    // after its disk scan. refreshArtist returns the context the match command
+    // needs to stay faithful to the old inline path.
+    const {
+        artistMbid,
+        shouldHydrateCatalog,
+        metadataChanged,
+        isNewArtist,
+        creditedArtistMbids,
+    } = await RefreshArtistService.refreshArtist(job.payload.artistId, {
         monitorArtist: job.payload.monitorArtist ?? false,
         monitorAlbums: job.payload.monitorAlbums,
         hydrateCatalog: job.payload.hydrateCatalog,
@@ -54,9 +58,39 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         return;
     }
 
+    // A monitored artist's canonical refresh may discover a genuinely new
+    // credited artist. Give each untouched stub one background catalogue and
+    // provider fill, even when the collaboration appeared years after the
+    // monitored artist was added. The child is not a LibraryArtist, so it cannot
+    // recursively walk the collaboration graph; already hydrated collaborators
+    // are skipped by content_hash.
+    if (
+        isArtistLibraryMonitored(job.payload.artistId)
+        && creditedArtistMbids.length > 0
+    ) {
+        const uniqueMbids = Array.from(new Set(creditedArtistMbids));
+        const marks = uniqueMbids.map(() => "?").join(", ");
+        const untouched = db.prepare(`
+            SELECT mbid, name
+            FROM ArtistMetadata
+            WHERE mbid IN (${marks})
+              AND content_hash IS NULL
+            ORDER BY name COLLATE NOCASE, mbid
+        `).all(...uniqueMbids) as Array<{ mbid: string; name: string }>;
+        for (const credited of untouched) {
+            queueArtistWorkflow({
+                artistId: credited.mbid,
+                artistName: credited.name,
+                workflow: "metadata-refresh",
+                priority: ARTIST_WORKFLOW_PRIORITY.CREDITED_CATALOG_BASE,
+                trigger: CommandTrigger.Unspecified,
+            });
+        }
+    }
+
     // Hand provider matching off to its own queued unit. That command emits
-    // ARTIST_REFRESH_COMPLETE when matching finishes, so the existing
-    // RescanFolders → CurateArtist chain still fires AFTER slots are selected.
+    // ARTIST_REFRESH_COMPLETE when matching finishes, so any workflow-specific
+    // disk scan and curation run only after provider slots are selected.
     CommandQueueManager.push(
         CommandNames.MatchArtistProviders,
         buildMatchArtistProvidersCommand({
@@ -69,7 +103,6 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             workflow: job.payload.workflow,
             forceUpdate: job.payload.forceUpdate ?? false,
             monitoringCycle: job.payload.monitoringCycle,
-            creditedContinuation: job.payload.creditedContinuation,
         }),
         job.payload.artistId,
         nextArtistWorkflowPriority(job.priority),
@@ -88,10 +121,6 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         job.payload.artistMbid ?? null,
         {
             forceUpdate: job.payload.forceUpdate ?? false,
-            // Skip the inline curation pass only for workflows that chain into
-            // a CurateArtist of their own; otherwise this command is the only
-            // place the artist gets curated. See workflowQueuesCuration.
-            deferCuration: workflowQueuesCuration(job.payload.workflow),
             progress: (event) => {
                 if (event.kind === "albums_total") {
                     ctx.updateCommandDescription(job, {
@@ -152,7 +181,7 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
 
     // A watchdog may have reclaimed this attempt while the handler was
     // finishing an external call. Do not let the stale attempt fan out the
-    // next Artist stages or credited hydration.
+    // next artist stages.
     if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
         return;
     }
@@ -168,32 +197,10 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         scanLibrary: job.payload.scanLibrary ?? false,
         metadataChanged: job.payload.metadataChanged ?? false,
         isNewArtist: job.payload.isNewArtist ?? false,
-        forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
         monitoringCycle: job.payload.monitoringCycle,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
         priority: job.priority ?? 0,
     });
-
-    if (
-        job.payload.metadataChanged
-        && getConfigSection("metadata").write_audio_tags_policy === "sync"
-    ) {
-        CommandQueueManager.push(
-            CommandNames.RetagArtist,
-            {
-                artistId: job.payload.artistId,
-                artistIds: [job.payload.artistId],
-            },
-            job.payload.artistId,
-            nextArtistWorkflowPriority(job.priority),
-            job.trigger ?? CommandTrigger.Unspecified,
-        );
-    }
-
-    if (job.payload.creditedContinuation?.length) {
-        await ctx.yieldToEventLoop();
-        queueCreditedArtistHydrationBatch(job.payload.creditedContinuation);
-    }
 };
 
 export const handleRefreshAlbum: CommandHandler<"RefreshAlbum"> = async (job) => {

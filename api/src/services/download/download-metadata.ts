@@ -16,6 +16,7 @@ import {
     renderableProviderArtworkUrl,
     videoCoverLocalUrl,
 } from '../metadata/media-cover-service.js';
+import { formatTrackDisplayTitle } from '../../utils/display-title.js';
 
 export type CanonicalProviderOffer = {
     provider?: string | null;
@@ -29,6 +30,7 @@ export type CanonicalProviderOffer = {
     track_mbid?: string | null;
     recording_mbid?: string | null;
     provider_title?: string | null;
+    provider_version?: string | null;
     provider_quality?: string | null;
     asset_id?: string | null;
     provider_artist_name?: string | null;
@@ -38,6 +40,7 @@ export type CanonicalProviderOffer = {
     selected_release_mbid?: string | null;
     canonical_album_title?: string | null;
     canonical_track_title?: string | null;
+    canonical_recording_disambiguation?: string | null;
     canonical_track_id?: number | null;
     canonical_release_id?: number | null;
     canonical_recording_title?: string | null;
@@ -251,6 +254,7 @@ export function resolveCanonicalProviderOffer(
             track.mbid AS track_mbid,
             recording.mbid AS recording_mbid,
             provider_track.title AS provider_title,
+            provider_track.version AS provider_version,
             COALESCE(variant.provider_quality_label, variant.quality_class) AS provider_quality,
             provider_track.cover_id AS asset_id,
             COALESCE(provider_track.artwork_url, provider_track.cover_id) AS provider_cover,
@@ -260,6 +264,7 @@ export function resolveCanonicalProviderOffer(
             track.id AS canonical_track_id,
             release.id AS canonical_release_id,
             recording.title AS canonical_recording_title,
+            recording.disambiguation AS canonical_recording_disambiguation,
             recording.id AS canonical_recording_id,
             COALESCE(track_credit.credited_name, artist.name, recording_artist.name) AS artist_name
         FROM ProviderItems provider_track
@@ -427,7 +432,11 @@ export function resolveDownloadMetadata(
                 ? canonicalOffer.canonical_album_title
                 : type === 'video'
                     ? canonicalOffer.canonical_recording_title
-                    : canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title;
+                    : formatTrackDisplayTitle(
+                        canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title,
+                        canonicalOffer.canonical_recording_disambiguation,
+                        canonicalOffer.provider_version,
+                    );
             const title = pickNonPlaceholderTitle(catalogTitle)
                 || pickNonPlaceholderTitle(canonicalOffer.provider_title)
                 || fallbackTitle

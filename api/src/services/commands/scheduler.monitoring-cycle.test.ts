@@ -284,10 +284,9 @@ function pendingDownloadMissing() {
     );
 }
 
-test("queueNextMonitoringPass ignores untagged CurateArtist (downloads come from handleCurateArtist)", () => {
-    // Cycle chaining only applies to monitoringCycle-tagged jobs. Standalone
-    // monitored intake queues DownloadMissing from handleCurateArtist when
-    // forceDownloadQueue is set — not from queueNextMonitoringPass.
+test("queueNextMonitoringPass ignores untagged CurateArtist", () => {
+    // Cycle chaining only applies to monitoringCycle-tagged jobs. The
+    // ARTIST_CURATED listener owns the scoped wanted check for monitored intake.
     const workflows = ["monitoring-intake", "full-monitoring"] as const;
 
     for (const [index, workflow] of workflows.entries()) {

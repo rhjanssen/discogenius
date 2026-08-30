@@ -23,6 +23,7 @@ import type {
   QueueHistoryOutcomeFilter,
 } from "../../utils/queue-history-query.js";
 import { resolveRequestedVideoOffer } from "../music/video-offer-resolver.js";
+import { formatDisambiguatedTitle } from "../../utils/display-title.js";
 
 type QueueJobRow = {
   id: number;
@@ -506,29 +507,33 @@ function resolveCanonicalAlbumTracks(input: {
 
   const rows = acquisitionPlanId != null
     ? db.prepare(`
-        SELECT track.title, track.position, track.medium_position
+        SELECT track.title, recording.disambiguation, track.position, track.medium_position
         FROM AcquisitionPlanTracks plan_track
         JOIN Tracks track ON track.id = plan_track.track_id
+        LEFT JOIN Recordings recording ON recording.id = track.recording_id
         WHERE plan_track.plan_id = ?
         ORDER BY track.medium_position, track.position, track.id
       `).all(acquisitionPlanId) as Array<{
         title?: string | null;
+        disambiguation?: string | null;
         position?: number | null;
         medium_position?: number | null;
       }>
     : releaseMbid
     ? db.prepare(`
-        SELECT title, position, medium_position
-        FROM Tracks
-        WHERE release_mbid = ?
-        ORDER BY medium_position ASC, position ASC, id ASC
+        SELECT track.title, recording.disambiguation, track.position, track.medium_position
+        FROM Tracks track
+        LEFT JOIN Recordings recording ON recording.id = track.recording_id
+        WHERE track.release_mbid = ?
+        ORDER BY track.medium_position ASC, track.position ASC, track.id ASC
       `).all(releaseMbid) as Array<{
         title?: string | null;
+        disambiguation?: string | null;
         position?: number | null;
         medium_position?: number | null;
       }>
     : db.prepare(`
-        SELECT track.title, track.position, track.medium_position
+        SELECT track.title, recording.disambiguation, track.position, track.medium_position
         FROM Albums release_group
         JOIN AlbumEditions release
           ON release.release_group_id = release_group.id
@@ -537,6 +542,7 @@ function resolveCanonicalAlbumTracks(input: {
          AND (? IS NULL OR library_release.library_id = ?)
         JOIN Tracks track
           ON track.album_edition_id = release.id
+        LEFT JOIN Recordings recording ON recording.id = track.recording_id
         WHERE release_group.mbid = ?
         ORDER BY
           library_release.updated_at DESC,
@@ -549,6 +555,7 @@ function resolveCanonicalAlbumTracks(input: {
         releaseGroupMbid,
       ) as Array<{
         title?: string | null;
+        disambiguation?: string | null;
         position?: number | null;
         medium_position?: number | null;
       }>;
@@ -557,7 +564,7 @@ function resolveCanonicalAlbumTracks(input: {
     .map((row, index): QueueTrackProgress | null => {
       const title = getOptionalString(row.title);
       return title ? {
-        title,
+        title: formatDisambiguatedTitle(title, row.disambiguation, "Unknown Track"),
         trackNum: getOptionalNumber(row.position) ?? index + 1,
         volumeNum: getOptionalNumber(row.medium_position) ?? undefined,
         status: "queued",

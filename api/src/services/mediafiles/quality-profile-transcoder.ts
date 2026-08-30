@@ -123,8 +123,12 @@ export async function transcodeForQualityProfile(
     throw new Error(`Refusing to overwrite existing transcode output: ${finalPath}`);
   }
   const nonce = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const temporaryPath = `${stem}.discogenius-transcode-${nonce}${extension}`;
-  const backupPath = `${inputPath}.discogenius-source-${nonce}`;
+  const workingDirectory = path.dirname(inputPath);
+  const temporaryPath = path.join(workingDirectory, `.discogenius-transcode-${nonce}${extension}`);
+  const backupPath = path.join(
+    workingDirectory,
+    `.discogenius-source-${nonce}${path.extname(inputPath)}`,
+  );
   try {
     await runFfmpeg(buildFfmpegArgs(inputPath, temporaryPath, decision), options.isCancelled);
     if (!fs.existsSync(temporaryPath) || fs.statSync(temporaryPath).size === 0) {

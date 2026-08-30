@@ -1,6 +1,5 @@
 import { db } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
-import { LibraryFilesService } from "../mediafiles/library-files.js";
 import {
   loadArtistMetadataIdentity,
 } from "./managed-artists.js";
@@ -8,7 +7,6 @@ import { LibraryCurationService } from "./library-curation-service.js";
 import { curateArtistVideos } from "./video-curation-service.js";
 
 interface ArtistCurationIdentity {
-  localArtistId: string | null;
   canonicalArtistId: number | null;
   artistMbid: string | null;
 }
@@ -17,10 +15,9 @@ export class CurationService {
   private static resolveIdentity(inputValue: string): ArtistCurationIdentity {
     const identity = loadArtistMetadataIdentity(inputValue);
     if (!identity) {
-      return { localArtistId: null, canonicalArtistId: null, artistMbid: null };
+      return { canonicalArtistId: null, artistMbid: null };
     }
     return {
-      localArtistId: identity.mbid,
       canonicalArtistId: identity.id,
       artistMbid: identity.mbid,
     };
@@ -28,7 +25,6 @@ export class CurationService {
 
   static async processAll(
     artistId: string,
-    options: { skipDownloadQueue?: boolean; forceDownloadQueue?: boolean } = {},
   ): Promise<{ newAlbums: number; upgradedAlbums: number }> {
     const identity = this.resolveIdentity(artistId);
     if (identity.canonicalArtistId == null || !identity.artistMbid) {
@@ -114,21 +110,6 @@ export class CurationService {
       WHERE artist.artist_metadata_id = ?
     `).get(identity.canonicalArtistId) as { count: number }).count);
 
-    const cleanupArtistId = identity.localArtistId;
-    if (cleanupArtistId) {
-      // Disk scan runs before this curation pass, so existing files may have
-      // bound to an unmonitored sibling (Bad Blood X Oct 13 vs the selected
-      // Jan 1 edition). Rebind onto the unique monitored edition so curation's
-      // new selection is reflected in the file rows. File and sidecar cleanup
-      // belongs to explicit removal actions and the housekeeping command.
-      LibraryFilesService.rebindFilesToMonitoredEditions(cleanupArtistId);
-    }
-    if (options.skipDownloadQueue !== undefined || options.forceDownloadQueue !== undefined) {
-      console.log(
-        `[Queue] Ignoring curation auto-queue flags for artist ${artistId}; `
-        + "DownloadMissing remains the dedicated queueing path.",
-      );
-    }
     return {
       newAlbums: Math.max(0, selectedAfter - selectedBefore),
       upgradedAlbums: 0,

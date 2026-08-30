@@ -129,9 +129,7 @@ test("provider-match curation does not manufacture monitoring for an unmonitored
     VALUES (?, 'Catalog Artist')
   `).run(artistMbid);
 
-  await curationModule.CurationService.processAll(artistMbid, {
-    skipDownloadQueue: true,
-  });
+  await curationModule.CurationService.processAll(artistMbid);
 
   const libraryArtists = dbModule.db.prepare(`
     SELECT library_artist.policy

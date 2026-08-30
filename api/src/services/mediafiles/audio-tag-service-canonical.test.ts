@@ -202,6 +202,26 @@ dbModule.db.prepare(`
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });
 
+test("embedded cover resolution reads the exact edition cache", async () => {
+  const firstCover = Buffer.from("edition-one-cover");
+  const secondCover = Buffer.from("edition-two-cover");
+  const firstCache = path.join(tempDir, "media-cover", "AlbumEditions", "release-mbid-1");
+  const secondCache = path.join(tempDir, "media-cover", "AlbumEditions", "release-mbid-2");
+  fs.mkdirSync(firstCache, { recursive: true });
+  fs.mkdirSync(secondCache, { recursive: true });
+  fs.writeFileSync(path.join(firstCache, "cover.jpg"), firstCover);
+  fs.writeFileSync(path.join(secondCache, "cover.jpg"), secondCover);
+
+  assert.deepEqual(
+    await audioTagServiceModule.AudioTagService.readPreferredEmbeddedCoverForTest("release-mbid-1"),
+    firstCover,
+  );
+  assert.deepEqual(
+    await audioTagServiceModule.AudioTagService.readPreferredEmbeddedCoverForTest("release-mbid-2"),
+    secondCover,
+  );
+});
+
 test("retag apply writes a real file, verifies it, and produces an idempotent second preview", {
   skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
 }, async () => {

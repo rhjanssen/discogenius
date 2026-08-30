@@ -114,14 +114,14 @@ test("OMV and bare live stay split even cross-provider at equal duration", () =>
   assert.equal(match.reason, "variant-incompatible");
 });
 
-test("named TV performance twins bare title within the soft ±2s duration gate", () => {
+test("named TV performance needs cross-provider date corroboration", () => {
   const sameDuration = scoreVideoIdentityMatch({
     titleA: "Pompeii",
     titleB: "Pompeii (Good Morning America Performance)",
     lengthMsA: 228_000,
     lengthMsB: 228_000,
   });
-  assert.equal(sameDuration.matched, true);
+  assert.equal(sameDuration.matched, false);
 
   const liveAtVenue = scoreVideoIdentityMatch({
     titleA: "Me & Mr. Jones",
@@ -229,6 +229,33 @@ test("isExactVideoTwin allows ±2s catalog rounding but rejects farther cuts", (
     lengthMsA: 233_000,
     lengthMsB: 228_000,
   }), false);
+});
+
+test("named live venues remain distinct even when title and duration agree", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Quarter Past Midnight (Live From Royal Albert Hall)",
+    titleB: "Quarter Past Midnight (Live From Jimmy Kimmel Live!/2018)",
+    lengthMsA: 212_000,
+    lengthMsB: 213_000,
+    releaseDateA: "2018-07-25",
+    releaseDateB: "2018-10-02",
+    providerA: "apple-music",
+    providerB: "youtube-music",
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.reason, "cut-qualifier-mismatch");
+});
+
+test("the same named performance survives provider wording differences", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Quarter Past Midnight (Live From Jimmy Kimmel Live!/2018)",
+    titleB: "Quarter Past Midnight (Jimmy Kimmel performance)",
+    lengthMsA: 212_000,
+    lengthMsB: 213_000,
+    providerA: "tidal",
+    providerB: "youtube-music",
+  });
+  assert.equal(match.matched, true);
 });
 
 test("isExactVideoTwin rejects same-provider alternates with different known dates", () => {

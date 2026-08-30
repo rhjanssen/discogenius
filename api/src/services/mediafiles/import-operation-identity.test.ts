@@ -264,10 +264,10 @@ test("a fallback-stamped file still receives quality when the command provider d
   assert.equal(row.provider, "tidal", "quality persist must not rewrite the supplying provider");
 });
 
-test("dest album cover cache overwrites a leftover downloader cover.jpg", async () => {
-  const destCover = Buffer.from("DEST-ALBUM-COVER");
+test("dest edition cover cache overwrites a leftover downloader cover.jpg", async () => {
+  const destCover = Buffer.from("DEST-EDITION-COVER");
   const leftoverCover = Buffer.from("DOWNLOADER-COVER");
-  const albumMbid = "c0bd9b69-9ff9-42a4-8a9b-722943a0743f";
+  const releaseMbid = "c0bd9b69-9ff9-42a4-8a9b-722943a0743f";
   const albumDir = path.join(tempDir, "library", "Afterlife", "Living At The Speed Of Light");
   fs.mkdirSync(albumDir, { recursive: true });
   const trackPath = path.join(albumDir, "01 - Living At The Speed Of Light.m4a");
@@ -284,11 +284,11 @@ test("dest album cover cache overwrites a leftover downloader cover.jpg", async 
     extension: "m4a",
   });
   db.prepare(`
-    UPDATE TrackFiles SET canonical_release_group_mbid = ? WHERE id = ?
-  `).run(albumMbid, fileId);
+    UPDATE TrackFiles SET canonical_release_mbid = ? WHERE id = ?
+  `).run(releaseMbid, fileId);
 
   const { getMediaCoverPath } = await import("../metadata/media-cover-service.js");
-  const cachePath = getMediaCoverPath(albumMbid, "Album", "cover", ".jpg");
+  const cachePath = getMediaCoverPath(releaseMbid, "Edition", "cover", ".jpg");
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   fs.writeFileSync(cachePath, destCover);
 
@@ -297,7 +297,7 @@ test("dest album cover cache overwrites a leftover downloader cover.jpg", async 
   assert.equal(
     crypto.createHash("sha256").update(fs.readFileSync(destSidecar)).digest("hex"),
     crypto.createHash("sha256").update(destCover).digest("hex"),
-    "dest cover.jpg must be the album MediaCover, not leftover downloader art",
+    "dest cover.jpg must be the edition MediaCover, not leftover downloader art",
   );
 });
 

@@ -1,7 +1,6 @@
 import { CommandTrigger } from "./command-trigger.js";
 import { db } from "../../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
-import { CurationService } from "../music/curation-service.js";
 import { DownloadMissingService } from "../music/download-missing-service.js";
 import { RefreshArtistService } from "../music/refresh-artist-service.js";
 import {CommandNames} from "./command-names.js";
@@ -396,11 +395,17 @@ export function queueDownloadMissingPass(options: {
     artistIds?: string[];
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
-    const refId = monitoringCycle ? `download-missing:${monitoringCycle}` : "download-missing";
+    const artistIds = normalizeArtistIds(options.artistIds);
+    const artistScope = artistIds && artistIds.length > 0
+        ? `:artists:${[...artistIds].sort().join(",")}`
+        : "";
+    const refId = monitoringCycle
+        ? `download-missing:${monitoringCycle}${artistScope}`
+        : `download-missing${artistScope}`;
     return CommandQueueManager.push(
         CommandNames.DownloadMissing,
         {
-            artistIds: normalizeArtistIds(options.artistIds),
+            artistIds,
             title: "Queueing missing downloads",
             description: "Adding monitored missing items to the download queue",
             monitoringCycle,

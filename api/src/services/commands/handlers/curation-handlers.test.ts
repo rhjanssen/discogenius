@@ -13,6 +13,7 @@ let queueModule: typeof import("../command-queue-manager.js");
 let handlerModule: typeof import("./curation-handlers.js");
 let curationModule: typeof import("../../music/curation-service.js");
 let statisticsModule: typeof import("../../music/artist-statistics-service.js");
+let eventsModule: typeof import("../app-events.js");
 
 before(async () => {
   dbModule = await import("../../../database.js");
@@ -21,6 +22,7 @@ before(async () => {
   handlerModule = await import("./curation-handlers.js");
   curationModule = await import("../../music/curation-service.js");
   statisticsModule = await import("../../music/artist-statistics-service.js");
+  eventsModule = await import("../app-events.js");
 });
 
 beforeEach(() => {
@@ -32,12 +34,15 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("CurateArtist advances priority for its per-artist DownloadMissing handoff", async () => {
+test("CurateArtist emits completion without queueing DownloadMissing itself", async () => {
   const originalProcessAll = curationModule.CurationService.processAll;
   const originalRefresh = statisticsModule.ArtistStatisticsService.refresh;
   (curationModule.CurationService as any).processAll = async () => undefined;
   (statisticsModule.ArtistStatisticsService as any).refresh = () => [];
 
+  const completed = new Promise<any>((resolve) => {
+    eventsModule.appEvents.once(eventsModule.AppEvent.ARTIST_CURATED, resolve);
+  });
   try {
     await handlerModule.handleCurateArtist({
       id: 42,
@@ -50,7 +55,6 @@ test("CurateArtist advances priority for its per-artist DownloadMissing handoff"
         artistId: "artist-1",
         artistName: "Bastille",
         workflow: "monitoring-intake",
-        forceDownloadQueue: true,
       },
     } as any, {
       updateCommandDescription: () => undefined,
@@ -61,18 +65,10 @@ test("CurateArtist advances priority for its per-artist DownloadMissing handoff"
     (statisticsModule.ArtistStatisticsService as any).refresh = originalRefresh;
   }
 
-  const queued = dbModule.db.prepare(`
-    SELECT name, priority, payload
-    FROM commands
-    WHERE name = ?
-    ORDER BY id DESC
-    LIMIT 1
-  `).get(queueModule.CommandNames.DownloadMissing) as {
-    name: string;
-    priority: number;
-    payload: string;
-  };
-  assert.equal(queued.name, queueModule.CommandNames.DownloadMissing);
-  assert.equal(queued.priority, 13);
-  assert.deepEqual(JSON.parse(queued.payload).artistIds, ["artist-1"]);
+  const event = await completed;
+  assert.equal(event.artistId, "artist-1");
+  assert.equal(event.workflow, "monitoring-intake");
+  const queued = dbModule.db.prepare("SELECT COUNT(*) AS n FROM commands WHERE name = ?")
+    .get(queueModule.CommandNames.DownloadMissing) as { n: number };
+  assert.equal(queued.n, 0);
 });

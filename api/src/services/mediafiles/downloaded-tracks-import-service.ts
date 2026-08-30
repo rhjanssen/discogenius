@@ -55,7 +55,7 @@ function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
 }
 
 /**
- * Dest-album artwork must be in the MediaCover cache *before* tag write.
+ * The destination edition's artwork must be in MediaCover before tag write.
  * Organizer and embed both read that cache; if it is empty they leave the
  * downloader's cover (Apple 540px covr, tiddl album art) on the library copy.
  * Fetch/store via the same resolver the UI uses, then rewrite dest cover.jpg
@@ -69,55 +69,59 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
 
     const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(`
-        SELECT canonical_release_group_mbid AS mbid, file_path, library_root, relative_path
+        SELECT canonical_release_mbid AS release_mbid, album_edition_id, library_id,
+               file_path, library_root, relative_path
         FROM TrackFiles
         WHERE id IN (${placeholders})
           AND file_type = 'track'
     `).all(...ids) as Array<{
-        mbid: string | null;
+        release_mbid: string | null;
+        album_edition_id: number | null;
+        library_id: number | null;
         file_path: string;
         library_root: string | null;
         relative_path: string | null;
     }>;
 
     const {
-        getCachedMediaCoverOriginalFilePath,
-        resolveAlbumArtwork,
+        resolveEditionArtwork,
         syncCachedMediaCoverToFile,
     } = await import("../metadata/media-cover-service.js");
     const { resolveStoredLibraryPath } = await import("./library-paths.js");
     const { getConfigSection } = await import("../config/config.js");
     const coverName = getConfigSection("metadata").album_cover_name || "cover.jpg";
 
-    const mbids = new Set<string>();
-    const sidecars: Array<{ mbid: string; outputPath: string }> = [];
+    const editions = new Map<string, { releaseMbid: string; libraryId: number | null }>();
+    const sidecars: Array<{ releaseMbid: string; outputPath: string }> = [];
     for (const row of rows) {
-        const mbid = String(row.mbid || "").trim();
-        if (!mbid) continue;
-        mbids.add(mbid);
+        const releaseMbid = String(row.release_mbid || "").trim();
+        if (!releaseMbid) continue;
+        editions.set(`${row.library_id ?? ""}:${row.album_edition_id ?? releaseMbid}`, {
+            releaseMbid,
+            libraryId: row.library_id,
+        });
         const resolved = resolveStoredLibraryPath({
             filePath: row.file_path,
             libraryRoot: row.library_root,
             relativePath: row.relative_path,
         });
         if (!resolved) continue;
-        sidecars.push({ mbid, outputPath: path.join(path.dirname(resolved), coverName) });
+        sidecars.push({ releaseMbid, outputPath: path.join(path.dirname(resolved), coverName) });
     }
 
-    for (const mbid of mbids) {
-        if (getCachedMediaCoverOriginalFilePath(mbid, "Album", "cover")) continue;
+    for (const { releaseMbid, libraryId } of editions.values()) {
         try {
-            await resolveAlbumArtwork({ albumMbid: mbid });
+            await resolveEditionArtwork({ releaseMbid, libraryId });
         } catch (error) {
-            console.warn(`[ImportDownload] Failed to cache dest cover for album ${mbid}:`, error);
+            console.warn(`[ImportDownload] Failed to cache dest cover for edition ${releaseMbid}:`, error);
         }
     }
 
-    for (const { mbid, outputPath } of sidecars) {
+    for (const { releaseMbid, outputPath } of sidecars) {
         try {
             syncCachedMediaCoverToFile({
-                entityId: mbid,
-                coverEntity: "Album",
+                entityId: releaseMbid,
+                coverEntity: "Edition",
                 coverTypes: "cover",
                 outputPath,
             });
@@ -697,8 +701,9 @@ function recoverExistingLibraryImport(
     type: string,
     providerId: string,
     provider: string,
+    libraryId?: number | null,
 ): OrganizeResult | null {
-    const recovered = getExistingLibraryFiles(type as any, providerId, provider);
+    const recovered = getExistingLibraryFiles(type as any, providerId, provider, libraryId);
     if (recovered.length === 0) {
         return null;
     }
@@ -1049,7 +1054,7 @@ export class DownloadedTracksImportService {
         let preparedImportQuality = new Map<string, PreparedImportQuality>();
         const workspaceHasMedia = workspaceContainsMediaFiles(downloadPath);
         if (!workspaceHasMedia) {
-            const recovered = recoverExistingLibraryImport(type, providerId, provider);
+            const recovered = recoverExistingLibraryImport(type, providerId, provider, job.payload.libraryId);
             if (!recovered) {
                 throw new Error(`Import files for ${type} ${providerId} are no longer available. Re-download the item to retry import.`);
             }

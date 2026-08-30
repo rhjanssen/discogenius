@@ -18,6 +18,7 @@ import {
     buildDurableQueueOrderClause,
     buildExecutionOrderClause,
 } from "./command-ordering.js";
+import { formatDisambiguatedTitle, formatTrackDisplayTitle } from "../../utils/display-title.js";
 
 const ALL_ACTIVITY_STATUSES = ["queued", "started", "completed", "failed", "cancelled"] as const;
 type ActivityStatus = typeof ALL_ACTIVITY_STATUSES[number];
@@ -386,19 +387,11 @@ function resolveVideoLookup(id: string, context?: DescriptionLookupContext): Vid
 }
 
 export const formatAlbumTitle = (title: string, version?: string | null) => {
-    const base = title || "Unknown Album";
-    const normalizedVersion = (version || "").trim();
-    if (!normalizedVersion) return base;
-    if (base.toLowerCase().includes(normalizedVersion.toLowerCase())) return base;
-    return `${base} (${normalizedVersion})`;
+    return formatDisambiguatedTitle(title, version, "Unknown Album");
 };
 
 export const formatTrackTitle = (title: string, version?: string | null) => {
-    const base = title || "Unknown Track";
-    const normalizedVersion = (version || "").trim();
-    if (!normalizedVersion) return base;
-    if (base.toLowerCase().includes(normalizedVersion.toLowerCase())) return base;
-    return `${base} (${normalizedVersion})`;
+    return formatTrackDisplayTitle(title, null, version);
 };
 
 export const buildDescription = (job: CommandModel, context?: DescriptionLookupContext): string => {
@@ -811,10 +804,6 @@ function toTaskEventTimestamp(job: TaskEventProjectionRow): number {
 function getTaskEventLevel(status: ActivityStatus, outcome?: string | null): ActivityEventLevel {
     if (status === "failed") {
         return "error";
-    }
-
-    if (status === "cancelled") {
-        return "warning";
     }
 
     if (status === "completed" && outcome === "completedWithWarning") {

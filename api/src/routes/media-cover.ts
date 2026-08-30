@@ -160,6 +160,21 @@ router.get("/Albums/:albumId/:filename", async (req, res) => {
   return sendMediaCover(req, res, filePath);
 });
 
+router.get("/AlbumEditions/:editionId/:filename", async (req, res) => {
+  const editionId = normalizeMediaCoverEntityId(req.params.editionId);
+  const editionFolder = editionId ? mediaCoverFolder("AlbumEditions", editionId) : null;
+  if (!editionId || !editionFolder) {
+    return res.status(400).end();
+  }
+  const filename = String(req.params.filename || "");
+  const filePath = resolveUiMediaCoverFilePath(editionFolder, filename);
+
+  if (!filePath) {
+    return res.status(404).end();
+  }
+  return sendMediaCover(req, res, filePath);
+});
+
 router.get("/Videos/:videoId/:filename", async (req, res) => {
   const videoId = normalizeMediaCoverEntityId(req.params.videoId);
   const videoFolder = videoId ? mediaCoverFolder("Videos", videoId) : null;

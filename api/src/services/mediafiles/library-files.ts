@@ -493,16 +493,15 @@ type RebaseLibraryFileRow = {
  */
 function resolveCanonicalInlineAudioExpectedPath(
   artistId: string | number,
-  videoTitle: string,
+  inlineTrackId: number,
+  placementLibraryId: number,
   cache?: ExpectedPathCache,
 ): string | null {
-  if (!videoTitle) return null;
-
   const artist = loadArtistNamePath(artistId);
   if (!artist) return null;
   const artistMbId = artist.mbid ? String(artist.mbid) : String(artistId);
 
-  const tracks = db.prepare(`
+  const track = db.prepare(`
     SELECT t.title,
            t.position,
            t.number,
@@ -511,61 +510,27 @@ function resolveCanonicalInlineAudioExpectedPath(
            ar.release_group_mbid,
            a.title AS album_title,
            a.primary_type,
-           a.first_release_date,
-           CASE WHEN EXISTS (
-             SELECT 1
-             FROM LibraryAlbums library_group
-             JOIN Libraries library ON library.id = library_group.library_id
-             JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-             WHERE library_group.release_group_id = a.id
-               AND library.enabled = 1
-               AND NOT EXISTS (
-                 SELECT 1
-                 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-                 WHERE allowed.value = 'spatial'
-               )
-           ) THEN 1 ELSE 0 END AS wanted,
-           COALESCE(c.included, 0) AS included,
-           CASE WHEN EXISTS (
-             SELECT 1
-             FROM LibraryEditions library_release
-             JOIN Libraries library ON library.id = library_release.library_id
-             JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-             WHERE library_release.edition_id = ar.id
-               AND library.enabled = 1
-               AND NOT EXISTS (
-                 SELECT 1
-                 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-                 WHERE allowed.value = 'spatial'
-               )
-           ) THEN 1 ELSE 0 END AS selected_release
+           a.first_release_date
     FROM Tracks t
-    JOIN AlbumEditions ar ON ar.mbid = t.release_mbid
-    JOIN Albums a ON a.mbid = ar.release_group_mbid
-    LEFT JOIN ArtistReleaseGroupCuration c
-      ON c.source_artist_mbid = ?
-     AND c.release_group_mbid = ar.release_group_mbid
-    WHERE a.artist_mbid = ?
-      AND EXISTS (
+    JOIN AlbumEditions ar
+      ON ar.id = t.album_edition_id
+      OR (t.album_edition_id IS NULL AND ar.mbid = t.release_mbid)
+    JOIN Albums a
+      ON a.id = ar.release_group_id
+      OR (ar.release_group_id IS NULL AND a.mbid = ar.release_group_mbid)
+    JOIN LibraryEditions selected
+      ON selected.edition_id = ar.id AND selected.library_id = ?
+    JOIN Libraries library ON library.id = selected.library_id AND library.enabled = 1
+    JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+    WHERE t.id = ?
+      AND a.artist_mbid = ?
+      AND NOT EXISTS (
         SELECT 1
-        FROM LibraryAlbums library_group
-        JOIN Libraries library ON library.id = library_group.library_id
-        JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-        WHERE library_group.release_group_id = a.id
-          AND library.enabled = 1
-          AND NOT EXISTS (
-            SELECT 1
-            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-            WHERE allowed.value = 'spatial'
-          )
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
       )
-    ORDER BY included DESC,
-             CASE a.primary_type WHEN 'Album' THEN 0 WHEN 'EP' THEN 1 WHEN 'Single' THEN 2 ELSE 3 END,
-             selected_release DESC,
-             a.first_release_date ASC,
-             ar.mbid ASC,
-             t.position ASC
-  `).all(artistMbId, artistMbId) as Array<{
+    LIMIT 1
+  `).get(placementLibraryId, inlineTrackId, artistMbId) as {
     title?: string | null;
     position?: number | null;
     number?: string | null;
@@ -574,8 +539,7 @@ function resolveCanonicalInlineAudioExpectedPath(
     primary_type?: string | null;
     first_release_date?: string | null;
     release_group_mbid?: string | null;
-  }>;
-  const track = tracks.find((candidate) => normalizeInlineVideoTitle(candidate.title) === videoTitle);
+  } | undefined;
   if (!track?.album_title) return null;
 
   const naming = cache?.configSnapshot.naming ?? getNamingConfig();
@@ -1172,7 +1136,8 @@ export class LibraryFilesService {
               FROM TrackFiles tf
               JOIN Libraries library ON library.id = tf.library_id
               JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-              WHERE tf.recording_id = ?
+              WHERE tf.track_id = ?
+                AND tf.library_id = ?
                 AND tf.file_type = 'track'
                 AND library.enabled = 1
                 AND NOT EXISTS (
@@ -1182,17 +1147,21 @@ export class LibraryFilesService {
                 )
               ORDER BY tf.id ASC
               LIMIT 1
-            `).get(relatedAudio.audio_recording_id) as LibraryFileRow | undefined;
-
-          const inlineVideoTitle = normalizeInlineVideoTitle(
-            relatedAudio.audio_title || canonicalVideo.title,
-          );
+            `).get(
+              persistedPlacement!.inlineTrackId,
+              persistedPlacement!.placementLibraryId,
+            ) as LibraryFileRow | undefined;
 
           let audioExpectedPath: string | null = audioTrack
             ? LibraryFilesService.computeExpectedPath(audioTrack, cache).expectedPath
             : null;
           // Catalog stereo-root fallback when the stereo file is not on disk yet.
-          audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_metadata_id, inlineVideoTitle, cache);
+          audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(
+            row.artist_metadata_id,
+            persistedPlacement!.inlineTrackId!,
+            persistedPlacement!.placementLibraryId!,
+            cache,
+          );
 
           if (audioExpectedPath) {
             const audioExpectedDir = path.dirname(audioExpectedPath);

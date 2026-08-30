@@ -2,8 +2,8 @@ import { CurationService } from "../../music/curation-service.js";
 import { UpgraderService } from "../../mediafiles/upgrader.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
-import { queueDownloadMissingPass } from "../scheduler.js";
-import { nextArtistWorkflowPriority } from "../../music/artist-workflow.js";
+import { appEvents, AppEvent } from "../app-events.js";
+import { CommandTrigger } from "../command-trigger.js";
 import { CommandQueueManager } from "../command-queue-manager.js";
 import type { CommandHandler } from "./handler-context.js";
 
@@ -34,10 +34,7 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
         });
 
         try {
-            await CurationService.processAll(artistId, {
-                skipDownloadQueue: true,
-                forceDownloadQueue: false,
-            });
+            await CurationService.processAll(artistId);
             ArtistStatisticsService.refresh([artistId]);
             curated++;
             await ctx.yieldToEventLoop();
@@ -70,33 +67,26 @@ export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job, ct
         progress: 10,
         description: ctx.formatArtistPhaseDescription(job, "applying release monitoring rules"),
     });
-    // Curation only selects slots/offers. DownloadMissing is the
-    // "search for missing" handoff (see monitoring-intake / full-monitoring).
-    await CurationService.processAll(
-        job.payload.artistId,
-        {
-            skipDownloadQueue: true,
-            forceDownloadQueue: false,
-        }
-    );
+    // Curation only selects slots and acquisition plans. The workflow
+    // orchestrator owns any later DownloadMissing command.
+    await CurationService.processAll(job.payload.artistId);
     ctx.updateCommandDescription(job, {
         progress: 90,
         description: ctx.formatArtistPhaseDescription(job, "updating artist statistics"),
     });
     ArtistStatisticsService.refresh([job.payload.artistId]);
 
-    if (job.payload.forceDownloadQueue) {
-        if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
-            return;
-        }
-        queueDownloadMissingPass({
-            artistIds: [String(job.payload.artistId)],
-            trigger: job.trigger,
-            priority: nextArtistWorkflowPriority(job.priority),
-        });
-        ctx.updateCommandDescription(job, {
-            progress: 100,
-            description: ctx.formatArtistPhaseDescription(job, "queued missing downloads"),
-        });
+    if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
+        return;
     }
+    appEvents.emit(AppEvent.ARTIST_CURATED, {
+        commandId: job.id,
+        workerId: job.worker_id ?? undefined,
+        artistId: job.payload.artistId,
+        artistName: job.payload.artistName,
+        workflow: job.payload.workflow,
+        monitoringCycle: job.payload.monitoringCycle,
+        trigger: job.trigger ?? CommandTrigger.Unspecified,
+        priority: job.priority ?? 0,
+    });
 };

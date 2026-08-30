@@ -293,17 +293,17 @@ async function resolvePreferredEmbeddedCover(
   _resolvedMediaPath: string,
   context: EmbeddedCoverContext,
 ): Promise<string | null> {
-  // Single source of truth: the cover already in the mediacover cache for this
-  // file's OWN canonical release group — the exact image the UI shows. No
+  // Single source of truth: the cover already in the MediaCover cache for this
+  // file's own canonical edition. No
   // provider fallback, no hybrid-matched-track release group, no folder-sidecar
   // preference, and no on-the-fly download at tag-write time. Refresh + provider
   // matching are the phases that acquire artwork; if it was never cached, we
   // simply do not embed (mirrors Lidarr, which embeds from the album's stored
   // MediaCover and does not fetch during a tag write).
-  const albumMbid = String(row.canonical_release_group_mbid || row.album_mbid || "").trim();
-  if (!albumMbid) return null;
+  const releaseMbid = String(row.canonical_release_mbid || row.album_mbid || "").trim();
+  if (!releaseMbid) return null;
 
-  const key = `canonical:${albumMbid}`;
+  const key = `edition:${releaseMbid}`;
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
@@ -311,7 +311,7 @@ async function resolvePreferredEmbeddedCover(
         getCachedMediaCoverOriginalFilePath,
         renderCappedCoverBuffer,
       } = await import("../metadata/media-cover-service.js");
-      const cover = getCachedMediaCoverOriginalFilePath(albumMbid, "Album", "cover");
+      const cover = getCachedMediaCoverOriginalFilePath(releaseMbid, "Edition", "cover");
       if (!cover || !fs.existsSync(cover)) return null;
 
       // Cap the embedded rendition at EMBEDDED_COVER_HEIGHT: scale down on the fly
@@ -1633,6 +1633,23 @@ export class AudioTagService {
       embed_replaygain: false,
       ...config,
     } as MetadataConfig);
+  }
+
+  static async readPreferredEmbeddedCoverForTest(canonicalReleaseMbid: string): Promise<Buffer | null> {
+    const context: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [] };
+    try {
+      const coverPath = await resolvePreferredEmbeddedCover(
+        { canonical_release_mbid: canonicalReleaseMbid } as RetagTrackRow,
+        getConfigSection("metadata") as MetadataConfig,
+        "",
+        context,
+      );
+      return coverPath ? fs.readFileSync(coverPath) : null;
+    } finally {
+      for (const tempDir of context.temporaryDirectories) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
   }
 
   private static async enrichMusicBrainzMetadata(row: RetagTrackRow, config: MetadataConfig): Promise<RetagTrackRow> {

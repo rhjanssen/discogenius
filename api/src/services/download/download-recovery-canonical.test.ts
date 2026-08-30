@@ -11,7 +11,11 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { getExistingLibraryMediaIds, shouldQueueRedownloadForFailedImport } = await import("./download-recovery.js");
+const {
+  getExistingLibraryFiles,
+  getExistingLibraryMediaIds,
+  shouldQueueRedownloadForFailedImport,
+} = await import("./download-recovery.js");
 
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
@@ -143,9 +147,90 @@ test("download recovery resolves existing album files through canonical provider
     "audio",
   );
 
-  const recovered = getExistingLibraryMediaIds("album", "provider-album", "tidal");
+  const spatialPath = path.join(tempDir, "library", "spatial", "Artist", "Album", "01 - Track.m4a");
+  fs.mkdirSync(path.dirname(spatialPath), { recursive: true });
+  fs.writeFileSync(spatialPath, "spatial-audio");
+  const spatialLibrary = db.prepare(`
+    SELECT id, root_path FROM Libraries WHERE name = 'Spatial'
+  `).get() as { id: number; root_path: string };
+  db.prepare(`
+    INSERT INTO LibraryAlbums (
+      library_id, release_group_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(spatialLibrary.id, releaseGroup.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (
+      library_id, edition_id, selection_mode, reason, curation_version
+    ) VALUES (?, ?, 'auto', 'test', 1)
+  `).run(spatialLibrary.id, release.id);
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type,
+      provider_id, release_group_id, album_edition_id, track_id, recording_id,
+      library_slot, library_id, file_path, relative_path, library_root, filename,
+      extension, file_type, file_class
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    artist.id,
+    "artist-mbid",
+    "rg-mbid",
+    "release-mbid",
+    "track-mbid",
+    "recording-mbid",
+    "tidal",
+    "track",
+    "provider-track-spatial",
+    releaseGroup.id,
+    release.id,
+    track.id,
+    recording.id,
+    "spatial",
+    spatialLibrary.id,
+    spatialPath,
+    path.relative(spatialLibrary.root_path, spatialPath),
+    spatialLibrary.root_path,
+    "01 - Track.m4a",
+    "m4a",
+    "track",
+    "audio",
+  );
+
+  const recovered = getExistingLibraryMediaIds("album", "provider-album", "tidal", library.id);
 
   assert.deepEqual(recovered, [String(track.id)]);
+  const stereoFiles = getExistingLibraryFiles("album", "provider-album", "tidal", library.id);
+  const spatialFiles = getExistingLibraryFiles("album", "provider-album", "tidal", spatialLibrary.id);
+  assert.equal(stereoFiles.length, 1);
+  assert.equal(spatialFiles.length, 1);
+  assert.notEqual(stereoFiles[0]?.trackFileId, spatialFiles[0]?.trackFileId);
+
+  fs.rmSync(filePath);
+  const failedImport = {
+    id: 2,
+    name: "ImportDownload",
+    status: "failed",
+    error: "Import failed",
+    payload: {
+      type: "album",
+      providerId: "provider-album",
+      provider: "tidal",
+      libraryId: library.id,
+    },
+  } as any;
+  assert.equal(
+    shouldQueueRedownloadForFailedImport(failedImport),
+    true,
+    "files in Spatial must not satisfy a failed Stereo import",
+  );
+  assert.equal(
+    shouldQueueRedownloadForFailedImport({
+      ...failedImport,
+      payload: { ...failedImport.payload, libraryId: spatialLibrary.id },
+    }),
+    false,
+    "same-library files still recover an import",
+  );
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
 });

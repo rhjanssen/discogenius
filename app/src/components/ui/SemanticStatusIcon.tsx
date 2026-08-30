@@ -10,6 +10,8 @@ import {
     DismissCircle24Color,
     QuestionCircle16Color,
     QuestionCircle24Color,
+    Prohibited16Regular,
+    Prohibited24Regular,
     Warning16Color,
     Warning24Color,
     bundleIcon,
@@ -93,6 +95,24 @@ export function QueuedStatusIcon({ size = 16, className, ...props }: Omit<Semant
                 fontSize={glyph}
                 style={{
                     ...statusIconGlyphStyle("filled", size),
+                    color: tokens.colorNeutralForeground3,
+                }}
+            />
+        </StatusIconSlot>
+    );
+}
+
+export function CancelledStatusIcon({ size = 16, className, ...props }: Omit<SemanticStatusIconProps, "status">) {
+    const glyph = statusIconGlyphPx("regular", size);
+    const Icon = size === 24 ? Prohibited24Regular : Prohibited16Regular;
+
+    return (
+        <StatusIconSlot size={size} className={className}>
+            <Icon
+                {...props}
+                fontSize={glyph}
+                style={{
+                    ...statusIconGlyphStyle("regular", size),
                     color: tokens.colorNeutralForeground3,
                 }}
             />

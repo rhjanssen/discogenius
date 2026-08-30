@@ -28,7 +28,7 @@ import {
 import { Link } from "react-router-dom";
 import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
-import { SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
+import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -142,7 +142,7 @@ function renderHistoryStatusIndicator(
         return <SemanticStatusIcon status="success" size={24} title="Completed" />;
     }
 
-    return <SemanticStatusIcon status="info" size={24} title="Waiting" />;
+    return <QueuedStatusIcon size={24} aria-label="Waiting" />;
 }
 
 function QueueHistoryFilterMenu({

@@ -1560,11 +1560,15 @@ export class DiskScanService {
      *   - Video thumbnail (if save_video_thumbnail enabled and file missing)
      */
     static async fillMissingMetadataFiles(artistId: string): Promise<MetadataFillResult> {
-        return libraryMetadataBackfillService.fillMissingMetadataFiles(artistId);
+        return libraryMetadataBackfillService.fillMissingMetadataFiles(artistId, {
+            writeEmbeddedMediaMetadata: false,
+        });
     }
 
     static async fillMissingMetadataFilesForLibrary(): Promise<MetadataFillResult> {
-        return libraryMetadataBackfillService.fillMissingMetadataFilesForLibrary();
+        return libraryMetadataBackfillService.fillMissingMetadataFilesForLibrary({
+            writeEmbeddedMediaMetadata: false,
+        });
     }
 
     // ==========================================================================

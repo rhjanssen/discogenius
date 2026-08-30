@@ -15,8 +15,6 @@ export const glassButtonStyles = {
     WebkitBackdropFilter: "blur(14px) saturate(140%)",
     ...shorthands.borderColor(tokens.colorNeutralStroke1Hover),
     boxShadow: tokens.shadow8,
-    // Avoid translateY lift — Layout <main> clips overflow-x; a raised hover
-    // would still look like a flat pill against the clip edge.
   },
   "&:active": {
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
@@ -25,7 +23,12 @@ export const glassButtonStyles = {
     ...shorthands.borderColor(tokens.colorNeutralStroke1Pressed),
     boxShadow: tokens.shadow2,
   },
-  "&:disabled": {
+  "&:disabled": { boxShadow: "none" },
+  "&[aria-disabled='true'], &[aria-disabled='true']:hover, &[aria-disabled='true']:active": {
+    backgroundColor: "transparent",
+    backdropFilter: "none",
+    WebkitBackdropFilter: "none",
+    ...shorthands.borderColor("transparent"),
     boxShadow: "none",
   },
 } as const;
@@ -37,13 +40,10 @@ export const glassPrimaryButtonStyles = {
   transitionProperty: "box-shadow",
   transitionDuration: tokens.durationFast,
   transitionTimingFunction: tokens.curveEasyEase,
-  "&:hover": {
-    boxShadow: tokens.shadow8,
-  },
-  "&:active": {
-    boxShadow: tokens.shadow2,
-  },
-  "&:disabled": {
+  "&:hover": { boxShadow: tokens.shadow8 },
+  "&:active": { boxShadow: tokens.shadow2 },
+  "&:disabled": { boxShadow: "none" },
+  "&[aria-disabled='true'], &[aria-disabled='true']:hover, &[aria-disabled='true']:active": {
     boxShadow: "none",
   },
 } as const;

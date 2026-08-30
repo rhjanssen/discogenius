@@ -72,7 +72,7 @@ function mediaCoverRoot(): string {
   return path.join(CONFIG_DIR, "media-cover");
 }
 
-type MediaCoverEntity = "Artist" | "Album" | "Video";
+type MediaCoverEntity = "Artist" | "Album" | "Edition" | "Video";
 export type MediaCoverEntityKind = MediaCoverEntity;
 
 const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
@@ -118,6 +118,9 @@ function mediaCoverFolder(entityId: string | number, coverEntity: MediaCoverEnti
   if (coverEntity === "Album") {
     return resolveWithinMediaCoverRoot("Albums", safeId);
   }
+  if (coverEntity === "Edition") {
+    return resolveWithinMediaCoverRoot("AlbumEditions", safeId);
+  }
   if (coverEntity === "Video") {
     return resolveWithinMediaCoverRoot("Videos", safeId);
   }
@@ -128,6 +131,9 @@ function mediaCoverUrlFolder(entityId: string | number, coverEntity: MediaCoverE
   const safeId = encodeURIComponent(safeMediaCoverEntityId(entityId));
   if (coverEntity === "Album") {
     return `/media-cover/Albums/${safeId}`;
+  }
+  if (coverEntity === "Edition") {
+    return `/media-cover/AlbumEditions/${safeId}`;
   }
   if (coverEntity === "Video") {
     return `/media-cover/Videos/${safeId}`;
@@ -757,6 +763,12 @@ export function getCoverArtArchiveReleaseGroupUrl(releaseGroupMbid: string | nul
   return mbid ? `https://coverartarchive.org/release-group/${mbid}/front` : null;
 }
 
+/** Exact MusicBrainz edition artwork. Release-group /front may name another edition. */
+export function getCoverArtArchiveReleaseUrl(releaseMbid: string | null | undefined): string | null {
+  const mbid = String(releaseMbid || "").trim();
+  return mbid ? `https://coverartarchive.org/release/${mbid}/front` : null;
+}
+
 /**
  * YouTube renders `hq720.jpg` / `maxresdefault.jpg` only for some uploads; many
  * videos 404 on those and only expose the 4:3 stills. `sddefault` is present for
@@ -940,6 +952,13 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
       : null;
   }
 
+  if (parts[2] === "AlbumEditions" && parts.length >= 5) {
+    const editionId = normalizeMediaCoverEntityId(parts[3]);
+    return editionId
+      ? resolveMediaCoverFilePath(resolveWithinMediaCoverRoot("AlbumEditions", editionId), parts[4])
+      : null;
+  }
+
   if (parts[2] === "Videos" && parts.length >= 5) {
     const videoId = normalizeMediaCoverEntityId(parts[3]);
     return videoId
@@ -981,6 +1000,11 @@ export function getCachedMediaCoverSourceUrlFromLocalUrl(value: unknown): string
     const albumId = normalizeMediaCoverEntityId(parts[3]);
     if (!albumId) return null;
     folder = resolveWithinMediaCoverRoot("Albums", albumId);
+    filename = parts[4];
+  } else if (parts[2] === "AlbumEditions" && parts.length >= 5) {
+    const editionId = normalizeMediaCoverEntityId(parts[3]);
+    if (!editionId) return null;
+    folder = resolveWithinMediaCoverRoot("AlbumEditions", editionId);
     filename = parts[4];
   } else if (parts[2] === "Videos" && parts.length >= 5) {
     const videoId = normalizeMediaCoverEntityId(parts[3]);
@@ -2120,6 +2144,174 @@ export async function resolveAlbumArtwork(options: {
   return resolved || existingAlbumMediaCoverUrl(options.albumMbid);
 }
 
+export function editionCoverLocalUrl(
+  releaseMbid: string | null | undefined,
+  sourceUrl?: string | null,
+): string | null {
+  const normalized = textOrNull(releaseMbid);
+  if (!normalized || normalizeMediaCoverEntityId(normalized) == null) return null;
+  return withArtworkPreference(
+    getMediaCoverUrl(normalized, "Edition", "Cover", ".jpg"),
+    configuredArtworkPreference(),
+    sourceUrl,
+  );
+}
+
+type EditionArtworkRow = {
+  provider?: string | null;
+  provider_id?: string | null;
+  asset_id?: string | null;
+  artwork_url?: string | null;
+  title?: string | null;
+  decision_source?: string | null;
+  confidence?: number | null;
+  updated_at?: string | null;
+};
+
+function configuredProviderPriority(): Map<string, number> {
+  const configured = getConfigSection("streaming")?.provider_priority;
+  const providers = Array.isArray(configured)
+    ? configured.map((provider) => String(provider || "").trim()).filter(Boolean)
+    : [];
+  return new Map(providers.map((provider, index) => [provider, index]));
+}
+
+/**
+ * Provider art for one exact canonical edition. A current plan owns the choice;
+ * without one, accepted matches for this edition are ranked deterministically.
+ */
+export function loadEditionProviderArtworkCandidates(
+  releaseMbid: string | null | undefined,
+  options: { libraryId?: number | null } = {},
+): ProviderArtworkCandidate[] {
+  const mbid = textOrNull(releaseMbid);
+  if (!mbid) return [];
+
+  const selectedParams: Array<string | number> = [mbid];
+  const libraryPredicate = Number.isInteger(options.libraryId)
+    ? "AND library_edition.library_id = ?"
+    : "";
+  if (libraryPredicate) selectedParams.push(Number(options.libraryId));
+
+  let selectedRows: EditionArtworkRow[] = [];
+  let matchedRows: EditionArtworkRow[] = [];
+  try {
+    selectedRows = db.prepare(`
+      SELECT
+        provider_item.provider,
+        CAST(provider_item.provider_id AS TEXT) AS provider_id,
+        provider_item.cover_id AS asset_id,
+        provider_item.artwork_url,
+        provider_item.title,
+        release_match.decision_source,
+        release_match.confidence,
+        release_match.updated_at
+      FROM AlbumEditions edition
+      JOIN LibraryEditions library_edition
+        ON library_edition.edition_id = edition.id
+      JOIN SelectedAcquisitionPlans plan
+        ON plan.library_edition_id = library_edition.id
+       AND plan.state = 'current'
+      JOIN AcquisitionPlanSources source
+        ON source.plan_id = plan.id
+       AND source.role = 'primary'
+      JOIN ProviderEditionMatches release_match
+        ON release_match.id = source.provider_edition_match_id
+       AND release_match.edition_id = edition.id
+       AND release_match.match_state = 'accepted'
+      JOIN ProviderItems provider_item
+        ON provider_item.id = release_match.provider_edition_item_id
+       AND provider_item.entity_type = 'release'
+      WHERE edition.mbid = ?
+        ${libraryPredicate}
+      ORDER BY source.sort_order, source.id
+    `).all(...selectedParams) as EditionArtworkRow[];
+
+    matchedRows = db.prepare(`
+      SELECT
+        provider_item.provider,
+        CAST(provider_item.provider_id AS TEXT) AS provider_id,
+        provider_item.cover_id AS asset_id,
+        provider_item.artwork_url,
+        provider_item.title,
+        release_match.decision_source,
+        release_match.confidence,
+        release_match.updated_at
+      FROM AlbumEditions edition
+      JOIN ProviderEditionMatches release_match
+        ON release_match.edition_id = edition.id
+       AND release_match.match_state = 'accepted'
+      JOIN ProviderItems provider_item
+        ON provider_item.id = release_match.provider_edition_item_id
+       AND provider_item.entity_type = 'release'
+      WHERE edition.mbid = ?
+    `).all(mbid) as EditionArtworkRow[];
+  } catch (error) {
+    console.warn("[MediaCoverService] Failed to load edition provider artwork candidates:", error);
+  }
+
+  const priority = configuredProviderPriority();
+  matchedRows.sort((left, right) =>
+    (left.decision_source === "manual" ? 0 : 1) - (right.decision_source === "manual" ? 0 : 1)
+    || (priority.get(String(left.provider || "")) ?? Number.MAX_SAFE_INTEGER)
+      - (priority.get(String(right.provider || "")) ?? Number.MAX_SAFE_INTEGER)
+    || Number(right.confidence || 0) - Number(left.confidence || 0)
+    || String(right.updated_at || "").localeCompare(String(left.updated_at || ""))
+    || String(left.provider || "").localeCompare(String(right.provider || ""))
+    || String(left.provider_id || "").localeCompare(String(right.provider_id || "")),
+  );
+
+  const seen = new Set<string>();
+  return [...selectedRows, ...matchedRows].flatMap((row) => {
+    const provider = textOrNull(row.provider);
+    const entityId = textOrNull(row.provider_id);
+    const imageId = textOrNull(row.asset_id, row.artwork_url);
+    const key = `${provider || ""}\u0000${entityId || ""}\u0000${imageId || ""}`;
+    if ((!provider && !entityId && !imageId) || seen.has(key)) return [];
+    seen.add(key);
+    return [{ provider, entityId, imageId, title: textOrNull(row.title) }];
+  });
+}
+
+/** Cache and return artwork for one exact MusicBrainz release/edition. */
+export async function resolveEditionArtwork(options: {
+  releaseMbid?: string | null;
+  libraryId?: number | null;
+  providerCandidates?: ProviderArtworkCandidate[];
+  size?: string | number | null;
+}): Promise<string | null> {
+  const releaseMbid = textOrNull(options.releaseMbid);
+  if (!releaseMbid) return null;
+
+  const cacheSource = async (
+    sourceUrl: string | null,
+    fulfilledBy: MediaCoverSourceKind,
+  ): Promise<string | null> => sourceUrl
+    ? ensureCachedMediaCover({
+      entityId: releaseMbid,
+      coverEntity: "Edition",
+      coverType: "Cover",
+      sourceUrl,
+      fulfilledBy,
+    })
+    : null;
+
+  const resolveCanonical = () => cacheSource(getCoverArtArchiveReleaseUrl(releaseMbid), "canonical");
+  const resolveProvider = async (): Promise<string | null> => {
+    const candidates = [
+      ...(options.providerCandidates || []),
+      ...loadEditionProviderArtworkCandidates(releaseMbid, { libraryId: options.libraryId }),
+    ];
+    const providerUrl = await resolveProviderArtworkUrl(candidates, "album", options.size ?? "origin");
+    return cacheSource(providerUrl, "provider");
+  };
+
+  const resolved = configuredArtworkPreference() === "provider"
+    ? await resolveProvider() || await resolveCanonical()
+    : await resolveCanonical() || await resolveProvider();
+  return resolved || existingMediaCover(releaseMbid, "Edition", "Cover")?.url || null;
+}
+
 /**
  * Reconstruct album artwork candidates from persisted provider offers.
  *
@@ -2600,7 +2792,9 @@ export class MediaCoverService {
   }
 
   static albumCoverLocalUrl = albumCoverLocalUrl;
+  static editionCoverLocalUrl = editionCoverLocalUrl;
   static resolveAlbumArtwork = resolveAlbumArtwork;
+  static resolveEditionArtwork = resolveEditionArtwork;
   static resolveArtistArtwork = resolveArtistArtwork;
   static resolveVideoArtwork = resolveVideoArtwork;
   static videoCoverLocalUrl = videoCoverLocalUrl;
@@ -2613,6 +2807,7 @@ export class MediaCoverService {
   static resolveProxyUrl = resolveMediaCoverProxyUrl;
   static ensureCachedMediaCover = ensureCachedMediaCover;
   static getCoverArtArchiveReleaseGroupUrl = getCoverArtArchiveReleaseGroupUrl;
+  static getCoverArtArchiveReleaseUrl = getCoverArtArchiveReleaseUrl;
 }
 
 /**
@@ -2622,11 +2817,13 @@ export class MediaCoverService {
 export const mediaCover = {
   url: {
     album: albumCoverLocalUrl,
+    edition: editionCoverLocalUrl,
     artist: mapArtistArtworkToLocalUrl,
     video: videoCoverLocalUrl,
   },
   resolve: {
     album: resolveAlbumArtwork,
+    edition: resolveEditionArtwork,
     artist: resolveArtistArtwork,
     video: resolveVideoArtwork,
   },

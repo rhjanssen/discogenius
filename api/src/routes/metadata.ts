@@ -141,7 +141,6 @@ router.post("/regenerate", async (req, res) => {
           {
             artistId: entityId,
             skipCuration: true,
-            skipDownloadQueue: true,
             trackUnmappedFiles: false,
             description: `Regenerate metadata sidecars for artist ${entityId}`,
           },

@@ -314,7 +314,10 @@ test("required scoped release hydration failure rejects before provider matching
   let providerMatchCalls = 0;
 
   service.refreshArtistMetadata = async () => undefined;
-  service.syncArtistMusicBrainzCatalog = async () => artistMbid;
+  service.syncArtistMusicBrainzCatalog = async () => ({
+    artistMbid,
+    creditedArtistMbids: [],
+  });
   service.matchArtistProviders = async () => {
     providerMatchCalls += 1;
   };
@@ -853,6 +856,170 @@ test("release-group-only provider evidence does not leak a guessed MusicBrainz e
   assert.equal(typedMatchCount.count, 0);
 });
 
+test("targeted collaboration search retries only unmatched releases unless forced", async () => {
+  const selectedArtistMbid = "11111111-1111-4111-8111-111111111111";
+  const ownerArtistMbid = "22222222-2222-4222-8222-222222222222";
+  const releaseGroupMbid = "33333333-3333-4333-8333-333333333333";
+  const releaseMbid = "44444444-4444-4444-8444-444444444444";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?), (?, ?)
+  `).run(selectedArtistMbid, "Bastille", ownerArtistMbid, "New collaborator");
+  const releaseGroup = dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, 'Future collaboration', 'Single', '2026-08-29')
+    RETURNING id
+  `).get(releaseGroupMbid, ownerArtistMbid) as { id: number };
+  const edition = dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title,
+      status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, 'Future collaboration', 'Official', '2026-08-29', 1, 1)
+    RETURNING id
+  `).get(releaseMbid, releaseGroup.id, releaseGroupMbid, ownerArtistMbid) as { id: number };
+  const selectedArtist = dbModule.db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = ?",
+  ).get(selectedArtistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (
+      artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship
+    ) VALUES (?, ?, ?, ?, 'credited')
+  `).run(selectedArtist.id, selectedArtistMbid, releaseGroup.id, releaseGroupMbid);
+
+  let searches = 0;
+  const provider = {
+    id: "collaboration-search-test",
+    name: "Collaboration Search Test",
+    searchReleaseGroup: async (query: Record<string, unknown>) => {
+      searches += 1;
+      assert.equal(query.artistName, "New collaborator");
+      assert.equal(query.releaseGroupMbid, releaseGroupMbid);
+      return [{
+        providerId: "future-collaboration-offer",
+        title: "Future collaboration",
+        artist: { providerId: "owner-provider-id", name: "New collaborator" },
+        releaseDate: "2026-08-29",
+        trackCount: 1,
+        volumeCount: 1,
+        type: "SINGLE",
+      }];
+    },
+  } as any;
+
+  const first = await (refreshServiceModule.RefreshArtistService as any)
+    .searchCanonicalCollaborationOffers(provider, selectedArtistMbid, false);
+  assert.equal(searches, 2, "stereo and spatial slots are searched on first discovery");
+  assert.equal(first.albums.length, 1);
+  assert.equal(first.matches.get("future-collaboration-offer")?.releaseGroup?.mbid, releaseGroupMbid);
+
+  const item = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'release', 'future-collaboration-offer', 'Future collaboration')
+    RETURNING id
+  `).get(provider.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(item.id, edition.id);
+
+  const cached = await (refreshServiceModule.RefreshArtistService as any)
+    .searchCanonicalCollaborationOffers(provider, selectedArtistMbid, false);
+  assert.equal(searches, 2);
+  assert.equal(cached.albums.length, 0);
+
+  await (refreshServiceModule.RefreshArtistService as any)
+    .searchCanonicalCollaborationOffers(provider, selectedArtistMbid, true);
+  assert.equal(searches, 4, "force refresh rechecks both capability slots");
+});
+
+test("provider matching consumes targeted collaboration offers without a selected-artist provider identity", async () => {
+  const provider = {
+    id: "collaboration-loop-test",
+    name: "Collaboration Loop Test",
+    capabilities: { musicVideos: false },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => { throw new Error("not used"); },
+    getArtistAlbums: async () => { throw new Error("selected artist catalog must not be required"); },
+    getAlbum: async () => { throw new Error("not used"); },
+    getAlbumTracks: async () => [],
+    getTrack: async () => { throw new Error("not used"); },
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+  const targetedAlbum = {
+    provider: provider.id,
+    provider_id: "targeted-offer",
+    title: "New collaboration",
+    artist_name: "Collaborator",
+    num_tracks: 0,
+    _provider_tracks: [],
+  };
+  const targetedMatch = {
+    providerId: "targeted-offer",
+    status: "verified",
+    confidence: 1,
+    method: "targeted-canonical-search",
+    releaseMbid: null,
+    releaseGroup: { mbid: "target-release-group", title: "New collaboration" },
+    evidence: {},
+  };
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  const service = refreshServiceModule.RefreshArtistService as any;
+  const originalSearchCollaborations = service.searchCanonicalCollaborationOffers;
+  const originalStore = service.storeProviderAlbumOffers;
+  const originalReplay = service.replayStaleTrackMatches;
+  const originalReviews = service.refreshMissingAlbumReviews;
+  const originalCovers = service.precacheArtistMediaCovers;
+  let stored: { albums: any[]; matches: Map<string, unknown> } | null = null;
+
+  manager.getAllStreamingProviders = () => [provider];
+  service.searchCanonicalCollaborationOffers = async () => ({
+    albums: [targetedAlbum],
+    matches: new Map([["targeted-offer", targetedMatch]]),
+  });
+  service.storeProviderAlbumOffers = async (
+    _providerId: string,
+    _artistMbid: string | null,
+    albums: any[],
+    matches: Map<string, unknown>,
+  ) => { stored = { albums, matches }; };
+  service.replayStaleTrackMatches = async () => undefined;
+  service.refreshMissingAlbumReviews = async () => undefined;
+  service.precacheArtistMediaCovers = async () => undefined;
+
+  try {
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      "selected-artist",
+      "11111111-1111-4111-8111-111111111111",
+      {},
+      true,
+    );
+  } finally {
+    manager.getAllStreamingProviders = originalGetAll;
+    service.searchCanonicalCollaborationOffers = originalSearchCollaborations;
+    service.storeProviderAlbumOffers = originalStore;
+    service.replayStaleTrackMatches = originalReplay;
+    service.refreshMissingAlbumReviews = originalReviews;
+    service.precacheArtistMediaCovers = originalCovers;
+  }
+
+  const storedResult = stored as { albums: any[]; matches: Map<string, unknown> } | null;
+  assert.ok(storedResult);
+  assert.deepEqual(storedResult.albums.map((album: any) => album.provider_id), ["targeted-offer"]);
+  assert.equal(storedResult.matches.get("targeted-offer"), targetedMatch);
+});
+
 test("connected video provider mints a provider_catalog recording when no catalog twin exists", async () => {
   const artistMbid = "11111111-1111-4111-8111-111111111111";
   const providerArtistId = "fake-video-artist";
@@ -983,6 +1150,3 @@ test("connected video provider mints a provider_catalog recording when no catalo
   assert.equal(minted.yt, null);
   assert.equal(minted.status, "provider_catalog");
 });
-
-
-

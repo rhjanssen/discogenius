@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
-const SETTINGS_TABS = [
+const SETTINGS_SECTIONS = [
   'Media Management',
   'Metadata',
   'Metadata Source',
@@ -16,17 +16,17 @@ const SETTINGS_TABS = [
 ] as const;
 
 // Single-scroll (VS Code-style) settings: every section is always rendered; the
-// nav scroll-spies. Clicking a tab (or the mobile menu item) scrolls to it.
+// nav scroll-spies. Clicking a navigation item or mobile menu item scrolls to it.
 async function selectSettingsCategory(page: import('@playwright/test').Page, label: string) {
   // Settings renders a loading state before either responsive navigation is
   // usable. Wait for the layout instead of treating "not visible yet" as the
   // mobile breakpoint and clicking its permanently hidden desktop counterpart.
   await expect(page.getByTestId('settings-layout')).toBeVisible();
-  const desktopTabs = page.getByTestId('settings-category-tabs');
-  if (await desktopTabs.isVisible().catch(() => false)) {
-    const desktopTab = desktopTabs.getByRole('tab', { name: label, exact: true });
-    await desktopTab.scrollIntoViewIfNeeded();
-    await desktopTab.click();
+  const desktopNav = page.getByTestId('settings-category-nav');
+  if (await desktopNav.isVisible().catch(() => false)) {
+    const desktopItem = desktopNav.getByRole('button', { name: label, exact: true });
+    await desktopItem.scrollIntoViewIfNeeded();
+    await desktopItem.click();
     return;
   }
 
@@ -50,18 +50,18 @@ test.describe('Settings page', () => {
     // Default focus: Media Management (first section).
     await expect(page.locator('#media-management')).toBeVisible();
 
-    // Desktop TabList or mobile category menu must expose all categories.
-    const desktopTabs = page.getByTestId('settings-category-tabs');
-    if (await desktopTabs.isVisible().catch(() => false)) {
-      for (const label of SETTINGS_TABS) {
-        await expect(desktopTabs.getByRole('tab', { name: label, exact: true })).toBeVisible();
+    // Desktop navigation or mobile category menu must expose all categories.
+    const desktopNav = page.getByTestId('settings-category-nav');
+    if (await desktopNav.isVisible().catch(() => false)) {
+      for (const label of SETTINGS_SECTIONS) {
+        await expect(desktopNav.getByRole('button', { name: label, exact: true })).toBeVisible();
       }
     } else {
       await expect(page.getByTestId('settings-category-menu')).toBeVisible();
     }
   });
 
-  test('category tabs scroll to their settings sections', async ({ page }) => {
+  test('category navigation scrolls to settings sections', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
     await selectSettingsCategory(page, 'Providers');
@@ -92,7 +92,7 @@ test.describe('Settings page', () => {
     await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
   });
 
-  test('uses tabbed settings layout on desktop', async ({ page }) => {
+  test('uses section navigation beside settings on desktop', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(page.locator('main')).toBeVisible();
 
@@ -106,8 +106,8 @@ test.describe('Settings page', () => {
 
     expect(layout.display).toBe('flex');
     expect(layout.flexDirection).toBe('row');
-    await expect(page.getByTestId('settings-category-tabs')).toBeVisible();
-    await expect(page.getByRole('tablist').first()).toBeVisible();
+    await expect(page.getByTestId('settings-category-nav')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
   });
 
   test('theme selector works', async ({ page }) => {

@@ -105,11 +105,11 @@ function rollbackStagedDeletions(deletions: StagedRenameDeletion[]): string[] {
 
 function stageRenameDeletion(filePath: string, id: number): string {
   const directory = path.dirname(filePath);
-  const basename = path.basename(filePath);
+  const extension = path.extname(filePath);
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const stagedPath = path.join(
       directory,
-      `.${basename}.discogenius-delete-${process.pid}-${Date.now()}-${id}-${attempt}`,
+      `.discogenius-delete-${process.pid}-${Date.now()}-${id}-${attempt}${extension}`,
     );
     if (fs.existsSync(stagedPath)) {
       continue;

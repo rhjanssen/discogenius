@@ -11,20 +11,19 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let appEvents: typeof import("../app-events.js").appEvents;
 let AppEvent: typeof import("../app-events.js").AppEvent;
 let handleMatchArtistProviders: typeof import("./refresh-handlers.js").handleMatchArtistProviders;
+let handleRefreshArtist: typeof import("./refresh-handlers.js").handleRefreshArtist;
 let RefreshArtistService: typeof import("../../music/refresh-artist-service.js").RefreshArtistService;
 let ArtistStatisticsService: typeof import("../../music/artist-statistics-service.js").ArtistStatisticsService;
 let MediaSeedService: typeof import("../../music/media-seed-service.js").MediaSeedService;
 let handleSeedVideo: typeof import("./refresh-handlers.js").handleSeedVideo;
 let dbModule: typeof import("../../../database.js");
-let configModule: typeof import("../../config/config.js");
 let CommandNames: typeof import("../command-names.js").CommandNames;
 
 before(async () => {
   dbModule = await import("../../../database.js");
   dbModule.initDatabase();
   ({ appEvents, AppEvent } = await import("../app-events.js"));
-  ({ handleMatchArtistProviders, handleSeedVideo } = await import("./refresh-handlers.js"));
-  configModule = await import("../../config/config.js");
+  ({ handleMatchArtistProviders, handleRefreshArtist, handleSeedVideo } = await import("./refresh-handlers.js"));
   ({ CommandNames } = await import("../command-names.js"));
   ({ RefreshArtistService } = await import("../../music/refresh-artist-service.js"));
   ({ ArtistStatisticsService } = await import("../../music/artist-statistics-service.js"));
@@ -165,25 +164,122 @@ test("deferred provider matching stamps credited artists only after a successful
   assert.equal(failure.library_origin, "musicbrainz-credit");
 });
 
-test("credited artist hydration queues the canonical MBID instead of the local row id", async () => {
-  const creditedMbid = "11111111-1111-4111-8111-111111111111";
+test("a recurring artist refresh fills only newly discovered credited artists once", async () => {
+  const { seedLibraryArtistMonitoring } = await import("../../../test-support/active-schema-fixture.js");
   dbModule.db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name)
-    VALUES (?, 'Canonical collaborator')
-  `).run(creditedMbid);
+    INSERT INTO ArtistMetadata (mbid, name, content_hash) VALUES
+      ('selected-artist-mbid', 'Selected artist', 'selected-hydrated'),
+      ('new-credit-mbid', 'New collaborator', NULL),
+      ('known-credit-mbid', 'Known collaborator', 'already-hydrated')
+  `).run();
+  seedLibraryArtistMonitoring(dbModule.db, "selected-artist-mbid");
 
-  await (RefreshArtistService as any).queueCreditedArtistRefreshes([creditedMbid]);
+  const originalRefresh = RefreshArtistService.refreshArtist;
+  const originalRefreshStats = ArtistStatisticsService.refresh;
+  (RefreshArtistService as any).refreshArtist = async () => ({
+    artistMbid: "selected-artist-mbid",
+    shouldHydrateCatalog: true,
+    metadataChanged: true,
+    isNewArtist: false,
+    creditedArtistMbids: ["new-credit-mbid", "known-credit-mbid", "new-credit-mbid"],
+  });
+  (ArtistStatisticsService as any).refresh = () => undefined;
 
-  const queued = dbModule.db.prepare(`
-    SELECT ref_id, payload
+  try {
+    await handleRefreshArtist({
+      id: 60,
+      name: "RefreshArtist",
+      status: "started",
+      priority: 3,
+      trigger: 2,
+      payload: {
+        artistId: "selected-artist-mbid",
+        artistName: "Selected artist",
+        workflow: "refresh-scan",
+        monitorArtist: false,
+        hydrateCatalog: true,
+        hydrateAlbumTracks: false,
+        scanLibrary: true,
+        forceUpdate: false,
+      },
+    } as any, {
+      updateCommandDescription: () => undefined,
+      formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+    } as any);
+  } finally {
+    (RefreshArtistService as any).refreshArtist = originalRefresh;
+    (ArtistStatisticsService as any).refresh = originalRefreshStats;
+  }
+
+  const refreshes = dbModule.db.prepare(`
+    SELECT priority, payload
     FROM commands
-    WHERE name = 'RefreshArtist'
-    LIMIT 1
-  `).get() as { ref_id: string; payload: string } | undefined;
-  assert.ok(queued);
-  assert.equal(queued.ref_id, creditedMbid);
-  assert.equal(JSON.parse(queued.payload).artistId, creditedMbid);
-  assert.equal(JSON.parse(queued.payload).artistName, "Canonical collaborator");
+    WHERE name = ?
+    ORDER BY id
+  `).all(CommandNames.RefreshArtist) as Array<{ priority: number; payload: string }>;
+  assert.equal(refreshes.length, 1);
+  assert.equal(refreshes[0].priority, -10);
+  assert.deepEqual(JSON.parse(refreshes[0].payload), {
+    artistId: "new-credit-mbid",
+    artistName: "New collaborator",
+    workflow: "metadata-refresh",
+    monitorArtist: false,
+    monitorAlbums: false,
+    hydrateCatalog: true,
+    hydrateAlbumTracks: false,
+    scanLibrary: false,
+    forceUpdate: false,
+  });
+});
+
+test("a credited-artist background fill cannot recursively expand", async () => {
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name, content_hash)
+    VALUES ('second-hop-mbid', 'Second hop', NULL)
+  `).run();
+
+  const originalRefresh = RefreshArtistService.refreshArtist;
+  const originalRefreshStats = ArtistStatisticsService.refresh;
+  (RefreshArtistService as any).refreshArtist = async () => ({
+    artistMbid: "first-hop-mbid",
+    shouldHydrateCatalog: true,
+    metadataChanged: true,
+    isNewArtist: true,
+    creditedArtistMbids: ["second-hop-mbid"],
+  });
+  (ArtistStatisticsService as any).refresh = () => undefined;
+
+  try {
+    await handleRefreshArtist({
+      id: 61,
+      name: "RefreshArtist",
+      status: "started",
+      priority: -10,
+      payload: {
+        artistId: "first-hop-mbid",
+        artistName: "First hop",
+        workflow: "metadata-refresh",
+        monitorArtist: false,
+        hydrateCatalog: true,
+        hydrateAlbumTracks: false,
+        scanLibrary: false,
+        forceUpdate: false,
+      },
+    } as any, {
+      updateCommandDescription: () => undefined,
+      formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+    } as any);
+  } finally {
+    (RefreshArtistService as any).refreshArtist = originalRefresh;
+    (ArtistStatisticsService as any).refresh = originalRefreshStats;
+  }
+
+  const queuedSecondHop = dbModule.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM commands
+    WHERE name = ? AND ref_id = 'second-hop-mbid'
+  `).get(CommandNames.RefreshArtist) as { count: number };
+  assert.equal(queuedSecondHop.count, 0);
 });
 
 test("stored-offer-only provider matching does not re-stamp a fresh artist", async () => {
@@ -310,26 +406,18 @@ test("SeedVideo monitors only the requested provider offer when IDs collide", as
   );
 });
 
-/**
- * The queued artist workflow is RefreshArtist -> MatchArtistProviders ->
- * RescanFolders -> CurateArtist. MatchArtistProviders also curated the whole
- * artist inline, so every monitored workflow curated twice; on a prolific
- * artist the redundant second pass is what overran the command lease and
- * poison-failed. It may only skip the inline pass when a CurateArtist really
- * does follow, which is a property of the workflow, not of the command.
- */
-test("MatchArtistProviders defers curation exactly when the workflow queues CurateArtist", async () => {
+test("MatchArtistProviders never carries an inline curation policy", async () => {
   const originalMatch = RefreshArtistService.matchArtistProviders;
   const originalRefreshStats = ArtistStatisticsService.refresh;
   (ArtistStatisticsService as any).refresh = () => undefined;
 
-  const seen: Array<{ workflow: string | undefined; deferCuration: unknown }> = [];
+  const seen: Array<{ workflow: string | undefined; hasDeferCuration: boolean }> = [];
   (RefreshArtistService as any).matchArtistProviders = async (
     _artistId: string,
     _artistMbid: string | null,
-    options: { deferCuration?: boolean },
+    options: Record<string, unknown>,
   ) => {
-    seen.push({ workflow: currentWorkflow, deferCuration: options.deferCuration });
+    seen.push({ workflow: currentWorkflow, hasDeferCuration: "deferCuration" in options });
   };
 
   let currentWorkflow: string | undefined;
@@ -354,13 +442,10 @@ test("MatchArtistProviders defers curation exactly when the workflow queues Cura
   };
 
   try {
-    // Curating workflows: RescanFolders -> CurateArtist follows, so one pass.
     await run("monitoring-intake");
     await run("full-monitoring");
-    // Non-curating workflows: nothing follows, so this command must curate.
     await run("refresh-scan");
     await run("metadata-refresh");
-    // An absent or unrecognised workflow must curate rather than silently skip.
     await run(undefined);
   } finally {
     (RefreshArtistService as any).matchArtistProviders = originalMatch;
@@ -369,10 +454,10 @@ test("MatchArtistProviders defers curation exactly when the workflow queues Cura
   }
 
   assert.deepEqual(
-    seen.map((entry) => [entry.workflow ?? "(none)", entry.deferCuration]),
+    seen.map((entry) => [entry.workflow ?? "(none)", entry.hasDeferCuration]),
     [
-      ["monitoring-intake", true],
-      ["full-monitoring", true],
+      ["monitoring-intake", false],
+      ["full-monitoring", false],
       ["refresh-scan", false],
       ["metadata-refresh", false],
       ["(none)", false],
@@ -380,17 +465,11 @@ test("MatchArtistProviders defers curation exactly when the workflow queues Cura
   );
 });
 
-test("MatchArtistProviders queues RetagArtist when metadata changed and tag policy is sync", async () => {
+test("MatchArtistProviders never folds rename or retag into refresh", async () => {
   const originalMatch = RefreshArtistService.matchArtistProviders;
   const originalRefreshStats = ArtistStatisticsService.refresh;
   (RefreshArtistService as any).matchArtistProviders = async () => undefined;
   (ArtistStatisticsService as any).refresh = () => undefined;
-
-  const config = configModule.readConfig();
-  const previousPolicy = config.metadata.write_audio_tags_policy;
-  config.metadata.write_audio_tags_policy = "sync";
-  configModule.writeConfig(config);
-  configModule.clearConfigCache();
 
   const context = {
     updateCommandDescription: () => undefined,
@@ -414,24 +493,17 @@ test("MatchArtistProviders queues RetagArtist when metadata changed and tag poli
   try {
     await handleMatchArtistProviders(job, context);
     const queued = dbModule.db.prepare(`
-      SELECT name FROM commands WHERE name = ?
-    `).all(CommandNames.RetagArtist) as Array<{ name: string }>;
-    assert.equal(queued.length, 1);
-
-    dbModule.db.prepare("DELETE FROM commands").run();
-    config.metadata.write_audio_tags_policy = "new_files";
-    configModule.writeConfig(config);
-    configModule.clearConfigCache();
-    await handleMatchArtistProviders(job, context);
-    const skipped = dbModule.db.prepare(`
-      SELECT name FROM commands WHERE name = ?
-    `).all(CommandNames.RetagArtist) as Array<{ name: string }>;
-    assert.equal(skipped.length, 0, "new_files does not retag on metadata refresh");
+      SELECT name FROM commands
+      WHERE name IN (?, ?, ?, ?)
+    `).all(
+      CommandNames.RenameArtist,
+      CommandNames.RenameFiles,
+      CommandNames.RetagArtist,
+      CommandNames.RetagFiles,
+    ) as Array<{ name: string }>;
+    assert.deepEqual(queued, []);
   } finally {
     (RefreshArtistService as any).matchArtistProviders = originalMatch;
     (ArtistStatisticsService as any).refresh = originalRefreshStats;
-    config.metadata.write_audio_tags_policy = previousPolicy;
-    configModule.writeConfig(config);
-    configModule.clearConfigCache();
   }
 });

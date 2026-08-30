@@ -20,7 +20,7 @@ export const useCardStyles = makeStyles({
         overflow: "hidden",
         cursor: "default",
         boxShadow: tokens.shadow4,
-        transitionProperty: "background-color, border-color, box-shadow",
+        transitionProperty: "background-color, border-color, box-shadow, transform",
         transitionDuration: tokens.durationFast,
         transitionTimingFunction: tokens.curveEasyEase,
         padding: tokens.spacingVerticalNone,
@@ -31,14 +31,6 @@ export const useCardStyles = makeStyles({
         minWidth: 0,
         width: "100%",
         maxWidth: "100%",
-        "&:hover": {
-            boxShadow: tokens.shadow8,
-            backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-            border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
-        },
-        "&:active": {
-            boxShadow: tokens.shadow4,
-        },
         "@media (prefers-reduced-motion: reduce)": {
             transitionDuration: "0.01ms",
         },
@@ -63,7 +55,7 @@ export const useCardStyles = makeStyles({
         overflow: "hidden",
         cursor: "default",
         boxShadow: tokens.shadow2,
-        transitionProperty: "background-color, border-color, box-shadow",
+        transitionProperty: "background-color, border-color, box-shadow, transform",
         transitionDuration: tokens.durationFast,
         transitionTimingFunction: tokens.curveEasyEase,
         padding: tokens.spacingVerticalNone,
@@ -71,11 +63,6 @@ export const useCardStyles = makeStyles({
         minWidth: 0,
         width: "100%",
         maxWidth: "100%",
-        "&:hover": {
-            boxShadow: tokens.shadow4,
-            backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-            border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
-        },
         "@media (prefers-reduced-motion: reduce)": {
             transitionDuration: "0.01ms",
         },
@@ -89,6 +76,20 @@ export const useCardStyles = makeStyles({
 
     cardInteractive: {
         cursor: "pointer",
+        "&:hover": {
+            boxShadow: tokens.shadow8,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+            border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
+            transform: "translateY(-2px)",
+        },
+        "&:active": {
+            boxShadow: tokens.shadow4,
+            transform: "translateY(0)",
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+            transform: "none",
+            "&:hover": { transform: "none" },
+        },
     },
 
     // Image preview area (1:1 aspect ratio)

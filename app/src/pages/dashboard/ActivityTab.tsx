@@ -14,7 +14,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
-import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
+import { CancelledStatusIcon, QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { ActivityListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { useActivityFeed } from "@/hooks/useActivityFeed";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
@@ -125,6 +125,10 @@ function formatActivityDescription(job: ActivityJob, source: ActivitySource): st
         parts.push(`retry of #${String(payload.originalJobId)}`);
     }
 
+    if (job.status === "cancelled") {
+        parts.push("Cancelled");
+    }
+
     // Lighter separator than the old " | " pipes so dense pending rows read cleaner.
     return parts.join(" · ");
 }
@@ -221,7 +225,10 @@ const ActivityTab = ({
         [activityFilter, historyJobs],
     );
 
-    const getStatusIcon = (level: EventLevel) => {
+    const getStatusIcon = (level: EventLevel, status?: string | null) => {
+        if (status === "cancelled") {
+            return <CancelledStatusIcon size={24} aria-label="Cancelled" />;
+        }
         switch (level) {
             case "success":
                 return <SemanticStatusIcon status="success" size={24} title="Completed" />;
@@ -252,9 +259,7 @@ const ActivityTab = ({
                     ? "warning"
                     : job.status === "completed"
                         ? "success"
-                        : job.status === "cancelled"
-                            ? "warning"
-                            : "info";
+                        : "info";
 
         const retryJobId = Number(job.id);
         const canRetry = source === "history"
@@ -271,7 +276,7 @@ const ActivityTab = ({
                     <div className={source === "history" ? styles.activityLeadingContent : styles.activityLeadingContentCompact}>
                         {source === "running"
                             ? <Spinner size="extra-tiny" />
-                            : getStatusIcon(level)}
+                            : getStatusIcon(level, job.status)}
                         <span className={styles.activityIconOffset}>{getActivityTypeIcon(job)}</span>
                     </div>
                 </div>
@@ -287,8 +292,10 @@ const ActivityTab = ({
                                 </Text>
                             ) : null}
                             {job.error ? <Text size={200} className={styles.activityErrorText}>Error: {job.error}</Text> : null}
-                            {!job.error && completedWithWarning && warningMessage ? (
-                                <Text size={200} className={styles.activityInlineDescription}>{warningMessage}</Text>
+                            {!job.error && completedWithWarning ? (
+                                <Text size={200} className={styles.activityInlineDescription}>
+                                    {warningMessage || "Completed with warning"}
+                                </Text>
                             ) : null}
                         </div>
                         <div className={styles.activityTimeActions}>

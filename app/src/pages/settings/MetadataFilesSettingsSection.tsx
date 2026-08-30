@@ -72,7 +72,11 @@ export const MetadataFilesSettingsSection = ({
     onEmbedCoverChange,
 }: MetadataFilesSettingsSectionProps) => {
     const styles = useStyles();
-    const writeAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
+    // `sync` used to couple metadata refresh to a filesystem rewrite. Keep
+    // accepting that stored value as the equivalent import policy, but do not
+    // expose a command-domain promise the app no longer makes.
+    const storedWriteAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
+    const writeAudioTagsPolicy = storedWriteAudioTagsPolicy === "sync" ? "all_files" : storedWriteAudioTagsPolicy;
 
     const renderToggleRow = (options: {
         title: string;
@@ -111,14 +115,13 @@ export const MetadataFilesSettingsSection = ({
                             aria-label="Write audio tags"
                             value={writeAudioTagsPolicy}
                             onChange={(_, data) => updateMetadataSettings({
-                                write_audio_tags_policy: data.value as "no" | "new_files" | "all_files" | "sync",
+                                write_audio_tags_policy: data.value as "no" | "new_files" | "all_files",
                             })}
                             className={styles.control}
                         >
                             <option value="no">Never</option>
                             <option value="new_files">New downloads only</option>
-                            <option value="all_files">All files, at import</option>
-                            <option value="sync">All files, keep in sync with MusicBrainz</option>
+                            <option value="all_files">All imported files</option>
                         </Select>
                     </div>
                 </div>

@@ -22,18 +22,6 @@ export interface RefreshOptions {
      */
     deferProviderMatching?: boolean;
     /**
-     * When true, provider matching stops after selecting slots and does NOT run
-     * curation inline — the caller is responsible for it.
-     *
-     * The queued artist workflow is RefreshArtist → MatchArtistProviders →
-     * RescanFolders → CurateArtist, and MatchArtistProviders was curating the
-     * whole artist inline *as well*, so every workflow paid for curation twice.
-     * On prolific artists the second pass is what ran past the command lease and
-     * poison-failed. Direct callers (scheduler, bulk RefreshMetadata) have no
-     * following CurateArtist, so they leave this unset and keep curating inline.
-     */
-    deferCuration?: boolean;
-    /**
      * Provider module that sourced the item being seeded/refreshed. Seeding a
      * cross-provider item (e.g. a video offer resolved to a non-default
      * provider) must query that provider's catalog, not the default one.
@@ -48,6 +36,8 @@ export interface ArtistRefreshResult {
     shouldHydrateCatalog: boolean;
     metadataChanged: boolean;
     isNewArtist: boolean;
+    /** Catalog-only collaborator stubs discovered by this canonical refresh. */
+    creditedArtistMbids: string[];
 }
 
 export type ArtistScanProgressEvent =

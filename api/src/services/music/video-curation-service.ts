@@ -293,11 +293,11 @@ export function curateArtistVideos(
 
   for (const libraryId of resolveVideoLibraryIds(db)) {
     const decision = curateLibraryVideos({ layout, candidates, placementCandidates });
+    const artistVideoIds = candidates.map((candidate) => candidate.videoRecordingId);
     db.transaction(() => {
       // Withdraw the automatic selections this pass is about to replace, so a
       // video that lost its slot does not keep an inline placement that would
       // now collide with the new winner.
-      const artistVideoIds = candidates.map((candidate) => candidate.videoRecordingId);
       if (artistVideoIds.length > 0) {
         db.prepare(`
           DELETE FROM LibraryVideos

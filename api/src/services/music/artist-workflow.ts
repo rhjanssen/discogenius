@@ -18,56 +18,10 @@ export type ArtistWorkflowEntryJobType =
   | typeof CommandNames.RescanFolders
   | typeof CommandNames.CurateArtist;
 
-/**
- * Workflow tiers leave enough room for every monitored handoff to run
- * depth-first before first-degree credited-artist metadata backfill begins.
- */
 export const ARTIST_WORKFLOW_PRIORITY = {
   MONITORED_BATCH_BASE: -1,
-  CREDITED_ARTIST_BASE: -10,
+  CREDITED_CATALOG_BASE: -10,
 } as const;
-
-export const CREDITED_ARTIST_HYDRATION_BATCH_SIZE = 25;
-
-export interface CreditedArtistHydrationItem {
-  artistId: string;
-  artistName: string;
-}
-
-/**
- * Queue one bounded first-degree collaborator batch. Any remainder is persisted
- * on the last queued command and handed to the next batch only after that
- * artist's provider match succeeds.
- */
-export function queueCreditedArtistHydrationBatch(
-  items: readonly CreditedArtistHydrationItem[],
-): { queued: number; remaining: number } {
-  const unique = [...new Map(
-    items
-      .filter((item) => item.artistId)
-      .map((item) => [item.artistId, item]),
-  ).values()];
-  const queuedCommandIds: number[] = [];
-  let cursor = 0;
-  while (cursor < unique.length && queuedCommandIds.length < CREDITED_ARTIST_HYDRATION_BATCH_SIZE) {
-    const item = unique[cursor++];
-    const commandId = queueArtistWorkflow({
-      artistId: item.artistId,
-      artistName: item.artistName,
-      workflow: "metadata-refresh",
-      priority: ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE,
-    });
-    if (commandId !== -1) queuedCommandIds.push(commandId);
-  }
-  const continuation = unique.slice(cursor);
-  const lastCommandId = queuedCommandIds.at(-1);
-  if (lastCommandId != null && continuation.length > 0) {
-    CommandQueueManager.updateState(lastCommandId, {
-      payloadPatch: { creditedContinuation: continuation },
-    });
-  }
-  return { queued: queuedCommandIds.length, remaining: continuation.length };
-}
 
 export function nextArtistWorkflowPriority(priority?: number | null): number {
   const normalized = Number(priority);
@@ -126,7 +80,7 @@ const WORKFLOW_PHASES: Record<ArtistWorkflow, WorkflowPhases> = {
     queueDownloads: false,
   },
   // Lidarr SearchForMissingAlbums after add+scan: monitored intake ends by
-  // queueing DownloadMissing for that artist (see handleCurateArtist).
+  // emitting ARTIST_CURATED; its listener queues DownloadMissing for that artist.
   "monitoring-intake": {
     monitorArtist: true,
     refreshMetadata: true,
@@ -168,27 +122,6 @@ export function getArtistWorkflowPhases(workflow: ArtistWorkflow): WorkflowPhase
   return phases;
 }
 
-/**
- * Whether this workflow will queue a CurateArtist command of its own after
- * provider matching finishes.
- *
- * MatchArtistProviders used to curate the whole artist inline *and* be followed
- * by CurateArtist, so every monitored workflow curated twice — and on a
- * prolific artist the redundant second pass is what ran past the command lease
- * and poison-failed. It can only safely skip the inline pass when a real
- * CurateArtist is guaranteed to follow, and that guarantee is exactly this
- * table: the ARTIST_REFRESH_COMPLETE listener only chains at all when
- * `scanLibrary` is set, and only reaches curation when `curate` is.
- *
- * Unknown or absent workflows answer false, so an unrecognised payload curates
- * inline rather than silently not curating at all.
- */
-export function workflowQueuesCuration(workflow: unknown): boolean {
-  if (!isArtistWorkflow(workflow)) return false;
-  const phases = getArtistWorkflowPhases(workflow);
-  return phases.scanLibrary && phases.curate;
-}
-
 export function buildRefreshArtistCommand(params: {
   artistId: string;
   artistName: string;
@@ -208,7 +141,6 @@ export function buildRefreshArtistCommand(params: {
     hydrateCatalog,
     hydrateAlbumTracks,
     scanLibrary: phases.scanLibrary,
-    forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
     monitoringCycle: params.monitoringCycle,
   };
@@ -224,7 +156,6 @@ export function buildMatchArtistProvidersCommand(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
-  creditedContinuation?: CreditedArtistHydrationItem[];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   return {
@@ -236,10 +167,8 @@ export function buildMatchArtistProvidersCommand(params: {
     isNewArtist: params.isNewArtist,
     workflow: params.workflow,
     scanLibrary: phases.scanLibrary,
-    forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
     monitoringCycle: params.monitoringCycle,
-    creditedContinuation: params.creditedContinuation,
   };
 }
 
@@ -439,13 +368,11 @@ export function buildRescanFoldersCommand(params: {
     artistIds: [params.artistId],
     artistName: params.artistName,
     workflow: params.workflow,
-    skipDownloadQueue: !phases.queueDownloads,
     skipCuration: !phases.curate,
     // Sidecar cover/NFO/lyrics belong to disk scan. Do not inherit the
     // catalog `backfillMetadata` phase — that skipped NFO on library-scan
     // and Refresh & Scan while organize still wrote sidecars on download.
     skipMetadataBackfill: false,
-    forceDownloadQueue: phases.queueDownloads,
     filter: params.filter,
     monitoringCycle: params.monitoringCycle,
   };
@@ -457,24 +384,12 @@ export function buildCurateArtistCommand(params: {
   workflow: Extract<ArtistWorkflow, "curation" | "monitoring-intake" | "full-monitoring">;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
 }) {
-  const phases = getArtistWorkflowPhases(params.workflow);
+  getArtistWorkflowPhases(params.workflow);
   return {
     artistId: params.artistId,
     artistName: params.artistName,
     workflow: params.workflow,
-    skipDownloadQueue: !phases.queueDownloads,
-    forceDownloadQueue: phases.queueDownloads,
     monitoringCycle: params.monitoringCycle,
-  };
-}
-
-export function getRedundancyOptionsForWorkflow(
-  workflow: Extract<ArtistWorkflow, "curation" | "monitoring-intake" | "full-monitoring">,
-) {
-  const phases = getArtistWorkflowPhases(workflow);
-  return {
-    skipDownloadQueue: !phases.queueDownloads,
-    forceDownloadQueue: phases.queueDownloads,
   };
 }
 

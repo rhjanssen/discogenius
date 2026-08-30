@@ -132,8 +132,6 @@ export interface CommandBodyCommon {
   hydrateAlbumTracks?: boolean;
   scanLibrary?: boolean;
   forceUpdate?: boolean;
-  forceDownloadQueue?: boolean;
-  skipDownloadQueue?: boolean;
   skipCuration?: boolean;
   skipMetadataBackfill?: boolean;
   trackUnmappedFiles?: boolean;
@@ -160,7 +158,6 @@ export interface CommandBodyCommon {
   originalJobId?: number;
   resolved?: ResolvedDownloadMetadata;
   downloadState?: DownloadStatePayload;
-  creditedContinuation?: Array<{ artistId: string; artistName: string }>;
 }
 
 export interface RefreshArtistCommand extends CommandBodyCommon {
@@ -172,15 +169,14 @@ export interface RefreshArtistCommand extends CommandBodyCommon {
   hydrateCatalog: boolean;
   hydrateAlbumTracks: boolean;
   scanLibrary: boolean;
-  forceDownloadQueue: boolean;
   forceUpdate: boolean;
 }
 
 /**
  * Provider availability matching for one artist, run as its own queued unit
- * AFTER the metadata refresh (RefreshArtist → MatchArtistProviders → RescanFolders
- * → CurateArtist). Carries the context the inline matching had so the deferred
- * step is faithful to the inline path.
+ * AFTER the metadata refresh. Carries the context the inline matching had so
+ * the deferred step is faithful to the inline path. Later scan/curation phases
+ * are selected by the workflow rather than being implicit in this command.
  */
 export interface MatchArtistProvidersCommand extends CommandBodyCommon {
   artistId: string;
@@ -197,9 +193,7 @@ export interface MatchArtistProvidersCommand extends CommandBodyCommon {
   isNewArtist?: boolean;
   workflow: ArtistWorkflowValue;
   scanLibrary: boolean;
-  forceDownloadQueue: boolean;
   forceUpdate: boolean;
-  creditedContinuation?: Array<{ artistId: string; artistName: string }>;
 }
 
 export interface RefreshAlbumCommand extends CommandBodyCommon {
@@ -248,8 +242,6 @@ export interface CurateArtistCommand extends CommandBodyCommon {
   artistId: string;
   artistName: string;
   workflow?: Extract<ArtistWorkflowValue, "curation" | "monitoring-intake" | "full-monitoring">;
-  skipDownloadQueue?: boolean;
-  forceDownloadQueue?: boolean;
 }
 
 export interface RescanFoldersCommand extends CommandBodyCommon {
@@ -257,11 +249,9 @@ export interface RescanFoldersCommand extends CommandBodyCommon {
   artistIds?: string[];
   artistName?: string;
   workflow?: Extract<ArtistWorkflowValue, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring">;
-  skipDownloadQueue?: boolean;
   skipCuration?: boolean;
   skipMetadataBackfill?: boolean;
   trackUnmappedFiles?: boolean;
-  forceDownloadQueue?: boolean;
   /**
    * Lidarr FilterFilesType. Scheduled root scan is `known`. A metadata-changed
    * artist refresh is `matched`. Omitted defaults in the handler.

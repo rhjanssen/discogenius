@@ -87,6 +87,22 @@ test("album requests serve the exact requested derivative before larger variants
   assert.deepEqual(Buffer.from(await stableAlias.arrayBuffer()), Buffer.alloc(50, 5));
 });
 
+test("edition requests serve only the exact release MBID cache", async () => {
+  const firstFolder = path.join(tempDir, "media-cover", "AlbumEditions", "release-one");
+  const secondFolder = path.join(tempDir, "media-cover", "AlbumEditions", "release-two");
+  fs.mkdirSync(firstFolder, { recursive: true });
+  fs.mkdirSync(secondFolder, { recursive: true });
+  fs.writeFileSync(path.join(firstFolder, "cover.jpg"), Buffer.alloc(40, 1));
+  fs.writeFileSync(path.join(secondFolder, "cover.jpg"), Buffer.alloc(40, 2));
+  writeCurrentMarker(firstFolder, "Cover");
+  writeCurrentMarker(secondFolder, "Cover");
+
+  const first = await fetch(`${baseUrl}/media-cover/AlbumEditions/release-one/cover.jpg`);
+  const second = await fetch(`${baseUrl}/media-cover/AlbumEditions/release-two/cover.jpg`);
+  assert.deepEqual(Buffer.from(await first.arrayBuffer()), Buffer.alloc(40, 1));
+  assert.deepEqual(Buffer.from(await second.arrayBuffer()), Buffer.alloc(40, 2));
+});
+
 test("detail requests prefer the origin over a smaller cached derivative", async () => {
   const folder = path.join(tempDir, "media-cover", "Albums", "origin-fallback-album");
   fs.mkdirSync(folder, { recursive: true });

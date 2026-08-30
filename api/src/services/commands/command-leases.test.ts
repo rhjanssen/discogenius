@@ -436,7 +436,6 @@ test("stale Artist completion events cannot chain a replacement execution", asyn
         scanLibrary: true,
         metadataChanged: true,
         isNewArtist: false,
-        forceDownloadQueue: true,
         trigger: 2,
         priority: 0,
     });

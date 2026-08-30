@@ -20,6 +20,7 @@ import {
 import { isSqliteWriteMutexHeld, sqliteWriteMutexWorkerData } from "../../database/sqlite-write-mutex.js";
 import { downloadBackendRegistry } from './download-backend.js';
 import { readIntEnv } from '../../utils/env.js';
+import { formatDisambiguatedTitle, formatTrackDisplayTitle } from '../../utils/display-title.js';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -271,6 +272,7 @@ export function deriveCatalogFileProgress(
 export type ProviderAlbumFallbackTrackRow = {
     provider_id: string;
     title: string | null;
+    canonical_disambiguation: string | null;
     version: string | null;
     track_number: number | null;
     volume_number: number | null;
@@ -299,6 +301,7 @@ export function listProviderAlbumFallbackTracks(
         SELECT
             CAST(pi.provider_id AS TEXT) AS provider_id,
             COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
+            recording.disambiguation AS canonical_disambiguation,
             pi.version,
             t.position AS track_number,
             t.medium_position AS volume_number
@@ -313,16 +316,54 @@ export function listProviderAlbumFallbackTracks(
            AND pi.entity_type = 'track'
            AND pi.provider = release_item.provider
         LEFT JOIN ProviderTrackMatches track_match
-            ON track_match.provider_edition_member_id = member.id
-           AND track_match.match_state = 'accepted'
+            ON track_match.id = (
+                SELECT candidate.id
+                FROM ProviderTrackMatches candidate
+                JOIN ProviderEditionMatches candidate_release_match
+                  ON candidate_release_match.id = candidate.provider_edition_match_id
+                 AND candidate_release_match.provider_edition_item_id = release_item.id
+                 AND candidate_release_match.match_state = 'accepted'
+                JOIN AlbumEditions candidate_release
+                  ON candidate_release.id = candidate_release_match.edition_id
+                WHERE candidate.provider_edition_member_id = member.id
+                  AND candidate.match_state = 'accepted'
+                  AND (? IS NULL OR candidate_release.mbid = ?)
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM ProviderTrackMatches conflicting
+                    JOIN ProviderEditionMatches conflicting_release_match
+                      ON conflicting_release_match.id = conflicting.provider_edition_match_id
+                     AND conflicting_release_match.provider_edition_item_id = release_item.id
+                     AND conflicting_release_match.match_state = 'accepted'
+                    JOIN AlbumEditions conflicting_release
+                      ON conflicting_release.id = conflicting_release_match.edition_id
+                    WHERE conflicting.provider_edition_member_id = member.id
+                      AND conflicting.match_state = 'accepted'
+                      AND (? IS NULL OR conflicting_release.mbid = ?)
+                      AND conflicting.track_id IS NOT candidate.track_id
+                  )
+                ORDER BY
+                  CASE WHEN candidate.decision_source = 'manual' THEN 0 ELSE 1 END,
+                  candidate.confidence DESC,
+                  candidate.id
+                LIMIT 1
+            )
         LEFT JOIN Tracks t
             ON t.id = track_match.track_id
-           AND t.release_mbid = ?
+        LEFT JOIN Recordings recording
+            ON recording.id = COALESCE(track_match.recording_id, t.recording_id)
         ORDER BY
             COALESCE(t.medium_position, member.medium_position, 1),
             COALESCE(t.position, member.position, 999999),
             pi.provider_id
-    `).all(input.provider, input.providerAlbumId, input.releaseMbid) as ProviderAlbumFallbackTrackRow[];
+    `).all(
+        input.provider,
+        input.providerAlbumId,
+        input.releaseMbid,
+        input.releaseMbid,
+        input.releaseMbid,
+        input.releaseMbid,
+    ) as ProviderAlbumFallbackTrackRow[];
 }
 
 /**
@@ -1721,15 +1762,6 @@ export class DownloadProcessor {
                 : undefined;
             let initialTracks: DownloadTrackStateEntry[] | undefined = seededTracks;
             try {
-                const formatTrackDisplayTitle = (title: string | null | undefined, version?: string | null) => {
-                    const baseTitle = String(title || '').trim() || 'Unknown Track';
-                    const normalizedVersion = String(version || '').trim();
-                    if (!normalizedVersion || baseTitle.toLowerCase().includes(normalizedVersion.toLowerCase())) {
-                        return baseTitle;
-                    }
-                    return `${baseTitle} (${normalizedVersion})`;
-                };
-
                 if (!initialTracks?.length) {
                     if (type === 'track' || type === 'video') {
                         initialTracks = [{ title: resolved.title, status: 'queued', providerTrackId: providerId }];
@@ -1737,7 +1769,7 @@ export class DownloadProcessor {
                         if (payload.releaseGroupMbid) {
                             const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
                             initialTracks = albumTracks.map(t => ({
-                                title: formatTrackDisplayTitle(t.title, t.version),
+                                title: formatDisambiguatedTitle(t.title, t.version, 'Unknown Track'),
                                 trackNum: t.track_number,
                                 volumeNum: t.volume_number || undefined,
                                 status: 'queued' as const,
@@ -1759,7 +1791,7 @@ export class DownloadProcessor {
                             });
 
                             initialTracks = providerRows.map((row) => ({
-                                title: formatTrackDisplayTitle(row.title, row.version),
+                                title: formatTrackDisplayTitle(row.title, row.canonical_disambiguation, row.version),
                                 trackNum: row.track_number ?? undefined,
                                 volumeNum: row.volume_number || undefined,
                                 status: 'queued' as const,

@@ -27,7 +27,7 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("curation rebinds files without running housekeeping cleanup", async () => {
+test("curation does not mutate the file registry or run housekeeping cleanup", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
@@ -59,7 +59,7 @@ test("curation rebinds files without running housekeeping cleanup", async () => 
   }) as typeof originalPruneMetadata;
 
   try {
-    await curationModule.CurationService.processAll(artistMbid, { skipDownloadQueue: true });
+    await curationModule.CurationService.processAll(artistMbid);
   } finally {
     libraryFilesModule.LibraryFilesService.rebindFilesToMonitoredEditions = originalRebind;
     libraryFilesModule.LibraryFilesService.pruneUnmonitoredFiles = originalPruneUnmonitored;
@@ -67,7 +67,7 @@ test("curation rebinds files without running housekeeping cleanup", async () => 
     configModule.updateConfig("monitoring", { remove_unmonitored_files: false });
   }
 
-  assert.deepEqual(calls.rebind, [artistMbid]);
+  assert.deepEqual(calls.rebind, []);
   assert.deepEqual(calls.pruneUnmonitored, []);
   assert.deepEqual(calls.pruneMetadata, []);
 });

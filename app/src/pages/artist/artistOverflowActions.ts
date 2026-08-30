@@ -1,6 +1,7 @@
 import type { OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 
 export type ArtistOverflowActionState = {
+  isMonitored: boolean;
   isScanBusy: boolean;
   isCurateBusy: boolean;
   hasAlbums: boolean;
@@ -42,7 +43,7 @@ export function buildArtistOverflowActions(
     {
       key: "curate",
       label: state.isCurateBusy ? "Running..." : "Curate",
-      disabled: state.isCurateBusy || state.isScanBusy || !state.hasAlbums,
+      disabled: !state.isMonitored || state.isCurateBusy || state.isScanBusy || !state.hasAlbums,
       onClick: handlers.curateArtist,
     },
     {

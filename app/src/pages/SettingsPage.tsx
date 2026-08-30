@@ -1,19 +1,17 @@
 import {
     Button,
     Menu,
-    MenuItem,
+    MenuItemRadio,
     MenuList,
     MenuPopover,
     MenuTrigger,
     Spinner,
-    Tab,
-    TabList,
+    Nav,
+    NavItem,
     Title2,
     makeStyles,
     tokens,
-    type SelectTabData,
-    type SelectTabEvent,
-    type TabValue,
+    type OnNavItemSelectData,
 } from "@fluentui/react-components";
 import {
     ChevronDown24Regular,
@@ -449,7 +447,7 @@ const SettingsPage = () => {
         navigate("/login");
     };
 
-    const onTabSelect = (_event: SelectTabEvent, data: SelectTabData) => {
+    const onNavItemSelect = (_event: unknown, data: OnNavItemSelectData) => {
         scrollToSection(String(data.value));
     };
 
@@ -482,7 +480,7 @@ const SettingsPage = () => {
                     <Title2 as="h1" className={styles.navTitle}>Settings</Title2>
 
                     <div className={styles.mobileNav}>
-                        <Menu>
+                        <Menu checkedValues={{ section: [activeSection] }}>
                             <MenuTrigger disableButtonEnhancement>
                                 <Button
                                     appearance="subtle"
@@ -497,27 +495,31 @@ const SettingsPage = () => {
                             <MenuPopover>
                                 <MenuList>
                                     {SECTIONS.map((section) => (
-                                        <MenuItem key={section.id} onClick={() => scrollToSection(section.id)}>
+                                        <MenuItemRadio
+                                            key={section.id}
+                                            name="section"
+                                            value={section.id}
+                                            onClick={() => scrollToSection(section.id)}
+                                        >
                                             {section.label}
-                                        </MenuItem>
+                                        </MenuItemRadio>
                                     ))}
                                 </MenuList>
                             </MenuPopover>
                         </Menu>
                     </div>
 
-                    <div className={styles.desktopNav} data-testid="settings-category-tabs">
-                        <TabList
-                            vertical
-                            selectedValue={activeSection as TabValue}
-                            onTabSelect={onTabSelect}
+                    <div className={styles.desktopNav} data-testid="settings-category-nav">
+                        <Nav
+                            selectedValue={activeSection}
+                            onNavItemSelect={onNavItemSelect}
                         >
                             {SECTIONS.map((section) => (
-                                <Tab key={section.id} value={section.id} id={`settings-tab-${section.id}`}>
+                                <NavItem key={section.id} value={section.id} id={`settings-nav-${section.id}`}>
                                     {section.label}
-                                </Tab>
+                                </NavItem>
                             ))}
-                        </TabList>
+                        </Nav>
                     </div>
                 </nav>
 

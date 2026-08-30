@@ -1784,3 +1784,135 @@ test("renderCappedCoverBuffer downscales origin taller than 1200 and leaves smal
 
   assert.equal(mediaCoverServiceModule.renderCappedCoverBuffer(shortPath, 1200), null);
 });
+
+test("edition artwork caches distinct accepted provider covers under exact release MBIDs", async () => {
+  const providerModule = await import("../providers/index.js");
+  const provider = "edition-art-provider";
+  const firstUrl = "https://provider.example/edition-one.jpg";
+  const secondUrl = "https://provider.example/edition-two.jpg";
+  const firstImage = jpeg.encode({
+    width: 32, height: 32, data: Buffer.alloc(32 * 32 * 4, 0x44),
+  }, 90).data;
+  const secondImage = jpeg.encode({
+    width: 32, height: 32, data: Buffer.alloc(32 * 32 * 4, 0xbb),
+  }, 90).data;
+
+  providerModule.streamingProviderManager.registerStreamingProvider({
+    id: provider,
+    name: "Edition artwork provider",
+    capabilities: {
+      catalogSearch: false, artistCatalog: false, followedArtists: false,
+      audioPreviews: false, audioDownloads: false, lossyStereo: false,
+      losslessStereo: false, hiResStereo: false, spatialAudio: false,
+      lyrics: false, musicVideos: false, videoPreviews: false,
+      videoDownloads: false, artwork: true, editorialMetadata: false,
+      providerIds: true,
+    },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => { throw new Error("not implemented"); },
+    getArtistAlbums: async () => [],
+    getAlbum: async () => { throw new Error("not implemented"); },
+    getAlbumTracks: async () => [],
+    getTrack: async () => { throw new Error("not implemented"); },
+    getAuthStatus: async () => ({
+      connected: true, tokenExpired: false, refreshTokenExpired: false,
+      hoursUntilExpiry: 1, canAccessShell: false, canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true, canAuthenticate: false,
+    }),
+    getArtworkUrl: ({ providerId }: any) => providerId === "provider-edition-one" ? firstUrl : secondUrl,
+  } as any);
+
+  const artistMbid = "edition-art-artist";
+  const groupMbid = "edition-art-group";
+  dbModule.db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Edition Art Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(groupMbid, artistMbid, "Edition Art Album");
+  const group = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = ?").get(groupMbid) as { id: number };
+  const insertEdition = dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  insertEdition.run("edition-art-one", group.id, groupMbid, artistMbid, "Edition One");
+  insertEdition.run("edition-art-two", group.id, groupMbid, artistMbid, "Edition Two");
+  const insertItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, cover_id)
+    VALUES (?, 'release', ?, ?, ?)
+    RETURNING id
+  `);
+  const itemOne = insertItem.get(provider, "provider-edition-one", "Edition One", "image-one") as { id: number };
+  const itemTwo = insertItem.get(provider, "provider-edition-two", "Edition Two", "image-two") as { id: number };
+  const edition = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?");
+  const insertMatch = dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+  `);
+  insertMatch.run(itemOne.id, (edition.get("edition-art-one") as { id: number }).id);
+  insertMatch.run(itemTwo.id, (edition.get("edition-art-two") as { id: number }).id);
+
+  configModule.updateConfig("metadata", { artwork_preference: "provider" } as any);
+  globalThis.fetch = (async (url: string | URL | Request) => new Response(
+    String(url) === firstUrl ? firstImage : secondImage,
+    { status: 200, headers: { "content-type": "image/jpeg" } },
+  )) as typeof fetch;
+
+  await mediaCoverServiceModule.resolveEditionArtwork({ releaseMbid: "edition-art-one" });
+  await mediaCoverServiceModule.resolveEditionArtwork({ releaseMbid: "edition-art-two" });
+  const firstPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath("edition-art-one", "Edition", "cover");
+  const secondPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath("edition-art-two", "Edition", "cover");
+  assert.ok(firstPath?.includes(path.join("AlbumEditions", "edition-art-one")));
+  assert.ok(secondPath?.includes(path.join("AlbumEditions", "edition-art-two")));
+  assert.notEqual(
+    crypto.createHash("sha256").update(fs.readFileSync(firstPath!)).digest("hex"),
+    crypto.createHash("sha256").update(fs.readFileSync(secondPath!)).digest("hex"),
+  );
+  assert.deepEqual(
+    mediaCoverServiceModule.loadEditionProviderArtworkCandidates("edition-art-one")
+      .map((candidate) => candidate.entityId),
+    ["provider-edition-one"],
+  );
+});
+
+test("edition artwork candidates put the exact current acquisition plan before other accepted matches", () => {
+  const artistMbid = "edition-plan-art-artist";
+  const groupMbid = "edition-plan-art-group";
+  const selectedProvider = "selected-art-provider";
+  const fallbackProvider = "preferred-fallback-art-provider";
+  dbModule.db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Edition Plan Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(groupMbid, artistMbid, "Edition Plan Album");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, cover_id)
+    VALUES (?, 'release', ?, ?, ?)
+  `).run(selectedProvider, "selected-edition", "Selected Edition", "selected-cover");
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: groupMbid,
+    provider: selectedProvider,
+    providerId: "selected-edition",
+    libraryClass: "stereo",
+  });
+
+  const release = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
+    .get(`${groupMbid}-release`) as { id: number };
+  const fallbackItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, cover_id)
+    VALUES (?, 'release', ?, ?, ?)
+    RETURNING id
+  `).get(fallbackProvider, "fallback-edition", "Fallback Edition", "fallback-cover") as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1)
+  `).run(fallbackItem.id, release.id);
+  configModule.updateConfig("streaming", { provider_priority: [fallbackProvider, selectedProvider] } as any);
+
+  const candidates = mediaCoverServiceModule.loadEditionProviderArtworkCandidates(`${groupMbid}-release`);
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.entityId),
+    ["selected-edition", "fallback-edition"],
+  );
+});

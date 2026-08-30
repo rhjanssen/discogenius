@@ -7,6 +7,7 @@ import { catalogProviderRegistry } from "../catalog/index.js";
 import {
     albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
+    editionCoverLocalUrl,
     providerArtworkIdFromCandidates,
     imageContainerFromImagesColumn,
     mapArtistArtworkToLocalUrl,
@@ -232,7 +233,7 @@ function formatReleaseCountry(value: unknown): string | null {
 
 function listMusicBrainzReleaseVersions(
     releaseGroup: any,
-    coverUrl?: string | null,
+    _coverUrl?: string | null,
 ): AlbumVersionContract[] {
     const includeSpatial = getConfigSection("filtering").include_spatial === true;
     const releases = db.prepare(`
@@ -278,8 +279,6 @@ function listMusicBrainzReleaseVersions(
         r.mbid ASC
     `).all(releaseGroup.mbid) as any[];
 
-    const imageUrl = coverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
-    const providerCoverUrl = chooseReleaseGroupProviderArtwork(releaseGroup);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
     // Both the slot and the badge used to be correlated subqueries evaluated once
     // per accepted match — each one walking AcquisitionPlanSources →
@@ -298,6 +297,7 @@ function listMusicBrainzReleaseVersions(
           release_match.confidence,
           provider_item.provider,
           provider_item.provider_id,
+          COALESCE(provider_item.artwork_url, provider_item.cover_id) AS provider_cover,
           release.mbid AS release_mbid
         FROM Albums release_group
         JOIN AlbumEditions release
@@ -357,6 +357,7 @@ function listMusicBrainzReleaseVersions(
       SELECT
         release_group_matches.provider,
         release_group_matches.provider_id,
+        release_group_matches.provider_cover,
         release_group_matches.release_mbid,
         CASE WHEN spatial_matches.match_id IS NOT NULL THEN 'spatial' ELSE 'stereo' END AS library_class,
         match_quality.quality AS quality,
@@ -381,6 +382,7 @@ function listMusicBrainzReleaseVersions(
     `).all(releaseGroup.mbid) as Array<{
         provider: string | null;
         provider_id: string | number | null;
+        provider_cover: string | null;
         release_mbid: string | null;
         library_class: string | null;
         quality: string | null;
@@ -404,6 +406,7 @@ function listMusicBrainzReleaseVersions(
 
     return releases.map((release) => {
         const releaseMbid = String(release.mbid);
+        const artworkOffer = offersByReleaseMbid.get(releaseMbid)?.[0] || null;
         const isStereoSelected = releaseGroup.stereo_release_mbid === releaseMbid;
         const isSpatialSelected = releaseGroup.spatial_release_mbid === releaseMbid;
         const stereoOffer = isStereoSelected
@@ -416,8 +419,8 @@ function listMusicBrainzReleaseVersions(
         return {
             id: releaseMbid,
             title: String(release.title || releaseGroup.title || "Unknown Release"),
-            cover_id: imageUrl,
-            provider_cover_id: providerCoverUrl,
+            cover_id: editionCoverLocalUrl(releaseMbid),
+            provider_cover_id: artworkOffer?.provider_cover || null,
             artist_name: artistName,
             release_date: release.date || releaseGroup.first_release_date || null,
             popularity: undefined,
@@ -633,6 +636,7 @@ function getReleaseTrackContracts(
         t.position,
         t.medium_position,
         t.length_ms,
+        r.disambiguation AS recording_disambiguation,
         r.credits AS recording_credits
       FROM Tracks t
       LEFT JOIN Recordings r ON t.recording_mbid = r.mbid
@@ -652,7 +656,9 @@ function getReleaseTrackContracts(
             preview_provider: null,
             preview_provider_track_id: null,
             title: String(track.title || "Unknown Track"),
-            version: null,
+            version: track.recording_disambiguation == null
+                ? null
+                : String(track.recording_disambiguation).trim() || null,
             duration: Math.round(Number(track.length_ms || 0) / 1000),
             track_number: Number(track.position || 0),
             volume_number: Number(track.medium_position || 1),

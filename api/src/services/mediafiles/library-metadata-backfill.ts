@@ -18,7 +18,7 @@ import { LibraryFilesService } from "./library-files.js";
 import { AudioTagService } from "./audio-tag-service.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
-import { syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
+import { resolveEditionArtwork, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
 import {
     findAdjacentLyricSidecar,
     lyricSidecarPath,
@@ -46,10 +46,22 @@ export interface MetadataFillResult {
     skipped: number;
 }
 
+export interface MetadataFillOptions {
+    /**
+     * Rewrite embedded cover art, thumbnails, or container tags. Disk scans
+     * pass false: media-file mutation belongs to import or an explicit Retag
+     * command, while scans may still repair missing sidecar files.
+     */
+    writeEmbeddedMediaMetadata?: boolean;
+}
+
 class LibraryMetadataBackfillService {
     private _writtenVideoTagFingerprints = new Map<string, string>();
 
-    async fillMissingMetadataFiles(artistId: string): Promise<MetadataFillResult> {
+    async fillMissingMetadataFiles(
+        artistId: string,
+        options: MetadataFillOptions = {},
+    ): Promise<MetadataFillResult> {
         const metadataConfig = getConfigSection("metadata");
         const naming = getNamingConfig();
         const result: MetadataFillResult = { downloaded: 0, failed: 0, skipped: 0 };
@@ -68,9 +80,17 @@ class LibraryMetadataBackfillService {
         });
 
         await this.fillArtistMetadata(metadataIdKey, artistFolder, metadataConfig, result);
-        await this.fillAlbumMetadata(metadataIdKey, artistFolder, metadataConfig, naming, result);
+        const writeEmbeddedMediaMetadata = options.writeEmbeddedMediaMetadata !== false;
+        await this.fillAlbumMetadata(
+            metadataIdKey,
+            artistFolder,
+            metadataConfig,
+            naming,
+            result,
+            writeEmbeddedMediaMetadata,
+        );
         await this.fillTrackMetadata(metadataIdKey, metadataConfig, result);
-        await this.fillVideoMetadata(metadataIdKey, metadataConfig, result);
+        await this.fillVideoMetadata(metadataIdKey, metadataConfig, result, writeEmbeddedMediaMetadata);
 
         if (result.downloaded > 0 || result.failed > 0) {
             console.log(
@@ -82,7 +102,9 @@ class LibraryMetadataBackfillService {
         return result;
     }
 
-    async fillMissingMetadataFilesForLibrary(): Promise<MetadataFillResult> {
+    async fillMissingMetadataFilesForLibrary(
+        options: MetadataFillOptions = {},
+    ): Promise<MetadataFillResult> {
         const artistRows = db.prepare(`
       SELECT DISTINCT artist_metadata_id
       FROM TrackFiles
@@ -93,7 +115,7 @@ class LibraryMetadataBackfillService {
         const totals: MetadataFillResult = { downloaded: 0, failed: 0, skipped: 0 };
 
         for (const row of artistRows) {
-            const result = await this.fillMissingMetadataFiles(String(row.artist_metadata_id));
+            const result = await this.fillMissingMetadataFiles(String(row.artist_metadata_id), options);
             totals.downloaded += result.downloaded;
             totals.failed += result.failed;
             totals.skipped += result.skipped;
@@ -189,6 +211,7 @@ class LibraryMetadataBackfillService {
         metadataConfig: any,
         naming: ReturnType<typeof getNamingConfig>,
         result: MetadataFillResult,
+        writeEmbeddedMediaMetadata: boolean,
     ) {
         // Canonical-first: backfill each selected edition independently in
         // every library that owns imported audio for it. Grouping only by
@@ -380,9 +403,19 @@ class LibraryMetadataBackfillService {
                     const coverName = metadataConfig.album_cover_name || "cover.jpg";
                     const coverPath = path.join(albumDir, coverName);
                     try {
+                        await resolveEditionArtwork({
+                            releaseMbid: canonicalReleaseMbid,
+                            libraryId: sourceAlbum.library_id,
+                            providerCandidates: albumProviderItem ? [{
+                                provider: albumProviderItem.provider,
+                                entityId: albumProviderItem.provider_id,
+                                imageId: albumProviderItem.cover,
+                                title: albumProviderItem.title,
+                            }] : [],
+                        });
                         const syncResult = syncCachedMediaCoverToFile({
-                            entityId: canonicalReleaseGroupMbid,
-                            coverEntity: "Album",
+                            entityId: canonicalReleaseMbid,
+                            coverEntity: "Edition",
                             coverTypes: "cover",
                             outputPath: coverPath,
                         });
@@ -423,7 +456,9 @@ class LibraryMetadataBackfillService {
                                 sourceAlbum.album_edition_id,
                                 libraryRoot,
                             ) as Array<{ id: number }>).map((row) => row.id);
-                            await AudioTagService.syncEmbeddedCovers(trackFileIds);
+                            if (writeEmbeddedMediaMetadata) {
+                                await AudioTagService.syncEmbeddedCovers(trackFileIds);
+                            }
                         }
                     } catch (error) {
                         console.warn(
@@ -684,11 +719,15 @@ class LibraryMetadataBackfillService {
         artistId: string,
         metadataConfig: any,
         result: MetadataFillResult,
+        writeEmbeddedMediaMetadata: boolean,
     ) {
         const videoRoot = Config.getVideoPath();
 
         // ---- Thumbnail backfill ----
-        if (metadataConfig.save_video_thumbnail || metadataConfig.embed_video_thumbnail !== false) {
+        if (
+            metadataConfig.save_video_thumbnail
+            || (writeEmbeddedMediaMetadata && metadataConfig.embed_video_thumbnail !== false)
+        ) {
             const resolution = metadataConfig.video_thumbnail_resolution || "origin";
 
             const thumbnailVideos = db.prepare(`
@@ -744,10 +783,12 @@ class LibraryMetadataBackfillService {
                 const thumbPath = metadataConfig.save_video_thumbnail ? persistentThumbPath : transientThumbPath;
 
                 try {
-                    const alreadyEmbedded = metadataConfig.embed_video_thumbnail !== false
+                    const alreadyEmbedded = writeEmbeddedMediaMetadata && metadataConfig.embed_video_thumbnail !== false
                         ? await hasEmbeddedVideoThumbnail(video.file_path)
                         : true;
-                    const needsEmbedding = metadataConfig.embed_video_thumbnail !== false && !alreadyEmbedded;
+                    const needsEmbedding = writeEmbeddedMediaMetadata
+                        && metadataConfig.embed_video_thumbnail !== false
+                        && !alreadyEmbedded;
                     let downloadedThumbnail = false;
 
                     if (metadataConfig.save_video_thumbnail || needsEmbedding) {
@@ -787,7 +828,8 @@ class LibraryMetadataBackfillService {
                     }
 
                     let embeddedThumbnail = false;
-                    const shouldEmbed = metadataConfig.embed_video_thumbnail !== false
+                    const shouldEmbed = writeEmbeddedMediaMetadata
+                        && metadataConfig.embed_video_thumbnail !== false
                         && (needsEmbedding || downloadedThumbnail);
                     if (shouldEmbed && fs.existsSync(thumbPath)) {
                         embeddedThumbnail = await embedVideoThumbnail(video.file_path, thumbPath);
@@ -909,7 +951,7 @@ class LibraryMetadataBackfillService {
         }
 
         // ---- Video tag backfill ----
-        if (metadataConfig.write_audio_tags_policy !== "no") {
+        if (writeEmbeddedMediaMetadata && metadataConfig.write_audio_tags_policy !== "no") {
             const tagVideos = db.prepare(`
       SELECT lf.file_path,
              COALESCE(lf.provider_id, pi.provider_id) AS media_id,

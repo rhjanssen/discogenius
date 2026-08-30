@@ -418,7 +418,10 @@ function verifyTagLibValues(
 }
 
 function replaceOriginalWithVerifiedCopy(originalPath: string, workingPath: string): void {
-  const backupPath = `${originalPath}.discogenius-tags-backup-${randomUUID()}`;
+  const backupPath = path.join(
+    path.dirname(originalPath),
+    `.discogenius-tags-backup-${randomUUID()}${extensionOf(originalPath)}`,
+  );
   fs.renameSync(originalPath, backupPath);
   try {
     fs.renameSync(workingPath, originalPath);
@@ -431,10 +434,9 @@ function replaceOriginalWithVerifiedCopy(originalPath: string, workingPath: stri
 
 function workingCopyPath(filePath: string): string {
   const extension = extensionOf(filePath);
-  const stem = path.basename(filePath, extension);
   return path.join(
     path.dirname(filePath),
-    `.${stem}.discogenius-tags-${randomUUID()}${extension}`,
+    `.discogenius-tags-${randomUUID()}${extension}`,
   );
 }
 

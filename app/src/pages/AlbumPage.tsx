@@ -462,12 +462,9 @@ const useStyles = makeStyles({
     marginBottom: tokens.spacingVerticalM,
   },
   trackListTabs: {
-    width: "100%",
-    maxWidth: "100%",
-    overflowX: "auto",
-    overflowY: "hidden",
-    scrollbarWidth: "thin",
-    scrollBehavior: "smooth",
+    width: "max-content",
+    minWidth: "100%",
+    overflow: "visible",
     "& [role='tab']": {
       flexShrink: 0,
       maxWidth: "min(260px, 72vw)",
@@ -479,6 +476,16 @@ const useStyles = makeStyles({
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
     },
+  },
+  trackListTabsScroller: {
+    width: "100%",
+    maxWidth: "100%",
+    overflowX: "auto",
+    overflowY: "hidden",
+    scrollbarWidth: "thin",
+    scrollBehavior: "smooth",
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS}`,
+    margin: `-${tokens.spacingVerticalXS} -${tokens.spacingHorizontalXS}`,
   },
   /** Horizontal scroll for associated videos (matches artist page carousel). */
   videoCarousel: {
@@ -1885,23 +1892,25 @@ const AlbumPage = () => {
             cannot show them all. The strip reuses the Dashboard's Queue/Activity
             TabList so the two read as the same control. */}
         {trackListTabs.length > 1 ? (
-          <TabList
-            className={styles.trackListTabs}
-            aria-label="Monitored album editions"
-            selectedValue={activeTabEditionId ?? undefined}
-            onTabSelect={(_, data) => setSelectedTabEditionId(Number(data.value))}
-          >
-            {trackListTabs.map((tab) => (
-              <Tab
-                key={tab.editionId}
-                value={tab.editionId}
-                title={tab.label}
-                aria-label={tab.label}
-              >
-                {tab.compactLabel}
-              </Tab>
-            ))}
-          </TabList>
+          <div className={styles.trackListTabsScroller}>
+            <TabList
+              className={styles.trackListTabs}
+              aria-label="Monitored album editions"
+              selectedValue={activeTabEditionId ?? undefined}
+              onTabSelect={(_, data) => setSelectedTabEditionId(Number(data.value))}
+            >
+              {trackListTabs.map((tab) => (
+                <Tab
+                  key={tab.editionId}
+                  value={tab.editionId}
+                  title={tab.label}
+                  aria-label={tab.label}
+                >
+                  {tab.compactLabel}
+                </Tab>
+              ))}
+            </TabList>
+          </div>
         ) : null}
         {isEditionTrackListLoading ? (
           <div className={styles.trackListLoading}>

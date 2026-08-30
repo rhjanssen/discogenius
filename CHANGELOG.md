@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.13.3] - 2026-08-30
+
+Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a
+reset.
+
+### Changed
+
+- **Refresh command scope.** Refresh & Scan now refreshes metadata, matches
+  providers, and scans the artist folder without silently curating, downloading,
+  renaming, or retagging media. Newly discovered credited artists receive one
+  low-priority catalogue onboarding pass; recurring scans do not repeatedly fan
+  out through their discographies.
+- **Fluent navigation and actions.** Dashboard and Library share stock Fluent
+  tabs with consistent icons, focus treatment, and a compact mobile picker.
+  Settings uses Fluent navigation, interactive cards use Fluent elevation, and
+  activity icons, album-edition tabs, page spacing, and disabled artist actions
+  follow the same responsive and accessible layout rules.
+- **Edition artwork.** Imported sidecars, embedded covers, backfill, organizer,
+  and edition APIs now resolve artwork for the exact MusicBrainz release. Album
+  hero and list artwork remains release-group scoped.
+
+### Fixed
+
+- **Video identity and classification.** Cross-provider matching better
+  separates official, live, lyric, visualiser, and remix performances while
+  still converging equivalent provider offers. Album placement only uses valid
+  audio relationships and preserves one selected video per album track.
+- **Queue titles.** Track disambiguation is included in download and activity
+  titles, so similarly named tracks such as a song and its commentary remain
+  distinguishable.
+- **Long media filenames.** Tagging, transcoding, rename, and backup operations
+  use short sibling temporary names. Apple Music videos with long source titles
+  no longer fail at import with `ENAMETOOLONG`.
+
 ## [2.13.2] - 2026-08-28
 
 Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a

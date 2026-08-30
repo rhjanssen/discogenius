@@ -49,7 +49,12 @@ function addMember(releaseItemId: number, memberItemId: number, medium: number, 
 
 /** Canonical release-group / release / track, returning the Tracks row id. */
 function seedCanonicalTrack(
-  releaseMbid: string, trackMbid: string, title: string, medium: number, position: number,
+  releaseMbid: string,
+  trackMbid: string,
+  title: string,
+  medium: number,
+  position: number,
+  disambiguation: string | null = null,
 ): { trackId: number; recordingId: number } {
   db.prepare(`
     INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Fallback Artist')
@@ -63,10 +68,10 @@ function seedCanonicalTrack(
     VALUES (?, 'rg-fallback', 'artist-mbid', 'Fallback Album', '2024-01-01', 3)
   `).run(releaseMbid);
   const recording = db.prepare(`
-    INSERT INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status)
-    VALUES (?, 'artist-mbid', ?, 0, 'complete')
+    INSERT INTO Recordings (mbid, artist_mbid, title, disambiguation, is_video, metadata_status)
+    VALUES (?, 'artist-mbid', ?, ?, 0, 'complete')
     RETURNING id
-  `).get(`rec-${trackMbid}`, title) as { id: number };
+  `).get(`rec-${trackMbid}`, title, disambiguation) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, recording_id, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -130,8 +135,38 @@ test("fallback tracklist takes numbers from the accepted canonical track", () =>
   });
 
   assert.deepEqual(rows, [
-    { provider_id: "t-b", title: "Canonical Title B", version: null, track_number: 1, volume_number: 1 },
-    { provider_id: "t-a", title: "Canonical Title A", version: "Radio Edit", track_number: 3, volume_number: 2 },
+    { provider_id: "t-b", title: "Canonical Title B", canonical_disambiguation: null, version: null, track_number: 1, volume_number: 1 },
+    { provider_id: "t-a", title: "Canonical Title A", canonical_disambiguation: null, version: "Radio Edit", track_number: 3, volume_number: 2 },
+  ]);
+});
+
+test("fallback without a release hint preserves canonical commentary titles", () => {
+  const releaseItem = providerItem("tidal", "release", "album-commentary", "Track by Track");
+  const commentaryItem = providerItem("tidal", "track", "bye-commentary", "Bye Bye");
+  const songItem = providerItem("tidal", "track", "bye-song", "Bye Bye");
+  const commentaryMember = addMember(releaseItem, commentaryItem, 1, 1);
+  const songMember = addMember(releaseItem, songItem, 1, 2);
+
+  const commentary = seedCanonicalTrack("rel-commentary", "track-commentary", "Bye Bye", 1, 1, "commentary");
+  const song = seedCanonicalTrack("rel-commentary", "track-song", "Bye Bye", 1, 2);
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-commentary'").get() as { id: number };
+  const releaseMatch = acceptReleaseMatch(releaseItem, release.id);
+  addTrackMatch(commentaryMember, releaseMatch, commentary.trackId, commentary.recordingId);
+  addTrackMatch(songMember, releaseMatch, song.trackId, song.recordingId);
+
+  const rows = listProviderAlbumFallbackTracks(db, {
+    provider: "tidal",
+    providerAlbumId: "album-commentary",
+    releaseMbid: null,
+  });
+
+  assert.deepEqual(rows.map((row) => ({
+    id: row.provider_id,
+    title: row.title,
+    detail: row.canonical_disambiguation,
+  })), [
+    { id: "bye-commentary", title: "Bye Bye", detail: "commentary" },
+    { id: "bye-song", title: "Bye Bye", detail: null },
   ]);
 });
 

@@ -107,7 +107,7 @@ test.describe('Restart resilience', () => {
     const dashboardViewPicker = page.getByRole('button', { name: /^Queue$/i }).first();
     await expect(dashboardViewPicker).toBeVisible({ timeout: 5_000 });
     await dashboardViewPicker.click();
-    await page.getByRole('menuitem', { name: /^Activity$/i }).click();
+    await page.getByRole('menuitemradio', { name: /^Activity$/i }).click();
     await expect(page.getByRole('button', { name: /^Activity$/i }).first()).toBeVisible();
 
     await expect(page.getByRole('button', { name: /^Filter$/i })).toBeVisible();

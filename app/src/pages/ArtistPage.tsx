@@ -1602,13 +1602,13 @@ const ArtistPage = () => {
   }
   // Button state logic based on actual data rather than scan timestamp
   const albumCount = pageData?.album_count ?? 0;
-  const monitoredAlbumCount = pageData?.monitored_album_count ?? 0;
   const hasAlbums = albumCount > 0;
-  const hasMonitoredAlbums = monitoredAlbumCount > 0;
-  const hasBeenScanned = Boolean(pageData?.artist?.last_scanned) || hasAlbums;
-  const downloadActionDisabled = !hasBeenScanned || isScanBusy || !hasProviderMatchedItems;
-  const downloadActionTitle = !hasBeenScanned
-    ? 'Get metadata first to enable downloads'
+  const hasBeenScanned = pageData?.needs_scan === false;
+  const downloadActionDisabled = !isMonitored || !hasBeenScanned || isScanBusy || !hasProviderMatchedItems;
+  const downloadActionTitle = !isMonitored
+    ? 'Monitor this artist to download missing releases'
+    : !hasBeenScanned
+      ? 'Get metadata first to enable downloads'
     : isScanBusy
       ? 'Wait for scan to finish'
       : !hasProviderMatchedItems
@@ -1618,6 +1618,7 @@ const ArtistPage = () => {
 
   const artistActions: OverflowAction[] = buildArtistOverflowActions(
     {
+      isMonitored,
       isScanBusy,
       isCurateBusy,
       hasAlbums,
@@ -1871,13 +1872,13 @@ const ArtistPage = () => {
                   <OverflowItem id="refresh-scan" priority={3}>
                     <AppTooltip content={isScanBusy ? "Scanning..." : scanActionTitle} relationship="label">
                       <Button
-                        appearance={!hasBeenScanned ? "primary" : "subtle"}
+                        appearance={isMonitored && !hasBeenScanned ? "primary" : "subtle"}
                         icon={isScanBusy ? <Spinner size="tiny" /> : <ArrowSync24 />}
                         onClick={syncArtist}
                         disabled={isScanBusy}
                         className={mergeClasses(
                           styles.actionButton,
-                          !hasBeenScanned ? styles.primaryButton : styles.transparentButton
+                          isMonitored && !hasBeenScanned ? styles.primaryButton : styles.transparentButton
                         )}
                       >
                         {isScanBusy ? "Scanning..." : "Refresh & Scan"}
@@ -1887,18 +1888,21 @@ const ArtistPage = () => {
 
                   <OverflowItem id="curate" priority={2}>
                     <AppTooltip
-                      content={!hasAlbums ? "Refresh & Scan first" : (isScanBusy ? "Wait for scan to finish" : "Curate")}
+                      content={!isMonitored
+                        ? "Monitor this artist to curate its library"
+                        : !hasAlbums
+                          ? "Refresh & Scan first"
+                          : isScanBusy
+                            ? "Wait for scan to finish"
+                            : "Curate"}
                       relationship="label"
                     >
                       <Button
-                        appearance={(hasAlbums && !hasMonitoredAlbums) ? "primary" : "subtle"}
+                        appearance="subtle"
                         icon={isCurateBusy ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
                         onClick={curateArtist}
-                        disabled={isCurateBusy || isScanBusy || !hasAlbums}
-                        className={mergeClasses(
-                          styles.actionButton,
-                          (hasAlbums && !hasMonitoredAlbums) ? styles.primaryButton : styles.transparentButton
-                        )}
+                        disabledFocusable={!isMonitored || isCurateBusy || isScanBusy || !hasAlbums}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
                       >
                         {isCurateBusy ? "Running..." : "Curate"}
                       </Button>
@@ -1911,7 +1915,7 @@ const ArtistPage = () => {
                         appearance="subtle"
                         icon={<ArrowDownload24 />}
                         onClick={startDownloads}
-                        disabled={downloadActionDisabled}
+                        disabledFocusable={downloadActionDisabled}
                         className={mergeClasses(styles.actionButton, styles.transparentButton)}
                       >
                         Download Missing

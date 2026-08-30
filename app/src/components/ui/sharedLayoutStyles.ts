@@ -3,13 +3,14 @@ import { tokens } from "@fluentui/react-components";
 /** Layout writes the measured app-bar height here for sticky page chrome. */
 export const appBarHeightCssVariable = "--dg-app-bar-height";
 
-/** Layout owns page-top spacing. Keep this one step so headers are not a second empty band. */
+/** Layout owns page-top spacing. Desktop uses Fluent's large spacing token so
+ * page content is visually separated from the elevated app bar. */
 export const pageInsetTop = tokens.spacingVerticalS;
-export const pageInsetTopDesktop = tokens.spacingVerticalS;
+export const pageInsetTopDesktop = tokens.spacingVerticalL;
 
-/** Pull top-level media pages flush with the app bar's content inset. */
+/** Top-level pages inherit the app-wide inset instead of cancelling it. */
 export const compactPageTopOffset = {
-    marginTop: `calc(-1 * ${tokens.spacingVerticalS})`,
+    marginTop: tokens.spacingVerticalNone,
 } as const;
 
 /** Shared collection spacing so tables, selection bars, cards, and queue rows align. */

@@ -496,7 +496,6 @@ test("refresh artist dedupe ignores label-only payload differences and stale exp
             hydrateCatalog: true,
             hydrateAlbumTracks: false,
             scanLibrary: false,
-            forceDownloadQueue: false,
             forceUpdate: true,
         },
         "artist-1",
@@ -512,7 +511,6 @@ test("refresh artist dedupe ignores label-only payload differences and stale exp
             hydrateCatalog: true,
             hydrateAlbumTracks: false,
             scanLibrary: false,
-            forceDownloadQueue: false,
             forceUpdate: true,
             expandCreditedArtists: true,
         } as any,
@@ -1257,7 +1255,6 @@ test("getTopPendingJobsByTypes perTypeLimit keeps a deep single-type backlog fro
                 hydrateCatalog: true,
                 hydrateAlbumTracks: true,
                 scanLibrary: false,
-                forceDownloadQueue: false,
                 forceUpdate: false,
             },
             `starve-artist-${i}`,
@@ -1272,7 +1269,6 @@ test("getTopPendingJobsByTypes perTypeLimit keeps a deep single-type backlog fro
             shouldHydrateCatalog: true,
             workflow: "monitoring-intake",
             scanLibrary: false,
-            forceDownloadQueue: false,
             forceUpdate: false,
         },
         "starve-match-artist",
@@ -1295,4 +1291,3 @@ test("getTopPendingJobsByTypes perTypeLimit keeps a deep single-type backlog fro
     // earlier-queued RefreshArtist rows come before the later MatchArtistProviders.
     assert.equal(diverseWindow[0].name, queueModule.CommandNames.RefreshArtist);
 });
-

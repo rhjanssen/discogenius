@@ -2,11 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ARTIST_WORKFLOW_PRIORITY,
-  CREDITED_ARTIST_HYDRATION_BATCH_SIZE,
   buildRefreshArtistCommand,
   buildRescanFoldersCommand,
   nextArtistWorkflowPriority,
-  queueCreditedArtistHydrationBatch,
   queueArtistIntake,
 } from "./artist-workflow.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
@@ -62,7 +60,7 @@ test("library scan and refresh-scan still write cover and NFO sidecars", () => {
   }
 });
 
-test("monitoring intake hydrates provider offers and marks post-curate download queue", () => {
+test("monitoring intake hydrates provider offers without coupling refresh to downloads", () => {
   const payload = buildRefreshArtistCommand({
     artistId: "artist-mbid",
     artistName: "Bastille",
@@ -73,10 +71,10 @@ test("monitoring intake hydrates provider offers and marks post-curate download 
   assert.equal(payload.hydrateCatalog, true);
   assert.equal(payload.hydrateAlbumTracks, true);
   assert.equal(payload.monitorAlbums, true);
-  assert.equal(payload.forceDownloadQueue, true);
+  assert.equal("forceDownloadQueue" in payload, false);
 });
 
-test("workflow handoffs run depth-first while credited artists stay in a lower tier", () => {
+test("workflow handoffs advance in selected-artist phase order", () => {
   const refreshPriority = ARTIST_WORKFLOW_PRIORITY.MONITORED_BATCH_BASE;
   const matchPriority = nextArtistWorkflowPriority(refreshPriority);
   const rescanPriority = nextArtistWorkflowPriority(matchPriority);
@@ -87,40 +85,4 @@ test("workflow handoffs run depth-first while credited artists stay in a lower t
     [refreshPriority, matchPriority, rescanPriority, curatePriority, downloadPriority],
     [-1, 0, 1, 2, 3],
   );
-  assert.ok(ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE < refreshPriority);
-  assert.ok(nextArtistWorkflowPriority(ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE) < refreshPriority);
-});
-
-test("first-degree credited hydration is bounded and persists a durable continuation", () => {
-  const originalPush = CommandQueueManager.push;
-  const originalUpdateState = CommandQueueManager.updateState;
-  const queued: Array<{ refId?: string; priority?: number }> = [];
-  let continuation: Array<{ artistId: string; artistName: string }> = [];
-  CommandQueueManager.push = ((_type: string, _payload: unknown, refId?: string, priority?: number) => {
-    queued.push({ refId, priority });
-    return queued.length;
-  }) as typeof CommandQueueManager.push;
-  CommandQueueManager.updateState = ((_id: number, options: any) => {
-    continuation = options.payloadPatch.creditedContinuation;
-    return null;
-  }) as typeof CommandQueueManager.updateState;
-
-  try {
-    const items = Array.from({ length: 60 }, (_, index) => ({
-      artistId: `credited-${index + 1}`,
-      artistName: `Credited ${index + 1}`,
-    }));
-    const result = queueCreditedArtistHydrationBatch(items);
-    assert.equal(result.queued, CREDITED_ARTIST_HYDRATION_BATCH_SIZE);
-    assert.equal(result.remaining, 35);
-    assert.equal(queued.length, 25);
-    assert.ok(queued.every((item) => item.priority === ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE));
-    assert.deepEqual(
-      continuation.map((item) => item.artistId),
-      items.slice(25).map((item) => item.artistId),
-    );
-  } finally {
-    CommandQueueManager.push = originalPush;
-    CommandQueueManager.updateState = originalUpdateState;
-  }
 });

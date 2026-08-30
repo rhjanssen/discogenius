@@ -13,7 +13,10 @@ import { shouldRefreshArtist, shouldRefreshVideos } from "../config/refresh-poli
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { servarrMetadata } from "../metadata/servarr-metadata.js";
 import { syncMusicBrainzVideosForArtist } from "../metadata/musicbrainz-video-service.js";
-import { syncYouTubeVideoCatalogForArtist } from "./youtube-video-catalog.js";
+import {
+    supplementSparseProviderVideosFromYouTube,
+    syncYouTubeVideoCatalogForArtist,
+} from "./youtube-video-catalog.js";
 import {
     matchProviderAlbumsToReleaseGroups,
     type MusicBrainzReleaseGroupForMatching,
@@ -35,8 +38,8 @@ import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-rele
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { providerAudioVariants, RefreshAlbumService } from "./refresh-album-service.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
+import { parseVideoVariant } from "./video-variant.js";
 import {
-    buildLibraryArtistMonitoredExistsSql,
     isArtistLibraryMonitored,
     loadArtistMetadataIdentity,
     resolveArtistMetadataId,
@@ -44,7 +47,6 @@ import {
     stampArtistLibraryRefresh,
     syncLibraryArtistMonitoring,
 } from "./managed-artists.js";
-import { CurationService } from "./curation-service.js";
 import {
     completeBulkTrackList,
     isCoreVideoCatalogProvider,
@@ -149,10 +151,10 @@ export class RefreshArtistService {
         artistId: string,
         force = false,
         includeCreditedReleaseGroups = false,
-    ): Promise<string | null> {
+    ): Promise<{ artistMbid: string | null; creditedArtistMbids: string[] }> {
         const artistMbid = this.getArtistMusicBrainzId(artistId);
         if (!artistMbid) {
-            return null;
+            return { artistMbid: null, creditedArtistMbids: [] };
         }
 
         // Past the artist-refresh staleness gate we always re-pull canonical
@@ -161,19 +163,18 @@ export class RefreshArtistService {
         // release groups and left ISRCs / curated columns on the first hydrate.
         void force;
         await servarrMetadata.syncArtist(artistMbid);
+        let creditedArtistMbids: string[] = [];
         if (includeCreditedReleaseGroups) {
             const credited = await MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(artistMbid);
+            creditedArtistMbids = credited.artistMbids.filter((mbid) => mbid !== artistMbid);
             console.log(
                 `[RefreshArtistService] Synced ${credited.releaseGroups} credited MusicBrainz release group(s) ` +
                 `and ${credited.artists} credited artist(s) for ${artistMbid}`,
             );
-            // Scan in each first-degree credited artist one level deep so they
-            // get a picture, their MusicBrainz discography, and provider
-            // matching. Recursion is naturally bounded: credited artists are
-            // created monitored=0, so their own refresh runs with
-            // includeCreditedReleaseGroups=false and does not pull a second
-            // degree of credits. Enqueue is deduped by artistId (queue refId).
-            await this.queueCreditedArtistRefreshes(credited.artistMbids);
+            // The credit service materializes collaborator identities and this
+            // artist's credited release groups. Keep those collaborators as
+            // catalog rows: refreshing one selected artist must not fan out into
+            // full discography/provider jobs for every unmonitored credit.
         }
         const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
         if (syncedVideos > 0) {
@@ -200,7 +201,7 @@ export class RefreshArtistService {
             console.warn(`[RefreshArtistService] Video offer quality backfill failed for ${artistMbid}:`, error);
         }
 
-        return artistMbid;
+        return { artistMbid, creditedArtistMbids };
     }
 
     /**
@@ -215,61 +216,6 @@ export class RefreshArtistService {
         const inferred = RefreshVideoService.linkCatalogVideoAudioRelations(artistMbid);
         if (inferred > 0) {
             console.log(`[RefreshArtistService] Linked ${inferred} catalog video→audio relation(s) for ${artistMbid}`);
-        }
-    }
-
-    /**
-     * Scan in first-degree credited artists one level deep. For each newly
-     * created credited artist (skeleton row, never scanned, not monitored),
-     * enqueue a metadata refresh so it gets a picture, its MusicBrainz
-     * discography, and provider matching. Monitored/already-scanned artists are
-     * skipped — the normal cycle owns those. Recursion is bounded: credited
-     * artists are monitored=0, so their own refresh runs with
-     * includeCreditedReleaseGroups=false and never pulls a second degree.
-     */
-    private static async queueCreditedArtistRefreshes(artistMbids: string[]): Promise<void> {
-        const uniqueMbids = Array.from(new Set((artistMbids || []).filter(Boolean)));
-        if (uniqueMbids.length === 0) return;
-
-        const placeholders = uniqueMbids.map(() => "?").join(", ");
-        const rows = db.prepare(`
-            SELECT a.id, a.mbid, a.name,
-                   (
-                     SELECT MAX(membership.metadata_last_checked_at)
-                     FROM LibraryArtists membership
-                     WHERE membership.artist_metadata_id = a.id
-                   ) AS last_scanned
-            FROM ArtistMetadata a
-            WHERE a.mbid IN (${placeholders})
-              AND NOT EXISTS (
-                SELECT 1 FROM LibraryArtists membership
-                WHERE membership.artist_metadata_id = a.id
-                  AND membership.metadata_last_checked_at IS NOT NULL
-              )
-              AND NOT ${buildLibraryArtistMonitoredExistsSql("a")}
-        `).all(...uniqueMbids) as Array<{
-            id: string; mbid: string; name: string | null; last_scanned: string | null;
-        }>;
-
-        const pending = rows;
-        if (pending.length === 0) return;
-
-        try {
-            const { queueCreditedArtistHydrationBatch } = await import("./artist-workflow.js");
-            const result = queueCreditedArtistHydrationBatch(pending.map((row) => ({
-                // RefreshArtist accepts a MusicBrainz identity. Passing the
-                // local ArtistMetadata integer made the provider fallback
-                // treat it as a TIDAL artist id, so Activity paired one
-                // credited artist's name with a different provider artist.
-                artistId: row.mbid,
-                artistName: row.name || row.mbid,
-            })));
-            console.log(
-                `[RefreshArtistService] Queued ${result.queued} low-priority first-degree credited artist(s)` +
-                (result.remaining > 0 ? `; ${result.remaining} persisted for continuation` : ""),
-            );
-        } catch (error) {
-            console.warn("[RefreshArtistService] Failed to queue credited-artist refreshes:", error);
         }
     }
 
@@ -581,6 +527,7 @@ export class RefreshArtistService {
     private static async searchCanonicalCollaborationOffers(
         provider: StreamingProvider,
         artistMbid: string | null,
+        forceUpdate: boolean,
     ): Promise<{ albums: any[]; matches: Map<string, ProviderReleaseGroupMatch> }> {
         if (!artistMbid || !provider.searchReleaseGroup) {
             return { albums: [], matches: new Map() };
@@ -615,8 +562,23 @@ export class RefreshArtistService {
             LEFT JOIN ArtistMetadata owner ON owner.mbid = rg.artist_mbid
             WHERE scope.artist_mbid = ?
               AND rg.artist_mbid != ?
+              AND (
+                ? = 1
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM AlbumEditions edition
+                    JOIN ProviderEditionMatches edition_match
+                      ON edition_match.edition_id = edition.id
+                     AND edition_match.match_state = 'accepted'
+                    JOIN ProviderItems provider_item
+                      ON provider_item.id = edition_match.provider_edition_item_id
+                     AND provider_item.entity_type = 'release'
+                    WHERE edition.release_group_mbid = rg.mbid
+                      AND provider_item.provider = ?
+                )
+              )
             ORDER BY rg.mbid ASC
-        `).all(artistMbid, artistMbid) as Array<{
+        `).all(artistMbid, artistMbid, forceUpdate ? 1 : 0, provider.id) as Array<{
             mbid: string;
             title: string;
             first_release_date?: string | null;
@@ -1265,6 +1227,7 @@ export class RefreshArtistService {
                 shouldHydrateCatalog: false,
                 metadataChanged: false,
                 isNewArtist: false,
+                creditedArtistMbids: [],
             };
         }
 
@@ -1280,14 +1243,17 @@ export class RefreshArtistService {
         await yieldToEventLoop();
 
         let artistMbid = resolveArtistMbid();
+        let creditedArtistMbids: string[] = [];
 
         {
             const isMonitored = isArtistLibraryMonitored(artistId);
-            artistMbid = await this.syncArtistMusicBrainzCatalog(
+            const catalogSync = await this.syncArtistMusicBrainzCatalog(
                 artistId,
                 options.forceUpdate === true,
                 isMonitored,
             );
+            artistMbid = catalogSync.artistMbid;
+            creditedArtistMbids = catalogSync.creditedArtistMbids;
             await yieldToEventLoop();
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
@@ -1314,6 +1280,7 @@ export class RefreshArtistService {
             shouldHydrateCatalog,
             metadataChanged: beforeFingerprint !== artistCatalogFingerprint(artistMbid),
             isNewArtist,
+            creditedArtistMbids,
         };
     }
 
@@ -1376,18 +1343,8 @@ export class RefreshArtistService {
             (provider) => Boolean(provider.getArtistVideos) && !isCoreVideoCatalogProvider(provider.id),
         );
 
-        // The queued workflow always ends in a CurateArtist command, so curating
-        // here as well means every artist is curated twice — the second pass on
-        // a prolific artist is what ran past the lease and poison-failed. The
-        // MatchArtistProviders command sets deferCuration; direct callers, which
-        // have no following CurateArtist, do not.
-        const curateInline = options.deferCuration !== true;
-
         if (!shouldHydrateCatalog) {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
-            if (curateInline) {
-                await CurationService.processAll(artistId, { skipDownloadQueue: true });
-            }
 
             const shouldRefreshArtistVideos =
                 options.forceUpdate === true ||
@@ -1422,12 +1379,17 @@ export class RefreshArtistService {
         // not serialize wall-clock matching time against TIDAL.
         await Promise.all(connectedProviders.map(async (provider) => {
             const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
-            if (providerArtistIds.length === 0) {
+            const collaborationOffers = await this.searchCanonicalCollaborationOffers(
+                provider,
+                artistMbid,
+                options.forceUpdate === true,
+            );
+            if (providerArtistIds.length === 0 && collaborationOffers.albums.length === 0) {
                 console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
                 return;
             }
 
-            if (!isCoreVideoCatalogProvider(provider.id)) {
+            if (providerArtistIds.length > 0 && !isCoreVideoCatalogProvider(provider.id)) {
                 try {
                     await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
                 } catch (err) {
@@ -1455,10 +1417,23 @@ export class RefreshArtistService {
                 if (providerArtistIds.length > 1) {
                     console.log(`[RefreshArtistService] Merged ${providerAlbums.length} releases from ${providerArtistIds.length} ${provider.name} identities for ${artistId}`);
                 }
-                const albums = providerAlbums.map((album) => ({
+                const albumsByProviderId = new Map(providerAlbums.map((album) => {
+                    const shaped = {
                     ...providerAlbumToOfferRow(album, artistId),
                     provider: provider.id,
+                    };
+                    return [String(shaped.provider_id), shaped] as const;
                 }));
+                for (const album of collaborationOffers.albums) {
+                    const providerAlbumId = String(album.provider_id);
+                    if (!albumsByProviderId.has(providerAlbumId)) {
+                        albumsByProviderId.set(providerAlbumId, {
+                            ...album,
+                            provider: provider.id,
+                        });
+                    }
+                }
+                const albums = Array.from(albumsByProviderId.values());
 
                 // Reuse already-materialized provider track offer rows for track-level
                 // matching instead of re-fetching the tracklist every refresh. Track
@@ -1538,6 +1513,9 @@ export class RefreshArtistService {
                 // Canonical MB tracklists remain complete; this only avoids detailed
                 // provider calls for releases the metadata matcher cannot associate.
                 const preliminaryMatches = buildProviderReleaseGroupMatches(artistMbid, albums);
+                for (const [providerAlbumId, match] of collaborationOffers.matches) {
+                    preliminaryMatches.set(providerAlbumId, match);
+                }
                 const candidateAlbumIds = new Set(
                     Array.from(preliminaryMatches.values())
                         .filter((match) => Boolean(match.releaseGroup))
@@ -1612,6 +1590,9 @@ export class RefreshArtistService {
                 }
 
                 const providerReleaseGroupMatches = buildProviderReleaseGroupMatches(artistMbid, albums);
+                for (const [providerAlbumId, match] of collaborationOffers.matches) {
+                    providerReleaseGroupMatches.set(providerAlbumId, match);
+                }
                 console.log(`[RefreshArtistService] Found ${albums.length} albums on ${provider.name} for artist ${artistId}`);
 
                 totalAlbumsCount += albums.length;
@@ -1812,9 +1793,6 @@ export class RefreshArtistService {
 
         await this.replayStaleTrackMatches(artistMbid);
 
-        if (curateInline) {
-            await CurationService.processAll(artistId, { skipDownloadQueue: true });
-        }
         ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
         await this.refreshMissingAlbumReviews(artistMbid, options.forceUpdate === true);
         await this.precacheArtistMediaCovers(artistId, artistMbid);
@@ -1905,6 +1883,16 @@ export class RefreshArtistService {
                 console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
             }
         }));
+        try {
+            const supplemented = await supplementSparseProviderVideosFromYouTube(artistId, artistMbid);
+            if (supplemented > 0) {
+                console.log(
+                    `[RefreshArtistService] Resolved ${supplemented} sparse provider video(s) through YouTube for ${artistId}`,
+                );
+            }
+        } catch (error) {
+            console.warn(`[RefreshArtistService] Sparse video catalog supplementation failed for ${artistId}:`, error);
+        }
     }
 
     private static async refreshProviderVideosForMatchedArtist(
@@ -1961,6 +1949,15 @@ export class RefreshArtistService {
                             }
                             if (detailed.isrc) {
                                 video.isrc = detailed.isrc;
+                            }
+                            if (
+                                detailed.title
+                                && (
+                                    parseVideoVariant(video.title) === "video"
+                                    || String(detailed.title).length > String(video.title || "").length
+                                )
+                            ) {
+                                video.title = detailed.title;
                             }
                         } catch (error) {
                             console.warn(

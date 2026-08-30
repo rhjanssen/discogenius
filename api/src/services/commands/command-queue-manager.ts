@@ -253,7 +253,6 @@ function normalizeRefreshArtistPayload(
         hydrateCatalog: Boolean(hydrateCatalog),
         hydrateAlbumTracks,
         scanLibrary: Boolean(scanLibrary),
-        forceDownloadQueue: Boolean(payload.forceDownloadQueue),
         forceUpdate: Boolean(payload.forceUpdate),
         monitoringCycle: payload.monitoringCycle,
     };
@@ -268,7 +267,6 @@ function areEquivalentRefreshArtistPayloads(
         && left.hydrateCatalog === right.hydrateCatalog
         && left.hydrateAlbumTracks === right.hydrateAlbumTracks
         && left.scanLibrary === right.scanLibrary
-        && left.forceDownloadQueue === right.forceDownloadQueue
         && left.forceUpdate === right.forceUpdate;
 }
 

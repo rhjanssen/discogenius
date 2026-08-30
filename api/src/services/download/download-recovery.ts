@@ -32,6 +32,7 @@ export function getExistingLibraryFiles(
     type: DownloadMediaType,
     providerId: string,
     provider: string,
+    libraryId?: number | null,
 ): ExistingLibraryFile[] {
     const normalizedProvider = String(provider || "").trim();
     if (!normalizedProvider) {
@@ -59,9 +60,12 @@ export function getExistingLibraryFiles(
                 WHERE provider_release.provider_id = ?
                   AND provider_release.entity_type = 'release'
                   AND provider_release.provider = ?
+                  AND (? IS NULL OR lf.library_id = ?)
             `).all(
                 providerId,
                 normalizedProvider,
+                libraryId ?? null,
+                libraryId ?? null,
             ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>
         : type === 'track'
           ? db.prepare(`
@@ -82,9 +86,12 @@ export function getExistingLibraryFiles(
                 WHERE provider_track.provider_id = ?
                   AND provider_track.entity_type = 'track'
                   AND provider_track.provider = ?
+                  AND (? IS NULL OR lf.library_id = ?)
             `).all(
                 providerId,
                 normalizedProvider,
+                libraryId ?? null,
+                libraryId ?? null,
             ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>
           : db.prepare(`
                 SELECT
@@ -102,9 +109,12 @@ export function getExistingLibraryFiles(
                 WHERE provider_video.provider_id = ?
                   AND provider_video.entity_type = 'video'
                   AND provider_video.provider = ?
+                  AND (? IS NULL OR lf.library_id = ?)
             `).all(
                 providerId,
                 normalizedProvider,
+                libraryId ?? null,
+                libraryId ?? null,
             ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>;
 
     return rows
@@ -124,8 +134,9 @@ export function getExistingLibraryMediaIds(
     type: DownloadMediaType,
     providerId: string,
     provider: string,
+    libraryId?: number | null,
 ): string[] {
-    return getExistingLibraryFiles(type, providerId, provider).map((entry) => entry.mediaId);
+    return getExistingLibraryFiles(type, providerId, provider, libraryId).map((entry) => entry.mediaId);
 }
 
 export function shouldQueueRedownloadForFailedImport(job: CommandModel): boolean {
@@ -151,5 +162,10 @@ export function shouldQueueRedownloadForFailedImport(job: CommandModel): boolean
         return false;
     }
 
-    return getExistingLibraryMediaIds(mediaType, providerId, job.payload.provider).length === 0;
+    return getExistingLibraryMediaIds(
+        mediaType,
+        providerId,
+        job.payload.provider,
+        job.payload.libraryId,
+    ).length === 0;
 }

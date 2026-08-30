@@ -579,7 +579,6 @@ test("release statistics stay equal across service, API, cache, projection, and 
     scanLibrary: false,
     metadataChanged: true,
     isNewArtist: true,
-    forceDownloadQueue: false,
     trigger: 0,
     priority: 0,
   });

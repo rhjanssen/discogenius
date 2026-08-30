@@ -11,6 +11,7 @@ import { parseIsrcValues } from "./refresh-video-support.js";
 import {
   VIDEO_DURATION_MATCH_MS,
   cleanVideoGroupTitle,
+  extractVideoParentheticals,
   isMainVideoVariant,
   normalizeVideoVariant,
   parseVideoVariant,
@@ -47,6 +48,9 @@ export type VideoIdentitySignals = {
   /** Provider ids when known — bare live↔main twin requires cross-provider. */
   providerA?: string | null;
   providerB?: string | null;
+  /** One side is a canonical MusicBrainz/YouTube catalog identity. */
+  catalogIdentityA?: boolean;
+  catalogIdentityB?: boolean;
   /** Skip cross-provider gate when revalidating an offer already on a recording. */
   allowSameProviderBareLiveTwin?: boolean;
 };
@@ -89,6 +93,31 @@ function variantsCompatible(
     || (clsB === "live" && isMainVideoVariant(clsA));
   if (livePair) return false;
   return false;
+}
+
+/**
+ * Provider titles often carry the only available cut identity. Marketing words
+ * are noise, but the remainder is not: "Live From Royal Albert Hall" and
+ * "Live From Jimmy Kimmel" are different performances even when their base
+ * title and duration happen to agree.
+ */
+function namedCutQualifiers(title: string): string[] {
+  return extractVideoParentheticals(title)
+    .map((value) => value
+      .toLowerCase()
+      .replace(/\b(?:official(?:\s+music)?\s+video|music\s+video|official\s+audio|audio|lyrics?|lyric\s+video|visuali[sz]er|moving\s+artwork)\b/g, " ")
+      .replace(/\b(?:live\s+(?:at|from|in)|performance|unplugged)\b/g, " ")
+      .replace(/\b(?:19|20)\d{2}\b/g, " ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim())
+    .filter(Boolean);
+}
+
+function namedCutQualifiersConflict(titleA: string, titleB: string): boolean {
+  const left = namedCutQualifiers(titleA);
+  const right = namedCutQualifiers(titleB);
+  if (left.length === 0 || right.length === 0) return false;
+  return !left.some((a) => right.some((b) => a === b || a.includes(b) || b.includes(a)));
 }
 
 function isUnlabeledVideoVariant(
@@ -138,6 +167,14 @@ function releaseDatesCompatibleWhenKnown(
   return dateSimilarity(releaseDateA, releaseDateB) >= 1;
 }
 
+function releaseDatesCorroborate(
+  releaseDateA?: string | null,
+  releaseDateB?: string | null,
+): boolean {
+  return Boolean(parseDateParts(releaseDateA) && parseDateParts(releaseDateB))
+    && releaseDatesCompatibleWhenKnown(releaseDateA, releaseDateB);
+}
+
 /**
  * True when the live title names a TV/show or venue performance — not bare
  * "(Live)". Providers (esp. TIDAL) often omit the venue on the twin offer.
@@ -147,9 +184,9 @@ function hasNamedPerformanceQualifier(title: string): boolean {
 }
 
 /**
- * Allow bare OMV title ↔ named venue/TV live twin when durations agree within
- * the soft ±2s gate. Plain "(Live)" without a venue stays blocked from
- * unlabeled studio cuts even at equal duration.
+ * Allow bare OMV title ↔ named venue/TV live twin only with independent
+ * cross-provider release-date corroboration plus the soft ±2s duration gate.
+ * Plain "(Live)" without a venue stays blocked from unlabeled studio cuts.
  */
 function canMergeLiveMainPerformanceTwin(input: VideoIdentitySignals): boolean {
   const titleA = String(input.titleA || "");
@@ -162,6 +199,10 @@ function canMergeLiveMainPerformanceTwin(input: VideoIdentitySignals): boolean {
 
   const liveTitle = clsA === "live" ? titleA : titleB;
   if (!hasNamedPerformanceQualifier(liveTitle)) return false;
+  const catalogCorroborated = input.catalogIdentityA === true || input.catalogIdentityB === true;
+  const providerCorroborated = isCrossProvider(input.providerA, input.providerB)
+    && releaseDatesCorroborate(input.releaseDateA, input.releaseDateB);
+  if (!catalogCorroborated && !providerCorroborated) return false;
 
   if (!softDurationTwinMatch(
     input.lengthMsA == null ? null : Number(input.lengthMsA),
@@ -311,6 +352,16 @@ export function dateSimilarity(
 export function scoreVideoIdentityMatch(input: VideoIdentitySignals): VideoIdentityMatchResult {
   const titleA = String(input.titleA || "");
   const titleB = String(input.titleB || "");
+  if (namedCutQualifiersConflict(titleA, titleB)) {
+    return {
+      matched: false,
+      score: 0,
+      titleScore: 0,
+      durationScore: 0,
+      dateScore: 0,
+      reason: "cut-qualifier-mismatch",
+    };
+  }
   const performanceTwin = canMergeLiveMainPerformanceTwin(input);
   const bareLiveTwin = canMergeBareLiveMainTwin(input);
   if (!variantsCompatible(titleA, titleB, input.variantA, input.variantB) && !performanceTwin && !bareLiveTwin) {

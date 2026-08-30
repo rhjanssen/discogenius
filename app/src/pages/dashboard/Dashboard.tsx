@@ -9,17 +9,13 @@ import {
     MenuList,
     MenuPopover,
     MenuTrigger,
-    Tab,
-    TabList,
     Text,
     Title1,
     tokens,
     makeStyles,
-    mergeClasses,
 } from "@fluentui/react-components";
 import {
   ArrowSync24Regular,
-  ChevronDownRegular,
   MoreHorizontal24Regular,
   Play24Regular,
   Pause24Regular,
@@ -29,7 +25,6 @@ import {
   ArrowDownload24Regular,
   Warning24Regular,
   ArrowSync24Filled,
-  ChevronDownFilled,
   MoreHorizontal24Filled,
   Play24Filled,
   Pause24Filled,
@@ -60,7 +55,7 @@ import {
     LIBRARY_UPDATED_EVENT,
     dispatchActivityRefresh,
 } from "@/utils/appEvents";
-import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
+import { ResponsiveStockTabList } from "@/components/ui/StockTabList";
 import QueueTab from "./QueueTab";
 import ActivityTab from "./ActivityTab";
 import ManualImportTab from "./ManualImportTab";
@@ -79,7 +74,6 @@ import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
 
 const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
-const ChevronDown = bundleIcon(ChevronDownFilled, ChevronDownRegular);
 const MoreHorizontal24 = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24Regular);
 const Play24 = bundleIcon(Play24Filled, Play24Regular);
 const Pause24 = bundleIcon(Pause24Filled, Pause24Regular);
@@ -303,9 +297,6 @@ const useStyles = makeStyles({
         alignItems: "center",
         flexWrap: "nowrap",
         minWidth: 0,
-        paddingTop: tokens.spacingVerticalXXS,
-        paddingBottom: tokens.spacingVerticalXXS,
-        marginBottom: tokens.spacingVerticalXS,
         gap: tokens.spacingHorizontalS,
         "@media (min-width: 640px)": {
             gap: tokens.spacingHorizontalM,
@@ -314,9 +305,13 @@ const useStyles = makeStyles({
     viewTabSlot: {
         flex: "1 1 auto",
         minWidth: 0,
-        overflowX: "auto",
-        scrollbarWidth: "none",
-        "&::-webkit-scrollbar": { display: "none" },
+        overflow: "visible",
+        "@media (min-width: 640px)": {
+            // These three fixed labels fit at the desktop breakpoint. Keeping
+            // the slot content-sized avoids a scrollport clipping Fluent's
+            // external focus ring and shadow.
+            flex: "0 1 auto",
+        },
     },
     dashboardTabLabel: {
         display: "inline-flex",
@@ -388,7 +383,6 @@ function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
 
 const Dashboard = () => {
     const styles = useStyles();
-    const responsiveTabsStyles = useResponsiveTabsStyles();
     const { toast } = useToast();
     const navigate = useNavigate();
     const { setArtwork } = useUltraBlurContext();
@@ -725,41 +719,14 @@ const Dashboard = () => {
             <div className={styles.mainCol}>
                 {/* Tab Bar */}
                 <div className={styles.viewTabs}>
-                    <div className={mergeClasses(responsiveTabsStyles.tabSlot, styles.viewTabSlot)}>
-                        <div className={responsiveTabsStyles.mobileSelect}>
-                            <Menu>
-                                <MenuTrigger disableButtonEnhancement>
-                                    <Button appearance="subtle" iconPosition="after" icon={<ChevronDown />} className={responsiveTabsStyles.menuButton}>
-                                        <span className={styles.dashboardTabLabel}>
-                                            {dashboardTabs.find((tab) => tab.key === mobileTab)?.icon}
-                                            {dashboardTabs.find((tab) => tab.key === mobileTab)?.label ?? "Queue"}
-                                        </span>
-                                    </Button>
-                                </MenuTrigger>
-                                <MenuPopover>
-                                    <MenuList>
-                                        {dashboardTabs.map((tab) => (
-                                            <MenuItem key={tab.key} icon={tab.icon} onClick={() => setMobileTab(tab.key)}>
-                                                {tab.label}
-                                            </MenuItem>
-                                        ))}
-                                    </MenuList>
-                                </MenuPopover>
-                            </Menu>
-                        </div>
-
-                        <div className={responsiveTabsStyles.desktopTabs}>
-                            <TabList
-                                selectedValue={mobileTab}
-                                onTabSelect={(_, data) => setMobileTab(data.value as "queue" | "activity" | "manualImport")}
-                            >
-                                {dashboardTabs.map((tab) => (
-                                    <Tab key={tab.key} value={tab.key} aria-label={tab.label} title={tab.label}>
-                                        {tab.label}
-                                    </Tab>
-                                ))}
-                            </TabList>
-                        </div>
+                    <div className={styles.viewTabSlot}>
+                        <ResponsiveStockTabList
+                            idBase="dashboard"
+                            ariaLabel="Dashboard view"
+                            items={dashboardTabs}
+                            selectedValue={mobileTab}
+                            onSelect={(value) => setMobileTab(value as "queue" | "activity" | "manualImport")}
+                        />
                     </div>
                     {mobileTab === "queue" && (
                         <Button
@@ -798,13 +765,23 @@ const Dashboard = () => {
                 </div>
 
                 {mobileTab === "queue" && (
-                    <div className={styles.tabContentPanel}>
+                    <div
+                        id="dashboard-panel-queue"
+                        role="tabpanel"
+                        aria-labelledby="dashboard-tab-queue"
+                        className={styles.tabContentPanel}
+                    >
                         <QueueTab />
                     </div>
                 )}
 
                 {mobileTab === "activity" && (
-                    <div className={styles.tabContentPanel}>
+                    <div
+                        id="dashboard-panel-activity"
+                        role="tabpanel"
+                        aria-labelledby="dashboard-tab-activity"
+                        className={styles.tabContentPanel}
+                    >
                         <ActivityTab
                             activityFilter={activityFilter}
                             isActive={mobileTab === "activity"}
@@ -813,7 +790,12 @@ const Dashboard = () => {
                 )}
 
                 {mobileTab === "manualImport" && (
-                    <div className={styles.tabContentPanel}>
+                    <div
+                        id="dashboard-panel-manualImport"
+                        role="tabpanel"
+                        aria-labelledby="dashboard-tab-manualImport"
+                        className={styles.tabContentPanel}
+                    >
                         <ManualImportTab />
                     </div>
                 )}

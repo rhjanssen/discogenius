@@ -36,7 +36,30 @@ test("queueMonitoredItems runs its video branch on the active schema", async () 
   const { db } = dbModule;
 
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Video Artist')`).run();
-seedLibraryArtistMonitoring(db, "artist-mbid");
+  seedLibraryArtistMonitoring(db, "artist-mbid");
+  const artist = db.prepare(`SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'`).get() as { id: number };
+  const album = db.prepare(`
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title)
+    VALUES ('album-mbid', ?, 'artist-mbid', 'Album Without a Plan')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const edition = db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid,
+      artist_metadata_id, artist_mbid, title
+    ) VALUES ('edition-mbid', ?, 'album-mbid', ?, 'artist-mbid', 'Album Without a Plan')
+    RETURNING id
+  `).get(album.id, artist.id) as { id: number };
+  const stereoLibrary = db.prepare(`SELECT id FROM Libraries WHERE name = 'Stereo'`).get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, curation_version)
+    VALUES (?, ?, 'auto', 1)
+  `).run(stereoLibrary.id, album.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, curation_version)
+    VALUES (?, ?, 'auto', 1)
+  `).run(stereoLibrary.id, edition.id);
+
   const video = db.prepare(`
     INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, metadata_status)
     VALUES ('video-mbid', 'artist-mbid', 'A Music Video', 210000, 1, 'musicbrainz')
@@ -57,6 +80,9 @@ seedLibraryArtistMonitoring(db, "artist-mbid");
   // Not yet selected into any Video library, so nothing is monitored.
   const before = await serviceModule.DownloadMissingService.queueMonitoredItems();
   assert.equal(before.videos, 0);
+  assert.equal(before.missingPlans, 1);
+  const acquisitionPlans = db.prepare(`SELECT COUNT(*) AS count FROM AcquisitionPlans`).get() as { count: number };
+  assert.equal(acquisitionPlans.count, 0, "Download Missing must not repair acquisition plans");
 
   const videoLibrary = db.prepare(`SELECT id FROM Libraries WHERE name = 'Video'`).get() as
     | { id: number }

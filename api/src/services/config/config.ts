@@ -96,7 +96,8 @@ export interface NamingConfig {
  * - "no"        — Never write tags
  * - "new_files" — Only write tags on newly downloaded/imported files
  * - "all_files" — Write tags on all files (existing + new)
- * - "sync"      — New files, and re-tag after a metadata refresh changes catalog columns
+ * - "sync"      — Legacy alias for tagging all imported files. Metadata refresh
+ *                 never rewrites files; Retag is an explicit command.
  */
 export type WriteAudioTagsPolicy = "no" | "new_files" | "all_files" | "sync";
 

@@ -16,14 +16,21 @@ import {
 import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 import {
   listStrandedMonitoredEditions,
-  replanMonitoredEditions,
 } from "./acquisition-planning-service.js";
+
+export interface DownloadMissingResult {
+    albums: number;
+    tracks: number;
+    videos: number;
+    alreadyQueued: number;
+    missingPlans: number;
+}
 
 export class DownloadMissingService {
     static async queueMonitoredItems(
         artistId?: string,
         options: { limit?: number } = {},
-    ): Promise<{ albums: number; tracks: number; videos: number; alreadyQueued: number }> {
+    ): Promise<DownloadMissingResult> {
         console.log(`[Queue] Queueing monitored items${artistId ? ` for artist ${artistId}` : ' app-wide'}...`);
 
         const filteringConfig = getConfigSection("filtering");
@@ -46,9 +53,11 @@ export class DownloadMissingService {
         let alreadyQueued = 0;
 
         const stranded = listStrandedMonitoredEditions(db, artistId);
-        for (let index = 0; index < stranded.length; index += 1) {
-            replanMonitoredEditions(db, [stranded[index]]);
-            if (index % 8 === 0) await yieldToEventLoop();
+        if (stranded.length > 0) {
+            console.warn(
+                `[Queue] Skipping ${stranded.length} monitored edition(s) with no current acquisition plan`
+                + `${artistId ? ` for artist ${artistId}` : ""}; run curation to rebuild their plans.`,
+            );
         }
 
         const normalizedPlanIds = (db.prepare(`
@@ -357,7 +366,13 @@ export class DownloadMissingService {
         }
 
         console.log(`[Queue] Ensured queue has ${albumJobs} albums, ${trackJobs} tracks, ${videoJobs} videos (${alreadyQueued} already waiting).`);
-        return { albums: albumJobs, tracks: trackJobs, videos: videoJobs, alreadyQueued };
+        return {
+            albums: albumJobs,
+            tracks: trackJobs,
+            videos: videoJobs,
+            alreadyQueued,
+            missingPlans: stranded.length,
+        };
     }
 }
 

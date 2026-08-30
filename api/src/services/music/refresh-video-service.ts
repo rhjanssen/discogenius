@@ -150,6 +150,9 @@ function persistNormalizedProviderVideo(input: {
                 identityMethod: input.identity.method,
                 canonicalRecordingMbid: canonicalMbid,
                 canonicalMetadataStatus: canonical?.metadata_status ?? null,
+                relatedTrackId: nullableText(
+                    input.video.related_track_id ?? input.video.relatedTrackId,
+                ),
                 ...input.identity.evidence,
             },
         },
@@ -437,9 +440,10 @@ function loadAudioRecordingCandidatesForProviderVideoMembership(
 function findAudioRecordingByProviderTrack(
     provider: string,
     providerTrackId: string,
-): AudioRecordingVideoMatch | null {
-    const row = db.prepare(`
-        SELECT rec.id, rec.mbid, rec.title
+    video: any,
+): { match: AudioRecordingVideoMatch | null; acceptedOccurrenceCount: number } {
+    const rows = db.prepare(`
+        SELECT DISTINCT rec.id, rec.artist_mbid
         FROM ProviderItems track
         JOIN ProviderEditionMembers member ON member.member_item_id = track.id
         JOIN ProviderTrackMatches track_match
@@ -453,25 +457,49 @@ function findAudioRecordingByProviderTrack(
           AND track.entity_type = 'track'
           AND CAST(track.provider_id AS TEXT) = CAST(? AS TEXT)
           AND rec.is_video = 0
-        LIMIT 1
-    `).get(provider, providerTrackId) as {
+        ORDER BY rec.id
+    `).all(provider, providerTrackId) as Array<{
         id: number;
-        mbid?: string | null;
-        title?: string | null;
-    } | undefined;
-    if (!row?.id) {
-        return null;
+        artist_mbid?: string | null;
+    }>;
+    // A provider track can occur on several provider editions. It identifies an
+    // audio recording only when every accepted occurrence agrees; choosing the
+    // first row would invent edition context.
+    const recordingIds = new Set(rows.map((row) => Number(row.id)));
+    if (recordingIds.size !== 1) {
+        return { match: null, acceptedOccurrenceCount: rows.length };
     }
-    return {
-        id: Number(row.id),
-        mbid: nullableText(row.mbid),
+    const row = rows[0];
+
+    // Provider relationships are strong evidence, not permission to collapse
+    // different cuts. Apple can relate a live video to a studio/reprise song;
+    // validate that exact target with the same title, variant, album-kind, and
+    // duration rules used by every other video-to-audio path.
+    const candidate = row.artist_mbid
+        ? loadAudioRecordingCandidatesForArtist(row.artist_mbid)
+            .find((entry) => Number(entry.id) === Number(row.id))
+        : null;
+    if (!candidate) {
+        return { match: null, acceptedOccurrenceCount: rows.length };
+    }
+    const compatible = findRelatedAudioRecordingForVideo(video, [candidate], {
+        videoVariant: parseVideoVariant(nullableText(video.title)),
+        preferStudioAudio: true,
+    });
+    if (!compatible) {
+        return { match: null, acceptedOccurrenceCount: rows.length };
+    }
+    return { match: {
+        id: compatible.id,
+        mbid: compatible.mbid,
         confidence: 0.96,
         method: "provider-video-related-track",
         evidence: {
             relatedTrackId: providerTrackId,
-            audioTitle: row.title ?? null,
+            audioTitle: candidate.title ?? null,
+            validatedBy: compatible.method,
         },
-    };
+    }, acceptedOccurrenceCount: rows.length };
 }
 
 /**
@@ -488,10 +516,11 @@ function resolveProviderVideoAudioMatch(input: {
 }): AudioRecordingVideoMatch | null {
     const relatedTrackId = nullableText(input.video.related_track_id ?? input.video.relatedTrackId);
     if (relatedTrackId) {
-        const byTrack = findAudioRecordingByProviderTrack(input.provider, relatedTrackId);
-        if (byTrack) {
-            return byTrack;
+        const byTrack = findAudioRecordingByProviderTrack(input.provider, relatedTrackId, input.video);
+        if (byTrack.match) {
+            return byTrack.match;
         }
+        if (byTrack.acceptedOccurrenceCount > 0) return null;
         // Related-track id present but not yet matched — keep trying album /
         // artist exact title once catalog track matching has caught up.
     }
@@ -1148,6 +1177,51 @@ function otherOffersFromProvider(
     }>;
 }
 
+type AcceptedVideoOfferFacts = {
+    provider: string;
+    provider_id: string;
+    title: string | null;
+    duration_ms: number | null;
+    release_date: string | null;
+    isrc: string | null;
+    method: string | null;
+};
+
+/**
+ * Provider-native facts already accepted into a recording cluster. The
+ * Recordings row is a canonical summary and can lag a later provider detail
+ * refresh, so it must not be the only duration/date evidence used to attach a
+ * new offer.
+ */
+function authoritativeAcceptedVideoOffers(recording: {
+    id: number;
+    mbid: string | null;
+    youtube_video_id: string | null;
+}): AcceptedVideoOfferFacts[] {
+    if (!recording.mbid && !recording.youtube_video_id) return [];
+    const offers = db.prepare(`
+        SELECT
+          item.provider, item.provider_id, item.title, item.duration_ms,
+          item.release_date, item.isrc, video_match.method
+        FROM ProviderVideoMatches video_match
+        JOIN ProviderItems item ON item.id = video_match.provider_video_item_id
+        WHERE video_match.recording_id = ?
+          AND video_match.match_state = 'accepted'
+          AND item.entity_type = 'video'
+    `).all(recording.id) as AcceptedVideoOfferFacts[];
+    if (recording.youtube_video_id) {
+        return offers.filter((offer) =>
+            offer.provider === "youtube-music"
+            && String(offer.provider_id) === String(recording.youtube_video_id));
+    }
+    if (recording.mbid) {
+        return offers.filter((offer) =>
+            offer.method === "musicbrainz-recording-url"
+            || offer.method === "external_id");
+    }
+    return [];
+}
+
 function recordingHasOtherAcceptedVideoOffer(
     recordingId: number,
     provider: string,
@@ -1258,6 +1332,14 @@ function findVideoRecordingIdByTitle(
         youtube_video_id: string | null;
         providers: string | null;
     }>).filter((row) => row.id !== exclude?.recordingId);
+    const authoritativeOffersByRecording = new Map<number, AcceptedVideoOfferFacts[]>();
+    const canonicalOffers = (row: (typeof rows)[number]): AcceptedVideoOfferFacts[] => {
+        const cached = authoritativeOffersByRecording.get(row.id);
+        if (cached) return cached;
+        const loaded = authoritativeAcceptedVideoOffers(row);
+        authoritativeOffersByRecording.set(row.id, loaded);
+        return loaded;
+    };
     const wantedClass = videoVariantClass(title);
     const incomingProvider = exclude?.provider ?? null;
     const isEligibleCandidate = (row: (typeof rows)[number]): boolean => {
@@ -1300,18 +1382,43 @@ function findVideoRecordingIdByTitle(
             // If a prior twin attach left video_variant=live on a bare MB title,
             // trust the title for matching so reverse unlabeled offers still join.
             const rowVariant = coherentStoredVideoVariant(rowTitle, row.video_variant, wantedClass);
-            const match = scoreVideoIdentityMatch({
-                titleA: title,
-                titleB: rowTitle,
-                lengthMsA: lengthMs,
-                lengthMsB: row.length_ms,
-                variantA: wantedClass,
-                variantB: rowVariant,
-                releaseDateA: releaseDate,
-                releaseDateB: row.release_date,
-                providerA: incomingProvider,
-                providerB: peerProvider(row),
-            });
+            const candidateSignals = [
+                {
+                    title: rowTitle,
+                    durationMs: row.length_ms,
+                    releaseDate: row.release_date,
+                    isrc: null,
+                    variant: rowVariant,
+                    provider: peerProvider(row),
+                },
+                ...canonicalOffers(row).map((offer) => ({
+                    title: String(offer.title || rowTitle),
+                    durationMs: offer.duration_ms,
+                    releaseDate: offer.release_date,
+                    isrc: offer.isrc,
+                    variant: parseVideoVariant(offer.title),
+                    provider: offer.provider,
+                })),
+            ];
+            const match = candidateSignals
+                .map((candidate) => scoreVideoIdentityMatch({
+                    titleA: title,
+                    titleB: candidate.title,
+                    lengthMsA: lengthMs,
+                    lengthMsB: candidate.durationMs,
+                    variantA: wantedClass,
+                    variantB: candidate.variant,
+                    releaseDateA: releaseDate,
+                    releaseDateB: candidate.releaseDate,
+                    isrcsA: exclude?.isrc,
+                    isrcsB: candidate.isrc,
+                    providerA: incomingProvider,
+                    providerB: candidate.provider,
+                    catalogIdentityB: Boolean(row.mbid || row.youtube_video_id),
+                }))
+                .filter((candidate) => candidate.matched)
+                .sort((left, right) => right.score - left.score)[0];
+            if (!match) return null;
             return match.matched ? { row, match } : null;
         })
         .filter((entry): entry is { row: typeof rows[number]; match: ReturnType<typeof scoreVideoIdentityMatch> } => entry != null);
@@ -1322,8 +1429,14 @@ function findVideoRecordingIdByTitle(
         const catalogRank = (row: (typeof rows)[number]) =>
             row.mbid ? 2 : row.youtube_video_id ? 1 : 0;
         const durationDistance = (row: (typeof rows)[number]) => {
-            if (lengthMs == null || row.length_ms == null) return Number.POSITIVE_INFINITY;
-            return Math.abs(Number(lengthMs) - Number(row.length_ms));
+            if (lengthMs == null) return Number.POSITIVE_INFINITY;
+            const candidates = [
+                row.length_ms,
+                ...canonicalOffers(row).map((offer) => offer.duration_ms),
+            ]
+                .filter((value): value is number => value != null);
+            if (candidates.length === 0) return Number.POSITIVE_INFINITY;
+            return Math.min(...candidates.map((value) => Math.abs(Number(lengthMs) - Number(value))));
         };
         const bestCatalogRank = Math.max(...candidates.map((entry) => catalogRank(entry.row)));
         const authoritative = candidates.filter((entry) => catalogRank(entry.row) === bestCatalogRank);
@@ -1337,7 +1450,7 @@ function findVideoRecordingIdByTitle(
     };
 
     // YouTube/MusicBrainz catalog identity: ytmusicapi can report the same
-    // official cut four seconds short of Apple/TIDAL. A unique exact-title,
+    // official cut several seconds short of Apple/TIDAL. A unique exact-title,
     // same-variant catalog row outranks provider-only rows even when those rows
     // match the provider duration more closely. Otherwise legacy provider rows
     // keep matching themselves forever and repair can never converge.
@@ -1349,23 +1462,54 @@ function findVideoRecordingIdByTitle(
             if (!comparable || videoComparableTitle(String(row.title || "")) !== comparable) {
                 return false;
             }
-            if (lengthMs == null || row.length_ms == null) return true;
-            return Math.abs(Number(lengthMs) - Number(row.length_ms)) <= 4_000;
+            if (lengthMs == null) return true;
+            const durations = [
+                row.length_ms,
+                ...canonicalOffers(row).map((offer) => offer.duration_ms),
+            ]
+                .filter((value): value is number => value != null);
+            if (durations.length === 0) return true;
+            return durations.some((value) => Math.abs(Number(lengthMs) - Number(value)) <= 4_000);
         })
         .map((row) => {
             const rowTitle = String(row.title || "");
-            const match = scoreVideoIdentityMatch({
-                titleA: title,
-                titleB: rowTitle,
-                lengthMsA: lengthMs,
-                lengthMsB: row.length_ms,
-                variantA: wantedClass,
-                variantB: coherentStoredVideoVariant(rowTitle, row.video_variant, wantedClass),
-                releaseDateA: releaseDate,
-                releaseDateB: row.release_date,
-                providerA: incomingProvider,
-                providerB: peerProvider(row),
-            });
+            const rowVariant = coherentStoredVideoVariant(rowTitle, row.video_variant, wantedClass);
+            const candidateSignals = [
+                {
+                    title: rowTitle,
+                    durationMs: row.length_ms,
+                    releaseDate: row.release_date,
+                    isrc: null,
+                    variant: rowVariant,
+                    provider: peerProvider(row),
+                },
+                ...canonicalOffers(row).map((offer) => ({
+                    title: String(offer.title || rowTitle),
+                    durationMs: offer.duration_ms,
+                    releaseDate: offer.release_date,
+                    isrc: offer.isrc,
+                    variant: parseVideoVariant(offer.title),
+                    provider: offer.provider,
+                })),
+            ];
+            const match = candidateSignals
+                .map((candidate) => scoreVideoIdentityMatch({
+                    titleA: title,
+                    titleB: candidate.title,
+                    lengthMsA: lengthMs,
+                    lengthMsB: candidate.durationMs,
+                    variantA: wantedClass,
+                    variantB: candidate.variant,
+                    releaseDateA: releaseDate,
+                    releaseDateB: candidate.releaseDate,
+                    isrcsA: exclude?.isrc,
+                    isrcsB: candidate.isrc,
+                    providerA: incomingProvider,
+                    providerB: candidate.provider,
+                    catalogIdentityB: Boolean(row.mbid || row.youtube_video_id),
+                }))
+                .sort((left, right) => right.score - left.score)[0];
+            if (!match) return null;
             if (match.matched) return { row, match };
             if (match.reason !== "duration-hard-reject" || match.titleScore < 0.95) {
                 return null;
@@ -1487,19 +1631,6 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         WHERE provider = ?
           AND (provider_entity_type = 'video' OR library_slot = 'video')
           AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-    `);
-    const copyAudioRelations = db.prepare(`
-        INSERT OR IGNORE INTO RecordingRelations (
-            source_recording_id, target_recording_id, source_foreign_recording_id,
-            target_foreign_recording_id, relation_type, source, confidence, data, updated_at
-        )
-        SELECT
-            ?, target_recording_id,
-            (SELECT mbid FROM Recordings WHERE id = ?),
-            target_foreign_recording_id, relation_type, source, confidence, data,
-            CURRENT_TIMESTAMP
-        FROM RecordingRelations
-        WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
     `);
     // Merging one canonical video into another carries the selections with it:
     // a library that wanted the duplicate wants the survivor. A selection the
@@ -1645,7 +1776,11 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
             continue;
         }
 
-        copyAudioRelations.run(targetRecordingId, targetRecordingId, row.recording_id);
+        // A relation belongs to the video cut, not to every provider offer that
+        // happened to share its old recording. Copying all inferred audio edges
+        // here attached a moved live Apple offer to the official video's studio
+        // track. The relation repair below recomputes the destination from this
+        // offer's own evidence and fails closed when it is ambiguous.
         inheritMonitoredState.run({
           mergedRecordingId: row.recording_id,
           survivorRecordingId: targetRecordingId,
@@ -1726,7 +1861,8 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
             recording.artist_mbid,
             recording.title AS recording_title,
             recording.disambiguation AS recording_disambiguation,
-            recording.video_variant AS video_variant
+            recording.video_variant AS video_variant,
+            video_match.evidence AS match_evidence
         FROM ProviderVideoMatches video_match
         JOIN ProviderItems provider_item
           ON provider_item.id = video_match.provider_video_item_id
@@ -1764,6 +1900,7 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         recording_title: string | null;
         recording_disambiguation: string | null;
         video_variant: string | null;
+        match_evidence: string | null;
     }>;
 
     const existingRelations = db.prepare(`
@@ -1817,22 +1954,6 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
           )
         LIMIT 1
     `);
-    const audioHasStudioAlbum = db.prepare(`
-        SELECT 1 AS hit
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        JOIN Albums a ON a.mbid = ar.release_group_mbid
-        WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
-          AND LOWER(COALESCE(a.primary_type, '')) IN ('album', 'ep', 'single')
-          AND (
-            a.secondary_types IS NULL
-            OR TRIM(a.secondary_types) = ''
-            OR a.secondary_types = '[]'
-          )
-        LIMIT 1
-    `);
     const liveAlbumTitleSql = livePerformanceTitleSql("a.title");
     const audioHasLiveAlbum = db.prepare(`
         SELECT 1 AS hit
@@ -1850,10 +1971,14 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
     `);
 
     let changed = 0;
-    const seenVideos = new Set<number>();
+    const rowsByVideo = new Map<number, typeof rows>();
     for (const row of rows) {
-        if (seenVideos.has(row.recording_id)) continue;
-        seenVideos.add(row.recording_id);
+        const grouped = rowsByVideo.get(row.recording_id) ?? [];
+        grouped.push(row);
+        rowsByVideo.set(row.recording_id, grouped);
+    }
+    for (const providerRows of rowsByVideo.values()) {
+        const row = providerRows[0];
 
         const videoTitle = recordingPerformanceTitle(
             nullableText(row.recording_title) || nullableText(row.title),
@@ -1871,19 +1996,14 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
             } catch {
                 relationMethod = "";
             }
-            // Explicit provider related-track / ATV↔OMV counterpart links are
-            // authoritative — do not drop them for missing studio-album rows
-            // (common before Tracks are hydrated, and in unit fixtures).
-            if (
-                relationMethod === "provider-video-related-track"
-                || relationMethod === "yt-atv-omv-counterpart"
-            ) {
-                continue;
-            }
-            const incompatibleTitle = !videoAudioTitlesCompatible(videoTitle, relation.audio_title);
+            // Provider counterpart links are strong evidence, but the detailed
+            // video title can arrive after the album row that created the link.
+            // Revalidate every inferred relation so a self-OMV later identified
+            // as Live cannot stay attached to a studio recording.
             const videoIsLive = isLivePerformanceTitle(videoTitle)
                 || normalizeVideoVariant(videoVariant) === "live"
-                || normalizeVideoVariant(row.video_variant) === "live";
+                || providerRows.some((candidate) =>
+                    normalizeVideoVariant(candidate.video_variant) === "live");
             const audioOnLiveAlbum = Boolean(
                 audioHasLiveAlbum.get(relation.audio_id, relation.mbid ?? null),
             );
@@ -1892,20 +2012,29 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
             );
             const audioIsLiveSide = isLivePerformanceTitle(relation.audio_title)
                 || (audioOnLiveAlbum && !audioOnNonLiveAlbum);
+            const liveCoreTitleCompatible = (() => {
+                const videoCore = videoComparableTitle(videoTitle);
+                const audioCore = videoComparableTitle(relation.audio_title);
+                return Boolean(videoCore && audioCore && (
+                    videoCore === audioCore
+                    || videoCore.includes(audioCore)
+                    || audioCore.includes(videoCore)
+                ));
+            })();
+            const incompatibleTitle = videoIsLive && audioIsLiveSide
+                ? !liveCoreTitleCompatible
+                : !videoAudioTitlesCompatible(videoTitle, relation.audio_title);
             // Live-marked video must not stick to studio-only audio.
             const liveVideoOntoStudioAudio = videoIsLive && !audioIsLiveSide;
             const mainOntoLiveTitle = isMainVideoVariant(videoVariant) && audioIsLiveSide;
             const mainOntoLiveOnlyAlbum = isMainVideoVariant(videoVariant)
+                && audioOnLiveAlbum
                 && !audioOnNonLiveAlbum;
-            // Prefer Album/EP/Single studio membership over compilation-only links.
-            const mainOntoWeakStudio = isMainVideoVariant(videoVariant)
-                && !audioHasStudioAlbum.get(relation.audio_id, relation.mbid ?? null);
             if (
                 !incompatibleTitle
                 && !liveVideoOntoStudioAudio
                 && !mainOntoLiveTitle
                 && !mainOntoLiveOnlyAlbum
-                && !mainOntoWeakStudio
             ) {
                 continue;
             }
@@ -1913,29 +2042,63 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
             changed += 1;
         }
 
-        const stillHasRelation = Boolean(db.prepare(`
-            SELECT 1 AS hit FROM RecordingRelations
-            WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
-            LIMIT 1
-        `).get(row.recording_id));
-        if (stillHasRelation) continue;
-
-        const audioMatch = resolveProviderVideoAudioMatch({
-            video: {
-                title: videoTitle,
-                duration: row.duration,
-                album_id: row.provider_album_id,
-                artist_mbid: row.artist_mbid,
-            },
-            provider: row.provider,
-            artistMbid: row.artist_mbid ?? artistMbid,
+        const providerMatches = providerRows.flatMap((candidate) => {
+            let relatedTrackId: string | null = null;
+            try {
+                const evidence = JSON.parse(String(candidate.match_evidence || "{}"));
+                relatedTrackId = nullableText(evidence?.relatedTrackId);
+            } catch {
+                relatedTrackId = null;
+            }
+            const audioMatch = resolveProviderVideoAudioMatch({
+                video: {
+                    title: videoTitle,
+                    duration: candidate.duration,
+                    album_id: candidate.provider_album_id,
+                    related_track_id: relatedTrackId,
+                    artist_mbid: candidate.artist_mbid,
+                },
+                provider: candidate.provider,
+                artistMbid: candidate.artist_mbid ?? artistMbid,
+            });
+            return audioMatch ? [{ row: candidate, audioMatch }] : [];
         });
-        if (!audioMatch) continue;
+        const targetIds = new Set(providerMatches.map(({ audioMatch }) => audioMatch.id));
+        const surviving = db.prepare(`
+            SELECT target_recording_id AS audio_id, source
+            FROM RecordingRelations
+            WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+        `).all(row.recording_id) as Array<{ audio_id: number; source: string | null }>;
+        if (targetIds.size > 1) {
+            // Conflicting positive provider evidence is ambiguity, not a
+            // provider-order tie-break. Preserve canonical relations only.
+            for (const relation of surviving) {
+                if (relation.source === "musicbrainz") continue;
+                deleteRelation.run(row.recording_id, relation.audio_id);
+                changed += 1;
+            }
+            continue;
+        }
+        if (targetIds.size === 0) continue;
+        const targetId = targetIds.values().next().value as number;
+        for (const relation of surviving) {
+            if (relation.audio_id === targetId || relation.source === "musicbrainz") continue;
+            deleteRelation.run(row.recording_id, relation.audio_id);
+            changed += 1;
+        }
+        const hasTarget = surviving.some((relation) => relation.audio_id === targetId);
+        if (hasTarget) continue;
+        // Prefer explicit album context, then the strongest confidence; input
+        // order is only the final deterministic tie-breaker.
+        providerMatches.sort((left, right) =>
+            Number(Boolean(right.row.provider_album_id)) - Number(Boolean(left.row.provider_album_id))
+            || right.audioMatch.confidence - left.audioMatch.confidence);
+        const selected = providerMatches[0];
         upsertProviderVideoAudioRelation({
             videoRecordingId: row.recording_id,
             videoRecordingMbid: row.recording_mbid,
-            audioMatch,
-            provider: row.provider,
+            audioMatch: selected.audioMatch,
+            provider: selected.row.provider,
             videoTitle,
             videoVariant,
         });
@@ -2271,7 +2434,11 @@ export class RefreshVideoService {
         })();
     }
 
-    static upsertArtistVideos(artistId: string, videos: any[], options: RefreshOptions = {}): void {
+    static upsertArtistVideos(
+        artistId: string,
+        videos: any[],
+        options: RefreshOptions & { deferRepair?: boolean } = {},
+    ): void {
         const updateRecordingState = db.prepare(`
             UPDATE Recordings
             SET
@@ -2356,6 +2523,8 @@ export class RefreshVideoService {
                 });
             }
 
+            if (options.deferRepair) return;
+
             const sweptArtists = new Set<string>();
             const normalizedCanonicalArtistMbid = nullableText(canonicalArtistMbid);
             if (normalizedCanonicalArtistMbid) {
@@ -2376,6 +2545,79 @@ export class RefreshVideoService {
                 }
                 deleteOrphanProviderOnlyVideoRecordings(normalized);
             }
+        })();
+    }
+
+    /**
+     * Persist a public-catalog video selected by the sparse-provider resolver,
+     * then fold the provider-only shell into that catalog identity. The caller
+     * has already required a unique title, duration, and date winner.
+     */
+    static upsertVerifiedCatalogVideoTwin(
+        artistId: string,
+        video: any,
+        providerOnlyRecordingId: number,
+    ): number | null {
+        return this.upsertVerifiedCatalogVideoTwins(artistId, [{ video, providerOnlyRecordingId }]) > 0
+            ? getAcceptedProviderVideoRecordingId(
+                String(video.provider || video._provider || "youtube-music"),
+                String(nullableText(video.provider_id) ?? nullableText(video.providerId)),
+            )
+            : null;
+    }
+
+    /**
+     * Batch sparse catalog twins so provider persistence happens once and the
+     * expensive whole-artist assignment/relation repair runs once, not once per
+     * resolved video.
+     */
+    static upsertVerifiedCatalogVideoTwins(
+        artistId: string,
+        matches: Array<{ video: any; providerOnlyRecordingId: number }>,
+    ): number {
+        const artistMbid = getArtistMusicBrainzId(artistId);
+        if (!artistMbid || matches.length === 0) return 0;
+        const valid = matches.filter(({ providerOnlyRecordingId }) => {
+        const source = db.prepare(`
+            SELECT id, artist_mbid, mbid, youtube_video_id
+            FROM Recordings
+            WHERE id = ? AND is_video = 1
+        `).get(providerOnlyRecordingId) as {
+            id: number;
+            artist_mbid: string | null;
+            mbid: string | null;
+            youtube_video_id: string | null;
+        } | undefined;
+            return !(
+            !source
+            || source.mbid
+            || source.youtube_video_id
+            || source.artist_mbid !== artistMbid
+            );
+        });
+        if (valid.length === 0) return 0;
+
+        this.upsertArtistVideos(
+            artistId,
+            valid.map(({ video }) => video),
+            { deferRepair: true },
+        );
+
+        return db.transaction(() => {
+            let mergedCount = 0;
+            for (const { video, providerOnlyRecordingId } of valid) {
+                const provider = String(video.provider || video._provider || "youtube-music");
+                const providerId = nullableText(video.provider_id) ?? nullableText(video.providerId);
+                if (!providerId) continue;
+                const catalogRecordingId = getAcceptedProviderVideoRecordingId(provider, providerId);
+                if (!catalogRecordingId) continue;
+                coalesceVideoRecordings(catalogRecordingId, providerOnlyRecordingId);
+                mergedCount += 1;
+            }
+            repairProviderVideoRecordingAssignments(artistMbid);
+            repairProviderVideoAudioRelations(artistMbid);
+            deleteOrphanProviderOnlyVideoRecordings(artistMbid);
+            return mergedCount;
         })();
     }
 }

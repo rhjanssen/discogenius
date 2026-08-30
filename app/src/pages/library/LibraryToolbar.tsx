@@ -13,8 +13,6 @@ import {
   MenuItemRadio,
   MenuGroup,
   MenuGroupHeader,
-  TabList,
-  Tab,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
@@ -52,6 +50,7 @@ import FilterMenu, { type ProviderFilterOption } from "@/components/FilterMenu";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import type { StatusFilters } from "@/utils/statusFilters";
 import type { StreamingProviderStatus } from "@/services/api";
+import { ResponsiveStockTabList } from "@/components/ui/StockTabList";
 
 const Grid24 = bundleIcon(Grid24Filled, Grid24Regular);
 const AppsListDetail24 = bundleIcon(AppsListDetail24Filled, AppsListDetail24Regular);
@@ -119,16 +118,15 @@ const useStyles = makeStyles({
   },
   tabSlot: {
     minWidth: 0,
-    flex: "1 1 auto",
+    flex: "0 1 auto",
+    "@media (max-width: 639px)": {
+      flex: "1 1 auto",
+    },
   },
   mobileTabs: {
-    width: "100%",
     minWidth: 0,
-    justifyContent: "space-between",
-    "& .fui-Tab": {
-      minWidth: 0,
-      paddingLeft: tokens.spacingHorizontalXS,
-      paddingRight: tokens.spacingHorizontalXS,
+    "@media (max-width: 639px)": {
+      maxWidth: "100%",
     },
   },
   compactActions: {
@@ -489,21 +487,21 @@ export function LibraryToolbar(props: LibraryToolbarProps): ReactElement {
   return (
     <div className={styles.toolbar}>
       <div className={styles.tabSlot}>
-          <TabList
+          <ResponsiveStockTabList
+            idBase="library"
+            ariaLabel="Library view"
             className={styles.mobileTabs}
             selectedValue={selectedTab}
-            onTabSelect={(_, data) => onSelectedTabChange(data.value as string)}
-          >
-            {LIBRARY_TABS.map((tab) => {
+            onSelect={onSelectedTabChange}
+            items={LIBRARY_TABS.map((tab) => {
               const statKey = tab.key as keyof Pick<NonNullable<typeof stats>, "artists" | "albums" | "tracks" | "videos">;
               const tabStats = stats?.[statKey];
-              return (
-                <Tab key={tab.key} value={tab.key} title={tabStats ? `${tabStats.monitored} monitored, ${tabStats.total} catalog` : undefined}>
-                  {tab.label}
-                </Tab>
-              );
+              return {
+                ...tab,
+                title: tabStats ? `${tabStats.monitored} monitored, ${tabStats.total} catalog` : undefined,
+              };
             })}
-          </TabList>
+          />
       </div>
 
       <div className={styles.mobileControlsRow}>

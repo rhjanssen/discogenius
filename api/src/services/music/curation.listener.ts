@@ -1,5 +1,11 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
-import { appEvents, AppEvent, type ArtistRefreshCompleteEventPayload, type ArtistScannedEventPayload } from "../commands/app-events.js";
+import {
+    appEvents,
+    AppEvent,
+    type ArtistCuratedEventPayload,
+    type ArtistRefreshCompleteEventPayload,
+    type ArtistScannedEventPayload,
+} from "../commands/app-events.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import {
@@ -9,6 +15,7 @@ import {
     isArtistWorkflow,
     nextArtistWorkflowPriority,
 } from "./artist-workflow.js";
+import { queueDownloadMissingPass } from "../commands/scheduler.js";
 
 function resolveRescanWorkflow(workflow: unknown): Extract<ArtistWorkflow, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring"> | null {
     if (!isArtistWorkflow(workflow)) {
@@ -55,29 +62,6 @@ export function initCurationListeners() {
             return;
         }
         if (payload?.scanLibrary) {
-            const shouldRescan = payload.isNewArtist
-                || payload.metadataChanged
-                || payload.trigger === CommandTrigger.Manual;
-            if (!shouldRescan) {
-                const curationWorkflow = resolveCurationWorkflow(payload.workflow);
-                if (curationWorkflow) {
-                    console.log(`[Listeners] Artist ${payload.artistId} metadata unchanged; skipping RescanFolders and queueing CurateArtist`);
-                    CommandQueueManager.push(
-                        CommandNames.CurateArtist,
-                        buildCurateArtistCommand({
-                            artistId: payload.artistId,
-                            artistName: payload.artistName,
-                            workflow: curationWorkflow,
-                            monitoringCycle: payload.monitoringCycle,
-                        }),
-                        payload.artistId,
-                        nextArtistWorkflowPriority(payload.priority),
-                        payload.trigger ?? CommandTrigger.Unspecified,
-                    );
-                }
-                return;
-            }
-
             const workflow = resolveRescanWorkflow(payload?.workflow);
             if (!workflow) {
                 console.warn(`[Listeners] Artist ${payload?.artistId ?? "unknown"} metadata refreshed without a rescan workflow; skipping RescanFolders`);
@@ -135,13 +119,32 @@ export function initCurationListeners() {
                     artistId: payload.artistId,
                     artistName: payload.artistName,
                     monitoringCycle: payload.monitoringCycle,
-                    skipDownloadQueue: payload.skipDownloadQueue ?? false,
-                    forceDownloadQueue: payload.forceDownloadQueue ?? false,
                 },
             payload.artistId,
             nextArtistWorkflowPriority(payload.priority),
             payload.trigger ?? CommandTrigger.Unspecified
         );
+    });
+
+    // Monitored artist intake is a scoped workflow, so its completion queues a
+    // scoped wanted check. Full monitoring has one app-wide terminal pass in the
+    // scheduler and must not fan out duplicate per-artist DownloadMissing jobs.
+    appEvents.on(AppEvent.ARTIST_CURATED, (payload: ArtistCuratedEventPayload | undefined) => {
+        if (!payload || payload.workflow !== "monitoring-intake") return;
+        if (
+            payload.commandId != null
+            && payload.workerId
+            && !CommandQueueManager.isExecutionOwner(payload.commandId, payload.workerId)
+        ) {
+            console.warn(`[Listeners] Ignoring stale curation completion from command #${payload.commandId}`);
+            return;
+        }
+
+        queueDownloadMissingPass({
+            artistIds: [String(payload.artistId)],
+            trigger: payload.trigger ?? CommandTrigger.Unspecified,
+            priority: nextArtistWorkflowPriority(payload.priority),
+        });
     });
 
     // You can add more decoupled listeners here, e.g. for AlbumImported.

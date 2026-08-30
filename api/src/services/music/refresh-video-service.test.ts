@@ -210,6 +210,33 @@ test("Apple and TIDAL Distorted Light Beam attach to the YouTube catalog row eve
   assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 1);
 });
 
+test("provider offers coalesce by current offer duration when the YouTube recording summary is stale", () => {
+  const youtube = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, is_video, video_variant, metadata_status, youtube_video_id
+    ) VALUES ('artist-mbid', 'Quarter Past Midnight', 200000, 1, 'video', 'youtube', 'X1VzzNbfPaM')
+    RETURNING id
+  `).get() as { id: number };
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music",
+    providerVideoId: "X1VzzNbfPaM",
+    recordingId: youtube.id,
+    title: "Quarter Past Midnight (Official Video)",
+    durationMs: 205000,
+  });
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "tidal",
+    provider_id: "89522194",
+    title: "Quarter Past Midnight",
+    artist_name: "Bastille",
+    duration: 205,
+  }]);
+
+  assert.equal(acceptedVideoMatch("tidal", "89522194")?.recordingId, youtube.id);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM Recordings WHERE is_video = 1"), 1);
+});
+
 test("repair coalesces legacy Apple and TIDAL twins onto YouTube while preserving the second TIDAL cut", () => {
   const apple = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -853,6 +880,308 @@ test("provider audio evidence links a minted video, then follows a later MusicBr
   assert.equal(relation.confidence, 0.96);
   assert.match(relation.data, /provider-video-related-track/);
   assert.equal(dbModule.db.prepare("SELECT id FROM Recordings WHERE id = ?").get(minted.id), undefined);
+});
+
+test("provider related-track evidence cannot attach a live video to studio or reprise audio", () => {
+  const audioId = seedStudioAudio({
+    recordingMbid: "audio-distorted-reprise",
+    title: "Distorted Light Beam (reprise)",
+    lengthMs: 181000,
+  });
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "apple-music",
+    providerEditionId: "apple-dlb-album",
+    providerTrackId: "apple-dlb-reprise",
+    recordingId: audioId,
+    title: "Distorted Light Beam (reprise)",
+    durationMs: 181000,
+  });
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-video-dlb-live",
+    title: "Distorted Light Beam (Live)",
+    lengthMs: 181000,
+    variant: "live",
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "apple-music",
+    providerVideoId: "apple-dlb-live",
+    providerEditionId: "apple-dlb-album",
+    recordingId: videoId,
+    title: "Distorted Light Beam (Live)",
+    durationMs: 181000,
+  });
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence, data
+    ) VALUES (?, ?, 'provider_video_for', 'provider', 0.96, ?)
+  `).run(videoId, audioId, JSON.stringify({ method: "provider-video-related-track" }));
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "apple-music",
+    provider_id: "apple-dlb-live",
+    album_id: "apple-dlb-album",
+    related_track_id: "apple-dlb-reprise",
+    title: "Distorted Light Beam (Live)",
+    duration: 181,
+  }]);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId
+    FROM RecordingRelations
+    WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+  `).get(videoId) as { audioId: number } | undefined;
+  assert.equal(relation, undefined);
+});
+
+test("provider related-track evidence can attach a live video to a track on a live album", () => {
+  const audioId = seedStudioAudio({
+    recordingMbid: "audio-royal-albert-hall",
+    title: "Pompeii",
+    lengthMs: 220000,
+    albumMbid: "rg-royal-albert-hall",
+    editionMbid: "rel-royal-albert-hall",
+  });
+  dbModule.db.prepare(`
+    UPDATE Albums SET title = 'Live at the Royal Albert Hall', secondary_types = '["Live"]'
+    WHERE mbid = 'rg-royal-albert-hall'
+  `).run();
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "apple-music",
+    providerEditionId: "apple-royal-albert-hall",
+    providerTrackId: "apple-pompeii-live",
+    recordingId: audioId,
+    title: "Pompeii",
+    durationMs: 220000,
+  });
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "apple-music",
+    provider_id: "apple-pompeii-live",
+    album_id: "apple-royal-albert-hall",
+    related_track_id: "apple-pompeii-live",
+    title: "Pompeii (Live)",
+    duration: 220,
+  }]);
+
+  const video = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1 AND title = 'Pompeii (Live)'
+  `).get() as { id: number };
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId, data
+    FROM RecordingRelations
+    WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+  `).get(video.id) as { audioId: number; data: string };
+  assert.equal(relation.audioId, audioId);
+  assert.equal(JSON.parse(relation.data).method, "provider-video-related-track");
+});
+
+test("provider related-track evidence fails closed when edition occurrences disagree", () => {
+  const firstAudioId = seedStudioAudio({
+    recordingMbid: "audio-shared-track-first",
+    title: "Shared song",
+    lengthMs: 180000,
+    albumMbid: "rg-shared-first",
+    editionMbid: "rel-shared-first",
+  });
+  const secondAudioId = seedStudioAudio({
+    recordingMbid: "audio-shared-track-second",
+    title: "Shared song",
+    lengthMs: 180000,
+    albumMbid: "rg-shared-second",
+    editionMbid: "rel-shared-second",
+  });
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "apple-music",
+    providerEditionId: "apple-shared-first",
+    providerTrackId: "apple-reused-track",
+    recordingId: firstAudioId,
+    title: "Shared song",
+    durationMs: 180000,
+  });
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "apple-music",
+    providerEditionId: "apple-shared-second",
+    providerTrackId: "apple-reused-track",
+    recordingId: secondAudioId,
+    title: "Shared song",
+    durationMs: 180000,
+  });
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "apple-music",
+    provider_id: "apple-shared-video",
+    related_track_id: "apple-reused-track",
+    title: "Shared song (Official Music Video)",
+    duration: 180,
+  }]);
+
+  assert.equal(
+    dbModule.db.prepare("SELECT 1 FROM RecordingRelations WHERE relation_type = 'provider_video_for'").get(),
+    undefined,
+  );
+});
+
+test("stored provider album evidence is aggregated instead of first-provider-wins", () => {
+  const firstAudioId = seedStudioAudio({
+    recordingMbid: "audio-provider-first",
+    title: "Provider conflict",
+    lengthMs: 180000,
+    albumMbid: "rg-provider-first",
+    editionMbid: "rel-provider-first",
+  });
+  const secondAudioId = seedStudioAudio({
+    recordingMbid: "audio-provider-second",
+    title: "Provider conflict",
+    lengthMs: 180000,
+    albumMbid: "rg-provider-second",
+    editionMbid: "rel-provider-second",
+  });
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "apple-music",
+    providerEditionId: "apple-provider-first",
+    providerTrackId: "apple-provider-track",
+    recordingId: firstAudioId,
+    title: "Provider conflict",
+    durationMs: 180000,
+  });
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "tidal",
+    providerEditionId: "tidal-provider-second",
+    providerTrackId: "tidal-provider-track",
+    recordingId: secondAudioId,
+    title: "Provider conflict",
+    durationMs: 180000,
+  });
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-video-provider-conflict",
+    title: "Provider conflict",
+    lengthMs: 180000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "apple-music",
+    providerVideoId: "apple-provider-video",
+    providerEditionId: "apple-provider-first",
+    recordingId: videoId,
+    title: "Provider conflict",
+    durationMs: 180000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal",
+    providerVideoId: "tidal-provider-video",
+    providerEditionId: "tidal-provider-second",
+    recordingId: videoId,
+    title: "Provider conflict",
+    durationMs: 180000,
+  });
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence, data
+    ) VALUES (?, ?, 'provider_video_for', 'apple-music', 0.9, '{}')
+  `).run(videoId, firstAudioId);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "apple-music",
+    provider_id: "apple-provider-video",
+    album_id: "apple-provider-first",
+    title: "Provider conflict",
+    duration: 180,
+  }, {
+    provider: "tidal",
+    provider_id: "tidal-provider-video",
+    album_id: "tidal-provider-second",
+    title: "Provider conflict",
+    duration: 180,
+  }]);
+
+  assert.equal(
+    dbModule.db.prepare(`
+      SELECT 1 FROM RecordingRelations
+      WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+    `).get(videoId),
+    undefined,
+  );
+});
+
+test("partial catalog hydration does not erase a compatible provider counterpart", () => {
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, metadata_status)
+    VALUES ('audio-partial', 'artist-mbid', 'Partial song', 180000, 0, 'musicbrainz')
+    RETURNING id
+  `).get() as { id: number };
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-video-partial",
+    title: "Partial song",
+    lengthMs: 180000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music",
+    providerVideoId: "youtube-partial-video",
+    recordingId: videoId,
+    title: "Partial song",
+    durationMs: 180000,
+  });
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence, data
+    ) VALUES (?, ?, 'provider_video_for', 'youtube-music', 0.98, ?)
+  `).run(videoId, audio.id, JSON.stringify({ method: "yt-atv-omv-counterpart" }));
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "youtube-music",
+    provider_id: "youtube-partial-video",
+    title: "Partial song",
+    duration: 180,
+  }]);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId
+    FROM RecordingRelations
+    WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+  `).get(videoId) as { audioId: number } | undefined;
+  assert.equal(relation?.audioId, audio.id);
+});
+
+test("a YouTube self-OMV relation is removed when detailed metadata identifies a live cut", () => {
+  const audioId = seedStudioAudio({
+    recordingMbid: "audio-million-pieces-studio",
+    title: "Million Pieces",
+    lengthMs: 283000,
+  });
+  const videoId = insertCanonicalVideo({
+    mbid: "mb-video-million-pieces-live",
+    title: "Million Pieces ft. The Chamber Orchestra Of London (Live)",
+    lengthMs: 285000,
+    variant: "live",
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music",
+    providerVideoId: "6OLp72eLLc4",
+    recordingId: videoId,
+    title: "Million Pieces ft. The Chamber Orchestra Of London (Live)",
+    durationMs: 285000,
+  });
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence, data
+    ) VALUES (?, ?, 'provider_video_for', 'youtube-music', 0.98, ?)
+  `).run(videoId, audioId, JSON.stringify({
+    method: "yt-atv-omv-counterpart",
+    evidence: { counterpartKind: "yt-self-omv" },
+  }));
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+    provider: "youtube-music",
+    provider_id: "6OLp72eLLc4",
+    title: "Million Pieces ft. The Chamber Orchestra Of London (Live)",
+    duration: 285,
+  }]);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id
+    FROM RecordingRelations
+    WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+  `).get(videoId);
+  assert.equal(relation, undefined);
 });
 
 test("provider refresh preserves previously probed video quality", () => {

@@ -32,10 +32,9 @@ function formatReconcileSummary(prefix: string, result: ScanResult): string {
 
 /**
  * Cover.jpg / album.nfo / lyrics are disk artifacts, not catalog hydration.
- * RescanFolders always writes missing sidecars unless a test explicitly
- * sets skipMetadataBackfill. Library-scan and Refresh & Scan used to skip
- * this because the workflow's backfillMetadata phase meant "hydrate album
- * tracks" — sibling edition folders then kept a cover and lost NFO.
+ * RescanFolders repairs missing sidecars unless a test explicitly sets
+ * skipMetadataBackfill. The backfill is invoked in sidecar-only mode: embedded
+ * covers, thumbnails, and container tags remain import/Retag responsibilities.
  */
 async function fillSidecarMetadata(
     artistIds: string[],
@@ -109,10 +108,8 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
                 artistName: job.payload.artistName ?? "",
                 workflow: job.payload.workflow,
                 monitoringCycle: job.payload.monitoringCycle,
-                skipDownloadQueue: job.payload.skipDownloadQueue ?? false,
                 skipCuration: job.payload.skipCuration ?? false,
                 skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
-                forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
                 trigger: job.trigger ?? CommandTrigger.Unspecified,
                 priority: job.priority,
             });
