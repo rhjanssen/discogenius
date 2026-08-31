@@ -153,7 +153,7 @@ export const MusicVideosSettingsSection = ({
     onVideoFolderLayoutChange,
 }: MusicVideosSettingsSectionProps) => {
     const styles = useStyles();
-    const downloadEnabled = curationConfig?.include_videos === true;
+    const videosEnabled = curationConfig?.include_videos === true;
 
     const renderToggleRow = (options: {
         title: string;
@@ -181,9 +181,9 @@ export const MusicVideosSettingsSection = ({
         >
             <SettingsCard>
                 {renderToggleRow({
-                    title: "Download music videos",
-                    description: "Queue monitored videos for download when a connected service offers them.",
-                    checked: downloadEnabled,
+                    title: "Monitor music videos",
+                    description: "Add selected video types to the Video library and download them when available.",
+                    checked: videosEnabled,
                     onChange: (checked) => void onUpdateCuration({ include_videos: checked }),
                 })}
 

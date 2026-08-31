@@ -1923,7 +1923,7 @@ test("upsertLibraryFile persists video_codec and frame size for music videos", (
   const videoRoot = configModule.Config.getVideoPath();
   const videoLibrary = dbModule.db.prepare(`
     UPDATE Libraries
-    SET root_path = ?
+    SET root_path = ?, enabled = 1
     WHERE name = 'Video'
     RETURNING id
   `).get(videoRoot) as { id: number };
@@ -1973,4 +1973,3 @@ test("upsertLibraryFile persists video_codec and frame size for music videos", (
   assert.equal(row.bitrate, 320000);
   assert.equal(row.quality, "MP4_1080P");
 });
-

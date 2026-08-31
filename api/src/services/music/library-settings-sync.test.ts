@@ -74,7 +74,7 @@ test("audio_quality maps onto stereo profile names", () => {
   assert.equal(stereoQualityProfileName("low"), "Low Quality");
 });
 
-test("Settings max selects Max Quality for Stereo and can disable Spatial", () => {
+test("Settings max selects Max Quality and can disable optional libraries", () => {
   withDb((db) => {
     const repo = new LibraryCurationRepository(db);
     repo.bootstrapDefaultLibraries(
@@ -83,7 +83,7 @@ test("Settings max selects Max Quality for Stereo and can disable Spatial", () =
         spatialRoot: "/library/spatial",
         videoRoot: "/library/video",
       },
-      { audioQuality: "max", includeSpatial: false },
+      { audioQuality: "max", includeSpatial: false, includeVideos: false },
     );
 
     const stereo = db.prepare(`
@@ -98,11 +98,15 @@ test("Settings max selects Max Quality for Stereo and can disable Spatial", () =
       JOIN quality_profiles profile ON profile.id = library.quality_profile_id
       WHERE library.name = 'Spatial'
     `).get() as { name: string; profile_name: string; enabled: number };
+    const video = db.prepare(`
+      SELECT enabled FROM Libraries WHERE name = 'Video'
+    `).get() as { enabled: number };
 
     assert.equal(stereo.profile_name, "Max Quality");
     assert.equal(Number(stereo.enabled), 1);
     assert.equal(spatial.profile_name, "Spatial");
     assert.equal(Number(spatial.enabled), 0);
+    assert.equal(Number(video.enabled), 0);
   });
 });
 
@@ -118,7 +122,7 @@ test("changing Settings updates Stereo profile and Spatial enabled without path 
       { audioQuality: "high", includeSpatial: false },
     );
 
-    applyLibrarySettingsFromConfig(db, { audioQuality: "max", includeSpatial: true });
+    applyLibrarySettingsFromConfig(db, { audioQuality: "max", includeSpatial: true, includeVideos: true });
 
     const stereo = db.prepare(`
       SELECT profile.name AS profile_name
@@ -129,9 +133,13 @@ test("changing Settings updates Stereo profile and Spatial enabled without path 
     const spatial = db.prepare(`
       SELECT enabled FROM Libraries WHERE name = 'Spatial'
     `).get() as { enabled: number };
+    const video = db.prepare(`
+      SELECT enabled FROM Libraries WHERE name = 'Video'
+    `).get() as { enabled: number };
 
     assert.equal(stereo.profile_name, "Max Quality");
     assert.equal(Number(spatial.enabled), 1);
+    assert.equal(Number(video.enabled), 1);
 
     // Re-bootstrap paths only: must not stomp Max → High.
     repo.bootstrapDefaultLibraries(
@@ -140,7 +148,7 @@ test("changing Settings updates Stereo profile and Spatial enabled without path 
         spatialRoot: "/library/spatial-new",
         videoRoot: "/library/video-new",
       },
-      { audioQuality: "max", includeSpatial: true },
+      { audioQuality: "max", includeSpatial: true, includeVideos: true },
     );
     const after = db.prepare(`
       SELECT library.root_path, profile.name AS profile_name

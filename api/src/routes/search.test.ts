@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedSelectedAcquisitionPlan } from "../test-support/acquisition-plan-fixture.js";
-import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../test-support/active-schema-fixture.js";
+import {
+  enableVideoLibraryForTests,
+  selectVideoInVideoLibraries,
+  seedLibraryArtistMonitoring,
+} from "../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-search-route-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.search.test.db");
@@ -16,6 +20,7 @@ let searchRouter: typeof import("./search.js").default;
 before(async () => {
   dbModule = await import("../database.js");
   dbModule.initDatabase();
+  enableVideoLibraryForTests(dbModule.db);
   searchRouter = (await import("./search.js")).default;
 });
 

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { enableVideoLibraryForTests } from "../../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-refresh-handlers-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -22,6 +23,7 @@ let CommandNames: typeof import("../command-names.js").CommandNames;
 before(async () => {
   dbModule = await import("../../../database.js");
   dbModule.initDatabase();
+  enableVideoLibraryForTests(dbModule.db);
   ({ appEvents, AppEvent } = await import("../app-events.js"));
   ({ handleMatchArtistProviders, handleRefreshArtist, handleSeedVideo } = await import("./refresh-handlers.js"));
   ({ CommandNames } = await import("../command-names.js"));

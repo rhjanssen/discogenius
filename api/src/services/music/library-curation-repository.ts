@@ -21,6 +21,8 @@ export interface LibraryBootstrapSettings {
   audioQuality?: StereoAudioQuality;
   /** Settings → Spatial audio toggle. Defaults to false (product default). */
   includeSpatial?: boolean;
+  /** Settings → Music videos toggle. Production supplies the product-default false explicitly. */
+  includeVideos?: boolean;
 }
 
 export interface LibraryReleaseScopeInput {
@@ -51,6 +53,10 @@ export class LibraryCurationRepository {
   } {
     const audioQuality = settings.audioQuality ?? "max";
     const includeSpatial = settings.includeSpatial === true;
+    // Video was enabled before this setting was wired to the fixed library.
+    // Preserve that bootstrap default for callers that do not yet provide the
+    // optional setting; production config always passes an explicit value.
+    const includeVideos = settings.includeVideos ?? true;
 
     return this.db.transaction(() => {
       this.db.prepare(`
@@ -115,10 +121,10 @@ export class LibraryCurationRepository {
         paths.videoRoot,
         metadataProfileId,
         videoQualityProfileId,
-        1,
+        includeVideos ? 1 : 0,
       ) as { id: number }).id;
 
-      applyLibrarySettingsFromConfig(this.db, { audioQuality, includeSpatial });
+      applyLibrarySettingsFromConfig(this.db, { audioQuality, includeSpatial, includeVideos });
 
       return { stereoId, spatialId, videoId };
     })();

@@ -209,6 +209,8 @@ export interface ApplyCurationCommand extends CommandBodyCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
 }
 
+export type ReplanAcquisitionCommand = CommandBodyCommon;
+
 export interface DownloadMissingCommand extends CommandBodyCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
   artistIds?: string[];

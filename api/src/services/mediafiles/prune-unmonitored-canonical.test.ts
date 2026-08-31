@@ -3,7 +3,11 @@ import { afterEach, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
+import {
+  enableVideoLibraryForTests,
+  selectVideoInVideoLibraries,
+  seedLibraryArtistMonitoring,
+} from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-prune-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -12,6 +16,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
+enableVideoLibraryForTests(db);
 const { LibraryFilesService } = await import("./library-files.js");
 
 function reset() {

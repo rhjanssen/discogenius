@@ -46,6 +46,9 @@ test("command registry exposes canonical command and task metadata", () => {
   assert.equal(findSystemTaskDefinitionByCommandName("BackupDatabase")?.kind, "scheduled");
 
   assert.ok(PENDING_ACTIVITY_COMMAND_NAMES.includes("RefreshArtist"));
+  assert.ok(PENDING_ACTIVITY_COMMAND_NAMES.includes("ReplanAcquisition"));
+  assert.ok(commandExecutors.ReplanAcquisition);
+  assert.ok(NON_DOWNLOAD_COMMAND_NAMES.includes("ReplanAcquisition"));
   assert.ok(getCommandTypesForQueueCategory("downloads").includes("ImportDownload"));
   assert.ok(getCommandTypesForQueueCategory("other").includes("CheckHealth"));
 

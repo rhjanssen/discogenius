@@ -132,6 +132,8 @@ export function formatJobType(job: JobLike): string {
             return "Refresh Metadata";
         case "ApplyCuration":
             return "Apply Curation";
+        case "ReplanAcquisition":
+            return "Replan Acquisition";
         case "DownloadMissing":
             return "Queue Downloads";
         case "CheckUpgrades":
@@ -223,6 +225,7 @@ export function formatJobDescription(job: JobLike): string {
             return title ? joinSubject(title, artist) : stripLabel("Album", desc);
         case "RefreshMetadata":
         case "ApplyCuration":
+        case "ReplanAcquisition":
         case "DownloadMissing":
         case "CheckUpgrades": {
             const workflowDescription = splitWorkflowDescription(desc);
@@ -237,6 +240,7 @@ export function formatJobDescription(job: JobLike): string {
 
             if (type === "RefreshMetadata") return desc || "MusicBrainz metadata and provider availability";
             if (type === "ApplyCuration") return desc || "Release monitoring and inclusion rules";
+            if (type === "ReplanAcquisition") return desc || "Applying the current provider order";
             if (type === "DownloadMissing") return summarizeQueuedDownloads(desc) || "Monitored library items";
             return desc || "Quality profile upgrades";
         }
@@ -316,6 +320,7 @@ export function matchesActivityFilter(job: any, filter: string): boolean {
         case 'curation':
             return [
                 'ApplyCuration',
+                'ReplanAcquisition',
                 'CurateArtist',
             ].includes(type);
         default:
@@ -349,7 +354,7 @@ export function getActivityTypeIcon(job: any) {
     if (type === 'ConfigPrune') {
         return createElement(Settings24Regular, { style: iconStyle });
     }
-    if (type === 'ApplyCuration' || type === 'CurateArtist') {
+    if (type === 'ApplyCuration' || type === 'ReplanAcquisition' || type === 'CurateArtist') {
         return createElement(ArrowSortDownLines24Regular, { style: iconStyle });
     }
     return createElement(ArrowSync24Regular, { style: iconStyle });

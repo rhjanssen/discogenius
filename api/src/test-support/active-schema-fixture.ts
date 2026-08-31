@@ -45,7 +45,18 @@ export async function openActiveSchemaDb(): Promise<{
 }> {
   const dbModule = await import("../database.js");
   dbModule.initDatabase();
+  // Most active-schema service fixtures predate the user-facing video toggle
+  // and intentionally exercise the complete three-library model. Preserve
+  // that fixture contract; tests for the disabled state switch it off
+  // explicitly.
+  enableVideoLibraryForTests(dbModule.db);
   return { db: dbModule.db, dbModule };
+}
+
+export function enableVideoLibraryForTests(
+  db: { prepare: (sql: string) => { run: (...args: any[]) => unknown } },
+): void {
+  db.prepare("UPDATE Libraries SET enabled = 1 WHERE name = 'Video'").run();
 }
 
 export function closeActiveSchemaDb(

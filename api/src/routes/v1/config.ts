@@ -37,11 +37,12 @@ import {
   queueMetadataRefreshPass,
 } from "../../services/commands/scheduler.js";
 
-/** Push Settings quality + spatial toggle onto the fixed Stereo / Spatial libraries. */
+/** Push Settings quality and media toggles onto the fixed libraries. */
 function syncLibrariesFromSettings(): void {
   applyLibrarySettingsFromConfig(db, {
     audioQuality: getConfigSection("quality").audio_quality,
     includeSpatial: getConfigSection("filtering").include_spatial === true,
+    includeVideos: getConfigSection("filtering").include_videos === true,
   });
 }
 
@@ -224,7 +225,7 @@ const updateFilteringConfig = async (req: any, res: any) => {
     const updates = parseFilteringConfigUpdate(getObjectBody(req.body), getConfigSection("filtering"));
     const commandId = await runConfigUserWrite(() => {
       updateConfig("filtering", updates);
-      // Spatial library enabled flag follows include_spatial.
+      // Spatial and Video library enabled flags follow their Settings toggles.
       syncLibrariesFromSettings();
       return queueCurationPass({ trigger: CommandTrigger.Manual });
     });

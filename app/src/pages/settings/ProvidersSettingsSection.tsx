@@ -268,6 +268,7 @@ export const ProvidersSettingsSection = ({
         setSavingProviderOrder(true);
         try {
             await api.updateProviderPriority(orderedIds);
+            dispatchActivityRefresh();
             await onRefetch();
         } catch (error: any) {
             toast({

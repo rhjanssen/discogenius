@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
-import { selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
+import { enableVideoLibraryForTests, selectVideoInVideoLibraries } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-video-query-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -15,6 +15,7 @@ let videoQueryModule: typeof import("./video-query-service.js");
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  enableVideoLibraryForTests(dbModule.db);
   videoQueryModule = await import("./video-query-service.js");
 });
 

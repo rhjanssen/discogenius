@@ -1,5 +1,5 @@
 /**
- * Collapse global Settings onto the fixed Stereo / Spatial libraries.
+ * Collapse global Settings onto the fixed Stereo / Spatial / Video libraries.
  *
  * Until users can define their own libraries (Lidarr-style), the product surface
  * is intentionally small:
@@ -21,6 +21,7 @@ export type StereoAudioQuality = QualityConfig["audio_quality"];
 
 const STEREO_LIBRARY_NAME = "Stereo";
 const SPATIAL_LIBRARY_NAME = "Spatial";
+const VIDEO_LIBRARY_NAME = "Video";
 
 /** Settings audio_quality value → quality_profiles.name */
 export function stereoQualityProfileName(audioQuality: StereoAudioQuality): string {
@@ -194,17 +195,21 @@ export function applyLibrarySettingsFromConfig(
   input: {
     audioQuality: StereoAudioQuality;
     includeSpatial: boolean;
+    includeVideos?: boolean;
   },
 ): {
   stereoProfileId: number | null;
   stereoProfileName: string;
   spatialEnabled: boolean;
+  videoEnabled: boolean;
 } {
   ensureDefaultQualityProfiles(db);
+  const includeVideos = input.includeVideos ?? true;
 
   const stereoProfileName = stereoQualityProfileName(input.audioQuality);
   const stereoProfileId = profileIdByName(db, stereoProfileName);
   const spatialProfileId = profileIdByName(db, "Spatial");
+  const videoProfileId = profileIdByName(db, "Video");
 
   if (stereoProfileId != null) {
     db.prepare(`
@@ -227,9 +232,21 @@ export function applyLibrarySettingsFromConfig(
     `).run(spatialProfileId, input.includeSpatial ? 1 : 0, SPATIAL_LIBRARY_NAME);
   }
 
+  if (videoProfileId != null) {
+    db.prepare(`
+      UPDATE Libraries
+      SET
+        quality_profile_id = ?,
+        enabled = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE name = ?
+    `).run(videoProfileId, includeVideos ? 1 : 0, VIDEO_LIBRARY_NAME);
+  }
+
   return {
     stereoProfileId,
     stereoProfileName,
     spatialEnabled: input.includeSpatial,
+    videoEnabled: includeVideos,
   };
 }

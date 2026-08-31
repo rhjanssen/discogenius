@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
+import { enableVideoLibraryForTests, seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-missing-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.download-missing.test.db");
@@ -19,6 +19,7 @@ before(async () => {
   // which is exactly why the retired-column read went unnoticed.
   const configModule = await import("../config/config.js");
   configModule.updateConfig("filtering", { include_videos: true });
+  enableVideoLibraryForTests(dbModule.db);
   serviceModule = await import("./download-missing-service.js");
 });
 

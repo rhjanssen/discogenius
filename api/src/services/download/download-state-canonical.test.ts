@@ -26,6 +26,9 @@ function writeFilteringConfig(includeSpatial: boolean, includeVideos: boolean) {
   db.prepare(`
     UPDATE Libraries SET enabled = ? WHERE name = 'Spatial'
   `).run(includeSpatial ? 1 : 0);
+  db.prepare(`
+    UPDATE Libraries SET enabled = ? WHERE name = 'Video'
+  `).run(includeVideos ? 1 : 0);
 }
 
 function resetRows() {

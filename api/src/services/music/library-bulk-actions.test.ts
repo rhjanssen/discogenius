@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
+import { enableVideoLibraryForTests } from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-bulk-actions-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -26,6 +27,7 @@ function assertRetiredProviderCatalogTablesAbsent() {
 before(async () => {
     dbModule = await import("../../database.js");
     dbModule.initDatabase();
+    enableVideoLibraryForTests(dbModule.db);
 
     queueModule = await import("../commands/command-queue-manager.js");
     serviceModule = await import("./library-bulk-actions.js");

@@ -1,8 +1,8 @@
 import { db } from "../../database.js";
-import { getConfigSection } from "../config/config.js";
 import {
   loadArtistMetadataIdentity,
 } from "./managed-artists.js";
+import { getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
 import { LibraryCurationService } from "./library-curation-service.js";
 import { curateArtistVideos } from "./video-curation-service.js";
 
@@ -65,10 +65,7 @@ export class CurationService {
       JOIN LibraryArtists artist ON artist.id = scope.library_artist_id
       WHERE artist.artist_metadata_id = ?
     `).get(identity.canonicalArtistId) as { count: number }).count);
-    const configuredPriority = getConfigSection("streaming")?.provider_priority;
-    const providerPriority = Array.isArray(configuredPriority)
-      ? configuredPriority.map(String)
-      : [];
+    const providerPriority = getAcquisitionProviderPriority();
     const curation = new LibraryCurationService(db);
     for (const library of libraries) {
       // Curate this artist, not the whole library. The optimiser has always run

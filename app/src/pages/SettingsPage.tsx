@@ -164,6 +164,18 @@ const useStyles = makeStyles({
     desktopNav: {
         display: "none",
         [MEDIA.desktop]: { display: "block", width: "100%" },
+        // Fluent Nav uses colorNeutralBackground4 for every item by default.
+        // Settings sits directly over the page hero, so keep the resting list
+        // transparent while retaining Fluent's interaction-state feedback.
+        "& .fui-NavItem": {
+            backgroundColor: tokens.colorTransparentBackground,
+        },
+        "& .fui-NavItem:hover": {
+            backgroundColor: tokens.colorSubtleBackgroundHover,
+        },
+        "& .fui-NavItem:active": {
+            backgroundColor: tokens.colorSubtleBackgroundPressed,
+        },
     },
     panel: {
         flex: "1 1 auto",

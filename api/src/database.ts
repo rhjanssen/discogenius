@@ -938,6 +938,7 @@ function initializeDefaultData() {
     {
       audioQuality: quality.audio_quality,
       includeSpatial: filtering.include_spatial === true,
+      includeVideos: filtering.include_videos === true,
     },
   );
 

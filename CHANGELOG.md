@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.13.4] - 2026-08-31
+
+Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a
+reset.
+
+### Fixed
+
+- **Settings navigation.** Desktop category rows rest directly on the page
+  background again instead of forming an opaque panel. Fluent hover, pressed,
+  selected, focus, and forced-colors feedback remains intact.
+- **Provider priority.** Acquisition planning now uses the same effective
+  provider order shown in Settings, including the factory TIDAL-first order.
+  Saving or repairing that order queues a plan-only rebuild, so existing
+  monitored editions are re-ranked without running curation.
+- **Music-video monitoring.** The Music videos toggle now enables and disables
+  the fixed Video library. Disabled videos remain in the catalogue but no
+  longer appear monitored or enter Download Missing.
+- **Dashboard statistics.** Artists now follow Albums, Tracks, and Videos: the
+  large value is complete locally, followed by monitored and catalogue totals.
+- **Dark-theme accents.** The Fluent orange ramp has a brighter, less brown
+  middle range while retaining WCAG contrast for filled controls and badges.
+
 ## [2.13.3] - 2026-08-30
 
 Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a

@@ -95,6 +95,7 @@ const COMMAND_QUEUE_CATEGORY_TYPES = {
     CommandNames.RefreshAlbum,
     CommandNames.RefreshMetadata,
     CommandNames.ApplyCuration,
+    CommandNames.ReplanAcquisition,
     CommandNames.DownloadMissing,
     CommandNames.CheckUpgrades,
     CommandNames.CurateArtist,
@@ -282,6 +283,14 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.ApplyCuration]: {
     type: CommandNames.ApplyCuration,
     name: "Apply Curation",
+    requiresDiskAccess: false,
+    isTypeExclusive: true,
+    isExclusive: false,
+    isLongRunning: true,
+  },
+  [CommandNames.ReplanAcquisition]: {
+    type: CommandNames.ReplanAcquisition,
+    name: "Replan Acquisition",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,

@@ -3,7 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
-import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
+import {
+  enableVideoLibraryForTests,
+  selectVideoInVideoLibraries,
+  seedLibraryArtistMonitoring,
+} from "../../test-support/active-schema-fixture.js";
 import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-artist-query-"));
@@ -20,6 +24,7 @@ let artistTopTrackModule: typeof import("./artist-top-track-service.js");
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  enableVideoLibraryForTests(dbModule.db);
   artistQueryModule = await import("./artist-query-service.js");
   mediaCoverServiceModule = await import("../metadata/media-cover-service.js");
   servarrMetadataModule = await import("../metadata/servarr-metadata.js");

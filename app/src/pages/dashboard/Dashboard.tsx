@@ -557,8 +557,8 @@ const Dashboard = () => {
             key: 'artists',
             label: 'Artists',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconArtists}`}><Person24Filled className={styles.statIcon} /></span>,
-            value: formatCompactNumber(libraryStats?.artists?.monitored),
-            detail: `${formatCompactNumber(libraryStats?.artists?.downloaded)} complete • ${formatCompactNumber(libraryStats?.artists?.total)} catalog`,
+            value: formatCompactNumber(libraryStats?.artists?.downloaded),
+            detail: `${formatCompactNumber(libraryStats?.artists?.monitored)} monitored • ${formatCompactNumber(libraryStats?.artists?.total)} catalog`,
         },
         {
             key: 'albums',

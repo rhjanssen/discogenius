@@ -29,6 +29,7 @@ import type {
     RefreshAlbumCommand,
     RefreshArtistCommand,
     RefreshMetadataCommand,
+    ReplanAcquisitionCommand,
     RenameArtistCommand,
     RenameFilesCommand,
     RescanAllRootsCommand,
@@ -47,6 +48,7 @@ export interface CommandBodyMap {
     [CommandNames.RefreshAlbum]: RefreshAlbumCommand;
     [CommandNames.RefreshMetadata]: RefreshMetadataCommand;
     [CommandNames.ApplyCuration]: ApplyCurationCommand;
+    [CommandNames.ReplanAcquisition]: ReplanAcquisitionCommand;
     [CommandNames.DownloadMissing]: DownloadMissingCommand;
     [CommandNames.CheckUpgrades]: CheckUpgradesCommand;
     [CommandNames.Housekeeping]: HousekeepingCommand;

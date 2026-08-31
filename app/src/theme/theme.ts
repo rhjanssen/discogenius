@@ -14,16 +14,16 @@ export const discogeniusOrangeTheme: BrandVariants = {
     30: "#421800",
     40: "#581d00",
     50: "#6e2800",
-    60: "#873500",
+    60: "#943800",
     // Fluent uses 80 for light filled controls and 70 for dark filled
     // controls. These stay recognisably orange while retaining white-text
     // contrast in both modes.
-    70: "#a94300",
+    70: "#ba4a00",
     80: "#c45100",
-    90: "#d85c08",
-    100: "#e7701c",
-    110: "#f47f34",
-    120: "#ff955a",
+    90: "#db6413",
+    100: "#ef772c",
+    110: "#f98747",
+    120: "#ff9b69",
     130: "#ffb695",
     140: "#ffcbb4",
     150: "#ffddcf",

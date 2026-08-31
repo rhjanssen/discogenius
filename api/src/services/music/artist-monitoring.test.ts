@@ -3,7 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
-import { selectVideoInVideoLibraries, seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
+import {
+  enableVideoLibraryForTests,
+  selectVideoInVideoLibraries,
+  seedLibraryArtistMonitoring,
+} from "../../test-support/active-schema-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-artist-monitoring-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -27,6 +31,7 @@ function assertRetiredProviderCatalogTablesAbsent() {
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  enableVideoLibraryForTests(dbModule.db);
   monitoringModule = await import("./artist-monitoring.js");
   refreshArtistModule = await import("./refresh-artist-service.js");
   curationModule = await import("./curation-service.js");

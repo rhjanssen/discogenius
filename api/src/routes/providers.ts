@@ -6,8 +6,26 @@ import { streamingProviderManager } from "../services/providers/index.js";
 import { getProviderDiagnostics } from "../services/providers/provider-diagnostics.js";
 import { providerSupportsAppAuthentication } from "../services/providers/provider-auth-support.js";
 import type { ProviderImportSelection, StreamingProvider } from "../services/providers/streaming-provider.js";
+import { CommandNames, CommandQueueManager } from "../services/commands/command-queue-manager.js";
+import { CommandTrigger } from "../services/commands/command-trigger.js";
 
 const router = Router();
+
+function queueProviderPriorityReplan(): number {
+  return CommandQueueManager.push(
+    CommandNames.ReplanAcquisition,
+    {
+      title: "Replanning acquisition",
+      description: "Applying the updated provider order",
+    },
+    // Keep every explicit reorder. Type exclusivity serializes these jobs, and
+    // each job reads the effective order when it starts, so a second reorder
+    // cannot be lost behind an already-running plan rebuild.
+    undefined,
+    0,
+    CommandTrigger.Manual,
+  );
+}
 
 export type ProviderPreferenceRepair = {
   providerPriority: string[];
@@ -126,7 +144,13 @@ router.put("/priority", (req, res) => {
       default_provider: order[0],
     });
 
-    res.json({ providerPriority: streamingProviderManager.getProviderPriority(), defaultProviderId: order[0] });
+    const replanCommandId = queueProviderPriorityReplan();
+
+    res.json({
+      providerPriority: streamingProviderManager.getProviderPriority(),
+      defaultProviderId: order[0],
+      replanCommandId,
+    });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
@@ -262,18 +286,21 @@ router.post("/:providerId/logout", async (req, res) => {
       provider.id,
       (providerId) => connectedByProvider.get(providerId) === true,
     );
+    let replanCommandId: number | null = null;
     if (repairedPreference) {
       updateConfig("streaming", {
         ...Config.getStreamingConfig(),
         provider_priority: repairedPreference.providerPriority,
         default_provider: repairedPreference.defaultProviderId,
       });
+      replanCommandId = queueProviderPriorityReplan();
     }
 
     res.json({
       success: true,
       provider: provider.id,
       ...(repairedPreference ?? {}),
+      ...(replanCommandId == null ? {} : { replanCommandId }),
     });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

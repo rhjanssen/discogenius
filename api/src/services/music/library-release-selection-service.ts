@@ -1,7 +1,6 @@
 import type Database from "better-sqlite3";
 import { emitLibraryUpdated } from "../commands/app-events.js";
-import { getConfigSection } from "../config/config.js";
-import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
+import { AcquisitionPlanningService, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { parseMediaFormats } from "./media-formats.js";
 import { editionRendition, planEligibleForEdition } from "./rendition-policy.js";
@@ -678,13 +677,10 @@ export class LibraryReleaseSelectionService {
           updated_at = CURRENT_TIMESTAMP
       WHERE library_id = ? AND edition_id = ?
     `).run(input.libraryId, input.editionId);
-    const configuredPriority = getConfigSection("streaming")?.provider_priority;
     new AcquisitionPlanningService(this.db).compute({
       libraryId: input.libraryId,
       editionId: input.editionId,
-      providerPriority: Array.isArray(configuredPriority)
-        ? configuredPriority.map(String)
-        : [],
+      providerPriority: getAcquisitionProviderPriority(),
       plannerVersion: 1,
     });
     return this.getAvailability(input.releaseGroupMbid);
@@ -864,13 +860,10 @@ export class LibraryReleaseSelectionService {
       });
     })();
 
-    const configuredPriority = getConfigSection("streaming")?.provider_priority;
     new AcquisitionPlanningService(this.db).compute({
       libraryId: input.libraryId,
       editionId: input.editionId,
-      providerPriority: Array.isArray(configuredPriority)
-        ? configuredPriority.map(String)
-        : [],
+      providerPriority: getAcquisitionProviderPriority(),
       plannerVersion: 1,
       preferredProviderEditionMatchId: input.providerEditionMatchId,
     });

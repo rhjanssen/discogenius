@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import { getConfigSection } from "../config/config.js";
+import { streamingProviderManager } from "../../providers/index.js";
 import { createCurationPhaseTimer } from "./curation-profile.js";
 import {
   enumerateAcquisitionPlans,
@@ -22,6 +23,11 @@ const QUALITY_VALUES = new Set<NormalizedAudioQuality>([
   "hires-lossless",
   "spatial",
 ]);
+
+/** The same normalized order exposed by Settings, including factory defaults. */
+export function getAcquisitionProviderPriority(): string[] {
+  return streamingProviderManager.getProviderPriority();
+}
 
 function parseQuality(value: unknown): NormalizedAudioQuality | null {
   const normalized = String(value || "").trim().toLowerCase() as NormalizedAudioQuality;
@@ -628,10 +634,7 @@ export function replanMonitoredEditions(
   plannerVersion = 1,
 ): number {
   if (editions.length === 0) return 0;
-  const configuredPriority = getConfigSection("streaming")?.provider_priority;
-  const providerPriority = Array.isArray(configuredPriority)
-    ? configuredPriority.map(String)
-    : [];
+  const providerPriority = getAcquisitionProviderPriority();
   const planner = new AcquisitionPlanningService(db);
   const seen = new Set<string>();
   let rebuilt = 0;

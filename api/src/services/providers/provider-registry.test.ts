@@ -69,6 +69,7 @@ test("default provider preference follows registration order when unset", async 
   initDatabase();
   const { updateConfig } = await import("../config/config.js");
   const { streamingProviderManager } = await import("./index.js");
+  const { getAcquisitionProviderPriority } = await import("../music/acquisition-planning-service.js");
 
   updateConfig("streaming", { default_provider: "tidal", provider_priority: [] });
   assert.deepEqual(streamingProviderManager.getProviderPriority(), [
@@ -80,6 +81,11 @@ test("default provider preference follows registration order when unset", async 
     "amazon-music",
     "spotify",
   ]);
+  assert.deepEqual(
+    getAcquisitionProviderPriority(),
+    streamingProviderManager.getProviderPriority(),
+    "the planner must use the effective default order shown in Settings",
+  );
 
   updateConfig("streaming", {
     default_provider: "tidal",
