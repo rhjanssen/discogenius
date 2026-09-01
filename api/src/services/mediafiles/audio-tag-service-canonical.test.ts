@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { after, before, test } from "node:test";
+import { compareEmbeddedAudioCover } from "./audioUtils.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-audio-tag-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -202,6 +203,31 @@ dbModule.db.prepare(`
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });
 
+test("artist retag scope resolves both public MBIDs and internal metadata ids", async () => {
+  const file = dbModule.db.prepare(`
+    SELECT id, artist_metadata_id
+    FROM TrackFiles
+    WHERE canonical_recording_mbid = ?
+  `).get("recording-mbid-1") as { id: number; artist_metadata_id: number };
+
+  const byMbid = await audioTagServiceModule.AudioTagService.preview({
+    artistId: "artist-mbid-1",
+    limit: 20,
+  });
+  const byInternalId = await audioTagServiceModule.AudioTagService.preview({
+    artistId: String(file.artist_metadata_id),
+    limit: 20,
+  });
+  const byBulkMbid = await audioTagServiceModule.AudioTagService.preview({
+    artistIds: ["artist-mbid-1"],
+    limit: 20,
+  });
+
+  assert.deepEqual(byMbid.map((item) => item.id), [file.id]);
+  assert.deepEqual(byInternalId.map((item) => item.id), [file.id]);
+  assert.deepEqual(byBulkMbid.map((item) => item.id), [file.id]);
+});
+
 test("embedded cover resolution reads the exact edition cache", async () => {
   const firstCover = Buffer.from("edition-one-cover");
   const secondCover = Buffer.from("edition-two-cover");
@@ -222,7 +248,7 @@ test("embedded cover resolution reads the exact edition cache", async () => {
   );
 });
 
-test("retag apply writes a real file, verifies it, and produces an idempotent second preview", {
+test("bulk artist retag writes tags and edition cover, verifies both, and is idempotent", {
   skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
 }, async () => {
   const row = dbModule.db.prepare(`
@@ -241,6 +267,20 @@ test("retag apply writes a real file, verifies it, and produces an idempotent se
   ], { windowsHide: true, encoding: "utf-8" });
   assert.equal(generated.status, 0, generated.stderr);
 
+  const coverPath = path.join(
+    tempDir,
+    "media-cover",
+    "AlbumEditions",
+    "release-mbid-1",
+    "cover.jpg",
+  );
+  const generatedCover = spawnSync("ffmpeg", [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "color=c=blue:s=64x64",
+    "-frames:v", "1", coverPath,
+  ], { windowsHide: true, encoding: "utf-8" });
+  assert.equal(generatedCover.status, 0, generatedCover.stderr);
+
   configModule.updateConfig("metadata", {
     ...configModule.getConfigSection("metadata"),
     write_audio_tags_policy: "all_files",
@@ -248,11 +288,14 @@ test("retag apply writes a real file, verifies it, and produces an idempotent se
   });
   configModule.updateConfig("quality", {
     ...configModule.getConfigSection("quality"),
-    embed_cover: false,
+    embed_cover: true,
     embed_lyrics: false,
   });
 
-  const before = await audioTagServiceModule.AudioTagService.preview({ limit: 20 });
+  const before = await audioTagServiceModule.AudioTagService.preview({
+    artistIds: ["artist-mbid-1"],
+    limit: 20,
+  });
   const preview = before.find((item) => item.id === row.id);
   assert.ok(preview);
   assert.equal(preview.missing, false);
@@ -260,11 +303,11 @@ test("retag apply writes a real file, verifies it, and produces an idempotent se
   assert.equal(preview.albumId, album.id);
   assert.ok(preview.changes.some((change) => change.field === "Title"));
   assert.ok(preview.changes.some((change) => change.field === "Artist"));
+  assert.ok(preview.changes.some((change) => change.field === "Cover Art"));
 
-  const applied = await audioTagServiceModule.AudioTagService.apply(
-    [row.id],
-    { includeExternalLyrics: false },
-  );
+  const applied = await audioTagServiceModule.AudioTagService.applyByQuery({
+    artistIds: ["artist-mbid-1"],
+  });
   assert.deepEqual(applied, {
     retagged: 1,
     skipped: 0,
@@ -272,6 +315,11 @@ test("retag apply writes a real file, verifies it, and produces an idempotent se
     errors: [],
   });
 
-  const after = await audioTagServiceModule.AudioTagService.preview({ limit: 20 });
+  assert.equal((await compareEmbeddedAudioCover(row.file_path, coverPath)).matches, true);
+
+  const after = await audioTagServiceModule.AudioTagService.preview({
+    artistIds: ["artist-mbid-1"],
+    limit: 20,
+  });
   assert.equal(after.some((item) => item.id === row.id), false);
 });

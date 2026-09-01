@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.13.6] - 2026-09-01
+
+Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a
+reset.
+
+### Changed
+
+- **Library-wide tag writing.** Selected artists now use Lidarr's bulk pattern:
+  one confirmation and one worker command. File-by-file previews remain on
+  artist and album pages, where they stay useful without trying to render an
+  entire large library in one dialog.
+
+### Fixed
+
+- **Artist retag scope.** Public MusicBrainz artist IDs now resolve to the
+  internal `ArtistMetadata` rows referenced by audio files. Library selection no
+  longer reports that no tags need writing while the same album shows changes.
+- **Large retag commands.** Artist batches read and write each file once, process
+  exact `TrackFiles` identities in bounded chunks, and stay below SQLite's
+  parameter limit while preserving per-file progress and verification.
+- **Edition cover art in bulk retags.** The bulk path uses the same cached,
+  edition-specific cover diff, write, and post-write verification as album-level
+  retagging, so composite donor artwork is replaced with the selected edition's
+  cover.
+
 ## [2.13.5] - 2026-09-01
 
 Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a

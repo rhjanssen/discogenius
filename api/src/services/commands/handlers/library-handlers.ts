@@ -258,20 +258,17 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds
         : (job.payload.artistId ? [job.payload.artistId] : []);
-    let retagged = 0;
-    let missing = 0;
-    const errors: Array<{ id: number; error: string }> = [];
-    for (const artistId of artistIds) {
-        const result = await AudioTagService.applyByQuery({ artistId, onProgress: makeRetagProgress(ctx, job, 'Retag Artist') });
-        ArtistStatisticsService.refresh([artistId]);
-        retagged += result.retagged;
-        missing += result.missing;
-        errors.push(...result.errors);
-        await ctx.yieldToEventLoop();
+    if (artistIds.length === 0) {
+        throw new Error("RetagArtist requires at least one artist id");
     }
+    const result = await AudioTagService.applyByQuery({
+        artistIds,
+        onProgress: makeRetagProgress(ctx, job, 'Retag Artist'),
+    });
+    ArtistStatisticsService.refresh(artistIds);
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: `Retagged ${retagged} file(s), ${missing} missing, ${errors.length} error(s)`,
+        description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
     });
 };
 

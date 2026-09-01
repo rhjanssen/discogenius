@@ -238,6 +238,7 @@ export type RetagMediaIdOptions = {
 
 export type RetagScopeOptions = {
   artistId?: string;
+  artistIds?: string[];
   albumId?: string;
   limit?: number;
   offset?: number;
@@ -291,6 +292,7 @@ const EMBEDDED_COVER_HEIGHT = 1200;
 // How many files the retag preview/status reads at once. Disk/parse bound, so a
 // modest fan-out (matching the artwork/refresh services) is the sweet spot.
 const RETAG_EVALUATION_CONCURRENCY = 8;
+const RETAG_APPLY_QUERY_BATCH_SIZE = 250;
 
 async function resolvePreferredEmbeddedCover(
   row: RetagTrackRow,
@@ -931,13 +933,30 @@ export class AudioTagService {
     }
   }
 
-  private static getTrackCount(options: RetagScopeOptions = {}): number {
+  private static buildScope(options: RetagScopeOptions = {}): {
+    where: string[];
+    params: Array<string | number>;
+  } {
     const where: string[] = ["lf.file_type = 'track'"];
-    const params: Array<string> = [];
+    const params: Array<string | number> = [];
 
-    if (options.artistId) {
-      where.push("lf.artist_metadata_id = ?");
-      params.push(options.artistId);
+    const artistIds = Array.from(new Set([
+      ...(Array.isArray(options.artistIds) ? options.artistIds : []),
+      ...(options.artistId ? [options.artistId] : []),
+    ].map((id) => String(id).trim()).filter(Boolean)));
+    if (artistIds.length > 0) {
+      const placeholders = artistIds.map(() => "?").join(",");
+      // Public artist identity is the MusicBrainz MBID; TrackFiles stores the
+      // internal ArtistMetadata FK. Accept either form at this boundary so the
+      // artist page, Library selection bar, API, and command worker share one
+      // scope contract.
+      where.push(`lf.artist_metadata_id IN (
+        SELECT artist.id
+        FROM ArtistMetadata artist
+        WHERE CAST(artist.id AS TEXT) IN (${placeholders})
+           OR artist.mbid IN (${placeholders})
+      )`);
+      params.push(...artistIds, ...artistIds);
     }
     if (options.albumId) {
       where.push(`(
@@ -962,6 +981,12 @@ export class AudioTagService {
       )`);
       params.push(options.albumId, options.albumId, options.albumId, options.albumId);
     }
+
+    return { where, params };
+  }
+
+  private static getTrackCount(options: RetagScopeOptions = {}): number {
+    const { where, params } = this.buildScope(options);
 
     const row = db.prepare(`
       SELECT COUNT(*) AS count
@@ -972,39 +997,20 @@ export class AudioTagService {
     return Number(row?.count || 0);
   }
 
+  private static getTrackFileIds(options: RetagScopeOptions = {}): number[] {
+    const { where, params } = this.buildScope(options);
+    return (db.prepare(`
+      SELECT lf.id
+      FROM TrackFiles lf
+      WHERE ${where.join(" AND ")}
+      ORDER BY lf.artist_metadata_id, lf.release_group_id, lf.album_edition_id, lf.id
+    `).all(...params) as Array<{ id: number }>).map((row) => row.id);
+  }
+
   private static getTrackRows(options: RetagScopeOptions = {}, includePaging = true): RetagTrackRow[] {
     const limit = options.limit ?? 200;
     const offset = options.offset ?? 0;
-    const where: string[] = ["lf.file_type = 'track'"];
-    const params: Array<string | number> = [];
-
-    if (options.artistId) {
-      where.push("lf.artist_metadata_id = ?");
-      params.push(options.artistId);
-    }
-    if (options.albumId) {
-      where.push(`(
-        lf.canonical_release_group_mbid = ?
-        OR lf.canonical_release_mbid = ?
-        OR (
-          lf.provider_entity_type = 'track'
-          AND CAST(lf.provider_id AS TEXT) IN (
-            SELECT CAST(scope_item.provider_id AS TEXT)
-            FROM ProviderItems scope_item
-            JOIN ProviderEditionMembers scope_member
-              ON scope_member.member_item_id = scope_item.id
-            JOIN ProviderEditionMatches scope_match
-              ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
-             AND scope_match.match_state = 'accepted'
-            JOIN AlbumEditions scope_release ON scope_release.id = scope_match.edition_id
-            JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
-            WHERE scope_item.entity_type = 'track'
-              AND (scope_group.mbid = ? OR scope_release.mbid = ?)
-          )
-        )
-      )`);
-      params.push(options.albumId, options.albumId, options.albumId, options.albumId);
-    }
+    const { where, params } = this.buildScope(options);
 
     const sql = this.buildTrackRowsSql(where.join(" AND "), includePaging);
 
@@ -2909,12 +2915,30 @@ export class AudioTagService {
       throw new Error("Enable fingerprinting, imported audio tag correction, or ReplayGain tagging before applying retag operations.");
     }
 
-    const items = await this.evaluateRows(this.getTrackRows(options, false), config);
-    const ids = items
-      .filter((item) => !item.missing && item.changes.length > 0)
-      .map((item) => item.id);
-
-    return this.apply(ids, { onProgress: options.onProgress });
+    // `apply` performs the same diff and skips aligned files. Pass exact row
+    // identities instead of evaluating the scope first, which used to parse
+    // every file twice. Batching also keeps a large library below SQLite's
+    // bound-variable limit and avoids holding all joined tag context in memory.
+    const ids = this.getTrackFileIds(options);
+    const result: RetagApplyResult = {
+      retagged: 0,
+      skipped: 0,
+      missing: 0,
+      errors: [],
+    };
+    let completed = 0;
+    for (let offset = 0; offset < ids.length; offset += RETAG_APPLY_QUERY_BATCH_SIZE) {
+      const batch = ids.slice(offset, offset + RETAG_APPLY_QUERY_BATCH_SIZE);
+      const batchResult = await this.apply(batch, {
+        onProgress: (batchCompleted) => options.onProgress?.(completed + batchCompleted, ids.length),
+      });
+      result.retagged += batchResult.retagged;
+      result.skipped += batchResult.skipped;
+      result.missing += batchResult.missing;
+      result.errors.push(...batchResult.errors);
+      completed += batch.length;
+    }
+    return result;
   }
 
   /**

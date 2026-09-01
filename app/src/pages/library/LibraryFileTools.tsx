@@ -1,9 +1,19 @@
 /**
- * Selection-scoped Preview Rename / Write Tags for library file tools.
+ * Selection-scoped rename and tag-writing tools for the Library.
  * Settings keeps naming templates and tag-writing policy; actions live on Library selection bars.
  */
 import { useCallback, useRef, useState, type ReactElement, type ReactNode } from "react";
-import { Spinner } from "@fluentui/react-components";
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Spinner,
+  Text,
+} from "@fluentui/react-components";
 import {
   Tag24Regular,
   Rename24Regular,
@@ -54,6 +64,7 @@ export function useLibraryFileMaintenance(): LibraryFileMaintenanceApi {
   const [renameLoading, setRenameLoading] = useState(false);
 
   const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
+  const [retagBulkOpen, setRetagBulkOpen] = useState(false);
   const [retagPreviewItems, setRetagPreviewItems] = useState<RetagPreviewItem[]>([]);
   const [retagApplying, setRetagApplying] = useState(false);
   const [retagLoading, setRetagLoading] = useState(false);
@@ -159,6 +170,13 @@ export function useLibraryFileMaintenance(): LibraryFileMaintenanceApi {
     }
 
     pendingScopeRef.current = { artistIds, albumIds };
+    if (albumIds.length === 0) {
+      // Lidarr deliberately confirms a bulk artist retag without reading every
+      // file into an enormous preview. Precise previews remain available from
+      // an artist or album page.
+      setRetagBulkOpen(true);
+      return;
+    }
     setRetagLoading(true);
     try {
       const chunks: RetagPreviewItem[] = [];
@@ -194,39 +212,43 @@ export function useLibraryFileMaintenance(): LibraryFileMaintenanceApi {
     }
   }, [toast]);
 
-  const handleApplyRetags = useCallback(async (ids?: number[]) => {
+  const handleApplyBulkRetags = useCallback(async () => {
+    const artistIds = uniqueIds(pendingScopeRef.current.artistIds);
+    if (artistIds.length === 0) return;
+
     setRetagApplying(true);
     try {
-      if (ids?.length) {
-        const result: any = await api.applyRetags({ ids });
-        toast({
-          title: "Retag queued",
-          description: result?.message || `Queued retag for ${ids.length} file(s).`,
-        });
-      } else {
-        const { artistIds = [], albumIds = [] } = pendingScopeRef.current;
-        let queued = 0;
-        if (albumIds.length > 0) {
-          for (const albumId of albumIds) {
-            await api.applyRetags({ applyAll: true, albumId });
-            queued += 1;
-          }
-        } else {
-          for (const artistId of artistIds) {
-            await api.applyRetags({ applyAll: true, artistId });
-            queued += 1;
-          }
-        }
-        toast({
-          title: "Retag queued",
-          description: `Queued retag for ${queued} selected scope${queued === 1 ? "" : "s"}.`,
-        });
-      }
+      const result: any = await api.applyRetags({ applyAll: true, artistIds });
+      toast({
+        title: "Write Tags queued",
+        description: result?.message || `Queued tag writing for ${artistIds.length} selected artist${artistIds.length === 1 ? "" : "s"}.`,
+      });
+      setRetagBulkOpen(false);
+    } catch (error) {
+      toast({
+        title: "Failed to queue tag writing",
+        description: error instanceof Error ? error.message : "Could not queue tag writing.",
+        variant: "destructive",
+      });
+    } finally {
+      setRetagApplying(false);
+    }
+  }, [toast]);
+
+  const handleApplyRetags = useCallback(async (ids?: number[]) => {
+    if (!ids?.length) return;
+    setRetagApplying(true);
+    try {
+      const result: any = await api.applyRetags({ ids });
+      toast({
+        title: "Write Tags queued",
+        description: result?.message || `Queued tag writing for ${ids.length} file(s).`,
+      });
       setRetagPreviewOpen(false);
     } catch (error) {
       toast({
-        title: "Failed to queue retag",
-        description: error instanceof Error ? error.message : "Could not queue retag.",
+        title: "Failed to queue tag writing",
+        description: error instanceof Error ? error.message : "Could not queue tag writing.",
         variant: "destructive",
       });
     } finally {
@@ -254,6 +276,29 @@ export function useLibraryFileMaintenance(): LibraryFileMaintenanceApi {
         onOpenChange={setRetagPreviewOpen}
         onApply={handleApplyRetags}
       />
+      <Dialog open={retagBulkOpen} onOpenChange={(_, data) => setRetagBulkOpen(data.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Write Tags for selected artists?</DialogTitle>
+            <DialogContent>
+              <Text>
+                Discogenius will check every audio file owned by the {pendingScopeRef.current.artistIds?.length ?? 0} selected artist{pendingScopeRef.current.artistIds?.length === 1 ? "" : "s"} and update only tags that differ from the catalog and library edition. Use an artist or album page when you want a file-by-file preview first.
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setRetagBulkOpen(false)}>Cancel</Button>
+              <Button
+                appearance="primary"
+                icon={retagApplying ? <Spinner size="tiny" /> : <Tag24 />}
+                disabled={retagApplying}
+                onClick={() => void handleApplyBulkRetags()}
+              >
+                Write Tags
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </>
   );
 

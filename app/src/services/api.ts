@@ -1091,6 +1091,7 @@ class ApiClient {
   async applyRetags(params: {
     ids?: number[];
     artistId?: string;
+    artistIds?: string[];
     albumId?: string;
     applyAll?: boolean;
   }) {

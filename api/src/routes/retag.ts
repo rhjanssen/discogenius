@@ -11,7 +11,7 @@ router.get("/", async (req, res) => {
   try {
     const artistId = req.query.artistId as string | undefined;
     const albumId = req.query.albumId as string | undefined;
-    const limit = parseBoundedQueryInteger(req.query.limit, 200, { min: 1, max: 500 });
+    const limit = parseBoundedQueryInteger(req.query.limit, 200, { min: 1, max: 2000 });
     const offset = parseBoundedQueryInteger(req.query.offset, 0);
 
     const items = await AudioTagService.preview({ artistId, albumId, limit, offset });
@@ -37,23 +37,41 @@ router.get("/status", async (req, res) => {
 
 router.post("/apply", async (req, res) => {
   try {
-    const ids = (req.body as any)?.ids as number[] | undefined;
-    const applyAll = (req.body as any)?.applyAll === true;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const ids = body.ids as number[] | undefined;
+    const applyAll = body.applyAll === true;
     if ((!ids || !Array.isArray(ids) || ids.length === 0) && !applyAll) {
       return res.status(400).json({ detail: "ids array is required unless applyAll is true" });
     }
 
-    const artistId = (req.body as any)?.artistId as string | undefined;
-    const albumId = (req.body as any)?.albumId as string | undefined;
+    const artistId = typeof body.artistId === "string" ? body.artistId.trim() : undefined;
+    const albumId = typeof body.albumId === "string" ? body.albumId.trim() : undefined;
+    if (body.artistIds !== undefined && !Array.isArray(body.artistIds)) {
+      return res.status(400).json({ detail: "artistIds must be an array" });
+    }
+    const rawArtistIds = Array.isArray(body.artistIds) ? body.artistIds : [];
+    if (rawArtistIds.length > 5000 || rawArtistIds.some((id) => typeof id !== "string" || !id.trim())) {
+      return res.status(400).json({ detail: "artistIds must contain 1 to 5000 non-empty identifiers" });
+    }
+    const artistIds = Array.from(new Set([
+      ...rawArtistIds.map((id) => String(id).trim()),
+      ...(artistId ? [artistId] : []),
+    ]));
     const normalizedIds = ids && Array.isArray(ids)
-      ? ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+      ? ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
       : undefined;
     const isArtistWideRetag = applyAll
-      && Boolean(artistId)
+      && artistIds.length > 0
       && !albumId
       && (!normalizedIds || normalizedIds.length === 0);
+    if (applyAll && (!normalizedIds || normalizedIds.length === 0) && !albumId && artistIds.length === 0) {
+      return res.status(400).json({ detail: "artistId, artistIds, or albumId is required when applyAll is true" });
+    }
+    if (albumId && artistIds.length > 0) {
+      return res.status(400).json({ detail: "Pass an artist scope or an album scope, not both" });
+    }
     const refId = isArtistWideRetag
-      ? artistId
+      ? (artistIds.length === 1 ? artistIds[0] : `retag-artists:${JSON.stringify(artistIds)}`)
       : `retag-files:${JSON.stringify(applyAll
         ? { artistId: artistId || null, albumId: albumId || null }
         : { ids: normalizedIds || [] })}`;
@@ -61,8 +79,8 @@ router.post("/apply", async (req, res) => {
     const commandId = await runWithAsyncBusyRetry(
       () => isArtistWideRetag
         ? CommandQueueManager.push(CommandNames.RetagArtist, {
-          artistId,
-          artistIds: artistId ? [artistId] : undefined,
+          artistId: artistIds.length === 1 ? artistIds[0] : undefined,
+          artistIds,
         }, refId, 1, 1)
         : CommandQueueManager.push(CommandNames.RetagFiles, {
           ids: normalizedIds,
