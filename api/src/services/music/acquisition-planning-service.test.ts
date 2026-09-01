@@ -6,6 +6,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
 import { buildAcquisitionDownloadCommand } from "./acquisition-plan-executor.js";
+import { resolveEnabledAudioLibraryTarget } from "./acquisition-download-command.js";
 import { AcquisitionPlanningService, listStrandedMonitoredEditions, replanMonitoredEditions } from "./acquisition-planning-service.js";
 
 function seedStandardDeluxeFixture(db: Database.Database): number {
@@ -156,6 +157,8 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
     assert.equal(highCommand?.body.providerId, "standard");
     assert.equal(highCommand?.body.libraryId, 1);
     assert.equal(highCommand?.body.acquisitionPlanId, highPlanId);
+    assert.equal(highCommand?.body.slot, "stereo");
+    assert.equal(highCommand?.body.libraryRoot, "music");
     assert.deepEqual(
       highCommand?.body.trackOffers?.map((offer) => [
         offer.providerTrackItemId,
@@ -171,6 +174,37 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
       ],
       "Album-mode commands still carry exact per-track provenance for import",
     );
+
+    db.prepare("UPDATE Libraries SET name = 'Spatial-looking stereo library' WHERE id = 1").run();
+    assert.equal(
+      buildAcquisitionDownloadCommand(db, highPlanId!)?.body.slot,
+      "stereo",
+      "the quality profile, not the display name, owns the destination slot",
+    );
+    db.prepare(`
+      UPDATE quality_profiles SET allowed_source_formats = '["spatial"]' WHERE id = 1
+    `).run();
+    const spatialCommand = buildAcquisitionDownloadCommand(db, highPlanId!);
+    assert.equal(spatialCommand?.body.slot, "spatial");
+    assert.equal(spatialCommand?.body.libraryRoot, "spatial");
+    assert.deepEqual(resolveEnabledAudioLibraryTarget(db, 1), {
+      libraryId: 1,
+      rootPath: "/library/stereo",
+      slot: "spatial",
+    });
+    db.prepare(`
+      UPDATE quality_profiles
+      SET allowed_source_formats = '["lossless","hires-lossless"]'
+      WHERE id = 1
+    `).run();
+    db.prepare("UPDATE Libraries SET enabled = 0 WHERE id = 1").run();
+    assert.equal(
+      buildAcquisitionDownloadCommand(db, highPlanId!),
+      null,
+      "a stale plan for a disabled library must not become a download command",
+    );
+    assert.equal(resolveEnabledAudioLibraryTarget(db, 1), null);
+    db.prepare("UPDATE Libraries SET enabled = 1 WHERE id = 1").run();
 
     db.prepare(`
       UPDATE quality_profiles

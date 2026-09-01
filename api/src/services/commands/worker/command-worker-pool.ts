@@ -4,7 +4,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { readIntEnv } from "../../../utils/env.js";
-import { sqliteWriteMutexWorkerData } from "../../../database/sqlite-write-mutex.js";
+import {
+    forceReleaseSqliteWriteMutexOwner,
+    SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY,
+    sqliteWriteMutexWorkerData,
+} from "../../../database/sqlite-write-mutex.js";
 import { appEvents, type AppEvent } from "../app-events.js";
 import { ownerAcquire, ownerRelease, ownerReleaseAllFor } from "./sqlite-write-lock.js";
 import type {CommandModel} from "../command-model.js";
@@ -89,6 +93,7 @@ interface PoolWorker {
     commandStartedAt?: number;
     exited: boolean;
     forcedExitError?: Error;
+    sqliteWriteMutexOwnerToken: number;
     settle?: JobSettle;
 }
 
@@ -262,11 +267,13 @@ export class CommandWorkerPool {
             busy: false,
             lastSeenAt: Date.now(),
             exited: false,
+            sqliteWriteMutexOwnerToken: Number(workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]) || 0,
         };
 
         worker.on("message", (message: WorkerToMainMessage) => this.handleMessage(poolWorker, message));
         worker.on("error", (error) => this.handleWorkerExit(poolWorker, error));
         worker.on("exit", (code) => {
+            forceReleaseSqliteWriteMutexOwner(poolWorker.sqliteWriteMutexOwnerToken);
             this.handleWorkerExit(
                 poolWorker,
                 new Error(
@@ -442,9 +449,12 @@ export class CommandWorkerPool {
         // asynchronous terminate cannot free this worker or receive a queued
         // replacement command.
         this.handleWorkerExit(entry, abortError);
-        void termination.catch((error) => {
-            this.handleWorkerExit(entry, error instanceof Error ? error : new Error(String(error)));
-        });
+        void termination.then(
+            () => { forceReleaseSqliteWriteMutexOwner(entry.sqliteWriteMutexOwnerToken); },
+            (error) => {
+                this.handleWorkerExit(entry, error instanceof Error ? error : new Error(String(error)));
+            },
+        );
         return true;
     }
 

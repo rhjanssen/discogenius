@@ -7,6 +7,7 @@ import {CommandNames} from "./command-names.js";
 import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
 import { getManagedArtists, getManagedArtistsDueForRefresh } from "../music/managed-artists.js";
 import { readIntEnv } from "../../utils/env.js";
+import { getPendingAcquisitionPlanningRevision } from "../music/acquisition-planning-control.js";
 import {
     getArtistsWithPendingJobs,
     getEffectiveMonitoringRuntimeState,
@@ -366,11 +367,17 @@ export function queueCurationPass(options: {
     trigger?: number;
     monitoringCycle?: MonitoringPassWorkflow;
     artistIds?: string[];
+    providerPriorityRevision?: string;
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const artistIds = normalizeArtistIds(options.artistIds);
     const artists = getManagedArtists({ orderByLastScanned: true, artistIds });
-    const refId = monitoringCycle ? `apply-curation:${monitoringCycle}` : "apply-curation";
+    const artistScope = artistIds && artistIds.length > 0
+        ? `:artists:${[...artistIds].sort().join(",")}`
+        : "";
+    const refId = `${monitoringCycle ? `apply-curation:${monitoringCycle}` : "apply-curation"}${artistScope}`;
+    const providerPriorityRevision = options.providerPriorityRevision
+        ?? (artistIds == null ? getPendingAcquisitionPlanningRevision() ?? undefined : undefined);
     return CommandQueueManager.push(
         CommandNames.ApplyCuration,
         {
@@ -381,6 +388,7 @@ export function queueCurationPass(options: {
             artistIds,
             expectedArtists: artists.length,
             monitoringCycle,
+            providerPriorityRevision,
         },
         refId,
         0,
@@ -393,9 +401,21 @@ export function queueDownloadMissingPass(options: {
     priority?: number;
     monitoringCycle?: MonitoringPassWorkflow;
     artistIds?: string[];
+    skipStalePlanningCheck?: boolean;
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const artistIds = normalizeArtistIds(options.artistIds);
+    const providerPriorityRevision = options.skipStalePlanningCheck
+        ? null
+        : getPendingAcquisitionPlanningRevision();
+    if (providerPriorityRevision) {
+        return queueCurationPass({
+            trigger: options.trigger,
+            monitoringCycle: monitoringCycle ?? "curation-cycle",
+            artistIds,
+            providerPriorityRevision,
+        });
+    }
     const artistScope = artistIds && artistIds.length > 0
         ? `:artists:${[...artistIds].sort().join(",")}`
         : "";
@@ -487,6 +507,10 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
             queueDownloadMissingPass({
                 trigger: job.trigger ?? CommandTrigger.Unspecified,
                 monitoringCycle,
+                artistIds: Array.isArray(job.payload?.artistIds)
+                    ? job.payload.artistIds.map((id) => String(id))
+                    : undefined,
+                skipStalePlanningCheck: true,
             });
             return;
         default:

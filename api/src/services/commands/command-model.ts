@@ -6,6 +6,7 @@
 import { CommandNames, type CommandName } from "./command-names.js";
 import type {
     ApplyCurationCommand,
+    ReplanAcquisitionCommand,
     BulkRefreshArtistCommand,
     CheckHealthCommand,
     BackupDatabaseCommand,
@@ -29,7 +30,6 @@ import type {
     RefreshAlbumCommand,
     RefreshArtistCommand,
     RefreshMetadataCommand,
-    ReplanAcquisitionCommand,
     RenameArtistCommand,
     RenameFilesCommand,
     RescanAllRootsCommand,

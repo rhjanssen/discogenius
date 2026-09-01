@@ -17,10 +17,16 @@ import {
     invalidateReleaseGroupDownloadStatus,
     updateAlbumDownloadStatus,
 } from './download-state.js';
-import { isSqliteWriteMutexHeld, sqliteWriteMutexWorkerData } from "../../database/sqlite-write-mutex.js";
+import {
+    forceReleaseSqliteWriteMutexOwner,
+    isSqliteWriteMutexHeld,
+    SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY,
+    sqliteWriteMutexWorkerData,
+} from "../../database/sqlite-write-mutex.js";
 import { downloadBackendRegistry } from './download-backend.js';
 import { readIntEnv } from '../../utils/env.js';
 import { formatDisambiguatedTitle, formatTrackDisplayTitle } from '../../utils/display-title.js';
+import { resolveEnabledAudioLibraryTarget } from '../music/acquisition-download-command.js';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -40,6 +46,7 @@ import {
 } from './download-failure-policy.js';
 import {
     listRankedAlbumOffers,
+    listRankedAlbumTrackOffers,
     listRankedTrackOffers,
     listRankedVideoOffers,
     makeOfferAttemptKey,
@@ -179,6 +186,31 @@ export function applyFallbackTrackOffer(
         acquisitionPlanSourceId: null,
         quality: next.quality ?? null,
     };
+}
+
+/**
+ * Rebind every planned track to the exact occurrence on a fallback provider
+ * edition. Returning null rejects an incomplete or ambiguous album fallback;
+ * the importer must never infer provenance after files have moved.
+ */
+export function remapAlbumTrackOffersForFallback(
+    trackOffers: readonly DownloadTrackOffer[],
+    fallback: Pick<RankedDownloadOffer, "provider" | "providerId">,
+    librarySlot?: string | null,
+): DownloadTrackOffer[] | null {
+    const remapped: DownloadTrackOffer[] = [];
+    for (const current of trackOffers) {
+        const candidates = listRankedAlbumTrackOffers({
+            provider: fallback.provider,
+            providerAlbumId: fallback.providerId,
+            trackMbid: current.canonicalTrackMbid,
+            recordingMbid: current.canonicalRecordingMbid,
+            librarySlot,
+        });
+        if (candidates.length !== 1) return null;
+        remapped.push(applyFallbackTrackOffer(current, candidates[0]));
+    }
+    return remapped;
 }
 
 export function resetTracksForImportState(
@@ -445,6 +477,21 @@ export function applyFallbackOfferToPayload(
         // A URL belongs to the provider that minted it. Clearing it is safer
         // than describing the fallback provider with the failed provider's URL.
     }
+    const remappedTrackOffers = type === "album"
+        && Array.isArray((payload as DownloadAlbumCommand).trackOffers)
+        && (payload as DownloadAlbumCommand).trackOffers!.length > 0
+        ? remapAlbumTrackOffersForFallback(
+            (payload as DownloadAlbumCommand).trackOffers!,
+            offer,
+            (payload as DownloadAlbumCommand).slot,
+        )
+        : undefined;
+    if (type === "album" && Array.isArray((payload as DownloadAlbumCommand).trackOffers)
+        && (payload as DownloadAlbumCommand).trackOffers!.length > 0 && !remappedTrackOffers) {
+        throw new Error(
+            `Fallback album ${offer.provider}:${offer.providerId} does not have one exact offer context for every requested track`,
+        );
+    }
     return {
         ...payload,
         provider: offer.provider,
@@ -452,6 +499,7 @@ export function applyFallbackOfferToPayload(
         providerId: offer.providerId,
         quality: offer.quality ?? null,
         url,
+        ...(remappedTrackOffers ? { trackOffers: remappedTrackOffers } : {}),
     } as unknown as DownloadCommand;
 }
 type DownloadOrImportCommand = DownloadCommand | ImportDownloadCommand;
@@ -1664,6 +1712,22 @@ export class DownloadProcessor {
         }
         let payload = job.payload as DownloadOrImportCommand;
 
+        if (type !== 'video' && payload.libraryId != null) {
+            const libraryId = Number(payload.libraryId);
+            const target = resolveEnabledAudioLibraryTarget(db, libraryId);
+            const requestedSlot = String(payload.slot || 'stereo');
+            if (!target || target.slot !== requestedSlot) {
+                const reason = !target
+                    ? `target library ${libraryId} is disabled or is not an audio library`
+                    : `target library ${libraryId} now uses the ${target.slot} slot instead of ${requestedSlot}`;
+                console.warn(`[DOWNLOAD-PROCESSOR] Cancelling stale job #${job.id}: ${reason}`);
+                CommandQueueManager.cancel(job.id);
+                DownloadWaitQueue.removeByCommandId(job.id);
+                this.scheduleNext();
+                return;
+            }
+        }
+
         console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.name} (ref: ${providerId})`);
 
         const claimedJob = this.claimDownloadJob(job);
@@ -2277,10 +2341,17 @@ export class DownloadProcessor {
         providerItemId: string,
     ): RankedDownloadOffer[] {
         if (type === "album") {
-            return listRankedAlbumOffers(
+            const ranked = listRankedAlbumOffers(
                 payload.releaseGroupMbid || payload.albumId || null,
                 payload.slot || null,
             );
+            const trackOffers = (payload as DownloadAlbumCommand).trackOffers;
+            if (!Array.isArray(trackOffers) || trackOffers.length === 0) return ranked;
+            return ranked.filter((offer) => remapAlbumTrackOffersForFallback(
+                trackOffers,
+                offer,
+                payload.slot,
+            ) != null);
         }
         if (type === "track") {
             return listRankedTrackOffers({
@@ -2331,7 +2402,9 @@ export class DownloadProcessor {
         payload: DownloadAlbumCommand,
         entry: ActiveDownload,
     ): Promise<void> {
-        const offers = Array.isArray(payload.trackOffers) ? payload.trackOffers : [];
+        const currentJob = CommandQueueManager.get(commandId);
+        const currentPayload = (currentJob?.payload || payload) as DownloadAlbumCommand;
+        const offers = Array.isArray(currentPayload.trackOffers) ? currentPayload.trackOffers : [];
         if (offers.length === 0) {
             throw new Error("DownloadAlbum trackOffers mode requires at least one track offer");
         }
@@ -2349,8 +2422,6 @@ export class DownloadProcessor {
         const controller = entry.abortController;
         const signal = controller.signal;
 
-        const currentJob = CommandQueueManager.get(commandId);
-        const currentPayload = (currentJob?.payload || payload) as DownloadAlbumCommand;
         const tracks: DownloadTrackStateEntry[] = Array.isArray(currentPayload.downloadState?.tracks)
             ? [...currentPayload.downloadState!.tracks!]
             : offers.map((offer) => ({
@@ -2373,6 +2444,17 @@ export class DownloadProcessor {
         let completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
         let fallbackPrimary: string | null = null;
         let fallbackUsed: string | null = null;
+        const durableOffers = offers.map((offer) => ({ ...offer }));
+        const persistFallbackOffer = (offerIndex: number, offer: DownloadTrackOffer): void => {
+            durableOffers[offerIndex] = { ...offer };
+            const updated = CommandQueueManager.updateState(commandId, {
+                workerId: entry.workerId,
+                payloadPatch: { trackOffers: durableOffers } as any,
+            });
+            if (!updated) {
+                throw new Error("Download attempt lost durable ownership while recording fallback provenance");
+            }
+        };
 
         const emitProgress = (partial: DownloadStatePayload) => {
             this.persistDownloadState(commandId, partial);
@@ -2411,8 +2493,6 @@ export class DownloadProcessor {
         }, 500);
 
         try {
-            const resolvedOffers: DownloadTrackOffer[] = [];
-
             for (let offerIndex = 0; offerIndex < offers.length; offerIndex++) {
                 if (entry.cancelRequested || signal.aborted) {
                     throw new Error("Download cancelled");
@@ -2448,6 +2528,7 @@ export class DownloadProcessor {
                         fallbackPrimary ||= primaryOfferProvider;
                         fallbackUsed = next.provider;
                         offer = applyFallbackTrackOffer(offer, next);
+                        persistFallbackOffer(offerIndex, offer);
                         continue;
                     }
 
@@ -2545,7 +2626,6 @@ export class DownloadProcessor {
                                 provider: providerId,
                             };
                         }
-                        resolvedOffers.push(offer);
                         downloaded = true;
                     } catch (error) {
                         if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
@@ -2563,6 +2643,7 @@ export class DownloadProcessor {
                         fallbackPrimary ||= primaryOfferProvider;
                         fallbackUsed = next.provider;
                         offer = applyFallbackTrackOffer(offer, next);
+                        persistFallbackOffer(offerIndex, offer);
                         emitProgress({
                             state: "downloading",
                             statusMessage: `Falling back to ${formatProviderLabel(next.provider)}…`,
@@ -2570,15 +2651,6 @@ export class DownloadProcessor {
                         });
                     }
                 }
-            }
-
-            if (resolvedOffers.length > 0) {
-                CommandQueueManager.updateState(commandId, {
-                    workerId: entry.workerId,
-                    payloadPatch: {
-                        trackOffers: resolvedOffers,
-                    } as any,
-                });
             }
 
             completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
@@ -2831,6 +2903,7 @@ function resolveDownloadWorkerSpawn(): { entry: string; workerData: Record<strin
 
 export class DownloadProcessorWorkerProxy {
     private worker?: Worker;
+    private workerSqliteWriteMutexOwnerToken = 0;
     private nextRequestId = 1;
     private pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
     private initialized = false;
@@ -2988,6 +3061,9 @@ export class DownloadProcessorWorkerProxy {
 
         const { entry, workerData } = resolveDownloadWorkerSpawn();
         const worker = new Worker(entry, { workerData });
+        this.workerSqliteWriteMutexOwnerToken = Number(
+            workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY],
+        ) || 0;
         // The API server's HTTP listener keeps the process alive; the worker
         // must never be the thing pinning it (shutdown calls process.exit).
         worker.unref();
@@ -3000,6 +3076,8 @@ export class DownloadProcessorWorkerProxy {
         });
         worker.on('exit', (code) => {
             if (this.worker !== worker) return;
+            forceReleaseSqliteWriteMutexOwner(this.workerSqliteWriteMutexOwnerToken);
+            this.workerSqliteWriteMutexOwnerToken = 0;
             this.worker = undefined;
             const reason = this.watchdogTerminationReason
                 || `Download processor worker exited unexpectedly with code ${code}`;

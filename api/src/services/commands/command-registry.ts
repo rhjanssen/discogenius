@@ -290,11 +290,11 @@ export const COMMAND_DEFINITIONS = {
   },
   [CommandNames.ReplanAcquisition]: {
     type: CommandNames.ReplanAcquisition,
-    name: "Replan Acquisition",
+    name: "Apply provider order on next curation",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
-    isLongRunning: true,
+    isLongRunning: false,
   },
   [CommandNames.DownloadMissing]: {
     type: CommandNames.DownloadMissing,

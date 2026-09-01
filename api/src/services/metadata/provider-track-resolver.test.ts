@@ -107,6 +107,7 @@ test("canonical provider track resolution follows the current normalized plan", 
     SELECT id, name FROM Libraries WHERE name IN ('Stereo', 'Spatial')
   `).all() as Array<{ id: number; name: string }>;
   for (const library of libraries) {
+    db.prepare("UPDATE Libraries SET enabled = 1 WHERE id = ?").run(library.id);
     db.prepare(`
       INSERT INTO LibraryAlbums (
       library_id, release_group_id, selection_mode, locked, reason, curation_version
@@ -162,4 +163,57 @@ test("canonical provider track resolution follows the current normalized plan", 
   assert.equal(spatial?.providerTrackId, "provider-track-1");
   assert.equal(spatial?.slot, "spatial");
   assert.equal(spatial?.quality, "DOLBY_ATMOS");
+
+  db.prepare("UPDATE AcquisitionPlans SET state = 'stale' WHERE provider = 'test-provider'").run();
+  const acceptedFallback = await resolverModule.resolveProviderPreviewTrackForCanonicalTrack({
+    releaseGroupMbid: "group-1",
+    canonicalRecordingMbid: "recording-1",
+    provider: "test-provider",
+    slot: "stereo",
+  });
+  assert.deepEqual(acceptedFallback, {
+    provider: "test-provider",
+    providerTrackId: "provider-track-1",
+    quality: "LOSSLESS",
+    score: 98,
+  });
+
+  const ambiguousProviderTrack = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('test-provider', 'track', 'provider-track-2', 'Target Track', 'unavailable')
+    RETURNING id
+  `).get() as { id: number };
+  const ambiguousMember = db.prepare(`
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 3)
+    RETURNING id
+  `).get(providerRelease.id, ambiguousProviderTrack.id) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
+      track_id, recording_id, match_state, decision_source, confidence, method,
+      matcher_version
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 0.97, 'test', 1)
+  `).run(
+    ambiguousProviderTrack.id,
+    ambiguousMember.id,
+    releaseMatch.id,
+    track.id,
+    recording.id,
+  );
+  assert.equal((await resolverModule.resolveProviderPreviewTrackForCanonicalTrack({
+    releaseGroupMbid: "group-1",
+    canonicalRecordingMbid: "recording-1",
+    provider: "test-provider",
+    slot: "stereo",
+  }))?.providerTrackId, "provider-track-1", "an unavailable match must not block the playable one");
+  db.prepare("UPDATE ProviderItems SET availability = 'available' WHERE id = ?")
+    .run(ambiguousProviderTrack.id);
+  assert.equal(await resolverModule.resolveProviderPreviewTrackForCanonicalTrack({
+    releaseGroupMbid: "group-1",
+    canonicalRecordingMbid: "recording-1",
+    provider: "test-provider",
+    slot: "stereo",
+  }), null, "an ambiguous accepted provider resource must fail closed");
 });

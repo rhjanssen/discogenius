@@ -240,6 +240,97 @@ export function listRankedTrackOffers(options: {
   ));
 }
 
+/**
+ * Resolve one canonical track inside a specific fallback provider edition.
+ *
+ * A provider track can occur on several provider editions, so the generic
+ * track-offer list is not enough here: its de-duplication deliberately treats
+ * the provider track resource as one offer and can discard the occurrence the
+ * album downloader will actually use. Album fallback needs the exact parent
+ * edition occurrence so the imported file keeps truthful provenance.
+ */
+export function listRankedAlbumTrackOffers(options: {
+  provider: string;
+  providerAlbumId: string;
+  trackMbid?: string | null;
+  recordingMbid?: string | null;
+  librarySlot?: string | null;
+}): RankedDownloadOffer[] {
+  const provider = String(options.provider || "").trim();
+  const providerAlbumId = String(options.providerAlbumId || "").trim();
+  const trackMbid = String(options.trackMbid || "").trim();
+  const recordingMbid = String(options.recordingMbid || "").trim();
+  if (!provider || !providerAlbumId || (!trackMbid && !recordingMbid)) return [];
+
+  const rows = db.prepare(`
+    SELECT item.id AS provider_item_id,
+           item.provider,
+           CAST(item.provider_id AS TEXT) AS provider_id,
+           COALESCE(
+             variant.provider_quality_label,
+             variant.spatial_format,
+             variant.quality_class
+           ) AS quality,
+           variant.quality_class,
+           variant.spatial_format,
+           parent.id AS provider_album_item_id,
+           CAST(parent.provider_id AS TEXT) AS provider_album_id,
+           variant.id AS provider_audio_variant_id
+    FROM ProviderTrackMatches track_match
+    JOIN ProviderItems item
+      ON item.id = track_match.provider_track_item_id
+     AND item.entity_type = 'track'
+    JOIN ProviderEditionMembers member
+      ON member.id = track_match.provider_edition_member_id
+     AND member.member_item_id = item.id
+    JOIN ProviderItems parent
+      ON parent.id = member.provider_edition_item_id
+     AND parent.entity_type = 'release'
+    JOIN ProviderEditionMatches release_match
+      ON release_match.id = track_match.provider_edition_match_id
+     AND release_match.provider_edition_item_id = parent.id
+     AND release_match.match_state = 'accepted'
+    LEFT JOIN Tracks track ON track.id = track_match.track_id
+    JOIN Recordings recording ON recording.id = track_match.recording_id
+    LEFT JOIN ProviderItemAudioVariants variant
+      ON variant.provider_item_id = item.id
+     AND ${availabilitySql("variant.availability")}
+    WHERE track_match.match_state = 'accepted'
+      AND item.provider = ?
+      AND parent.provider = ?
+      AND CAST(parent.provider_id AS TEXT) = CAST(? AS TEXT)
+      AND (
+        (? != '' AND track.mbid = ?)
+        OR (? != '' AND recording.mbid = ?)
+      )
+      AND ${availabilitySql("item.availability")}
+      AND ${availabilitySql("parent.availability")}
+  `).all(
+    provider,
+    provider,
+    providerAlbumId,
+    trackMbid,
+    trackMbid,
+    recordingMbid,
+    recordingMbid,
+  ) as AudioOfferRow[];
+
+  const slot = String(options.librarySlot || "stereo").trim().toLowerCase();
+  if (slot === "spatial") {
+    return dedupeOffers(sortSpatialOffers(
+      rows
+        .map(toSpatialDownloadOffer)
+        .filter((offer): offer is SpatialRankedDownloadOffer => Boolean(offer)),
+    ));
+  }
+
+  return dedupeOffers(sortAudioOffers(
+    rows
+      .filter((row) => rowSlot(row) === "stereo")
+      .map(toDownloadOffer),
+  ));
+}
+
 export function listRankedVideoOffers(recordingRef: string | null | undefined): RankedDownloadOffer[] {
   const key = String(recordingRef || "").trim();
   if (!key) return [];

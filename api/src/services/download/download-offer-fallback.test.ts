@@ -13,6 +13,7 @@ dbModule.initDatabase();
 const { db } = dbModule;
 
 const {
+  listRankedAlbumTrackOffers,
   listRankedAlbumOffers,
   listRankedTrackOffers,
   listRankedVideoOffers,
@@ -251,6 +252,49 @@ test("listRankedTrackOffers accepts an exact parentless provider track match", (
       providerAudioVariantId: variant,
     }],
   );
+});
+
+test("album fallback keeps the requested edition occurrence when one provider track is reused", () => {
+  seedCanonicalAlbum(db, {
+    releaseGroupMbid: "rg-shared-occurrence",
+    releaseMbid: "rel-shared-occurrence",
+    tracks: [{ trackMbid: "track-shared", recordingMbid: "recording-shared" }],
+  });
+  const first = seedAcceptedProviderTrackMatch(db, {
+    provider: "tidal",
+    providerEditionId: "tidal-first-edition",
+    providerTrackId: "tidal-shared-track",
+    releaseMbid: "rel-shared-occurrence",
+    trackMbid: "track-shared",
+  });
+  const second = seedAcceptedProviderTrackMatch(db, {
+    provider: "tidal",
+    providerEditionId: "tidal-second-edition",
+    providerTrackId: "tidal-shared-track",
+    releaseMbid: "rel-shared-occurrence",
+    trackMbid: "track-shared",
+  });
+  const variant = seedProviderAudioVariant(db, {
+    providerItemId: first.providerTrackItemId,
+    qualityClass: "lossless",
+    providerQualityLabel: "LOSSLESS",
+  });
+
+  assert.deepEqual(listRankedAlbumTrackOffers({
+    provider: "tidal",
+    providerAlbumId: "tidal-second-edition",
+    trackMbid: "track-shared",
+    recordingMbid: "recording-shared",
+    librarySlot: "stereo",
+  }), [{
+    provider: "tidal",
+    providerId: "tidal-shared-track",
+    quality: "LOSSLESS",
+    providerAlbumId: "tidal-second-edition",
+    providerItemId: first.providerTrackItemId,
+    providerAlbumItemId: second.providerEditionItemId,
+    providerAudioVariantId: variant,
+  }]);
 });
 
 test("listRankedTrackOffers keeps stereo and spatial fallbacks in their requested slot", () => {

@@ -444,13 +444,30 @@ export class DownloadWaitQueue {
           FROM SelectedAcquisitionPlans plan
           JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
           JOIN Libraries library ON library.id = library_release.library_id
+          JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
           JOIN AlbumEditions release ON release.id = library_release.edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
           WHERE plan.state = 'current'
+            AND library.enabled = 1
             AND release_group.mbid = ?
             AND (
-              (? = 'spatial' AND library.name LIKE '%spatial%')
-              OR ((? IS NULL OR ? = 'stereo') AND library.name NOT LIKE '%spatial%' AND library.name NOT LIKE '%Video%')
+              (? = 'spatial' AND EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE LOWER(CAST(allowed.value AS TEXT)) = 'spatial'
+              ))
+              OR ((? IS NULL OR ? = 'stereo')
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                  WHERE LOWER(CAST(allowed.value AS TEXT)) = 'spatial'
+                )
+                AND EXISTS (
+                  SELECT 1
+                  FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                  WHERE LOWER(CAST(allowed.value AS TEXT)) IN ('lossy', 'lossless', 'hires-lossless')
+                )
+              )
             )
           ORDER BY library.id
           LIMIT 1

@@ -4,7 +4,6 @@ import express, { Request, Response, Router } from 'express';
 import {AnyCommandBody, CommandStatus} from "../../services/commands/command-model.js";
 import {NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
-import { CommandWorkerPool } from "../../services/commands/worker/command-worker-pool.js";
 import { downloadProcessor } from '../../services/download/download-processor.js';
 import { downloadEvents } from '../../services/download/download-events.js';
 import { authMiddleware } from '../../middleware/auth.js';
@@ -280,31 +279,39 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     const commandId = wait.command_id;
     const job = commandId != null ? CommandQueueManager.get(commandId) : null;
-    if (job?.status === 'started') {
-      if (job.worker_id) {
-        CommandWorkerPool.abortCommand(commandId!, job.worker_id, "Command deleted by user");
-      } else {
-        const CANCEL_WAIT_MS = 2_500;
-        try {
-          await Promise.race([
-            downloadProcessor.cancelJob(commandId!),
-            new Promise<void>((resolve) => {
-              setTimeout(resolve, CANCEL_WAIT_MS);
-            }),
-          ]);
-        } catch (cancelError) {
-          console.warn(
-            `[QUEUE-API] cancelJob(${commandId}) before delete failed:`,
-            cancelError instanceof Error ? cancelError.message : cancelError,
-          );
-        }
+    const wasStarted = job?.status === 'started';
+
+    if (job && (job.status === 'queued' || wasStarted)) {
+      const CANCEL_WAIT_MS = 2_500;
+      try {
+        await Promise.race([
+          // Download commands run in the dedicated download worker. Their
+          // worker_id is an execution lease, not a CommandWorkerPool thread id.
+          // Routing these through CommandWorkerPool.abortCommand left the real
+          // provider process running while its database rows were deleted.
+          downloadProcessor.cancelJob(commandId!),
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, CANCEL_WAIT_MS);
+          }),
+        ]);
+      } catch (cancelError) {
+        console.warn(
+          `[QUEUE-API] cancelJob(${commandId}) before delete failed:`,
+          cancelError instanceof Error ? cancelError.message : cancelError,
+        );
       }
     }
 
-    if (commandId != null) {
-      await runQueueUserWrite(() => CommandQueueManager.deleteCommand(commandId));
-    }
-    await runQueueUserWrite(() => DownloadWaitQueue.remove(queueItemId));
+    await runQueueUserWrite(() => db.transaction(() => {
+      // A started attempt may still be unwinding provider/import work after the
+      // cancellation request. Keep its cancelled command row as the ownership
+      // barrier and activity record; deleting it underneath the worker creates
+      // late-write races. Unstarted commands have no owner and can be removed.
+      if (commandId != null && !wasStarted) {
+        CommandQueueManager.deleteCommand(commandId);
+      }
+      DownloadWaitQueue.remove(queueItemId);
+    })());
     res.json({ message: 'Job deleted' });
   } catch (error: any) {
     console.error('[QUEUE-API] Error deleting job:', error);

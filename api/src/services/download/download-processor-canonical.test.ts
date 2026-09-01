@@ -18,6 +18,7 @@ const importServiceModule = await import("../mediafiles/downloaded-tracks-import
 const downloadRoutingModule = await import("./download-routing.js");
 
 function resetRows() {
+  db.prepare("UPDATE Libraries SET enabled = 1").run();
   db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM TrackFiles").run();
   // Release the deferred plan reference before its rows go.
@@ -273,6 +274,39 @@ test("cancelling the active item aborts its provider signal without pausing the 
   assert.equal(processor.isPaused, false);
   assert.equal(queueModule.CommandQueueManager.get(commandId)?.status, "cancelled");
   assert.equal(processor.explicitlyCancelledDownloads.has(commandId), true);
+});
+
+test("download processor cancels a materialized job when its target library was disabled", async () => {
+  const graph = seedTypedRelease({
+    suffix: "disabled-library",
+    provider: "tidal",
+    providerEditionId: "tidal-disabled-album",
+    providerTrackId: "tidal-disabled-track",
+    artistName: "Disabled Library Artist",
+    albumTitle: "Disabled Library Album",
+    trackTitle: "Disabled Library Track",
+  });
+  const commandId = queueModule.CommandQueueManager.push(
+    queueModule.CommandNames.DownloadAlbum,
+    {
+      type: "album",
+      provider: "tidal",
+      providerId: "tidal-disabled-album",
+      acquisitionPlanId: graph.planId,
+      libraryId: graph.libraryId,
+      slot: "stereo",
+    },
+    "disabled-library-job",
+  );
+  db.prepare("UPDATE Libraries SET enabled = 0 WHERE id = ?").run(graph.libraryId);
+
+  const job = queueModule.CommandQueueManager.get(commandId);
+  assert.ok(job);
+  const processor = new DownloadProcessor() as any;
+  await processor.dispatchDownloadPhase(job);
+
+  assert.equal(queueModule.CommandQueueManager.get(commandId)?.status, "cancelled");
+  assert.equal(processor.activeDownloads.size, 0);
 });
 
 test("cancelling an active import waits for a safe boundary before releasing its duplicate barrier", async () => {
@@ -689,4 +723,3 @@ test("resolveDownloadMetadata uses recording_id join when recording_mbid is null
   assert.equal(resolved.artist, "Recording Id Artist");
   assert.equal(resolved.cover, `/media-cover/Videos/${video.recordingId}/cover.jpg`);
 });
-

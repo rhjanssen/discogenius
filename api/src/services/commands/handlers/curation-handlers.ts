@@ -6,6 +6,7 @@ import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import { CommandQueueManager } from "../command-queue-manager.js";
 import type { CommandHandler } from "./handler-context.js";
+import { clearAcquisitionPlanningRevision } from "../../music/acquisition-planning-control.js";
 
 export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, ctx) => {
     const baseLabel = "Managed artists";
@@ -42,6 +43,13 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
             errors++;
             console.error(`[CommandExecutor] ApplyCuration: failed to curate ${artistName} (${artistId}):`, error?.message);
         }
+    }
+
+    // A scoped curation only rebuilt part of the library, so it must not clear
+    // the global provider-priority revision. The next scheduled global pass
+    // will still bring every other monitored edition up to date.
+    if (errors === 0 && !selectedCurationArtistIds && job.payload.providerPriorityRevision) {
+        clearAcquisitionPlanningRevision(job.payload.providerPriorityRevision);
     }
 
     ctx.updateCommandDescription(job, {

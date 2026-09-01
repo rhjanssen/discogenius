@@ -17,6 +17,7 @@ interface PlanHeader {
   library_id: number;
   library_name: string;
   root_path: string;
+  allowed_source_formats: string;
   edition_id: number;
   release_mbid: string;
   release_group_mbid: string;
@@ -66,8 +67,43 @@ function sourceQuality(snapshot: string | null): string | null {
   }
 }
 
-function displaySlot(libraryName: string): "stereo" | "spatial" {
-  return /spatial|atmos/i.test(libraryName) ? "spatial" : "stereo";
+export function acquisitionProfileSlot(allowedSourceFormats: string): "stereo" | "spatial" | null {
+  try {
+    const parsed = JSON.parse(String(allowedSourceFormats || "[]"));
+    if (!Array.isArray(parsed)) return null;
+    const formats = new Set(parsed.map((value) => String(value || "").trim().toLowerCase()));
+    if (formats.has("spatial")) return "spatial";
+    if (["lossy", "lossless", "hires-lossless"].some((format) => formats.has(format))) {
+      return "stereo";
+    }
+  } catch {
+    // An invalid profile cannot safely select a library destination.
+  }
+  return null;
+}
+
+export function resolveEnabledAudioLibraryTarget(
+  db: Database.Database,
+  libraryId: number,
+): { libraryId: number; rootPath: string; slot: "stereo" | "spatial" } | null {
+  if (!Number.isInteger(libraryId) || libraryId <= 0) return null;
+  const row = db.prepare(`
+    SELECT
+      library.id AS library_id,
+      library.root_path,
+      quality_profile.allowed_source_formats
+    FROM Libraries library
+    JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+    WHERE library.id = ? AND library.enabled = 1
+  `).get(libraryId) as {
+    library_id: number;
+    root_path: string;
+    allowed_source_formats: string;
+  } | undefined;
+  if (!row) return null;
+  const slot = acquisitionProfileSlot(row.allowed_source_formats);
+  if (!slot) return null;
+  return { libraryId: row.library_id, rootPath: row.root_path, slot };
 }
 
 export function buildAcquisitionDownloadCommand(
@@ -84,6 +120,7 @@ export function buildAcquisitionDownloadCommand(
       library.id AS library_id,
       library.name AS library_name,
       library.root_path,
+      quality_profile.allowed_source_formats,
       release.id AS edition_id,
       release.mbid AS release_mbid,
       release_group.mbid AS release_group_mbid,
@@ -92,13 +129,16 @@ export function buildAcquisitionDownloadCommand(
     FROM SelectedAcquisitionPlans plan
     JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
     JOIN Libraries library ON library.id = library_release.library_id
+    JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
     JOIN AlbumEditions release ON release.id = library_release.edition_id
     JOIN Albums release_group ON release_group.id = release.release_group_id
     LEFT JOIN ReleaseGroupArtistCredits primary_credit
       ON primary_credit.release_group_id = release_group.id AND primary_credit.ordinal = 0
     LEFT JOIN ArtistMetadata primary_artist
       ON primary_artist.id = release_group.artist_metadata_id
-    WHERE plan.id = ? AND plan.state = 'current'
+    WHERE plan.id = ?
+      AND plan.state = 'current'
+      AND library.enabled = 1
   `).get(planId) as PlanHeader | undefined;
   if (!header) return null;
 
@@ -199,7 +239,8 @@ export function buildAcquisitionDownloadCommand(
     canonicalRecordingMbid: track.recording_mbid,
   }));
   const done = tracks.length - missingTracks.length;
-  const slot = displaySlot(header.library_name);
+  const slot = acquisitionProfileSlot(header.allowed_source_formats);
+  if (!slot) return null;
 
   return {
     name: CommandNames.DownloadAlbum,

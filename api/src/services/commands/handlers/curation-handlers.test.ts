@@ -14,6 +14,7 @@ let handlerModule: typeof import("./curation-handlers.js");
 let curationModule: typeof import("../../music/curation-service.js");
 let statisticsModule: typeof import("../../music/artist-statistics-service.js");
 let eventsModule: typeof import("../app-events.js");
+let planningControlModule: typeof import("../../music/acquisition-planning-control.js");
 
 before(async () => {
   dbModule = await import("../../../database.js");
@@ -23,10 +24,42 @@ before(async () => {
   curationModule = await import("../../music/curation-service.js");
   statisticsModule = await import("../../music/artist-statistics-service.js");
   eventsModule = await import("../app-events.js");
+  planningControlModule = await import("../../music/acquisition-planning-control.js");
 });
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM commands").run();
+  dbModule.db.prepare("DELETE FROM runtime_controls").run();
+});
+
+test("global ApplyCuration clears only the provider-priority revision it processed", async () => {
+  const firstRevision = planningControlModule.markAcquisitionPlanningStale();
+  const context = {
+    updateCommandDescription: () => undefined,
+    yieldToEventLoop: async () => undefined,
+  } as any;
+
+  await handlerModule.handleApplyCuration({
+    id: 100,
+    name: queueModule.CommandNames.ApplyCuration,
+    status: "started",
+    payload: { providerPriorityRevision: firstRevision },
+  } as any, context);
+  assert.equal(planningControlModule.getPendingAcquisitionPlanningRevision(), null);
+
+  const staleRevision = planningControlModule.markAcquisitionPlanningStale();
+  const currentRevision = planningControlModule.markAcquisitionPlanningStale();
+  await handlerModule.handleApplyCuration({
+    id: 101,
+    name: queueModule.CommandNames.ApplyCuration,
+    status: "started",
+    payload: { providerPriorityRevision: staleRevision },
+  } as any, context);
+  assert.equal(
+    planningControlModule.getPendingAcquisitionPlanningRevision(),
+    currentRevision,
+    "a reorder made during curation must remain pending",
+  );
 });
 
 after(() => {

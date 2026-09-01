@@ -550,7 +550,7 @@ class ApiClient {
   }
 
   /** Persist provider preference order; the first entry becomes the default provider. */
-  async updateProviderPriority(order: string[]): Promise<{ providerPriority: string[]; defaultProviderId: string; replanCommandId: number }> {
+  async updateProviderPriority(order: string[]): Promise<{ providerPriority: string[]; defaultProviderId: string; plansPendingCuration: boolean }> {
     return this.request('/provider/priority', {
       method: 'PUT',
       body: JSON.stringify({ order }),

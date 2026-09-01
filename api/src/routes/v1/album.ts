@@ -106,7 +106,7 @@ router.get("/", async (req, res) => {
     const downloadedFilter = parseOptionalQueryBoolean(req.query.downloaded);
     const lockedFilter = parseOptionalQueryBoolean(req.query.locked);
 
-    res.json(await runWithAsyncBusyRetry(() => AlbumQueryService.listAlbums({
+    res.json(AlbumQueryService.listAlbums({
       limit: parseBoundedQueryInteger(req.query.limit, 50, { min: 1, max: 200 }),
       offset: parseBoundedQueryInteger(req.query.offset, 0),
       search: req.query.search as string | undefined,
@@ -118,7 +118,7 @@ router.get("/", async (req, res) => {
       qualityTier: req.query.quality_tier as string | undefined,
       sort: req.query.sort as string | undefined,
       dir: req.query.dir as string | undefined,
-    }), 20, 100));
+    }));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

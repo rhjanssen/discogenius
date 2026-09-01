@@ -5,9 +5,21 @@ import {
   AudioTagService,
   buildEmbeddedLyricsManagedTag,
   getCurrentTagValue,
+  isAudioTagMaintenanceEnabled,
   selectEmbeddedLyricsText,
   type ManagedTag,
 } from "./audio-tag-service.js";
+
+test("audio tag maintenance includes cover-only work and permits a true no-op policy", () => {
+  const metadata = {
+    write_audio_tags_policy: "no",
+    embed_replaygain: false,
+    enable_fingerprinting: false,
+  } as any;
+
+  assert.equal(isAudioTagMaintenanceEnabled(metadata, { embed_cover: true } as any), true);
+  assert.equal(isAudioTagMaintenanceEnabled(metadata, { embed_cover: false } as any), false);
+});
 
 test("embedded lyrics prefer synced subtitles with plain text fallback", () => {
   assert.equal(selectEmbeddedLyricsText({

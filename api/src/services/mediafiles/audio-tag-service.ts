@@ -4,7 +4,12 @@ import path from "node:path";
 import * as mm from "music-metadata";
 import pLimit from "p-limit";
 import { db } from "../../database.js";
-import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "../config/config.js";
+import {
+  type MetadataConfig,
+  type QualityConfig,
+  type WriteAudioTagsPolicy,
+  getConfigSection,
+} from "../config/config.js";
 import { embedAudioCover, compareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, removeAllTags } from "./audioUtils.js";
 import {
   type AcoustIdLookupResult,
@@ -368,8 +373,14 @@ function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
   return config.write_audio_tags_policy ?? "no";
 }
 
-function isRetagMaintenanceEnabled(config: MetadataConfig): boolean {
-  return resolveTagPolicy(config) !== "no" || config.embed_replaygain !== false || config.enable_fingerprinting === true;
+export function isAudioTagMaintenanceEnabled(
+  config: MetadataConfig,
+  quality: QualityConfig = getConfigSection("quality"),
+): boolean {
+  return resolveTagPolicy(config) !== "no"
+    || config.embed_replaygain !== false
+    || config.enable_fingerprinting === true
+    || quality.embed_cover === true;
 }
 
 function normalizeReleaseDate(value: string | null | undefined): string | null {
@@ -2542,7 +2553,7 @@ export class AudioTagService {
 
   static async preview(options: RetagScopeOptions = {}): Promise<RetagPreviewItem[]> {
     const config = getConfigSection("metadata") as MetadataConfig;
-    if (!isRetagMaintenanceEnabled(config)) {
+    if (!isAudioTagMaintenanceEnabled(config)) {
       return [];
     }
 
@@ -2557,7 +2568,7 @@ export class AudioTagService {
     const config = getConfigSection("metadata") as MetadataConfig;
     const total = this.getTrackCount(options);
 
-    if (!isRetagMaintenanceEnabled(config)) {
+    if (!isAudioTagMaintenanceEnabled(config)) {
       return {
         enabled: false,
         total,
@@ -2689,7 +2700,7 @@ export class AudioTagService {
 
   static async apply(ids: number[], options: RetagApplyOptions = {}): Promise<RetagApplyResult> {
     const config = getConfigSection("metadata") as MetadataConfig;
-    if (!isRetagMaintenanceEnabled(config)) {
+    if (!isAudioTagMaintenanceEnabled(config)) {
       throw new Error("Enable fingerprinting, imported audio tag correction, or ReplayGain tagging before applying retag operations.");
     }
 
@@ -2743,7 +2754,7 @@ export class AudioTagService {
 
       const row = rowsById.get(id);
       if (!row) {
-        result.skipped++;
+        result.errors.push({ id, error: "TrackFiles row not found" });
         continue;
       }
 
@@ -2781,8 +2792,10 @@ export class AudioTagService {
       const removalKeys = this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(enrichedRow, config), enrichedRow.extension);
 
       if (shouldSkipEmbeddedAudioTagWrite(enrichedRow)) {
-        console.warn(`[Retag] Skipping embedded tag rewrite for ${resolvedPath}; ${enrichedRow.extension || "file"} ${enrichedRow.file_codec || "spatial"} is not safely writable with ffmpeg stream copy.`);
-        result.skipped++;
+        result.errors.push({
+          id,
+          error: `${enrichedRow.extension || "file"} ${enrichedRow.file_codec || "audio"} metadata is not safely writable with ffmpeg stream copy`,
+        });
         continue;
       }
 
@@ -2892,7 +2905,7 @@ export class AudioTagService {
 
   static async applyByQuery(options: RetagScopeOptions = {}): Promise<RetagApplyResult> {
     const config = getConfigSection("metadata") as MetadataConfig;
-    if (!isRetagMaintenanceEnabled(config)) {
+    if (!isAudioTagMaintenanceEnabled(config)) {
       throw new Error("Enable fingerprinting, imported audio tag correction, or ReplayGain tagging before applying retag operations.");
     }
 

@@ -14,6 +14,7 @@ let queueModule: typeof import("./command-queue-manager.js");
 let taskSchedulerModule: typeof import("./scheduler.js");
 let taskStateModule: typeof import("./task-state.js");
 let workflowModule: typeof import("../music/artist-workflow.js");
+let planningControlModule: typeof import("../music/acquisition-planning-control.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
@@ -21,6 +22,7 @@ before(async () => {
     taskSchedulerModule = await import("./scheduler.js");
     taskStateModule = await import("./task-state.js");
     workflowModule = await import("../music/artist-workflow.js");
+    planningControlModule = await import("../music/acquisition-planning-control.js");
 
     dbModule.initDatabase();
 });
@@ -29,8 +31,52 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM scheduled_tasks").run();
     dbModule.db.prepare("DELETE FROM monitoring_runtime_state").run();
+    dbModule.db.prepare("DELETE FROM runtime_controls").run();
     dbModule.db.prepare("DELETE FROM LibraryArtists").run();
     dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+});
+
+test("a pending provider order waits for curation before Download Missing", () => {
+    seedMonitoredArtist();
+    const revision = planningControlModule.markAcquisitionPlanningStale();
+    const refreshJobId = taskSchedulerModule.queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
+    const refreshJob = queueModule.CommandQueueManager.get(refreshJobId);
+    assert.ok(refreshJob);
+
+    queueModule.CommandQueueManager.complete(refreshJobId);
+    taskSchedulerModule.queueNextMonitoringPass(refreshJob);
+
+    const curationJobs = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.ApplyCuration],
+        10,
+    );
+    assert.equal(curationJobs.length, 1);
+    assert.equal(curationJobs[0].payload.monitoringCycle, "full-cycle");
+    assert.equal((curationJobs[0].payload as Record<string, unknown>).providerPriorityRevision, revision);
+    assert.equal(pendingDownloadMissing().length, 0);
+
+    queueModule.CommandQueueManager.complete(curationJobs[0].id);
+    taskSchedulerModule.queueNextMonitoringPass(curationJobs[0]);
+    const downloads = pendingDownloadMissing();
+    assert.equal(downloads.length, 1);
+    assert.equal(downloads[0].payload.monitoringCycle, "full-cycle");
+});
+
+test("manual Download Missing and direct curation consume a pending provider order without an immediate replan command", () => {
+    const revision = planningControlModule.markAcquisitionPlanningStale();
+    const commandId = taskSchedulerModule.queueDownloadMissingPass({ trigger: 1 });
+    const command = queueModule.CommandQueueManager.get(commandId);
+    assert.ok(command);
+    assert.equal(command.name, queueModule.CommandNames.ApplyCuration);
+    assert.equal(command.payload.monitoringCycle, "curation-cycle");
+    assert.equal((command.payload as Record<string, unknown>).providerPriorityRevision, revision);
+    assert.equal(pendingDownloadMissing().length, 0);
+
+    dbModule.db.prepare("DELETE FROM commands").run();
+    const directId = taskSchedulerModule.queueCurationPass({ trigger: 1 });
+    const direct = queueModule.CommandQueueManager.get(directId);
+    assert.ok(direct);
+    assert.equal((direct.payload as Record<string, unknown>).providerPriorityRevision, revision);
 });
 
 after(() => {

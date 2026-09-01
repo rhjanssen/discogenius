@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { runWithAsyncBusyRetry } from "../../database.js";
 import {
   deletionScopeFromRequest,
   scopeToOptions,
@@ -55,7 +54,7 @@ router.get("/", async (req, res) => {
     const dirParam = (req.query.dir as string | undefined) || 'desc';
     const sortDir = dirParam.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-    res.json(await runWithAsyncBusyRetry(() => listTracks({
+    res.json(listTracks({
       limit,
       offset,
       search,
@@ -67,7 +66,7 @@ router.get("/", async (req, res) => {
       qualityTier: qualityTierFilter,
       sort: sortParam,
       dir: sortDir,
-    }), 20, 100));
+    }));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

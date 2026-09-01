@@ -144,7 +144,13 @@ export const useDashboardStyles = makeStyles({
         flexDirection: "column",
         borderRadius: tokens.borderRadiusMedium,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        overflow: "hidden",
+        // `overflow: hidden` makes this tall, growing list its own scroll
+        // container even though it has no scrollbars. When another queue page
+        // is appended, Chromium may anchor that inner container and clamp the
+        // document back toward the top. `clip` keeps the rounded-edge clipping
+        // without creating a competing scroll container.
+        overflow: "clip",
+        overflowAnchor: "auto",
     },
     downloadGroup: {
         display: "flex",

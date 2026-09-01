@@ -110,6 +110,8 @@ test("deleting a started download asks the worker to cancel it without pausing t
     const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
     assert.ok(claimed);
     queueModule.CommandQueueManager.markProcessing(claimed.commandId);
+    dbModule.db.prepare("UPDATE commands SET worker_id = ? WHERE id = ?")
+        .run("download-attempt-token", claimed.commandId);
 
     const processor = downloadProcessorModule.downloadProcessor;
     const originalCancelJob = processor.cancelJob;
@@ -130,12 +132,33 @@ test("deleting a started download asks the worker to cancel it without pausing t
 
         assert.equal(response.statusCode, 200);
         assert.deepEqual(cancelledIds, [claimed.commandId]);
-        assert.equal(queueModule.CommandQueueManager.get(claimed.commandId), null);
+        assert.equal(queueModule.CommandQueueManager.get(claimed.commandId)?.status, "cancelled");
         assert.equal(waitQueueModule.DownloadWaitQueue.get(queued.id), null);
     } finally {
         processor.cancelJob = originalCancelJob;
         processor.pause = originalPause;
     }
+});
+
+test("deleting an unstarted download removes its wait row and unowned command", async () => {
+    const queued = waitQueueModule.DownloadWaitQueue.enqueue({
+        refKey: "queued-delete",
+        mediaKind: "track",
+        commandName: queueModule.CommandNames.DownloadTrack,
+        provider: "tidal",
+        providerId: "queued-delete",
+        payload: { providerId: "queued-delete", type: "track" },
+    });
+    const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id);
+    assert.ok(claimed);
+
+    const handler = getRouteHandler(tasksRouter as any, "delete", "/:id");
+    const response = createMockResponse();
+    await handler({ params: { id: String(queued.id) } }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(queueModule.CommandQueueManager.get(claimed.commandId), null);
+    assert.equal(waitQueueModule.DownloadWaitQueue.get(queued.id), null);
 });
 
 test("/api/tasks defaults to queued+started+completed+failed+cancelled and supports explicit status override", () => {

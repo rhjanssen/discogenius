@@ -144,6 +144,10 @@ export function initCurationListeners() {
             artistIds: [String(payload.artistId)],
             trigger: payload.trigger ?? CommandTrigger.Unspecified,
             priority: nextArtistWorkflowPriority(payload.priority),
+            // This artist was just curated with the current provider order.
+            // A pending global revision still belongs to the other artists and
+            // must not make this intake repeat the same curation step.
+            skipStalePlanningCheck: true,
         });
     });
 

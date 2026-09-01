@@ -11,6 +11,7 @@
 import {
   acquireSqliteWriteMutexAsync,
   releaseSqliteWriteMutex,
+  sqliteWriteMutexDiagnostics,
 } from "../../../database/sqlite-write-mutex.js";
 
 export interface WriteLockWaitStats {
@@ -131,19 +132,25 @@ export function writeLockDiagnostics(): {
   maxWaitMs: number;
   maxQueueDepth: number;
 } {
+  const active = sqliteWriteMutexDiagnostics();
+  const legacyLongestWins = longestHold.heldMs >= active.longestHoldMs;
+  const combinedGrants = active.grants + stats.grants;
+  const combinedWaitMs = active.averageWaitMs * active.grants + stats.totalWaitMs;
   return {
-    held: heldBy != null,
-    heldByOwner: heldBy?.ownerId ?? null,
-    heldByLabel: heldBy?.label ?? null,
-    heldForMs: heldBy ? Date.now() - heldBy.since : 0,
-    longestHoldMs: longestHold.heldMs,
-    longestHoldLabel: longestHold.label || null,
+    held: active.held || heldBy != null,
+    heldByOwner: active.held
+      ? `mutex-owner-${active.ownerToken}`
+      : heldBy?.ownerId ?? null,
+    heldByLabel: active.held ? null : heldBy?.label ?? null,
+    heldForMs: active.held ? active.heldForMs : heldBy ? Date.now() - heldBy.since : 0,
+    longestHoldMs: Math.max(active.longestHoldMs, longestHold.heldMs),
+    longestHoldLabel: legacyLongestWins ? longestHold.label || null : null,
     waitingLabels: waiters.map((waiter) => waiter.label),
-    queueDepth: waiters.length,
-    grants: stats.grants,
-    averageWaitMs: stats.grants === 0 ? 0 : Math.round(stats.totalWaitMs / stats.grants),
-    maxWaitMs: stats.maxWaitMs,
-    maxQueueDepth: stats.maxQueueDepth,
+    queueDepth: active.queueDepth + waiters.length,
+    grants: combinedGrants,
+    averageWaitMs: combinedGrants === 0 ? 0 : Math.round(combinedWaitMs / combinedGrants),
+    maxWaitMs: Math.max(active.maxWaitMs, stats.maxWaitMs),
+    maxQueueDepth: Math.max(active.maxQueueDepth, stats.maxQueueDepth),
   };
 }
 

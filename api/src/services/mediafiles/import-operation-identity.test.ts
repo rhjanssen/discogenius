@@ -21,6 +21,7 @@ const {
   reconcileImportedDownload,
   releaseGroupMbidFromJobContext,
   ensureDestAlbumArtworkForFileIds,
+  assertImportedAudioTagsApplied,
 } = await import("./downloaded-tracks-import-service.js");
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));
@@ -299,6 +300,62 @@ test("dest edition cover cache overwrites a leftover downloader cover.jpg", asyn
     crypto.createHash("sha256").update(destCover).digest("hex"),
     "dest cover.jpg must be the edition MediaCover, not leftover downloader art",
   );
+});
+
+test("dest edition artwork cache does not materialize cover.jpg when sidecars are disabled", async () => {
+  const releaseMbid = "7bd48d27-e5ae-47e5-b4c2-424a8293839a";
+  const albumDir = path.join(tempDir, "library", "Afterlife", "No Sidecar");
+  fs.mkdirSync(albumDir, { recursive: true });
+  const trackPath = path.join(albumDir, "01 - No Sidecar.m4a");
+  const destSidecar = path.join(albumDir, "cover.jpg");
+  fs.writeFileSync(trackPath, "fixture audio");
+
+  seedLibrary();
+  const fileId = seedTrackFile({
+    file_path: trackPath,
+    library_root: path.join(tempDir, "library"),
+    relative_path: path.join("Afterlife", "No Sidecar", "01 - No Sidecar.m4a"),
+    filename: "01 - No Sidecar.m4a",
+    extension: "m4a",
+  });
+  db.prepare(`
+    UPDATE TrackFiles SET canonical_release_mbid = ? WHERE id = ?
+  `).run(releaseMbid, fileId);
+
+  const { getMediaCoverPath } = await import("../metadata/media-cover-service.js");
+  const cachePath = getMediaCoverPath(releaseMbid, "Edition", "cover", ".jpg");
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+  fs.writeFileSync(cachePath, Buffer.from("CACHED-ONLY-COVER"));
+
+  const configModule = await import("../config/config.js");
+  configModule.updateConfig("metadata", { save_album_cover: false } as any);
+  try {
+    await ensureDestAlbumArtworkForFileIds([fileId]);
+    assert.equal(fs.existsSync(destSidecar), false);
+  } finally {
+    configModule.updateConfig("metadata", { save_album_cover: true } as any);
+  }
+});
+
+test("an import cannot complete when canonical tag writing or verification failed", () => {
+  assert.doesNotThrow(() => assertImportedAudioTagsApplied({
+    retagged: 2,
+    skipped: 0,
+    missing: 0,
+    errors: [],
+  }, "album fixture"));
+  assert.throws(() => assertImportedAudioTagsApplied({
+    retagged: 1,
+    skipped: 0,
+    missing: 0,
+    errors: [{ id: 2, error: "Metadata verification failed for: Album" }],
+  }, "album fixture"), /Canonical audio tags were not applied.*Metadata verification failed/);
+  assert.throws(() => assertImportedAudioTagsApplied({
+    retagged: 0,
+    skipped: 0,
+    missing: 1,
+    errors: [],
+  }, "album fixture"), /1 file\(s\) missing/);
 });
 
 test("a reported row that is not a track file fails closed", () => {

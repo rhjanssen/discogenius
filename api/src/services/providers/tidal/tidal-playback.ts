@@ -9,6 +9,10 @@
  * fetched sequentially and concatenated into a single audio/mp4 stream.
  */
 import { loadToken, refreshTidalToken, getCountryCode } from "./tidal.js";
+import {
+    PLAYBACK_QUALITY_ORDER,
+    normalizePlaybackQuality,
+} from "../../music/playback-quality.js";
 
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 
@@ -22,17 +26,8 @@ export type VideoPlaybackInfo = {
     contentType?: string | null;
 };
 
-const PLAYBACK_QUALITY_ORDER = ["DOLBY_ATMOS", "HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const;
-type PlaybackQuality = typeof PLAYBACK_QUALITY_ORDER[number];
 type PlaybackManifestType = PlaybackInfo["type"];
 export const BROWSER_PLAYBACK_MANIFEST_TYPES = ["bts", "dash"] as const satisfies readonly PlaybackManifestType[];
-
-function normalizePlaybackQuality(value: string | undefined | null): PlaybackQuality | null {
-    const normalized = String(value ?? "").trim().toUpperCase();
-    return (PLAYBACK_QUALITY_ORDER as readonly string[]).includes(normalized)
-        ? normalized as PlaybackQuality
-        : null;
-}
 
 export function buildPlaybackQualityOrder(preferredQuality?: string | null): string[] {
     const preferred = normalizePlaybackQuality(preferredQuality);

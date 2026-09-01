@@ -6,7 +6,11 @@ import {
     updateAlbumDownloadStatus,
     updateArtistDownloadStatusFromMedia,
 } from "../download/download-state.js";
-import { AudioTagService } from "./audio-tag-service.js";
+import {
+    AudioTagService,
+    isAudioTagMaintenanceEnabled,
+    type RetagApplyResult,
+} from "./audio-tag-service.js";
 import { VideoTagService } from "./video-tag-service.js";
 import { getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { getExistingLibraryFiles } from "../download/download-recovery.js";
@@ -54,6 +58,20 @@ function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
     ));
 }
 
+export function assertImportedAudioTagsApplied(
+    result: RetagApplyResult,
+    context: string,
+): void {
+    if (result.missing === 0 && result.errors.length === 0) return;
+    const firstError = result.errors[0]?.error;
+    const details = [
+        result.missing > 0 ? `${result.missing} file(s) missing` : "",
+        result.errors.length > 0 ? `${result.errors.length} write or verification error(s)` : "",
+        firstError ? `first error: ${firstError}` : "",
+    ].filter(Boolean).join(", ");
+    throw new Error(`[ImportDownload] Canonical audio tags were not applied for ${context}: ${details}`);
+}
+
 /**
  * The destination edition's artwork must be in MediaCover before tag write.
  * Organizer and embed both read that cache; if it is empty they leave the
@@ -89,7 +107,8 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
     } = await import("../metadata/media-cover-service.js");
     const { resolveStoredLibraryPath } = await import("./library-paths.js");
     const { getConfigSection } = await import("../config/config.js");
-    const coverName = getConfigSection("metadata").album_cover_name || "cover.jpg";
+    const metadataConfig = getConfigSection("metadata");
+    const coverName = metadataConfig.album_cover_name || "cover.jpg";
 
     const editions = new Map<string, { releaseMbid: string; libraryId: number | null }>();
     const sidecars: Array<{ releaseMbid: string; outputPath: string }> = [];
@@ -106,28 +125,40 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
             relativePath: row.relative_path,
         });
         if (!resolved) continue;
-        sidecars.push({ releaseMbid, outputPath: path.join(path.dirname(resolved), coverName) });
+        if (metadataConfig.save_album_cover) {
+            sidecars.push({ releaseMbid, outputPath: path.join(path.dirname(resolved), coverName) });
+        }
     }
 
+    const resolvedEditions = new Set<string>();
+    const failures: string[] = [];
     for (const { releaseMbid, libraryId } of editions.values()) {
         try {
-            await resolveEditionArtwork({ releaseMbid, libraryId });
+            const resolved = await resolveEditionArtwork({ releaseMbid, libraryId });
+            if (resolved) resolvedEditions.add(releaseMbid);
         } catch (error) {
-            console.warn(`[ImportDownload] Failed to cache dest cover for edition ${releaseMbid}:`, error);
+            failures.push(`edition ${releaseMbid}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
     for (const { releaseMbid, outputPath } of sidecars) {
         try {
-            syncCachedMediaCoverToFile({
+            const result = syncCachedMediaCoverToFile({
                 entityId: releaseMbid,
                 coverEntity: "Edition",
                 coverTypes: "cover",
                 outputPath,
             });
+            if (resolvedEditions.has(releaseMbid) && result === "missing") {
+                failures.push(`edition ${releaseMbid}: resolved artwork was not present in the media-cover cache`);
+            }
         } catch (error) {
-            console.warn(`[ImportDownload] Failed to refresh dest cover sidecar ${outputPath}:`, error);
+            failures.push(`${outputPath}: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    if (failures.length > 0) {
+        throw new Error(`Failed to materialize canonical album artwork. ${failures[0]}`);
     }
 }
 
@@ -1239,11 +1270,16 @@ export class DownloadedTracksImportService {
             cancellationCheckpoint("after refreshing provider tag supplements");
 
             const importedFileIds = importedLibraryFileIds(organizeResult);
-            cancellationCheckpoint("before caching dest album artwork");
-            try {
+            if (importedFileIds.length === 0) {
+                throw new Error(
+                    `[ImportDownload] Organizer reported ${organizeResult.processedTrackIds.length} processed audio item(s) without exact TrackFiles row identity`,
+                );
+            }
+            const metadataConfig = Config.getMetadataConfig();
+            const qualityConfig = Config.getQualityConfig();
+            if (metadataConfig.save_album_cover || qualityConfig.embed_cover) {
+                cancellationCheckpoint("before caching dest album artwork");
                 await ensureDestAlbumArtworkForFileIds(importedFileIds);
-            } catch (error) {
-                console.warn(`[ImportDownload] Failed to cache dest album artwork for ${type} ${providerId}:`, error);
             }
 
             let lyricResult: TrackLyricsMaterializeResult | null = null;
@@ -1278,31 +1314,13 @@ export class DownloadedTracksImportService {
             });
 
             cancellationCheckpoint("before applying audio tag rules");
-            try {
-                if (importedFileIds.length > 0) {
-                    await ensureAlbumCatalogGenresForFileIds(importedFileIds);
-                }
-                const retagResult = importedFileIds.length > 0
-                    ? await AudioTagService.apply(importedFileIds, {
-                        includeExternalLyrics: lyricResult !== null,
-                        lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
-                    })
-                    : await AudioTagService.applyForMediaIds(
-                        organizeResult.processedTrackIds,
-                        {
-                            provider,
-                            includeExternalLyrics: lyricResult !== null,
-                            lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
-                        },
-                    );
-                if (retagResult.errors.length > 0) {
-                    console.warn(
-                        `[ImportDownload] Audio tag rules completed with ${retagResult.errors.length} error(s) for ${type} ${providerId}:`,
-                        retagResult.errors,
-                    );
-                }
-            } catch (error) {
-                console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${providerId}:`, error);
+            await ensureAlbumCatalogGenresForFileIds(importedFileIds);
+            if (isAudioTagMaintenanceEnabled(metadataConfig, qualityConfig)) {
+                const retagResult = await AudioTagService.apply(importedFileIds, {
+                    includeExternalLyrics: lyricResult !== null,
+                    lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
+                });
+                assertImportedAudioTagsApplied(retagResult, `${type} ${providerId}`);
             }
             cancellationCheckpoint("after applying audio tag rules");
         }

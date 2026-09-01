@@ -16,8 +16,12 @@ import { Readable } from "stream";
 import { streamingProviderManager } from "../services/providers/index.js";
 import type { ProviderPlaybackInfo, ProviderVideoPlaybackInfo } from "../services/providers/streaming-provider.js";
 import { authMiddleware } from "../middleware/auth.js";
-import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from "../services/metadata/provider-track-resolver.js";
+import {
+    looksLikeMusicBrainzMbid,
+    resolveProviderPreviewTrackForCanonicalTrack,
+} from "../services/metadata/provider-track-resolver.js";
 import { materializeSegmentedPlayback, parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
+import { normalizePlaybackQuality } from "../services/music/playback-quality.js";
 import { isKnownProviderVideoOffer, resolvePreferredVideoOffer, resolveVideoOfferForProvider } from "../services/music/video-offer-resolver.js";
 import { db } from "../database.js";
 import { fetchPublicHttpUrl } from "../security/outbound-http.js";
@@ -30,7 +34,6 @@ import {
 
 const streamPipeline = promisify(pipeline);
 const router = Router();
-const PLAYBACK_QUALITIES = new Set(["DOLBY_ATMOS", "HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"]);
 const PLAYBACK_INFO_TTL_MS = 5 * 60 * 1000;
 const playbackInfoCache = new Map<string, {
     expiresAt: number;
@@ -45,15 +48,6 @@ const hlsProxyTargets = new Map<string, {
     targetUrl: string;
     expires: number;
 }>();
-
-function normalizePlaybackQuality(value: unknown): string | null {
-    const normalized = String(value ?? "").trim().toUpperCase();
-    if (!normalized) {
-        return null;
-    }
-
-    return PLAYBACK_QUALITIES.has(normalized) ? normalized : null;
-}
 
 function resolvePlaybackProvider(providerId?: unknown) {
     const requested = String(providerId ?? "").trim();
@@ -218,35 +212,78 @@ router.get("/stream/sign/:trackId", authMiddleware, async (req: Request, res: Re
 
     let providerId = "";
     try {
-        const provider = resolvePlaybackProvider(req.query.provider);
-        providerId = provider.id;
-        if (!provider.getPlaybackInfo) {
-            return res.status(501).json({ error: `${provider.name} does not support track preview` });
-        }
-
+        const requestedProvider = resolvePlaybackProvider(req.query.provider);
+        providerId = requestedProvider.id;
         const releaseGroupMbid = String(req.query.releaseGroupMbid ?? "").trim();
         const canonicalTrackMbid = String(req.query.canonicalTrackMbid ?? "").trim();
         const canonicalRecordingMbid = String(req.query.canonicalRecordingMbid ?? "").trim();
-        if (releaseGroupMbid && (canonicalTrackMbid || canonicalRecordingMbid || looksLikeMusicBrainzMbid(trackId))) {
-            const resolved = await resolveProviderTrackForCanonicalTrack({
-                releaseGroupMbid,
-                canonicalTrackMbid: canonicalTrackMbid || (looksLikeMusicBrainzMbid(trackId) ? trackId : null),
-                canonicalRecordingMbid: canonicalRecordingMbid || null,
-                provider: providerId,
-                slot: String(req.query.slot ?? "").trim() || null,
-            });
-            if (resolved) {
-                providerId = resolved.provider;
-                trackId = resolved.providerTrackId;
-                quality = quality ?? normalizePlaybackQuality(resolved.quality);
-            } else if (looksLikeMusicBrainzMbid(trackId)) {
-                // Canonical-only requests have nothing else to play.
+        const canonicalTrackId = canonicalTrackMbid || (looksLikeMusicBrainzMbid(trackId) ? trackId : "");
+        const hasCanonicalContext = Boolean(
+            releaseGroupMbid && (canonicalTrackId || canonicalRecordingMbid),
+        );
+        const providerIds = hasCanonicalContext
+            ? [...new Set([requestedProvider.id, ...streamingProviderManager.getProviderPriority()])]
+            : [requestedProvider.id];
+
+        let foundProviderMatch = false;
+        let playable: {
+            providerId: string;
+            trackId: string;
+            quality: ReturnType<typeof normalizePlaybackQuality>;
+        } | null = null;
+        for (const candidateProviderId of providerIds) {
+            const provider = resolvePlaybackProvider(candidateProviderId);
+            if (!provider.getPlaybackInfo) continue;
+
+            const resolved = hasCanonicalContext
+                ? await resolveProviderPreviewTrackForCanonicalTrack({
+                    releaseGroupMbid,
+                    canonicalTrackMbid: canonicalTrackId || null,
+                    canonicalRecordingMbid: canonicalRecordingMbid || null,
+                    provider: candidateProviderId,
+                    slot: String(req.query.slot ?? "").trim() || null,
+                })
+                : null;
+            const candidateTrackId = resolved?.providerTrackId
+                || (candidateProviderId === requestedProvider.id && !looksLikeMusicBrainzMbid(trackId)
+                    ? trackId
+                    : "");
+            if (!candidateTrackId) continue;
+            foundProviderMatch = true;
+
+            const candidateQuality = quality ?? normalizePlaybackQuality(resolved?.quality);
+            try {
+                const info = await getCachedPlaybackInfo(
+                    provider.id,
+                    candidateTrackId,
+                    candidateQuality,
+                    () => provider.getPlaybackInfo!(candidateTrackId, candidateQuality || undefined),
+                );
+                if (!info) continue;
+                playable = {
+                    providerId: provider.id,
+                    trackId: candidateTrackId,
+                    quality: candidateQuality,
+                };
+                break;
+            } catch (error) {
+                console.warn(`[Playback] Preview probe failed for ${provider.id}:${candidateTrackId}:`, error);
+            }
+        }
+
+        if (!playable) {
+            if (hasCanonicalContext && !foundProviderMatch) {
                 return res.status(409).json({ error: "provider track match not found" });
             }
-            // Otherwise the caller already supplied a direct provider track id
-            // (e.g. artist top tracks carrying the provider's own popularity
-            // evidence) — play that even when no canonical match edge exists.
+            if (!requestedProvider.getPlaybackInfo && !hasCanonicalContext) {
+                return res.status(501).json({ error: `${requestedProvider.name} does not support track preview` });
+            }
+            return res.status(502).json({ error: "No provider preview is currently playable" });
         }
+
+        providerId = playable.providerId;
+        trackId = playable.trackId;
+        quality = playable.quality;
     } catch (error: any) {
         return res.status(404).json({ error: error?.message || "provider not found" });
     }

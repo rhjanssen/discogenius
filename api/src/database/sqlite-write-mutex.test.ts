@@ -12,8 +12,13 @@ import test from "node:test";
 import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import {
+  SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY,
   SQLITE_WRITE_MUTEX_WORKER_DATA_KEY,
+  forceReleaseSqliteWriteMutexOwner,
   getOrCreateSqliteWriteMutexSab,
+  isSqliteWriteMutexHeld,
+  sqliteWriteMutexDiagnostics,
+  sqliteWriteMutexWorkerData,
   withSqliteWriteMutexAsync,
   withSqliteWriteMutexSync,
 } from "./sqlite-write-mutex.js";
@@ -31,9 +36,18 @@ test("async writers on the same thread take turns across an await", async () => 
     order.push("b-end");
     return "b";
   });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const whileContended = sqliteWriteMutexDiagnostics();
+  assert.equal(whileContended.held, true);
+  assert.equal(whileContended.queueDepth, 1);
+  assert.equal(whileContended.ownerToken !== null, true);
   const results = await Promise.all([first, second]);
   assert.deepEqual(results, ["a", "b"]);
   assert.deepEqual(order, ["a-start", "a-end", "b-start", "b-end"]);
+  const after = sqliteWriteMutexDiagnostics();
+  assert.equal(after.held, false);
+  assert.equal(after.queueDepth, 0);
+  assert.equal(after.maxQueueDepth >= 2, true);
 });
 
 test("nested sync writes re-enter while an async holder is active", async () => {
@@ -41,6 +55,38 @@ test("nested sync writes re-enter while an async holder is active", async () => 
     withSqliteWriteMutexSync(() => undefined);
     withSqliteWriteMutexSync(() => undefined);
   });
+});
+
+test("a terminated worker's owner token can release its abandoned mutex", async () => {
+  const workerMutexData = sqliteWriteMutexWorkerData();
+  const mutex = workerMutexData[SQLITE_WRITE_MUTEX_WORKER_DATA_KEY] as SharedArrayBuffer;
+  const ownerToken = Number(workerMutexData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]);
+  const worker = new Worker(`
+    const { parentPort, workerData } = require("node:worker_threads");
+    const lock = new Int32Array(workerData.mutex);
+    if (Atomics.compareExchange(lock, 0, 0, workerData.ownerToken) !== 0) {
+      throw new Error("test worker could not acquire mutex");
+    }
+    parentPort.postMessage("locked");
+    setInterval(() => {}, 60_000);
+  `, {
+    eval: true,
+    workerData: { mutex, ownerToken },
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    worker.once("message", () => resolve());
+    worker.once("error", reject);
+  });
+  assert.equal(isSqliteWriteMutexHeld(), true);
+
+  await worker.terminate();
+  assert.equal(isSqliteWriteMutexHeld(), true, "worker exit alone leaves the SAB owner token behind");
+  assert.equal(forceReleaseSqliteWriteMutexOwner(ownerToken + 1), false, "another worker cannot release it");
+  assert.equal(forceReleaseSqliteWriteMutexOwner(ownerToken), true);
+  assert.equal(isSqliteWriteMutexHeld(), false);
+
+  withSqliteWriteMutexSync(() => undefined);
 });
 
 const WRITER_SOURCE = `

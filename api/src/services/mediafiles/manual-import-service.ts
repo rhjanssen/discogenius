@@ -901,9 +901,18 @@ export class ManualImportService {
             if (shouldTagManuallyImportedFiles(metadataConfig)) {
                 try {
                     const { AudioTagService } = await import("./audio-tag-service.js");
-                    await AudioTagService.apply(audioInsertedIds);
+                    const result = await AudioTagService.apply(audioInsertedIds);
+                    if (result.missing > 0 || result.errors.length > 0) {
+                        const firstError = result.errors[0]?.error;
+                        throw new Error(
+                            `Canonical audio tags failed for ${result.missing + result.errors.length} manually imported file(s)`
+                            + (firstError ? `. First error: ${firstError}` : ""),
+                        );
+                    }
                 } catch (error) {
-                    console.warn("[ManualImport] Failed to apply audio tag rules:", error);
+                    throw new Error(
+                        `[ManualImport] Failed to apply audio tag rules: ${error instanceof Error ? error.message : String(error)}`,
+                    );
                 }
             }
         }

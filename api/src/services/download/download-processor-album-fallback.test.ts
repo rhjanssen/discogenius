@@ -15,6 +15,7 @@ const {
   applyFallbackOfferToPayload,
   applyFallbackTrackOffer,
   listProviderAlbumFallbackTracks,
+  remapAlbumTrackOffersForFallback,
   resolveFallbackProvenance,
 } = await import("./download-processor.js");
 
@@ -349,4 +350,149 @@ test("generic fallback replaces persisted provider routing and clears an old pro
   assert.equal(moved.providerId, "fallback-album");
   assert.equal(moved.url, null);
   assert.equal(moved.releaseGroupMbid, "canonical-release-group");
+});
+
+test("whole-album fallback rebinds every track to the exact fallback edition occurrence", () => {
+  const first = seedCanonicalTrack("rel-fallback", "track-first", "First", 1, 1);
+  const second = seedCanonicalTrack("rel-fallback", "track-second", "Second", 1, 2);
+  const release = db.prepare(
+    "SELECT id FROM AlbumEditions WHERE mbid = 'rel-fallback'",
+  ).get() as { id: number };
+
+  const fallbackRelease = providerItem("tidal", "release", "tidal-album", "Fallback Album");
+  const fallbackFirst = providerItem("tidal", "track", "tidal-first", "First");
+  const fallbackSecond = providerItem("tidal", "track", "tidal-second", "Second");
+  const firstMember = addMember(fallbackRelease, fallbackFirst, 1, 1);
+  const secondMember = addMember(fallbackRelease, fallbackSecond, 1, 2);
+  const releaseMatch = acceptReleaseMatch(fallbackRelease, release.id);
+  addTrackMatch(firstMember, releaseMatch, first.trackId, first.recordingId);
+  addTrackMatch(secondMember, releaseMatch, second.trackId, second.recordingId);
+  const firstVariant = (db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label, availability
+    ) VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+    RETURNING id
+  `).get(fallbackFirst) as { id: number }).id;
+  const secondVariant = (db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label, availability
+    ) VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+    RETURNING id
+  `).get(fallbackSecond) as { id: number }).id;
+
+  const moved = applyFallbackOfferToPayload({
+    type: "album",
+    provider: "apple-music",
+    providerId: "apple-album",
+    releaseGroupMbid: "rg-fallback",
+    releaseMbid: "rel-fallback",
+    slot: "stereo",
+    trackOffers: [
+      {
+        provider: "apple-music",
+        providerTrackId: "apple-first",
+        providerTrackItemId: 9001,
+        providerEditionItemId: 9002,
+        providerAudioVariantId: 9003,
+        acquisitionPlanSourceId: 9004,
+        canonicalTrackMbid: "track-first",
+        canonicalRecordingMbid: "rec-track-first",
+        trackNum: 1,
+        volumeNum: 1,
+      },
+      {
+        provider: "apple-music",
+        providerTrackId: "apple-second",
+        providerTrackItemId: 9011,
+        providerEditionItemId: 9012,
+        providerAudioVariantId: 9013,
+        acquisitionPlanSourceId: 9014,
+        canonicalTrackMbid: "track-second",
+        canonicalRecordingMbid: "rec-track-second",
+        trackNum: 2,
+        volumeNum: 1,
+      },
+    ],
+  } as any, "album", {
+    provider: "tidal",
+    providerId: "tidal-album",
+    quality: "LOSSLESS",
+  }) as any;
+
+  assert.equal(moved.provider, "tidal");
+  assert.equal(moved.providerId, "tidal-album");
+  assert.deepEqual(
+    moved.trackOffers.map((offer: any) => ({
+      provider: offer.provider,
+      providerTrackId: offer.providerTrackId,
+      providerTrackItemId: offer.providerTrackItemId,
+      providerAlbumId: offer.providerAlbumId,
+      providerEditionItemId: offer.providerEditionItemId,
+      providerAudioVariantId: offer.providerAudioVariantId,
+      acquisitionPlanSourceId: offer.acquisitionPlanSourceId,
+      canonicalTrackMbid: offer.canonicalTrackMbid,
+      canonicalRecordingMbid: offer.canonicalRecordingMbid,
+    })),
+    [
+      {
+        provider: "tidal",
+        providerTrackId: "tidal-first",
+        providerTrackItemId: fallbackFirst,
+        providerAlbumId: "tidal-album",
+        providerEditionItemId: fallbackRelease,
+        providerAudioVariantId: firstVariant,
+        acquisitionPlanSourceId: null,
+        canonicalTrackMbid: "track-first",
+        canonicalRecordingMbid: "rec-track-first",
+      },
+      {
+        provider: "tidal",
+        providerTrackId: "tidal-second",
+        providerTrackItemId: fallbackSecond,
+        providerAlbumId: "tidal-album",
+        providerEditionItemId: fallbackRelease,
+        providerAudioVariantId: secondVariant,
+        acquisitionPlanSourceId: null,
+        canonicalTrackMbid: "track-second",
+        canonicalRecordingMbid: "rec-track-second",
+      },
+    ],
+    "canonical track and recording identity survives while every provider-native id changes",
+  );
+});
+
+test("whole-album fallback rejects an edition missing one requested track context", () => {
+  const first = seedCanonicalTrack("rel-incomplete", "track-first", "First", 1, 1);
+  seedCanonicalTrack("rel-incomplete", "track-second", "Second", 1, 2);
+  const release = db.prepare(
+    "SELECT id FROM AlbumEditions WHERE mbid = 'rel-incomplete'",
+  ).get() as { id: number };
+  const fallbackRelease = providerItem("tidal", "release", "tidal-incomplete", "Incomplete");
+  const fallbackFirst = providerItem("tidal", "track", "tidal-first", "First");
+  const firstMember = addMember(fallbackRelease, fallbackFirst, 1, 1);
+  const releaseMatch = acceptReleaseMatch(fallbackRelease, release.id);
+  addTrackMatch(firstMember, releaseMatch, first.trackId, first.recordingId);
+  db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label, availability
+    ) VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+  `).run(fallbackFirst);
+
+  assert.equal(remapAlbumTrackOffersForFallback([
+    {
+      provider: "apple-music",
+      providerTrackId: "apple-first",
+      canonicalTrackMbid: "track-first",
+      canonicalRecordingMbid: "rec-track-first",
+    },
+    {
+      provider: "apple-music",
+      providerTrackId: "apple-second",
+      canonicalTrackMbid: "track-second",
+      canonicalRecordingMbid: "rec-track-second",
+    },
+  ], {
+    provider: "tidal",
+    providerId: "tidal-incomplete",
+  }, "stereo"), null);
 });

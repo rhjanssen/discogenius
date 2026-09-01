@@ -207,8 +207,10 @@ export interface RefreshMetadataCommand extends CommandBodyCommon {
 
 export interface ApplyCurationCommand extends CommandBodyCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
+  providerPriorityRevision?: string;
 }
 
+/** Upgrade drain for jobs enqueued by 2.13.4. New preference writes never enqueue it. */
 export type ReplanAcquisitionCommand = CommandBodyCommon;
 
 export interface DownloadMissingCommand extends CommandBodyCommon {

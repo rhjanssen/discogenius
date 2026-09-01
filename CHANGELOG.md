@@ -4,6 +4,45 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.13.5] - 2026-09-01
+
+Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a
+reset.
+
+### Changed
+
+- **Provider preference updates.** Saving a new provider order marks acquisition
+  plans stale without immediately rebuilding a large library. The next global
+  curation applies the order, and Download Missing schedules that curation first
+  when needed. Queued 2.13.4 plan-rebuild commands drain safely into this flow.
+- **SQLite read and diagnostics paths.** Read-only artist, album, and track lists
+  use WAL readers instead of joining the writer queue. Health diagnostics now
+  report the active cross-worker mutex rather than a separate in-process view.
+
+### Fixed
+
+- **Database lock recovery.** Each worker owns the SQLite write mutex with a
+  unique token. A worker crash releases only its abandoned lock after the worker
+  has exited, preventing permanent locks and overlapping lease expiry storms.
+- **Library routing.** Download planning and execution reject disabled libraries
+  and quality profiles that do not match the stereo or spatial source slot. A
+  stereo album can no longer be routed into the spatial library.
+- **Fallback provenance.** Album and track fallbacks retain the exact provider
+  edition occurrence selected for every canonical track. Missing or ambiguous
+  contexts fail before download or import instead of attaching files to an
+  arbitrary edition.
+- **Audio preview fallback.** TIDAL hi-res quality aliases are normalized to the
+  backend's canonical spelling. Preview signing may use another accepted,
+  available provider match when the planned provider cannot supply playback.
+- **Queue removal and scrolling.** Removing an active queue item cancels its real
+  download worker before changing command state. Growing queue history no longer
+  creates a competing inner scroll container that snaps the page to the top.
+- **Canonical import metadata.** Downloaded and manually imported audio is tied
+  to the exact `TrackFiles` rows produced by the operation. Canonical edition
+  tags and exact-edition artwork are written and verified according to the tag,
+  embedded-cover, and folder-cover settings; failures remain visible and
+  recoverable instead of completing silently with provider or single metadata.
+
 ## [2.13.4] - 2026-08-31
 
 Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a

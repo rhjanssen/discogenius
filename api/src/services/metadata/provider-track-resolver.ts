@@ -21,6 +21,13 @@ export type ResolvedProviderTrack = {
     score: number;
 };
 
+export type ResolvedProviderPreviewTrack = {
+    provider: string;
+    providerTrackId: string;
+    quality: string | null;
+    score: number;
+};
+
 export function looksLikeMusicBrainzMbid(value: unknown): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
 }
@@ -136,6 +143,9 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
          AND plan.state = 'current'
         JOIN LibraryEditions library_release
           ON library_release.id = plan.library_edition_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
         JOIN AlbumEditions release
           ON release.id = library_release.edition_id
         JOIN Albums release_group
@@ -200,6 +210,140 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
         providerTrackId: String(row.provider_track_id),
         providerAlbumId: String(row.provider_album_id),
         slot: row.slot,
+        quality: row.quality,
+        score: Number(row.score),
+    };
+}
+
+/**
+ * Resolve a preview independently of the selected acquisition provider.
+ *
+ * The current plan remains the first choice. If that provider cannot produce a
+ * browser preview, callers may ask another provider for an accepted typed match.
+ * The fallback fails closed when that provider has more than one distinct track
+ * resource for the recording in this release group. Picking one occurrence by
+ * row order would recreate the ambiguous provider-context bug that imports
+ * deliberately reject.
+ */
+export async function resolveProviderPreviewTrackForCanonicalTrack(input: {
+    releaseGroupMbid?: string | null;
+    canonicalTrackMbid?: string | null;
+    canonicalRecordingMbid?: string | null;
+    provider: string;
+    slot?: string | null;
+}): Promise<ResolvedProviderPreviewTrack | null> {
+    const provider = String(input.provider || "").trim().toLowerCase();
+    if (!provider) return null;
+
+    const planned = await resolveProviderTrackForCanonicalTrack({ ...input, provider });
+    if (planned) {
+        return {
+            provider: planned.provider,
+            providerTrackId: planned.providerTrackId,
+            quality: planned.quality,
+            score: planned.score,
+        };
+    }
+
+    const canonicalTrack = getCanonicalTrack(input);
+    const releaseGroupMbid = String(input.releaseGroupMbid || canonicalTrack?.release_group_mbid || "").trim();
+    if (!canonicalTrack || !releaseGroupMbid) return null;
+
+    const requestedSlot = String(input.slot || "").trim().toLowerCase();
+    const rows = db.prepare(`
+        SELECT
+          provider_track.id AS provider_track_item_id,
+          provider_track.provider,
+          provider_track.provider_id AS provider_track_id,
+          track_match.confidence * 100 AS score,
+          (
+            SELECT COALESCE(variant.provider_quality_label, variant.quality_class)
+            FROM ProviderItemAudioVariants variant
+            WHERE variant.provider_item_id = provider_track.id
+              AND variant.availability = 'available'
+              AND (
+                ? = ''
+                OR (? = 'spatial' AND variant.quality_class = 'spatial')
+                OR (? = 'stereo' AND variant.quality_class <> 'spatial')
+              )
+            ORDER BY
+              CASE LOWER(variant.quality_class)
+                WHEN 'hires-lossless' THEN 0
+                WHEN 'hires_lossless' THEN 0
+                WHEN 'lossless' THEN 1
+                WHEN 'lossy' THEN 2
+                WHEN 'spatial' THEN 3
+                ELSE 4
+              END,
+              variant.id
+            LIMIT 1
+          ) AS quality
+        FROM ProviderTrackMatches track_match
+        JOIN ProviderItems provider_track
+          ON provider_track.id = track_match.provider_track_item_id
+         AND provider_track.entity_type = 'track'
+        JOIN ProviderEditionMembers member
+          ON member.id = track_match.provider_edition_member_id
+         AND member.member_item_id = provider_track.id
+        JOIN ProviderItems provider_release
+          ON provider_release.id = member.provider_edition_item_id
+         AND provider_release.provider = provider_track.provider
+         AND provider_release.entity_type = 'release'
+        JOIN ProviderEditionMatches release_match
+          ON release_match.id = track_match.provider_edition_match_id
+         AND release_match.provider_edition_item_id = provider_release.id
+         AND release_match.match_state = 'accepted'
+        JOIN AlbumEditions release
+          ON release.id = release_match.edition_id
+        JOIN Albums release_group
+          ON release_group.id = release.release_group_id
+        JOIN Recordings recording
+          ON recording.id = track_match.recording_id
+        WHERE track_match.match_state = 'accepted'
+          AND release_group.mbid = ?
+          AND LOWER(provider_track.provider) = ?
+          AND (
+            provider_track.availability IS NULL
+            OR LOWER(CAST(provider_track.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
+          AND (
+            provider_release.availability IS NULL
+            OR LOWER(CAST(provider_release.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
+          AND (
+            (? IS NOT NULL AND track_match.track_id = ?)
+            OR (? IS NOT NULL AND recording.mbid = ?)
+          )
+        ORDER BY
+          CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          track_match.confidence DESC,
+          provider_track.id
+    `).all(
+        requestedSlot,
+        requestedSlot,
+        requestedSlot,
+        releaseGroupMbid,
+        provider,
+        canonicalTrack.id ?? null,
+        canonicalTrack.id ?? null,
+        canonicalTrack.recording_mbid,
+        canonicalTrack.recording_mbid,
+    ) as Array<{
+        provider_track_item_id: number;
+        provider: string;
+        provider_track_id: string;
+        quality: string | null;
+        score: number;
+    }>;
+
+    const distinct = new Map<number, typeof rows[number]>();
+    for (const row of rows) distinct.set(row.provider_track_item_id, row);
+    if (distinct.size !== 1) return null;
+
+    const row = distinct.values().next().value as typeof rows[number];
+    return {
+        provider: row.provider,
+        providerTrackId: String(row.provider_track_id),
         quality: row.quality,
         score: Number(row.score),
     };
