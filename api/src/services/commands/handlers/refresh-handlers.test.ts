@@ -166,7 +166,7 @@ test("deferred provider matching stamps credited artists only after a successful
   assert.equal(failure.library_origin, "musicbrainz-credit");
 });
 
-test("a recurring artist refresh fills only newly discovered credited artists once", async () => {
+test("a recurring artist refresh catalogues new collaborators in-process without queue fan-out", async () => {
   const { seedLibraryArtistMonitoring } = await import("../../../test-support/active-schema-fixture.js");
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name, content_hash) VALUES
@@ -178,13 +178,26 @@ test("a recurring artist refresh fills only newly discovered credited artists on
 
   const originalRefresh = RefreshArtistService.refreshArtist;
   const originalRefreshStats = ArtistStatisticsService.refresh;
-  (RefreshArtistService as any).refreshArtist = async () => ({
-    artistMbid: "selected-artist-mbid",
-    shouldHydrateCatalog: true,
-    metadataChanged: true,
-    isNewArtist: false,
-    creditedArtistMbids: ["new-credit-mbid", "known-credit-mbid", "new-credit-mbid"],
-  });
+  const refreshedIds: string[] = [];
+  (RefreshArtistService as any).refreshArtist = async (artistId: string) => {
+    refreshedIds.push(artistId);
+    if (artistId === "selected-artist-mbid") {
+      return {
+        artistMbid: "selected-artist-mbid",
+        shouldHydrateCatalog: true,
+        metadataChanged: true,
+        isNewArtist: false,
+        creditedArtistMbids: ["new-credit-mbid", "known-credit-mbid", "new-credit-mbid"],
+      };
+    }
+    return {
+      artistMbid: artistId,
+      shouldHydrateCatalog: true,
+      metadataChanged: true,
+      isNewArtist: true,
+      creditedArtistMbids: [],
+    };
+  };
   (ArtistStatisticsService as any).refresh = () => undefined;
 
   try {
@@ -207,31 +220,30 @@ test("a recurring artist refresh fills only newly discovered credited artists on
     } as any, {
       updateCommandDescription: () => undefined,
       formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+      yieldToEventLoop: async () => undefined,
     } as any);
   } finally {
     (RefreshArtistService as any).refreshArtist = originalRefresh;
     (ArtistStatisticsService as any).refresh = originalRefreshStats;
   }
 
-  const refreshes = dbModule.db.prepare(`
-    SELECT priority, payload
+  assert.deepEqual(refreshedIds, ["selected-artist-mbid", "new-credit-mbid"]);
+
+  const childRefreshes = dbModule.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM commands
+    WHERE name = ? AND ref_id IN ('new-credit-mbid', 'known-credit-mbid')
+  `).get(CommandNames.RefreshArtist) as { count: number };
+  assert.equal(childRefreshes.count, 0);
+
+  const matchJobs = dbModule.db.prepare(`
+    SELECT ref_id
     FROM commands
     WHERE name = ?
     ORDER BY id
-  `).all(CommandNames.RefreshArtist) as Array<{ priority: number; payload: string }>;
-  assert.equal(refreshes.length, 1);
-  assert.equal(refreshes[0].priority, -10);
-  assert.deepEqual(JSON.parse(refreshes[0].payload), {
-    artistId: "new-credit-mbid",
-    artistName: "New collaborator",
-    workflow: "metadata-refresh",
-    monitorArtist: false,
-    monitorAlbums: false,
-    hydrateCatalog: true,
-    hydrateAlbumTracks: false,
-    scanLibrary: false,
-    forceUpdate: false,
-  });
+  `).all(CommandNames.MatchArtistProviders) as Array<{ ref_id: string }>;
+  assert.equal(matchJobs.length, 1);
+  assert.equal(matchJobs[0].ref_id, "selected-artist-mbid");
 });
 
 test("a credited-artist background fill cannot recursively expand", async () => {
@@ -270,6 +282,7 @@ test("a credited-artist background fill cannot recursively expand", async () => 
     } as any, {
       updateCommandDescription: () => undefined,
       formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+      yieldToEventLoop: async () => undefined,
     } as any);
   } finally {
     (RefreshArtistService as any).refreshArtist = originalRefresh;

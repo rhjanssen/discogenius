@@ -22,7 +22,8 @@ router.get("/", (_req, res) => {
     res.json({
       ...collectHealthDiagnosticsSnapshot(),
       imports: {
-        unmatchedArtists: ProviderArtistIdentityService.listUnmatched(),
+        unmatchedArtistTotal: ProviderArtistIdentityService.countUnmatched(),
+        unmatchedArtists: ProviderArtistIdentityService.listUnmatched({ limit: 50, offset: 0 }),
       },
     });
   } catch (error: any) {

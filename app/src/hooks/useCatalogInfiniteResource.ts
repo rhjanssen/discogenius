@@ -72,7 +72,10 @@ export function useCatalogInfiniteResource<TItem, TResponse = unknown>({
     ),
     staleTime,
     refetchOnWindowFocus: false,
-    retry: 1,
+    // A timed-out list query is still running on the Node event loop. Retrying
+    // queues a second synchronous SQLite read behind the first and is how two
+    // library tabs took the live 2.13.6 server down.
+    retry: false,
     placeholderData: (previousData: InfiniteData<CatalogPage<TItem>> | undefined) => previousData,
     enabled,
   });

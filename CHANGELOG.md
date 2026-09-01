@@ -4,6 +4,63 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.13.7] - 2026-09-01
+
+Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a
+reset.
+
+After upgrading a library that ran 2.13.6 Write Tags or a collaborator
+refresh, restart the process and clear the stuck command queue. Those jobs
+enqueued thousands of refresh/match rows and mixed MusicBrainz lookups into
+retag.
+
+### Changed
+
+- **Write Tags is local.** Retag no longer looks up MusicBrainz barcodes/ISRCs,
+  fingerprints files, or fetches provider lyrics while writing. Those belong
+  to refresh and identification. A library-wide retag on 2.13.6 mixed them
+  together and stalled the live 500-artist server.
+- **Collaborator catalog stays in one refresh job.** Lidarr keeps credits on
+  `ArtistMetadata` and membership on `Artists`. Discogenius does the same:
+  collaborators get a full MusicBrainz discography (unmonitored, no
+  `LibraryArtists` row, no provider matching until you add them) so Search and
+  unmonitored artist cards can discover them. That work runs inside the parent
+  `RefreshArtist` command, like Lidarr looping artists in one job. It no
+  longer enqueues one refresh+match row per credited name.
+- **System status unmatched list.** `/api/v1/system/status` returns a count
+  and the first 50 unmatched provider artists instead of every row.
+- **Library list retries.** Timed-out Tracks/Albums/Videos requests are not
+  retried. A retry used to stack a second synchronous SQLite read behind the
+  first and take the UI down with it.
+
+### Fixed
+
+- **`/health` stays a liveness probe.** It no longer runs queue/WAL/import
+  diagnostics or returns 503 because a command failed. Those snapshots stay
+  on `/api/health`. Docker already used `/ping`; reverse proxies that hit
+  `/health` will no longer restart a busy process.
+- **Cover-cache writes no longer raise SQLite `busy_timeout` to 5s** on the
+  HTTP connection. After a cover request, later statements waited five
+  seconds on a locked database instead of one.
+- **WAL checkpoints left the HTTP thread.** PASSIVE checkpoint still copies
+  frames; with a large WAL that stalled `/ping`. The dedicated WAL thread
+  already does this work.
+- **Track library index rebuild.** Housekeeping can populate `TrackLibraryIndex`
+  again. `needsRebuild()` was hardcoded false, so the projection never ran.
+- **Dark brand controls.** Dark mode uses Fluent's theme-designer brand text
+  (110/120) and a brighter filled brand step, so primary buttons and brand
+  badges are orange rather than brown. The dashboard queue badge uses Fluent's
+  tint appearance.
+- **Settings category nav.** Desktop categories use stock Fluent Nav, including
+  the selected left indicator. Item fills stay transparent so UltraBlur shows
+  through, and the column no longer grows a horizontal scrollbar.
+- **Dashboard stats.** Artist/album/track/video figures use each accent ramp's
+  Fluent `colorBrandForeground1`, including the large number, not the raw logo
+  hex.
+- **Library and dashboard tabs.** Stock Fluent `TabList` medium size, so the
+  selected underline matches Word/PowerPoint (`strokeWidthThicker`) instead of
+  the thinner small size.
+
 ## [2.13.6] - 2026-09-01
 
 Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a

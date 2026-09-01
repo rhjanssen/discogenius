@@ -219,9 +219,10 @@ export type RetagApplyResult = {
 
 type RetagApplyOptions = {
   /**
-   * Permit provider/network lyric discovery while writing tags. Interactive
-   * maintenance keeps this enabled; the download-import path disables it so
-   * optional lyric misses cannot hold a completed media job for minutes.
+   * Permit provider lyric discovery while writing tags. Off by default:
+   * Write Tags is a local command (Lidarr AudioTagService). Lyrics belong
+   * on LyricFiles from import/backfill; this flag is only for an explicit
+   * interactive repair that already has a lyrics map or wants a fetch.
    */
   includeExternalLyrics?: boolean;
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
@@ -2428,7 +2429,7 @@ export class AudioTagService {
     const desiredTags = this.buildDesiredTags(row, config);
 
     const quality = getConfigSection("quality");
-    if (options.includeExternalMetadata !== false && quality.embed_lyrics && row.file_provider_id) {
+    if (options.includeExternalMetadata === true && quality.embed_lyrics && row.file_provider_id) {
       const lyrics = await resolveLyricsForRetagRow(row, true, options.lyricsByProviderMedia);
       const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
       if (lyricTag) desiredTags.push(lyricTag);
@@ -2764,12 +2765,15 @@ export class AudioTagService {
         continue;
       }
 
-      const enrichedRow = await this.enrichMusicBrainzMetadata(row, config);
-
+      // Write Tags uses persisted catalog + local assets only. Barcode/ISRC
+      // lookups, AcoustID, and fpcalc belong to identification, not retag.
+      // A 2.13.6 library-wide retag mixed those together and wedged the live
+      // server (one file at a time against MusicBrainz while 5k refresh
+      // commands fought for the writer).
       const resolvedPath = resolveStoredLibraryPath({
-        filePath: enrichedRow.file_path,
-        libraryRoot: enrichedRow.library_root,
-        relativePath: enrichedRow.relative_path,
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+        relativePath: row.relative_path,
       });
 
       if (!fs.existsSync(resolvedPath)) {
@@ -2777,8 +2781,8 @@ export class AudioTagService {
         continue;
       }
 
-      const preview = await this.evaluateRow(enrichedRow, config, {
-        includeExternalMetadata: options.includeExternalLyrics !== false,
+      const preview = await this.evaluateRow(row, config, {
+        includeExternalMetadata: options.includeExternalLyrics === true,
         lyricsByProviderMedia,
       });
       if (!preview.missing && preview.changes.length === 0) {
@@ -2786,21 +2790,21 @@ export class AudioTagService {
         continue;
       }
 
-      const desiredTagsArr = this.buildDesiredTags(enrichedRow, config);
+      const desiredTagsArr = this.buildDesiredTags(row, config);
 
-      if (options.includeExternalLyrics !== false && quality.embed_lyrics && enrichedRow.file_provider_id) {
-        const lyrics = await resolveLyricsForRetagRow(enrichedRow, true, lyricsByProviderMedia);
+      if (options.includeExternalLyrics === true && quality.embed_lyrics && row.file_provider_id) {
+        const lyrics = await resolveLyricsForRetagRow(row, true, lyricsByProviderMedia);
         const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
         if (lyricTag) desiredTagsArr.push(lyricTag);
       }
 
-      const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, enrichedRow.extension);
-      const removalKeys = this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(enrichedRow, config), enrichedRow.extension);
+      const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, row.extension);
+      const removalKeys = this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(row, config), row.extension);
 
-      if (shouldSkipEmbeddedAudioTagWrite(enrichedRow)) {
+      if (shouldSkipEmbeddedAudioTagWrite(row)) {
         result.errors.push({
           id,
-          error: `${enrichedRow.extension || "file"} ${enrichedRow.file_codec || "audio"} metadata is not safely writable with ffmpeg stream copy`,
+          error: `${row.extension || "file"} ${row.file_codec || "audio"} metadata is not safely writable with ffmpeg stream copy`,
         });
         continue;
       }
@@ -2820,13 +2824,13 @@ export class AudioTagService {
         continue;
       }
 
-      const coverOutcome = await applyPreferredCover(enrichedRow, resolvedPath, id);
+      const coverOutcome = await applyPreferredCover(row, resolvedPath, id);
       if (coverOutcome === "failed") {
         continue;
       }
 
-      const verification = await this.evaluateRow(enrichedRow, config, {
-        includeExternalMetadata: options.includeExternalLyrics !== false,
+      const verification = await this.evaluateRow(row, config, {
+        includeExternalMetadata: options.includeExternalLyrics === true,
         lyricsByProviderMedia,
       });
       if (verification.missing || verification.error || verification.changes.length > 0) {
@@ -2930,6 +2934,7 @@ export class AudioTagService {
     for (let offset = 0; offset < ids.length; offset += RETAG_APPLY_QUERY_BATCH_SIZE) {
       const batch = ids.slice(offset, offset + RETAG_APPLY_QUERY_BATCH_SIZE);
       const batchResult = await this.apply(batch, {
+        includeExternalLyrics: false,
         onProgress: (batchCompleted) => options.onProgress?.(completed + batchCompleted, ids.length),
       });
       result.retagged += batchResult.retagged;

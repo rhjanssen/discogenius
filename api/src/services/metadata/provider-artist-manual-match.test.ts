@@ -60,7 +60,9 @@ test("ignoreProviderArtist hides the row from the unmatched list", () => {
   storeUnmatchedArtist("k-1", "Hit Tunes Karaoke");
   storeUnmatchedArtist("k-2", "Some Real Artist");
 
+  assert.equal(identityService.ProviderArtistIdentityService.countUnmatched(), 2);
   assert.equal(identityService.ProviderArtistIdentityService.listUnmatched().length, 2);
+  assert.equal(identityService.ProviderArtistIdentityService.listUnmatched({ limit: 1 }).length, 1);
 
   const result = manualMatch.ignoreProviderArtist("tidal", "k-1");
   assert.equal(result.ignored, true);

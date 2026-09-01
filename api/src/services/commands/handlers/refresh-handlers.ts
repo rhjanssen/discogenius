@@ -58,12 +58,14 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         return;
     }
 
-    // A monitored artist's canonical refresh may discover a genuinely new
-    // credited artist. Give each untouched stub one background catalogue and
-    // provider fill, even when the collaboration appeared years after the
-    // monitored artist was added. The child is not a LibraryArtist, so it cannot
-    // recursively walk the collaboration graph; already hydrated collaborators
-    // are skipped by content_hash.
+    // Lidarr: ArtistMetadata holds every credited name; Artists holds who you
+    // follow. Discogenius matches that with ArtistMetadata vs LibraryArtists.
+    // Collaborators still get a full MusicBrainz discography so Search and
+    // unmonitored artist cards can discover them — but that work stays inside
+    // this command (Lidarr's RefreshArtist loops artists in one job). One
+    // RefreshArtist + MatchArtistProviders row per collaborator is what
+    // produced 5,300 queue items and wedged SQLite. They are not LibraryArtists,
+    // so they are not matched for download until the user adds them.
     if (
         isArtistLibraryMonitored(job.payload.artistId)
         && creditedArtistMbids.length > 0
@@ -77,15 +79,29 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
               AND content_hash IS NULL
             ORDER BY name COLLATE NOCASE, mbid
         `).all(...uniqueMbids) as Array<{ mbid: string; name: string }>;
-        for (const credited of untouched) {
-            queueArtistWorkflow({
-                artistId: credited.mbid,
-                artistName: credited.name,
-                workflow: "metadata-refresh",
-                priority: ARTIST_WORKFLOW_PRIORITY.CREDITED_CATALOG_BASE,
-                trigger: CommandTrigger.Unspecified,
+        for (let index = 0; index < untouched.length; index += 1) {
+            const credited = untouched[index];
+            ctx.updateCommandDescription(job, {
+                progress: 50 + Math.floor(((index + 1) / Math.max(untouched.length, 1)) * 35),
+                description: ctx.formatArtistPhaseDescription(
+                    job,
+                    `cataloguing collaborator ${index + 1}/${untouched.length}: ${credited.name}`,
+                ),
             });
+            await RefreshArtistService.refreshArtist(credited.mbid, {
+                monitorArtist: false,
+                hydrateCatalog: true,
+                hydrateAlbumTracks: true,
+                deferProviderMatching: true,
+                forceUpdate: false,
+            });
+            await ctx.yieldToEventLoop();
         }
+    }
+
+    if (!isArtistLibraryMonitored(job.payload.artistId)) {
+        RefreshArtistService.markArtistRefreshComplete(job.payload.artistId);
+        return;
     }
 
     // Hand provider matching off to its own queued unit. That command emits

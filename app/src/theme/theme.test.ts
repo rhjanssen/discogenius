@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildDiscogeniusSearchUnderlineGradient,
   createDiscogeniusTheme,
-  discogeniusAccentKeyColor,
   discogeniusAccentKeys,
   discogeniusOrangeTheme,
   getDiscogeniusAccentTokens,
@@ -29,29 +28,44 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("Discogenius theme semantics", () => {
-  it("keeps Fluent's complete mode-aware brand mapping intact", () => {
+  it("keeps Fluent's light brand mapping intact", () => {
     expect(createDiscogeniusTheme(discogeniusOrangeTheme, "light")).toEqual(
       createLightTheme(discogeniusOrangeTheme),
     );
-    expect(createDiscogeniusTheme(discogeniusOrangeTheme, "dark")).toEqual(
-      createDarkTheme(discogeniusOrangeTheme),
-    );
   });
 
-  it("keeps decorative logo accents stable while badges use semantic colors", () => {
+  it("applies Fluent theme-designer dark brand text and a readable filled step", () => {
+    const theme = createDiscogeniusTheme(discogeniusOrangeTheme, "dark");
+    const stock = createDarkTheme(discogeniusOrangeTheme);
+    expect(theme.colorBrandForeground1).toBe(discogeniusOrangeTheme[110]);
+    expect(theme.colorBrandForeground2).toBe(discogeniusOrangeTheme[120]);
+    expect(theme.colorCompoundBrandForeground1).toBe(discogeniusOrangeTheme[110]);
+    expect(theme.colorBrandBackground).toBe(discogeniusOrangeTheme[80]);
+    expect(theme.colorNeutralForeground1).toBe(stock.colorNeutralForeground1);
+    expect(theme.colorNeutralBackground1).toBe(stock.colorNeutralBackground1);
+  });
+
+  it("uses Fluent brand-text tokens for dashboard accents", () => {
     const lightAccents = getDiscogeniusAccentTokens("light");
     const darkAccents = getDiscogeniusAccentTokens("dark");
 
+    expect(lightAccents.artists.foreground).toBe(
+      createDiscogeniusTheme(discogeniusOrangeTheme, "light").colorBrandForeground1,
+    );
+    expect(darkAccents.artists.foreground).toBe(
+      createDiscogeniusTheme(discogeniusOrangeTheme, "dark").colorBrandForeground1,
+    );
+
     for (const accent of discogeniusAccentKeys) {
-      expect(lightAccents[accent].foreground).toBe(discogeniusAccentKeyColor[accent]);
-      expect(lightAccents[accent].foreground).toBe(darkAccents[accent].foreground);
+      expect(contrastRatio(lightAccents[accent].foreground, createLightTheme(discogeniusOrangeTheme).colorNeutralBackground1)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(darkAccents[accent].foreground, createDarkTheme(discogeniusOrangeTheme).colorNeutralBackground1)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(lightAccents[accent].badgeForeground, lightAccents[accent].badgeBackground)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(darkAccents[accent].badgeForeground, darkAccents[accent].badgeBackground)).toBeGreaterThanOrEqual(4.5);
     }
 
     const gradient = buildDiscogeniusSearchUnderlineGradient("dark");
     for (const accent of discogeniusAccentKeys) {
-      expect(gradient).toContain(discogeniusAccentKeyColor[accent]);
+      expect(gradient).toContain(darkAccents[accent].foreground);
     }
   });
 

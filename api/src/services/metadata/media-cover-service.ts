@@ -1,7 +1,6 @@
 import { CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import { db } from "../../database.js";
-import { isMainThread } from "node:worker_threads";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -1112,7 +1111,7 @@ function runBestEffortMediaCoverWrite(action: () => void): void {
     // command-worker writes, never let cache maintenance block library reads.
   } finally {
     try {
-      db.pragma(`busy_timeout = ${isMainThread ? 5000 : 30000}`);
+      db.pragma("busy_timeout = 1000");
     } catch {
       // Ignore restore failures; the next connection initialization will set it.
     }

@@ -116,11 +116,11 @@ export function getDiscogeniusAccentTokens(mode: "light" | "dark"): DiscogeniusA
         const brand = discogeniusAuxiliaryThemes[accent];
         const theme = createDiscogeniusTheme(brand, mode);
         map[accent] = {
-            // Search and dashboard illustrations are decorative brand artwork.
-            foreground: discogeniusAccentKeyColor[accent],
+            // Same Fluent brand-text token the rest of the UI uses (light 80 /
+            // dark 110 after the theme-designer override). Logo hex stays on
+            // UltraBlur seeds and the wordmark, not on dashboard stats.
+            foreground: theme.colorBrandForeground1,
             background: theme.colorBrandBackground2,
-            // Badge text is semantic content and follows Fluent's accessible,
-            // mode-aware tint mapping instead of the decorative logo color.
             badgeForeground: theme.colorBrandForeground2,
             badgeBackground: theme.colorBrandBackground2,
         };
@@ -173,8 +173,39 @@ export const tidalBadgeColorLight = {
     SpatialBackground: "#ededed",
 } as const;
 
+/**
+ * Fluent's theme designer keeps `createLightTheme` / `createDarkTheme` as the
+ * mapping, then lifts dark-mode brand *text* to 110/120 so links and selected
+ * indicators stay recognizable on dark chrome:
+ * https://react.fluentui.dev/?path=/docs/theme-theme-designer--docs
+ *
+ * Orange (and similar warm ramps) also make `createDarkTheme`'s filled brand
+ * step (70) read as brown. Use the lightest filled step that still has 4.5:1
+ * with white on-brand text.
+ */
+function applyFluentDarkBrandOverrides(theme: Theme, brand: BrandVariants): Theme {
+    return {
+        ...theme,
+        colorBrandForeground1: brand[110],
+        colorBrandForeground2: brand[120],
+        colorCompoundBrandForeground1: brand[110],
+        colorCompoundBrandForeground1Hover: brand[120],
+        colorCompoundBrandForeground1Pressed: brand[130],
+        colorBrandBackground: brand[80],
+        colorBrandBackgroundHover: brand[80],
+        colorBrandBackgroundPressed: brand[70],
+        colorBrandBackgroundSelected: brand[80],
+        colorCompoundBrandBackground: brand[80],
+        colorCompoundBrandBackgroundHover: brand[80],
+        colorCompoundBrandBackgroundPressed: brand[70],
+    };
+}
+
 export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {
-    return mode === "dark" ? createDarkTheme(brand) : createLightTheme(brand);
+    if (mode !== "dark") {
+        return createLightTheme(brand);
+    }
+    return applyFluentDarkBrandOverrides(createDarkTheme(brand), brand);
 }
 
 export const lightTheme: Theme = createDiscogeniusTheme(discogeniusOrangeTheme, "light");

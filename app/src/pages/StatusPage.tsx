@@ -551,13 +551,20 @@ const StatusPage = () => {
                         id="import-unmatched"
                         title="Import"
                         description="Provider artists that were not linked automatically. Pick the right MusicBrainz artist with Find match, or use Ignore for entries that have nothing to match (karaoke channels, misspelled duplicates)."
-                        actions={status && status.imports.unmatchedArtists.length > 0 ? (
+                        actions={status && (status.imports.unmatchedArtistTotal ?? status.imports.unmatchedArtists.length) > 0 ? (
                             <Badge appearance="filled" color="warning">
-                                {`${status.imports.unmatchedArtists.length} not monitored`}
+                                {`${status.imports.unmatchedArtistTotal ?? status.imports.unmatchedArtists.length} not monitored`}
                             </Badge>
                         ) : undefined}
                     >
                         <div className={styles.card}>
+                            {status && (status.imports.unmatchedArtistTotal ?? 0) > status.imports.unmatchedArtists.length ? (
+                                <div className={styles.row}>
+                                    <Caption1 className={styles.mutedText}>
+                                        {`Showing ${status.imports.unmatchedArtists.length} of ${status.imports.unmatchedArtistTotal}. Use Find match on these first; the rest stay queued until matched or ignored.`}
+                                    </Caption1>
+                                </div>
+                            ) : null}
                             {status && status.imports.unmatchedArtists.length > 0 ? (
                                 status.imports.unmatchedArtists.map((artist, index) => (
                                     <div

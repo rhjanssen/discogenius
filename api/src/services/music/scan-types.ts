@@ -36,7 +36,7 @@ export interface ArtistRefreshResult {
     shouldHydrateCatalog: boolean;
     metadataChanged: boolean;
     isNewArtist: boolean;
-    /** Catalog-only collaborator stubs discovered by this canonical refresh. */
+    /** First-degree credited artists discovered by this canonical refresh. */
     creditedArtistMbids: string[];
 }
 

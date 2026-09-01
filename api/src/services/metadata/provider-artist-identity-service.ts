@@ -828,7 +828,27 @@ export class ProviderArtistIdentityService {
    * import-list items). Read-only; used by the System Status page so a
    * "531 followed, 494 monitored" gap is explainable in the UI.
    */
-  static listUnmatched(): Array<{
+  static countUnmatched(): number {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM ProviderItems item
+      WHERE item.entity_type = 'artist'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ProviderArtistMatches match
+          WHERE match.provider_artist_item_id = item.id
+            AND match.match_state = 'accepted'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ProviderArtistIgnores ignored
+          WHERE ignored.provider_artist_item_id = item.id
+        )
+    `).get() as { count: number };
+    return Number(row.count || 0);
+  }
+
+  static listUnmatched(options: { limit?: number; offset?: number } = {}): Array<{
     provider: string;
     providerId: string;
     name: string;
@@ -836,6 +856,8 @@ export class ProviderArtistIdentityService {
     method: string;
     updatedAt: string | null;
   }> {
+    const limit = Number.isFinite(options.limit) ? Math.max(0, Math.floor(Number(options.limit))) : undefined;
+    const offset = Number.isFinite(options.offset) ? Math.max(0, Math.floor(Number(options.offset))) : 0;
     const rows = db.prepare(`
       SELECT
         item.provider,
@@ -856,7 +878,8 @@ export class ProviderArtistIdentityService {
           WHERE ignored.provider_artist_item_id = item.id
         )
       ORDER BY item.title COLLATE NOCASE ASC
-    `).all() as Array<{
+      ${limit == null ? "" : "LIMIT ? OFFSET ?"}
+    `).all(...(limit == null ? [] : [limit, offset])) as Array<{
       provider: string;
       provider_id: string;
       title?: string | null;

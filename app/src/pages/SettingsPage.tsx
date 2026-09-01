@@ -129,9 +129,14 @@ const useStyles = makeStyles({
             justifyContent: "flex-start",
             gap: tokens.spacingVerticalS,
             width: "240px",
+            boxSizing: "border-box",
             alignSelf: "flex-start",
             position: "sticky",
             paddingTop: tokens.spacingVerticalNone,
+            // Fluent's selected indicator sits 16px left of the item. Keep it
+            // inside this column so overflow-x: clip cannot hide it and cannot
+            // create a horizontal scrollbar.
+            paddingInlineStart: tokens.spacingHorizontalM,
             top: `calc(var(${appBarHeightCssVariable}, 48px) + ${pageInsetTopDesktop})`,
             maxHeight: `calc(100dvh - var(${appBarHeightCssVariable}, 48px) - ${pageInsetTopDesktop} - ${tokens.spacingVerticalM})`,
             overflowY: "auto",
@@ -163,10 +168,14 @@ const useStyles = makeStyles({
     },
     desktopNav: {
         display: "none",
-        [MEDIA.desktop]: { display: "block", width: "100%" },
-        // Fluent Nav uses colorNeutralBackground4 for every item by default.
-        // Settings sits directly over the page hero, so keep the resting list
-        // transparent while retaining Fluent's interaction-state feedback.
+        [MEDIA.desktop]: {
+            display: "block",
+            width: "100%",
+            minWidth: 0,
+        },
+        // Resting items stay transparent so UltraBlur shows through. Hover and
+        // press use Fluent's subtle overlays. The selected left indicator is
+        // stock Nav; do not restyle ::after.
         "& .fui-NavItem": {
             backgroundColor: tokens.colorTransparentBackground,
         },
@@ -175,6 +184,12 @@ const useStyles = makeStyles({
         },
         "& .fui-NavItem:active": {
             backgroundColor: tokens.colorSubtleBackgroundPressed,
+        },
+        "& .fui-NavItem[aria-current='page']": {
+            backgroundColor: tokens.colorTransparentBackground,
+        },
+        "& .fui-NavItem[aria-current='page']:hover": {
+            backgroundColor: tokens.colorSubtleBackgroundHover,
         },
     },
     panel: {

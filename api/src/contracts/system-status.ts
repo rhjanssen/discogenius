@@ -131,5 +131,6 @@ export interface SystemStatusContract {
   /** Added by the /system/status route (not part of the /health probe snapshot). */
   imports: {
     unmatchedArtists: UnmatchedImportArtistContract[];
+    unmatchedArtistTotal: number;
   };
 }

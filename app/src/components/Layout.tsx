@@ -519,7 +519,7 @@ const Layout = () => {
                     <Badge
                       aria-hidden="true"
                       className={styles.queueBadge}
-                      appearance="filled"
+                      appearance="tint"
                       color="brand"
                       size="small"
                       shape="circular"

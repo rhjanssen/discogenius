@@ -76,7 +76,6 @@ export function StockTabList({
     <TabList
       aria-label={ariaLabel}
       className={className}
-      size="small"
       selectedValue={selectedValue}
       onTabSelect={(_, data) => onSelect(String(data.value))}
     >

@@ -4,7 +4,7 @@ import express, { Express } from "express";
 import fs from "fs";
 import path from "path";
 
-import { checkpointWal, closeDatabase, initDatabase } from "./database.js";
+import { closeDatabase, initDatabase } from "./database.js";
 import { startWalMaintenance, stopWalMaintenance } from "./services/database/wal-maintenance.js";
 import { authMiddleware } from "./middleware/auth.js";
 import albumsRouter from "./routes/v1/album.js";
@@ -197,15 +197,9 @@ if (startupHealthSnapshot.status !== "healthy") {
 // enqueues run off the main thread. Initialising it here too would double-enqueue
 // from the bridged events.
 
-// Periodically drain the WAL so a write-heavy backlog (worker pool + main)
-// can't grow it into the gigabytes and make every reader pay to search it.
-// checkpointWal() runs a non-blocking PASSIVE here; the escalation that has to
-// *wait* for a reader gap runs on its own thread, because a blocking checkpoint
-// on this one would stall every request and SSE stream.
-const walCheckpointTimer = setInterval(() => {
-  checkpointWal();
-}, readIntEnv("DISCOGENIUS_WAL_CHECKPOINT_INTERVAL_MS", 15000, 1000));
-walCheckpointTimer.unref();
+// WAL wrap/truncate runs on the dedicated maintenance thread. A PASSIVE
+// checkpoint on this event loop still copies frames synchronously; with a
+// large WAL that stalls /ping the same way a blocked writer does.
 startWalMaintenance();
 
 app.use((req, res, next) => {
@@ -286,9 +280,11 @@ function sendHealthSnapshot(res: express.Response) {
 }
 
 app.get("/health", (_req, res) => {
-  const { status } = getHealthSnapshot();
+  // Liveness only. Diagnostic snapshots (queue, WAL, imports) live on
+  // /api/health so a stale command or last week's failed import cannot 503
+  // a reverse-proxy probe and restart a busy process.
   res.setHeader("cache-control", "no-store");
-  res.status(status === "unhealthy" ? 503 : 200).json({ status });
+  res.status(200).json({ status: "ok" });
 });
 
 app.get("/api/health", authMiddleware, (_, res) => {
