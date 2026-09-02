@@ -48,6 +48,40 @@ after(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+test("listLive returns queued jobs even when newer history fills the default page", () => {
+    const liveId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshArtist,
+        {
+            artistId: "live-artist",
+            artistName: "Live",
+            workflow: "metadata-refresh",
+            monitorArtist: false,
+            hydrateCatalog: true,
+            hydrateAlbumTracks: false,
+            scanLibrary: false,
+            forceUpdate: false,
+        },
+        "live-artist",
+    );
+    const insertHistory = dbModule.db.prepare(`
+        INSERT INTO commands(name, ref_id, payload, status, progress, created_at, updated_at, completed_at)
+        VALUES('RefreshArtist', ?, '{}', 'completed', 100, ?, ?, ?)
+    `);
+    for (let index = 0; index < 220; index += 1) {
+        const stamp = `2099-01-01 12:${String(index % 60).padStart(2, "0")}:00`;
+        insertHistory.run(`history-${index}`, stamp, stamp, stamp);
+    }
+
+    const byCreated = queueModule.CommandQueueManager.all("%", "%", 200)
+        .filter((job) => job.status === "queued" || job.status === "started");
+    assert.equal(byCreated.some((job) => job.id === liveId), false);
+
+    const live = queueModule.CommandQueueManager.listLive(200);
+    assert.equal(live.length, 1);
+    assert.equal(live[0].id, liveId);
+    assert.equal(live[0].status, "queued");
+});
+
 function queuePendingDownload(type: "track" | "video" | "album", providerId: string) {
     const jobType = type === "video"
         ? queueModule.CommandNames.DownloadVideo

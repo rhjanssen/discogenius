@@ -1873,9 +1873,9 @@ export function videoCoverLocalUrl(
  * `images` column) to its local /media-cover URL. Image selection and any
  * provider-fallback artwork are resolved and persisted into `images` at
  * refresh/match time (see resolveAlbumArtwork / persistResolvedFallbackArtwork),
- * so a page read never re-derives a cover from raw provider data. RefreshArtist
- * / MatchArtistProviders warm bytes into config/media-cover; the delivery route
- * only serves those local files.
+ * so a page read never re-derives a cover from raw provider data. MatchArtistProviders
+ * warms monitored edition covers plus one release-group cover (the representative
+ * edition) into config/media-cover; the delivery route only serves those local files.
  */
 export function albumCoverLocalUrl(options: {
   albumMbid?: string | null;
@@ -2117,8 +2117,13 @@ export async function resolveAlbumArtwork(options: {
       ...loadAlbumProviderArtworkCandidates(options.albumMbid),
     ];
     const primaryCandidates = providerCandidates.filter((candidate) => !candidate.supplemental);
-    const candidates = primaryCandidates.length > 0 ? primaryCandidates : providerCandidates;
-    const supplemental = candidates.length > 0 && candidates.every((candidate) => candidate.supplemental);
+    // A composite built from singles has no matching album cover. Do not
+    // promote a single/EP companion image onto the album.
+    if (primaryCandidates.length === 0) {
+      return cacheSource(storedProviderFallbackUrl, "provider", true);
+    }
+    const candidates = primaryCandidates;
+    const supplemental = false;
     const providerUrl = await resolveProviderArtworkUrl(
       candidates,
       "album",
@@ -2270,6 +2275,147 @@ export function loadEditionProviderArtworkCandidates(
     seen.add(key);
     return [{ provider, entityId, imageId, title: textOrNull(row.title) }];
   });
+}
+
+export function albumMbidForEdition(releaseMbid?: string | null): string | null {
+  const mbid = textOrNull(releaseMbid);
+  if (!mbid) return null;
+  try {
+    const row = db.prepare(`
+      SELECT rg.mbid AS album_mbid
+      FROM AlbumEditions edition
+      JOIN Albums rg ON rg.id = edition.release_group_id
+      WHERE edition.mbid = ?
+      LIMIT 1
+    `).get(mbid) as { album_mbid?: string } | undefined;
+    return textOrNull(row?.album_mbid);
+  } catch {
+    return null;
+  }
+}
+
+export function releaseGroupHasMultipleMonitoredEditions(albumMbid?: string | null): boolean {
+  const mbid = textOrNull(albumMbid);
+  if (!mbid) return false;
+  try {
+    const row = db.prepare(`
+      SELECT COUNT(DISTINCT library_edition.edition_id) AS n
+      FROM Albums rg
+      JOIN AlbumEditions edition ON edition.release_group_id = rg.id
+      JOIN LibraryEditions library_edition ON library_edition.edition_id = edition.id
+      WHERE rg.mbid = ?
+    `).get(mbid) as { n?: number } | undefined;
+    return Number(row?.n || 0) >= 2;
+  } catch {
+    return false;
+  }
+}
+
+/** Edition cache if present, otherwise the release-group cache. */
+export function getPreferredCachedAlbumCoverPath(options: {
+  releaseMbid?: string | null;
+  albumMbid?: string | null;
+}): string | null {
+  const releaseMbid = textOrNull(options.releaseMbid);
+  const albumMbid = textOrNull(options.albumMbid) || albumMbidForEdition(releaseMbid);
+  if (releaseMbid) {
+    const editionPath = getCachedMediaCoverOriginalFilePath(releaseMbid, "Edition", "cover");
+    if (editionPath) return editionPath;
+  }
+  if (albumMbid) {
+    return getCachedMediaCoverOriginalFilePath(albumMbid, "Album", "cover");
+  }
+  return null;
+}
+
+export function discardEditionCoverIfDuplicateOfAlbum(
+  releaseMbid?: string | null,
+  albumMbid?: string | null,
+): void {
+  const editionMbid = textOrNull(releaseMbid);
+  const groupMbid = textOrNull(albumMbid) || albumMbidForEdition(editionMbid);
+  if (!editionMbid || !groupMbid) return;
+  const editionPath = getCachedMediaCoverOriginalFilePath(editionMbid, "Edition", "cover");
+  const albumPath = getCachedMediaCoverOriginalFilePath(groupMbid, "Album", "cover");
+  if (!editionPath || !albumPath) return;
+  if (fileSha256(editionPath) !== fileSha256(albumPath)) return;
+  try {
+    fs.rmSync(mediaCoverFolder(editionMbid, "Edition"), { recursive: true, force: true });
+  } catch {
+    // absent
+  }
+}
+
+/**
+ * Cover cache targets for an artist refresh/match.
+ *
+ * Release-group covers are the default (monitored albums plus the artist's
+ * own unmonitored albums). Edition covers are only listed when two or more
+ * editions of that group are monitored — a single monitored edition shares
+ * the group image. Credited "appears on" compilations are skipped until
+ * they are monitored.
+ */
+export function listArtistCoverPrecacheTargets(artistMbid: string): {
+  editions: Array<{ releaseMbid: string; libraryId: number; albumMbid: string }>;
+  albumMbids: string[];
+} {
+  const mbid = textOrNull(artistMbid);
+  if (!mbid) return { editions: [], albumMbids: [] };
+
+  let editions: Array<{ releaseMbid: string; libraryId: number; albumMbid: string }> = [];
+  let monitoredAlbums: string[] = [];
+  let primaryAlbums: string[] = [];
+  try {
+    editions = (db.prepare(`
+      SELECT DISTINCT
+        edition.mbid AS release_mbid,
+        library_edition.library_id AS library_id,
+        rg.mbid AS album_mbid
+      FROM AlbumEditions edition
+      JOIN Albums rg ON rg.id = edition.release_group_id
+      JOIN LibraryEditions library_edition
+        ON library_edition.edition_id = edition.id
+      LEFT JOIN ArtistReleaseGroups scope
+        ON scope.release_group_mbid = rg.mbid
+      WHERE (rg.artist_mbid = ? OR scope.artist_mbid = ?)
+        AND (
+          SELECT COUNT(DISTINCT other_library.edition_id)
+          FROM AlbumEditions other_edition
+          JOIN LibraryEditions other_library
+            ON other_library.edition_id = other_edition.id
+          WHERE other_edition.release_group_id = rg.id
+        ) >= 2
+      ORDER BY library_edition.representative DESC, edition.mbid, library_edition.library_id
+    `).all(mbid, mbid) as Array<{ release_mbid: string; library_id: number; album_mbid: string }>).map((row) => ({
+      releaseMbid: row.release_mbid,
+      libraryId: row.library_id,
+      albumMbid: row.album_mbid,
+    }));
+
+    monitoredAlbums = (db.prepare(`
+      SELECT DISTINCT rg.mbid AS album_mbid
+      FROM AlbumEditions edition
+      JOIN Albums rg ON rg.id = edition.release_group_id
+      JOIN LibraryEditions library_edition
+        ON library_edition.edition_id = edition.id
+      LEFT JOIN ArtistReleaseGroups scope
+        ON scope.release_group_mbid = rg.mbid
+      WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+    `).all(mbid, mbid) as Array<{ album_mbid: string }>).map((row) => row.album_mbid);
+
+    primaryAlbums = (db.prepare(`
+      SELECT DISTINCT rg.mbid AS album_mbid
+      FROM Albums rg
+      WHERE rg.artist_mbid = ?
+    `).all(mbid) as Array<{ album_mbid: string }>).map((row) => row.album_mbid);
+  } catch (error) {
+    console.warn("[MediaCoverService] Failed to list artist cover precache targets:", error);
+  }
+
+  return {
+    editions,
+    albumMbids: [...new Set([...monitoredAlbums, ...primaryAlbums])].sort(),
+  };
 }
 
 /** Cache and return artwork for one exact MusicBrainz release/edition. */
@@ -2438,6 +2584,7 @@ export function loadAlbumProviderArtworkCandidates(
         AND plan.state = 'current'
         AND release_match.match_state = 'accepted'
       ORDER BY
+        library_release.representative DESC,
         CASE WHEN EXISTS (
           SELECT 1
           FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
@@ -2466,10 +2613,13 @@ export function loadAlbumProviderArtworkCandidates(
         ON release.id = release_match.edition_id
       JOIN Albums release_group
         ON release_group.id = release.release_group_id
+      LEFT JOIN LibraryEditions library_release
+        ON library_release.edition_id = release.id
       WHERE release_group.mbid = ?
         AND release_match.match_state = 'accepted'
       ORDER BY
         CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+        COALESCE(library_release.representative, 0) DESC,
         release_match.confidence DESC,
         release_match.updated_at DESC
       LIMIT 8
@@ -2792,6 +2942,11 @@ export class MediaCoverService {
 
   static albumCoverLocalUrl = albumCoverLocalUrl;
   static editionCoverLocalUrl = editionCoverLocalUrl;
+  static listArtistCoverPrecacheTargets = listArtistCoverPrecacheTargets;
+  static albumMbidForEdition = albumMbidForEdition;
+  static releaseGroupHasMultipleMonitoredEditions = releaseGroupHasMultipleMonitoredEditions;
+  static getPreferredCachedAlbumCoverPath = getPreferredCachedAlbumCoverPath;
+  static discardEditionCoverIfDuplicateOfAlbum = discardEditionCoverIfDuplicateOfAlbum;
   static resolveAlbumArtwork = resolveAlbumArtwork;
   static resolveEditionArtwork = resolveEditionArtwork;
   static resolveArtistArtwork = resolveArtistArtwork;

@@ -102,6 +102,10 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
     }>;
 
     const {
+        albumMbidForEdition,
+        discardEditionCoverIfDuplicateOfAlbum,
+        releaseGroupHasMultipleMonitoredEditions,
+        resolveAlbumArtwork,
         resolveEditionArtwork,
         syncCachedMediaCoverToFile,
     } = await import("../metadata/media-cover-service.js");
@@ -130,12 +134,22 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
         }
     }
 
-    const resolvedEditions = new Set<string>();
+    const resolvedCovers = new Set<string>();
     const failures: string[] = [];
     for (const { releaseMbid, libraryId } of editions.values()) {
         try {
-            const resolved = await resolveEditionArtwork({ releaseMbid, libraryId });
-            if (resolved) resolvedEditions.add(releaseMbid);
+            const albumMbid = albumMbidForEdition(releaseMbid);
+            if (albumMbid) {
+                const albumUrl = await resolveAlbumArtwork({ albumMbid });
+                if (albumUrl) resolvedCovers.add(releaseMbid);
+            }
+            if (albumMbid && releaseGroupHasMultipleMonitoredEditions(albumMbid)) {
+                const editionUrl = await resolveEditionArtwork({ releaseMbid, libraryId });
+                if (editionUrl) {
+                    discardEditionCoverIfDuplicateOfAlbum(releaseMbid, albumMbid);
+                    resolvedCovers.add(releaseMbid);
+                }
+            }
         } catch (error) {
             failures.push(`edition ${releaseMbid}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -143,13 +157,24 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
 
     for (const { releaseMbid, outputPath } of sidecars) {
         try {
-            const result = syncCachedMediaCoverToFile({
+            let result = syncCachedMediaCoverToFile({
                 entityId: releaseMbid,
                 coverEntity: "Edition",
                 coverTypes: "cover",
                 outputPath,
             });
-            if (resolvedEditions.has(releaseMbid) && result === "missing") {
+            if (result === "missing") {
+                const albumMbid = albumMbidForEdition(releaseMbid);
+                if (albumMbid) {
+                    result = syncCachedMediaCoverToFile({
+                        entityId: albumMbid,
+                        coverEntity: "Album",
+                        coverTypes: "cover",
+                        outputPath,
+                    });
+                }
+            }
+            if (resolvedCovers.has(releaseMbid) && result === "missing") {
                 failures.push(`edition ${releaseMbid}: resolved artwork was not present in the media-cover cache`);
             }
         } catch (error) {

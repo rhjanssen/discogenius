@@ -18,7 +18,14 @@ import { LibraryFilesService } from "./library-files.js";
 import { AudioTagService } from "./audio-tag-service.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
-import { resolveEditionArtwork, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
+import {
+    albumMbidForEdition,
+    discardEditionCoverIfDuplicateOfAlbum,
+    releaseGroupHasMultipleMonitoredEditions,
+    resolveAlbumArtwork,
+    resolveEditionArtwork,
+    syncCachedMediaCoverToFile,
+} from "../metadata/media-cover-service.js";
 import {
     findAdjacentLyricSidecar,
     lyricSidecarPath,
@@ -403,22 +410,37 @@ class LibraryMetadataBackfillService {
                     const coverName = metadataConfig.album_cover_name || "cover.jpg";
                     const coverPath = path.join(albumDir, coverName);
                     try {
-                        await resolveEditionArtwork({
-                            releaseMbid: canonicalReleaseMbid,
-                            libraryId: sourceAlbum.library_id,
-                            providerCandidates: albumProviderItem ? [{
-                                provider: albumProviderItem.provider,
-                                entityId: albumProviderItem.provider_id,
-                                imageId: albumProviderItem.cover,
-                                title: albumProviderItem.title,
-                            }] : [],
-                        });
-                        const syncResult = syncCachedMediaCoverToFile({
+                        const albumMbid = albumMbidForEdition(canonicalReleaseMbid);
+                        if (albumMbid) {
+                            await resolveAlbumArtwork({ albumMbid });
+                        }
+                        if (albumMbid && releaseGroupHasMultipleMonitoredEditions(albumMbid)) {
+                            await resolveEditionArtwork({
+                                releaseMbid: canonicalReleaseMbid,
+                                libraryId: sourceAlbum.library_id,
+                                providerCandidates: albumProviderItem ? [{
+                                    provider: albumProviderItem.provider,
+                                    entityId: albumProviderItem.provider_id,
+                                    imageId: albumProviderItem.cover,
+                                    title: albumProviderItem.title,
+                                }] : [],
+                            });
+                            discardEditionCoverIfDuplicateOfAlbum(canonicalReleaseMbid, albumMbid);
+                        }
+                        let syncResult = syncCachedMediaCoverToFile({
                             entityId: canonicalReleaseMbid,
                             coverEntity: "Edition",
                             coverTypes: "cover",
                             outputPath: coverPath,
                         });
+                        if (syncResult === "missing" && albumMbid) {
+                            syncResult = syncCachedMediaCoverToFile({
+                                entityId: albumMbid,
+                                coverEntity: "Album",
+                                coverTypes: "cover",
+                                outputPath: coverPath,
+                            });
+                        }
                         if (syncResult === "written") {
                             result.downloaded++;
                         } else {

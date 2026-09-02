@@ -28,8 +28,11 @@ import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-pr
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isUntrustedTidalCatalogVideoQuality } from "../providers/tidal/tidal-quality.js";
 import {
+    discardEditionCoverIfDuplicateOfAlbum,
+    listArtistCoverPrecacheTargets,
     resolveAlbumArtwork,
     resolveArtistArtwork,
+    resolveEditionArtwork,
     resolveVideoArtwork,
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
@@ -234,19 +237,10 @@ export class RefreshArtistService {
         // skips unchanged payloads inside syncArtistReleaseGroups.
         const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
         await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids);
-
-        // Always reconcile scoped covers after catalog hydration. The resolver
-        // is source-marker-aware and returns without network I/O when current;
-        // running it for every row also catches a changed canonical image URL.
-        const artworkReleaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
-        const limit = pLimit(6);
-        await Promise.all(artworkReleaseGroupMbids.map((releaseGroupMbid) => limit(async () => {
-            try {
-                await resolveAlbumArtwork({ albumMbid: releaseGroupMbid });
-            } catch (error) {
-                console.warn(`[RefreshArtistService] Failed to resolve artwork for release group ${releaseGroupMbid}:`, error);
-            }
-        })));
+        // Covers wait for MatchArtistProviders.precacheArtistMediaCovers().
+        // Hitting Cover Art Archive here made local-MB RefreshArtist look
+        // rate-limited: every scoped album (and every collaborator's albums)
+        // paid CAA even though Postgres itself is unthrottled.
     }
 
     static async upsertMusicBrainzArtist(artistMbid: string, options: RefreshOptions = {}): Promise<string> {
@@ -2053,20 +2047,28 @@ export class RefreshArtistService {
     }
 
     private static async precacheArtistAlbumArtwork(artistMbid: string): Promise<void> {
-        const releaseGroups = db.prepare(`
-            SELECT DISTINCT rg.mbid
-            FROM Albums rg
-            LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-            WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
-            ORDER BY rg.mbid ASC
-        `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
+        const targets = listArtistCoverPrecacheTargets(artistMbid);
         const limit = pLimit(6);
-        await Promise.all(releaseGroups.map((releaseGroup) => limit(async () => {
+        await Promise.all(targets.albumMbids.map((albumMbid) => limit(async () => {
             try {
-                await resolveAlbumArtwork({ albumMbid: releaseGroup.mbid });
+                await resolveAlbumArtwork({ albumMbid });
             } catch (error) {
                 console.warn(
-                    `[RefreshArtistService] Failed to pre-cache album artwork for ${releaseGroup.mbid}:`,
+                    `[RefreshArtistService] Failed to pre-cache album artwork for ${albumMbid}:`,
+                    error,
+                );
+            }
+        })));
+        await Promise.all(targets.editions.map((edition) => limit(async () => {
+            try {
+                await resolveEditionArtwork({
+                    releaseMbid: edition.releaseMbid,
+                    libraryId: edition.libraryId,
+                });
+                discardEditionCoverIfDuplicateOfAlbum(edition.releaseMbid, edition.albumMbid);
+            } catch (error) {
+                console.warn(
+                    `[RefreshArtistService] Failed to pre-cache edition artwork for ${edition.releaseMbid}:`,
                     error,
                 );
             }

@@ -225,11 +225,14 @@ export class LibraryStatsQueryService {
                   ON video_completion.recording_id = recording.id
             ),
             completed_artists AS (
-                SELECT local_artist_id
-                FROM artist_requirement_completion
-                GROUP BY local_artist_id
-                HAVING COUNT(*) > 0
-                   AND MIN(completed) = 1
+                SELECT DISTINCT library_artist.artist_metadata_id AS local_artist_id
+                FROM LibraryArtists library_artist
+                JOIN Libraries library
+                  ON library.id = library_artist.library_id
+                 AND library.enabled = 1
+                JOIN TrackFiles file
+                  ON file.artist_metadata_id = library_artist.artist_metadata_id
+                 AND (file.file_class = 'audio' OR file.file_type = 'track')
             )
             SELECT
                 (SELECT COUNT(*) FROM ArtistMetadata) AS artist_total,

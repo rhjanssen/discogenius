@@ -558,6 +558,28 @@ LIMIT ? OFFSET ?
             .filter((job): job is CommandModel => job !== null);
     }
 
+    /**
+     * Live queue only. Sorts ids first so finished-history payloads never hide
+     * queued/started rows the way `all("%", "%", 200)` did.
+     */
+    static listLive(limit: number = 200): CommandModel[] {
+        const orderBy = buildExecutionOrderClause();
+        const jobs = db.prepare(`
+            SELECT * FROM commands
+            WHERE id IN (
+                SELECT id FROM commands
+                WHERE status IN ('queued', 'started')
+                ORDER BY ${orderBy}
+                LIMIT ?
+            )
+            ORDER BY ${orderBy}
+        `).all(limit) as any[];
+
+        return jobs
+            .map((job) => hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>))
+            .filter((job): job is CommandModel => job !== null);
+    }
+
     static listJobsByTypesAndStatuses(
         types: readonly CommandName[],
         statuses: readonly CommandStatus[],

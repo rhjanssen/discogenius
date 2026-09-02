@@ -321,14 +321,14 @@ test("global stats deduplicate collaborations and require every selected Library
   snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.albums, { total: 1, monitored: 1, downloaded: 0 });
   assert.deepEqual(snapshot.tracks, { total: 2, monitored: 2, downloaded: 1 });
-  assert.equal(snapshot.artists.downloaded, 0);
+  assert.equal(snapshot.artists.downloaded, 1);
 
   addAudioFile(firstArtist, album, 1, stereo, "second");
   libraryStatsModule.LibraryStatsQueryService.clearCache();
   snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(snapshot.albums.downloaded, 1);
   assert.equal(snapshot.tracks.downloaded, 2);
-  assert.equal(snapshot.artists.downloaded, 2);
+  assert.equal(snapshot.artists.downloaded, 1);
 
   // Selecting the same canonical Edition into Spatial creates additional
   // completion requirements but never additional dashboard entities.
@@ -349,7 +349,7 @@ test("global stats deduplicate collaborations and require every selected Library
   snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.albums, { total: 1, monitored: 1, downloaded: 1 });
   assert.deepEqual(snapshot.tracks, { total: 2, monitored: 2, downloaded: 2 });
-  assert.deepEqual(snapshot.artists, { total: 2, monitored: 2, downloaded: 2 });
+  assert.deepEqual(snapshot.artists, { total: 2, monitored: 2, downloaded: 1 });
 });
 
 test("video downloaded stats count selected canonical videos, not physical files", () => {
@@ -366,7 +366,7 @@ test("video downloaded stats count selected canonical videos, not physical files
 
   let snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.videos, { total: 2, monitored: 1, downloaded: 1 });
-  assert.deepEqual(snapshot.artists, { total: 1, monitored: 1, downloaded: 1 });
+  assert.deepEqual(snapshot.artists, { total: 1, monitored: 1, downloaded: 0 });
   assert.deepEqual(snapshot.files, { total: 3, totalSizeBytes: 600 });
 
   dbModule.db.prepare("UPDATE Libraries SET enabled = 0 WHERE id = ?").run(videoLibrary.id);

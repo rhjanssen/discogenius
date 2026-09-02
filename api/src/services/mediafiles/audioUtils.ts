@@ -491,6 +491,17 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
             windowsHide: true,
         });
 
+        const killTimer = setTimeout(() => {
+            console.error(`Metadata write timed out for ${filePath}`);
+            child.kill("SIGKILL");
+            finish(false);
+        }, 30_000);
+        const originalFinish = finish;
+        const finishWithTimer = (value: boolean) => {
+            clearTimeout(killTimer);
+            originalFinish(value);
+        };
+
         let stderr = '';
         child.stderr.on('data', (chunk) => {
             stderr += chunk.toString();
@@ -498,28 +509,28 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
 
         child.on('error', (error) => {
             console.error(`Failed to launch metadata write for ${filePath}`, error);
-            finish(false);
+            finishWithTimer(false);
         });
 
         child.on('close', (code) => {
             if (code !== 0) {
                 console.error(`Failed to write metadata for ${filePath}: ${stderr.trim() || `ffmpeg exited with code ${code}`}`);
-                finish(false);
+                finishWithTimer(false);
                 return;
             }
 
             try {
                 if (!fs.existsSync(tempPath)) {
                     console.error(`Metadata write failed silently: Temp file ${tempPath} missing.`);
-                    finish(false);
+                    finishWithTimer(false);
                     return;
                 }
                 if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
                 fs.renameSync(tempPath, filePath);
-                finish(true);
+                finishWithTimer(true);
             } catch (e) {
                 console.error(`Failed to rename temp file ${tempPath}`, e);
-                finish(false);
+                finishWithTimer(false);
             }
         });
     });

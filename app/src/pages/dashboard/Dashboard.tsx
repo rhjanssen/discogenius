@@ -13,7 +13,6 @@ import {
     Title1,
     tokens,
     makeStyles,
-    mergeClasses,
 } from "@fluentui/react-components";
 import {
   ArrowSync24Regular,
@@ -211,18 +210,7 @@ const useStyles = makeStyles({
         fontSize: tokens.fontSizeBase600,
         fontWeight: tokens.fontWeightBold,
         lineHeight: "1",
-    },
-    statValueArtists: {
-        color: "var(--dg-accent-artists)",
-    },
-    statValueAlbums: {
-        color: "var(--dg-accent-albums)",
-    },
-    statValueTracks: {
-        color: "var(--dg-accent-tracks)",
-    },
-    statValueVideos: {
-        color: "var(--dg-accent-videos)",
+        color: tokens.colorNeutralForeground1,
     },
     statLabel: {
         fontSize: tokens.fontSizeBase200,
@@ -570,7 +558,6 @@ const Dashboard = () => {
             key: 'artists',
             label: 'Artists',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconArtists}`}><Person24Filled className={styles.statIcon} /></span>,
-            valueClassName: styles.statValueArtists,
             value: formatCompactNumber(libraryStats?.artists?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.artists?.monitored)} monitored • ${formatCompactNumber(libraryStats?.artists?.total)} catalog`,
         },
@@ -578,7 +565,6 @@ const Dashboard = () => {
             key: 'albums',
             label: 'Albums',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconAlbums}`}><Album24Filled className={styles.statIcon} /></span>,
-            valueClassName: styles.statValueAlbums,
             value: formatCompactNumber(libraryStats?.albums?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.albums?.monitored)} monitored • ${formatCompactNumber(libraryStats?.albums?.total)} catalog`,
         },
@@ -586,7 +572,6 @@ const Dashboard = () => {
             key: 'tracks',
             label: 'Tracks',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconTracks}`}><MusicNote224Filled className={styles.statIcon} /></span>,
-            valueClassName: styles.statValueTracks,
             value: formatCompactNumber(libraryStats?.tracks?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.tracks?.monitored)} monitored • ${formatCompactNumber(libraryStats?.tracks?.total)} catalog`,
         },
@@ -594,7 +579,6 @@ const Dashboard = () => {
             key: 'videos',
             label: 'Videos',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconVideos}`}><Video24Filled className={styles.statIcon} /></span>,
-            valueClassName: styles.statValueVideos,
             value: formatCompactNumber(libraryStats?.videos?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.videos?.monitored)} monitored • ${formatCompactNumber(libraryStats?.videos?.total)} catalog`,
         },
@@ -709,7 +693,7 @@ const Dashboard = () => {
                             {card.icon}
                             <Text className={styles.statLabel}>{card.label}</Text>
                         </div>
-                        <Text className={mergeClasses(styles.statValue, card.valueClassName)}>{card.value}</Text>
+                        <Text className={styles.statValue}>{card.value}</Text>
                         <Text className={styles.statDetail}>{card.detail}</Text>
                     </Card>
                 ))}

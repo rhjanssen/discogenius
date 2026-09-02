@@ -1916,3 +1916,91 @@ test("edition artwork candidates put the exact current acquisition plan before o
     ["selected-edition", "fallback-edition"],
   );
 });
+
+test("cover precache targets monitored editions and primary albums, not unmonitored appears-on compilations", () => {
+  const artistMbid = "precache-art-artist";
+  const primaryMbid = "precache-art-primary";
+  const appearsOnMbid = "precache-art-appears-on";
+  const otherArtistMbid = "precache-art-other-artist";
+  dbModule.db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Precache Artist");
+  dbModule.db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(otherArtistMbid, "Other Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(primaryMbid, artistMbid, "Primary Album");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(appearsOnMbid, otherArtistMbid, "Appears On Compilation");
+  const appearsOn = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = ?")
+    .get(appearsOnMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (
+      artist_mbid, release_group_id, release_group_mbid, relationship
+    ) VALUES (?, ?, ?, 'featured')
+  `).run(artistMbid, appearsOn.id, appearsOnMbid);
+
+  const beforeMonitor = mediaCoverServiceModule.listArtistCoverPrecacheTargets(artistMbid);
+  assert.deepEqual(beforeMonitor.albumMbids, [primaryMbid]);
+  assert.deepEqual(beforeMonitor.editions, []);
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, cover_id)
+    VALUES ('precache-provider', 'release', 'appears-on-edition', 'Appears On', 'cover')
+  `).run();
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: appearsOnMbid,
+    provider: "precache-provider",
+    providerId: "appears-on-edition",
+    libraryClass: "stereo",
+  });
+
+  const afterMonitor = mediaCoverServiceModule.listArtistCoverPrecacheTargets(artistMbid);
+  assert.ok(afterMonitor.albumMbids.includes(primaryMbid));
+  assert.ok(afterMonitor.albumMbids.includes(appearsOnMbid));
+  assert.equal(afterMonitor.editions.length, 0, "A single monitored edition shares the release-group cover");
+});
+
+test("cover precache lists edition covers only when two monitored editions share a release group", () => {
+  const artistMbid = "precache-multi-edition-artist";
+  const groupMbid = "precache-multi-edition-group";
+  dbModule.db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Multi Edition Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(groupMbid, artistMbid, "Multi Edition Album");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, cover_id)
+    VALUES ('precache-multi-provider', 'release', 'standard-edition', 'Standard', 'cover-a')
+  `).run();
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: groupMbid,
+    provider: "precache-multi-provider",
+    providerId: "standard-edition",
+    libraryClass: "stereo",
+  });
+
+  const oneEdition = mediaCoverServiceModule.listArtistCoverPrecacheTargets(artistMbid);
+  assert.deepEqual(oneEdition.albumMbids, [groupMbid]);
+  assert.equal(oneEdition.editions.length, 0);
+
+  const group = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = ?").get(groupMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("precache-deluxe-edition", group.id, groupMbid, artistMbid, "Deluxe");
+  const deluxe = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
+    .get("precache-deluxe-edition") as { id: number };
+  const library = dbModule.db.prepare(`
+    SELECT id FROM Libraries WHERE name = ?
+  `).get(`Artwork stereo ${groupMbid}`) as { id: number };
+  dbModule.db.prepare(`
+    INSERT OR IGNORE INTO LibraryEditions (
+      library_id, edition_id, selection_mode, representative, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, deluxe.id);
+
+  const twoEditions = mediaCoverServiceModule.listArtistCoverPrecacheTargets(artistMbid);
+  assert.equal(twoEditions.editions.length, 2);
+  assert.deepEqual(
+    twoEditions.editions.map((edition) => edition.releaseMbid).sort(),
+    [`${groupMbid}-release`, "precache-deluxe-edition"].sort(),
+  );
+});

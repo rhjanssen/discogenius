@@ -637,18 +637,19 @@ function getPendingDownloadQueuePositionsForWaitIds(waitIds: readonly number[]):
 
   const idPlaceholders = waitIds.map(() => "?").join(",");
   const rows = db.prepare(`
-    WITH ranked AS (
-      SELECT
-        id,
-        ROW_NUMBER() OVER (
-          ORDER BY queue_order ASC, id ASC
-        ) AS queuePosition
-      FROM DownloadQueue
-      WHERE command_id IS NULL
-    )
-    SELECT id, queuePosition
-    FROM ranked
-    WHERE id IN (${idPlaceholders})
+    SELECT
+      page.id,
+      (
+        SELECT COUNT(*)
+        FROM DownloadQueue ahead
+        WHERE ahead.command_id IS NULL
+          AND (
+            ahead.queue_order < page.queue_order
+            OR (ahead.queue_order = page.queue_order AND ahead.id <= page.id)
+          )
+      ) AS queuePosition
+    FROM DownloadQueue page
+    WHERE page.id IN (${idPlaceholders})
   `).all(...waitIds) as Array<{ id: number; queuePosition: number }>;
 
   for (const row of rows) {
@@ -765,7 +766,6 @@ const WAIT_QUEUE_LIST_SQL = `
     dq.created_at,
     dq.updated_at,
     c.status AS command_status,
-    c.payload AS command_payload,
     c.progress AS command_progress,
     c.error AS command_error,
     c.started_at,
@@ -786,13 +786,40 @@ const WAIT_QUEUE_ORDER_SQL = `
 `;
 
 function countActiveWaitRows(): number {
+  // qBittorrent/Tidarr keep the live list as waiting+running only. Counting
+  // through a LEFT JOIN of every finished command row is what made GET /queue
+  // time out after a mass-cancel of thousands of albums.
   const row = db.prepare(`
     SELECT COUNT(*) AS count
     FROM DownloadQueue dq
-    LEFT JOIN commands c ON c.id = dq.command_id
-    WHERE ${WAIT_QUEUE_ACTIVE_PREDICATE}
+    WHERE dq.command_id IS NULL
+       OR EXISTS (
+         SELECT 1
+         FROM commands c
+         WHERE c.id = dq.command_id
+           AND c.status IN ('queued', 'started')
+       )
   `).get() as { count?: number };
   return Number(row.count || 0);
+}
+
+function attachStartedCommandPayloads(rows: WaitQueueJoinedRow[]): void {
+  const commandIds = [...new Set(
+    rows
+      .filter((row) => row.command_status === "started" && row.command_id != null)
+      .map((row) => Number(row.command_id)),
+  )];
+  if (commandIds.length === 0) return;
+  const marks = commandIds.map(() => "?").join(",");
+  const payloads = db.prepare(`
+    SELECT id, payload FROM commands WHERE id IN (${marks})
+  `).all(...commandIds) as Array<{ id: number; payload: unknown }>;
+  const byId = new Map(payloads.map((row) => [Number(row.id), row.payload]));
+  for (const row of rows) {
+    if (row.command_id != null) {
+      row.command_payload = byId.get(Number(row.command_id)) ?? null;
+    }
+  }
 }
 
 type QueueHistoryQueryFilters = {
@@ -1049,6 +1076,7 @@ export class DownloadQueueQueryService {
   }
 
   private static buildQueue(params: { limit: number; offset: number }): QueueListResponseContract {
+    DownloadWaitQueue.recoverOrphanClaims();
     const total = countActiveWaitRows();
     const rows = db.prepare(`
       ${WAIT_QUEUE_LIST_SQL}
@@ -1056,6 +1084,7 @@ export class DownloadQueueQueryService {
       ${WAIT_QUEUE_ORDER_SQL}
       LIMIT ? OFFSET ?
     `).all(params.limit, params.offset) as WaitQueueJoinedRow[];
+    attachStartedCommandPayloads(rows);
     const jobs = rows.map((row) => waitRowToQueueJob(row));
     const queuePositionById = getPendingDownloadQueuePositionsForWaitIds(
       jobs.filter((job) => job.status === "queued").map((job) => job.id),
@@ -1169,6 +1198,7 @@ export class DownloadQueueQueryService {
         ${WAIT_QUEUE_ORDER_SQL}
         LIMIT 5000
       `).all(...sqlParams) as WaitQueueJoinedRow[];
+      attachStartedCommandPayloads(rows);
 
       return rows
         .map((row) => waitRowToQueueJob(row))
@@ -1189,6 +1219,7 @@ export class DownloadQueueQueryService {
         ${WAIT_QUEUE_ORDER_SQL}
         LIMIT 50
       `).all() as WaitQueueJoinedRow[];
+      attachStartedCommandPayloads(rows);
 
       return rows
         .map((row) => waitRowToQueueJob(row))

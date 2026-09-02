@@ -411,30 +411,16 @@ function directTruth(): TruthSnapshot {
 
   let completedArtists = 0;
   for (const artist of monitoredArtists) {
-    const albumIds = new Set((dbModule.db.prepare(`
-      SELECT album.id
-      FROM Albums album
-      WHERE album.artist_mbid = ?
-      UNION
-      SELECT album.id
-      FROM ArtistReleaseGroups scope
-      JOIN Albums album ON album.mbid = scope.release_group_mbid
-      WHERE scope.artist_mbid = ?
-    `).all(artist.artist_mbid, artist.artist_mbid) as Array<{ id: number }>).map((row) => row.id));
-    const artistAudio = audioRequirements.filter((row) => albumIds.has(row.release_group_id));
-    const artistVideoIds = new Set((dbModule.db.prepare(`
-      SELECT id FROM Recordings WHERE artist_mbid = ? AND is_video = 1
-    `).all(artist.artist_mbid) as Array<{ id: number }>).map((row) => row.id));
-    const artistVideos = videoRequirements.filter((row) => artistVideoIds.has(row.recording_id));
-    const requirementCount = artistAudio.length + artistVideos.length;
-    const completeCount = artistAudio.filter(
-      (row) => hasFile(row.library_id, "track_id", row.track_id, "audio"),
-    ).length + artistVideos.filter(
-      (row) => hasFile(row.library_id, "recording_id", row.recording_id, "video"),
-    ).length;
-    if (requirementCount > 0 && completeCount === requirementCount) {
-      completedArtists += 1;
-    }
+    const hasAudioFile = Boolean(dbModule.db.prepare(`
+      SELECT 1
+      FROM TrackFiles file
+      JOIN Libraries library
+        ON library.id = file.library_id AND library.enabled = 1
+      WHERE file.canonical_artist_mbid = ?
+        AND (file.file_class = 'audio' OR file.file_type = 'track')
+      LIMIT 1
+    `).get(artist.artist_mbid));
+    if (hasAudioFile) completedArtists += 1;
   }
 
   const fileRow = dbModule.db.prepare(`

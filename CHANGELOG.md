@@ -4,6 +4,53 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-09-02
+
+Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a
+reset.
+
+### Changed
+
+- **Dashboard stats.** The large downloaded counts use default Fluent text
+  color. Accent stays on the 16px icons, using the same brand rest step as
+  buttons and selected nav (light 100, dark 110).
+- **Fluent brand mapping.** One rest step per mode so filled buttons, toggles,
+  tab underlines, and icons match: **100 in light**, **110 in dark**. Hover and
+  press keep Fluent's distances from that rest (orange, not brown). Type badges
+  keep tint polarity (light text on dark fill in dark mode, the reverse in
+  light). The dashboard queue count uses the same opaque brand-tint recipe.
+- **Artist downloaded count.** Dashboard "Artists" downloaded is artists that
+  have at least one audio file, not artists whose entire monitored discography
+  is complete.
+- **Tracks list paging.** The library Tracks tab pages from `TrackLibraryIndex`
+  when that projection is ready, instead of walking every catalog track.
+- **Download queue.** Live listing follows Tidarr/qBittorrent: waiting and
+  running items only, history separate, no full-table command-payload join.
+- **Cover cache.** Refresh no longer fetches Cover Art Archive during MusicBrainz
+  hydrate. The default cache is one cover per release group. Edition covers are
+  stored only when two or more editions of that group are monitored *and* those
+  editions have their own art (a duplicate of the group image is discarded).
+  Tag write and folder sidecars use the edition file when it exists, otherwise
+  the group cover. Unmonitored "appears on" compilations are skipped.
+
+### Fixed
+
+- **Live command list.** `GET /api/v1/command` asks for queued/started rows
+  directly. Newest history no longer hides hundreds of live RefreshArtist jobs.
+- **Write Tags per-file timeout.** A hung parse or ffmpeg rewrite of one file
+  no longer stalls the whole library job. Each file has 30s, failures are
+  recorded, and the worker yields every five files. Tag diff no longer parses
+  embedded pictures; embed still uses the MediaCover cache Lidarr-style.
+- **Download queue positions.** Queue rank for a page no longer runs
+  `ROW_NUMBER()` over every unclaimed wait row. Live list counting uses
+  `EXISTS` instead of joining finished command payloads (Tidarr/qBittorrent
+  keep the live queue as waiting+running only; history stays separate).
+  Finished wait rows are pruned on list. Started-job payloads are loaded
+  only for the current page's running items.
+- **Composite album covers.** Provider artwork from singles/EPs is not used as
+  the album cover when the plan is a composite of companions. A hole stays a
+  hole until a real album edition or catalog cover exists.
+
 ## [2.13.7] - 2026-09-01
 
 Schema 46 is unchanged. Existing 2.12.x and 2.13.x databases do not need a

@@ -294,6 +294,29 @@ const EMBEDDED_COVER_HEIGHT = 1200;
 // modest fan-out (matching the artwork/refresh services) is the sweet spot.
 const RETAG_EVALUATION_CONCURRENCY = 8;
 const RETAG_APPLY_QUERY_BATCH_SIZE = 250;
+const RETAG_FILE_TIMEOUT_MS = 30_000;
+
+function yieldRetagToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function withRetagFileTimeout<T>(work: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${RETAG_FILE_TIMEOUT_MS}ms`));
+    }, RETAG_FILE_TIMEOUT_MS);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 async function resolvePreferredEmbeddedCover(
   row: RetagTrackRow,
@@ -301,25 +324,25 @@ async function resolvePreferredEmbeddedCover(
   _resolvedMediaPath: string,
   context: EmbeddedCoverContext,
 ): Promise<string | null> {
-  // Single source of truth: the cover already in the MediaCover cache for this
-  // file's own canonical edition. No
-  // provider fallback, no hybrid-matched-track release group, no folder-sidecar
-  // preference, and no on-the-fly download at tag-write time. Refresh + provider
-  // matching are the phases that acquire artwork; if it was never cached, we
-  // simply do not embed (mirrors Lidarr, which embeds from the album's stored
-  // MediaCover and does not fetch during a tag write).
-  const releaseMbid = String(row.canonical_release_mbid || row.album_mbid || "").trim();
-  if (!releaseMbid) return null;
+  // Prefer an edition MediaCover when this release group has more than one
+  // monitored edition with its own art; otherwise the release-group cache.
+  // No fetch at tag-write time.
+  const releaseMbid = String(row.canonical_release_mbid || "").trim();
+  const albumMbid = String(row.canonical_release_group_mbid || row.album_mb_release_group_id || "").trim();
+  if (!releaseMbid && !albumMbid) return null;
 
-  const key = `edition:${releaseMbid}`;
+  const key = `cover:${releaseMbid || albumMbid}`;
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
       const {
-        getCachedMediaCoverOriginalFilePath,
+        getPreferredCachedAlbumCoverPath,
         renderCappedCoverBuffer,
       } = await import("../metadata/media-cover-service.js");
-      const cover = getCachedMediaCoverOriginalFilePath(releaseMbid, "Edition", "cover");
+      const cover = getPreferredCachedAlbumCoverPath({
+        releaseMbid: releaseMbid || null,
+        albumMbid: albumMbid || null,
+      });
       if (!cover || !fs.existsSync(cover)) return null;
 
       // Cap the embedded rendition at EMBEDDED_COVER_HEIGHT: scale down on the fly
@@ -2449,7 +2472,7 @@ export class AudioTagService {
     }
 
     try {
-      const metadata = await mm.parseFile(resolvedPath, { skipCovers: false, duration: false });
+      const metadata = await mm.parseFile(resolvedPath, { skipCovers: true, duration: false });
       const lookup = buildNativeLookup(metadata);
       mergeMp4KeyedNativeLookup(metadata, lookup, resolvedPath);
       const changes = desiredTags.reduce<RetagDifference[]>((result, tag) => {
@@ -2486,8 +2509,7 @@ export class AudioTagService {
           ?? { byAlbum: new Map(), temporaryDirectories: [] };
         const preferredCover = await resolvePreferredEmbeddedCover(row, config, resolvedPath, coverContext);
         if (preferredCover) {
-          const currentPicture = metadata.common?.picture?.[0]?.data ?? null;
-          const comparison = await compareEmbeddedAudioCover(resolvedPath, preferredCover, currentPicture);
+          const comparison = await compareEmbeddedAudioCover(resolvedPath, preferredCover);
           if (!shouldSkipCoverEmbed(comparison)) {
             changes.push({
               field: "Cover Art",
@@ -2770,86 +2792,101 @@ export class AudioTagService {
       // A 2.13.6 library-wide retag mixed those together and wedged the live
       // server (one file at a time against MusicBrainz while 5k refresh
       // commands fought for the writer).
-      const resolvedPath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
+      try {
+        await withRetagFileTimeout((async () => {
+          const resolvedPath = resolveStoredLibraryPath({
+            filePath: row.file_path,
+            libraryRoot: row.library_root,
+            relativePath: row.relative_path,
+          });
 
-      if (!fs.existsSync(resolvedPath)) {
-        result.missing++;
-        continue;
-      }
+          if (!fs.existsSync(resolvedPath)) {
+            result.missing++;
+            return;
+          }
 
-      const preview = await this.evaluateRow(row, config, {
-        includeExternalMetadata: options.includeExternalLyrics === true,
-        lyricsByProviderMedia,
-      });
-      if (!preview.missing && preview.changes.length === 0) {
-        result.skipped++;
-        continue;
-      }
+          const preview = await this.evaluateRow(row, config, {
+            includeExternalMetadata: options.includeExternalLyrics === true,
+            lyricsByProviderMedia,
+            embeddedCoverContext,
+          });
+          if (!preview.missing && preview.changes.length === 0) {
+            result.skipped++;
+            return;
+          }
 
-      const desiredTagsArr = this.buildDesiredTags(row, config);
+          const desiredTagsArr = this.buildDesiredTags(row, config);
 
-      if (options.includeExternalLyrics === true && quality.embed_lyrics && row.file_provider_id) {
-        const lyrics = await resolveLyricsForRetagRow(row, true, lyricsByProviderMedia);
-        const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
-        if (lyricTag) desiredTagsArr.push(lyricTag);
-      }
+          if (options.includeExternalLyrics === true && quality.embed_lyrics && row.file_provider_id) {
+            const lyrics = await resolveLyricsForRetagRow(row, true, lyricsByProviderMedia);
+            const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
+            if (lyricTag) desiredTagsArr.push(lyricTag);
+          }
 
-      const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, row.extension);
-      const removalKeys = this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(row, config), row.extension);
+          const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, row.extension);
+          const removalKeys = this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(row, config), row.extension);
 
-      if (shouldSkipEmbeddedAudioTagWrite(row)) {
+          if (shouldSkipEmbeddedAudioTagWrite(row)) {
+            result.errors.push({
+              id,
+              error: `${row.extension || "file"} ${row.file_codec || "audio"} metadata is not safely writable with ffmpeg stream copy`,
+            });
+            return;
+          }
+
+          // Scrub all existing tags before writing
+          if (config.scrub_audio_tags) {
+            const scrubbed = await removeAllTags(resolvedPath);
+            if (!scrubbed) {
+              result.errors.push({ id, error: "Tag scrub failed" });
+              return;
+            }
+          }
+
+          const success = await writeMetadata(resolvedPath, desiredTags, removalKeys);
+          if (!success) {
+            result.errors.push({ id, error: "Metadata write failed" });
+            return;
+          }
+
+          const coverOutcome = await applyPreferredCover(row, resolvedPath, id);
+          if (coverOutcome === "failed") {
+            return;
+          }
+
+          const verification = await this.evaluateRow(row, config, {
+            includeExternalMetadata: options.includeExternalLyrics === true,
+            lyricsByProviderMedia,
+            embeddedCoverContext,
+          });
+          if (verification.missing || verification.error || verification.changes.length > 0) {
+            const remainingFields = verification.changes
+              .map((change) => change.field)
+              .filter(Boolean)
+              .join(", ");
+            result.errors.push({
+              id,
+              error: verification.error
+                ? `Metadata verification failed: ${verification.error}`
+                : `Metadata verification failed${remainingFields ? ` for: ${remainingFields}` : ""}`,
+            });
+            return;
+          }
+
+          const stat = fs.statSync(resolvedPath);
+          pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
+          result.retagged++;
+        })(), `retag file ${id}`);
+      } catch (error) {
         result.errors.push({
           id,
-          error: `${row.extension || "file"} ${row.file_codec || "audio"} metadata is not safely writable with ffmpeg stream copy`,
+          error: error instanceof Error ? error.message : "Tag write failed",
         });
-        continue;
       }
 
-      // Scrub all existing tags before writing
-      if (config.scrub_audio_tags) {
-        const scrubbed = await removeAllTags(resolvedPath);
-        if (!scrubbed) {
-          result.errors.push({ id, error: "Tag scrub failed" });
-          continue;
-        }
+      if (processedCount % 5 === 0) {
+        await yieldRetagToEventLoop();
       }
-
-      const success = await writeMetadata(resolvedPath, desiredTags, removalKeys);
-      if (!success) {
-        result.errors.push({ id, error: "Metadata write failed" });
-        continue;
-      }
-
-      const coverOutcome = await applyPreferredCover(row, resolvedPath, id);
-      if (coverOutcome === "failed") {
-        continue;
-      }
-
-      const verification = await this.evaluateRow(row, config, {
-        includeExternalMetadata: options.includeExternalLyrics === true,
-        lyricsByProviderMedia,
-      });
-      if (verification.missing || verification.error || verification.changes.length > 0) {
-        const remainingFields = verification.changes
-          .map((change) => change.field)
-          .filter(Boolean)
-          .join(", ");
-        result.errors.push({
-          id,
-          error: verification.error
-            ? `Metadata verification failed: ${verification.error}`
-            : `Metadata verification failed${remainingFields ? ` for: ${remainingFields}` : ""}`,
-        });
-        continue;
-      }
-
-      const stat = fs.statSync(resolvedPath);
-      pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
-      result.retagged++;
     }
 
     for (const tempDir of embeddedCoverContext.temporaryDirectories) {
@@ -2937,6 +2974,7 @@ export class AudioTagService {
         includeExternalLyrics: false,
         onProgress: (batchCompleted) => options.onProgress?.(completed + batchCompleted, ids.length),
       });
+      await yieldRetagToEventLoop();
       result.retagged += batchResult.retagged;
       result.skipped += batchResult.skipped;
       result.missing += batchResult.missing;

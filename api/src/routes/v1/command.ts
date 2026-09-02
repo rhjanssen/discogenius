@@ -20,8 +20,10 @@ function commandMutationHttpStatus(error: unknown): number {
 
 router.get("/", (req, res) => {
   try {
-    const active = CommandQueueManager.all("%", "%", 200)
-      .filter((job) => job.status === "queued" || job.status === "started")
+    // Query queued/started directly. `all("%","%",200)` sorted by created_at
+    // DESC, so a burst of finished history hid the live backlog (321
+    // RefreshArtist rows vanished behind the newest 200 cancelled/completed).
+    const active = CommandQueueManager.listLive(200)
       .map((job) => mapJob(job));
     const historyLimit = Math.max(0, parseInt(String(req.query.limit || "50"), 10) || 50);
     const historyOffset = Math.max(0, parseInt(String(req.query.offset || "0"), 10) || 0);

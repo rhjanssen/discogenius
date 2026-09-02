@@ -274,6 +274,14 @@ const useStyles = makeStyles({
     position: "absolute",
     top: "1px",
     right: "1px",
+    fontWeight: tokens.fontWeightSemibold,
+    backgroundColor: tokens.colorBrandBackground2,
+    color: tokens.colorBrandForeground2,
+    boxShadow: "none",
+    border: "none",
+    "::after": {
+      display: "none",
+    },
   },
   main: {
     maxWidth: "1320px",

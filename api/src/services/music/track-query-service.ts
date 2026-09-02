@@ -5,6 +5,7 @@ import { getConfigSection } from "../config/config.js";
 import { albumCoverLocalUrl, imageContainerFromImagesColumn } from "../metadata/media-cover-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
 import { buildLibraryArtistMonitoredExistsSql } from "./managed-artists.js";
+import { TrackLibraryIndexService } from "./track-library-index-service.js";
 
 const canonicalTrackDownloadedPredicate = `
   EXISTS (
@@ -835,6 +836,13 @@ const unmonitoredTrackCandidateSql = `
 `;
 
 function candidateTrackScopeSql(monitored: boolean | undefined): string {
+  if (monitored === true && TrackLibraryIndexService.isReady()) {
+    return `
+    WITH candidate_track_ids(id) AS MATERIALIZED (
+      SELECT track_id FROM TrackLibraryIndex
+    )
+  `;
+  }
   const body = monitored === true
     ? monitoredTrackCandidateSql
     : monitored === false

@@ -78,9 +78,14 @@ const TRACK_INDEX_EDITION_CHUNK = 75;
  */
 export class TrackLibraryIndexService {
   static isReady(): boolean {
-    return Boolean(db.prepare(`
-      SELECT 1 FROM TrackLibraryProjectionState WHERE singleton_id = 1
-    `).get());
+    const state = db.prepare(`
+      SELECT row_count FROM TrackLibraryProjectionState WHERE singleton_id = 1
+    `).get() as { row_count?: number } | undefined;
+    if (!state) return false;
+    if (Number(state.row_count) > 0) return true;
+    // A seed row with zero indexed tracks is only authoritative when nothing
+    // is monitored yet. Otherwise fall back to catalog SQL until rebuild.
+    return !db.prepare("SELECT 1 FROM LibraryEditions LIMIT 1").get();
   }
 
   static needsRebuild(): boolean {
