@@ -1325,3 +1325,25 @@ test("getTopPendingJobsByTypes perTypeLimit keeps a deep single-type backlog fro
     // earlier-queued RefreshArtist rows come before the later MatchArtistProviders.
     assert.equal(diverseWindow[0].name, queueModule.CommandNames.RefreshArtist);
 });
+
+test("download queue history sorts earlier ISO-formatted failures below later space-delimited completions", () => {
+    const { db } = dbModule;
+    // Insert an earlier failed download command with ISO timestamp (00:47:25)
+    db.prepare(`
+        INSERT INTO commands (name, payload, priority, status, created_at, started_at, completed_at)
+        VALUES ('DownloadAlbum', '{"type":"album","title":"Morning Failed Album","artist":"Band","downloadState":{"outcome":"failed"}}', 1, 'failed', '2026-09-03T00:47:25.821Z', '2026-09-03T00:47:25.821Z', '2026-09-03T00:47:25.821Z')
+    `).run();
+
+    // Insert a later completed download command with SQLite standard space-delimited timestamp (12:06:43)
+    db.prepare(`
+        INSERT INTO commands (name, payload, priority, status, created_at, started_at, completed_at)
+        VALUES ('DownloadAlbum', '{"type":"album","title":"Afternoon Success Album","artist":"Band","downloadState":{"outcome":"ok"}}', 1, 'completed', '2026-09-03 12:06:00', '2026-09-03 12:06:10', '2026-09-03 12:06:43')
+    `).run();
+
+    const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+    assert.ok(history.items.length >= 2);
+    // The later completed command (12:06) must sort FIRST, before the midnight failure (00:47)
+    assert.equal(history.items[0]?.title, "Afternoon Success Album");
+    assert.equal(history.items[1]?.title, "Morning Failed Album");
+});
+

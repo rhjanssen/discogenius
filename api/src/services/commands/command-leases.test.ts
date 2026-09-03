@@ -582,3 +582,63 @@ test("an unexpected clean worker exit is recovered and capacity is restored", as
         "pool did not recover an unexpected clean exit",
     );
 });
+
+test("active progress updates automatically extend lease and prevent watchdog recovery within noProgressMs", () => {
+    const started = new Date("2026-01-01T00:00:00.000Z");
+    const id = queueCommand("hang");
+    claim(id, "attempt-progressing", started, 1_000);
+
+    // Initial state: lease expires at started + 1000ms
+    const initialJob = queueModule.CommandQueueManager.get(id);
+    const initialExpiry = initialJob?.lease_expires_at;
+    assert.ok(initialExpiry);
+
+    // Advance progress at 500ms
+    queueModule.CommandQueueManager.updateState(id, {
+        workerId: "attempt-progressing",
+        progress: 25,
+        progressPhase: "processing chunk 1",
+    });
+
+    const updatedJob = queueModule.CommandQueueManager.get(id);
+    assert.ok(updatedJob?.lease_expires_at);
+    // Lease must have been extended
+    assert.ok(
+        new Date(updatedJob!.lease_expires_at!).getTime() >= new Date(initialExpiry!).getTime(),
+        "lease_expires_at should be extended on progress update",
+    );
+
+    // Even if lease expired past now, active progress within noProgressMs protects the worker
+    const simulatedNow = new Date("2026-01-01T00:01:00.000Z");
+    const stale = queueModule.CommandQueueManager.findStaleExecutionLeases({
+        types: [queueModule.CommandNames.CheckHealth],
+        now: simulatedNow,
+        noProgressMs: 300_000, // 5 minutes progress timeout
+    });
+
+    assert.equal(
+        stale.length,
+        0,
+        "worker actively making progress within noProgressMs must not be killed as lease expired",
+    );
+});
+
+test("command history sorts earlier ISO-formatted failures below later space-delimited completions", () => {
+    // Insert an earlier failed command with ISO timestamp (00:47:25)
+    dbModule.db.prepare(`
+        INSERT INTO commands (name, payload, priority, status, created_at, started_at, completed_at)
+        VALUES ('CheckHealth', '{}', 1, 'failed', '2026-09-03T00:47:25.821Z', '2026-09-03T00:47:25.821Z', '2026-09-03T00:47:25.821Z')
+    `).run();
+
+    // Insert a later completed command with SQLite standard space-delimited timestamp (12:06:43)
+    dbModule.db.prepare(`
+        INSERT INTO commands (name, payload, priority, status, created_at, started_at, completed_at)
+        VALUES ('CheckHealth', '{}', 1, 'completed', '2026-09-03 12:06:00', '2026-09-03 12:06:10', '2026-09-03 12:06:43')
+    `).run();
+
+    const history = queueModule.CommandQueueManager.getHistory(10, 0);
+    assert.ok(history.length >= 2);
+    // The later completed command (12:06) must sort FIRST, before the midnight failure (00:47)
+    assert.equal(history[0].status, "completed");
+    assert.equal(history[1].status, "failed");
+});

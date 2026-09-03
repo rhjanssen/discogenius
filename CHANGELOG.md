@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.14.3] - 2026-09-03
+
+### Fixed
+
+- **Command watchdog lease expiration crash during long-running tasks.** Resolved premature termination of commands (such as library-wide `RetagArtist`, `MatchArtistProviders`, `CurateArtist`, and download workers) by the watchdog. When a worker advances progress (`updateState` / `updateProgress`), its execution lease is now automatically renewed. Furthermore, `findStaleExecutionLeases` checks if progress has moved within the command's configured `noProgressTimeout` (up to 4 hours for retagging) before considering a lease expired, preventing workers from being killed mid-task during heavy background processing or SQLite write contention.
+- **Download queue history chronological timestamp ordering.** Fixed a SQLite string comparison defect in `DownloadQueueQueryService.getQueueHistory`, `CommandHistory`, and `CommandQueueManager.getHistory` where failed jobs serialized with ISO-8601 (`'T'`) sorted above completed jobs formatted with SQLite's default space delimiter (`' '`) on the same calendar day. History queries now order using `datetime(COALESCE(...)) DESC, id DESC` for strict chronological ordering.
+- **Task management alignment with Lidarr.** Verified library-wide vs album-level retag execution parity (`RetagArtist` and `RetagFiles` execute identical `AudioTagService.applyByQuery` logic) and confirmed append-only audit trail conventions for failed download attempts and retries.
+
 ## [2.14.2] - 2026-09-03
 
 ### Fixed

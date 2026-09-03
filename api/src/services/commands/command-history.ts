@@ -916,7 +916,7 @@ function listTaskEventProjectionRows(limit: number, offset: number = 0): TaskEve
         FROM commands
         WHERE name IN (${typePlaceholders})
           AND status IN (${statusPlaceholders})
-        ORDER BY COALESCE(completed_at, started_at, created_at) DESC, id DESC
+        ORDER BY datetime(COALESCE(completed_at, started_at, created_at)) DESC, id DESC
         LIMIT ?
                 OFFSET ?
     `).all(...types, ...ALL_ACTIVITY_STATUSES, limit, offset) as TaskEventProjectionRow[];

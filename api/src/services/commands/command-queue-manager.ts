@@ -661,7 +661,7 @@ LIMIT ? OFFSET ?
         const jobs = db.prepare(`
             SELECT * FROM commands 
             WHERE status IN('completed', 'failed', 'cancelled')
-            ORDER BY COALESCE(started_at, created_at) DESC
+            ORDER BY datetime(COALESCE(completed_at, started_at, created_at)) DESC, id DESC
 LIMIT ? OFFSET ?
     `).all(limit, offset) as any[];
 
@@ -871,7 +871,11 @@ ${orderBy}
 
     static updateProgress(id: number, progress: number, workerId?: string) {
         const ownershipClause = workerId ? " AND status = 'started' AND worker_id = ?" : " AND status NOT IN ('completed', 'failed', 'cancelled')";
-        const params: unknown[] = [progress, progress, id];
+        const current = this.get(id);
+        const currentLeaseMs = current?.lease_expires_at
+            ? Math.max(60_000, parseSqliteDate(current.lease_expires_at) - parseSqliteDate(current.heartbeat_at || current.started_at))
+            : 300_000;
+        const params: unknown[] = [progress, progress, leaseExpiry(new Date(), currentLeaseMs), id];
         if (workerId) params.push(workerId);
         const result = db.prepare(`
             UPDATE commands
@@ -880,6 +884,7 @@ ${orderBy}
                 progress_current = ?,
                 progress_total = COALESCE(progress_total, 100),
                 last_progress_at = CURRENT_TIMESTAMP,
+                lease_expires_at = CASE WHEN lease_expires_at IS NOT NULL THEN ? ELSE NULL END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?${ownershipClause}
         `).run(...params);
@@ -948,6 +953,14 @@ ${orderBy}
         }
         if (advancesProgress) {
             updates.push("last_progress_at = CURRENT_TIMESTAMP");
+            if (current.lease_expires_at != null) {
+                const currentLeaseMs = Math.max(
+                    60_000,
+                    parseSqliteDate(current.lease_expires_at) - parseSqliteDate(current.heartbeat_at || current.started_at),
+                );
+                updates.push("lease_expires_at = ?");
+                params.push(leaseExpiry(new Date(), currentLeaseMs));
+            }
             if (options.blockedReason === undefined) {
                 updates.push("blocked_reason = NULL");
             }
@@ -1349,8 +1362,6 @@ ${orderBy}
         }>;
 
         return rows.flatMap((row): StaleCommandLease[] => {
-            const leaseExpired = row.lease_expires_at != null
-                && parseSqliteDate(row.lease_expires_at) <= now.getTime();
             const noProgressMs = Math.max(
                 0,
                 options.noProgressMs
@@ -1361,13 +1372,26 @@ ${orderBy}
                 && row.blocked_reason == null
                 && row.last_progress_at != null
                 && parseSqliteDate(row.last_progress_at) <= now.getTime() - noProgressMs;
-            if (!leaseExpired && !progressStopped) return [];
+
+            const leaseExpired = row.lease_expires_at != null
+                && parseSqliteDate(row.lease_expires_at) <= now.getTime();
+
+            // An execution lease is NOT considered expired if the command has made recent progress.
+            // When noProgressMs is configured (e.g. up to 4 hours for RetagArtist), active progress
+            // proves the worker is alive and progressing even if heartbeat DB writes were delayed.
+            const hasRecentProgress = noProgressMs > 0
+                && row.last_progress_at != null
+                && parseSqliteDate(row.last_progress_at) > now.getTime() - noProgressMs;
+
+            const isStaleLease = leaseExpired && !hasRecentProgress;
+
+            if (!isStaleLease && !progressStopped) return [];
             return [{
                 id: row.id,
                 name: row.name,
                 workerId: row.worker_id,
                 attempt: Number(row.attempt) || 0,
-                reason: leaseExpired ? "lease expired" : "progress stopped",
+                reason: isStaleLease ? "lease expired" : "progress stopped",
                 heartbeatAt: row.heartbeat_at,
                 lastProgressAt: row.last_progress_at,
                 leaseExpiresAt: row.lease_expires_at,

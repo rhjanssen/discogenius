@@ -1136,10 +1136,7 @@ export class DownloadQueueQueryService {
       FROM commands jq
       WHERE ${logicalHistory.whereSql}
       ORDER BY
-        jq.completed_at DESC,
-        jq.updated_at DESC,
-        jq.started_at DESC,
-        jq.created_at DESC,
+        datetime(COALESCE(jq.completed_at, jq.updated_at, jq.started_at, jq.created_at)) DESC,
         jq.id DESC
       LIMIT ? OFFSET ?
     `).all(...logicalHistory.params, params.limit, params.offset) as Array<{ id: number }>;
