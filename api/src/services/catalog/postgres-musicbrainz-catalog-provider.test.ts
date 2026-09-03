@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PostgresMusicBrainzCatalogProvider } from "./postgres-musicbrainz-catalog-provider.js";
+import { PostgresMusicBrainzCatalogProvider, earlierDate } from "./postgres-musicbrainz-catalog-provider.js";
 
 test("bulk MusicBrainz hydration keeps release-group and unknown-country dates", async () => {
   const provider = new PostgresMusicBrainzCatalogProvider({
@@ -159,4 +159,27 @@ test("local MusicBrainz video recordings include the recording comment", async (
   } finally {
     await provider.dispose();
   }
+});
+
+test("earlierDate compares partial ISO dates with precision preference", () => {
+  assert.equal(earlierDate(null, null), null);
+  assert.equal(earlierDate("2016-04-29", null), "2016-04-29");
+  assert.equal(earlierDate(null, "2016-04-29"), "2016-04-29");
+
+  // Higher precision is preserved when year matches
+  assert.equal(earlierDate("2016", "2016-04-29"), "2016-04-29");
+  assert.equal(earlierDate("2016-04-29", "2016"), "2016-04-29");
+  assert.equal(earlierDate("2016-04", "2016-04-29"), "2016-04-29");
+  assert.equal(earlierDate("2016-04-29", "2016-04"), "2016-04-29");
+
+  // Strictly earlier year wins
+  assert.equal(earlierDate("2015", "2016-04-29"), "2015");
+  assert.equal(earlierDate("2016-04-29", "2015"), "2015");
+  assert.equal(earlierDate("2015-12-31", "2016-01-01"), "2015-12-31");
+
+  // Strictly earlier month/day wins
+  assert.equal(earlierDate("2016-03-01", "2016-04-29"), "2016-03-01");
+  assert.equal(earlierDate("2016-04-29", "2016-03-01"), "2016-03-01");
+  assert.equal(earlierDate("2016-04-15", "2016-04-29"), "2016-04-15");
+  assert.equal(earlierDate("2016-04-29", "2016-04-15"), "2016-04-15");
 });

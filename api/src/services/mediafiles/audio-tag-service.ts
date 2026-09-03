@@ -516,6 +516,40 @@ function normalizeComparableValue(value: string | null): string | null {
   return normalized ? normalized : null;
 }
 
+export function isTagValueEqual(tagKey: string, current: string | null, target: string | null): boolean {
+  const normCurrent = normalizeComparableValue(current);
+  const normTarget = normalizeComparableValue(target);
+  if (normCurrent === normTarget) {
+    return true;
+  }
+  if (!normCurrent || !normTarget) {
+    return false;
+  }
+
+  if (tagKey === "genre" || tagKey === "label" || tagKey === "artist" || tagKey === "album_artist") {
+    const splitItems = (s: string) =>
+      s
+        .split(/[\/;,\n]+/)
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean);
+    const currList = splitItems(normCurrent);
+    const targList = splitItems(normTarget);
+    if (currList.length === targList.length && currList.every((v, i) => v === targList[i])) {
+      return true;
+    }
+  }
+
+  if (tagKey === "date" || tagKey === "original_date") {
+    const currDate = normalizeReleaseDate(normCurrent);
+    const targDate = normalizeReleaseDate(normTarget);
+    if (currDate && targDate && currDate === targDate) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /** Normalize AlbumEditions.country (plain code or JSON array string) for tags. */
 function formatReleaseCountryTag(value: unknown): string | null {
   const raw = String(value || "").trim();
@@ -921,6 +955,98 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
       return formatPositiveNumber(common.disk?.of ?? null) || fallback();
     case "date":
       return normalizeReleaseDate(common.date || (common.year ? String(common.year) : null)) || normalizeReleaseDate(fallback());
+    case "original_date":
+      return (
+        normalizeReleaseDate(common.originaldate || (common.originalyear ? String(common.originalyear) : null)) ||
+        normalizeReleaseDate(
+          getLookupValue(lookup, [
+            tag.ffmpegKey,
+            ...(tag.aliases || []),
+            "original date",
+            "originaldate",
+            "original_date",
+            "----:com.apple.itunes:original date",
+            "tdor",
+            "tory",
+          ])
+        )
+      );
+    case "genre": {
+      const genreVal = Array.isArray(common.genre)
+        ? common.genre.map((g: any) => String(g).trim()).filter(Boolean).join(" / ")
+        : common.genre;
+      return (
+        normalizeValue(genreVal) ||
+        getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || []), "genre", "genres", "©gen", "tcon"])
+      );
+    }
+    case "barcode":
+      return (
+        normalizeValue(common.barcode) ||
+        getLookupValue(lookup, [
+          tag.ffmpegKey,
+          ...(tag.aliases || []),
+          "barcode",
+          "----:com.apple.itunes:barcode",
+          "txxx:barcode",
+          "upc",
+        ])
+      );
+    case "label": {
+      const labelVal = Array.isArray(common.label) ? common.label[0] : common.label;
+      return (
+        normalizeValue(labelVal) ||
+        getLookupValue(lookup, [
+          tag.ffmpegKey,
+          ...(tag.aliases || []),
+          "label",
+          "publisher",
+          "organization",
+          "----:com.apple.itunes:label",
+          "tpub",
+        ])
+      );
+    }
+    case "media_format":
+      return (
+        normalizeValue(common.media) ||
+        getLookupValue(lookup, [
+          tag.ffmpegKey,
+          ...(tag.aliases || []),
+          "media",
+          "media_format",
+          "----:com.apple.itunes:media",
+          "tmed",
+        ])
+      );
+    case "comment": {
+      const commentVal = Array.isArray(common.comment)
+        ? (typeof common.comment[0] === "object" ? common.comment[0]?.text : common.comment[0])
+        : common.comment;
+      return normalizeValue(commentVal) || fallback();
+    }
+    case "release_country":
+      return normalizeValue(common.releasecountry) || fallback();
+    case "release_status": {
+      const statusVal = common.releasestatus ? String(common.releasestatus).toLowerCase() : null;
+      return statusVal || (fallback() ? fallback()!.toLowerCase() : null);
+    }
+    case "release_type": {
+      const typeVal = Array.isArray(common.releasetype) ? common.releasetype.join("; ") : common.releasetype;
+      return normalizeValue(typeVal) || fallback();
+    }
+    case "musicbrainz_recordingid":
+      return normalizeValue(common.musicbrainz_recordingid || common.musicbrainz_trackid) || fallback();
+    case "musicbrainz_albumid":
+      return normalizeValue(common.musicbrainz_albumid) || fallback();
+    case "musicbrainz_artistid":
+      return normalizeValue(common.musicbrainz_artistid) || fallback();
+    case "musicbrainz_albumartistid":
+      return normalizeValue(common.musicbrainz_albumartistid) || fallback();
+    case "musicbrainz_releasegroupid":
+      return normalizeValue(common.musicbrainz_releasegroupid) || fallback();
+    case "musicbrainz_releasetrackid":
+      return normalizeValue(common.musicbrainz_releasetrackid) || fallback();
     case "isrc":
       return normalizeValue(common.isrc) || fallback();
     case "copyright":
@@ -1050,7 +1176,7 @@ export class AudioTagService {
       SELECT
         lf.id,
         lf.artist_metadata_id,
-        COALESCE(lf.release_group_id, canonical_group.id, alb.id) AS album_id,
+        COALESCE(lf.release_group_id, canonical_release.release_group_id, canonical_group.id) AS album_id,
         lf.provider_id AS media_id,
         lf.file_path,
         lf.relative_path,
@@ -1060,80 +1186,69 @@ export class AudioTagService {
         lf.quality AS file_quality,
         lf.codec AS file_codec,
         lf.channels AS file_channels,
-        COALESCE(lf.provider, provider_track.provider, provider_album.provider) AS file_provider,
+        COALESCE(lf.provider, provider_track.provider) AS file_provider,
         lf.provider_entity_type AS file_provider_entity_type,
         COALESCE(lf.provider_id, provider_track.provider_id) AS file_provider_id,
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
         artist.name AS primary_artist_name,
-        COALESCE(canonical_track.title, provider_canonical_track.title, canonical_recording.title) AS media_title,
-        CASE WHEN COALESCE(canonical_track.mbid, provider_canonical_track.mbid) IS NOT NULL THEN NULL ELSE provider_track.version END AS media_version,
+        COALESCE(canonical_track.title, canonical_recording.title, provider_track.title) AS media_title,
+        NULL AS media_version,
         COALESCE(
           CASE WHEN canonical_track.length_ms IS NOT NULL THEN ROUND(canonical_track.length_ms / 1000.0) END,
-          CASE WHEN provider_canonical_track.length_ms IS NOT NULL THEN ROUND(provider_canonical_track.length_ms / 1000.0) END,
           CASE WHEN canonical_recording.length_ms IS NOT NULL THEN ROUND(canonical_recording.length_ms / 1000.0) END,
-          CASE WHEN provider_recording.length_ms IS NOT NULL THEN ROUND(provider_recording.length_ms / 1000.0) END,
-          CASE WHEN provider_track.duration_ms IS NOT NULL
-            THEN ROUND(provider_track.duration_ms / 1000.0) END
+          CASE WHEN provider_track.duration_ms IS NOT NULL THEN ROUND(provider_track.duration_ms / 1000.0) END
         ) AS media_duration,
-        COALESCE(canonical_release.date, ar.date) AS media_release_date,
-        COALESCE(canonical_track.position, provider_canonical_track.position) AS media_track_number,
-        COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position) AS media_volume_number,
+        canonical_release.date AS media_release_date,
+        canonical_track.position AS media_track_number,
+        canonical_track.medium_position AS media_volume_number,
         COALESCE(
           CASE WHEN json_valid(canonical_recording.isrcs) THEN json_extract(canonical_recording.isrcs, '$[0]') ELSE canonical_recording.isrcs END,
-          CASE WHEN json_valid(provider_recording.isrcs) THEN json_extract(provider_recording.isrcs, '$[0]') ELSE provider_recording.isrcs END,
           provider_track.isrc
         ) AS media_isrc,
         COALESCE(
           canonical_recording.copyright,
-          provider_recording.copyright,
           provider_track.copyright,
           provider_album.copyright
         ) AS media_copyright,
         provider_track.replay_gain AS media_replay_gain,
         provider_track.peak AS media_peak,
         provider_track.musical_key AS media_musical_key,
-        COALESCE(canonical_group.title, canonical_release.title, alb.title) AS album_title,
-        CASE WHEN COALESCE(canonical_group.mbid, alb.mbid) IS NOT NULL THEN NULL ELSE provider_album.version END AS album_version,
-        COALESCE(canonical_release.date, ar.date) AS album_release_date,
+        COALESCE(canonical_group.title, canonical_release.title, provider_album.title) AS album_title,
+        NULL AS album_version,
+        canonical_release.date AS album_release_date,
         canonical_release.media_count AS album_num_volumes,
         COALESCE(canonical_release.barcode, provider_album.upc) AS album_upc,
-        COALESCE(canonical_group.genres, alb.genres, am.genres) AS album_genres,
-        COALESCE(canonical_group.first_release_date, alb.first_release_date) AS album_original_date,
+        COALESCE(canonical_group.genres, artist.genres) AS album_genres,
+        canonical_group.first_release_date AS album_original_date,
         COALESCE(
           CASE WHEN json_valid(canonical_release.media) AND json_extract(canonical_release.media, '$[0].format') IS NOT NULL AND json_extract(canonical_release.media, '$[0].format') != '' THEN json_extract(canonical_release.media, '$[0].format') END,
-          CASE WHEN json_valid(ar.media) AND json_extract(ar.media, '$[0].format') IS NOT NULL AND json_extract(ar.media, '$[0].format') != '' THEN json_extract(ar.media, '$[0].format') END,
           'Digital Media'
         ) AS media_format,
         canonical_release.label AS album_label,
         COALESCE(
           canonical_group.review_text,
-          alb.review_text,
-          canonical_group.overview,
-          alb.overview
+          canonical_group.overview
         ) AS album_review_text,
         canonical_recording.credits AS media_credits,
-        COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid, provider_recording.mbid) AS media_mbid,
+        COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid) AS media_mbid,
         lf.acoustid_id AS media_acoustid_id,
         lf.fingerprint AS media_acoustid_fingerprint,
         lf.fingerprint_duration AS media_fingerprint_duration,
         provider_track.explicit AS media_explicit,
-        COALESCE(lf.canonical_release_mbid, canonical_release.mbid, ar.mbid) AS album_mbid,
-        COALESCE(lf.canonical_release_group_mbid, canonical_group.mbid, alb.mbid) AS album_mb_release_group_id,
-        -- The file's OWN canonical release group (no hybrid provider-track fallback):
-        -- the album identity the UI resolves the cover by. Used for cover embedding
-        -- so a hybrid-matched track can never pull a foreign album's art.
+        COALESCE(lf.canonical_release_mbid, canonical_release.mbid) AS album_mbid,
+        COALESCE(lf.canonical_release_group_mbid, canonical_group.mbid) AS album_mb_release_group_id,
         lf.canonical_release_group_mbid AS canonical_release_group_mbid,
         provider_album.provider_id AS album_provider_id,
-        COALESCE(lf.canonical_artist_mbid, canonical_recording.artist_mbid, provider_recording.artist_mbid, canonical_group.artist_mbid, alb.artist_mbid, artist.mbid) AS artist_mbid,
-        COALESCE(canonical_release.status, ar.status) AS release_status,
-        COALESCE(canonical_release.country, ar.country) AS release_country,
-        COALESCE(canonical_group.primary_type, alb.primary_type) AS release_primary_type,
-        COALESCE(canonical_group.secondary_types, alb.secondary_types) AS release_secondary_types,
-        COALESCE(lf.canonical_release_mbid, canonical_release.mbid, ar.mbid) AS canonical_release_mbid,
-        COALESCE(lf.canonical_track_mbid, canonical_track.mbid, provider_canonical_track.mbid) AS canonical_track_mbid,
-        COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid, provider_recording.mbid) AS canonical_recording_mbid,
+        COALESCE(lf.canonical_artist_mbid, canonical_recording.artist_mbid, canonical_group.artist_mbid, artist.mbid) AS artist_mbid,
+        canonical_release.status AS release_status,
+        canonical_release.country AS release_country,
+        canonical_group.primary_type AS release_primary_type,
+        canonical_group.secondary_types AS release_secondary_types,
+        COALESCE(lf.canonical_release_mbid, canonical_release.mbid) AS canonical_release_mbid,
+        COALESCE(lf.canonical_track_mbid, canonical_track.mbid) AS canonical_track_mbid,
+        COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid) AS canonical_recording_mbid,
         canonical_recording.artist_credit AS recording_artist_credit,
         canonical_recording.credits AS recording_data
       FROM TrackFiles lf
@@ -1145,7 +1260,7 @@ export class AudioTagService {
         ON canonical_release.id = lf.album_edition_id
         OR (lf.album_edition_id IS NULL AND canonical_release.mbid = lf.canonical_release_mbid)
       LEFT JOIN Albums canonical_group
-        ON canonical_group.id = lf.release_group_id
+        ON canonical_group.id = COALESCE(lf.release_group_id, canonical_release.release_group_id)
         OR (lf.release_group_id IS NULL AND canonical_group.mbid = lf.canonical_release_group_mbid)
       LEFT JOIN Recordings canonical_recording
         ON canonical_recording.id = COALESCE(lf.recording_id, canonical_track.recording_id)
@@ -1155,119 +1270,30 @@ export class AudioTagService {
           AND canonical_recording.mbid = lf.canonical_recording_mbid
         )
       LEFT JOIN ProviderItems provider_track
-        ON provider_track.id = (
-          SELECT candidate.id
-          FROM ProviderItems candidate
-          WHERE candidate.entity_type = 'track'
-            AND CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NOT NULL
-            AND CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-            AND lf.provider IS NOT NULL
-            AND candidate.provider = lf.provider
+        ON provider_track.id = COALESCE(
+          lf.provider_item_id,
+          (
+            SELECT candidate.id
+            FROM ProviderItems candidate
+            WHERE candidate.entity_type = 'track'
+              AND CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NOT NULL
+              AND CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+              AND lf.provider IS NOT NULL
+              AND candidate.provider = lf.provider
+            LIMIT 1
+          )
+        )
+      LEFT JOIN ProviderItems provider_album
+        ON provider_album.id = (
+          SELECT pem.provider_edition_item_id
+          FROM ProviderEditionMembers pem
+          WHERE pem.member_item_id = provider_track.id
           LIMIT 1
         )
-      -- Preference tiers as COALESCE'd subqueries rather than one subquery with a
-      -- correlated ORDER BY. SQLite resolves outer aliases inside a JOIN
-      -- subquery's WHERE but NOT inside its ORDER BY, so the original form threw
-      -- "no such column: canonical_track.id" and silently broke audio tagging for
-      -- every imported album — the download embedded no MusicBrainz ids at all.
-      LEFT JOIN ProviderEditionMembers provider_member
-        ON provider_member.id = COALESCE(
-          -- 1. the membership whose accepted match is this file's canonical track
-          (
-            SELECT CASE
-              WHEN COUNT(DISTINCT candidate_member.provider_edition_item_id) = 1
-              THEN MAX(candidate_member.id)
-            END
-            FROM ProviderEditionMembers candidate_member
-            JOIN ProviderTrackMatches candidate_match
-              ON candidate_match.provider_edition_member_id = candidate_member.id
-             AND candidate_match.match_state = 'accepted'
-            WHERE candidate_member.member_item_id = provider_track.id
-              AND candidate_match.track_id = COALESCE(
-                    lf.track_id,
-                    (SELECT resolved_track.id FROM Tracks resolved_track
-                      WHERE resolved_track.mbid = lf.canonical_track_mbid)
-                  )
-          ),
-          -- 2. ...else one matching its canonical recording
-          (
-            SELECT CASE
-              WHEN COUNT(DISTINCT candidate_member.provider_edition_item_id) = 1
-              THEN MAX(candidate_member.id)
-            END
-            FROM ProviderEditionMembers candidate_member
-            JOIN ProviderTrackMatches candidate_match
-              ON candidate_match.provider_edition_member_id = candidate_member.id
-             AND candidate_match.match_state = 'accepted'
-            WHERE candidate_member.member_item_id = provider_track.id
-              AND candidate_match.recording_id = COALESCE(
-                    lf.recording_id,
-                    (SELECT resolved_recording.id FROM Recordings resolved_recording
-                      WHERE resolved_recording.mbid = lf.canonical_recording_mbid)
-                  )
-          ),
-          -- 3. ...else any membership of this provider track
-          (
-            SELECT CASE
-              WHEN COUNT(DISTINCT candidate_member.provider_edition_item_id) = 1
-              THEN MAX(candidate_member.id)
-            END
-            FROM ProviderEditionMembers candidate_member
-            WHERE candidate_member.member_item_id = provider_track.id
-          )
-        )
-      LEFT JOIN ProviderTrackMatches provider_track_match
-        ON provider_track_match.provider_edition_member_id = provider_member.id
-       AND provider_track_match.match_state = 'accepted'
-      LEFT JOIN Tracks provider_canonical_track
-        ON provider_canonical_track.id = provider_track_match.track_id
-      LEFT JOIN Recordings provider_recording
-        ON provider_recording.id = provider_track_match.recording_id
-      -- Preference as COALESCE'd tiers, for the same SQLite reason as the
-      -- membership join above: an outer alias resolves in a subquery's WHERE but
-      -- not in its ORDER BY.
-      LEFT JOIN ProviderItems provider_album
-        ON provider_album.id = COALESCE(
-          -- 1. the provider edition this membership actually sits on
-          provider_member.provider_edition_item_id,
-          -- 2. ...else the edition the file itself records
-          (
-            SELECT album_candidate.id
-            FROM ProviderItems album_candidate
-            WHERE album_candidate.entity_type = 'release'
-              AND lf.provider_entity_type IN ('album', 'release')
-              AND CAST(album_candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-              AND COALESCE(lf.provider, provider_track.provider) IS NOT NULL
-              AND album_candidate.provider = COALESCE(lf.provider, provider_track.provider)
-            LIMIT 1
-          )
-        )
-      -- Third instance of the same SQLite rule: the "prefer the match pointing at
-      -- this file's own canonical edition" tier moves into a WHERE-correlated
-      -- subquery, and the generic best-match tier follows as the fallback.
-      LEFT JOIN ProviderEditionMatches provider_release_match
-        ON provider_release_match.id = COALESCE(
-          (
-            SELECT candidate_release_match.id
-            FROM ProviderEditionMatches candidate_release_match
-            WHERE candidate_release_match.provider_edition_item_id = provider_album.id
-              AND candidate_release_match.match_state = 'accepted'
-              AND candidate_release_match.edition_id = lf.album_edition_id
-            ORDER BY
-              CASE candidate_release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
-              candidate_release_match.confidence DESC
-            LIMIT 1
-          ),
-          provider_track_match.provider_edition_match_id
-        )
-      LEFT JOIN AlbumEditions ar
-        ON ar.id = COALESCE(canonical_release.id, canonical_track.album_edition_id, provider_release_match.edition_id)
-      LEFT JOIN Albums alb
-        ON alb.id = COALESCE(canonical_group.id, ar.release_group_id)
-      LEFT JOIN ArtistMetadata am ON am.mbid = artist.mbid
       WHERE ${whereClause}
-        AND (provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
-      ORDER BY lf.artist_metadata_id, COALESCE(canonical_group.mbid, alb.mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
+        AND (canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR lf.canonical_track_mbid IS NOT NULL OR lf.canonical_recording_mbid IS NOT NULL OR provider_track.provider_id IS NOT NULL OR lf.provider_id IS NOT NULL)
+      GROUP BY lf.id
+      ORDER BY lf.artist_metadata_id, canonical_group.mbid, COALESCE(canonical_track.medium_position, 1), COALESCE(canonical_track.position, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
     `;
   }
@@ -2477,7 +2503,7 @@ export class AudioTagService {
       mergeMp4KeyedNativeLookup(metadata, lookup, resolvedPath);
       const changes = desiredTags.reduce<RetagDifference[]>((result, tag) => {
         const currentValue = getCurrentTagValue(metadata, lookup, tag);
-        if (normalizeComparableValue(currentValue) !== normalizeComparableValue(tag.targetValue)) {
+        if (!isTagValueEqual(tag.key, currentValue, tag.targetValue)) {
           result.push({
             field: tag.label,
             oldValue: currentValue,

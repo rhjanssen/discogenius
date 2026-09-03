@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import { inspect } from "util";
 import { CONFIG_DIR } from "./config.js";
+import { getDiscogeniusVersion } from "./user-agent.js";
+import { readIntEnv } from "../../utils/env.js";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -14,9 +16,7 @@ type LogRecord = {
 
 const LEVEL_ORDER: LogLevel[] = ["debug", "info", "warn", "error"];
 const MAX_LOG_RECORDS = 5000;
-const MAX_STARTUP_LOG_LOAD_BYTES = 4 * 1024 * 1024;
-const LOG_DIR = path.join(CONFIG_DIR, "logs");
-const LOG_FILE = path.join(LOG_DIR, "discogenius.jsonl");
+const LOG_FILE_NAME = "discogenius.jsonl";
 const originalConsole = {
   log: console.log.bind(console),
   info: console.info.bind(console),
@@ -26,10 +26,42 @@ const originalConsole = {
 };
 
 let loggingInitialized = false;
+let consolePatched = false;
 let nextLogId = 1;
 const logBuffer: LogRecord[] = [];
-let logStream: fs.WriteStream | null = null;
-let persistedLogsLoaded = false;
+let currentFileBytes = 0;
+
+function getLogDir(): string {
+  const override = process.env.DISCOGENIUS_LOG_DIR?.trim();
+  if (override) {
+    return path.resolve(override);
+  }
+  return path.join(CONFIG_DIR, "logs");
+}
+
+function getLogFilePath(): string {
+  return path.join(getLogDir(), LOG_FILE_NAME);
+}
+
+function getArchiveFilePath(index: number): string {
+  return path.join(getLogDir(), `discogenius.${index}.jsonl`);
+}
+
+function getMaxArchiveFiles(): number {
+  return readIntEnv("DISCOGENIUS_LOG_ROTATE", 5, 1);
+}
+
+function getArchiveAboveBytes(): number {
+  const rawBytes = process.env.DISCOGENIUS_LOG_ARCHIVE_ABOVE_BYTES?.trim();
+  if (rawBytes) {
+    const parsed = Number.parseInt(rawBytes, 10);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return parsed;
+    }
+  }
+
+  return readIntEnv("DISCOGENIUS_LOG_SIZE_LIMIT_MB", 1, 1) * 1024 * 1024;
+}
 
 function pushLogRecord(record: LogRecord) {
   logBuffer.push(record);
@@ -40,131 +72,59 @@ function pushLogRecord(record: LogRecord) {
 }
 
 function ensureLogDirectory() {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+  fs.mkdirSync(getLogDir(), { recursive: true });
 }
 
-function loadPersistedLogs() {
-  if (persistedLogsLoaded) {
+function currentLogFileSize(): number {
+  const logFile = getLogFilePath();
+  if (!fs.existsSync(logFile)) {
+    return 0;
+  }
+  return fs.statSync(logFile).size;
+}
+
+function rotateLogFiles() {
+  const logFile = getLogFilePath();
+  if (!fs.existsSync(logFile)) {
+    currentFileBytes = 0;
     return;
   }
 
-  persistedLogsLoaded = true;
-  ensureLogDirectory();
-
-  if (!fs.existsSync(LOG_FILE)) {
-    return;
+  const maxArchiveFiles = getMaxArchiveFiles();
+  const oldest = getArchiveFilePath(maxArchiveFiles);
+  if (fs.existsSync(oldest)) {
+    fs.rmSync(oldest, { force: true });
   }
 
-  try {
-    const { size: fileSize } = fs.statSync(LOG_FILE);
-    if (fileSize <= 0) {
-      return;
+  for (let index = maxArchiveFiles - 1; index >= 1; index -= 1) {
+    const from = getArchiveFilePath(index);
+    if (!fs.existsSync(from)) {
+      continue;
     }
+    fs.renameSync(from, getArchiveFilePath(index + 1));
+  }
 
-    const tailBytes = Math.min(fileSize, MAX_STARTUP_LOG_LOAD_BYTES);
-    const startOffset = fileSize - tailBytes;
-    const tailBuffer = Buffer.alloc(tailBytes);
-    let totalRead = 0;
-    let startsMidLine = false;
+  fs.renameSync(logFile, getArchiveFilePath(1));
+  currentFileBytes = 0;
+}
 
-    const fd = fs.openSync(LOG_FILE, "r");
-    try {
-      if (tailBytes > 0) {
-        while (totalRead < tailBytes) {
-          const bytesRead = fs.readSync(
-            fd,
-            tailBuffer,
-            totalRead,
-            tailBytes - totalRead,
-            startOffset + totalRead
-          );
-          if (bytesRead === 0) {
-            break;
-          }
+function rotateLogFilesIfNeeded(incomingBytes = 0) {
+  if (currentFileBytes <= 0) {
+    currentFileBytes = currentLogFileSize();
+  }
 
-          totalRead += bytesRead;
-        }
-      }
-
-      if (startOffset > 0) {
-        const previousByte = Buffer.alloc(1);
-        fs.readSync(fd, previousByte, 0, 1, startOffset - 1);
-        startsMidLine = previousByte[0] !== 0x0a && previousByte[0] !== 0x0d;
-      }
-    } finally {
-      fs.closeSync(fd);
-    }
-
-    if (totalRead === 0) {
-      return;
-    }
-
-    if (totalRead < tailBytes) {
-      originalConsole.warn(
-        `[Logging] Requested ${tailBytes} startup log bytes but read ${totalRead}. Parsing available bytes only.`
-      );
-    }
-
-    if (fileSize > tailBytes) {
-      originalConsole.info(
-        `[Logging] Loading startup logs from tail ${tailBytes}/${fileSize} bytes.`
-      );
-    }
-
-    let lines = tailBuffer
-      .subarray(0, totalRead)
-      .toString("utf-8")
-      .split(/\r?\n/);
-
-    if (startsMidLine && lines.length > 0) {
-      lines = lines.slice(1);
-    }
-
-    lines = lines
-      .filter((line) => line.trim().length > 0)
-      .slice(-MAX_LOG_RECORDS);
-
-    for (const line of lines) {
-      try {
-        const record = JSON.parse(line) as Partial<LogRecord>;
-        if (
-          typeof record.id !== "number" ||
-          typeof record.level !== "string" ||
-          typeof record.message !== "string" ||
-          typeof record.time !== "string"
-        ) {
-          continue;
-        }
-
-        pushLogRecord({
-          id: record.id,
-          level: record.level as LogLevel,
-          message: record.message,
-          time: record.time,
-        });
-        nextLogId = Math.max(nextLogId, record.id + 1);
-      } catch {
-        // Ignore malformed log lines from previous builds.
-      }
-    }
-  } catch (error) {
-    originalConsole.warn("[Logging] Failed to load persisted logs:", error);
+  const limit = getArchiveAboveBytes();
+  if (currentFileBytes > 0 && currentFileBytes + incomingBytes > limit) {
+    rotateLogFiles();
   }
 }
 
-function ensureLogStream() {
-  if (logStream) {
-    return;
-  }
-
+function persistLine(line: string) {
   ensureLogDirectory();
-  logStream = fs.createWriteStream(LOG_FILE, {
-    flags: "a",
-    encoding: "utf8",
-  });
-  logStream.on("error", (error) => {
-    originalConsole.warn("[Logging] Failed to write to log file:", error);
-  });
+  const bytes = Buffer.byteLength(line, "utf8");
+  rotateLogFilesIfNeeded(bytes);
+  fs.appendFileSync(getLogFilePath(), line);
+  currentFileBytes += bytes;
 }
 
 function normalizeMessage(args: unknown[]): string {
@@ -192,8 +152,10 @@ function appendLog(level: LogLevel, args: unknown[]) {
   pushLogRecord(record);
   nextLogId += 1;
 
-  if (logStream) {
-    logStream.write(`${JSON.stringify(record)}\n`);
+  try {
+    persistLine(`${JSON.stringify(record)}\n`);
+  } catch (error) {
+    originalConsole.warn("[Logging] Failed to write to log file:", error);
   }
 }
 
@@ -204,28 +166,47 @@ function patchConsoleMethod(method: keyof typeof originalConsole, level: LogLeve
   };
 }
 
+function restoreConsole() {
+  if (!consolePatched) {
+    return;
+  }
+
+  console.log = originalConsole.log;
+  console.info = originalConsole.info;
+  console.warn = originalConsole.warn;
+  console.error = originalConsole.error;
+  console.debug = originalConsole.debug;
+  consolePatched = false;
+}
+
 export function initAppLogging() {
   if (loggingInitialized) {
     return;
   }
 
-  loadPersistedLogs();
-  ensureLogStream();
+  ensureLogDirectory();
+  currentFileBytes = currentLogFileSize();
   loggingInitialized = true;
   console.log = patchConsoleMethod("log", "info");
   console.info = patchConsoleMethod("info", "info");
   console.warn = patchConsoleMethod("warn", "warn");
   console.error = patchConsoleMethod("error", "error");
   console.debug = patchConsoleMethod("debug", "debug");
+  consolePatched = true;
+
+  console.info(`[Discogenius] ${getDiscogeniusVersion()} starting`);
 }
 
 export function closeAppLogging() {
-  if (!logStream) {
-    return;
-  }
+  currentFileBytes = currentLogFileSize();
+}
 
-  logStream.end();
-  logStream = null;
+export function resetAppLoggingForTests() {
+  restoreConsole();
+  loggingInitialized = false;
+  nextLogId = 1;
+  logBuffer.splice(0, logBuffer.length);
+  currentFileBytes = 0;
 }
 
 function getAllowedLevels(level?: string | null): LogLevel[] {
@@ -249,4 +230,8 @@ export function getLogs(options: { limit?: number; offset?: number; level?: stri
     records: sorted.slice(offset, offset + limit),
     totalRecords: filtered.length,
   };
+}
+
+export function getAppLogFilePathForTests(): string {
+  return getLogFilePath();
 }

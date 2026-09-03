@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.14.1] - 2026-09-03
+
+### Fixed
+
+- **Audio tag writing & verification across all containers.** Fixed tag verification failures on M4A, FLAC, and MP3 files where written tags were flagged as mismatched. Added complete tag extraction in `getCurrentTagValue` for `genre`, `original_date`, `barcode`, `media_format`, `label`, `comment`, `release_country`, `release_status`, `release_type`, and `musicbrainz_*`, properly mapping native MP4 iTunes atoms and metadata lookups. Added semantic tag comparison `isTagValueEqual` to prevent false diffs from delimiter variations or date formatting.
+- **Audio tag query performance & deduplication.** Aligned audio tag retrieval with canonical catalog architecture, removing correlated Cartesian joins across `ProviderEditionMembers` and `ProviderTrackMatches` that caused 50+ second query slowdowns and duplicate track rows.
+- **MusicBrainz release date precision.** Fixed date comparison in `PostgresMusicBrainzCatalogProvider` (`earlierDate`) so full ISO dates (`YYYY-MM-DD`) are preserved and never downgraded to year-only strings (`YYYY`).
+- **Application logger.** Decoupled initial UI log streaming listener and added size-based log file rotation with comprehensive test coverage.
+
 ## [Unreleased]
 
 ## [2.14.0] - 2026-09-02

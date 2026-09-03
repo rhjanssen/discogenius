@@ -73,11 +73,38 @@ function formatMbDate(y?: number | null, m?: number | null, d?: number | null): 
   return `${yy}-${mm}-${String(d).padStart(2, "0")}`;
 }
 
-/** Sort partial ISO dates ascending; null/empty last. */
-function earlierDate(a: string | null, b: string | null): string | null {
+/** Sort partial ISO dates ascending; prefer higher precision when years/months match; null/empty last. */
+export function earlierDate(a: string | null, b: string | null): string | null {
   if (!a) return b;
   if (!b) return a;
-  return a <= b ? a : b;
+  if (a === b) return a;
+
+  const [ay, am = "00", ad = "00"] = a.split("-");
+  const [by, bm = "00", bd = "00"] = b.split("-");
+
+  const aYear = Number.parseInt(ay, 10);
+  const bYear = Number.parseInt(by, 10);
+  if (!Number.isNaN(aYear) && !Number.isNaN(bYear) && aYear !== bYear) {
+    return aYear < bYear ? a : b;
+  }
+
+  const aMonth = Number.parseInt(am, 10);
+  const bMonth = Number.parseInt(bm, 10);
+  if (aMonth !== bMonth) {
+    if (aMonth === 0) return b; // a has no month, b has specific month; prefer b
+    if (bMonth === 0) return a; // b has no month, a has specific month; prefer a
+    return aMonth < bMonth ? a : b;
+  }
+
+  const aDay = Number.parseInt(ad, 10);
+  const bDay = Number.parseInt(bd, 10);
+  if (aDay !== bDay) {
+    if (aDay === 0) return b; // a has no day, b has specific day; prefer b
+    if (bDay === 0) return a; // b has no day, a has specific day; prefer a
+    return aDay < bDay ? a : b;
+  }
+
+  return a.length >= b.length ? a : b;
 }
 
 export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
@@ -197,12 +224,11 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     const releases = await this.loadReleasesForGroup(header.id);
     const curated = (await this.loadReleaseGroupCuratedFields([header.id])).get(header.id);
 
-    const firstReleaseDate = earlierDate(
-      releases
-        .map((release) => release.date ?? null)
-        .reduce<string | null>((acc, date) => earlierDate(acc, date), null),
-      formatMbDate(header.y, header.m, header.d),
-    );
+    const rgDate = formatMbDate(header.y, header.m, header.d);
+    const earliestReleaseDate = releases
+      .map((release) => release.date ?? null)
+      .reduce<string | null>((acc, date) => earlierDate(acc, date), null);
+    const firstReleaseDate = rgDate ? earlierDate(rgDate, earliestReleaseDate) : earliestReleaseDate;
 
     const mbReleaseGroup: MbReleaseGroup = {
       id: header.gid,
@@ -264,12 +290,11 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     return headers.map((header) => {
       const releases = releasesByRgId.get(header.id) ?? [];
       const curated = curatedByRgId.get(header.id);
-      const firstReleaseDate = earlierDate(
-        releases
-          .map((release) => release.date ?? null)
-          .reduce<string | null>((acc, date) => earlierDate(acc, date), null),
-        formatMbDate(header.y, header.m, header.d),
-      );
+      const rgDate = formatMbDate(header.y, header.m, header.d);
+      const earliestReleaseDate = releases
+        .map((release) => release.date ?? null)
+        .reduce<string | null>((acc, date) => earlierDate(acc, date), null);
+      const firstReleaseDate = rgDate ? earlierDate(rgDate, earliestReleaseDate) : earliestReleaseDate;
       const mbReleaseGroup: MbReleaseGroup = {
         id: header.gid,
         title: header.name,

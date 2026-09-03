@@ -6,6 +6,7 @@ import {
   buildEmbeddedLyricsManagedTag,
   getCurrentTagValue,
   isAudioTagMaintenanceEnabled,
+  isTagValueEqual,
   selectEmbeddedLyricsText,
   type ManagedTag,
 } from "./audio-tag-service.js";
@@ -443,4 +444,79 @@ test("buildAudioTagWriteMap maps original_date and media_format across formats",
     "TXXX:Original Release Date": "2024-10-25",
     TMED: "Digital Media",
   });
+});
+
+test("getCurrentTagValue extracts all managed tags from common and native metadata", () => {
+  const metadata = {
+    common: {
+      title: "How Dare You",
+      artist: "10cc",
+      albumartist: "10cc",
+      album: "How Dare You!",
+      track: { no: 1, of: 10 },
+      disk: { no: 1, of: 1 },
+      date: "1976-01-01",
+      originaldate: "1976-01-01",
+      genre: ["Rock", "Art Rock", "Pop Rock"],
+      barcode: "042283449323",
+      label: ["Mercury", "Phonogram"],
+      media: "Digital Media",
+      comment: [{ text: "Classic album" }],
+      releasecountry: "US",
+      releasestatus: "Official",
+      releasetype: ["album"],
+      musicbrainz_recordingid: "rec-123",
+      musicbrainz_albumid: "rel-456",
+      musicbrainz_artistid: "art-789",
+      musicbrainz_albumartistid: "art-789",
+      musicbrainz_releasegroupid: "rg-101",
+      musicbrainz_releasetrackid: "trk-202",
+      isrc: "GBAYE7500001",
+      copyright: "(P) 1976 Phonogram Ltd.",
+    },
+    native: {},
+    format: {},
+    quality: { warnings: [] },
+  } as any;
+  const lookup = new Map<string, string>();
+
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "title", label: "Title", ffmpegKey: "title", targetValue: "" }), "How Dare You");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "artist", label: "Artist", ffmpegKey: "artist", targetValue: "" }), "10cc");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "album_artist", label: "Album Artist", ffmpegKey: "album_artist", targetValue: "" }), "10cc");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "album", label: "Album", ffmpegKey: "album", targetValue: "" }), "How Dare You!");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "track", label: "Track", ffmpegKey: "track", targetValue: "" }), "1/10");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "disc", label: "Disc", ffmpegKey: "disc", targetValue: "" }), "1/1");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "date", label: "Date", ffmpegKey: "date", targetValue: "" }), "1976-01-01");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "original_date", label: "Original Date", ffmpegKey: "originaldate", targetValue: "" }), "1976-01-01");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "genre", label: "Genre", ffmpegKey: "genre", targetValue: "" }), "Rock / Art Rock / Pop Rock");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "barcode", label: "Barcode", ffmpegKey: "barcode", targetValue: "" }), "042283449323");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "label", label: "Label", ffmpegKey: "label", targetValue: "" }), "Mercury");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "media_format", label: "Media Format", ffmpegKey: "media_format", targetValue: "" }), "Digital Media");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "comment", label: "Comment", ffmpegKey: "comment", targetValue: "" }), "Classic album");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "release_country", label: "Release Country", ffmpegKey: "release_country", targetValue: "" }), "US");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "release_status", label: "Release Status", ffmpegKey: "release_status", targetValue: "" }), "official");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "release_type", label: "Release Type", ffmpegKey: "release_type", targetValue: "" }), "album");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "musicbrainz_recordingid", label: "MusicBrainz Recording ID", ffmpegKey: "musicbrainz_recordingid", targetValue: "" }), "rec-123");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "musicbrainz_albumid", label: "MusicBrainz Release ID", ffmpegKey: "musicbrainz_albumid", targetValue: "" }), "rel-456");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "musicbrainz_artistid", label: "MusicBrainz Artist ID", ffmpegKey: "musicbrainz_artistid", targetValue: "" }), "art-789");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "musicbrainz_releasegroupid", label: "MusicBrainz Release Group ID", ffmpegKey: "musicbrainz_releasegroupid", targetValue: "" }), "rg-101");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "musicbrainz_releasetrackid", label: "MusicBrainz Release Track ID", ffmpegKey: "musicbrainz_releasetrackid", targetValue: "" }), "trk-202");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "isrc", label: "ISRC", ffmpegKey: "isrc", targetValue: "" }), "GBAYE7500001");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "copyright", label: "Copyright", ffmpegKey: "copyright", targetValue: "" }), "(P) 1976 Phonogram Ltd.");
+});
+
+test("isTagValueEqual compares multi-value tags and dates with semantic tolerance", () => {
+  // Equal strings
+  assert.equal(isTagValueEqual("title", "Song Title", "Song Title"), true);
+  assert.equal(isTagValueEqual("title", "Song Title", "Different Title"), false);
+
+  // Genre delimiters
+  assert.equal(isTagValueEqual("genre", "Rock / Pop Rock", "Rock, Pop Rock"), true);
+  assert.equal(isTagValueEqual("genre", "Rock; Pop Rock", "Rock / Pop Rock"), true);
+  assert.equal(isTagValueEqual("genre", "Rock / Pop", "Pop / Rock"), false);
+
+  // Date normalization
+  assert.equal(isTagValueEqual("date", "2016-04-29", "2016-04-29"), true);
+  assert.equal(isTagValueEqual("original_date", "2016-04-29", "2016-04-29"), true);
+  assert.equal(isTagValueEqual("original_date", "2016-04-29", "2015-04-29"), false);
 });
