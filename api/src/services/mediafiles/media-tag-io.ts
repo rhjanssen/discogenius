@@ -39,6 +39,9 @@ const ID3_TEXT_KEYS: Record<string, string> = {
   track: "TRCK",
   disc: "TPOS",
   date: "TDRC",
+  original_date: "TDOR",
+  tdor: "TDOR",
+  tory: "TORY",
   genre: "TCON",
   isrc: "TSRC",
   copyright: "TCOP",
@@ -248,8 +251,9 @@ function setId3UserText(tag: Id3v2Tag, description: string, value: string): void
 }
 
 function id3TextIdentifier(key: string) {
-  const identifier = ID3_TEXT_KEYS[key.toLowerCase()];
-  return identifier ? Id3v2FrameIdentifiers[identifier] : undefined;
+  const mapped = ID3_TEXT_KEYS[key.toLowerCase()];
+  const lookupKey = mapped || key.toUpperCase();
+  return lookupKey ? (Id3v2FrameIdentifiers as any)[lookupKey] : undefined;
 }
 
 function setId3Value(tag: Id3v2Tag, rawKey: string, value: string): void {
@@ -265,6 +269,18 @@ function setId3Value(tag: Id3v2Tag, rawKey: string, value: string): void {
   }
   if (lower === "comment") {
     tag.comment = value;
+    return;
+  }
+  if (lower === "date" || lower === "year") {
+    if (tag.version >= 4) {
+      tag.setTextFrame(Id3v2FrameIdentifiers.TDRC, value);
+    } else {
+      const year = parseInt(value, 10);
+      if (!Number.isNaN(year) && year > 0) {
+        tag.year = year;
+      }
+      tag.setTextFrame(Id3v2FrameIdentifiers.TYER, value.slice(0, 4));
+    }
     return;
   }
   const identifier = id3TextIdentifier(lower);
@@ -286,6 +302,20 @@ function readId3Value(tag: Id3v2Tag, rawKey: string): string {
   }
   if (lower === "comment") {
     return tag.comment ?? "";
+  }
+  if (lower === "date" || lower === "year" || lower === "tdrc" || lower === "tyer") {
+    return (
+      tag.getTextAsString(Id3v2FrameIdentifiers.TDRC) ||
+      tag.getTextAsString(Id3v2FrameIdentifiers.TYER) ||
+      (tag.year ? String(tag.year) : "")
+    );
+  }
+  if (lower === "original_date" || lower === "originaldate" || lower === "tdor" || lower === "tory") {
+    return (
+      tag.getTextAsString(Id3v2FrameIdentifiers.TDOR) ||
+      tag.getTextAsString(Id3v2FrameIdentifiers.TORY) ||
+      ""
+    );
   }
   const identifier = id3TextIdentifier(lower);
   if (identifier) {
@@ -405,7 +435,19 @@ function verifyTagLibValues(
 ): void {
   for (const [key, expected] of Object.entries(tags)) {
     const actual = readTagLibValue(filePath, key);
-    if (normalizeTagValue(actual) !== normalizeTagValue(expected)) {
+    const normActual = normalizeTagValue(actual);
+    const normExpected = normalizeTagValue(expected);
+    if (normActual !== normExpected) {
+      const isDateKey =
+        key.toLowerCase().includes("date") ||
+        key.toLowerCase().includes("year") ||
+        key.toUpperCase() === "TDOR" ||
+        key.toUpperCase() === "TDRC" ||
+        key.toUpperCase() === "TORY" ||
+        key.toUpperCase() === "TYER";
+      if (isDateKey && normActual && normExpected && normExpected.startsWith(normActual)) {
+        continue;
+      }
       throw new Error(`TagLib verification failed for ${key}`);
     }
   }

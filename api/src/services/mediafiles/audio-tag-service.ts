@@ -529,7 +529,7 @@ export function isTagValueEqual(tagKey: string, current: string | null, target: 
   if (tagKey === "genre" || tagKey === "label" || tagKey === "artist" || tagKey === "album_artist") {
     const splitItems = (s: string) =>
       s
-        .split(/[\/;,\n]+/)
+        .split(/[;,/\n]+/)
         .map((x) => x.trim().toLowerCase())
         .filter(Boolean);
     const currList = splitItems(normCurrent);
@@ -542,8 +542,18 @@ export function isTagValueEqual(tagKey: string, current: string | null, target: 
   if (tagKey === "date" || tagKey === "original_date") {
     const currDate = normalizeReleaseDate(normCurrent);
     const targDate = normalizeReleaseDate(normTarget);
-    if (currDate && targDate && currDate === targDate) {
-      return true;
+    if (currDate && targDate) {
+      if (currDate === targDate) {
+        return true;
+      }
+      // If one of the dates is year-only (e.g. ID3v2.3 TYER/TORY container limit),
+      // and the other starts with that exact year, treat as matching.
+      if (
+        (currDate.length === 4 && targDate.startsWith(currDate)) ||
+        (targDate.length === 4 && currDate.startsWith(targDate))
+      ) {
+        return true;
+      }
     }
   }
 
@@ -1453,7 +1463,7 @@ export class AudioTagService {
       disc_number: "TXXX:Disc Number",
       disc_count: "TXXX:Disc Count",
       date: "date",
-      original_date: "TXXX:Original Release Date",
+      original_date: "TDOR",
       media_format: "TMED",
       genre: "genre",
       isrc: "isrc",
@@ -2105,7 +2115,6 @@ export class AudioTagService {
             "tdor",
             "tory",
             "original date",
-            "Original Release Date",
           ],
           writeAliases: [
             "ORIGINALDATE",

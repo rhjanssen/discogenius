@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.14.2] - 2026-09-03
+
+### Fixed
+
+- **MP3 standard ID3v2 date alignment (Lidarr / Picard standard).** Replaced non-standard `TXXX:Original Release Date` user-text frame with official ID3v2 date frames: `TDOR` (Original release time on ID3v2.4) and `TORY` (Original release year on ID3v2.3), fully aligning with Lidarr and MusicBrainz Picard tagging standards.
+- **Consistent library retagging.** Removed non-standard `Original Release Date` alias from original date evaluation so any existing MP3 files tagged with the old custom frame are cleanly identified and retagged to standard `TDOR`/`TORY`.
+- **ID3v2.3 year precision matching.** Enhanced `isTagValueEqual` and TagLib verification to recognize 4-digit container year matches (e.g. `2012` against `2012-02-17`) for ID3v2.3 files where the specification limits `TYER` and `TORY` to 4 digits, preventing persistent false diffs on re-scans.
+
 ## [2.14.1] - 2026-09-03
 
 ### Fixed

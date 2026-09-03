@@ -441,7 +441,7 @@ test("buildAudioTagWriteMap maps original_date and media_format across formats",
   });
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), {
-    "TXXX:Original Release Date": "2024-10-25",
+    TDOR: "2024-10-25",
     TMED: "Digital Media",
   });
 });
@@ -519,4 +519,10 @@ test("isTagValueEqual compares multi-value tags and dates with semantic toleranc
   assert.equal(isTagValueEqual("date", "2016-04-29", "2016-04-29"), true);
   assert.equal(isTagValueEqual("original_date", "2016-04-29", "2016-04-29"), true);
   assert.equal(isTagValueEqual("original_date", "2016-04-29", "2015-04-29"), false);
+
+  // Year-only container match (e.g. ID3v2.3 TYER/TORY)
+  assert.equal(isTagValueEqual("date", "2012", "2012-02-17"), true);
+  assert.equal(isTagValueEqual("date", "2012-02-17", "2012"), true);
+  assert.equal(isTagValueEqual("original_date", "2012", "2012-02-17"), true);
+  assert.equal(isTagValueEqual("original_date", "2015", "2012-02-17"), false);
 });
