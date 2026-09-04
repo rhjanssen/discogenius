@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.15.0] - 2026-09-04
+
+### Changed
+
+- **Download pipeline resilience & Lidarr architecture adoption.** Adopted Lidarr's architecture and task processing patterns across download importing, audio tagging, and in-process execution:
+  - **Non-fatal audio tagging during import:** Wrapped `AudioTagService.apply` in `try/catch` in `DownloadedTracksImportService` matching Lidarr's `ImportApprovedTracks.cs`. Tag discrepancies or write warnings are now logged rather than aborting the entire album import or rolling back track files.
+  - **Import slot & download protection:** Added guaranteed slot cleanup in `DownloadProcessor` across early returns, error handlers, and `finally` blocks to eliminate leaked import slots. Added a 10-minute timeout to off-thread import jobs.
+  - **Unexecutable acquisition plan handling:** Guarded download execution against raw `acquisition-plan:` identifiers without track offers, safely falling back to alternative provider offers rather than stalling streamrip or downstream download backends.
+  - **Subprocess timeout enforcement:** Added strict timeouts across external subprocesses to eliminate unkillable hangs: 15s for `ffprobe` (metadata probing, audio stream metrics, attached pictures), 60s for `cp` (cross-device filesystem operations), and 300s with `SIGKILL` escalation for `streamrip`.
+  - **Watchdog & heartbeat contention elimination:** Eliminated the periodic download worker watchdog and the command loop stale recovery pass. Removed periodic synchronous SQLite lease renewal heartbeats from command worker threads, eliminating writer lockup spikes and false "Command stopped after 3 execution attempt(s): lease expired" aborts.
+  - **Event loop cooperativeness:** Added event loop yields (`setImmediate`) every 10 processed files during disk scan indexing (`indexNewFiles`), preventing hundreds of files from starving asynchronous I/O and mutex handoffs.
+  - **Complete audio tag mappings & tolerance:** Added container-accurate mappings for `comment`, `itunesadvisory` (`rtng` on M4A, `TXXX:ITUNESADVISORY` on MP3, `COMMENT` on FLAC), and `replaygain_track_gain` / `replaygain_track_peak`. Normalized `release_country` to the primary ISO code matching Lidarr (`release.Country.FirstOrDefault()`), and added semantic floating-point tolerance (±0.02) and newline normalization to `isTagValueEqual`.
+
 ## [2.14.3] - 2026-09-03
 
 ### Fixed

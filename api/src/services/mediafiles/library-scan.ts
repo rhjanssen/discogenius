@@ -1089,6 +1089,9 @@ export class DiskScanService {
             for (const filePath of allFiles) {
                 processedFiles += 1;
                 reportIndexProgress();
+                if (processedFiles % 10 === 0) {
+                    await new Promise<void>((resolve) => setImmediate(resolve));
+                }
 
                 const resolved = path.resolve(filePath);
                 if (existingPaths.has(resolved)) continue;

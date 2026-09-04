@@ -87,7 +87,7 @@ export async function readFormatTags(filePath: string): Promise<Record<string, s
         execFile(
             ffprobeBin,
             ['-v', 'error', '-show_entries', 'format_tags', '-of', 'json', filePath],
-            { windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+            { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 15_000 },
             (error, stdout) => {
                 if (error || !stdout) {
                     resolve({});
@@ -131,7 +131,7 @@ export async function probeMediaDuration(filePath: string): Promise<number | nul
         execFile(
             ffprobeBin,
             ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath],
-            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024, timeout: 15_000 },
             (error, stdout) => {
                 if (error || !stdout) {
                     resolve(null);
@@ -206,7 +206,7 @@ export async function probeAudioStreamMetrics(filePath: string): Promise<Partial
                 '-of', 'json',
                 filePath,
             ],
-            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024, timeout: 15_000 },
             (error, stdout) => {
                 if (error || !stdout) {
                     resolve({});
@@ -278,7 +278,7 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
             execFile(
                 ffprobeBin,
                 ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,codec_name', '-of', 'json', filePath],
-                { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+                { windowsHide: true, maxBuffer: 4 * 1024 * 1024, timeout: 15_000 },
                 (error, stdout) => {
                     if (error || !stdout) {
                         resolve({});
@@ -614,7 +614,7 @@ async function getAttachedPictureVideoStreamIndexes(filePath: string): Promise<n
         execFile(
             ffprobeBin,
             getVideoThumbnailProbeArgs(filePath),
-            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024, timeout: 15_000 },
             (error, stdout) => {
                 if (error || !stdout) {
                     resolve([]);

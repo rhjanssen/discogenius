@@ -879,11 +879,16 @@ export class DownloadProcessor {
                     // sync DB writes) on a worker thread so it never blocks the
                     // main thread's HTTP/SSE loop. Progress streams back via the
                     // bridge to the same emitImportProgress sink used inline.
-                    await CommandWorkerPool.run(importJob, {
-                        onProgress: (state: any) => emitImportProgress(state as Parameters<typeof emitImportProgress>[0]),
-                        leaseMs: DOWNLOAD_LEASE_MS,
-                        heartbeatMs: DOWNLOAD_HEARTBEAT_MS,
-                    });
+                    await Promise.race([
+                        CommandWorkerPool.run(importJob, {
+                            onProgress: (state: any) => emitImportProgress(state as Parameters<typeof emitImportProgress>[0]),
+                            leaseMs: DOWNLOAD_LEASE_MS,
+                            heartbeatMs: DOWNLOAD_HEARTBEAT_MS,
+                        }),
+                        new Promise((_, reject) =>
+                            setTimeout(() => reject(new Error('Import execution timed out after 10 minutes')), 600_000).unref()
+                        ),
+                    ]);
                 } else {
                     await DownloadedTracksImportService.process(importJob, {
                         updateState: emitImportProgress,
@@ -893,6 +898,8 @@ export class DownloadProcessor {
 
                 if (!CommandQueueManager.complete(commandId, workerId)) {
                     console.warn(`[DOWNLOAD-PROCESSOR] Ignoring late import completion for retired attempt ${workerId || 'legacy'} on command #${commandId}`);
+                    this.activeImports.delete(commandId);
+                    this.clearAttempt(commandId, workerId);
                     return;
                 }
                 const waitJobId = DownloadWaitQueue.finishClaimed(commandId);
@@ -933,6 +940,8 @@ export class DownloadProcessor {
                     );
                     if (!failed) {
                         console.warn(`[DOWNLOAD-PROCESSOR] Ignoring late import failure for retired attempt ${workerId || 'legacy'} on command #${commandId}`);
+                        this.activeImports.delete(commandId);
+                        this.clearAttempt(commandId, workerId);
                         return;
                     }
                     this.clearAttempt(commandId, workerId);
@@ -954,10 +963,7 @@ export class DownloadProcessor {
                 }
             } finally {
                 this.activeImports.delete(commandId);
-                const latest = CommandQueueManager.get(commandId);
-                if (!latest || latest.status !== 'started' || latest.worker_id !== workerId) {
-                    this.clearAttempt(commandId, workerId);
-                }
+                this.clearAttempt(commandId, workerId);
                 downloadEvents.emitQueueStatus(this.isPaused);
                 // An import slot freed up — check for more pending imports/downloads.
                 this.scheduleNext();
@@ -2179,6 +2185,22 @@ export class DownloadProcessor {
                     throw new Error("Download cancelled");
                 }
 
+                if (String(activeProviderItemId).startsWith("acquisition-plan:")) {
+                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    if (!next) {
+                        throw new Error(`Acquisition plan ${activeProviderItemId} has no downloadable track offers or fallback offers available`);
+                    }
+                    triedOffers.add(makeOfferAttemptKey(next.provider, next.providerId));
+                    usedFallback = true;
+                    fallbackProvider = next.provider;
+                    activeProvider = next.provider;
+                    activeProviderItemId = next.providerId;
+                    workingPayload = this.applyOfferToPayload(workingPayload, type, next);
+                    entry.provider = activeProvider;
+                    entry.providerId = activeProviderItemId;
+                    continue;
+                }
+
                 const backend = downloadBackendRegistry.resolve(activeProvider, capability);
                 if (!backend) {
                     const next = nextOfferAfterTried(rankedAlternates, triedOffers);
@@ -2924,7 +2946,7 @@ export class DownloadProcessorWorkerProxy {
     async initialize(): Promise<void> {
         this.initialized = true;
         this.subscribeToQueueEvents();
-        this.startWatchdog();
+        // this.startWatchdog(); // eliminated in 2.15 to match Lidarr architecture
         await this.request('initialize');
     }
 

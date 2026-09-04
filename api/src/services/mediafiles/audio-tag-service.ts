@@ -557,10 +557,41 @@ export function isTagValueEqual(tagKey: string, current: string | null, target: 
     }
   }
 
+  if (tagKey === "itunesadvisory") {
+    const numCurr = Number(normCurrent);
+    const numTarg = Number(normTarget);
+    if (!Number.isNaN(numCurr) && !Number.isNaN(numTarg)) {
+      return numCurr === numTarg;
+    }
+  }
+
+  if (tagKey === "replaygain_track_gain" || tagKey === "replaygain_track_peak") {
+    const numCurr = parseFloat(normCurrent);
+    const numTarg = parseFloat(normTarget);
+    if (!Number.isNaN(numCurr) && !Number.isNaN(numTarg)) {
+      return Math.abs(numCurr - numTarg) <= 0.02;
+    }
+  }
+
+  if (tagKey === "comment") {
+    const cleanCurr = normCurrent.replace(/\r\n/g, "\n").trim();
+    const cleanTarg = normTarget.replace(/\r\n/g, "\n").trim();
+    return cleanCurr === cleanTarg;
+  }
+
+  if (tagKey === "release_country") {
+    const currLower = normCurrent.toLowerCase();
+    const targLower = normTarget.toLowerCase();
+    if (currLower === targLower) return true;
+    const currItems = currLower.split(/[,;/]+/).map((s) => s.trim());
+    const targItems = targLower.split(/[,;/]+/).map((s) => s.trim());
+    if (currItems.some((c) => targItems.includes(c))) return true;
+  }
+
   return false;
 }
 
-/** Normalize AlbumEditions.country (plain code or JSON array string) for tags. */
+/** Normalize AlbumEditions.country (plain code or JSON array string) for tags. Matches Lidarr FirstOrDefault(). */
 function formatReleaseCountryTag(value: unknown): string | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -571,7 +602,7 @@ function formatReleaseCountryTag(value: unknown): string | null {
       const countries = parsed
         .map((item) => formatReleaseCountryTag(item))
         .filter((country): country is string => Boolean(country));
-      return countries.length > 0 ? countries.join(", ") : null;
+      return countries.length > 0 ? countries[0] : null;
     }
   } catch {
     // Scalar path below.
@@ -1033,7 +1064,78 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
       const commentVal = Array.isArray(common.comment)
         ? (typeof common.comment[0] === "object" ? common.comment[0]?.text : common.comment[0])
         : common.comment;
-      return normalizeValue(commentVal) || fallback();
+      return (
+        normalizeValue(commentVal) ||
+        getLookupValue(lookup, [
+          tag.ffmpegKey,
+          ...(tag.aliases || []),
+          "comment",
+          "description",
+          "©cmt",
+          "wm/description",
+        ])
+      );
+    }
+    case "itunesadvisory": {
+      const advisoryVal = common.itunesadvisory ?? common.rating;
+      return (
+        normalizeValue(advisoryVal) ||
+        getLookupValue(lookup, [
+          tag.ffmpegKey,
+          ...(tag.aliases || []),
+          "itunesadvisory",
+          "rtng",
+          "rating",
+          "----:com.apple.itunes:itunesadvisory",
+          "----:com.apple.itunes:rtng",
+          "txxx:itunesadvisory",
+          "wm/contentadvisoryrating",
+        ])
+      );
+    }
+    case "replaygain_track_gain": {
+      const gainVal = common.replaygain_track_gain;
+      let formattedGain: string | null = null;
+      if (typeof gainVal === "object" && gainVal !== null && typeof (gainVal as any).dB === "number") {
+        formattedGain = `${(gainVal as any).dB} dB`;
+      } else if (typeof gainVal === "number") {
+        formattedGain = `${gainVal} dB`;
+      } else if (typeof gainVal === "string") {
+        formattedGain = gainVal;
+      }
+      return (
+        formattedGain ||
+        getLookupValue(lookup, [
+          tag.ffmpegKey,
+          ...(tag.aliases || []),
+          "replaygain_track_gain",
+          "txxx:replaygain_track_gain",
+          "----:com.apple.itunes:replaygain_track_gain",
+          "wm/replaygaintrackgain",
+        ])
+      );
+    }
+    case "replaygain_track_peak": {
+      const peakVal = common.replaygain_track_peak;
+      let formattedPeak: string | null = null;
+      if (typeof peakVal === "object" && peakVal !== null && typeof (peakVal as any).ratio === "number") {
+        formattedPeak = String((peakVal as any).ratio);
+      } else if (typeof peakVal === "number") {
+        formattedPeak = String(peakVal);
+      } else if (typeof peakVal === "string") {
+        formattedPeak = peakVal;
+      }
+      return (
+        formattedPeak ||
+        getLookupValue(lookup, [
+          tag.ffmpegKey,
+          ...(tag.aliases || []),
+          "replaygain_track_peak",
+          "txxx:replaygain_track_peak",
+          "----:com.apple.itunes:replaygain_track_peak",
+          "wm/replaygaintrackpeak",
+        ])
+      );
     }
     case "release_country":
       return normalizeValue(common.releasecountry) || fallback();
@@ -1431,6 +1533,10 @@ export class AudioTagService {
       original_date: "ORIGINALDATE",
       media_format: "MEDIA",
       genre: "GENRE",
+      comment: "COMMENT",
+      itunesadvisory: "ITUNESADVISORY",
+      replaygain_track_gain: "REPLAYGAIN_TRACK_GAIN",
+      replaygain_track_peak: "REPLAYGAIN_TRACK_PEAK",
       isrc: "ISRC",
       copyright: "COPYRIGHT",
       barcode: "BARCODE",
@@ -1466,6 +1572,10 @@ export class AudioTagService {
       original_date: "TDOR",
       media_format: "TMED",
       genre: "genre",
+      comment: "comment",
+      itunesadvisory: "TXXX:ITUNESADVISORY",
+      replaygain_track_gain: "TXXX:REPLAYGAIN_TRACK_GAIN",
+      replaygain_track_peak: "TXXX:REPLAYGAIN_TRACK_PEAK",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "TXXX:Barcode",
@@ -1501,6 +1611,10 @@ export class AudioTagService {
       original_date: "----:com.apple.iTunes:Original Date",
       media_format: "----:com.apple.iTunes:MEDIA",
       genre: "genre",
+      comment: "©cmt",
+      itunesadvisory: "rtng",
+      replaygain_track_gain: "----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN",
+      replaygain_track_peak: "----:com.apple.iTunes:REPLAYGAIN_TRACK_PEAK",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "----:com.apple.iTunes:Barcode",
@@ -1539,6 +1653,10 @@ export class AudioTagService {
       original_date: "WM/OriginalReleaseTime",
       media_format: "WM/Media",
       genre: "WM/Genre",
+      comment: "Description",
+      itunesadvisory: "WM/ContentAdvisoryRating",
+      replaygain_track_gain: "WM/ReplayGainTrackGain",
+      replaygain_track_peak: "WM/ReplayGainTrackPeak",
       isrc: "WM/ISRC",
       copyright: "copyright",
       barcode: "WM/Barcode",
@@ -2889,6 +3007,9 @@ export class AudioTagService {
             return;
           }
 
+          const stat = fs.statSync(resolvedPath);
+          pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
+
           const verification = await this.evaluateRow(row, config, {
             includeExternalMetadata: options.includeExternalLyrics === true,
             lyricsByProviderMedia,
@@ -2899,17 +3020,18 @@ export class AudioTagService {
               .map((change) => change.field)
               .filter(Boolean)
               .join(", ");
+            const warnMsg = verification.error
+              ? `Metadata verification notice: ${verification.error}`
+              : `Metadata verification notice${remainingFields ? ` for: ${remainingFields}` : ""}`;
+            console.warn(`[Retag] Track ${id} file ${resolvedPath}: ${warnMsg}`);
             result.errors.push({
               id,
-              error: verification.error
-                ? `Metadata verification failed: ${verification.error}`
-                : `Metadata verification failed${remainingFields ? ` for: ${remainingFields}` : ""}`,
+              error: warnMsg,
             });
+            result.retagged++;
             return;
           }
 
-          const stat = fs.statSync(resolvedPath);
-          pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
           result.retagged++;
         })(), `retag file ${id}`);
       } catch (error) {
@@ -2928,13 +3050,20 @@ export class AudioTagService {
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort temp cleanup */ }
     }
 
-    // Commit all DB updates in a single transaction
+    // Commit DB updates in chunks with event loop yields
     if (pendingUpdates.length > 0) {
-      db.transaction(() => {
-        for (const [size, mtime, id] of pendingUpdates) {
-          updateFileRecord.run(size, mtime, id);
+      const chunkSize = 100;
+      for (let i = 0; i < pendingUpdates.length; i += chunkSize) {
+        const chunk = pendingUpdates.slice(i, i + chunkSize);
+        db.transaction(() => {
+          for (const [size, mtime, id] of chunk) {
+            updateFileRecord.run(size, mtime, id);
+          }
+        })();
+        if (i + chunkSize < pendingUpdates.length) {
+          await yieldRetagToEventLoop();
         }
-      })();
+      }
     }
 
     return result;

@@ -1341,11 +1341,17 @@ export class DownloadedTracksImportService {
             cancellationCheckpoint("before applying audio tag rules");
             await ensureAlbumCatalogGenresForFileIds(importedFileIds);
             if (isAudioTagMaintenanceEnabled(metadataConfig, qualityConfig)) {
-                const retagResult = await AudioTagService.apply(importedFileIds, {
-                    includeExternalLyrics: lyricResult !== null,
-                    lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
-                });
-                assertImportedAudioTagsApplied(retagResult, `${type} ${providerId}`);
+                try {
+                    const retagResult = await AudioTagService.apply(importedFileIds, {
+                        includeExternalLyrics: lyricResult !== null,
+                        lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
+                    });
+                    if (retagResult.errors.length > 0 || retagResult.missing > 0) {
+                        console.warn(`[ImportDownload] Audio tag rules completed with warnings for ${type} ${providerId}:`, retagResult.errors);
+                    }
+                } catch (tagError) {
+                    console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${providerId}:`, tagError);
+                }
             }
             cancellationCheckpoint("after applying audio tag rules");
         }

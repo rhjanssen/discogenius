@@ -201,8 +201,6 @@ export class CommandExecutor {
     private static async loop() {
         while (this.isRunning) {
             try {
-                await this.maybeRecoverStaleJobs();
-
                 // Try to fill all available slots
                 const executorSlots = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
                 // Imports share this pool. Do not claim a durable command until

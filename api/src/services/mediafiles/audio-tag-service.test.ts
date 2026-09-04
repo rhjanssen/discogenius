@@ -525,4 +525,59 @@ test("isTagValueEqual compares multi-value tags and dates with semantic toleranc
   assert.equal(isTagValueEqual("date", "2012-02-17", "2012"), true);
   assert.equal(isTagValueEqual("original_date", "2012", "2012-02-17"), true);
   assert.equal(isTagValueEqual("original_date", "2015", "2012-02-17"), false);
+
+  // itunesadvisory numeric equality
+  assert.equal(isTagValueEqual("itunesadvisory", "0", "0"), true);
+  assert.equal(isTagValueEqual("itunesadvisory", "1", "1"), true);
+  assert.equal(isTagValueEqual("itunesadvisory", "0", "1"), false);
+
+  // replaygain float tolerance
+  assert.equal(isTagValueEqual("replaygain_track_gain", "-7.31 dB", "-7.32 dB"), true);
+  assert.equal(isTagValueEqual("replaygain_track_gain", "-7.31 dB", "-8.00 dB"), false);
+  assert.equal(isTagValueEqual("replaygain_track_peak", "0.967717", "0.97"), true);
+
+  // comment newline normalization
+  assert.equal(isTagValueEqual("comment", "Line1\r\nLine2", "Line1\nLine2"), true);
+
+  // release_country matching
+  assert.equal(isTagValueEqual("release_country", "US", "us"), true);
+  assert.equal(isTagValueEqual("release_country", "US", "US, CA"), true);
 });
+
+test("buildAudioTagWriteMap maps comment, itunesadvisory, and replaygain across formats", () => {
+  const tags: ManagedTag[] = [
+    { key: "comment", label: "Comment", ffmpegKey: "comment", targetValue: "My review" },
+    { key: "itunesadvisory", label: "iTunes Advisory", ffmpegKey: "ITUNESADVISORY", targetValue: "1" },
+    { key: "replaygain_track_gain", label: "Gain", ffmpegKey: "REPLAYGAIN_TRACK_GAIN", targetValue: "-7.31 dB" },
+    { key: "replaygain_track_peak", label: "Peak", ffmpegKey: "REPLAYGAIN_TRACK_PEAK", targetValue: "0.967717" },
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
+    COMMENT: "My review",
+    ITUNESADVISORY: "1",
+    REPLAYGAIN_TRACK_GAIN: "-7.31 dB",
+    REPLAYGAIN_TRACK_PEAK: "0.967717",
+  });
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), {
+    comment: "My review",
+    "TXXX:ITUNESADVISORY": "1",
+    "TXXX:REPLAYGAIN_TRACK_GAIN": "-7.31 dB",
+    "TXXX:REPLAYGAIN_TRACK_PEAK": "0.967717",
+  });
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".m4a"), {
+    "©cmt": "My review",
+    rtng: "1",
+    "----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN": "-7.31 dB",
+    "----:com.apple.iTunes:REPLAYGAIN_TRACK_PEAK": "0.967717",
+  });
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".wma"), {
+    Description: "My review",
+    "WM/ContentAdvisoryRating": "1",
+    "WM/ReplayGainTrackGain": "-7.31 dB",
+    "WM/ReplayGainTrackPeak": "0.967717",
+  });
+});
+

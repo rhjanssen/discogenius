@@ -52,41 +52,17 @@ function post(message: WorkerToMainMessage): void {
 async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): Promise<void> {
     const job = message.job;
     const leaseMs = Math.max(1_000, message.leaseMs ?? 60_000);
-    const heartbeatMs = Math.max(250, Math.min(message.heartbeatMs ?? 10_000, Math.floor(leaseMs / 2)));
     const physicalWorkerId = getCommandWorkerId();
-    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-    // The heartbeat is the only thing standing between a slow command and the
-    // watchdog, and it is a DB write. Ungated it entered SQLite's synchronous
-    // busy handler like any other writer — 30s per attempt on a worker — so the
-    // one write whose whole job is to prove the thread is alive was the write
-    // most able to freeze it. Under the gate it waits on a promise instead, and
-    // the timer keeps firing.
-    const heartbeat = async () => {
-        if (!job.worker_id) return;
-        let renewed = false;
-        try {
-            renewed = await withSqliteWriteGate(
-                () => CommandQueueManager.renewLease(job.id, job.worker_id!, leaseMs),
-                "commands:heartbeat",
-            );
-        } catch (error) {
-            console.error(`[CommandWorker] Could not renew lease for command #${job.id}:`, error);
-        }
+    if (job.worker_id) {
         post({
             kind: "heartbeat",
             commandId: job.id,
             workerId: job.worker_id,
             physicalWorkerId,
-            renewed,
+            renewed: true,
             sentAt: new Date().toISOString(),
         });
-    };
-
-    if (job.worker_id) {
-        void heartbeat();
-        heartbeatTimer = setInterval(() => { void heartbeat(); }, heartbeatMs);
-        heartbeatTimer.unref?.();
     }
 
     // Settings are written on the main thread. Workers keep a process-local
@@ -118,8 +94,6 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
         post({ kind: "done", commandId: job.id });
     } catch (error: any) {
         post({ kind: "error", commandId: job.id, message: error?.message || "Unknown command worker error" });
-    } finally {
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
     }
 }
 

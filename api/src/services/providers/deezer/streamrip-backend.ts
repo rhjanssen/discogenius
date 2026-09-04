@@ -299,6 +299,17 @@ export function streamripProgressForLine(line: string): DownloadProgress | null 
 }
 
 export const runStreamripCommand: StreamripCommandRunner = (command, args, options) => new Promise((resolve, reject) => {
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+  }, 300_000);
+  timeoutId.unref?.();
+
   const child = spawn(command, args, {
     cwd: options.cwd,
     stdio: ["ignore", "pipe", "pipe"],
@@ -325,10 +336,12 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
   const abort = () => child.kill("SIGTERM");
   options.signal?.addEventListener("abort", abort, { once: true });
   child.once("error", (error) => {
+    clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", abort);
     reject(error);
   });
   child.once("close", (code, signal) => {
+    clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", abort);
     for (const source of ["stdout", "stderr"] as const) {
       if (buffers[source].trim()) {
@@ -337,7 +350,9 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
         options.onLine(leftover);
       }
     }
-    if (options.signal?.aborted) {
+    if (timedOut) {
+      reject(new Error("Deezer download timed out after 300 seconds."));
+    } else if (options.signal?.aborted) {
       reject(new Error("Deezer download cancelled."));
     } else {
       const producedFiles = mediaFilesUnder(options.cwd);

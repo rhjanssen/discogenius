@@ -945,7 +945,7 @@ export class OrganizerService {
     const pgid = process.env.PGID || "568";
     try {
       if (!/^\d+$/.test(puid) || !/^\d+$/.test(pgid)) return;
-      execFileSync("chown", [`${puid}:${pgid}`, dirPath], { stdio: "ignore" });
+      execFileSync("chown", [`${puid}:${pgid}`, dirPath], { stdio: "ignore", timeout: 10_000 });
     } catch {
       // Silently ignore chown failures (e.g., on non-Unix systems)
     }
@@ -1736,7 +1736,7 @@ export class OrganizerService {
       fs.copyFileSync(sourcePath, destPath);
     } else {
       // Imports and upgrades intentionally replace an existing destination.
-      execFileSync("cp", ["-f", sourcePath, destPath], { stdio: "ignore" });
+      execFileSync("cp", ["-f", sourcePath, destPath], { stdio: "ignore", timeout: 60_000 });
     }
 
     fs.rmSync(sourcePath, { force: true });
