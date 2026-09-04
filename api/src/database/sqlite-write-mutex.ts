@@ -203,7 +203,7 @@ export function tryAcquireSqliteWriteMutex(): boolean {
   return false;
 }
 
-export function acquireSqliteWriteMutexSync(timeoutMs?: number): void {
+export function acquireSqliteWriteMutexSync(timeoutMs: number = 15_000): void {
   if (tls.holds > 0) {
     tls.holds += 1;
     return;
@@ -287,7 +287,7 @@ export function withSqliteWriteMutexSync<T>(work: () => T): T {
   if (!nested) {
     if (isMainThread) {
       if (!tryAcquireSqliteWriteMutex()) {
-        acquireSqliteWriteMutexSync(1_000);
+        acquireSqliteWriteMutexSync(15_000);
       }
     } else {
       acquireSqliteWriteMutexSync();

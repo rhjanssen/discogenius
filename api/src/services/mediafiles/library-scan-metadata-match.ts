@@ -568,19 +568,33 @@ function offersByTitleInAlbums(
     );
 }
 
+const artistTrackOffersCache = new Map<string, { timestamp: number; rows: ProviderOfferRow[] }>();
+const ARTIST_TRACK_OFFERS_CACHE_TTL_MS = 60_000;
+
+export function clearArtistTrackOffersCache(): void {
+    artistTrackOffersCache.clear();
+}
+
 function offersByTitleForArtist(
     artistId: string,
     title: string,
     preferredSlot: string,
     durationSeconds: number | null | undefined,
 ): ProviderOfferRow[] {
-    const rows = db.prepare(`
-        ${OFFER_SELECT}
-        WHERE pi.entity_type = 'track'
-          AND ${OFFER_ARTIST_SCOPE}
-    `).all({ artistId, preferredSlot }) as ProviderOfferRow[];
+    const cacheKey = `${artistId}:${preferredSlot}`;
+    let cached = artistTrackOffersCache.get(cacheKey);
+    const now = Date.now();
+    if (!cached || now - cached.timestamp > ARTIST_TRACK_OFFERS_CACHE_TTL_MS) {
+        const rows = db.prepare(`
+            ${OFFER_SELECT}
+            WHERE pi.entity_type = 'track'
+              AND ${OFFER_ARTIST_SCOPE}
+        `).all({ artistId, preferredSlot }) as ProviderOfferRow[];
+        cached = { timestamp: now, rows };
+        artistTrackOffersCache.set(cacheKey, cached);
+    }
 
-    return rows.filter((offer) =>
+    return cached.rows.filter((offer) =>
         sameRecordingTitle(title, offer.title)
         && durationClose(durationSeconds ?? null, offer.duration)
     );

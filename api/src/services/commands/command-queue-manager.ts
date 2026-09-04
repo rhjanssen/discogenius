@@ -201,6 +201,102 @@ function clearCommandUpdateThrottle(commandId: number): void {
     }
 }
 
+interface CommandOverlay {
+    progress?: number | null;
+    progressCurrent?: number | null;
+    progressTotal?: number | null;
+    progressPhase?: string | null;
+    blockedReason?: string | null;
+    payloadPatch?: Partial<CommandBodyCommon>;
+    lastProgressAt?: string;
+    lastWrittenAt: number;
+    pendingTimer?: NodeJS.Timeout;
+}
+
+const COMMAND_PERSIST_THROTTLE_MS = 5000;
+const commandOverlays = new Map<number, CommandOverlay>();
+
+function applyOverlay(job: CommandModel | null): CommandModel | null {
+    if (!job) return null;
+    const overlay = commandOverlays.get(job.id);
+    if (!overlay) return job;
+    return {
+        ...job,
+        progress: overlay.progress !== undefined && overlay.progress !== null ? overlay.progress : job.progress,
+        progress_current: overlay.progressCurrent !== undefined && overlay.progressCurrent !== null ? overlay.progressCurrent : job.progress_current,
+        progress_total: overlay.progressTotal !== undefined && overlay.progressTotal !== null ? overlay.progressTotal : job.progress_total,
+        progress_phase: overlay.progressPhase !== undefined ? overlay.progressPhase : job.progress_phase,
+        blocked_reason: overlay.blockedReason !== undefined ? overlay.blockedReason : job.blocked_reason,
+        last_progress_at: overlay.lastProgressAt ?? job.last_progress_at,
+        payload: (overlay.payloadPatch ? { ...job.payload, ...overlay.payloadPatch } : job.payload) as any,
+    };
+}
+
+function clearCommandOverlay(commandId: number): void {
+    const overlay = commandOverlays.get(commandId);
+    if (overlay) {
+        if (overlay.pendingTimer) clearTimeout(overlay.pendingTimer);
+        commandOverlays.delete(commandId);
+    }
+}
+
+function flushCommandOverlay(id: number, workerId?: string): void {
+    const overlay = commandOverlays.get(id);
+    if (!overlay) return;
+    if (overlay.pendingTimer) {
+        clearTimeout(overlay.pendingTimer);
+        overlay.pendingTimer = undefined;
+    }
+    overlay.lastWrittenAt = Date.now();
+
+    const updates: string[] = ["updated_at = CURRENT_TIMESTAMP"];
+    const params: unknown[] = [];
+
+    if (overlay.progress !== undefined && overlay.progress !== null) {
+        updates.push("progress = ?");
+        params.push(overlay.progress);
+        updates.push("progress_current = ?");
+        params.push(overlay.progressCurrent ?? overlay.progress);
+        if (overlay.progressTotal !== undefined && overlay.progressTotal !== null) {
+            updates.push("progress_total = ?");
+            params.push(overlay.progressTotal);
+        } else {
+            updates.push("progress_total = COALESCE(progress_total, 100)");
+        }
+        updates.push("last_progress_at = CURRENT_TIMESTAMP");
+    }
+
+    if (overlay.progressPhase !== undefined) {
+        updates.push("progress_phase = ?");
+        params.push(overlay.progressPhase);
+    }
+    if (overlay.blockedReason !== undefined) {
+        updates.push("blocked_reason = ?");
+        params.push(overlay.blockedReason);
+    }
+    if (overlay.payloadPatch) {
+        const current = db.prepare("SELECT payload FROM commands WHERE id = ?").get(id) as { payload?: string } | undefined;
+        const currentPayload = safeParsePayload(current?.payload);
+        const nextPayload = { ...currentPayload, ...overlay.payloadPatch };
+        updates.push("payload = ?");
+        params.push(JSON.stringify(nextPayload));
+    }
+
+    if (updates.length > 1) {
+        params.push(id);
+        let ownershipClause = " AND status NOT IN ('completed', 'failed', 'cancelled')";
+        if (workerId) {
+            ownershipClause = " AND status = 'started' AND worker_id = ?";
+            params.push(workerId);
+        }
+        try {
+            db.prepare(`UPDATE commands SET ${updates.join(", ")} WHERE id = ?${ownershipClause}`).run(...params);
+        } catch (err) {
+            console.warn(`[CommandQueue] Throttled DB flush failed for command #${id}:`, err);
+        }
+    }
+}
+
 function getDownloadContentType(type: string, payload: CommandBodyCommon): string | null {
     if (type === CommandNames.DownloadTrack) return "track";
     if (type === CommandNames.DownloadVideo) return "video";
@@ -554,7 +650,7 @@ LIMIT ? OFFSET ?
     `).all(typePattern, statusPattern, limit, offset) as any[];
 
         return jobs
-            .map((job) => hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>))
+            .map((job) => applyOverlay(hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>)))
             .filter((job): job is CommandModel => job !== null);
     }
 
@@ -870,27 +966,30 @@ ${orderBy}
     }
 
     static updateProgress(id: number, progress: number, workerId?: string) {
-        const ownershipClause = workerId ? " AND status = 'started' AND worker_id = ?" : " AND status NOT IN ('completed', 'failed', 'cancelled')";
         const current = this.get(id);
-        const currentLeaseMs = current?.lease_expires_at
-            ? Math.max(60_000, parseSqliteDate(current.lease_expires_at) - parseSqliteDate(current.heartbeat_at || current.started_at))
-            : 300_000;
-        const params: unknown[] = [progress, progress, leaseExpiry(new Date(), currentLeaseMs), id];
-        if (workerId) params.push(workerId);
-        const result = db.prepare(`
-            UPDATE commands
-            SET
-                progress = ?,
-                progress_current = ?,
-                progress_total = COALESCE(progress_total, 100),
-                last_progress_at = CURRENT_TIMESTAMP,
-                lease_expires_at = CASE WHEN lease_expires_at IS NOT NULL THEN ? ELSE NULL END,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?${ownershipClause}
-        `).run(...params);
-        if (result.changes === 0) return;
-        const job = this.get(id);
-        if (job) emitThrottledCommandUpdate({ id, type: job.name, status: job.status, progress } as CommandEventPayload);
+        if (!current || TERMINAL_COMMAND_STATUSES.has(current.status)) return;
+        if (workerId && (current.status !== "started" || current.worker_id !== workerId)) return;
+
+        let overlay = commandOverlays.get(id);
+        const now = Date.now();
+        if (!overlay) {
+            overlay = { lastWrittenAt: 0 };
+            commandOverlays.set(id, overlay);
+        }
+        overlay.progress = progress;
+        overlay.progressCurrent = progress;
+        overlay.lastProgressAt = new Date(now).toISOString();
+
+        emitThrottledCommandUpdate({ id, type: current.name, status: current.status, progress, payload: current.payload } as CommandEventPayload);
+
+        if (now - overlay.lastWrittenAt >= COMMAND_PERSIST_THROTTLE_MS) {
+            flushCommandOverlay(id, workerId);
+        } else if (!overlay.pendingTimer) {
+            overlay.pendingTimer = setTimeout(() => {
+                flushCommandOverlay(id, workerId);
+            }, COMMAND_PERSIST_THROTTLE_MS);
+            if (overlay.pendingTimer.unref) overlay.pendingTimer.unref();
+        }
     }
 
     static updateState(id: number, options: {
@@ -1015,6 +1114,7 @@ ${orderBy}
             WHERE id = ? AND ${ownershipClause}
         `).run(...params);
         if (result.changes === 0) return false;
+        clearCommandOverlay(id);
         clearCommandUpdateThrottle(id);
         const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'completed', progress: 100 } as CommandEventPayload);
@@ -1042,6 +1142,7 @@ ${orderBy}
             WHERE id = ? AND ${ownershipClause}
         `).run(...params);
         if (result.changes === 0) return false;
+        clearCommandOverlay(id);
         clearCommandUpdateThrottle(id);
         const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'failed', progress: job.progress, error } as CommandEventPayload);
@@ -1050,6 +1151,7 @@ ${orderBy}
 
     static cancel(id: number) {
         db.prepare("UPDATE commands SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+        clearCommandOverlay(id);
         clearCommandUpdateThrottle(id);
         const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'cancelled', progress: job.progress } as CommandEventPayload);
@@ -1914,7 +2016,7 @@ ${orderBy}
 
         if (!job) return null;
 
-        return hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>);
+        return applyOverlay(hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>));
     }
 
     /**

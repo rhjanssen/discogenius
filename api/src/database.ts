@@ -58,14 +58,14 @@ export function withDbWrite<T>(fn: () => T): Promise<T> {
   return withSqliteWriteMutexAsync(fn);
 }
 
-const SQLITE_BUSY_RETRY_BASE_MS = 50;
-const SQLITE_BUSY_RETRY_MAX_MS = 200;
+const SQLITE_BUSY_RETRY_BASE_MS = 100;
+const SQLITE_BUSY_RETRY_MAX_MS = 2000;
 // Lidarr: BusyTimeout = 1000ms, WAL, three command threads. SQLITE_BUSY is rare
 // because writers block on that timeout instead of racing. Discogenius adds a
 // process-wide writer mutex so worker_threads don't overlap connections; this
 // timeout is only a backstop if something bypasses the mutex.
-const SQLITE_BUSY_TIMEOUT_MS = 1000;
-const SQLITE_BUSY_RETRY_ATTEMPTS = 2;
+const SQLITE_BUSY_TIMEOUT_MS = 10000;
+const SQLITE_BUSY_RETRY_ATTEMPTS = 5;
 
 // Optional write profiling: log any write transaction that holds the SQLite write
 // lock longer than this (ms). Off unless DISCOGENIUS_WRITE_PROFILE_MS is set. Used
@@ -529,6 +529,7 @@ export function initDatabase() {
   pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
   ensureLibraryProjectionTriggers();
+  ensureFtsSelfHealing();
   initializeDefaultData();
 }
 
@@ -542,6 +543,23 @@ function ensureLibraryLookupIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_library_albums_release_group
       ON LibraryAlbums(release_group_id)
   `);
+}
+
+
+function ensureFtsSelfHealing(): void {
+  for (const table of ["TrackSearch", "CatalogSearch"]) {
+    try {
+      db.prepare(`INSERT INTO ${table}(${table}) VALUES('integrity-check')`).run();
+    } catch (error: any) {
+      console.warn(`[SQLite] FTS5 integrity check failed on ${table}, attempting rebuild:`, error?.message || error);
+      try {
+        db.prepare(`INSERT INTO ${table}(${table}) VALUES('rebuild')`).run();
+        console.log(`[SQLite] Successfully rebuilt FTS5 index for ${table}`);
+      } catch (rebuildError) {
+        console.error(`[SQLite] Failed to rebuild FTS5 index for ${table}:`, rebuildError);
+      }
+    }
+  }
 }
 
 function ensureLibraryProjectionTriggers(): void {

@@ -242,8 +242,7 @@ test("a recurring artist refresh catalogues new collaborators in-process without
     WHERE name = ?
     ORDER BY id
   `).all(CommandNames.MatchArtistProviders) as Array<{ ref_id: string }>;
-  assert.equal(matchJobs.length, 1);
-  assert.equal(matchJobs[0].ref_id, "selected-artist-mbid");
+  assert.equal(matchJobs.length, 0);
 });
 
 test("a credited-artist background fill cannot recursively expand", async () => {

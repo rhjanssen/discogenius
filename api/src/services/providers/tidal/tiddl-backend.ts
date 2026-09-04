@@ -11,6 +11,7 @@ import {
     syncTiddlSettings,
 } from "./tiddl.js";
 import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
+import { syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
 
 export { TIDDL_CONFIG_DIR, TIDDL_AUTH_FILE, getTiddlCapabilitySnapshot } from "./tiddl.js";
 
@@ -212,6 +213,9 @@ export class TiddlBackend implements DownloadBackend {
             throw new Error("tiddl download requested without a provider ID");
         }
 
+        await syncStoredTidalTokenToDownloaders().catch((err) => {
+            console.warn("[TIDDL-BACKEND] Warning syncing stored token before download:", err);
+        });
         syncTiddlSettings();
 
         for (let index = 0; index < providerIds.length; index++) {

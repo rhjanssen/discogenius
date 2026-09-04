@@ -75,16 +75,20 @@ function cacheAccountInfo(user: TidalAuthUser | undefined): void {
         return;
     }
 
-    updateConfig("account", {
-        userId: user.userId,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        fullName: user.fullName,
-        countryCode: user.countryCode,
-        picture: user.picture,
-    });
+    try {
+        updateConfig("account", {
+            userId: user.userId,
+            username: user.username,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            fullName: user.fullName,
+            countryCode: user.countryCode,
+            picture: user.picture,
+        });
+    } catch (error) {
+        console.warn("[TIDAL-AUTH] Non-fatal: Failed to cache account info in config:", error);
+    }
 }
 
 async function enrichTokenUser(token: TidalAuthToken): Promise<TidalAuthToken> {
@@ -93,7 +97,10 @@ async function enrichTokenUser(token: TidalAuthToken): Promise<TidalAuthToken> {
     });
 
     if (!sessionResponse.ok) {
-        throw new Error(`Failed to read TIDAL session (${sessionResponse.status})`);
+        const payload = await sessionResponse.text().catch(() => "");
+        throw new Error(
+            `Failed to fetch TIDAL session for user enrichment (${sessionResponse.status}): ${payload || sessionResponse.statusText}`,
+        );
     }
 
     const sessionData = await sessionResponse.json() as {
@@ -146,13 +153,14 @@ export function loadStoredTidalToken(): TidalAuthToken | null {
 export function saveStoredTidalToken(token: TidalAuthToken): void {
     ensureAuthDir();
     fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify(token, null, 2), "utf-8");
-    cacheAccountInfo(token.user);
 
     try {
         syncTokenToTiddl(token);
     } catch (error) {
         console.error("[TIDAL-AUTH] Failed to sync tiddl auth:", error);
     }
+
+    cacheAccountInfo(token.user);
 }
 
 export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {

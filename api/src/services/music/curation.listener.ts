@@ -53,6 +53,9 @@ export function initCurationListeners() {
 
     // Trigger disk scan after metadata refresh is complete
     appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETE, (payload: ArtistRefreshCompleteEventPayload | undefined) => {
+        if (payload?.handledInline) {
+            return;
+        }
         if (
             payload?.commandId != null
             && payload.workerId
@@ -87,7 +90,7 @@ export function initCurationListeners() {
 
     // Trigger missing search/curation after disk scan is complete
     appEvents.on(AppEvent.ARTIST_SCANNED, (payload: ArtistScannedEventPayload | undefined) => {
-        if (!payload) {
+        if (!payload || payload.handledInline) {
             return;
         }
         if (
@@ -130,7 +133,7 @@ export function initCurationListeners() {
     // scoped wanted check. Full monitoring has one app-wide terminal pass in the
     // scheduler and must not fan out duplicate per-artist DownloadMissing jobs.
     appEvents.on(AppEvent.ARTIST_CURATED, (payload: ArtistCuratedEventPayload | undefined) => {
-        if (!payload || payload.workflow !== "monitoring-intake") return;
+        if (!payload || payload.handledInline || payload.workflow !== "monitoring-intake") return;
         if (
             payload.commandId != null
             && payload.workerId

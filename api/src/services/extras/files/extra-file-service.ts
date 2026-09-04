@@ -427,11 +427,19 @@ export class ExtraFileService {
    * wrong sibling (studio vs Abbey Road sessions) as a leftover extra.
    */
   static releaseDuplicateForRescan(filePath: string): void {
+    const normPath = normalizeComparablePath(path.resolve(filePath));
+    const exists = db.prepare(`
+      SELECT 1 FROM ExtraFiles
+      WHERE file_type = ?
+        AND ${comparablePathColumnSql("file_path")} = ?
+      LIMIT 1
+    `).get(DUPLICATE_EXTRA_FILE_TYPE, normPath);
+    if (!exists) return;
     db.prepare(`
       DELETE FROM ExtraFiles
       WHERE file_type = ?
         AND ${comparablePathColumnSql("file_path")} = ?
-    `).run(DUPLICATE_EXTRA_FILE_TYPE, normalizeComparablePath(path.resolve(filePath)));
+    `).run(DUPLICATE_EXTRA_FILE_TYPE, normPath);
   }
 
   static deleteMissingRows(tableName: ExtraFileTableName, artistId?: string): number {

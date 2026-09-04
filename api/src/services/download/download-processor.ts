@@ -2134,6 +2134,27 @@ export class DownloadProcessor {
         }
     }
 
+    private async prepareProviderForDownload(providerId: string, downloadPath?: string): Promise<void> {
+        try {
+            const provider = streamingProviderManager.getStreamingProvider(providerId);
+            if (provider) {
+                if (provider.getAuthStatus) {
+                    await provider.getAuthStatus().catch((err: unknown) => {
+                        console.warn(`[DOWNLOAD-PROCESSOR] Non-fatal auth check warning for ${providerId}:`, err);
+                    });
+                }
+                if (provider.syncCredentials) {
+                    await provider.syncCredentials();
+                }
+                if (provider.syncSettings) {
+                    await provider.syncSettings(downloadPath);
+                }
+            }
+        } catch (err) {
+            console.warn(`[DOWNLOAD-PROCESSOR] Provider preparation warning for ${providerId}:`, err);
+        }
+    }
+
     private async downloadItem(
         commandId: number,
         id: string,
@@ -2273,6 +2294,7 @@ export class DownloadProcessor {
                             },
                         },
                         async () => {
+                            await this.prepareProviderForDownload(activeProvider, downloadPath);
                             await backend.download({
                                 provider: activeProvider,
                                 entityType: type as "album" | "track" | "video",
@@ -2601,6 +2623,7 @@ export class DownloadProcessor {
                                 },
                             },
                             async () => {
+                                await this.prepareProviderForDownload(providerId, trackDownloadPath);
                                 await backend.download({
                                     provider: providerId,
                                     entityType: "track",

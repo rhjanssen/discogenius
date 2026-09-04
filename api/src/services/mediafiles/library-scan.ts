@@ -573,6 +573,7 @@ export class DiskScanService {
         `);
 
         let updated = 0;
+        const verifiedIds: number[] = [];
         for (let index = 0; index < rows.length; index += 1) {
             const row = rows[index];
             const filePath = resolveStoredLibraryPath({
@@ -1049,8 +1050,9 @@ export class DiskScanService {
         const totalFiles = scanTargets.reduce((sum, target) => sum + target.allFiles.length, 0);
         let processedFiles = 0;
         let lastReportedFiles = -1;
+        let lastReportedTime = 0;
 
-        const reportIndexProgress = () => {
+        const reportIndexProgress = (force = false) => {
             if (totalFiles === 0) {
                 options?.onProgress?.({
                     phase: "index",
@@ -1062,15 +1064,19 @@ export class DiskScanService {
                 return;
             }
 
+            const now = Date.now();
             if (
+                !force &&
                 processedFiles !== totalFiles &&
                 processedFiles !== 1 &&
-                processedFiles - lastReportedFiles < 25
+                processedFiles - lastReportedFiles < 25 &&
+                now - lastReportedTime < 2000
             ) {
                 return;
             }
 
             lastReportedFiles = processedFiles;
+            lastReportedTime = now;
             const normalizedProgress = Math.min(75, 45 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 30));
             options?.onProgress?.({
                 phase: "index",
@@ -1505,6 +1511,7 @@ export class DiskScanService {
         }>;
 
         let updated = 0;
+        const verifiedIds: number[] = [];
         for (const row of rows) {
             const resolvedPath = resolveStoredLibraryPath({
                 filePath: row.file_path,
@@ -1534,8 +1541,16 @@ export class DiskScanService {
                 });
                 updated++;
             } else {
-                // Just update verified_at timestamp
-                db.prepare("UPDATE TrackFiles SET verified_at = CURRENT_TIMESTAMP WHERE id = ?").run(row.id);
+                verifiedIds.push(row.id);
+            }
+        }
+
+        if (verifiedIds.length > 0) {
+            const BATCH_SIZE = 200;
+            for (let i = 0; i < verifiedIds.length; i += BATCH_SIZE) {
+                const chunk = verifiedIds.slice(i, i + BATCH_SIZE);
+                const placeholders = chunk.map(() => "?").join(",");
+                db.prepare(`UPDATE TrackFiles SET verified_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).run(...chunk);
             }
         }
 

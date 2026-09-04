@@ -642,6 +642,11 @@ function syncScheduledTasks() {
 
 function trySyncScheduledTasks(): boolean {
     try {
+        const definitions = getScheduledTaskDefinitions();
+        const row = db.prepare("SELECT count(*) as count FROM scheduled_tasks").get() as { count: number } | undefined;
+        if (row && row.count >= definitions.length) {
+            return true;
+        }
         syncScheduledTasks();
         return true;
     } catch (error) {
@@ -782,7 +787,7 @@ export function pollScheduledTasks() {
         }
 
         if (definition.key === "monitoring-cycle") {
-            if (isChecking || hasActiveMonitoringCycleWorkflow() || hasPendingMonitoringTerminalPass()) {
+            if (isChecking || hasActiveMonitoringCycleWorkflow() || hasPendingMonitoringTerminalPass() || hasActiveLibraryWideRescan()) {
                 continue;
             }
 
@@ -819,7 +824,7 @@ export function pollScheduledTasks() {
         }
 
         if (definition.key === "root-scan") {
-            if (hasActiveTask(CommandNames.RescanFolders)) {
+            if (hasActiveTask(CommandNames.RescanFolders) || hasActiveMonitoringCycleWorkflow()) {
                 continue;
             }
             const commandId = queueRescanFoldersPass({

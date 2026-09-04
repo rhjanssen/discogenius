@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.0] - 2026-09-04
+
+### Changed
+
+- **Universal database resilience & mutex timeout expansion:**
+  - Expanded SQLite `busy_timeout` to 10,000 ms across connections and PRAGMA settings.
+  - Replaced rigid 1-second timeout cliff in `sqlite-write-mutex.ts` with a resilient 15,000 ms wait loop.
+  - Enhanced `runWithSqliteBusyRetry` with 5 retry attempts, exponential backoff (100ms to 2000ms), and randomized jitter.
+  - Added startup FTS5 self-healing integrity verification and automatic rebuild routine for virtual search tables (`TrackSearch`, `CatalogSearch`).
+  - Decoupled auxiliary writes (such as provider account info caching) with non-fatal handlers so background metadata doesn't interrupt active download queues.
+
+- **Lidarr-aligned DiskScanService & audio probing optimizations:**
+  - **In-process stereo audio probing:** Removed `.m4a` from unconditional `ffprobe` container extension list in `audioUtils.ts`. Standard stereo `.m4a` tracks (AAC/ALAC, 2 channels) are parsed entirely in-process via `music-metadata` (~7 ms vs ~1,000 ms ffprobe process launch), dropping scan time on large libraries from 15+ minutes down to seconds.
+  - **Dolby Atmos precision preservation:** `ffprobe` execution is strictly reserved for spatial audio bitstreams (`ec-3`, `eac3`, `ac4`), multichannel configurations (`channels > 2`), undetermined channel counts, video containers, and spatial library roots.
+  - **In-memory artist offer caching:** Added scoped in-memory caching for artist track offers in `library-scan-metadata-match.ts`, eliminating repeated heavy cross-table joins on unmatched tracks during artist scan passes.
+  - **Guarded duplicate release:** Guarded `ExtraFileService.releaseDuplicateForRescan` with a read check before write lock acquisition, preventing hundreds of redundant `DELETE FROM ExtraFiles` write transactions on every candidate file.
+  - **Batch file verification:** Replaced individual per-file `UPDATE TrackFiles SET verified_at` statements with batched chunk updates during scan verification.
+  - **Responsive scan progress reporting:** Implemented dual-throttle progress emissions (every 25 files or 2,000 ms) to guarantee smooth, continuous UI progress updates.
+
+- **In-memory command queue progress & scheduler optimization:**
+  - **In-memory progress overlays:** Command progress, subtasks, and track status are now updated in-memory and emitted via SSE immediately, while disk persistence (`UPDATE commands`) is throttled to 5-second heartbeats or terminal status changes (`completed`, `failed`, `cancelled`), reducing command write contention by >90%.
+  - **In-memory scheduled task status:** Cached scheduled task definitions and existence checks in memory, eliminating 8 redundant SQLite write transactions on every 30-second scheduler tick (>23,000 write transactions per day eliminated).
+
+- **Universal pre-download contract (All 7 Providers):**
+  - Centralized proactive authentication refresh, credential synchronization (`syncCredentials`), and downloader configuration synchronization (`syncSettings`) in `download-processor.ts` prior to delegating to backend downloader processes.
+
 ## [2.15.0] - 2026-09-04
 
 ### Changed

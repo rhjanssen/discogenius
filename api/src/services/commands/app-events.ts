@@ -62,6 +62,7 @@ export interface ArtistRefreshCompleteEventPayload {
     isNewArtist: boolean;
     trigger: number;
     priority: number;
+    handledInline?: boolean;
 }
 
 // Raised when a disk scan completes.
@@ -76,6 +77,7 @@ export interface ArtistScannedEventPayload {
     skipMetadataBackfill: boolean;
     trigger: number;
     priority: number;
+    handledInline?: boolean;
 }
 
 export interface ArtistCuratedEventPayload {
@@ -87,6 +89,7 @@ export interface ArtistCuratedEventPayload {
     monitoringCycle?: MonitoringPassWorkflowValue;
     trigger: number;
     priority: number;
+    handledInline?: boolean;
 }
 
 export interface ImportArtistsProgressEventPayload {

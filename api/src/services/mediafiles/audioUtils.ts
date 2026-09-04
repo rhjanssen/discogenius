@@ -23,7 +23,7 @@ export const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".m
 const MUTAGEN_MP4_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".m4v"]);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
-const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".m4a", ".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
+const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
 const MP4_METADATA_REWRITE_EXTENSIONS = new Set([".m4a", ".mp4", ".m4v"]);
 
 function isSpatialAudioCodec(codec: string | null | undefined): boolean {
@@ -170,14 +170,32 @@ export interface AudioMetrics {
 
 export function shouldProbeAudioMetrics(
     filePath: string,
-    metrics: { sampleRate?: number | null; channels?: number | null; codec?: string | null },
+    metrics: { sampleRate?: number | null; channels?: number | null; codec?: string | null; duration?: number | null },
 ): boolean {
     const extension = path.extname(filePath).toLowerCase();
     const sampleRate = Number(metrics.sampleRate || 0);
-    return FFMPEG_AUDIO_CONTAINER_EXTENSIONS.has(extension)
-        || isSpatialAudioCodec(metrics.codec)
-        || metrics.channels == null
-        || (sampleRate > 0 && sampleRate < 8_000);
+    const channels = metrics.channels;
+
+    if (FFMPEG_AUDIO_CONTAINER_EXTENSIONS.has(extension)) {
+        return true;
+    }
+    if (isSpatialAudioCodec(metrics.codec)) {
+        return true;
+    }
+    if (channels == null || channels > 2) {
+        return true;
+    }
+    const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+    if (normalizedPath.includes("/spatial-music/") || normalizedPath.includes("/spatial/")) {
+        return true;
+    }
+    if (extension === ".m4a") {
+        const codecUpper = String(metrics.codec ?? "").toUpperCase();
+        if ((codecUpper === "AAC" || codecUpper === "ALAC") && channels === 2 && (metrics.duration ?? 0) > 0) {
+            return false;
+        }
+    }
+    return sampleRate > 0 && sampleRate < 8_000;
 }
 
 export function mergeProbedAudioMetrics(metrics: AudioMetrics, probe: Partial<AudioMetrics>): AudioMetrics {
