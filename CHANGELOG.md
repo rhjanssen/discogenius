@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.2] - 2026-09-05
+
+### Changed
+
+- **Lidarr-Aligned Naming Template Engine:**
+  - Brought naming token engine to 1:1 parity with Lidarr: added `{Album Year}`, `{Original Year}`, and `{Edition Year}` tokens.
+  - `{Release Year}` now faithfully reflects the edition's release date while intelligently falling back to the album/release group first release year when the edition date is absent, ensuring folders are never created missing years.
+  - Added Lidarr MediaInfo tokens (`{MediaInfo Simple}`, `{MediaInfo Full}`, `{MediaInfo AudioCodec}`, `{MediaInfo AudioChannels}`, etc.), Quality tokens (`{Quality Full}`, `{Quality Title}`), Original tokens (`{Original Title}`, `{Original Filename}`), and Medium tokens (`{Medium Format}`, `{Medium Name}`).
+  - Updated canonical album metadata query to coalesce edition release dates with release group first release dates and resolve missing release group MBIDs.
+
+- **Naming Settings UX & Help Modal Overhaul:**
+  - Upgraded naming modal to match Lidarr's experience, featuring interactive Separator (`Space`, `Period`, `Underscore`, `Dash`) and Casing (`Default`, `Lowercase`, `Uppercase`) controls.
+  - Live token insertion and previews dynamically adapt to selected separator and case format.
+  - Added a sticky bottom dialog footer with live template input tracking cursor position for effortless token placement.
+  - Refined clean example previews below inputs (formatted as `Single Track: ...`, `Multi Disc Track: ...`, `Example: ...`).
+
+- **Rename Track Files SQL Fix:**
+  - Resolved SQL column and parameter count mismatches in `RenameTrackFileService` by properly projecting `release_group_id` and `album_edition_id` across track files and sidecars and scoping parameters correctly during album rename operations.
+
 ## [2.16.1] - 2026-09-05
 
 ### Changed
