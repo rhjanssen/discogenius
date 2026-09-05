@@ -29,6 +29,8 @@ export type RenameLibraryFileRow = {
   canonical_release_mbid?: string | null;
   canonical_track_mbid?: string | null;
   canonical_recording_mbid?: string | null;
+  release_group_id?: number | null;
+  album_edition_id?: number | null;
   file_path: string;
   relative_path: string | null;
   library_root: string | null;
@@ -160,7 +162,7 @@ export function buildRenameFilters(options: RenameScopeOptions = {}): { where: s
           )
         )
       )`);
-    params.push(albumTarget, albumTarget, albumTarget, albumTarget, albumTarget);
+    params.push(albumTarget, albumTarget, albumTarget, albumTarget, albumTarget, albumTarget);
   }
   if (options.libraryRoot) {
     const rootValues = getLibraryRootFilterValues(options.libraryRoot);

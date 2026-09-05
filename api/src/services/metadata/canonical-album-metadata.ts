@@ -9,6 +9,8 @@ export type CanonicalAlbumMetadata = {
    */
   editionTitle: string;
   releaseDate: string | null;
+  albumReleaseDate: string | null;
+  editionReleaseDate: string | null;
   albumType: string | null;
   albumMbid: string | null;
   volumeCount: number | null;
@@ -30,18 +32,25 @@ export function getCanonicalAlbumMetadata(input: {
   canonicalReleaseGroupMbid?: string | null;
 }): CanonicalAlbumMetadata | null {
   const releaseMbid = String(input.canonicalReleaseMbid || "").trim();
-  const releaseGroupMbid = String(input.canonicalReleaseGroupMbid || "").trim();
+  let releaseGroupMbid = String(input.canonicalReleaseGroupMbid || "").trim();
   if (!releaseMbid && !releaseGroupMbid) {
     return null;
+  }
+
+  if (!releaseGroupMbid && releaseMbid) {
+    const edition = db.prepare(`SELECT release_group_mbid FROM AlbumEditions WHERE mbid = ? LIMIT 1`).get(releaseMbid) as { release_group_mbid?: string } | undefined;
+    releaseGroupMbid = edition?.release_group_mbid || "";
   }
 
   const row = db.prepare(`
     SELECT
       release_group.title AS title,
       COALESCE(NULLIF(TRIM(release.title), ''), release_group.title) AS edition_title,
-      release.date AS release_date,
+      COALESCE(NULLIF(TRIM(release.date), ''), release_group.first_release_date) AS release_date,
+      release_group.first_release_date AS album_release_date,
+      release.date AS edition_release_date,
       release_group.primary_type AS album_type,
-      release.mbid AS album_mbid,
+      COALESCE(release.mbid, release_group.mbid) AS album_mbid,
       release.media_count AS volume_count,
       release_group.cover_image_id AS cover_image_id,
       release_group.vibrant_color AS vibrant_color,
@@ -62,6 +71,8 @@ export function getCanonicalAlbumMetadata(input: {
     title: string | null;
     edition_title: string | null;
     release_date: string | null;
+    album_release_date: string | null;
+    edition_release_date: string | null;
     album_type: string | null;
     album_mbid: string | null;
     volume_count: number | null;
@@ -84,6 +95,8 @@ export function getCanonicalAlbumMetadata(input: {
     title: row.title,
     editionTitle: row.edition_title || row.title,
     releaseDate: row.release_date || null,
+    albumReleaseDate: row.album_release_date || null,
+    editionReleaseDate: row.edition_release_date || null,
     albumType: row.album_type || null,
     albumMbid: row.album_mbid || null,
     volumeCount: row.volume_count || null,

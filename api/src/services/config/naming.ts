@@ -26,7 +26,14 @@ export type NamingContext = {
   /** MusicBrainz release (edition) disambiguation. */
   editionDisambiguation?: string | null;
   releaseGroupMbId?: string | null;
-  releaseYear?: string | null;
+  releaseYear?: string | number | null;
+  albumYear?: string | number | null;
+  editionYear?: string | number | null;
+  mediumName?: string | null;
+  mediumFormat?: string | null;
+  originalTitle?: string | null;
+  originalFileName?: string | null;
+  releaseGroup?: string | null;
   explicit?: boolean | null;
 
   trackTitle?: string | null;
@@ -214,7 +221,16 @@ function buildDerived(context: NamingContext) {
   const trackNumber = Number(context.trackNumber || 0);
   const volumeNumber = Number(context.volumeNumber || 1);
 
-  const releaseYear = (context.releaseYear ? String(context.releaseYear) : "").toString();
+  const albumYear = (context.albumYear ? String(context.albumYear) : "").toString();
+  const editionYear = (context.editionYear ? String(context.editionYear) : "").toString();
+  const releaseYear = (context.releaseYear ? String(context.releaseYear) : (editionYear || albumYear)).toString();
+  const resolvedAlbumYear = albumYear || releaseYear;
+  const resolvedEditionYear = editionYear || releaseYear;
+  const mediumName = context.mediumName || "";
+  const mediumFormat = context.mediumFormat || "";
+  const originalTitle = context.originalTitle || "";
+  const originalFileName = context.originalFileName || "";
+  const releaseGroup = context.releaseGroup || "";
   const videoTitle = context.videoTitle || "Unknown Video";
   const rawVideoType = String(context.videoType || "").trim();
   const videoType = rawVideoType
@@ -247,6 +263,13 @@ function buildDerived(context: NamingContext) {
     editionDisambiguation,
     releaseGroupMbId,
     releaseYear,
+    albumYear: resolvedAlbumYear,
+    editionYear: resolvedEditionYear,
+    mediumName,
+    mediumFormat,
+    originalTitle,
+    originalFileName,
+    releaseGroup,
     trackTitle,
     trackArtistName,
     trackArtistMbId,
@@ -385,7 +408,14 @@ function resolveTokenValue(
       baseValue = derived.providerAlbumId;
       break;
     case "releaseyear":
+    case "editionyear":
       baseValue = derived.releaseYear;
+      break;
+    case "albumyear":
+    case "albumreleaseyear":
+    case "originalyear":
+    case "originalreleaseyear":
+      baseValue = derived.albumYear;
       break;
 
     // Edition / release titles (MusicBrainz release — one specific product)
@@ -503,15 +533,40 @@ function resolveTokenValue(
     case "e":
       return context.explicit ? "[E]" : "";
 
-    // Quality metadata
+    case "mediumname":
+      baseValue = derived.mediumName;
+      break;
+    case "mediumformat":
+      baseValue = derived.mediumFormat;
+      break;
+
+    // Original file / scene tokens (Lidarr alignment)
+    case "originaltitle":
+      baseValue = derived.originalTitle;
+      break;
+    case "originalfilename":
+      baseValue = derived.originalFileName;
+      break;
+    case "releasegroup":
+      baseValue = derived.releaseGroup;
+      break;
+
+    // Quality metadata (including Lidarr aliases)
     case "quality":
+    case "qualityfull":
+    case "qualitytitle":
+    case "qualityproper":
       baseValue = context.quality || "";
       break;
     case "codec":
+    case "mediainfoaudiocodec":
       baseValue = context.codec || "";
       break;
     case "bitrate":
       baseValue = context.bitrate ? String(context.bitrate) : "";
+      break;
+    case "mediainfoaudiobitrate":
+      baseValue = context.bitrate ? `${context.bitrate} kbps` : "";
       break;
     case "samplerate":
       if (context.sampleRate) {
@@ -520,11 +575,24 @@ function resolveTokenValue(
         baseValue = "";
       }
       break;
+    case "mediainfoaudiosamplerate":
+      baseValue = context.sampleRate ? `${(context.sampleRate / 1000).toFixed(1).replace(/\.0$/, "")}kHz` : "";
+      break;
     case "bitdepth":
       baseValue = context.bitDepth ? String(context.bitDepth) : "";
       break;
+    case "mediainfoaudiobitspersample":
+      baseValue = context.bitDepth ? `${context.bitDepth}bit` : "";
+      break;
     case "channels":
       baseValue = context.channels ? String(context.channels) : "";
+      break;
+    case "mediainfoaudiochannels":
+      baseValue = context.channels
+        ? (typeof context.channels === "number" && !String(context.channels).includes(".")
+          ? `${context.channels}.0`
+          : String(context.channels))
+        : "";
       break;
     case "__numeric_suffix__":
       break;
@@ -777,6 +845,16 @@ const KNOWN_TOKEN_NAMES = new Set([
   "releasegroupmbid",
   "albumid",
   "releaseyear",
+  "albumyear",
+  "albumreleaseyear",
+  "originalyear",
+  "originalreleaseyear",
+  "editionyear",
+  "mediumname",
+  "mediumformat",
+  "originaltitle",
+  "originalfilename",
+  "releasegroup",
   "editiontitle",
   "editioncleantitle",
   "editiontitlethe",
@@ -814,11 +892,19 @@ const KNOWN_TOKEN_NAMES = new Set([
   "explicit",
   "e",
   "quality",
+  "qualityfull",
+  "qualitytitle",
+  "qualityproper",
   "codec",
+  "mediainfoaudiocodec",
   "bitrate",
+  "mediainfoaudiobitrate",
   "samplerate",
+  "mediainfoaudiosamplerate",
   "bitdepth",
+  "mediainfoaudiobitspersample",
   "channels",
+  "mediainfoaudiochannels",
   "providername",
   "providerartistid",
   "provideralbumid",
@@ -949,6 +1035,8 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     editionDisambiguation: "deluxe edition",
     releaseGroupMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
     releaseYear: "2013",
+    albumYear: "2013",
+    editionYear: "2013",
     trackTitle: "Pompeii",
     trackArtistName: "Bastille",
     trackArtistMbId: "7808accb-6395-4b25-858c-678bbb73896b",
@@ -966,9 +1054,15 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     explicit: false,
     quality: "LOSSLESS",
     codec: "FLAC",
+    bitrate: 320,
     sampleRate: 44100,
     bitDepth: 16,
     channels: 2,
+    mediumName: "Disc 1",
+    mediumFormat: "CD",
+    releaseGroup: "FLAC-GRP",
+    originalTitle: "Bastille - Bad Blood - 01 - Pompeii",
+    originalFileName: "01 - Pompeii",
   };
 
   // Previews are display strings: always use forward slashes regardless of

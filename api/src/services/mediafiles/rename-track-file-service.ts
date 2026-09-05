@@ -143,12 +143,14 @@ export class RenameTrackFileService {
     const sql = `
       SELECT id, artist_metadata_id, album_id, media_id,
              canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+             release_group_id, album_edition_id,
              file_path, relative_path, library_root, file_type, extension, library_slot,
              provider, provider_entity_type, provider_id,
              quality, codec, bitrate, sample_rate, bit_depth, channels
       FROM (
         SELECT id, artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, provider_id AS media_id,
                canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+               release_group_id, album_edition_id,
                file_path, relative_path, library_root, file_type, extension, library_slot,
                provider, provider_entity_type, provider_id,
                quality, codec, bitrate, sample_rate, bit_depth, channels, created_at
@@ -159,6 +161,7 @@ export class RenameTrackFileService {
         SELECT id + 10000000 AS id, artist_id AS artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
                CASE WHEN provider_entity_type = 'video' THEN COALESCE(provider_id, canonical_recording_mbid) ELSE COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) END AS media_id,
                canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+               NULL AS release_group_id, NULL AS album_edition_id,
                file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
                NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
@@ -168,6 +171,7 @@ export class RenameTrackFileService {
 
         SELECT id + 20000000 AS id, artist_id AS artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
                canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+               NULL AS release_group_id, NULL AS album_edition_id,
                file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
                NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
@@ -177,6 +181,7 @@ export class RenameTrackFileService {
 
         SELECT id + 30000000 AS id, artist_id AS artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
                canonical_artist_mbid AS canonical_artist_mbid, canonical_release_group_mbid AS canonical_release_group_mbid, canonical_release_mbid AS canonical_release_mbid, canonical_track_mbid AS canonical_track_mbid, canonical_recording_mbid AS canonical_recording_mbid,
+               NULL AS release_group_id, NULL AS album_edition_id,
                file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, extension AS extension, library_slot AS library_slot,
                provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
                Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
@@ -203,22 +208,22 @@ export class RenameTrackFileService {
     const sql = `
       SELECT COUNT(*) AS count
       FROM (
-        SELECT artist_metadata_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, file_type
+        SELECT artist_metadata_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, release_group_id, album_edition_id, provider_entity_type, provider_id, library_root, file_type
         FROM TrackFiles
 
         UNION ALL
 
-        SELECT artist_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, file_type
+        SELECT artist_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, NULL AS release_group_id, NULL AS album_edition_id, provider_entity_type, provider_id, library_root, file_type
         FROM MetadataFiles
 
         UNION ALL
 
-        SELECT artist_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, file_type
+        SELECT artist_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, NULL AS release_group_id, NULL AS album_edition_id, provider_entity_type, provider_id, library_root, file_type
         FROM ExtraFiles
 
         UNION ALL
 
-        SELECT artist_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, 'lyrics' AS file_type
+        SELECT artist_id AS artist_metadata_id, canonical_release_group_mbid, canonical_release_mbid, NULL AS release_group_id, NULL AS album_edition_id, provider_entity_type, provider_id, library_root, 'lyrics' AS file_type
         FROM LyricFiles
       ) lf
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -491,6 +496,7 @@ export class RenameTrackFileService {
         const row = db.prepare(`
           SELECT id, artist_metadata_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, provider_id AS media_id,
                  canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+                 release_group_id, album_edition_id,
                  file_path, relative_path, library_root, file_type, extension, library_slot,
                  provider, provider_entity_type, provider_id,
                  quality, codec, bitrate, sample_rate, bit_depth, channels

@@ -558,6 +558,8 @@ function resolveCanonicalInlineAudioExpectedPath(
     albumTitle: track.album_title,
     albumMbId: track.release_group_mbid || null,
     albumType: track.primary_type || null,
+    albumYear: getReleaseYear(track.first_release_date),
+    editionYear: getReleaseYear(track.first_release_date),
     releaseYear: getReleaseYear(track.first_release_date),
     trackTitle: track.title || "Unknown Track",
     trackNumber: Number(track.position || track.number || 0),
@@ -1421,6 +1423,8 @@ export class LibraryFilesService {
     if (!canonicalAlbum) return { expectedPath: null, reason: "album_not_found" };
 
     const releaseYear = getReleaseYear(canonicalAlbum.releaseDate);
+    const albumYear = getReleaseYear(canonicalAlbum.albumReleaseDate || canonicalAlbum.releaseDate);
+    const editionYear = getReleaseYear(canonicalAlbum.editionReleaseDate || canonicalAlbum.releaseDate);
     const albumContext: NamingContext = {
       ...contextBase,
       albumId: String(releaseGroupMbid ?? ""),
@@ -1430,6 +1434,8 @@ export class LibraryFilesService {
       albumDisambiguation: canonicalAlbum.disambiguation || null,
       editionTitle: canonicalAlbum.editionTitle || canonicalAlbum.title || "Unknown Album",
       editionDisambiguation: canonicalAlbum.editionDisambiguation || null,
+      albumYear,
+      editionYear,
       releaseYear,
       explicit: false,
     };

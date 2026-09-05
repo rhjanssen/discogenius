@@ -1439,3 +1439,17 @@ test("a failed duplicate-sidecar commit restores the staged source sidecar", () 
     [],
   );
 });
+
+test("RenameTrackFileService supports albumId and editionId scopes without column errors", () => {
+  const previewsByAlbum = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({ albumId: "f227498f-7faa-465c-9b3b-a60656034a7d" });
+  assert.equal(Array.isArray(previewsByAlbum), true);
+
+  const statusByAlbum = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ albumId: "f227498f-7faa-465c-9b3b-a60656034a7d" });
+  assert.equal(typeof statusByAlbum.total, "number");
+
+  const previewsByEdition = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({ editionId: "edition-test-123" });
+  assert.equal(Array.isArray(previewsByEdition), true);
+
+  const statusByEdition = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ editionId: "edition-test-123" });
+  assert.equal(typeof statusByEdition.total, "number");
+});

@@ -557,3 +557,62 @@ test("{Release Title} is an alias of {Edition Title}", () => {
   });
   assert.equal(rendered, "Bad Blood (Deluxe)");
 });
+
+test("date tokens: {Release Year} falls back to {Album Year} when edition has no date", () => {
+  const renderedFallback = renderFileStem("{Edition Title} ({Release Year})", {
+    artistName: "The Kinks",
+    albumTitle: "Preservation Act 1",
+    editionTitle: "Preservation Act 1",
+    albumYear: "1973",
+  });
+  assert.equal(renderedFallback, "Preservation Act 1 (1973)");
+
+  const renderedExplicit = renderFileStem("{Edition Title} ({Release Year})", {
+    artistName: "The Kinks",
+    albumTitle: "Preservation Act 1",
+    editionTitle: "Preservation Act 1",
+    editionYear: "2014",
+    albumYear: "1973",
+  });
+  assert.equal(renderedExplicit, "Preservation Act 1 (2014)");
+
+  const renderedOriginal = renderFileStem("{Edition Title} ({Original Year})", {
+    artistName: "The Kinks",
+    albumTitle: "Preservation Act 1",
+    editionTitle: "Preservation Act 1 (Deluxe)",
+    editionYear: "2014",
+    albumYear: "1973",
+  });
+  assert.equal(renderedOriginal, "Preservation Act 1 (Deluxe) (1973)");
+});
+
+test("Lidarr tokens: MediaInfo, Medium, Original and Quality aliases render correctly", () => {
+  const stem = renderFileStem(
+    "{Track Title} [{MediaInfo AudioCodec} {MediaInfo AudioChannels} {MediaInfo AudioBitRate} {MediaInfo AudioBitsPerSample} {MediaInfo AudioSampleRate}]",
+    {
+      artistName: "South Park",
+      trackTitle: "City Sushi",
+      codec: "FLAC",
+      channels: 2,
+      bitrate: 320,
+      bitDepth: 16,
+      sampleRate: 44100,
+    },
+  );
+  assert.equal(stem, "City Sushi [FLAC 2.0 320 kbps 16bit 44.1kHz]");
+
+  const medium = renderFileStem("{Medium Name} - {Medium Format}", {
+    artistName: "Queen",
+    mediumName: "Live at Wembley",
+    mediumFormat: "CD",
+  });
+  assert.equal(medium, "Live at Wembley - CD");
+
+  const orig = renderFileStem("{Original Title} - {Release Group}", {
+    artistName: "Scene",
+    originalTitle: "Scene.Release.Title",
+    releaseGroup: "LOL",
+  });
+  assert.equal(orig, "Scene.Release.Title - LOL");
+});
+

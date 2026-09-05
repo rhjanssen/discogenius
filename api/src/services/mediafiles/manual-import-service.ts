@@ -432,6 +432,8 @@ export class ManualImportService {
                     })
                     : null;
                 const canonicalReleaseYear = String(canonicalAlbum?.releaseDate || releaseYear || "").slice(0, 4) || null;
+                const canonicalAlbumYear = String(canonicalAlbum?.albumReleaseDate || releaseYear || "").slice(0, 4) || null;
+                const canonicalEditionYear = String(canonicalAlbum?.editionReleaseDate || canonicalAlbum?.releaseDate || releaseYear || "").slice(0, 4) || null;
                 const isMultiDisc = Number(canonicalAlbum?.volumeCount || albumRow?.num_volumes || 1) > 1;
                 const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
                 const fullPathTemplate = isVideo ? path.join(artistFolder, namingConfig.video_file) : path.join(artistFolder, trackTemplate);
@@ -469,6 +471,8 @@ export class ManualImportService {
                       || trackData.album_title
                       || "Unknown Album",
                     editionDisambiguation: canonicalAlbum?.editionDisambiguation || null,
+                    albumYear: canonicalAlbumYear,
+                    editionYear: canonicalEditionYear,
                     releaseYear: canonicalReleaseYear,
                     trackTitle: canonicalPosition?.title || trackData.title,
                     trackNumber: canonicalPosition?.trackNumber ?? trackData.trackNumber ?? trackData.track_num ?? 1,

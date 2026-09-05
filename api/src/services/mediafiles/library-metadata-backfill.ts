@@ -1091,6 +1091,12 @@ class LibraryMetadataBackfillService {
         const releaseYear = canonicalAlbum?.releaseDate || album.release_date
             ? (String(canonicalAlbum?.releaseDate || album.release_date).match(/^(\d{4})/)?.[1] || null)
             : null;
+        const albumYear = canonicalAlbum?.albumReleaseDate || album.release_date
+            ? (String(canonicalAlbum?.albumReleaseDate || album.release_date).match(/^(\d{4})/)?.[1] || null)
+            : null;
+        const editionYear = canonicalAlbum?.editionReleaseDate || canonicalAlbum?.releaseDate
+            ? (String(canonicalAlbum?.editionReleaseDate || canonicalAlbum?.releaseDate).match(/^(\d{4})/)?.[1] || null)
+            : null;
 
         const albumContext: NamingContext = {
             artistName: "",
@@ -1098,6 +1104,8 @@ class LibraryMetadataBackfillService {
             albumDisambiguation: canonicalAlbum?.disambiguation || null,
             editionTitle: canonicalAlbum?.editionTitle || canonicalAlbum?.title || album.title,
             editionDisambiguation: canonicalAlbum?.editionDisambiguation || null,
+            albumYear,
+            editionYear,
             releaseYear,
         };
 
