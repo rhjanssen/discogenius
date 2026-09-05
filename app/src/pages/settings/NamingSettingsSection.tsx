@@ -374,7 +374,27 @@ const useStyles = makeStyles({
     helpSurface: {
         width: "min(680px, calc(100vw - 32px))",
         maxWidth: "680px",
+        height: "85vh",
         maxHeight: "85vh",
+        display: "flex",
+        flexDirection: "column",
+        [MEDIA.mobile]: {
+            width: "100vw",
+            maxWidth: "100vw",
+            height: "100vh",
+            maxHeight: "100vh",
+            borderRadius: tokens.borderRadiusNone,
+        },
+    },
+    helpBody: {
+        display: "grid",
+        gridTemplateRows: "auto 1fr auto",
+        gridTemplateColumns: "1fr auto",
+        gridTemplateAreas: '"title action" "content content" "actions actions"',
+        height: "100%",
+        maxHeight: "100%",
+        minHeight: 0,
+        overflow: "hidden",
     },
     helpHeader: {
         display: "flex",
@@ -395,11 +415,14 @@ const useStyles = makeStyles({
         minWidth: 0,
     },
     helpContent: {
+        gridArea: "content",
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalM,
         minWidth: 0,
         maxWidth: "100%",
+        minHeight: 0,
+        overflowY: "auto",
         overflowX: "hidden",
         paddingTop: tokens.spacingVerticalS,
     },
@@ -453,10 +476,12 @@ const useStyles = makeStyles({
         minWidth: 0,
     },
     modalFooter: {
+        gridArea: "actions",
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
         width: "100%",
+        boxSizing: "border-box",
         paddingTop: tokens.spacingVerticalM,
         borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         [MEDIA.mobile]: {
@@ -928,7 +953,7 @@ export const NamingSettingsSection = ({
                 }}
             >
                 <DialogSurface className={styles.helpSurface}>
-                    <DialogBody>
+                    <DialogBody className={styles.helpBody}>
                         <DialogTitle
                             action={
                                 <Button
@@ -939,34 +964,32 @@ export const NamingSettingsSection = ({
                                 />
                             }
                         >
-                            <div className={styles.helpHeader}>
-                                <div>{namingHelpMeta?.title}</div>
-                                <div className={styles.selectorsRow}>
-                                    <Select
-                                        aria-label="Token Separator"
-                                        value={tokenSeparator}
-                                        onChange={(_, data) => setTokenSeparator(data.value)}
-                                        className={styles.selectorControl}
-                                    >
-                                        <option value=" ">Space ( )</option>
-                                        <option value=".">Period (.)</option>
-                                        <option value="_">Underscore (_)</option>
-                                        <option value="-">Dash (-)</option>
-                                    </Select>
-                                    <Select
-                                        aria-label="Token Case"
-                                        value={tokenCase}
-                                        onChange={(_, data) => setTokenCase(data.value as "title" | "lower" | "upper")}
-                                        className={styles.selectorControl}
-                                    >
-                                        <option value="title">Default Case</option>
-                                        <option value="lower">Lowercase</option>
-                                        <option value="upper">Uppercase</option>
-                                    </Select>
-                                </div>
-                            </div>
+                            {namingHelpMeta?.title}
                         </DialogTitle>
                         <DialogContent className={styles.helpContent}>
+                            <div className={styles.selectorsRow}>
+                                <Select
+                                    aria-label="Token Separator"
+                                    value={tokenSeparator}
+                                    onChange={(_, data) => setTokenSeparator(data.value)}
+                                    className={styles.selectorControl}
+                                >
+                                    <option value=" ">Space ( )</option>
+                                    <option value=".">Period (.)</option>
+                                    <option value="_">Underscore (_)</option>
+                                    <option value="-">Dash (-)</option>
+                                </Select>
+                                <Select
+                                    aria-label="Token Case"
+                                    value={tokenCase}
+                                    onChange={(_, data) => setTokenCase(data.value as "title" | "lower" | "upper")}
+                                    className={styles.selectorControl}
+                                >
+                                    <option value="title">Default Case</option>
+                                    <option value="lower">Lowercase</option>
+                                    <option value="upper">Uppercase</option>
+                                </Select>
+                            </div>
                             <Text size={200} className={styles.mutedText}>
                                 {namingHelpMeta?.description}{" "}
                                 Click any token to insert it into the template below.
