@@ -241,6 +241,8 @@ export type RetagScopeOptions = {
   artistId?: string;
   artistIds?: string[];
   albumId?: string;
+  editionId?: string | number;
+  releaseMbid?: string;
   limit?: number;
   offset?: number;
   onProgress?: (completed: number, total: number) => void;
@@ -526,7 +528,20 @@ export function isTagValueEqual(tagKey: string, current: string | null, target: 
     return false;
   }
 
-  if (tagKey === "genre" || tagKey === "label" || tagKey === "artist" || tagKey === "album_artist") {
+  if (tagKey === "genre" || tagKey === "label") {
+    const splitItems = (s: string) =>
+      s
+        .split(/[;,/\n]+/)
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean);
+    const currSet = new Set(splitItems(normCurrent));
+    const targSet = new Set(splitItems(normTarget));
+    if (currSet.size === targSet.size && Array.from(currSet).every((v) => targSet.has(v))) {
+      return true;
+    }
+  }
+
+  if (tagKey === "artist" || tagKey === "album_artist") {
     const splitItems = (s: string) =>
       s
         .split(/[;,/\n]+/)
@@ -1220,28 +1235,32 @@ export class AudioTagService {
       )`);
       params.push(...artistIds, ...artistIds);
     }
-    if (options.albumId) {
+    const editionTarget = options.releaseMbid
+      ? String(options.releaseMbid).trim()
+      : (options.editionId != null ? String(options.editionId).trim() : null);
+
+    if (editionTarget) {
       where.push(`(
-        lf.canonical_release_group_mbid = ?
+        CAST(lf.album_edition_id AS TEXT) = ?
         OR lf.canonical_release_mbid = ?
-        OR (
-          lf.provider_entity_type = 'track'
-          AND CAST(lf.provider_id AS TEXT) IN (
-            SELECT CAST(scope_item.provider_id AS TEXT)
-            FROM ProviderItems scope_item
-            JOIN ProviderEditionMembers scope_member
-              ON scope_member.member_item_id = scope_item.id
-            JOIN ProviderEditionMatches scope_match
-              ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
-             AND scope_match.match_state = 'accepted'
-            JOIN AlbumEditions scope_release ON scope_release.id = scope_match.edition_id
-            JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
-            WHERE scope_item.entity_type = 'track'
-              AND (scope_group.mbid = ? OR scope_release.mbid = ?)
-          )
+        OR lf.album_edition_id IN (
+          SELECT ed.id FROM AlbumEditions ed WHERE CAST(ed.id AS TEXT) = ? OR ed.mbid = ?
         )
       )`);
-      params.push(options.albumId, options.albumId, options.albumId, options.albumId);
+      params.push(editionTarget, editionTarget, editionTarget, editionTarget);
+    } else if (options.albumId) {
+      const albumTarget = String(options.albumId).trim();
+      where.push(`(
+        CAST(lf.release_group_id AS TEXT) = ?
+        OR lf.canonical_release_group_mbid = ?
+        OR lf.canonical_release_mbid = ?
+        OR lf.album_edition_id IN (
+          SELECT ed.id FROM AlbumEditions ed
+          JOIN Albums alb ON alb.id = ed.release_group_id
+          WHERE CAST(alb.id AS TEXT) = ? OR alb.mbid = ? OR ed.mbid = ?
+        )
+      )`);
+      params.push(albumTarget, albumTarget, albumTarget, albumTarget, albumTarget, albumTarget);
     }
 
     return { where, params };

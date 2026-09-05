@@ -1004,6 +1004,8 @@ class ApiClient {
     const queryParams = new URLSearchParams();
     if (params?.mediaId) queryParams.set('mediaId', params.mediaId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
+    if (params?.editionId) queryParams.set('editionId', String(params.editionId));
+    if (params?.releaseMbid) queryParams.set('releaseMbid', params.releaseMbid);
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.fileType) queryParams.set('fileType', params.fileType);
     const query = queryParams.toString();
@@ -1013,6 +1015,8 @@ class ApiClient {
   async getLibraryRenameStatus(params?: {
     artistId?: string;
     albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
     libraryRoot?: string;
     fileTypes?: string[];
     sampleLimit?: number;
@@ -1032,6 +1036,8 @@ class ApiClient {
   async getLibraryRenamePreview(params?: {
     artistId?: string;
     albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
     libraryRoot?: string;
     fileTypes?: string[];
     limit?: number;
@@ -1049,7 +1055,10 @@ class ApiClient {
   async applyLibraryRenames(params: {
     ids?: number[];
     artistId?: string;
+    artistIds?: string[];
     albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
     libraryRoot?: string;
     fileTypes?: string[];
     applyAll?: boolean;
@@ -1063,12 +1072,16 @@ class ApiClient {
   async getRetagStatus(params?: {
     artistId?: string;
     albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
     sampleLimit?: number;
     scanLimit?: number;
   }) {
     const queryParams = new URLSearchParams();
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
+    if (params?.editionId) queryParams.set('editionId', String(params.editionId));
+    if (params?.releaseMbid) queryParams.set('releaseMbid', params.releaseMbid);
     if (params?.sampleLimit) queryParams.set('sampleLimit', params.sampleLimit.toString());
     if (params?.scanLimit) queryParams.set('scanLimit', params.scanLimit.toString());
     const query = queryParams.toString();
@@ -1078,11 +1091,15 @@ class ApiClient {
   async getRetagPreview(params?: {
     artistId?: string;
     albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
     limit?: number;
   }) {
     const queryParams = new URLSearchParams();
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
+    if (params?.editionId) queryParams.set('editionId', String(params.editionId));
+    if (params?.releaseMbid) queryParams.set('releaseMbid', params.releaseMbid);
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     const query = queryParams.toString();
     return this.request(`/retag${query ? `?${query}` : ''}`);
@@ -1093,6 +1110,8 @@ class ApiClient {
     artistId?: string;
     artistIds?: string[];
     albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
     applyAll?: boolean;
   }) {
     return this.request('/retag/apply', {
@@ -1105,6 +1124,8 @@ class ApiClient {
     ids?: number[];
     artistId?: string;
     albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
     applyAll?: boolean;
   }) {
     return this.request('/retag/strip', {

@@ -15,9 +15,9 @@ describe("SemanticStatusIcon", () => {
         expect(container.querySelector("svg")).toBeTruthy();
     });
 
-    it("draws Color glyphs slightly larger than Filled glyphs in the same slot", () => {
+    it("draws Color glyphs slightly larger than Filled glyphs in size 16 slot for geometric circle parity", () => {
         expect(statusIconGlyphPx("color", 16)).toBeGreaterThan(statusIconGlyphPx("filled", 16));
-        expect(statusIconGlyphPx("color", 24)).toBeGreaterThan(statusIconGlyphPx("filled", 24));
+        expect(statusIconGlyphPx("color", 24)).toBe(statusIconGlyphPx("filled", 24));
     });
 
     it("uses a neutral prohibited glyph for cancelled work", () => {

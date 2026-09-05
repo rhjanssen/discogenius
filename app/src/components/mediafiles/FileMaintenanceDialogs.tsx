@@ -67,6 +67,12 @@ const useStyles = makeStyles({
   dialog: {
     maxWidth: "840px",
     width: "100%",
+    "@media (max-width: 640px)": {
+      width: "calc(100vw - 16px)",
+      maxWidth: "100vw",
+      margin: "8px",
+      padding: "12px",
+    },
   },
   summary: {
     display: "flex",
@@ -106,6 +112,10 @@ const useStyles = makeStyles({
     transition: "background-color 0.15s ease",
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    },
+    "@media (max-width: 640px)": {
+      gap: tokens.spacingHorizontalS,
+      padding: tokens.spacingVerticalS,
     },
   },
   item: {
@@ -175,13 +185,74 @@ const useStyles = makeStyles({
   },
   tagChangeRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(130px, 180px) minmax(0, 1fr) auto minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(120px, 160px) minmax(0, 1fr)",
     alignItems: "center",
-    gap: tokens.spacingHorizontalS,
+    gap: tokens.spacingHorizontalM,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
     borderRadius: tokens.borderRadiusSmall,
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke3}`,
+    "@media (max-width: 640px)": {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "stretch",
+      gap: tokens.spacingVerticalXXS,
+      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    },
+  },
+  tagDiffContainer: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    minWidth: 0,
+    "@media (max-width: 640px)": {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "stretch",
+      gap: tokens.spacingVerticalXXS,
+      backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+      padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+      borderRadius: tokens.borderRadiusSmall,
+      border: `1px solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
+  tagDiffValueBefore: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
+  tagDiffValueAfter: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
+  tagDiffArrow: {
+    flexShrink: 0,
+    color: tokens.colorNeutralForeground4,
+    "@media (max-width: 640px)": {
+      display: "none",
+    },
+  },
+  tagDiffIndicatorOld: {
+    display: "none",
+    color: tokens.colorPaletteRedForeground2,
+    flexShrink: 0,
+    "@media (max-width: 640px)": {
+      display: "inline-flex",
+    },
+  },
+  tagDiffIndicatorNew: {
+    display: "none",
+    color: tokens.colorPaletteGreenForeground2,
+    flexShrink: 0,
+    "@media (max-width: 640px)": {
+      display: "inline-flex",
+    },
   },
   tagFieldLabel: {
     display: "inline-flex",
@@ -495,8 +566,8 @@ export function RetagPreviewDialog({
                       />
                       <div className={styles.item}>
                         <div className={styles.headerLine}>
-                          <Record20Regular />
-                          <span>{item.path}</span>
+                          <Record20Regular style={{ flexShrink: 0 }} />
+                          <span style={{ overflowWrap: "anywhere", minWidth: 0 }}>{item.path}</span>
                         </div>
                         {item.missing ? (
                           <div className={styles.warningBanner}>
@@ -514,9 +585,17 @@ export function RetagPreviewDialog({
                               <Tag16Regular />
                               {change.field}
                             </span>
-                            <TagValueDisplay value={change.oldValue} isNew={false} />
-                            <ArrowRight16 style={{ flexShrink: 0, color: tokens.colorNeutralForeground4 }} />
-                            <TagValueDisplay value={change.newValue} isNew={true} />
+                            <div className={styles.tagDiffContainer}>
+                              <div className={styles.tagDiffValueBefore}>
+                                <SubtractCircle16Filled className={styles.tagDiffIndicatorOld} />
+                                <TagValueDisplay value={change.oldValue} isNew={false} />
+                              </div>
+                              <ArrowRight16 className={styles.tagDiffArrow} />
+                              <div className={styles.tagDiffValueAfter}>
+                                <AddCircle16Filled className={styles.tagDiffIndicatorNew} />
+                                <TagValueDisplay value={change.newValue} isNew={true} />
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>

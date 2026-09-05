@@ -513,7 +513,7 @@ test("isTagValueEqual compares multi-value tags and dates with semantic toleranc
   // Genre delimiters
   assert.equal(isTagValueEqual("genre", "Rock / Pop Rock", "Rock, Pop Rock"), true);
   assert.equal(isTagValueEqual("genre", "Rock; Pop Rock", "Rock / Pop Rock"), true);
-  assert.equal(isTagValueEqual("genre", "Rock / Pop", "Pop / Rock"), false);
+  assert.equal(isTagValueEqual("genre", "Rock / Pop", "Pop / Rock"), true);
 
   // Date normalization
   assert.equal(isTagValueEqual("date", "2016-04-29", "2016-04-29"), true);

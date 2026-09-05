@@ -299,6 +299,8 @@ export interface RenameFilesCommand extends CommandBodyCommon {
   ids?: number[];
   artistId?: string;
   albumId?: string;
+  editionId?: string | number;
+  releaseMbid?: string;
   libraryRoot?: string;
   fileTypes?: string[];
   applyAll?: boolean;
@@ -376,6 +378,8 @@ export interface RetagFilesCommand extends CommandBodyCommon {
   mediaIds?: Array<string | number>;
   artistId?: string;
   albumId?: string;
+  editionId?: string | number;
+  releaseMbid?: string;
   applyAll?: boolean;
   /** When true, remove embedded tags without rewriting catalog metadata. */
   stripOnly?: boolean;

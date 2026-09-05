@@ -2,10 +2,10 @@ import type { CSSProperties } from "react";
 
 export type StatusIconWeight = "color" | "filled" | "regular";
 
-/** Optical compensation for Color and Filled artwork in the same fixed slot. */
+/** Optical compensation for Color, Filled, and Regular artwork in the same fixed slot. */
 const GLYPH_PX = {
-    color: { 16: 17, 24: 25 },
-    filled: { 16: 15, 24: 22 },
+    color: { 16: 18.5, 24: 24 },
+    filled: { 16: 16, 24: 24 },
     regular: { 16: 16, 24: 24 },
 } as const;
 

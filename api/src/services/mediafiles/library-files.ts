@@ -395,6 +395,8 @@ export type RenameApplyResult = {
 export type RenameScopeOptions = {
   artistId?: string;
   albumId?: string;
+  editionId?: string | number;
+  releaseMbid?: string;
   libraryRoot?: string;
   fileTypes?: string[];
   limit?: number;

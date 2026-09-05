@@ -87,7 +87,7 @@ test("applyAll retag rejects an unscoped library-wide request", async () => {
   await handler({ body: { applyAll: true } }, res);
 
   assert.equal(res.statusCode, 400);
-  assert.match(res.body.detail, /artistId, artistIds, or albumId/);
+  assert.match(res.body.detail, /artistId, artistIds, albumId, or editionId/);
   const commandCount = dbModule.db.prepare("SELECT COUNT(*) AS count FROM commands").get() as { count: number };
   assert.equal(commandCount.count, 0);
 });

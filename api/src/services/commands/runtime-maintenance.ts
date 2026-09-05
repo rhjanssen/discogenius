@@ -4,6 +4,7 @@ import path from "path";
 import { db } from "../../database.js";
 import { Config, CONFIG_DIR } from "../config/config.js";
 import { invalidateAllDownloadState } from "../download/download-state.js";
+import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-files.js";
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
@@ -363,6 +364,11 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
       AND COALESCE(completed_at, updated_at) < datetime('now', '-1 day')
   `).run();
   summary.historyJobsPruned = pruneResult.changes + staleVideoRetag.changes;
+  try {
+    DownloadWaitQueue.recoverOrphanClaims();
+  } catch (orphanErr) {
+    console.warn("[Maintenance] Failed to recover orphan wait queue claims:", orphanErr);
+  }
 
   if (
     summary.duplicateTrackedAssetsRemoved > 0 ||

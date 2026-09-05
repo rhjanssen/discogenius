@@ -1076,7 +1076,6 @@ export class DownloadQueueQueryService {
   }
 
   private static buildQueue(params: { limit: number; offset: number }): QueueListResponseContract {
-    DownloadWaitQueue.recoverOrphanClaims();
     const total = countActiveWaitRows();
     const rows = db.prepare(`
       ${WAIT_QUEUE_LIST_SQL}

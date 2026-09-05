@@ -1,4 +1,4 @@
-import { CommandTrigger } from "../services/commands/command-trigger.js";
+import { CommandPriority, CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
@@ -54,12 +54,14 @@ router.get("/rename/preview", (req, res) => {
   try {
     const artistId = req.query.artistId as string | undefined;
     const albumId = req.query.albumId as string | undefined;
+    const editionId = req.query.editionId as string | undefined;
+    const releaseMbid = req.query.releaseMbid as string | undefined;
     const libraryRoot = req.query.libraryRoot as string | undefined;
     const fileTypes = parseFileTypes(req.query.fileTypes);
     const limit = parseBoundedQueryInteger(req.query.limit, 200, { min: 1, max: 500 });
     const offset = parseBoundedQueryInteger(req.query.offset, 0);
 
-    const items = RenameTrackFileService.getRenamePreviews({ artistId, albumId, libraryRoot, fileTypes, limit, offset });
+    const items = RenameTrackFileService.getRenamePreviews({ artistId, albumId, editionId, releaseMbid, libraryRoot, fileTypes, limit, offset });
     res.json({ items, limit, offset });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -70,12 +72,14 @@ router.get("/rename/status", (req, res) => {
   try {
     const artistId = req.query.artistId as string | undefined;
     const albumId = req.query.albumId as string | undefined;
+    const editionId = req.query.editionId as string | undefined;
+    const releaseMbid = req.query.releaseMbid as string | undefined;
     const libraryRoot = req.query.libraryRoot as string | undefined;
     const fileTypes = parseFileTypes(req.query.fileTypes);
     const sampleLimit = parseBoundedQueryInteger(req.query.sampleLimit, 10, { min: 1, max: 100 });
     const scanLimit = parseBoundedQueryInteger(req.query.scanLimit, 25, { min: 1, max: 500 });
 
-    const summary = RenameTrackFileService.getRenameStatus({ artistId, albumId, libraryRoot, fileTypes, limit: scanLimit }, sampleLimit);
+    const summary = RenameTrackFileService.getRenameStatus({ artistId, albumId, editionId, releaseMbid, libraryRoot, fileTypes, limit: scanLimit }, sampleLimit);
     res.json(summary);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -91,38 +95,53 @@ router.post("/rename/apply", async (req, res) => {
     }
 
     const artistId = (req.body as any)?.artistId as string | undefined;
+    const rawArtistIds = (req.body as any)?.artistIds;
+    const artistIds = Array.isArray(rawArtistIds)
+      ? rawArtistIds.map((id) => String(id ?? "").trim()).filter(Boolean)
+      : (artistId ? [artistId.trim()] : undefined);
     const albumId = (req.body as any)?.albumId as string | undefined;
+    const editionId = (req.body as any)?.editionId != null ? String((req.body as any).editionId).trim() : undefined;
+    const releaseMbid = typeof (req.body as any)?.releaseMbid === "string" ? (req.body as any).releaseMbid.trim() : undefined;
     const libraryRoot = (req.body as any)?.libraryRoot as string | undefined;
     const fileTypes = parseFileTypes((req.body as any)?.fileTypes);
     const normalizedIds = ids && Array.isArray(ids)
       ? ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
       : undefined;
+
+    if (applyAll && (!artistIds || artistIds.length === 0) && !albumId && !editionId) {
+      return res.status(400).json({ detail: "artistId, artistIds, albumId, or editionId is required when applyAll is true" });
+    }
+
     const isArtistWideRename = applyAll
-      && Boolean(artistId)
+      && Boolean(artistIds && artistIds.length > 0)
       && !albumId
+      && !editionId
+      && !releaseMbid
       && !libraryRoot
       && (!fileTypes || fileTypes.length === 0)
       && (!normalizedIds || normalizedIds.length === 0);
     const refId = applyAll
       ? (isArtistWideRename
-        ? artistId
-        : `rename-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null, libraryRoot: libraryRoot || null, fileTypes: fileTypes || [] })}`)
+        ? (artistIds && artistIds.length === 1 ? artistIds[0] : `rename-artist-bulk:${artistIds?.length ?? 0}`)
+        : `rename-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null, editionId: editionId || null, releaseMbid: releaseMbid || null, libraryRoot: libraryRoot || null, fileTypes: fileTypes || [] })}`)
       : undefined;
 
     const commandId = await runWithAsyncBusyRetry(
-      () => isArtistWideRename
+      () => isArtistWideRename && artistIds && artistIds.length > 0
         ? CommandQueueManager.push(CommandNames.RenameArtist, {
-          artistId,
-          artistIds: artistId ? [artistId] : undefined,
-        }, refId, 1, 1)
+          artistId: artistIds[0],
+          artistIds,
+        }, refId, CommandPriority.Interactive, CommandTrigger.Manual)
         : CommandQueueManager.push(CommandNames.RenameFiles, {
           ids: normalizedIds,
           applyAll,
-          artistId,
+          artistId: artistIds?.[0] ?? artistId,
           albumId,
+          editionId,
+          releaseMbid,
           libraryRoot,
           fileTypes,
-        }, refId, 1, 1),
+        }, refId, CommandPriority.Interactive, CommandTrigger.Manual),
       30,
       200,
     );

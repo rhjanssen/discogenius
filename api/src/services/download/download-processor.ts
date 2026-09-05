@@ -809,11 +809,25 @@ export class DownloadProcessor {
 
         console.log(`[DOWNLOAD-PROCESSOR] Importing command #${commandId}: ${type} ${providerId} (${this.activeImports.size + 1}/${MAX_CONCURRENT_IMPORTS} slots)`);
 
-        const emitImportProgress = (state: Parameters<typeof this.persistDownloadState>[1]) => {
+        const emitImportProgress = (state: any) => {
             this.persistDownloadState(commandId, state, workerId);
             const currentJob = CommandQueueManager.get(commandId);
             const currentDownloadState = (currentJob?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
-            const tracks = state.tracks ?? currentDownloadState.tracks;
+            let tracks = state.tracks ?? currentDownloadState.tracks;
+            if (tracks && tracks.length > 0 && (state.currentProviderTrackId || state.currentTrackNum != null || state.currentTrack)) {
+                tracks = tracks.map((track: any) => {
+                    const matchesId = state.currentProviderTrackId && track.providerTrackId && String(track.providerTrackId).trim() === String(state.currentProviderTrackId).trim();
+                    const matchesNum = state.currentTrackNum != null && track.trackNum === state.currentTrackNum && (state.currentVolumeNum == null || (track as any).volumeNum == null || (track as any).volumeNum === state.currentVolumeNum);
+                    const matchesTitle = state.currentTrack && track.title && track.title.toLowerCase().trim() === state.currentTrack.toLowerCase().trim();
+                    if (matchesId || matchesNum || matchesTitle) {
+                        return {
+                            ...track,
+                            status: state.trackStatus === 'completed' ? 'completed' : 'downloading',
+                        };
+                    }
+                    return track;
+                });
+            }
             downloadEvents.emitProgress(commandId, {
                 providerId,
                 type,
@@ -1146,7 +1160,7 @@ export class DownloadProcessor {
         eta?: string;
         size?: number;
         sizeleft?: number;
-        tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
+        tracks?: { title: string; trackNum?: number; volumeNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
         outcome?: 'ok' | 'completedWithWarning';
         warningMessage?: string;
         primaryProvider?: string;

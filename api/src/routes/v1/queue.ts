@@ -80,14 +80,14 @@ function normalizeDownloadMediaType(value: unknown): DownloadMediaType | null {
  * GET /api/v1/queue
  * List all active download queue items
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', (req: Request, res: Response) => {
   try {
     const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '100'), 10) || 100));
     const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
-    res.json(await runQueueUserWrite(() => DownloadQueueQueryService.getQueue({ limit, offset })));
+    res.json(DownloadQueueQueryService.getQueue({ limit, offset }));
   } catch (error: any) {
     console.error('[QUEUE-API] Error getting queue:', error);
-    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to get queue', message: error.message });
+    res.status(500).json({ error: 'Failed to get queue', message: error.message });
   }
 });
 
@@ -344,12 +344,12 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
  * GET /api/v1/queue/status
  * Get active download queue status (isPaused, processing, currentItem)
  */
-router.get('/status', async (_req: Request, res: Response) => {
+router.get('/status', (_req: Request, res: Response) => {
   try {
-    res.json(await runQueueUserWrite(() => DownloadQueueQueryService.getQueueStatus()));
+    res.json(DownloadQueueQueryService.getQueueStatus());
   } catch (error: any) {
     console.error('[QUEUE-API] Error getting status:', error);
-    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to get status', message: error.message });
+    res.status(500).json({ error: 'Failed to get status', message: error.message });
   }
 });
 

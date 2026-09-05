@@ -71,7 +71,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             filter,
             trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
             onProgress: (event) => {
-                ctx.updateCommandDescription(job, {
+                ctx.updateCommandDescription(job as any, {
                     progress: event.progress,
                     description: `${baseLabel} - ${event.message}`,
                 });
@@ -215,6 +215,8 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
         : RenameTrackFileService.executeRenameFilesByQuery({
             artistId: job.payload.artistId,
             albumId: job.payload.albumId,
+            editionId: job.payload.editionId,
+            releaseMbid: job.payload.releaseMbid,
             libraryRoot: job.payload.libraryRoot,
             fileTypes: job.payload.fileTypes,
         });
@@ -243,7 +245,7 @@ function makeRetagProgress(
         const step = Math.max(1, Math.floor(total / 50));
         if (completed !== total && completed - lastReported < step) return;
         lastReported = completed;
-        ctx.updateCommandDescription(job, {
+        ctx.updateCommandDescription(job as any, {
             progress: 5 + Math.floor((completed / Math.max(total, 1)) * 90),
             description: `${label} - writing file ${completed}/${total}`,
         });
@@ -285,6 +287,8 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             result = await AudioTagService.stripTagsByScope({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
+                editionId: job.payload.editionId,
+                releaseMbid: job.payload.releaseMbid,
             });
         }
         ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
@@ -339,6 +343,8 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             : await AudioTagService.applyByQuery({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
+                editionId: job.payload.editionId,
+                releaseMbid: job.payload.releaseMbid,
                 onProgress: makeRetagProgress(ctx, job, 'Retag Files'),
             });
     }

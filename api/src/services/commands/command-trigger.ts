@@ -18,6 +18,7 @@ export const CommandPriority = {
   Low: -1,
   Normal: 0,
   High: 1,
+  Interactive: 2,
 } as const;
 
 export type CommandPriority = typeof CommandPriority[keyof typeof CommandPriority];

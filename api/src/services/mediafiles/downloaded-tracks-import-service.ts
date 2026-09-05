@@ -266,6 +266,9 @@ export type ImportDownloadState = {
     currentFileNum?: number;
     totalFiles?: number;
     currentTrack?: string;
+    currentTrackNum?: number | null;
+    currentVolumeNum?: number | null;
+    currentProviderTrackId?: string | null;
     trackProgress?: number;
     trackStatus?: "queued" | "downloading" | "completed" | "error" | "skipped";
     statusMessage?: string;
@@ -1181,6 +1184,9 @@ export class DownloadedTracksImportService {
                         currentFileNum: progress.currentFileNum,
                         totalFiles: progress.totalFiles,
                         currentTrack: progress.currentTrack,
+                        currentTrackNum: progress.currentTrackNum,
+                        currentVolumeNum: progress.currentVolumeNum,
+                        currentProviderTrackId: progress.currentProviderTrackId,
                         trackProgress: progress.totalFiles === 1 && progress.currentFileNum === 1 ? 100 : undefined,
                         trackStatus: progress.trackStatus ?? (progress.phase === "finalizing" ? "completed" : progress.currentTrack ? "downloading" : undefined),
                         statusMessage: progress.statusMessage,

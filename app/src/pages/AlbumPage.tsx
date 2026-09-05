@@ -1366,7 +1366,7 @@ const AlbumPage = () => {
     if (!albumId) return;
     setRenameApplying(true);
     try {
-      const response = await api.getLibraryRenamePreview({ albumId, limit: 1000 }) as { items: RenamePreviewItem[] };
+      const response = await api.getLibraryRenamePreview({ albumId, editionId: activeTabEditionId ?? undefined, limit: 1000 }) as { items: RenamePreviewItem[] };
       const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename || item.drop_duplicate);
       setRenamePreviewItems(items);
       setRenamePreviewOpen(true);
@@ -1385,7 +1385,7 @@ const AlbumPage = () => {
     if (!albumId) return;
     setRenameApplying(true);
     try {
-      const result: any = await api.applyLibraryRenames(ids.length > 0 ? { ids } : { applyAll: true, albumId });
+      const result: any = await api.applyLibraryRenames(ids.length > 0 ? { ids } : { applyAll: true, albumId, editionId: activeTabEditionId ?? undefined });
       toast({
         title: "Rename queued",
         description: result?.message || "Queued album file renaming.",
@@ -1408,7 +1408,7 @@ const AlbumPage = () => {
     if (!albumId) return;
     setRetagApplying(true);
     try {
-      const response = await api.getRetagPreview({ albumId, limit: 1000 }) as { items: RetagPreviewItem[] };
+      const response = await api.getRetagPreview({ albumId, editionId: activeTabEditionId ?? undefined, limit: 1000 }) as { items: RetagPreviewItem[] };
       setRetagPreviewItems(response.items);
       setRetagPreviewOpen(true);
     } catch (error) {
@@ -1426,7 +1426,7 @@ const AlbumPage = () => {
     if (!albumId) return;
     setRetagApplying(true);
     try {
-      const result: any = await api.applyRetags(ids.length > 0 ? { ids } : { applyAll: true, albumId });
+      const result: any = await api.applyRetags(ids.length > 0 ? { ids } : { applyAll: true, albumId, editionId: activeTabEditionId ?? undefined });
       toast({
         title: "Retag queued",
         description: result?.message || "Queued album metadata tag writing.",

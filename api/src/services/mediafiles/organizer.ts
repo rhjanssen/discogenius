@@ -225,6 +225,9 @@ type OrganizeRequest = {
     currentFileNum?: number;
     totalFiles?: number;
     currentTrack?: string;
+    currentTrackNum?: number | null;
+    currentVolumeNum?: number | null;
+    currentProviderTrackId?: string | null;
     trackStatus?: "downloading" | "completed" | "error" | "skipped";
     statusMessage?: string;
   }) => void;
@@ -2065,6 +2068,20 @@ export class OrganizerService {
       const processedEmbeddedVideoIds = new Set<string>();
       const albumTrackNamingTemplate = path.join(artistFolder, trackTemplate);
 
+      files.sort((a, b) => {
+        const idA = matchedTrackIdsByFile.get(a);
+        const idB = matchedTrackIdsByFile.get(b);
+        const offerA = idA ? trackOffersByProviderIdEarly.get(String(idA)) : undefined;
+        const offerB = idB ? trackOffersByProviderIdEarly.get(String(idB)) : undefined;
+        if (offerA?.volumeNum != null && offerB?.volumeNum != null && offerA.volumeNum !== offerB.volumeNum) {
+          return offerA.volumeNum - offerB.volumeNum;
+        }
+        if (offerA?.trackNum != null && offerB?.trackNum != null && offerA.trackNum !== offerB.trackNum) {
+          return offerA.trackNum - offerB.trackNum;
+        }
+        return path.basename(a).localeCompare(path.basename(b), undefined, { numeric: true, sensitivity: "base" });
+      });
+
       for (const srcFile of files) {
         const ext = path.extname(srcFile).toLowerCase();
         const base = path.basename(srcFile, ext);
@@ -2301,6 +2318,9 @@ export class OrganizerService {
           currentFileNum: destFiles.length + 1,
           totalFiles: totalImportableTracks,
           currentTrack: trackTitle,
+          currentTrackNum: trackNumber ?? null,
+          currentVolumeNum: volumeNumber ?? null,
+          currentProviderTrackId: trackId ? String(trackId) : null,
           trackStatus: "downloading",
           statusMessage: `Importing ${trackTitle}`,
         });
@@ -2444,8 +2464,11 @@ export class OrganizerService {
           currentFileNum: destFiles.length,
           totalFiles: totalImportableTracks,
           currentTrack: trackTitle,
+          currentTrackNum: trackNumber ?? null,
+          currentVolumeNum: volumeNumber ?? null,
+          currentProviderTrackId: trackId ? String(trackId) : null,
           trackStatus: "completed",
-          statusMessage: `Importing ${trackTitle}`,
+          statusMessage: `Imported ${trackTitle}`,
         });
       }
 

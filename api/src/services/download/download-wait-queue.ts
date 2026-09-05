@@ -725,6 +725,18 @@ export class DownloadWaitQueue {
   }
 
   static recoverOrphanClaims(): number {
+    const hasOrphans = db.prepare(`
+      SELECT 1
+      FROM DownloadQueue dq
+      LEFT JOIN commands c ON c.id = dq.command_id
+      WHERE dq.command_id IS NOT NULL
+        AND (c.id IS NULL OR c.status IN ('completed', 'cancelled', 'failed'))
+      LIMIT 1
+    `).get();
+    if (!hasOrphans) {
+      return 0;
+    }
+
     const completedOrGone = db.prepare(`
       DELETE FROM DownloadQueue
       WHERE id IN (

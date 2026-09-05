@@ -1357,9 +1357,11 @@ const Library = () => {
           onDownload={queueSelectedArtistDownload}
           onRename={() => fileMaintenance.openRenamePreview({
             artistIds: artistSelection.selectedItems.map((artist: any) => String(artist.id)),
+            artistNames: artistSelection.selectedItems.map((artist: any) => artist.name || "Unknown Artist"),
           })}
           onWriteTags={() => fileMaintenance.openRetagPreview({
             artistIds: artistSelection.selectedItems.map((artist: any) => String(artist.id)),
+            artistNames: artistSelection.selectedItems.map((artist: any) => artist.name || "Unknown Artist"),
           })}
           onMonitor={() => void applyArtistLibraryChange("monitor", artistSelection.selectedItems, "all")}
           onNew={() => void applyArtistLibraryChange("policy", artistSelection.selectedItems, "new")}

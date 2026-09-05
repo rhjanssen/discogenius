@@ -151,6 +151,8 @@ function findActiveAlbumTrackIndex(
         currentFileNum?: number;
         currentTrack?: string | null;
         currentProviderTrackId?: string | null;
+        currentTrackNum?: number | null;
+        currentVolumeNum?: number | null;
         state?: string;
     } | undefined,
     tracks?: Array<{ title: string; trackNum?: number; volumeNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
@@ -161,6 +163,16 @@ function findActiveAlbumTrackIndex(
 
     if (progress?.currentProviderTrackId) {
         const matchedIndex = tracks.findIndex((track) => matchesProviderTrackId(track.providerTrackId, progress.currentProviderTrackId));
+        if (matchedIndex >= 0) {
+            return matchedIndex;
+        }
+    }
+
+    if (typeof progress?.currentTrackNum === 'number' && progress.currentTrackNum > 0) {
+        const matchedIndex = tracks.findIndex((track) =>
+            track.trackNum === progress.currentTrackNum
+            && (progress.currentVolumeNum == null || track.volumeNum == null || track.volumeNum === progress.currentVolumeNum)
+        );
         if (matchedIndex >= 0) {
             return matchedIndex;
         }
@@ -197,7 +209,7 @@ function inferAlbumTrackStatus(
         return 'skipped';
     }
 
-    if (progress?.state === 'completed') {
+    if (progress?.state === 'completed' || progress?.state === 'finalizing') {
         return 'completed';
     }
 
@@ -235,10 +247,6 @@ function inferAlbumTrackStatus(
             }
 
             if (progress?.trackStatus === 'completed') {
-                if (isImportPhase && progress.state === 'importing' && (progress.progress ?? 100) < 100) {
-                    return 'downloading';
-                }
-
                 return 'completed';
             }
 

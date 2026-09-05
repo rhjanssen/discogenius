@@ -127,27 +127,40 @@ export function buildRenameFilters(options: RenameScopeOptions = {}): { where: s
     where.push(`CAST(lf.artist_metadata_id AS TEXT) IN (${keys.map(() => "?").join(",")})`);
     params.push(...keys);
   }
-  if (options.albumId) {
+  const editionTarget = options.releaseMbid
+    ? String(options.releaseMbid).trim()
+    : (options.editionId != null ? String(options.editionId).trim() : null);
+
+  if (editionTarget) {
+    where.push(`(
+        lf.canonical_release_mbid = ?
+        OR (
+          lf.file_type = 'track' AND (
+            CAST(lf.album_edition_id AS TEXT) = ?
+            OR lf.album_edition_id IN (
+              SELECT ed.id FROM AlbumEditions ed WHERE CAST(ed.id AS TEXT) = ? OR ed.mbid = ?
+            )
+          )
+        )
+      )`);
+    params.push(editionTarget, editionTarget, editionTarget, editionTarget);
+  } else if (options.albumId) {
+    const albumTarget = String(options.albumId).trim();
     where.push(`(
         lf.canonical_release_group_mbid = ?
         OR lf.canonical_release_mbid = ?
-        OR (lf.provider_entity_type, CAST(lf.provider_id AS TEXT)) IN (
-          -- Provider tracks reach an album through their edition membership and
-          -- that edition's accepted typed match; there are no MBID shadow columns.
-          SELECT scope_item.entity_type, CAST(scope_item.provider_id AS TEXT)
-          FROM ProviderItems scope_item
-          JOIN ProviderEditionMembers scope_member
-            ON scope_member.member_item_id = scope_item.id
-          JOIN ProviderEditionMatches scope_match
-            ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
-           AND scope_match.match_state = 'accepted'
-          JOIN AlbumEditions scope_edition ON scope_edition.id = scope_match.edition_id
-          JOIN Albums scope_album ON scope_album.id = scope_edition.release_group_id
-          WHERE scope_item.entity_type IN ('track', 'video')
-            AND (scope_album.mbid = ? OR scope_edition.mbid = ?)
+        OR (
+          lf.file_type = 'track' AND (
+            CAST(lf.release_group_id AS TEXT) = ?
+            OR lf.album_edition_id IN (
+              SELECT ed.id FROM AlbumEditions ed
+              JOIN Albums alb ON alb.id = ed.release_group_id
+              WHERE CAST(alb.id AS TEXT) = ? OR alb.mbid = ? OR ed.mbid = ?
+            )
+          )
         )
       )`);
-    params.push(options.albumId, options.albumId, options.albumId, options.albumId);
+    params.push(albumTarget, albumTarget, albumTarget, albumTarget, albumTarget);
   }
   if (options.libraryRoot) {
     const rootValues = getLibraryRootFilterValues(options.libraryRoot);

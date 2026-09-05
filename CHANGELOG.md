@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.1] - 2026-09-05
+
+### Changed
+
+- **Lidarr Task Priority Alignment:**
+  - Added `CommandPriority.Interactive = 2` to the command engine. User-initiated interactive operations (`RetagArtist`, `RetagFiles`, `RenameArtist`, `RenameFiles`) now preempt background catalog intake and maintenance tasks (`RefreshArtist`, etc.), matching Lidarr's command queue behavior and eliminating command starvation.
+
+- **Edition-Scoped Retagging & Renaming:**
+  - Scoped album retag and rename previews and executions to the active edition tab (`activeTabEditionId`) on multi-edition albums, preventing multi-edition cross-contamination.
+  - Eliminated leaky `ProviderItems` cross-joins in `AudioTagService` and `RenameTrackFileService`, isolating tag and path operations strictly to canonical catalog track files and linked edition IDs.
+
+- **Lidarr-Aligned Multi-Value Tag Comparison:**
+  - Implemented unordered set comparison for multi-value tags (`genre`, `label`) in `AudioTagService`, matching Lidarr's `ISet<string>` semantics. Tag order differences across delimiters (e.g. `Pop / Rock` vs `Rock / Pop`) are recognized as matching and no longer generate false-positive retag differences.
+
+- **Mobile Tag Diff & Rename Preview Redesign:**
+  - Redesigned `RetagPreviewDialog` for mobile screens (`@media (max-width: 640px)`), replacing cramped 4-column grids with a stacked field header and vertical diff container featuring clear color-coded diff badges, eliminating horizontal squeezing.
+  - Improved `RenamePreviewDialog` layout on mobile viewports to prevent path overflow and horizontal scroll.
+
+- **Lidarr-Parity Bulk Organize & Retag Modals:**
+  - Implemented lightweight confirmation modals for multi-artist selections (`Organize Selected Artists` and `Retag Selected Artists`) matching Lidarr (`OrganizeArtistModalContent.tsx` / `RetagArtistModalContent.tsx`).
+  - Added Fluent UI `MessageBar` informational tips guiding users to individual pages for file-by-file previews.
+  - Rendered a scrollable artist roster with `Person16Regular` icons and count summaries.
+  - Modals dismiss immediately upon action trigger, dispatching interactive background commands and refreshing global activity indicators.
+
+- **Queue & Status Icon Polish:**
+  - Normalized semantic status icon dimensions across Queue, Activity, and streaming import modals.
+  - Improved real-time track progress reporting during download import processing.
 ## [2.16.0] - 2026-09-04
 
 ### Changed
