@@ -1000,7 +1000,14 @@ class ApiClient {
   }
 
   // Managed media-file endpoints
-  async getLibraryFiles(params?: { mediaId?: string; albumId?: string; artistId?: string; fileType?: string }): Promise<LibraryFilesListResponseContract> {
+  async getLibraryFiles(params?: {
+    mediaId?: string;
+    albumId?: string;
+    editionId?: number | string;
+    releaseMbid?: string;
+    artistId?: string;
+    fileType?: string;
+  }): Promise<LibraryFilesListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.mediaId) queryParams.set('mediaId', params.mediaId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
