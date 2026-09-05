@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.3] - 2026-09-05
+
+### Changed
+
+- **Naming Token Help Modal Visual & Scrolling Polish:**
+  - Fixed Fluent UI dialog body grid layout (`"title action" "content content" "actions actions"`) so the modal header title and top-right dismiss button stay cleanly on the top row.
+  - Constrained dialog surface height to viewport (`85vh` desktop, `100vh` mobile) with scrollable token list content, ensuring the bottom footer with template input and action button remains permanently visible and sticky.
+  - Verified end-to-end interactive token clicking, insertion at cursor position, and real-time settings preview updates via live browser testing.
+
 ## [2.16.2] - 2026-09-05
 
 ### Changed
