@@ -58,13 +58,13 @@ function retryDelayForAttempt(attempt: number, baseMs: number, maxMs: number): n
  * One deterministic lease/no-progress watchdog pass. Exported so recovery can
  * be verified without starting the executor's perpetual polling loop.
  */
-export function recoverStaleNonDownloadCommands(options: {
+export async function recoverStaleNonDownloadCommands(options: {
     now?: Date;
     noProgressMs: number;
     maxAttempts: number;
     retryBaseMs: number;
     retryMaxMs: number;
-}): CommandWatchdogPassResult {
+}): Promise<CommandWatchdogPassResult> {
     const stale = CommandQueueManager.findStaleExecutionLeases({
         types: NON_DOWNLOAD_COMMAND_NAMES,
         now: options.now,
@@ -75,7 +75,8 @@ export function recoverStaleNonDownloadCommands(options: {
     let failed = 0;
 
     for (const command of stale) {
-        const result = CommandQueueManager.recoverOwnedCommand({
+        await CommandWorkerPool.abortCommandAndWait(command.id, command.workerId, `Command watchdog recovered ${command.reason}`);
+        const result = await withSqliteWriteGate(() => CommandQueueManager.recoverOwnedCommand({
             id: command.id,
             workerId: command.workerId,
             reason: `${command.reason}; last heartbeat ${command.heartbeatAt ?? "never"}, last progress ${command.lastProgressAt ?? "never"}`,
@@ -89,14 +90,9 @@ export function recoverStaleNonDownloadCommands(options: {
                 options.retryMaxMs,
             ),
             now: options.now,
-        });
+        }), "commands:recover-stale");
         if (result.outcome === "not-owner") continue;
 
-        CommandWorkerPool.abortCommand(
-            command.id,
-            command.workerId,
-            `Command watchdog recovered ${command.reason}`,
-        );
         if (result.outcome === "requeued") requeued += 1;
         if (result.outcome === "failed") failed += 1;
         console.warn(
@@ -190,17 +186,18 @@ export class CommandExecutor {
         // for a full busy_timeout — measured at a 1.0s median and 5s worst case,
         // which is the server "hanging" under refresh load. Waiting for the gate
         // is a promise, so the loop keeps serving while it waits.
-        await withSqliteWriteGate(() => recoverStaleNonDownloadCommands({
+        await recoverStaleNonDownloadCommands({
             noProgressMs: COMMAND_NO_PROGRESS_MS,
             maxAttempts: COMMAND_MAX_ATTEMPTS,
             retryBaseMs: COMMAND_RETRY_BASE_MS,
             retryMaxMs: COMMAND_RETRY_MAX_MS,
-        }), "commands:recover-stale");
+        });
     }
 
     private static async loop() {
         while (this.isRunning) {
             try {
+                await this.maybeRecoverStaleJobs();
                 // Try to fill all available slots
                 const executorSlots = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
                 // Imports share this pool. Do not claim a durable command until

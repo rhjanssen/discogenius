@@ -4,15 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
+import { prepareActiveSchemaEnv, createActiveSchema } from "../../test-support/active-schema-fixture.js";
+prepareActiveSchemaEnv("planning-active");
 import { buildAcquisitionDownloadCommand } from "./acquisition-plan-executor.js";
 import { resolveEnabledAudioLibraryTarget } from "./acquisition-download-command.js";
 import { AcquisitionPlanningService, listStrandedMonitoredEditions, replanMonitoredEditions } from "./acquisition-planning-service.js";
 
 function seedStandardDeluxeFixture(db: Database.Database): number {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
-db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album A')").run();
-  db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Album A')").run();
+db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title, artist_mbid) VALUES (1, 'group-a', 1, 'Album A', (SELECT mbid FROM ArtistMetadata WHERE id = 1))").run();
+  db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title, release_group_mbid, artist_mbid) VALUES (1, 'release-a', 1, 'Album A', (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1))").run();
   db.prepare(`
     INSERT INTO Recordings (id, mbid, title) VALUES
       (1, 'recording-1', 'One'),
@@ -20,11 +21,10 @@ db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 
       (3, 'recording-3', 'Three'),
       (4, 'recording-4', 'Four')
   `).run();
-  const insertTrack = db.prepare(`
-    INSERT INTO Tracks (
-      id, mbid, album_edition_id, recording_id, medium_position, position, title
-    ) VALUES (?, ?, 1, ?, 1, ?, ?)
+  const insertTrackStatement = db.prepare(`
+    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, release_mbid, recording_mbid) VALUES (@p1, @p2, 1, @p3, 1, @p4, @p5, (SELECT mbid FROM AlbumEditions WHERE id = 1), (SELECT mbid FROM Recordings WHERE id = @p3))
   `);
+  const insertTrack = { run: (...values: unknown[]) => insertTrackStatement.run(Object.fromEntries(values.map((value, i) => [`p${i + 1}`, value]))) };
   ["One", "Two", "Three", "Four"].forEach((title, index) =>
     insertTrack.run(index + 1, `track-${index + 1}`, index + 1, index + 1, title));
 
@@ -126,12 +126,12 @@ db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 
   return 1;
 }
 
-test("planning service materializes HIGH coherent and MAX justified composite plans", () => {
+test("planning service materializes HIGH coherent and MAX justified composite plans", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-acquisition-planning-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    await createActiveSchema(db);
     seedStandardDeluxeFixture(db);
     const service = new AcquisitionPlanningService(db);
 
@@ -256,8 +256,8 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
     db.prepare(`
       INSERT INTO TrackFiles (
         library_id, album_edition_id, track_id, recording_id, file_path,
-        relative_path, filename, extension, file_class
-      ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac', 'flac', 'audio')
+        relative_path, filename, extension, file_class, library_root, file_type
+      ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac', 'flac', 'audio', '/library/stereo', 'track')
     `).run();
     const partialCommand = buildAcquisitionDownloadCommand(db, maxPlanId!);
     assert.deepEqual(
@@ -286,21 +286,20 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
  */
 function seedSplitRecordingIsrcFixture(db: Database.Database): void {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
-db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album A')").run();
+db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title, artist_mbid) VALUES (1, 'group-a', 1, 'Album A', (SELECT mbid FROM ArtistMetadata WHERE id = 1))").run();
   db.prepare(`
-    INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES
-      (1, 'release-target', 1, 'Album A'),
-      (2, 'release-sibling', 1, 'Album A (Japan)')
+    INSERT INTO AlbumEditions (id, mbid, release_group_id, title, release_group_mbid, artist_mbid) VALUES (1, 'release-target', 1, 'Album A', (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1)),
+      (2, 'release-sibling', 1, 'Album A (Japan)', (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1))
   `).run();
   db.prepare(`
     INSERT INTO Recordings (id, mbid, title) VALUES
       (1, 'recording-1', 'One'), (2, 'recording-2', 'Two'),
       (11, 'recording-11', 'One'), (12, 'recording-12', 'Two')
   `).run();
-  const insertTrack = db.prepare(`
-    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
-    VALUES (?, ?, ?, ?, 1, ?, ?)
+  const insertTrackStatement = db.prepare(`
+    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, release_mbid, recording_mbid) VALUES (@p1, @p2, @p3, @p4, 1, @p5, @p6, (SELECT mbid FROM AlbumEditions WHERE id = @p3), (SELECT mbid FROM Recordings WHERE id = @p4))
   `);
+  const insertTrack = { run: (...values: unknown[]) => insertTrackStatement.run(Object.fromEntries(values.map((value, i) => [`p${i + 1}`, value]))) };
   insertTrack.run(1, "track-1", 1, 1, 1, "One");
   insertTrack.run(2, "track-2", 1, 2, 2, "Two");
   insertTrack.run(11, "track-11", 2, 11, 1, "One");
@@ -391,12 +390,12 @@ db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 
   }
 }
 
-test("a sibling edition's provider tracks source this one when they share an ISRC", () => {
+test("a sibling edition's provider tracks source this one when they share an ISRC", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-isrc-source-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    await createActiveSchema(db);
     seedSplitRecordingIsrcFixture(db);
 
     const planId = new AcquisitionPlanningService(db).compute({
@@ -432,17 +431,17 @@ test("a sibling edition's provider tracks source this one when they share an ISR
   }
 });
 
-test("a shared ISRC outside the release group is not a source", () => {
+test("a shared ISRC outside the release group is not a source", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-isrc-scope-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    await createActiveSchema(db);
     seedSplitRecordingIsrcFixture(db);
     // Move the sibling edition into a different release group. Same ISRCs, same
     // provider, same everything else - a compilation appearance is a different
     // product decision, so it must stop being a source.
-    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (2, 'group-b', 1, 'Greatest Hits')").run();
+    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title, artist_mbid) VALUES (2, 'group-b', 1, 'Greatest Hits', (SELECT mbid FROM ArtistMetadata WHERE id = 1))").run();
     db.prepare("UPDATE AlbumEditions SET release_group_id = 2 WHERE id = 2").run();
 
     const planId = new AcquisitionPlanningService(db).compute({
@@ -463,12 +462,12 @@ test("a shared ISRC outside the release group is not a source", () => {
   }
 });
 
-test("a plan is rebuilt when its inputs change, and reused when they do not", () => {
+test("a plan is rebuilt when its inputs change, and reused when they do not", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-fingerprint-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    await createActiveSchema(db);
     seedStandardDeluxeFixture(db);
     const service = new AcquisitionPlanningService(db);
     const args = {
@@ -538,12 +537,12 @@ test("a plan is rebuilt when its inputs change, and reused when they do not", ()
   }
 });
 
-test("replanMonitoredEditions restores a selected plan after rematch deleted it", () => {
+test("replanMonitoredEditions restores a selected plan after rematch deleted it", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-replan-stranded-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    await createActiveSchema(db);
     seedStandardDeluxeFixture(db);
     db.prepare(`
       INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, curation_version)

@@ -121,9 +121,8 @@ const TRACK_ARTIST_NAMING_TOKENS: NamingToken[] = [
 ];
 
 const QUALITY_NAMING_TOKENS: NamingToken[] = [
-    { section: "Quality", token: "{Quality Full}", example: "FLAC Proper" },
-    { section: "Quality", token: "{Quality Title}", example: "FLAC" },
-    { section: "Quality", token: "{Quality Proper}", example: "Proper" },
+    { section: "Quality", token: "{Quality Full}", example: "LOSSLESS" },
+    { section: "Quality", token: "{Quality Title}", example: "LOSSLESS" },
     { section: "Quality", token: "{Quality}", example: "LOSSLESS" },
 ];
 
@@ -135,7 +134,7 @@ const MEDIAINFO_NAMING_TOKENS: NamingToken[] = [
     { section: "MediaInfo", token: "{MediaInfo AudioSampleRate}", example: "44.1kHz" },
     { section: "MediaInfo", token: "{Codec}", example: "FLAC" },
     { section: "MediaInfo", token: "{Channels}", example: "2" },
-    { section: "MediaInfo", token: "{Bitrate}", example: "320" },
+    { section: "MediaInfo", token: "{Bitrate}", example: "320000" },
     { section: "MediaInfo", token: "{BitDepth}", example: "16" },
     { section: "MediaInfo", token: "{SampleRate}", example: "44100" },
     { section: "MediaInfo", token: "{SampleRate:kHz}", example: "44.1" },
@@ -146,7 +145,6 @@ const MEDIAINFO_NAMING_TOKENS: NamingToken[] = [
 const ORIGINAL_NAMING_TOKENS: NamingToken[] = [
     { section: "Original", token: "{Original Title}", example: "Bastille - Bad Blood - 01 - Pompeii" },
     { section: "Original", token: "{Original Filename}", example: "01 - Pompeii" },
-    { section: "Original", token: "{Release Group}", example: "FLAC-GRP" },
 ];
 
 const PROVIDER_NAMING_TOKENS: NamingToken[] = [

@@ -38,7 +38,7 @@ import {
 import { getCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
-import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
+import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata/canonical-album-metadata.js";
 import { ExtraFileService, FOLDER_SCOPED_METADATA_TYPES, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "../extras/files/extra-file-service.js";
 import { captureLinkedExtras, releaseExtrasForDeletedTrackFiles } from "../extras/files/extra-file-deletion.js";
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
@@ -1450,6 +1450,9 @@ export class LibraryFilesService {
 
       const renderedTrackPath = renderRelativePath(trackTemplate, {
         ...albumContext,
+        originalFileName: path.parse(String(row.file_path || "")).name,
+        originalTitle: path.parse(String(row.file_path || "")).name,
+        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, 1),
         trackTitle: "Track",
         trackNumber: 1,
         volumeNumber: 1,
@@ -1540,6 +1543,9 @@ export class LibraryFilesService {
         : null;
       const trackContext: NamingContext = {
         ...albumContext,
+        originalFileName: path.parse(String(row.file_path || "")).name,
+        originalTitle: path.parse(String(row.file_path || "")).name,
+        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,
@@ -1666,6 +1672,9 @@ export class LibraryFilesService {
       const canonicalPosition = getCanonicalTrackPosition(positionMbid);
       const trackContext: NamingContext = {
         ...albumContext,
+        originalFileName: path.parse(String(row.file_path || "")).name,
+        originalTitle: path.parse(String(row.file_path || "")).name,
+        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,

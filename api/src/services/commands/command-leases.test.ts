@@ -216,7 +216,7 @@ test("watchdog pass requeues a live-owner attempt whose configured progress expe
     );
 
     const executorModule = await import("./command-executor.js");
-    const result = executorModule.recoverStaleNonDownloadCommands({
+    const result = await executorModule.recoverStaleNonDownloadCommands({
         now,
         noProgressMs: 100,
         maxAttempts: 3,
@@ -255,7 +255,7 @@ test("default policy recovers a heartbeat-alive never-resolving catalog handler"
     );
 
     const executorModule = await import("./command-executor.js");
-    const result = executorModule.recoverStaleNonDownloadCommands({
+    const result = await executorModule.recoverStaleNonDownloadCommands({
         now,
         noProgressMs: 0,
         maxAttempts: 3,
@@ -299,7 +299,7 @@ test("filesystem mutations fail closed instead of replaying without an operation
     );
 
     const executorModule = await import("./command-executor.js");
-    const result = executorModule.recoverStaleNonDownloadCommands({
+    const result = await executorModule.recoverStaleNonDownloadCommands({
         now,
         noProgressMs: 100,
         maxAttempts: 3,

@@ -256,7 +256,7 @@ export function isImportDownloadCancelledError(error: unknown): error is ImportD
 export function isImportDownloadCancellationRequested(commandId: number): boolean {
     const command = CommandQueueManager.get(commandId);
     return !command
-        || command.status === "cancelled"
+        || command.status !== "started"
         || command.payload.importCancellationRequested === true;
 }
 

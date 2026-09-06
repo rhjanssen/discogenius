@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.4] - 2026-09-06
+
+### Fixed
+
+- Validate audio acquisition provider identity and the requested library before organization. Explicit stereo/spatial destinations take precedence over provider source capabilities, and probed audio must match the target slot.
+- Keep per-track album fallback within the selected provider. Reject mixed-provider or stale provider-item manifests before downloading or importing.
+- Restore recurring download and command supervision. Remove the ineffective import-only wall-clock timeout, observe terminal import cancellation, and wait for command workers to exit before reusing their capacity.
+- Match import progress by exact track occurrence and preserve skipped/error states.
+- Correct audio bitrate naming units, populate original filenames and canonical medium names/formats, and stop advertising unsupported scene revision tokens.
+- Show the number of editions in the album Download button and remove the inactive retagging fingerprint control.
+
+### Changed
+
+- Remove duplicate TIDAL preparation from the download processor and log preparation/transfer timings for successful track attempts.
+- Run acquisition planning and composite regression fixtures against the active database schema. Add regressions for acquisition identity, destination selection, progress ambiguity, naming units and supervision startup.
+
 ## [2.16.3] - 2026-09-05
 
 ### Changed

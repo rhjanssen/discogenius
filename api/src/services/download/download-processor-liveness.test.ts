@@ -279,3 +279,13 @@ test('bounded infrastructure retries poison the third interrupted download attem
     assert.equal(poisoned.blocked_reason, 'poisoned command');
     assert.match(poisoned.error || '', /after 3 execution attempt/);
 });
+
+test('initialization schedules recurring download supervision', async () => {
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.request = async () => {};
+    proxy.subscribeToQueueEvents = () => {};
+    try {
+        await proxy.initialize();
+        assert.ok(proxy.watchdogTimer, 'production initialization must schedule the watchdog');
+    } finally { clearInterval(proxy.watchdogTimer); }
+});

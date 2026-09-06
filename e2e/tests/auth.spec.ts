@@ -6,6 +6,12 @@ test.describe('Auth flow', () => {
   test('initial TIDAL connect button opens the verification URL on first click', async ({ page }) => {
     const verificationUrl = `${baseURL}/health`;
 
+    await page.route('**/api/v1/provider', async (route) => {
+      const response = await route.fetch();
+      const registry = await response.json();
+      await route.fulfill({ json: { ...registry, providers: registry.providers.map((provider: Record<string, unknown>) => ({ ...provider, authenticated: false })) } });
+    });
+
     await page.route('**/api/auth/status', async (route) => {
       await route.fulfill({
         status: 200,

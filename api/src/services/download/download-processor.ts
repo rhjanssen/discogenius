@@ -1,3 +1,4 @@
+import { validateExecutionManifest, applyImportTrackProgress } from './execution-manifest.js';
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -815,18 +816,7 @@ export class DownloadProcessor {
             const currentDownloadState = (currentJob?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
             let tracks = state.tracks ?? currentDownloadState.tracks;
             if (tracks && tracks.length > 0 && (state.currentProviderTrackId || state.currentTrackNum != null || state.currentTrack)) {
-                tracks = tracks.map((track: any) => {
-                    const matchesId = state.currentProviderTrackId && track.providerTrackId && String(track.providerTrackId).trim() === String(state.currentProviderTrackId).trim();
-                    const matchesNum = state.currentTrackNum != null && track.trackNum === state.currentTrackNum && (state.currentVolumeNum == null || (track as any).volumeNum == null || (track as any).volumeNum === state.currentVolumeNum);
-                    const matchesTitle = state.currentTrack && track.title && track.title.toLowerCase().trim() === state.currentTrack.toLowerCase().trim();
-                    if (matchesId || matchesNum || matchesTitle) {
-                        return {
-                            ...track,
-                            status: state.trackStatus === 'completed' ? 'completed' : 'downloading',
-                        };
-                    }
-                    return track;
-                });
+                tracks = applyImportTrackProgress(tracks, state);
             }
             downloadEvents.emitProgress(commandId, {
                 providerId,
@@ -893,16 +883,11 @@ export class DownloadProcessor {
                     // sync DB writes) on a worker thread so it never blocks the
                     // main thread's HTTP/SSE loop. Progress streams back via the
                     // bridge to the same emitImportProgress sink used inline.
-                    await Promise.race([
-                        CommandWorkerPool.run(importJob, {
-                            onProgress: (state: any) => emitImportProgress(state as Parameters<typeof emitImportProgress>[0]),
-                            leaseMs: DOWNLOAD_LEASE_MS,
-                            heartbeatMs: DOWNLOAD_HEARTBEAT_MS,
-                        }),
-                        new Promise((_, reject) =>
-                            setTimeout(() => reject(new Error('Import execution timed out after 10 minutes')), 600_000).unref()
-                        ),
-                    ]);
+                    await CommandWorkerPool.run(importJob, {
+                        onProgress: emitImportProgress,
+                        leaseMs: DOWNLOAD_LEASE_MS,
+                        heartbeatMs: DOWNLOAD_HEARTBEAT_MS,
+                    });
                 } else {
                     await DownloadedTracksImportService.process(importJob, {
                         updateState: emitImportProgress,
@@ -1414,9 +1399,9 @@ export class DownloadProcessor {
         const blockedReason = state.state === 'importPending'
             ? 'waiting on import slot'
             : state.state === 'downloading'
-                ? 'waiting on provider'
+                ? null
                 : state.state === 'importing'
-                    ? 'waiting on disk'
+                    ? null
                     : state.state === 'failed' || state.state === 'importFailed'
                         ? 'failed'
                         : undefined;
@@ -2151,7 +2136,8 @@ export class DownloadProcessor {
     private async prepareProviderForDownload(providerId: string, downloadPath?: string): Promise<void> {
         try {
             const provider = streamingProviderManager.getStreamingProvider(providerId);
-            if (provider) {
+            // The TIDAL backend owns credential/settings synchronization per request.
+            if (provider && providerId !== 'tidal') {
                 if (provider.getAuthStatus) {
                     await provider.getAuthStatus().catch((err: unknown) => {
                         console.warn(`[DOWNLOAD-PROCESSOR] Non-fatal auth check warning for ${providerId}:`, err);
@@ -2467,7 +2453,8 @@ export class DownloadProcessor {
             throw new Error("DownloadAlbum trackOffers mode requires at least one track offer");
         }
 
-        const defaultProvider = payload.provider || getDefaultStreamingSource();
+        validateExecutionManifest(db, currentPayload);
+        const defaultProvider = currentPayload.provider || getDefaultStreamingSource();
         const workspaceKey = String(payload.releaseGroupMbid || payload.providerId || commandId);
         const baseDownloadPath = getDownloadWorkspacePath("album", workspaceKey, defaultProvider);
         const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
@@ -2565,7 +2552,7 @@ export class DownloadProcessor {
                     trackMbid: offer.canonicalTrackMbid,
                     recordingMbid: offer.canonicalRecordingMbid,
                     librarySlot: slot,
-                });
+                }).filter(candidate => candidate.provider === defaultProvider);
 
                 const trackIndex = tracks.findIndex((track) => {
                     if (offer.canonicalTrackMbid && track.canonicalTrackMbid === offer.canonicalTrackMbid) return true;
@@ -2637,7 +2624,9 @@ export class DownloadProcessor {
                                 },
                             },
                             async () => {
+                                const attemptStartedAt = Date.now();
                                 await this.prepareProviderForDownload(providerId, trackDownloadPath);
+                                const preparedAt = Date.now();
                                 await backend.download({
                                     provider: providerId,
                                     entityType: "track",
@@ -2672,6 +2661,7 @@ export class DownloadProcessor {
                                         });
                                     },
                                 });
+                                console.log(`[DOWNLOAD-TIMING] command=${commandId} provider=${providerId} track=${offer.providerTrackId} prepareMs=${preparedAt - attemptStartedAt} transferMs=${Date.now() - preparedAt}`);
                             },
                         );
 
@@ -2983,7 +2973,7 @@ export class DownloadProcessorWorkerProxy {
     async initialize(): Promise<void> {
         this.initialized = true;
         this.subscribeToQueueEvents();
-        // this.startWatchdog(); // eliminated in 2.15 to match Lidarr architecture
+        this.startWatchdog();
         await this.request('initialize');
     }
 

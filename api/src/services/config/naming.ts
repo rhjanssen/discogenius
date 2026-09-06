@@ -555,8 +555,10 @@ function resolveTokenValue(
     case "quality":
     case "qualityfull":
     case "qualitytitle":
-    case "qualityproper":
       baseValue = context.quality || "";
+      break;
+    case "qualityproper":
+      baseValue = ""; // Streaming acquisitions have no scene Proper revision.
       break;
     case "codec":
     case "mediainfoaudiocodec":
@@ -566,7 +568,7 @@ function resolveTokenValue(
       baseValue = context.bitrate ? String(context.bitrate) : "";
       break;
     case "mediainfoaudiobitrate":
-      baseValue = context.bitrate ? `${context.bitrate} kbps` : "";
+      baseValue = context.bitrate ? `${Math.round(context.bitrate / 1000)} kbps` : "";
       break;
     case "samplerate":
       if (context.sampleRate) {
@@ -1054,7 +1056,7 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     explicit: false,
     quality: "LOSSLESS",
     codec: "FLAC",
-    bitrate: 320,
+    bitrate: 320000,
     sampleRate: 44100,
     bitDepth: 16,
     channels: 2,

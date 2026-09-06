@@ -222,3 +222,9 @@ export function resetActiveSchemaRows(
     }
   }
 }
+
+/** Empty active baseline for services that accept an injected database. */
+export async function createActiveSchema(db: import("better-sqlite3").Database): Promise<void> {
+  const module = await import("../database.js");
+  module.createBaselineSchemaV41(db);
+}

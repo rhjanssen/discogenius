@@ -969,7 +969,7 @@ const AlbumPage = () => {
     }
     return [...byEdition.values()];
   }, [releaseAvailability]);
-  const downloadButtonLabel = downloadingAlbum ? "Adding..." : "Download";
+  const downloadButtonLabel = downloadingAlbum ? "Adding..." : queuedEditions.length > 1 ? `Download ${queuedEditions.length} editions` : "Download";
   const downloadScopeDescription = queuedEditions.length > 1
     ? `Download all ${queuedEditions.length} monitored editions`
     : "Download the monitored edition";

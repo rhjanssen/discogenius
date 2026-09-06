@@ -1,3 +1,5 @@
+import { isSpatialAudioQuality } from '../../utils/spatial-audio.js';
+import { validateExecutionManifest } from '../download/execution-manifest.js';
 import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
@@ -20,11 +22,10 @@ import {
   resolveArtistMbid,
   stampArtistLibraryPath,
 } from "../music/managed-artists.js";
-import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
-import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
+import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata/canonical-album-metadata.js";
 import { albumCoverLocalUrl, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
@@ -1830,6 +1831,9 @@ export class OrganizerService {
     }
 
     const streamingProviderId = OrganizerService.resolveOrganizeStreamingProvider(raw, providerId, type as OrganizeType);
+    const requestedTarget = type !== "video"
+      ? validateExecutionManifest(db, { ...raw, provider: streamingProviderId })
+      : null;
     const downloadPath = raw.downloadPath
       ? validateDownloadWorkspacePath(raw.downloadPath)
       : getDownloadWorkspacePath(type as OrganizeType, providerId, streamingProviderId);
@@ -1954,13 +1958,12 @@ export class OrganizerService {
         path: artistContext.artistPath || null,
       });
 
-      let isSpatial = false;
-      if (canonicalContext?.slot) {
-        isSpatial = canonicalContext.slot === "spatial";
-      } else {
-        isSpatial = isSpatialAudioQuality(canonicalContext?.quality || album.quality);
+      const requestedSlot = requestedTarget?.slot || raw.slot || canonicalContext?.slot;
+      if (requestedSlot !== "stereo" && requestedSlot !== "spatial") {
+        throw new Error("Audio import requires an explicit stereo or spatial destination");
       }
-      const targetRoot = isSpatial ? spatialRoot : musicRoot;
+      const isSpatial = requestedSlot === "spatial";
+      const targetRoot = requestedTarget?.rootPath || (isSpatial ? spatialRoot : musicRoot);
       const canonicalAlbumForNaming = getCanonicalAlbumMetadata({
         canonicalReleaseGroupMbid: jobReleaseGroupMbid || album.mb_release_group_id,
         canonicalReleaseMbid: jobReleaseMbid || album.mbid,
@@ -2233,7 +2236,7 @@ export class OrganizerService {
           provider: canonicalContext?.provider || raw.provider || getDefaultStreamingSource(),
           providerEntityType: "track",
           providerId: trackId,
-          librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
+          librarySlot: isSpatial ? "spatial" : "stereo",
           canonicalArtistMbid: canonicalContext?.artistMbid || artistMbId || null,
           canonicalReleaseGroupMbid: jobReleaseGroupMbid,
           canonicalReleaseMbid: jobReleaseMbid,
@@ -2261,8 +2264,14 @@ export class OrganizerService {
         const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
         const metrics = await parseAudioFile(srcFile);
         const derivedQuality = deriveQuality(ext, metrics);
+        if (!metrics.codec || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
+          throw new Error("Probed audio does not match the requested library slot");
+        }
 
         const renderedTrackPath = renderRelativePath(trackTemplate, {
+          originalFileName: path.parse(srcFile).name,
+          originalTitle: path.parse(srcFile).name,
+          ...getCanonicalMediumNaming(jobReleaseMbid, volumeNumber),
           artistName: resolvedArtistName,
           artistId,
           artistMbId,
@@ -2644,7 +2653,7 @@ export class OrganizerService {
           await saveAlbumNfoFile(jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || albumIds[0], albumNfoPath, {
             releaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid,
             releaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid,
-            librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
+            librarySlot: isSpatial ? "spatial" : "stereo",
             provider: streamingProviderId,
             providerAlbumId: albumIds[0],
           });
@@ -2875,9 +2884,12 @@ export class OrganizerService {
         path: artistContext.artistPath || null,
       });
 
-      const isSpatial = (String(raw.slot || "").toLowerCase() === "spatial")
-        || isSpatialAudioQuality(album.quality);
-      const targetRoot = isSpatial ? spatialRoot : musicRoot;
+      const requestedSlot = requestedTarget?.slot || raw.slot;
+      if (requestedSlot !== "stereo" && requestedSlot !== "spatial") {
+        throw new Error("Audio import requires an explicit stereo or spatial destination");
+      }
+      const isSpatial = requestedSlot === "spatial";
+      const targetRoot = requestedTarget?.rootPath || (isSpatial ? spatialRoot : musicRoot);
 
       const jobCanonicalTrackMbid = String(raw.canonicalTrackMbid || "").trim() || null;
       const jobCanonicalRecordingMbid = String(raw.canonicalRecordingMbid || "").trim() || null;
@@ -2933,6 +2945,9 @@ export class OrganizerService {
       const trackNamingTemplate = path.join(artistFolder, trackTemplate);
       const metrics = await parseAudioFile(src);
       const derivedQuality = deriveQuality(ext, metrics);
+        if (!metrics.codec || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
+          throw new Error("Probed audio does not match the requested library slot");
+        }
 
       const trackIdentity = resolveLibraryFileIdentity({
         ...identityInput,
@@ -2943,6 +2958,9 @@ export class OrganizerService {
       const libraryAlbumId = trackIdentity.canonicalReleaseGroupMbid || albumId;
 
       const renderedTrackPath = renderRelativePath(trackTemplate, {
+        originalFileName: path.parse(src).name,
+        originalTitle: path.parse(src).name,
+        ...getCanonicalMediumNaming(trackIdentity.canonicalReleaseMbid, volumeNumber),
         artistName: resolvedArtistName,
         artistId,
         artistMbId,

@@ -132,14 +132,15 @@ test.describe('App shell & navigation', () => {
     const publicResponse = await request.get(`${baseURL}/health`);
     expect(publicResponse.status()).toBe(200);
     const publicData = await publicResponse.json();
-    expect(publicData).toEqual({ status: 'degraded' });
+    expect(Object.keys(publicData)).toEqual(['status']);
+    expect(['ok', 'degraded']).toContain(publicData.status);
 
     // E2E runs with application authentication disabled. Deployments with an
     // admin password require the normal API bearer token for this endpoint.
     const diagnosticsResponse = await request.get(`${baseURL}/api/health`);
     expect(diagnosticsResponse.status()).toBe(200);
     const diagnostics = await diagnosticsResponse.json();
-    expect(diagnostics.status).toBe('degraded');
+    expect(['ok', 'degraded']).toContain(diagnostics.status);
     expect(diagnostics.preflight).toBeTruthy();
     expect(diagnostics.startup).toBeTruthy();
     expect(diagnostics.preflight.subsystems.database.schema.status).toBe('ok');

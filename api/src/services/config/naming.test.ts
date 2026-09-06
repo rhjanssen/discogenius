@@ -594,7 +594,7 @@ test("Lidarr tokens: MediaInfo, Medium, Original and Quality aliases render corr
       trackTitle: "City Sushi",
       codec: "FLAC",
       channels: 2,
-      bitrate: 320,
+      bitrate: 320000,
       bitDepth: 16,
       sampleRate: 44100,
     },

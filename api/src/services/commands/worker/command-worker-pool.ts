@@ -291,7 +291,7 @@ export class CommandWorkerPool {
         // `error` and `exit` can both fire for one worker. Once the first signal
         // recovered its command and removed the worker, ignore all late
         // messages from that physical thread.
-        if (entry.exited) return;
+        if (entry.exited || entry.forcedExitError) return;
         entry.lastSeenAt = Date.now();
         switch (message.kind) {
             case "ready":
@@ -448,7 +448,6 @@ export class CommandWorkerPool {
         // Retire the ownership synchronously so a `done` message racing the
         // asynchronous terminate cannot free this worker or receive a queued
         // replacement command.
-        this.handleWorkerExit(entry, abortError);
         void termination.then(
             () => { forceReleaseSqliteWriteMutexOwner(entry.sqliteWriteMutexOwnerToken); },
             (error) => {
@@ -456,6 +455,14 @@ export class CommandWorkerPool {
             },
         );
         return true;
+    }
+
+    static async abortCommandAndWait(commandId: number, executionToken: string, reason: string): Promise<void> {
+        const entry = this.workers.find(worker => worker.settle?.commandId === commandId
+            && this.getExecutionToken(worker) === executionToken);
+        const exited = entry ? new Promise<void>(resolve => entry.worker.once('exit', () => resolve())) : Promise.resolve();
+        this.abortCommand(commandId, executionToken, reason);
+        await exited;
     }
 
     static getSnapshot(): CommandWorkerPoolSnapshot {

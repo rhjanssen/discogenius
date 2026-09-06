@@ -651,14 +651,14 @@ function pruneStaleArtistIdCommandFailures(): void {
  * against a verified-empty database, so ordering and uniqueness are guaranteed.
  * Parents are created before children where trigger/index bodies depend on them.
  */
-function createBaselineSchemaV41(): void {
+export function createBaselineSchemaV41(schemaDb: Database.Database = db): void {
   // ====================================================================
   // TRACKFILES TABLE (Local file tracking; file inventory)
   // Catalog identity is ArtistMetadata (created below). Membership is
   // LibraryArtists. Files keep library_id + artist_metadata_id and must
   // not FK LibraryArtists: unmonitor/pause leave inventory in place.
   // ====================================================================
-  db.exec(`
+  schemaDb.exec(`
     CREATE TABLE TrackFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT, -- Internal file ID
       
@@ -744,14 +744,14 @@ function createBaselineSchemaV41(): void {
     )
   `);
 
-  createMetadataIdentitySchema(db);
-  createCatalogSchema(db);
-  createCanonicalCreditSchemaV41(db);
-  createCommandsSchema(db);
-  createRuntimeControlSchema(db);
-  createLibrarySchemaV41(db);
+  createMetadataIdentitySchema(schemaDb);
+  createCatalogSchema(schemaDb);
+  createCanonicalCreditSchemaV41(schemaDb);
+  createCommandsSchema(schemaDb);
+  createRuntimeControlSchema(schemaDb);
+  createLibrarySchemaV41(schemaDb);
 
-  db.exec(`
+  schemaDb.exec(`
     CREATE TABLE ArtistStatistics (
       library_id INTEGER NOT NULL,
       artist_metadata_id INTEGER NOT NULL,
@@ -771,17 +771,17 @@ function createBaselineSchemaV41(): void {
     )
   `);
 
-  createArtistTopTrackProjectionSchema(db);
-  createAlbumLibraryProjectionSchema(db);
-  createTrackLibraryProjectionSchema(db);
-  createExtraFileSchema(db);
-  createMediaCoverProxyCacheSchema(db);
-  createTrackFileForeignKeyTriggers(db);
+  createArtistTopTrackProjectionSchema(schemaDb);
+  createAlbumLibraryProjectionSchema(schemaDb);
+  createTrackLibraryProjectionSchema(schemaDb);
+  createExtraFileSchema(schemaDb);
+  createMediaCoverProxyCacheSchema(schemaDb);
+  createTrackFileForeignKeyTriggers(schemaDb);
 
   // ====================================================================
   // UNMAPPED FILES TABLE (local files not mapped to canonical metadata/provider evidence)
   // ====================================================================
-  db.exec(`
+  schemaDb.exec(`
     CREATE TABLE UnmappedFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       
@@ -813,39 +813,39 @@ function createBaselineSchemaV41(): void {
     )
   `);
 
-  createCatalogForeignKeyIndexes(db);
-  createCatalogForeignKeyTriggers(db);
-  createTrackSearchIndex(db);
-  createCatalogSearchIndex(db);
+  createCatalogForeignKeyIndexes(schemaDb);
+  createCatalogForeignKeyTriggers(schemaDb);
+  createTrackSearchIndex(schemaDb);
+  createCatalogSearchIndex(schemaDb);
 
   // ====================================================================
   // INDEXES
   // ====================================================================
-  createCommandsIndexes(db);
+  createCommandsIndexes(schemaDb);
 
   // Library file indexes
-  db.exec(`CREATE INDEX idx_track_files_file_type ON TrackFiles(file_type)`);
-  db.exec(`CREATE INDEX idx_track_files_library_root ON TrackFiles(library_root)`);
-  db.exec(`CREATE INDEX idx_track_files_needs_rename ON TrackFiles(needs_rename)`);
-  db.exec(`CREATE INDEX idx_track_files_quality ON TrackFiles(quality)`);
-  db.exec(`CREATE UNIQUE INDEX idx_track_files_path ON TrackFiles(file_path)`);
-  db.exec(`CREATE INDEX idx_track_files_fingerprint ON TrackFiles(fingerprint)`);
-  db.exec(`CREATE INDEX idx_track_files_acoustid_id ON TrackFiles(acoustid_id)`);
-  db.exec(`CREATE INDEX idx_track_files_canonical_artist ON TrackFiles(canonical_artist_mbid)`);
-  db.exec(`CREATE INDEX idx_track_files_canonical_release_group ON TrackFiles(canonical_release_group_mbid, library_slot)`);
-  db.exec(`CREATE INDEX idx_track_files_canonical_release ON TrackFiles(canonical_release_mbid)`);
-  db.exec(`CREATE INDEX idx_track_files_provider_resource ON TrackFiles(provider, provider_entity_type, provider_id)`);
-  db.exec(`CREATE INDEX idx_track_files_slot_type ON TrackFiles(library_slot, file_type)`);
-  db.exec(`CREATE INDEX idx_track_files_expected_path ON TrackFiles(expected_path)`);
-  db.exec(`CREATE INDEX idx_track_files_provider_id_type_slot ON TrackFiles(provider_id, file_type, library_slot)`);
-  db.exec("CREATE INDEX idx_artist_statistics_mbid ON ArtistStatistics(artist_mbid)");
-  db.exec("CREATE INDEX idx_artist_statistics_metadata ON ArtistStatistics(artist_metadata_id, library_id)");
+  schemaDb.exec(`CREATE INDEX idx_track_files_file_type ON TrackFiles(file_type)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_library_root ON TrackFiles(library_root)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_needs_rename ON TrackFiles(needs_rename)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_quality ON TrackFiles(quality)`);
+  schemaDb.exec(`CREATE UNIQUE INDEX idx_track_files_path ON TrackFiles(file_path)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_fingerprint ON TrackFiles(fingerprint)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_acoustid_id ON TrackFiles(acoustid_id)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_canonical_artist ON TrackFiles(canonical_artist_mbid)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_canonical_release_group ON TrackFiles(canonical_release_group_mbid, library_slot)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_canonical_release ON TrackFiles(canonical_release_mbid)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_provider_resource ON TrackFiles(provider, provider_entity_type, provider_id)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_slot_type ON TrackFiles(library_slot, file_type)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_expected_path ON TrackFiles(expected_path)`);
+  schemaDb.exec(`CREATE INDEX idx_track_files_provider_id_type_slot ON TrackFiles(provider_id, file_type, library_slot)`);
+  schemaDb.exec("CREATE INDEX idx_artist_statistics_mbid ON ArtistStatistics(artist_mbid)");
+  schemaDb.exec("CREATE INDEX idx_artist_statistics_metadata ON ArtistStatistics(artist_metadata_id, library_id)");
 
-  db.exec(`CREATE INDEX idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);
+  schemaDb.exec(`CREATE INDEX idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);
 
   // Foreign key and lookup performance indexes
-  db.exec("CREATE INDEX idx_mb_releases_artist_mbid ON AlbumEditions(artist_mbid)");
-  db.exec("CREATE INDEX idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
+  schemaDb.exec("CREATE INDEX idx_mb_releases_artist_mbid ON AlbumEditions(artist_mbid)");
+  schemaDb.exec("CREATE INDEX idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
 }
 
 function recordDatabaseVersionState() {

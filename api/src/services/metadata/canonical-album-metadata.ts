@@ -111,3 +111,14 @@ export function getCanonicalAlbumMetadata(input: {
     genres: row.genres || null,
   };
 }
+
+export function getCanonicalMediumNaming(releaseMbid: string | null | undefined, position: number | null | undefined): { mediumName: string | null; mediumFormat: string | null } {
+  if (!releaseMbid || !position) return { mediumName: null, mediumFormat: null };
+  const row = db.prepare("SELECT media FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as { media: string | null } | undefined;
+  try {
+    const media = JSON.parse(row?.media || "[]");
+    const matches = Array.isArray(media) ? media.filter(m => Number(m.position ?? m.Position) === position) : [];
+    const medium = matches.length === 1 ? matches[0] : null;
+    return { mediumName: medium?.name || medium?.Name || medium?.title || null, mediumFormat: medium?.format || medium?.Format || null };
+  } catch { return { mediumName: null, mediumFormat: null }; }
+}

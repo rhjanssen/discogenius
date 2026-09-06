@@ -191,12 +191,7 @@ export const MetadataFilesSettingsSection = ({
                     checked: metadataSettings?.embed_video_thumbnail !== false,
                     onChange: (checked) => void updateMetadataSettings({ embed_video_thumbnail: checked }),
                 })}
-                {renderToggleRow({
-                    title: "Fingerprint unidentified files",
-                    description: "During retagging, use AcoustID for imported audio that still has no MusicBrainz recording ID. This setting does not control Unmapped review.",
-                    checked: metadataSettings?.enable_fingerprinting === true,
-                    onChange: (checked) => void updateMetadataSettings({ enable_fingerprinting: checked }),
-                })}
+
             </SettingsCard>
         </SettingsSection>
     );

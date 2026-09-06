@@ -23,7 +23,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
+import { prepareActiveSchemaEnv, createActiveSchema } from "../../test-support/active-schema-fixture.js";
+prepareActiveSchemaEnv("planning-active");
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
 import { ProviderReleaseIngestionService } from "../providers/provider-release-ingestion-service.js";
 
@@ -91,9 +92,9 @@ function ingestOffer(
   }
 }
 
-function seedLibrary(db: Database.Database): void {
+async function seedLibrary(db: Database.Database): Promise<void> {
   db.pragma("foreign_keys = ON");
-  createCurrentDomainSchema(db);
+  await createActiveSchema(db);
   db.exec(`
     INSERT INTO MetadataProfiles (id, name, release_type_policy, redundancy_enabled)
       VALUES (1, 'Default', '{}', 0);
@@ -110,11 +111,11 @@ function seedLibrary(db: Database.Database): void {
   `);
 }
 
-function withDb(run: (db: Database.Database) => void): void {
+async function withDb(run: (db: Database.Database) => void): Promise<void> {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-composite-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
-    seedLibrary(db);
+    await seedLibrary(db);
     run(db);
   } finally {
     db.close();
@@ -160,28 +161,25 @@ const plan = (db: Database.Database, editionId: number) =>
 
 /* ── Killing Me Softly: two singles, two Editions, two Release Groups ─ */
 
-test("a three-track Edition is filled from two provider singles that match neither it nor each other", () => {
-  withDb((db) => {
+test("a three-track Edition is filled from two provider singles that match neither it nor each other", async () => {
+  await withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type) VALUES
-        (1, 'group-kms', 1, 'Killing Me Softly With His Song (MTV Unplugged)', 'Single'),
-        (2, 'group-pompeii', 1, 'Pompeii / Come as You Are (MTV Unplugged)', 'Single');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count) VALUES
-        (1, 'kms-1track', 1, 'KMS 1-track', 'Official', 1),
-        (2, 'kms-3track', 1, 'KMS 3-track', 'Official', 1),
-        (3, 'pompeii-2track', 2, 'Pompeii 2-track', 'Official', 1);
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type, artist_mbid) VALUES (1, 'group-kms', 1, 'Killing Me Softly With His Song (MTV Unplugged)', 'Single', (SELECT mbid FROM ArtistMetadata WHERE id = 1)),
+      (2, 'group-pompeii', 1, 'Pompeii / Come as You Are (MTV Unplugged)', 'Single', (SELECT mbid FROM ArtistMetadata WHERE id = 1));
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count, release_group_mbid, artist_mbid) VALUES (1, 'kms-1track', 1, 'KMS 1-track', 'Official', 1, (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1)),
+      (2, 'kms-3track', 1, 'KMS 3-track', 'Official', 1, (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1)),
+      (3, 'pompeii-2track', 2, 'Pompeii 2-track', 'Official', 1, (SELECT mbid FROM Albums WHERE id = 2), (SELECT artist_mbid FROM Albums WHERE id = 2));
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
         (1, 'rec-kms', 'Killing Me Softly With His Song (edit)', 298000, '["GBUM72302334"]'),
         (2, 'rec-pompeii', 'Pompeii (edit)', 268000, '["GBUM72302279"]'),
         (3, 'rec-cay', 'Come as You Are (edit)', 231000, '["GBUM72302277"]');
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-kms-1',  1, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000),
-        (2, 't-kms-3a', 2, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000),
-        (3, 't-kms-3b', 2, 2, 1, 2, 'Pompeii (edit)', 268000),
-        (4, 't-kms-3c', 2, 3, 1, 3, 'Come as You Are (edit)', 231000),
-        (5, 't-pom-a',  3, 2, 1, 1, 'Pompeii (edit)', 268000),
-        (6, 't-pom-b',  3, 3, 1, 2, 'Come as You Are (edit)', 231000);
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms, release_mbid, recording_mbid) VALUES (1, 't-kms-1', 1, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000, (SELECT mbid FROM AlbumEditions WHERE id = 1), (SELECT mbid FROM Recordings WHERE id = 1)),
+      (2, 't-kms-3a', 2, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000, (SELECT mbid FROM AlbumEditions WHERE id = 2), (SELECT mbid FROM Recordings WHERE id = 1)),
+      (3, 't-kms-3b', 2, 2, 1, 2, 'Pompeii (edit)', 268000, (SELECT mbid FROM AlbumEditions WHERE id = 2), (SELECT mbid FROM Recordings WHERE id = 2)),
+      (4, 't-kms-3c', 2, 3, 1, 3, 'Come as You Are (edit)', 231000, (SELECT mbid FROM AlbumEditions WHERE id = 2), (SELECT mbid FROM Recordings WHERE id = 3)),
+      (5, 't-pom-a', 3, 2, 1, 1, 'Pompeii (edit)', 268000, (SELECT mbid FROM AlbumEditions WHERE id = 3), (SELECT mbid FROM Recordings WHERE id = 2)),
+      (6, 't-pom-b', 3, 3, 1, 2, 'Come as You Are (edit)', 231000, (SELECT mbid FROM AlbumEditions WHERE id = 3), (SELECT mbid FROM Recordings WHERE id = 3));
     `);
 
     ingestOffer(db, 1, "290132977", "Killing Me Softly (MTV Unplugged / Edit)", [
@@ -225,8 +223,8 @@ test("a three-track Edition is filled from two provider singles that match neith
 
 /* ── Back to Black: 19/19 across three albums and two tiers ─────────── */
 
-test("the Back to Black deluxe composite covers 19/19 across three provider albums", () => {
-  withDb((db) => {
+test("the Back to Black deluxe composite covers 19/19 across three provider albums", async () => {
+  await withDb((db) => {
     // 13 tracks the hi-res standard issue carries, then 6 deluxe-only ones
     // split across two further albums — the measured shape of the real case.
     const hiRes = Array.from({ length: 13 }, (_, i) => i + 1);
@@ -235,13 +233,11 @@ test("the Back to Black deluxe composite covers 19/19 across three provider albu
 
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-amy', 'Amy Winehouse');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
-        VALUES (1, 'group-btb', 1, 'Back to Black', 'Album');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count) VALUES
-        (1, 'btb-deluxe', 1, 'Back to Black (Deluxe)', 'Official', 1),
-        (2, 'btb-standard', 1, 'Back to Black', 'Official', 1),
-        (3, 'btb-supp-a', 1, 'Back to Black (B-sides)', 'Official', 1),
-        (4, 'btb-supp-b', 1, 'Back to Black (Live)', 'Official', 1);
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type, artist_mbid) VALUES (1, 'group-btb', 1, 'Back to Black', 'Album', (SELECT mbid FROM ArtistMetadata WHERE id = 1));
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count, release_group_mbid, artist_mbid) VALUES (1, 'btb-deluxe', 1, 'Back to Black (Deluxe)', 'Official', 1, (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1)),
+      (2, 'btb-standard', 1, 'Back to Black', 'Official', 1, (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1)),
+      (3, 'btb-supp-a', 1, 'Back to Black (B-sides)', 'Official', 1, (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1)),
+      (4, 'btb-supp-b', 1, 'Back to Black (Live)', 'Official', 1, (SELECT mbid FROM Albums WHERE id = 1), (SELECT artist_mbid FROM Albums WHERE id = 1));
       ${Array.from({ length: 19 }, (_, i) => {
         const n = i + 1;
         return `INSERT INTO Recordings (id, mbid, title, length_ms, isrcs)
@@ -249,15 +245,11 @@ test("the Back to Black deluxe composite covers 19/19 across three provider albu
       }).join("\n")}
       ${Array.from({ length: 19 }, (_, i) => {
         const n = i + 1;
-        return `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms)
-                VALUES (${n}, 't-deluxe-${n}', 1, ${n}, 1, ${n}, 'Track ${n}', ${180000 + n * 1000});`;
+        return `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms, release_mbid, recording_mbid) VALUES (${n}, 't-deluxe-${n}', 1, ${n}, 1, ${n}, 'Track ${n}', ${180000 + n * 1000}, (SELECT mbid FROM AlbumEditions WHERE id = 1), (SELECT mbid FROM Recordings WHERE id = ${n}));`;
       }).join("\n")}
-      ${hiRes.map((n) => `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms)
-                VALUES (${100 + n}, 't-std-${n}', 2, ${n}, 1, ${n}, 'Track ${n}', ${180000 + n * 1000});`).join("\n")}
-      ${supplementA.map((n, i) => `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms)
-                VALUES (${200 + n}, 't-sa-${n}', 3, ${n}, 1, ${i + 1}, 'Track ${n}', ${180000 + n * 1000});`).join("\n")}
-      ${supplementB.map((n, i) => `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms)
-                VALUES (${300 + n}, 't-sb-${n}', 4, ${n}, 1, ${i + 1}, 'Track ${n}', ${180000 + n * 1000});`).join("\n")}
+      ${hiRes.map((n) => `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms, release_mbid, recording_mbid) VALUES (${100 + n}, 't-std-${n}', 2, ${n}, 1, ${n}, 'Track ${n}', ${180000 + n * 1000}, (SELECT mbid FROM AlbumEditions WHERE id = 2), (SELECT mbid FROM Recordings WHERE id = ${n}));`).join("\n")}
+      ${supplementA.map((n, i) => `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms, release_mbid, recording_mbid) VALUES (${200 + n}, 't-sa-${n}', 3, ${n}, 1, ${i + 1}, 'Track ${n}', ${180000 + n * 1000}, (SELECT mbid FROM AlbumEditions WHERE id = 3), (SELECT mbid FROM Recordings WHERE id = ${n}));`).join("\n")}
+      ${supplementB.map((n, i) => `INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms, release_mbid, recording_mbid) VALUES (${300 + n}, 't-sb-${n}', 4, ${n}, 1, ${i + 1}, 'Track ${n}', ${180000 + n * 1000}, (SELECT mbid FROM AlbumEditions WHERE id = 4), (SELECT mbid FROM Recordings WHERE id = ${n}));`).join("\n")}
     `);
 
     const offer = (n: number, quality: string): OfferTrack => ({
