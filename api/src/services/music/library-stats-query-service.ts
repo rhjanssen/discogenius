@@ -31,12 +31,8 @@ export class LibraryStatsQueryService {
         this.cachedSnapshot = null;
     }
 
-    /**
-     * Stale-while-revalidate: an expired snapshot is served immediately and
-     * refreshed off the request path. Under load the refresh cost is paid at
-     * most once per TTL instead of by every waiting request, and /stats
-     * latency stays flat. Only a cold cache computes synchronously.
-     */
+    // Cache repeated dashboard reads. Refresh still runs on this event loop,
+    // so the underlying queries must stay bounded even when the cache is warm.
     static getSnapshot(): LibraryStatsContract {
         const cached = this.cachedSnapshot;
         if (cached && Date.now() - cached.createdAtMs < this.SNAPSHOT_TTL_MS) {
@@ -195,35 +191,6 @@ export class LibraryStatsQueryService {
                 HAVING COUNT(*) > 0
                    AND MIN(completed) = 1
             ),
-            album_artist_scope AS (
-                SELECT album.id AS release_group_id, album.artist_mbid
-                FROM Albums album
-                UNION
-                SELECT album.id AS release_group_id, scope.artist_mbid
-                FROM ArtistReleaseGroups scope
-                JOIN Albums album
-                  ON album.mbid = scope.release_group_mbid
-            ),
-            artist_requirement_completion AS (
-                SELECT
-                    monitored_artist.local_artist_id,
-                    audio_completion.completed
-                FROM monitored_artist_rows monitored_artist
-                JOIN album_artist_scope artist_scope
-                  ON artist_scope.artist_mbid = monitored_artist.artist_mbid
-                JOIN audio_requirement_completion audio_completion
-                  ON audio_completion.release_group_id = artist_scope.release_group_id
-                UNION ALL
-                SELECT
-                    monitored_artist.local_artist_id,
-                    video_completion.completed
-                FROM monitored_artist_rows monitored_artist
-                JOIN Recordings recording
-                  ON recording.artist_mbid = monitored_artist.artist_mbid
-                 AND recording.is_video = 1
-                JOIN video_requirement_completion video_completion
-                  ON video_completion.recording_id = recording.id
-            ),
             completed_artists AS (
                 SELECT DISTINCT library_artist.artist_metadata_id AS local_artist_id
                 FROM LibraryArtists library_artist
@@ -247,11 +214,15 @@ export class LibraryStatsQueryService {
                 ) AS album_monitored,
                 (SELECT COUNT(*) FROM completed_albums) AS album_downloaded,
                 (
-                  SELECT COUNT(*)
-                  FROM Tracks track
-                  JOIN Recordings recording
-                    ON recording.id = track.recording_id
-                   AND recording.is_video = 0
+                  -- Recordings enforces is_video in (0, 1), and Tracks has
+                  -- a nullable recording FK. Count index entries, then exclude
+                  -- unresolved and video occurrences instead of joining every
+                  -- audio recording in the entire catalogue.
+                  SELECT (SELECT COUNT(*) FROM Tracks)
+                    - (SELECT COUNT(*) FROM Tracks WHERE recording_id IS NULL)
+                    - (SELECT COUNT(*) FROM Recordings recording
+                       JOIN Tracks track ON track.recording_id = recording.id
+                       WHERE recording.is_video = 1)
                 ) AS track_total,
                 (
                   SELECT COUNT(DISTINCT track_id)

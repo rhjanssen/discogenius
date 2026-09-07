@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { pipeline } from "stream";
 import { promisify } from "util";
-import { db, runWithAsyncBusyRetry } from "../database.js";
+import { db, withDbWrite } from "../database.js";
 import { findLibraryFileById, findTextLibraryFileByPath, listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/mediafiles/library-files-query-service.js";
 import { resolveStoredLibraryPath } from "../services/mediafiles/library-paths.js";
 import { queueArtistWorkflow } from "../services/music/artist-workflow.js";
@@ -126,7 +126,7 @@ router.post("/rename/apply", async (req, res) => {
         : `rename-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null, editionId: editionId || null, releaseMbid: releaseMbid || null, libraryRoot: libraryRoot || null, fileTypes: fileTypes || [] })}`)
       : undefined;
 
-    const commandId = await runWithAsyncBusyRetry(
+    const commandId = await withDbWrite(
       () => isArtistWideRename && artistIds && artistIds.length > 0
         ? CommandQueueManager.push(CommandNames.RenameArtist, {
           artistId: artistIds[0],
@@ -142,8 +142,6 @@ router.post("/rename/apply", async (req, res) => {
           libraryRoot,
           fileTypes,
         }, refId, CommandPriority.Interactive, CommandTrigger.Manual),
-      30,
-      200,
     );
 
     res.json({
@@ -386,7 +384,7 @@ router.post("/scan/:artistId", (req, res) => {
  */
 router.post("/scan-roots", async (req, res) => {
   try {
-    const commandId = await runWithAsyncBusyRetry(() =>
+    const commandId = await withDbWrite(() =>
       rootScanRouteService.queueRootScan({
         trigger: CommandTrigger.Manual,
         fullProcessing: req.body?.fullProcessing,

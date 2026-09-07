@@ -17,7 +17,7 @@
 
 import { db } from '../../database.js';
 import {CommandModel} from "./command-model.js";
-import {CommandNames, isCommandName} from "./command-names.js";
+import {CommandNames, DOWNLOAD_COMMAND_NAMES, isCommandName} from "./command-names.js";
 import {type CommandName} from "./command-queue-manager.js";
 import {
     getCommandDefinition,
@@ -28,6 +28,7 @@ import {
 import type { CommandBodyCommon } from './command-bodies.js';
 
 export interface CanStartCommandOptions {
+    excludeCommandId?: number;
     /** Job types to ignore when evaluating running-job exclusivity (e.g. download types for the Scheduler). */
     excludeRunningTypes?: readonly string[];
 }
@@ -55,11 +56,15 @@ export class CommandManager {
             ? new Set(options.excludeRunningTypes)
             : null;
         const allProcessing = db.prepare(`
-            SELECT name, ref_id, payload FROM commands WHERE status = 'started'
-        `).all() as Array<{ name: string; ref_id: string | null; payload: string | null }>;
-        const processingJobs = excludeSet
-            ? allProcessing.filter(j => !excludeSet.has(j.name))
-            : allProcessing;
+            SELECT id, name, progress_phase, ref_id, payload FROM commands WHERE status = 'started'
+        `).all() as Array<{ id: number; name: string; progress_phase: string | null; ref_id: string | null; payload: string | null }>;
+        const processingJobs = allProcessing
+            .filter(job => job.id !== options?.excludeCommandId)
+            .map(job => (DOWNLOAD_COMMAND_NAMES as readonly string[]).includes(job.name) && job.progress_phase === "importing"
+                ? { ...job, name: CommandNames.ImportDownload } : job)
+            // Downloads use a separate pipeline, but their import phase owns
+            // library files and must obey the same disk exclusions as renames.
+            .filter(job => !excludeSet?.has(job.name) || job.name === CommandNames.ImportDownload);
 
         if (processingJobs.length === 0) {
             return { canStart: true };

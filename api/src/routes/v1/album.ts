@@ -8,7 +8,7 @@ import {
 import { deleteReleaseGroupLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { LibraryReleaseSelectionService } from "../../services/music/library-release-selection-service.js";
 import { getAlbumAssociatedVideos } from "../../services/music/video-query-service.js";
-import { db, isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
+import { db, isSqliteBusyError, withDbWrite } from "../../database.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -26,7 +26,7 @@ const router = Router();
 
 /** Same yield-and-retry budget as rename/retag enqueue: main-thread writes fail fast on SQLITE_BUSY. */
 function runAlbumUserWrite<T>(operation: () => T): Promise<T> {
-  return runWithAsyncBusyRetry(operation, 30, 200);
+  return withDbWrite(operation);
 }
 
 export function albumMutationHttpStatus(error: unknown): number {

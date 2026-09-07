@@ -1,4 +1,3 @@
-import { createDarkTheme, createLightTheme } from "@fluentui/react-components";
 import { describe, expect, it } from "vitest";
 import {
   buildDiscogeniusSearchUnderlineGradient,
@@ -29,37 +28,14 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("Discogenius theme semantics", () => {
-  it("uses brand 100 as the light rest step for fills, compounds, and icons", () => {
-    const theme = createDiscogeniusTheme(discogeniusOrangeTheme, "light");
-    const stock = createLightTheme(discogeniusOrangeTheme);
-    expect(theme.colorBrandForeground1).toBe(discogeniusOrangeTheme[100]);
-    expect(theme.colorBrandBackground).toBe(discogeniusOrangeTheme[100]);
-    expect(theme.colorBrandBackgroundHover).toBe(discogeniusOrangeTheme[90]);
-    expect(theme.colorBrandBackgroundPressed).toBe(discogeniusOrangeTheme[60]);
-    expect(theme.colorBrandBackgroundSelected).toBe(discogeniusOrangeTheme[80]);
-    expect(theme.colorCompoundBrandBackground).toBe(discogeniusOrangeTheme[100]);
-    expect(theme.colorCompoundBrandBackgroundHover).toBe(discogeniusOrangeTheme[90]);
-    expect(theme.colorCompoundBrandStroke).toBe(discogeniusOrangeTheme[100]);
-    expect(theme.colorBrandForeground2).toBe(stock.colorBrandForeground2);
-    expect(theme.colorBrandBackground2).toBe(stock.colorBrandBackground2);
-    expect(theme.colorNeutralForeground1).toBe(stock.colorNeutralForeground1);
-  });
-
-  it("uses brand 110 as the dark rest step for fills, compounds, and icons", () => {
-    const theme = createDiscogeniusTheme(discogeniusOrangeTheme, "dark");
-    const stock = createDarkTheme(discogeniusOrangeTheme);
-    expect(theme.colorBrandForeground1).toBe(discogeniusOrangeTheme[110]);
-    expect(theme.colorBrandForeground2).toBe(discogeniusOrangeTheme[120]);
-    expect(theme.colorBrandBackground).toBe(discogeniusOrangeTheme[110]);
-    expect(theme.colorBrandBackgroundHover).toBe(discogeniusOrangeTheme[120]);
-    expect(theme.colorBrandBackgroundPressed).toBe(discogeniusOrangeTheme[80]);
-    expect(theme.colorBrandBackgroundSelected).toBe(discogeniusOrangeTheme[100]);
-    expect(theme.colorCompoundBrandBackground).toBe(discogeniusOrangeTheme[110]);
-    expect(theme.colorCompoundBrandBackgroundHover).toBe(discogeniusOrangeTheme[120]);
-    expect(theme.colorCompoundBrandStroke).toBe(discogeniusOrangeTheme[110]);
-    expect(theme.colorBrandBackground2).toBe(stock.colorBrandBackground2);
-    expect(theme.colorNeutralForeground1).toBe(stock.colorNeutralForeground1);
-    expect(theme.colorNeutralBackground1).toBe(stock.colorNeutralBackground1);
+  it.each(["light", "dark"] as const)("keeps %s brand labels readable for every accent and button state", mode => {
+    for (const brand of Object.values(discogeniusAuxiliaryThemes)) {
+      const theme = createDiscogeniusTheme(brand, mode);
+      for (const background of [theme.colorBrandBackground, theme.colorBrandBackgroundHover, theme.colorBrandBackgroundPressed, theme.colorBrandBackgroundSelected]) {
+        expect(contrastRatio(theme.colorNeutralForegroundOnBrand, background)).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(contrastRatio(theme.colorBrandForeground1, theme.colorNeutralBackground1)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("uses brand-text tokens for accent icons and tint-badge polarity for type chips", () => {

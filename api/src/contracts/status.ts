@@ -103,6 +103,7 @@ export interface TaskQueueStatContract {
 
 export interface QueueStatusContract {
   isPaused: boolean;
+  recoveryMessage?: string;
   processing: boolean;
   currentJobId?: number;
   currentProviderId?: string;
@@ -420,6 +421,7 @@ export function parseQueueStatusContract(value: unknown): QueueStatusContract {
   const record = expectRecord(value, "queueStatus");
   return {
     isPaused: expectBoolean(record.isPaused, "queueStatus.isPaused"),
+    recoveryMessage: expectOptionalString(record.recoveryMessage, "queueStatus.recoveryMessage"),
     processing: expectBoolean(record.processing, "queueStatus.processing"),
     currentJobId: expectOptionalNumber(record.currentJobId, "queueStatus.currentJobId"),
     currentProviderId: expectOptionalString(record.currentProviderId, "queueStatus.currentProviderId"),

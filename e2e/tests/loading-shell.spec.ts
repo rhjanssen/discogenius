@@ -101,7 +101,7 @@ test.describe('Shell loading states', () => {
     releaseAppAuthCheck?.();
 
     await expect(page.getByRole('status', { name: /loading discogenius/i })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /^tidal$/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^tidal\b/i })).toBeVisible();
   });
 
   test('does not block the shell while provider auth status is loading', async ({ page }) => {

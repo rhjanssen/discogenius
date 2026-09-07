@@ -24,7 +24,7 @@ import {
 import * as TOML from "@iarna/toml";
 import pg from "pg";
 import fs from "fs";
-import { db, isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
+import { db, isSqliteBusyError, withDbWrite } from "../../database.js";
 import { applyLibrarySettingsFromConfig } from "../../services/music/library-settings-sync.js";
 
 const { Client: PgClient } = pg;
@@ -48,7 +48,7 @@ function syncLibrariesFromSettings(): void {
 
 /** Same yield-and-retry budget as queue/album writes: settings persist in SQLite. */
 function runConfigUserWrite<T>(operation: () => T): Promise<T> {
-  return runWithAsyncBusyRetry(operation, 30, 200);
+  return withDbWrite(operation);
 }
 
 function configMutationHttpStatus(error: unknown): number {

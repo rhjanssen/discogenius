@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
 import {
     Badge,
+    MessageBar,
+    MessageBarBody,
     Button,
     Checkbox,
     Menu,
@@ -62,6 +64,7 @@ import {
     defaultQueueHistoryFilters,
     type QueueHistoryFilters,
 } from "./queueHistoryFilters";
+import { mergeQueueItemsWithProgress, queueItemGroupKey } from "./queueItemProgress";
 import { getQueueItemNavPath } from "./queueNavigation";
 import {
     buildBulkEdgeMoveRequest,
@@ -351,24 +354,6 @@ function getQueueGroupNavPath(groupType: QueueItem['type'], firstItem?: QueueIte
     });
 }
 
-function getQueueItemSlotKey(item: QueueItem): string | null {
-    const slot = item.slot?.trim().toLowerCase();
-    if (slot) {
-        return slot;
-    }
-
-    if (item.type !== 'album') {
-        return null;
-    }
-
-    const quality = item.quality?.toUpperCase() ?? '';
-    if (quality.includes('ATMOS') || quality.includes('SPATIAL') || quality.includes('SURROUND')) {
-        return 'spatial';
-    }
-
-    return 'stereo';
-}
-
 type QueueGroup = {
     id: string;
     title: string;
@@ -380,180 +365,6 @@ type QueueGroup = {
     status: 'downloading' | 'queued' | 'failed';
     sortIndex: number;
 };
-
-function getLiveQueueItemStatus(progress: DownloadProgress): QueueItem["status"] {
-    switch (progress.state) {
-        case "failed":
-        case "importFailed":
-            return "failed";
-        case "queued":
-            return "queued";
-        case "importPending":
-        case "importing":
-            return "started";
-        case "completed":
-            return "completed";
-        default:
-            return "downloading";
-    }
-}
-
-function getLiveQueueItemStage(progress: DownloadProgress): QueueItem["stage"] | undefined {
-    switch (progress.state) {
-        case "importPending":
-        case "importing":
-        case "importFailed":
-            return "import";
-        case "queued":
-        case "downloading":
-        case "failed":
-        case "paused":
-            return "download";
-        default:
-            return undefined;
-    }
-}
-
-function isPlaceholderQueueLabel(value: unknown): boolean {
-    const text = String(value || "").trim().toLowerCase();
-    return !text
-        || text === "unknown"
-        || text === "unknown track"
-        || text === "unknown video"
-        || text === "unknown album"
-        || text === "unknown item";
-}
-
-function preferQueueLabel(progressValue: unknown, itemValue: unknown): string | undefined {
-    const progressText = typeof progressValue === "string" ? progressValue : progressValue == null ? undefined : String(progressValue);
-    const itemText = typeof itemValue === "string" ? itemValue : itemValue == null ? undefined : String(itemValue);
-    if (!isPlaceholderQueueLabel(progressText)) return progressText;
-    if (!isPlaceholderQueueLabel(itemText)) return itemText;
-    return progressText ?? itemText;
-}
-
-function preferQueueCover(progressCover: unknown, itemCover: unknown): string | null {
-    const progressText = typeof progressCover === "string" ? progressCover.trim() : "";
-    const itemText = typeof itemCover === "string" ? itemCover.trim() : "";
-    if (progressText) return progressText;
-    if (itemText) return itemText;
-    return null;
-}
-
-function mergeQueueItemsWithProgress(
-    downloadQueue: QueueItem[],
-    progressByJobId: Map<number, DownloadProgress>,
-): QueueItem[] {
-    const mergedQueue = downloadQueue.map((item) => {
-        const progress = progressByJobId.get(item.id);
-        if (!progress) {
-            return item;
-        }
-
-        // Server is authoritative for clean queued rows. Client progress can linger
-        // after a requeue that stripped downloadState, which otherwise resurrects
-        // tracklists / "downloading" chrome on items that are only waiting.
-        const serverIsCleanQueued = item.status === "queued"
-            && (!item.state || item.state === "queued")
-            && !(item.tracks && item.tracks.length > 0);
-        if (serverIsCleanQueued && progress.state !== "queued") {
-            return item;
-        }
-
-        const liveStatus = getLiveQueueItemStatus(progress);
-        const liveStage = getLiveQueueItemStage(progress);
-        // Progress-state "completed" must not yank an Active row while the
-        // command is still started (download backends used to emit that early).
-        const status = (liveStatus === "completed" && (item.status === "started" || item.status === "downloading"))
-            ? (item.status === "downloading" ? "downloading" : "started")
-            : liveStatus;
-
-        return {
-            ...item,
-            status,
-            stage: liveStage ?? item.stage,
-            progress: progress.progress ?? item.progress,
-            error: status === "failed"
-                ? progress.statusMessage ?? item.error ?? null
-                : item.error ?? null,
-            quality: progress.quality ?? item.quality ?? null,
-            title: preferQueueLabel(progress.title, item.title),
-            artist: preferQueueLabel(progress.artist, item.artist),
-            cover: preferQueueCover(progress.cover, item.cover),
-            currentFileNum: progress.currentFileNum ?? item.currentFileNum,
-            totalFiles: progress.totalFiles ?? item.totalFiles,
-            currentTrack: progress.currentTrack ?? item.currentTrack,
-            currentProviderTrackId: progress.currentProviderTrackId ?? item.currentProviderTrackId,
-            currentTrackNum: progress.currentTrackNum ?? item.currentTrackNum,
-            currentVolumeNum: progress.currentVolumeNum ?? item.currentVolumeNum,
-            trackProgress: progress.trackProgress ?? item.trackProgress,
-            trackStatus: progress.trackStatus ?? item.trackStatus,
-            statusMessage: progress.statusMessage ?? item.statusMessage,
-            speed: progress.speed ?? item.speed,
-            eta: progress.eta ?? item.eta,
-            size: progress.size ?? item.size,
-            sizeleft: progress.sizeleft ?? item.sizeleft,
-            state: (progress.state === "completed" && (item.status === "started" || item.status === "downloading"))
-                ? (item.state === "importPending" || item.state === "importing" ? item.state : "downloading")
-                : (progress.state ?? item.state),
-            tracks: progress.tracks ?? item.tracks,
-        };
-    });
-
-    const existingJobIds = new Set(mergedQueue.map((item) => item.id));
-
-    for (const progress of progressByJobId.values()) {
-        if (existingJobIds.has(progress.jobId)) {
-            continue;
-        }
-
-        const status = getLiveQueueItemStatus(progress);
-        if (status === "completed") {
-            continue;
-        }
-
-        const timestamp = new Date().toISOString();
-        mergedQueue.push({
-            id: progress.jobId,
-            url: null,
-            type: progress.type,
-            queuePosition: undefined,
-            quality: progress.quality ?? null,
-            stage: getLiveQueueItemStage(progress),
-            providerId: progress.providerId,
-            path: null,
-            status,
-            progress: progress.progress ?? 0,
-            error: status === "failed" ? progress.statusMessage ?? null : null,
-            created_at: timestamp,
-            updated_at: timestamp,
-            started_at: timestamp,
-            completed_at: null,
-            title: progress.title,
-            artist: progress.artist,
-            cover: progress.cover ?? null,
-            album_id: progress.type === "album" ? progress.providerId : null,
-            album_title: progress.type === "album" ? progress.title : null,
-            currentFileNum: progress.currentFileNum,
-            totalFiles: progress.totalFiles,
-            currentTrack: progress.currentTrack,
-            currentProviderTrackId: progress.currentProviderTrackId,
-            currentTrackNum: progress.currentTrackNum,
-            currentVolumeNum: progress.currentVolumeNum,
-            trackProgress: progress.trackProgress,
-            trackStatus: progress.trackStatus,
-            statusMessage: progress.statusMessage,
-            speed: progress.speed,
-            eta: progress.eta,
-            size: progress.size,
-            sizeleft: progress.sizeleft,
-            state: progress.state,
-            tracks: progress.tracks,
-        });
-    }
-
-    return mergedQueue;
-}
 
 function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | undefined {
     if (!item || !item.providerId) {
@@ -718,6 +529,7 @@ const QueueTab = () => {
     const {
         getProgress,
         progressByJobId,
+        recoveryMessage,
         retryItem,
         deleteItem,
         reorderItems,
@@ -758,14 +570,7 @@ const QueueTab = () => {
         filteredQueue.forEach((item, index) => {
             const isAlbum = item.type === 'album';
             const isVideo = item.type === 'video';
-            const albumSlotKey = isAlbum ? getQueueItemSlotKey(item) : null;
-            // Catalog-anchored albums are one DownloadAlbum command. Standalone
-            // DownloadTrack rows stay individual track cards (no fake album grouping).
-            const groupId = isAlbum
-                ? `album-${item.album_id ?? item.providerId}-${albumSlotKey ?? 'default'}`
-                : isVideo
-                    ? `video-${item.providerId}`
-                    : `track-${item.id}-${item.providerId}`;
+            const groupId = queueItemGroupKey(item);
 
             if (!groups[groupId]) {
                 const groupType = isAlbum ? 'album' : isVideo ? 'video' : 'track';
@@ -1347,6 +1152,7 @@ const QueueTab = () => {
 
     return (
         <div className={styles.tabSection}>
+            {recoveryMessage && <MessageBar intent="warning"><MessageBarBody>{recoveryMessage}</MessageBarBody></MessageBar>}
             <div className={styles.queueColumnsWrapper}>
                 {hasQueueRows ? (
                     <section className={styles.queueSection} aria-label="Active">

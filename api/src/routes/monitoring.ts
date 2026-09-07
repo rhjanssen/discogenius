@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
-import { isSqliteBusyError, runWithAsyncBusyRetry } from "../database.js";
+import { isSqliteBusyError, withDbWrite } from "../database.js";
 import { parseMonitoringConfigUpdate } from "../contracts/config-updates.js";
 import { getObjectBody, isRequestValidationError } from "../utils/request-validation.js";
 import {
@@ -18,7 +18,7 @@ import {
 const router = Router();
 
 function runMonitoringUserWrite<T>(operation: () => T): Promise<T> {
-  return runWithAsyncBusyRetry(operation, 30, 200);
+  return withDbWrite(operation);
 }
 
 function monitoringMutationHttpStatus(error: unknown): number {

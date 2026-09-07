@@ -1,5 +1,6 @@
 import { CommandTrigger } from "./command-trigger.js";
-import { db } from "../../database.js";
+import { CommandManager } from "./command.js";
+import { db, withDbWrite } from "../../database.js";
 import type {
     CommandBodyCommon,
     ImportDownloadCommand,
@@ -202,6 +203,7 @@ function clearCommandUpdateThrottle(commandId: number): void {
 }
 
 interface CommandOverlay {
+    workerId?: string;
     progress?: number | null;
     progressCurrent?: number | null;
     progressTotal?: number | null;
@@ -211,6 +213,7 @@ interface CommandOverlay {
     lastProgressAt?: string;
     lastWrittenAt: number;
     pendingTimer?: NodeJS.Timeout;
+    pendingFlush?: Promise<void>;
 }
 
 const COMMAND_PERSIST_THROTTLE_MS = 5000;
@@ -219,7 +222,8 @@ const commandOverlays = new Map<number, CommandOverlay>();
 function applyOverlay(job: CommandModel | null): CommandModel | null {
     if (!job) return null;
     const overlay = commandOverlays.get(job.id);
-    if (!overlay) return job;
+    if (!overlay || TERMINAL_COMMAND_STATUSES.has(job.status)
+        || (overlay.workerId && (job.status !== "started" || job.worker_id !== overlay.workerId))) return job;
     return {
         ...job,
         progress: overlay.progress !== undefined && overlay.progress !== null ? overlay.progress : job.progress,
@@ -242,12 +246,11 @@ function clearCommandOverlay(commandId: number): void {
 
 function flushCommandOverlay(id: number, workerId?: string): void {
     const overlay = commandOverlays.get(id);
-    if (!overlay) return;
+    if (!overlay || overlay.workerId !== workerId) return;
     if (overlay.pendingTimer) {
         clearTimeout(overlay.pendingTimer);
         overlay.pendingTimer = undefined;
     }
-    overlay.lastWrittenAt = Date.now();
 
     const updates: string[] = ["updated_at = CURRENT_TIMESTAMP"];
     const params: unknown[] = [];
@@ -289,12 +292,27 @@ function flushCommandOverlay(id: number, workerId?: string): void {
             ownershipClause = " AND status = 'started' AND worker_id = ?";
             params.push(workerId);
         }
-        try {
-            db.prepare(`UPDATE commands SET ${updates.join(", ")} WHERE id = ?${ownershipClause}`).run(...params);
-        } catch (err) {
-            console.warn(`[CommandQueue] Throttled DB flush failed for command #${id}:`, err);
-        }
+        db.prepare(`UPDATE commands SET ${updates.join(", ")} WHERE id = ?${ownershipClause}`).run(...params);
     }
+    overlay.lastWrittenAt = Date.now();
+}
+
+function scheduleCommandOverlay(id: number, overlay: CommandOverlay): void {
+    if (overlay.pendingTimer || overlay.pendingFlush) return;
+    const delay = Math.max(0, COMMAND_PERSIST_THROTTLE_MS - (Date.now() - overlay.lastWrittenAt));
+    overlay.pendingTimer = setTimeout(() => {
+        overlay.pendingTimer = undefined;
+        overlay.pendingFlush = withDbWrite(() => {
+            if (commandOverlays.get(id) === overlay) flushCommandOverlay(id, overlay.workerId);
+        }).catch(error => {
+            console.warn(`[CommandQueue] Progress checkpoint failed for command #${id}:`, error);
+            overlay.lastWrittenAt = Date.now();
+            // Keep the latest snapshot and retry after the normal interval.
+            overlay.pendingFlush = undefined;
+            if (commandOverlays.get(id) === overlay) scheduleCommandOverlay(id, overlay);
+        }).finally(() => { overlay.pendingFlush = undefined; });
+    }, delay);
+    overlay.pendingTimer.unref();
 }
 
 function getDownloadContentType(type: string, payload: CommandBodyCommon): string | null {
@@ -966,30 +984,56 @@ ${orderBy}
     }
 
     static updateProgress(id: number, progress: number, workerId?: string) {
+        this.updateProgressMessage(id, { progress, workerId });
+    }
+
+    /** The download keeps its queue identity while its import takes the shared
+     * disk slot. Check and reserve atomically against scheduler claims. */
+    static claimImportForExecution(id: number, workerId: string): boolean {
+        return db.transaction(() => {
+            const job = this.get(id);
+            if (!job || job.status !== "started" || job.worker_id !== workerId || job.progress_phase === "importing") return false;
+            if (!CommandManager.canStartCommand(CommandNames.ImportDownload, job.payload, job.ref_id, {
+                excludeCommandId: id, excludeRunningTypes: DOWNLOAD_COMMAND_NAMES,
+            }).canStart) return false;
+            return db.prepare(`UPDATE commands SET progress_phase = 'importing', blocked_reason = NULL
+                WHERE id = ? AND status = 'started' AND worker_id = ?`).run(id, workerId).changes === 1;
+        })();
+    }
+
+    /** Transient UI telemetry, coalesced in memory with periodic checkpoints.
+     * Execution plans and import handoffs must use durable updateState instead. */
+    static updateProgressMessage(id: number, options: {
+        progress?: number;
+        description?: string;
+        workerId?: string;
+    }): void {
+        const { progress, description, workerId } = options;
         const current = this.get(id);
         if (!current || TERMINAL_COMMAND_STATUSES.has(current.status)) return;
         if (workerId && (current.status !== "started" || current.worker_id !== workerId)) return;
 
         let overlay = commandOverlays.get(id);
         const now = Date.now();
-        if (!overlay) {
-            overlay = { lastWrittenAt: 0 };
+        if (!overlay || overlay.workerId !== workerId) {
+            clearCommandOverlay(id);
+            overlay = { lastWrittenAt: Date.now(), workerId };
             commandOverlays.set(id, overlay);
         }
-        overlay.progress = progress;
-        overlay.progressCurrent = progress;
+        if (progress !== undefined) {
+            overlay.progress = progress;
+            overlay.progressCurrent = progress;
+            overlay.progressTotal = 100;
+        }
+        if (description !== undefined) {
+            overlay.progressPhase = description;
+            overlay.payloadPatch = { ...overlay.payloadPatch, description };
+        }
         overlay.lastProgressAt = new Date(now).toISOString();
 
-        emitThrottledCommandUpdate({ id, type: current.name, status: current.status, progress, payload: current.payload } as CommandEventPayload);
-
-        if (now - overlay.lastWrittenAt >= COMMAND_PERSIST_THROTTLE_MS) {
-            flushCommandOverlay(id, workerId);
-        } else if (!overlay.pendingTimer) {
-            overlay.pendingTimer = setTimeout(() => {
-                flushCommandOverlay(id, workerId);
-            }, COMMAND_PERSIST_THROTTLE_MS);
-            if (overlay.pendingTimer.unref) overlay.pendingTimer.unref();
-        }
+        const updated = applyOverlay(current)!;
+        emitThrottledCommandUpdate({ id, type: current.name, status: current.status, progress: updated.progress, payload: updated.payload } as CommandEventPayload);
+        scheduleCommandOverlay(id, overlay);
     }
 
     static updateState(id: number, options: {
@@ -1007,6 +1051,9 @@ ${orderBy}
         if (options.workerId && (current.status !== "started" || current.worker_id !== options.workerId)) {
             return null;
         }
+
+        flushCommandOverlay(id, options.workerId);
+        clearCommandOverlay(id);
 
         const updates: string[] = ["updated_at = CURRENT_TIMESTAMP"];
         const params: unknown[] = [];
@@ -1093,6 +1140,7 @@ ${orderBy}
     }
 
     static complete(id: number, workerId?: string): boolean {
+        flushCommandOverlay(id, workerId);
         const ownershipClause = workerId
             ? "status = 'started' AND worker_id = ?"
             : "status NOT IN ('completed', 'failed', 'cancelled')";
@@ -1122,6 +1170,7 @@ ${orderBy}
     }
 
     static fail(id: number, error: string, workerId?: string): boolean {
+        flushCommandOverlay(id, workerId);
         const ownershipClause = workerId
             ? "status = 'started' AND worker_id = ?"
             : "status NOT IN ('completed', 'failed', 'cancelled')";
@@ -1367,6 +1416,7 @@ ${orderBy}
 
         const outcome = recover();
         if (outcome.outcome !== "not-owner") {
+            clearCommandOverlay(options.id);
             clearCommandUpdateThrottle(options.id);
             const job = this.get(options.id);
             if (job) {

@@ -1,11 +1,11 @@
 /**
- * Process-wide SQLite writer mutex: Lidarr's one-writer model for Node
- * worker_threads. Four threads with busy_timeout=0 must never see SQLITE_BUSY
+ * Process-wide SQLite writer admission for Node worker_threads.
+ * Four threads with busy_timeout=0 must never see SQLITE_BUSY
  * when they take the mutex around each write.
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,6 +22,72 @@ import {
   withSqliteWriteMutexAsync,
   withSqliteWriteMutexSync,
 } from "./sqlite-write-mutex.js";
+
+function holdWorker(name: string, onAcquired?: () => void) {
+  const data = sqliteWriteMutexWorkerData();
+  const worker = new Worker(new URL("../services/commands/worker/command-worker-bootstrap.mjs", import.meta.url), {
+    workerData: { ...data, mode: "hold", name, __entry: new URL("./sqlite-write-mutex.fixture.ts", import.meta.url).href },
+  });
+  const queued = new Promise<void>((resolve, reject) => {
+    worker.on("message", (message) => { if (message.kind === "queued") resolve(); });
+    worker.once("error", reject);
+  });
+  const acquired = new Promise<void>((resolve, reject) => {
+    worker.on("message", (message) => { if (message.kind === "acquired") { onAcquired?.(); resolve(); } });
+    worker.once("error", reject);
+  });
+  return { worker, queued, acquired, token: Number(data[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]) };
+}
+
+test("production writers receive the lock in arrival order across worker threads", { timeout: 10_000 }, async () => {
+  const names = ["first writer", "second writer", "third writer"];
+  const order: string[] = [];
+  const holders: ReturnType<typeof holdWorker>[] = [];
+  try {
+    await withSqliteWriteMutexAsync(async () => {
+      for (const name of names) {
+        const holder = holdWorker(name, () => { order.push(name); holder.worker.postMessage("release"); });
+        holders.push(holder);
+        await holder.queued;
+      }
+      assert.deepEqual(sqliteWriteMutexDiagnostics().waitingLabels, names);
+    }, "test:hold-until-writers-queue");
+    await Promise.all(holders.map(holder => holder.acquired));
+    assert.deepEqual(order, names);
+  } finally {
+    for (const holder of holders) {
+      await holder.worker.terminate();
+      forceReleaseSqliteWriteMutexOwner(holder.token);
+    }
+  }
+});
+
+test("terminating a queued production writer removes its ticket without releasing another owner", { timeout: 10_000 }, async () => {
+  await withSqliteWriteMutexAsync(async () => {
+    const holder = holdWorker("interrupted waiter");
+    await holder.queued;
+    await holder.worker.terminate();
+    assert.equal(forceReleaseSqliteWriteMutexOwner(holder.token), true);
+    assert.equal(sqliteWriteMutexDiagnostics().queueDepth, 0);
+    assert.equal(isSqliteWriteMutexHeld(), true);
+  });
+  assert.equal(isSqliteWriteMutexHeld(), false);
+});
+
+test("a contended synchronous HTTP write fails promptly and a dead owner releases its ticket", { timeout: 10_000 }, async () => {
+  const holder = holdWorker("long writer");
+  try {
+    await holder.acquired;
+    const started = performance.now();
+    assert.throws(() => withSqliteWriteMutexSync(() => undefined), { code: "SQLITE_BUSY" });
+    assert.ok(performance.now() - started < 1_000, "HTTP thread must not wait out the 15-second worker timeout");
+  } finally {
+    await holder.worker.terminate();
+    forceReleaseSqliteWriteMutexOwner(holder.token);
+  }
+  assert.equal(isSqliteWriteMutexHeld(), false);
+  await withSqliteWriteMutexAsync(() => undefined);
+});
 
 test("async writers on the same thread take turns across an await", async () => {
   const order: string[] = [];
@@ -57,6 +123,24 @@ test("nested sync writes re-enter while an async holder is active", async () => 
   });
 });
 
+test("an unrelated callback cannot borrow an async writer's ownership on the same thread", async () => {
+  let release!: () => void;
+  let ready!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { ready = resolve; });
+  const writer = withSqliteWriteMutexAsync(async () => {
+    ready();
+    await pending;
+    withSqliteWriteMutexSync(() => undefined);
+    await withSqliteWriteMutexAsync(() => undefined);
+  });
+  try {
+    await started;
+    assert.throws(() => withSqliteWriteMutexSync(() => assert.fail("unrelated write entered")), { code: "SQLITE_BUSY" });
+  } finally { release(); await writer; }
+  withSqliteWriteMutexSync(() => undefined);
+});
+
 test("a terminated worker's owner token can release its abandoned mutex", async () => {
   const workerMutexData = sqliteWriteMutexWorkerData();
   const mutex = workerMutexData[SQLITE_WRITE_MUTEX_WORKER_DATA_KEY] as SharedArrayBuffer;
@@ -89,55 +173,26 @@ test("a terminated worker's owner token can release its abandoned mutex", async 
   withSqliteWriteMutexSync(() => undefined);
 });
 
-const WRITER_SOURCE = `
-const { parentPort, workerData } = require("node:worker_threads");
-const Database = require(workerData.betterSqlitePath);
-const { Atomics, SharedArrayBuffer } = globalThis;
-
-const lock = new Int32Array(workerData.mutex);
-let holds = 0;
-function acquire() {
-  if (holds > 0) { holds += 1; return; }
-  while (Atomics.compareExchange(lock, 0, 0, 1) !== 0) {
-    Atomics.wait(lock, 0, 1);
+test("supervisor finishes a dead worker's interrupted release without touching a live owner", () => {
+  const data = sqliteWriteMutexWorkerData();
+  const view = new Int32Array(data[SQLITE_WRITE_MUTEX_WORKER_DATA_KEY] as SharedArrayBuffer);
+  const owner = Number(data[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]);
+  assert.equal(Atomics.compareExchange(view, 0, 0, -owner), 0);
+  try {
+    assert.equal(forceReleaseSqliteWriteMutexOwner(owner + 1), false);
+    assert.equal(isSqliteWriteMutexHeld(), true);
+    assert.equal(forceReleaseSqliteWriteMutexOwner(owner), true);
+    withSqliteWriteMutexSync(() => undefined);
+  } finally {
+    forceReleaseSqliteWriteMutexOwner(owner);
   }
-  holds = 1;
-}
-function release() {
-  holds -= 1;
-  if (holds > 0) return;
-  Atomics.store(lock, 0, 0);
-  Atomics.notify(lock, 0);
-}
-
-const db = new Database(workerData.dbPath);
-db.pragma("journal_mode = WAL");
-db.pragma("busy_timeout = 0");
-
-(async () => {
-  const errors = [];
-  for (let i = 0; i < workerData.iterations; i += 1) {
-    acquire();
-    try {
-      db.prepare("INSERT INTO writes (owner, seq) VALUES (?, ?)").run(workerData.name, i);
-      await new Promise((r) => setImmediate(r));
-      db.prepare("UPDATE writes SET committed = 1 WHERE owner = ? AND seq = ?")
-        .run(workerData.name, i);
-    } catch (error) {
-      errors.push(String(error && error.code || error));
-    } finally {
-      release();
-    }
-  }
-  parentPort.postMessage({ kind: "finished", name: workerData.name, errors });
-})();
-`;
+});
 
 test("four concurrent workers with busy_timeout=0 never see SQLITE_BUSY", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-write-mutex-"));
   const dbPath = path.join(folder, "test.db");
-  const workerPath = path.join(folder, "writer.cjs");
-  writeFileSync(workerPath, WRITER_SOURCE);
+  const workerPath = new URL("../services/commands/worker/command-worker-bootstrap.mjs", import.meta.url);
+  const fixturePath = new URL("./sqlite-write-mutex.fixture.ts", import.meta.url).href;
 
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
@@ -156,6 +211,8 @@ test("four concurrent workers with busy_timeout=0 never see SQLITE_BUSY", async 
     }>((resolve, reject) => {
       const worker = new Worker(workerPath, {
         workerData: {
+          __entry: fixturePath,
+          ...sqliteWriteMutexWorkerData(),
           name,
           iterations,
           dbPath,
@@ -184,5 +241,17 @@ test("four concurrent workers with busy_timeout=0 never see SQLITE_BUSY", async 
     await Promise.allSettled(terminations);
     db.close();
     rmSync(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+
+test("an interrupted diagnostic counter update cannot block an empty writer queue", () => {
+  const view = new Int32Array(getOrCreateSqliteWriteMutexSab());
+  const prior = Atomics.load(view, 3);
+  Atomics.store(view, 3, 1);
+  try {
+    assert.equal(withSqliteWriteMutexSync(() => "written"), "written");
+  } finally {
+    Atomics.store(view, 3, prior);
   }
 });

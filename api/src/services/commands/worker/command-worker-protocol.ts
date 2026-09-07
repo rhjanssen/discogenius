@@ -44,17 +44,12 @@ export type WorkerToMainMessage =
     | { kind: "cacheInvalidate"; target: CacheInvalidateTarget; key?: string }
     | { kind: "importProgress"; commandId: number; state: unknown }
     | { kind: "done"; commandId: number }
-    | { kind: "error"; commandId: number; message: string }
-    // The process-global SQLite write lock lives on the main thread; see
-    // sqlite-write-lock.ts for why a worker-local mutex cannot work.
-    | { kind: "writeLockAcquire"; requestId: string; label?: string }
-    | { kind: "writeLockRelease"; requestId: string };
+    | { kind: "error"; commandId: number; message: string };
 
 /** main → worker messages. */
 export type MainToWorkerMessage =
     | { kind: "run"; job: CommandModel; leaseMs?: number; heartbeatMs?: number }
-    | { kind: "shutdown" }
-    | { kind: "writeLockGranted"; requestId: string };
+    | { kind: "shutdown" };
 
 /**
  * True only inside a worker thread that *we* spawned for job execution. Other

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runWithAsyncBusyRetry } from "../database.js";
+import { db, withDbWrite } from "../database.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { CommandTrigger } from "../services/commands/command-trigger.js";
@@ -73,6 +73,15 @@ router.post("/regenerate", async (req, res) => {
     const scope = String(req.body?.scope || "").trim();
     const entityId = parseEntityId(req.body?.entityId);
     const kind = String(req.body?.kind || "all").trim();
+    const fileId = scope === "track" ? Number(entityId) : null;
+    if (scope === "track") {
+      if (!/^\d+$/.test(entityId) || !Number.isSafeInteger(fileId) || fileId! <= 0) {
+        return res.status(400).json({ detail: "Track regeneration requires an exact positive TrackFiles id" });
+      }
+      if (!db.prepare("SELECT id FROM TrackFiles WHERE id = ? AND file_type = 'track'").get(fileId)) {
+        return res.status(404).json({ detail: "Audio file not found" });
+      }
+    }
 
     if (!["tags", "nfo", "all"].includes(kind)) {
       return res.status(400).json({ detail: "kind must be tags, nfo, or all" });
@@ -92,7 +101,7 @@ router.post("/regenerate", async (req, res) => {
       return res.status(400).json({ detail: "Audio tag regeneration is only supported for artist, album, or track scope" });
     }
 
-    const commandIds = await runWithAsyncBusyRetry(() => {
+    const commandIds = await withDbWrite(() => {
       const queuedCommandIds: number[] = [];
       if ((kind === "tags" || kind === "all") && scope === "artist") {
         const commandId = CommandQueueManager.push(
@@ -124,11 +133,11 @@ router.post("/regenerate", async (req, res) => {
         const commandId = CommandQueueManager.push(
           CommandNames.RetagFiles,
           {
-            mediaIds: [entityId],
+            ids: [fileId!],
             applyAll: false,
             description: `Regenerate audio tags for media file ${entityId}`,
           },
-          `retag-files:${JSON.stringify({ mediaIds: [entityId] })}`,
+          `retag-files:${JSON.stringify({ ids: [fileId] })}`,
           1,
           CommandTrigger.Manual,
         );
@@ -152,7 +161,7 @@ router.post("/regenerate", async (req, res) => {
       }
 
       return queuedCommandIds;
-    }, 30, 200);
+    });
 
     res.status(202).json({
       success: true,

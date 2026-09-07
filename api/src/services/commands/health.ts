@@ -3,6 +3,7 @@ import path from "node:path";
 import { isMainThread } from "node:worker_threads";
 import { db } from "../../database.js";
 import { BASE_SCHEMA_VERSION } from "../../database/schema/version.js";
+import { rebuildSearchIndex } from "../../database/schema/search.js";
 import { Config, CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { DB_PATH } from "../config/bootstrap.js";
 import { getRuntimeDiagnosticsSnapshot } from "./runtime-diagnostics.js";
@@ -810,19 +811,19 @@ function persistDeepHealthResult(
 }
 
 /**
- * FTS5 checksum mismatches happen when search-index shadow tables drift from
- * the content table (concurrent writer + WAL is the usual live cause). Rebuild
- * is the documented repair; without it /health stays 503 until the next
- * CheckHealth even after the rest of the database is fine.
+ * Repair only named derived search indexes. A failed check does not establish
+ * what caused corruption; canonical data and other damaged tables need their
+ * own diagnosis. Recreate from canonical rows instead of reading FTS content.
  */
-function rebuildFtsSearchIndexes(): string[] {
+function rebuildFtsSearchIndexes(results: string[]): string[] {
   const rebuilt: string[] = [];
-  for (const table of ["CatalogSearch", "TrackSearch"] as const) {
+  for (const table of ["CatalogSearch", "CatalogSubstringSearch", "TrackSearch"] as const) {
+    if (!results.some(line => /fts5:/i.test(line) && line.includes(`"${table}"`))) continue;
     const exists = db.prepare(
       "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?",
     ).get(table) as { ok?: number } | undefined;
     if (!exists) continue;
-    db.exec(`INSERT INTO ${table}(${table}) VALUES('rebuild')`);
+    rebuildSearchIndex(db, table);
     rebuilt.push(table);
   }
   return rebuilt;
@@ -846,8 +847,8 @@ export function runDeepDatabaseHealthCheck(): DeepDatabaseHealthResult {
   let result: DeepDatabaseHealthResult;
   try {
     let { passed: quickPassed, results: quickResults } = runQuickCheck();
-    if (!quickPassed && quickResults.some((line) => /fts5: checksum mismatch/i.test(line))) {
-      const rebuilt = rebuildFtsSearchIndexes();
+    if (!quickPassed && quickResults.some((line) => /fts5:/i.test(line))) {
+      const rebuilt = rebuildFtsSearchIndexes(quickResults);
       const retried = runQuickCheck();
       quickPassed = retried.passed;
       quickResults = rebuilt.length > 0

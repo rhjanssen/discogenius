@@ -24,21 +24,3 @@ export function validateExecutionManifest(db: Database.Database, request: {
     if (request.slot && request.slot !== target.slot) throw new Error('Requested slot does not match the destination library');
     return target;
 }
-
-/** A repeated title cannot override a conflicting exact ID or occurrence. */
-export function applyImportTrackProgress<T extends { providerTrackId?: string; trackNum?: number; volumeNum?: number; title?: string; status: string }>(
-    tracks: T[], state: { currentProviderTrackId?: string | null; currentTrackNum?: number | null; currentVolumeNum?: number | null; currentTrack?: string; trackStatus?: string },
-): T[] {
-    const candidates = tracks.filter(track => {
-        if (state.currentProviderTrackId) {
-            if (track.providerTrackId !== state.currentProviderTrackId) return false;
-        } else if (state.currentTrackNum == null) {
-            return !!state.currentTrack && track.title?.trim().toLowerCase() === state.currentTrack.trim().toLowerCase();
-        }
-        if (state.currentTrackNum != null && track.trackNum !== state.currentTrackNum) return false;
-        if (state.currentVolumeNum != null && track.volumeNum !== state.currentVolumeNum) return false;
-        return true;
-    });
-    if (candidates.length !== 1) return tracks;
-    return tracks.map(track => track === candidates[0] ? { ...track, status: state.trackStatus || 'downloading' } : track);
-}

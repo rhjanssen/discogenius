@@ -416,3 +416,18 @@ test("snapshot caching is stable and mutation events invalidate it", () => {
   assert.notEqual(refreshed, initial);
   assert.equal(refreshed.artists.total, 1);
 });
+
+
+test("track totals exclude unresolved and video occurrences while counting each audio edition slot", () => {
+  const artist = seedArtist("counts");
+  const album = seedAlbum("counts", artist, 4);
+  dbModule.db.prepare("UPDATE Tracks SET recording_id = NULL WHERE id = ?").run(album.tracks[0].id);
+  dbModule.db.prepare("UPDATE Recordings SET is_video = 1 WHERE id = ?").run(album.tracks[1].recordingId);
+  // Two edition slots may refer to the same recording and must both count.
+  dbModule.db.prepare("UPDATE Tracks SET recording_mbid = ? WHERE id = ?")
+    .run(album.tracks[2].recordingMbid, album.tracks[3].id);
+  const expected = dbModule.db.prepare(`SELECT COUNT(*) AS count FROM Tracks track
+    JOIN Recordings recording ON recording.id = track.recording_id AND recording.is_video = 0`).get() as { count: number };
+  assert.equal(expected.count, 2);
+  assert.equal(libraryStatsModule.LibraryStatsQueryService.getSnapshot().tracks.total, expected.count);
+});

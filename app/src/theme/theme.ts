@@ -170,81 +170,15 @@ export const tidalBadgeColorLight = {
     SpatialBackground: "#ededed",
 } as const;
 
-/**
- * One brand rest step per mode so buttons, toggles, tab underlines, and
- * icons match: light 100, dark 110. Hover/press keep Fluent's distances
- * from that rest (light −10/−40/−20, dark +10/−30/−10). White-on-fill
- * contrast is below 4.5 at these steps; that is intentional so orange
- * does not read as brown.
- *
- * Tint badges stay on Fluent's background2/foreground2 pair (pale fill
- * + darker text in light, dark fill + lighter text in dark).
- * https://react.fluentui.dev/?path=/docs/theme-theme-designer--docs
- */
-function applyFluentLightBrandOverrides(theme: Theme, brand: BrandVariants): Theme {
+// Keep Fluent's distinct text, fill and interaction steps. Making all of them
+// the bright logo color drops white button labels below readable contrast.
+export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {
+    if (mode === "light") return createLightTheme(brand);
     return {
-        ...theme,
-        colorBrandForeground1: brand[100],
-        colorBrandForegroundLink: brand[100],
-        colorBrandForegroundLinkHover: brand[90],
-        colorBrandForegroundLinkPressed: brand[70],
-        colorBrandForegroundLinkSelected: brand[100],
-        colorCompoundBrandForeground1: brand[100],
-        colorCompoundBrandForeground1Hover: brand[90],
-        colorCompoundBrandForeground1Pressed: brand[80],
-        colorBrandBackground: brand[100],
-        colorBrandBackgroundHover: brand[90],
-        colorBrandBackgroundPressed: brand[60],
-        colorBrandBackgroundSelected: brand[80],
-        colorCompoundBrandBackground: brand[100],
-        colorCompoundBrandBackgroundHover: brand[90],
-        colorCompoundBrandBackgroundPressed: brand[80],
-        colorCompoundBrandStroke: brand[100],
-        colorCompoundBrandStrokeHover: brand[90],
-        colorCompoundBrandStrokePressed: brand[80],
-        colorBrandStroke1: brand[100],
-        colorNeutralForeground2BrandHover: brand[100],
-        colorNeutralForeground2BrandPressed: brand[90],
-        colorNeutralForeground2BrandSelected: brand[100],
-        colorNeutralStrokeAccessibleSelected: brand[100],
-    };
-}
-
-function applyFluentDarkBrandOverrides(theme: Theme, brand: BrandVariants): Theme {
-    return {
-        ...theme,
+        ...createDarkTheme(brand),
         colorBrandForeground1: brand[110],
         colorBrandForeground2: brand[120],
-        colorBrandForegroundLink: brand[110],
-        colorBrandForegroundLinkHover: brand[120],
-        colorBrandForegroundLinkPressed: brand[90],
-        colorBrandForegroundLinkSelected: brand[110],
-        colorCompoundBrandForeground1: brand[110],
-        colorCompoundBrandForeground1Hover: brand[120],
-        colorCompoundBrandForeground1Pressed: brand[130],
-        colorBrandBackground: brand[110],
-        colorBrandBackgroundHover: brand[120],
-        colorBrandBackgroundPressed: brand[80],
-        colorBrandBackgroundSelected: brand[100],
-        colorCompoundBrandBackground: brand[110],
-        colorCompoundBrandBackgroundHover: brand[120],
-        colorCompoundBrandBackgroundPressed: brand[100],
-        colorCompoundBrandStroke: brand[110],
-        colorCompoundBrandStrokeHover: brand[120],
-        colorCompoundBrandStrokePressed: brand[100],
-        colorBrandStroke1: brand[110],
-        colorNeutralForeground2BrandHover: brand[110],
-        colorNeutralForeground2BrandPressed: brand[100],
-        colorNeutralForeground2BrandSelected: brand[110],
-        colorNeutralStrokeAccessibleSelected: brand[110],
     };
-}
-
-export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {
-    if (mode !== "dark") {
-        return applyFluentLightBrandOverrides(createLightTheme(brand), brand);
-    }
-    return applyFluentDarkBrandOverrides(createDarkTheme(brand), brand);
 }
 
 export const lightTheme: Theme = createDiscogeniusTheme(discogeniusOrangeTheme, "light");

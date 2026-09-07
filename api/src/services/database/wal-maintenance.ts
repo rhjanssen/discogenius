@@ -12,12 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { DB_PATH } from "../config/bootstrap.js";
-import { sqliteWriteMutexWorkerData } from "../../database/sqlite-write-mutex.js";
-import {
-  ownerAcquire,
-  ownerRelease,
-  ownerReleaseAllFor,
-} from "../commands/worker/sqlite-write-lock.js";
+import { sqliteWriteMutexWorkerData, forceReleaseSqliteWriteMutexOwner, SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY } from "../../database/sqlite-write-mutex.js";
 import type { WalMaintenanceAttempt, WalWorkerToMain } from "./wal-maintenance-worker.js";
 
 /** Keep the tail, not the history: enough to see a trend, bounded in memory. */
@@ -25,7 +20,8 @@ const ATTEMPT_HISTORY = 10;
 
 const recentAttempts: WalMaintenanceAttempt[] = [];
 let worker: Worker | null = null;
-let ownerId = "";
+let stopping = false;
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
 
 function readIntEnv(name: string, fallback: number, min: number): number {
   const raw = Number.parseInt(String(process.env[name] ?? ""), 10);
@@ -38,10 +34,7 @@ function resolveSpawn(): { entry: string; workerData: Record<string, unknown> } 
   const walMaintenance = {
     dbPath: DB_PATH,
     intervalMs: readIntEnv("DISCOGENIUS_WAL_MAINTENANCE_INTERVAL_MS", 10_000, 1_000),
-    // Above 256 MB a WAL is already costing every reader real CPU per lookup,
-    // and well short of the multi-gigabyte territory that made the library
-    // unusable. Below it, letting the log breathe is cheaper than forcing
-    // windows that interrupt writers.
+    // Bound disk growth during sustained writes without checkpointing each commit.
     highWaterBytes: readIntEnv("DISCOGENIUS_WAL_HIGH_WATER_BYTES", 256 * 1024 * 1024, 16 * 1024 * 1024),
     checkpointTimeoutMs: readIntEnv("DISCOGENIUS_WAL_CHECKPOINT_TIMEOUT_MS", 2_000, 100),
   };
@@ -69,20 +62,13 @@ export function startWalMaintenance(): void {
   }
 
   const { entry, workerData } = resolveSpawn();
-  ownerId = `wal-maintenance:${process.pid}`;
+  stopping = false;
+  const ownerToken = Number(workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]);
   const spawned = new Worker(entry, { workerData });
   worker = spawned;
 
   spawned.on("message", (message: WalWorkerToMain) => {
     switch (message?.kind) {
-      case "writeLockAcquire":
-        ownerAcquire(message.requestId, ownerId, () => {
-          spawned.postMessage({ kind: "writeLockGranted", requestId: message.requestId });
-        }, message.label);
-        break;
-      case "writeLockRelease":
-        ownerRelease(message.requestId);
-        break;
       case "walAttempt":
         recentAttempts.push(message.attempt);
         if (recentAttempts.length > ATTEMPT_HISTORY) recentAttempts.shift();
@@ -103,16 +89,23 @@ export function startWalMaintenance(): void {
   const handleExit = (reason: string) => {
     // Never leave the gate held by a thread that no longer exists — one crash
     // here would otherwise stop every writer in the process.
-    ownerReleaseAllFor(ownerId);
+    forceReleaseSqliteWriteMutexOwner(ownerToken);
     if (worker === spawned) worker = null;
     console.warn(`[WalMaintenance] thread stopped (${reason})`);
+    if (!stopping) {
+      restartTimer = setTimeout(() => { restartTimer = null; startWalMaintenance(); }, 10_000);
+      restartTimer.unref();
+    }
   };
-  spawned.on("error", (error) => handleExit(String(error?.message || error)));
+  spawned.on("error", (error) => console.warn("[WalMaintenance] worker error:", error));
   spawned.on("exit", (code) => handleExit(`exit code ${code}`));
   spawned.unref();
 }
 
 export async function stopWalMaintenance(): Promise<void> {
+  stopping = true;
+  if (restartTimer) clearTimeout(restartTimer);
+  restartTimer = null;
   const spawned = worker;
   if (!spawned) return;
   worker = null;
@@ -122,7 +115,6 @@ export async function stopWalMaintenance(): Promise<void> {
   } catch {
     // best-effort shutdown
   }
-  ownerReleaseAllFor(ownerId);
 }
 
 export function walMaintenanceDiagnostics(): {

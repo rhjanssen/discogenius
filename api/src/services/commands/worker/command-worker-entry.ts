@@ -11,6 +11,7 @@ import { clearConfigCache } from "../../config/config.js";
 import { catalogProviderRegistry } from "../../catalog/index.js";
 import { withSqliteWriteGate } from "../../../database.js";
 import { initCurationListeners } from "../../music/curation.listener.js";
+import { startExecutionHeartbeat } from "./execution-heartbeat.js";
 import {
     forwardImportProgress,
     getCommandWorkerId,
@@ -54,25 +55,30 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
     const leaseMs = Math.max(1_000, message.leaseMs ?? 60_000);
     const physicalWorkerId = getCommandWorkerId();
 
-    if (job.worker_id) {
-        post({
+    const stopHeartbeat = startExecutionHeartbeat({
+        intervalMs: Math.min(message.heartbeatMs ?? 30_000, Math.max(250, leaseMs / 2)),
+        onHeartbeat: () => { if (job.worker_id) post({
             kind: "heartbeat",
             commandId: job.id,
             workerId: job.worker_id,
             physicalWorkerId,
-            renewed: true,
+            renewed: false,
             sentAt: new Date().toISOString(),
-        });
-    }
+        }); },
+        renew: () => withSqliteWriteGate(() => job.worker_id
+            ? CommandQueueManager.renewLease(job.id, job.worker_id, leaseMs)
+            : false, "command:heartbeat"),
+        onError: (error) => console.warn(`[CommandWorker] Lease renewal for #${job.id} failed:`, error),
+    });
 
     // Settings are written on the main thread. Workers keep a process-local
     // config cache *and* a catalog-provider registry, so without a refresh they
     // keep boot-time defaults (Servarr catalog, include_videos=false, old
     // naming templates) forever. Catalog source lives on the registry, not in
     // the config cache — clearing the cache alone is not enough.
-    clearConfigCache();
-    catalogProviderRegistry.refreshFromConfig();
     try {
+        clearConfigCache();
+        catalogProviderRegistry.refreshFromConfig();
         if (job.name === CommandNames.ImportDownload) {
             // Imports are owned by the download processor (it persists
             // complete/fail + emits download-progress SSE). Here we only run the
@@ -91,8 +97,10 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
             // throws, so reaching here always means the lifecycle ran.
             await executeCommand(job);
         }
+        await stopHeartbeat();
         post({ kind: "done", commandId: job.id });
     } catch (error: any) {
+        await stopHeartbeat();
         post({ kind: "error", commandId: job.id, message: error?.message || "Unknown command worker error" });
     }
 }

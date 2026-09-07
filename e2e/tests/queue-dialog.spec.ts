@@ -668,11 +668,11 @@ function createImportTransitionQueueFixture() {
           created_at: nowIso,
           updated_at: nowIso,
           started_at: nowIso,
-          title: 'Import stays second',
+          title: 'Live import',
           artist: 'Queue Order',
           cover: null,
           album_id: 'album-1302',
-          album_title: 'Import stays second',
+          album_title: 'Live import',
           queuePosition: 2,
         },
         {
@@ -1116,7 +1116,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByText('Queued')).toHaveCount(0);
   });
 
-  test('queue tab inserts an active album from live started and progress events before queue refresh completes', async ({ page }) => {
+  test('queue tab refreshes authoritative identity on started events before offering album actions', async ({ page }) => {
     await page.addInitScript(({ targetUrlPart, mockEvents }) => {
       class MockEventSource {
         static CONNECTING = 0;
@@ -1138,7 +1138,7 @@ test.describe('Dashboard queue and activity tabs', () => {
                 const event = { data: JSON.stringify(item.data) } as MessageEvent;
                 callbacks.forEach((callback) => callback(event));
               }
-            }, 0);
+            }, 200);
           }
         }
 
@@ -1198,10 +1198,26 @@ test.describe('Dashboard queue and activity tabs', () => {
       },
     });
 
+    let queueReads = 0;
+    await page.route('**/api/v1/queue?*', async route => {
+      queueReads += 1;
+      const items = queueReads === 1 ? [] : [{
+        id: 901, providerId: 'album-901', type: 'album', status: 'downloading',
+        state: 'downloading', stage: 'download', progress: 21,
+        title: 'Discovery', artist: 'Daft Punk', album_id: 'canonical-discovery',
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }];
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        items, total: items.length, limit: 50, offset: 0, hasMore: false,
+      }) });
+    });
+
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.getByText('Discovery')).toBeVisible();
+    expect(queueReads).toBeGreaterThan(1);
+    await expect(page.getByRole('link', { name: 'Discovery', exact: true })).toHaveAttribute('href', '/album/canonical-discovery');
     await expect(page.getByText('Daft Punk')).toBeVisible();
     await expect(page.getByText('Album', { exact: true })).toBeVisible();
     await expect(page.getByText('No items in queue')).toHaveCount(0);
@@ -1322,7 +1338,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     }
   });
 
-  test('queue tab keeps pending rows visible in backend order under mixed pending, importing, and downloading states', async ({ page }) => {
+  test('queue tab keeps active imports and downloads above pending rows', async ({ page }) => {
     await stubDashboardApis(page, createBackendOrderedMixedQueueFixture());
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
@@ -1331,14 +1347,14 @@ test.describe('Dashboard queue and activity tabs', () => {
     const liveGroups = liveQueue.locator('[data-queue-group-id]');
 
     await expect(liveGroups).toHaveCount(3);
-    await expect(liveGroups.nth(0)).toContainText('Alpha pending');
-    await expect(liveGroups.nth(1)).toContainText('Bravo importing');
-    await expect(liveGroups.nth(2)).toContainText('Charlie downloading');
+    await expect(liveGroups.nth(0)).toContainText('Bravo importing');
+    await expect(liveGroups.nth(1)).toContainText('Charlie downloading');
+    await expect(liveGroups.nth(2)).toContainText('Alpha pending');
     await expect(liveQueue.getByRole('button', { name: /Move Alpha pending up/i })).toBeVisible();
-    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
+    await expect(liveGroups.nth(0).getByText(/^importing$/i)).toBeVisible();
   });
 
-  test('queue tab keeps an importing row in place when a later item starts downloading', async ({ page }) => {
+  test('queue tab moves a live import above downloads and retains waiting rows', async ({ page }) => {
     await page.addInitScript(({ targetUrlPart, mockEvents }) => {
       class MockEventSource {
         static CONNECTING = 0;
@@ -1391,7 +1407,7 @@ test.describe('Dashboard queue and activity tabs', () => {
             jobId: 1302,
             providerId: 'album-1302',
             type: 'album',
-            title: 'Import stays second',
+            title: 'Live import',
             artist: 'Queue Order',
             progress: 100,
             state: 'importing',
@@ -1433,15 +1449,15 @@ test.describe('Dashboard queue and activity tabs', () => {
     const liveGroups = page.locator('section[aria-label="Active"] [data-queue-group-id]');
 
     await expect(liveGroups).toHaveCount(3);
-    await expect(liveGroups.nth(0)).toContainText('Anchor download');
-    await expect(liveGroups.nth(1)).toContainText('Import stays second');
+    await expect(liveGroups.nth(0)).toContainText('Live import');
+    await expect(liveGroups.nth(1)).toContainText('Anchor download');
     await expect(liveGroups.nth(2)).toContainText('Next download');
 
     await page.waitForTimeout(500);
 
-    await expect(liveGroups.nth(0)).toContainText('Anchor download');
-    await expect(liveGroups.nth(1)).toContainText('Import stays second');
-    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
+    await expect(liveGroups.nth(0)).toContainText('Live import');
+    await expect(liveGroups.nth(1)).toContainText('Anchor download');
+    await expect(liveGroups.nth(0).getByText(/^importing$/i)).toBeVisible();
     await expect(liveGroups.nth(2)).toContainText('Next download');
   });
 

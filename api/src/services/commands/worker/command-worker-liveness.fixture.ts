@@ -1,6 +1,8 @@
 import { parentPort } from "node:worker_threads";
 
 import { CommandQueueManager } from "../command-queue-manager.js";
+import { withDbWrite } from "../../../database.js";
+import { startExecutionHeartbeat } from "./execution-heartbeat.js";
 import {
     getCommandWorkerId,
     isCommandWorker,
@@ -13,14 +15,15 @@ if (!parentPort || !isCommandWorker()) {
 }
 
 const port = parentPort;
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let stopHeartbeat: (() => Promise<void>) | null = null;
 let completionTimer: ReturnType<typeof setTimeout> | null = null;
 
-function clearTimers(): void {
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
+async function clearTimers(): Promise<void> {
     if (completionTimer) clearTimeout(completionTimer);
-    heartbeatTimer = null;
     completionTimer = null;
+    const stop = stopHeartbeat;
+    stopHeartbeat = null;
+    await stop?.();
 }
 
 function post(message: WorkerToMainMessage): void {
@@ -34,31 +37,30 @@ function startHeartbeats(
     if (!job.worker_id) return;
     const leaseMs = Math.max(20, message.leaseMs ?? 100);
     const heartbeatMs = Math.max(5, message.heartbeatMs ?? 20);
-    const beat = () => {
-        const renewed = CommandQueueManager.renewLease(job.id, job.worker_id!, leaseMs);
-        post({
+    stopHeartbeat = startExecutionHeartbeat({
+        intervalMs: heartbeatMs,
+        renew: () => withDbWrite(() => CommandQueueManager.renewLease(job.id, job.worker_id!, leaseMs)),
+        onError: error => console.warn("Fixture lease renewal failed", error),
+        onHeartbeat: () => post({
             kind: "heartbeat",
             commandId: job.id,
             workerId: job.worker_id!,
             physicalWorkerId: getCommandWorkerId(),
-            renewed,
+            renewed: false,
             sentAt: new Date().toISOString(),
-        });
-    };
-    beat();
-    heartbeatTimer = setInterval(beat, heartbeatMs);
+        }),
+    });
 }
 
-port.on("message", (message: MainToWorkerMessage) => {
+port.on("message", async (message: MainToWorkerMessage) => {
     if (message.kind === "shutdown") {
-        clearTimers();
+        await clearTimers();
         port.close();
         return;
     }
-    // The write-lock grant is handled by sqlite-write-lock.ts's own listener.
     if (message.kind !== "run") return;
 
-    clearTimers();
+    await clearTimers();
     const behavior = String(
         (message.job.payload as Record<string, unknown>).testBehavior ?? "complete",
     );
@@ -81,8 +83,8 @@ port.on("message", (message: MainToWorkerMessage) => {
     const durationMs = Number(
         (message.job.payload as Record<string, unknown>).testDurationMs ?? 25,
     );
-    completionTimer = setTimeout(() => {
-        clearTimers();
+    completionTimer = setTimeout(async () => {
+        await clearTimers();
         post({ kind: "done", commandId: message.job.id });
     }, Math.max(0, durationMs));
 });

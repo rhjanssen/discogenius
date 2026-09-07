@@ -24,6 +24,7 @@ import {
 import {
   createTrackSearchIndex,
   createCatalogSearchIndex,
+  ensureSearchIndexes,
 } from "./database/schema/search.js";
 import {
   createCommandsSchema,
@@ -48,24 +49,15 @@ import {
 
 let _db: Database.Database | null = null;
 
-/**
- * Run a user-initiated write. Lidarr doesn't retry SQLITE_BUSY in every
- * controller — it serializes writers and lets SQLite's 1s BusyTimeout cover
- * the rare overlap. HTTP handlers await this so they wait for the writer mutex
- * without freezing the event loop.
- */
+/** Wait for writer admission without blocking HTTP. The callback runs once;
+ * retrying a callback can repeat filesystem or event side effects. */
 export function withDbWrite<T>(fn: () => T): Promise<T> {
   return withSqliteWriteMutexAsync(fn);
 }
 
-const SQLITE_BUSY_RETRY_BASE_MS = 100;
-const SQLITE_BUSY_RETRY_MAX_MS = 2000;
-// Lidarr: BusyTimeout = 1000ms, WAL, three command threads. SQLITE_BUSY is rare
-// because writers block on that timeout instead of racing. Discogenius adds a
-// process-wide writer mutex so worker_threads don't overlap connections; this
-// timeout is only a backstop if something bypasses the mutex.
-const SQLITE_BUSY_TIMEOUT_MS = 10000;
-const SQLITE_BUSY_RETRY_ATTEMPTS = 5;
+// SQLite's own timeout only covers writers outside our shared admission queue.
+// A synchronous timeout on the HTTP thread would freeze unrelated requests.
+const SQLITE_BUSY_TIMEOUT_MS = isMainThread ? 0 : 1000;
 
 // Optional write profiling: log any write transaction that holds the SQLite write
 // lock longer than this (ms). Off unless DISCOGENIUS_WRITE_PROFILE_MS is set. Used
@@ -131,51 +123,6 @@ function isSqliteBusy(error: unknown): boolean {
   return typeof message === "string" && /database( table)? is locked/i.test(message);
 }
 
-function sleepSync(ms: number): void {
-  // Allowed on the Node main thread (unlike browsers). Keeps the retry backoff
-  // synchronous so better-sqlite3's synchronous API is preserved.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-/**
- * Last-resort SQLITE_BUSY retry. Call sites should not need this: the writer
- * mutex is the Lidarr-shaped strategy. Kept as a backstop so an uncaught busy
- * error cannot abort the process.
- */
-export function runWithSqliteBusyRetry<T>(operation: () => T): T {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= SQLITE_BUSY_RETRY_ATTEMPTS; attempt += 1) {
-    try {
-      return operation();
-    } catch (error) {
-      if (!isSqliteBusy(error) || attempt >= SQLITE_BUSY_RETRY_ATTEMPTS) {
-        throw error;
-      }
-
-      lastError = error;
-      const delayMs = Math.min(SQLITE_BUSY_RETRY_MAX_MS, SQLITE_BUSY_RETRY_BASE_MS * (2 ** attempt))
-        + Math.floor(Math.random() * SQLITE_BUSY_RETRY_BASE_MS);
-      sleepSync(delayMs);
-    }
-  }
-
-  throw lastError;
-}
-
-/**
- * Wait for the process writer mutex, then run the write once.
- *
- * Kept under the old name so existing route handlers pick up the Lidarr-shaped
- * strategy without a call-site sweep. Extra attempt/delay arguments are ignored.
- */
-export async function runWithAsyncBusyRetry<T>(
-  operation: () => T,
-  _attempts?: number,
-  _baseDelayMs?: number,
-): Promise<T> {
-  return withSqliteWriteMutexAsync(operation);
-}
-
 function getDbInstance(): Database.Database {
   if (_db) return _db;
 
@@ -197,7 +144,7 @@ function getDbInstance(): Database.Database {
   _db.pragma(`journal_mode = ${journalMode}`);
   _db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   _db.pragma("synchronous = NORMAL");
-  _db.pragma("cache_size = -512000");
+  _db.pragma("cache_size = -64000"); // 64 MB per connection, not a 500 MB budget per worker
   _db.pragma("foreign_keys = ON");
   // Bound the WAL on disk: without a size limit a write storm (worker pool +
   // main) grows the WAL into the hundreds of MB, and every reader then has to
@@ -214,13 +161,13 @@ export const db = new Proxy({} as any, {
   get(target, prop, receiver) {
     const instance = getDbInstance();
     if (prop === "prepare") {
-      // Writes take the process writer mutex (Lidarr: one writer), then a short
+      // Writes take the shared admission mutex, then a short
       // busy_timeout backstop. Reads don't take the write lock under WAL.
       return (source: string) => {
         const stmt = instance.prepare(source);
         const originalRun = stmt.run.bind(stmt);
         stmt.run = ((...args: unknown[]) => withSqliteWriteMutexSync(
-          () => runWithSqliteBusyRetry(() => originalRun(...args)),
+          () => originalRun(...args), source,
         )) as typeof stmt.run;
         const originalGet = stmt.get.bind(stmt);
         const originalAll = stmt.all.bind(stmt);
@@ -232,10 +179,10 @@ export const db = new Proxy({} as any, {
           // SQLITE_BUSY. The statement's SQLite-provided `readonly` flag is the
           // authoritative distinction; parsing SQL text would miss CTEs.
           stmt.get = ((...args: unknown[]) => withSqliteWriteMutexSync(
-            () => runWithSqliteBusyRetry(() => originalGet(...args)),
+            () => originalGet(...args), source,
           )) as typeof stmt.get;
           stmt.all = ((...args: unknown[]) => withSqliteWriteMutexSync(
-            () => runWithSqliteBusyRetry(() => originalAll(...args)),
+            () => originalAll(...args), source,
           )) as typeof stmt.all;
         } else if (READ_PROFILE_MS && isMainThread) {
           // Only wrap reads when profiling is on AND we're on the event loop;
@@ -248,23 +195,23 @@ export const db = new Proxy({} as any, {
     }
     if (prop === "exec") {
       return (source: string) => withSqliteWriteMutexSync(
-        () => runWithSqliteBusyRetry(() => instance.exec(source)),
+        () => instance.exec(source), source,
       );
     }
     if (prop === "transaction") {
       return (fn: any) => {
         const txn = instance.transaction(fn) as any;
         const runImmediate = (...args: any[]) => withSqliteWriteMutexSync(
-          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.immediate(...args))),
+          () => profileWrite(() => txn.immediate(...args)), "database:transaction",
         );
         const runDeferred = (...args: any[]) => withSqliteWriteMutexSync(
-          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.deferred(...args))),
+          () => profileWrite(() => txn.deferred(...args)), "database:transaction",
         );
         const runDefault = (...args: any[]) => withSqliteWriteMutexSync(
-          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.default(...args))),
+          () => profileWrite(() => txn.default(...args)), "database:transaction",
         );
         const runExclusive = (...args: any[]) => withSqliteWriteMutexSync(
-          () => runWithSqliteBusyRetry(() => profileWrite(() => txn.exclusive(...args))),
+          () => profileWrite(() => txn.exclusive(...args)), "database:transaction",
         );
         const immediateTxn = (...args: any[]) => runImmediate(...args);
         Object.defineProperties(immediateTxn, {
@@ -529,7 +476,10 @@ export function initDatabase() {
   pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
   ensureLibraryProjectionTriggers();
-  ensureFtsSelfHealing();
+  const rebuiltSearchIndexes = ensureSearchIndexes(db);
+  if (rebuiltSearchIndexes.length > 0) {
+    console.log(`[SQLite] Rebuilt derived search indexes: ${rebuiltSearchIndexes.join(", ")}`);
+  }
   initializeDefaultData();
 }
 
@@ -545,22 +495,6 @@ function ensureLibraryLookupIndexes(): void {
   `);
 }
 
-
-function ensureFtsSelfHealing(): void {
-  for (const table of ["TrackSearch", "CatalogSearch"]) {
-    try {
-      db.prepare(`INSERT INTO ${table}(${table}) VALUES('integrity-check')`).run();
-    } catch (error: any) {
-      console.warn(`[SQLite] FTS5 integrity check failed on ${table}, attempting rebuild:`, error?.message || error);
-      try {
-        db.prepare(`INSERT INTO ${table}(${table}) VALUES('rebuild')`).run();
-        console.log(`[SQLite] Successfully rebuilt FTS5 index for ${table}`);
-      } catch (rebuildError) {
-        console.error(`[SQLite] Failed to rebuild FTS5 index for ${table}:`, rebuildError);
-      }
-    }
-  }
-}
 
 function ensureLibraryProjectionTriggers(): void {
   syncAlbumLibraryProjectionInvalidationTriggers(db);

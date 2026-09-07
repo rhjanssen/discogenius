@@ -1,3 +1,4 @@
+import { replaceMediaFile } from "./media-file-rewrite.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -459,21 +460,6 @@ function verifyTagLibValues(
   }
 }
 
-function replaceOriginalWithVerifiedCopy(originalPath: string, workingPath: string): void {
-  const backupPath = path.join(
-    path.dirname(originalPath),
-    `.discogenius-tags-backup-${randomUUID()}${extensionOf(originalPath)}`,
-  );
-  fs.renameSync(originalPath, backupPath);
-  try {
-    fs.renameSync(workingPath, originalPath);
-  } catch (error) {
-    fs.renameSync(backupPath, originalPath);
-    throw error;
-  }
-  fs.rmSync(backupPath, { force: true });
-}
-
 function workingCopyPath(filePath: string): string {
   const extension = extensionOf(filePath);
   return path.join(
@@ -498,7 +484,7 @@ export async function writeMediaTagsWithTagLib(
     writeTagLibValues(workingPath, tags, removeKeys);
     verifyTagLibValues(workingPath, tags, removeKeys);
     verifyMediaStructure(workingPath, mediaStructure);
-    replaceOriginalWithVerifiedCopy(filePath, workingPath);
+    replaceMediaFile(filePath, workingPath);
     return { handled: true, success: true, backend: "taglib" };
   } catch (error) {
     fs.rmSync(workingPath, { force: true });
@@ -549,7 +535,7 @@ export async function clearMediaTagsWithTagLib(
       }
     });
     verifyMediaStructure(workingPath, mediaStructure);
-    replaceOriginalWithVerifiedCopy(filePath, workingPath);
+    replaceMediaFile(filePath, workingPath);
     return { handled: true, success: true, backend: "taglib" };
   } catch (error) {
     fs.rmSync(workingPath, { force: true });
@@ -589,7 +575,7 @@ export async function replaceMediaCoverWithTagLib(
       }
     });
     verifyMediaStructure(workingPath, mediaStructure);
-    replaceOriginalWithVerifiedCopy(filePath, workingPath);
+    replaceMediaFile(filePath, workingPath);
     return { handled: true, success: true, backend: "taglib" };
   } catch (error) {
     fs.rmSync(workingPath, { force: true });

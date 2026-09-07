@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runWithAsyncBusyRetry } from "../database.js";
+import { withDbWrite } from "../database.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { LIBRARY_BULK_ACTIONS, LIBRARY_BULK_ENTITIES } from "../services/music/library-bulk-actions.js";
@@ -22,7 +22,7 @@ router.post("/", async (req, res) => {
         const action = getEnumValue(body, "action", LIBRARY_BULK_ACTIONS);
         const ids = getRequiredIdentifierArray(body, "ids");
 
-        const commandId = await runWithAsyncBusyRetry(() =>
+        const commandId = await withDbWrite(() =>
             CommandQueueManager.push(
                 CommandNames.LibraryBulkAction,
                 {

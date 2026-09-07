@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runWithAsyncBusyRetry } from "../database.js";
+import { withDbWrite } from "../database.js";
 import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
@@ -85,7 +85,7 @@ router.post("/apply", async (req, res) => {
         ? { artistId: artistId || null, albumId: albumId || null, editionId: editionId || null, releaseMbid: releaseMbid || null }
         : { ids: normalizedIds || [] })}`;
 
-    const commandId = await runWithAsyncBusyRetry(
+    const commandId = await withDbWrite(
       () => isArtistWideRetag
         ? CommandQueueManager.push(CommandNames.RetagArtist, {
           artistId: artistIds.length === 1 ? artistIds[0] : undefined,
@@ -99,8 +99,6 @@ router.post("/apply", async (req, res) => {
           editionId,
           releaseMbid,
         }, refId, CommandPriority.Interactive, CommandTrigger.Manual),
-      30,
-      200,
     );
 
     res.json({
@@ -143,7 +141,7 @@ router.post("/strip", async (req, res) => {
       ? { artistId: artistId || null, albumId: albumId || null, editionId: editionId || null, releaseMbid: releaseMbid || null }
       : { ids: normalizedIds || [] })}`;
 
-    const commandId = await runWithAsyncBusyRetry(
+    const commandId = await withDbWrite(
       () => CommandQueueManager.push(CommandNames.RetagFiles, {
         ids: normalizedIds,
         applyAll,
@@ -153,8 +151,6 @@ router.post("/strip", async (req, res) => {
         releaseMbid,
         stripOnly: true,
       }, refId, CommandPriority.Interactive, CommandTrigger.Manual),
-      30,
-      200,
     );
 
     res.json({

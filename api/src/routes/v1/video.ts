@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, runWithAsyncBusyRetry } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
 import { CommandNames } from "../../services/commands/command-names.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
@@ -102,7 +102,7 @@ router.post("/", async (req, res) => {
     const providerId = getRequiredIdentifier(body, "id");
     const provider = getOptionalString(body, "provider");
 
-    const commandId = await runWithAsyncBusyRetry(
+    const commandId = await withDbWrite(
       () => CommandQueueManager.push(
         CommandNames.SeedVideo,
         {
@@ -116,8 +116,6 @@ router.post("/", async (req, res) => {
         1,
         CommandTrigger.Manual,
       ),
-      30,
-      200,
     );
 
     res.status(202).json({
@@ -258,7 +256,7 @@ router.patch("/:videoId", async (req, res) => {
     })();
     const renameArtistId = applied?.artistId;
     if (renameArtistId) {
-      await runWithAsyncBusyRetry(
+      await withDbWrite(
         () => CommandQueueManager.push(
           CommandNames.RenameFiles,
           { artistId: renameArtistId, fileTypes: ["video"], applyAll: true },
@@ -266,8 +264,6 @@ router.patch("/:videoId", async (req, res) => {
           1,
           CommandTrigger.Manual,
         ),
-        30,
-        200,
       );
     }
 

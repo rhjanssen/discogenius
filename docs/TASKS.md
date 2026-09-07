@@ -77,3 +77,12 @@ Not 2.12.0. After the model is stable, replace the public history with a clean i
 - Metadata-consumer profiles beyond MBID tagging and NFO/artwork sidecars.
 - Flush SQLite catalog + live-query Postgres only (superseded by replicated-cache behavior).
 - Dynamic npm plugin loading per provider.
+
+
+## After 2.16.5 validation
+
+- pending: merge remote catalogue discovery with local identities and show progress for queued hydration of unknown album/artist pages. Page opening must not monitor or download implicitly.
+- pending: measure broad one/two-character search and cold track-list filters separately from selective album searches.
+- pending: update persisted file size/mtime after standalone tag stripping, as retagging already does.
+- pending: profile cold statistics reads and video-update transactions during concurrent catalogue refresh; the scale run still recorded 2.3 s and 6.5 s respectively.
+- pending: reproduce artwork-cache temporary-file loss during concurrent metadata refresh.

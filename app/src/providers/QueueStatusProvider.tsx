@@ -1,3 +1,4 @@
+import { applyTrackProgress } from "@contracts/track-progress";
 import React, {
   useCallback,
   useEffect,
@@ -49,7 +50,7 @@ const DEFAULT_STATS: QueueStatsSummary = {
   total: 0,
 };
 
-const STRUCTURAL_QUEUE_UPDATE_STATUSES = new Set<CommandStatusRaw>(["queued", "completed", "failed", "cancelled"]);
+const STRUCTURAL_QUEUE_UPDATE_STATUSES = new Set<CommandStatusRaw>(["queued", "started", "completed", "failed", "cancelled"]);
 
 function getQueueGlobalJobEventData(data: unknown): QueueGlobalJobEventData | null {
   if (!data || typeof data !== "object") {
@@ -85,80 +86,6 @@ function shouldRefreshQueueStatusForGlobalEvent(event: GlobalEventPayload): bool
   return jobEventData.status !== undefined && STRUCTURAL_QUEUE_UPDATE_STATUSES.has(jobEventData.status);
 }
 
-type ProgressTrackRow = NonNullable<DownloadProgress["tracks"]>[number];
-
-/**
- * Normalize a reported or catalog track title for matching. Keep in sync
- * with the server-side copy in download-processor.ts.
- */
-function normalizeTrackTitleForMatch(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/^[^-]+\s-\s/, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-/**
- * Apply a live per-title status update to the cached tracklist so row
- * indicators move with SSE events instead of waiting for the next poll.
- * Reported titles are "<track title> <quality suffix>" (downloads) or
- * file-derived names (imports); match normalized prefixes, prefer the
- * longest catalog title, and never regress a completed row.
- */
-function applyTrackStatusToRows(
-  tracks: ProgressTrackRow[] | undefined,
-  reportedTitle: string | undefined,
-  reportedStatus: string | undefined,
-  providerTrackId?: string | null,
-): ProgressTrackRow[] | undefined {
-  if (!tracks?.length || !reportedStatus) {
-    return tracks;
-  }
-
-  const providerKey = String(providerTrackId || "").trim();
-  if (providerKey) {
-    const matchedIndex = tracks.findIndex((track) => String(track.providerTrackId || "").trim() === providerKey);
-    if (matchedIndex >= 0) {
-      const current = tracks[matchedIndex];
-      if (current.status === reportedStatus || (current.status === "completed" && reportedStatus !== "completed")) {
-        return tracks;
-      }
-      return tracks.map((track, idx) => (
-        idx === matchedIndex ? { ...track, status: reportedStatus as ProgressTrackRow["status"] } : track
-      ));
-    }
-  }
-
-  if (!reportedTitle) {
-    return tracks;
-  }
-
-  const reported = normalizeTrackTitleForMatch(reportedTitle);
-  let bestIdx = -1;
-  let bestLen = 0;
-  tracks.forEach((track, idx) => {
-    const title = normalizeTrackTitleForMatch(String(track.title || ""));
-    if (title && reported && (reported.startsWith(title) || title.startsWith(reported)) && title.length > bestLen) {
-      bestIdx = idx;
-      bestLen = title.length;
-    }
-  });
-
-  if (bestIdx < 0) {
-    return tracks;
-  }
-
-  const current = tracks[bestIdx];
-  if (current.status === reportedStatus || (current.status === "completed" && reportedStatus !== "completed")) {
-    return tracks;
-  }
-
-  return tracks.map((track, idx) => (
-    idx === bestIdx ? { ...track, status: reportedStatus as ProgressTrackRow["status"] } : track
-  ));
-}
-
 function buildProgressSnapshot(
   data: QueueProgressEvent,
   existing?: DownloadProgress,
@@ -171,12 +98,8 @@ function buildProgressSnapshot(
     return null;
   }
 
-  const tracks = applyTrackStatusToRows(
-    data.tracks ?? existing?.tracks,
-    data.currentTrack,
-    data.trackStatus,
-    data.currentProviderTrackId,
-  );
+  const sourceTracks = data.tracks ?? existing?.tracks;
+  const tracks = sourceTracks ? applyTrackProgress(sourceTracks, data) : undefined;
 
   return {
     jobId,
@@ -227,6 +150,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<QueueStatsSummary>(DEFAULT_STATS);
   const [isPaused, setIsPaused] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState<string | undefined>();
   const [progressState, setProgressState] = useState<ProgressState>(createEmptyProgressState);
   const progressStateRef = useRef<ProgressState>(createEmptyProgressState());
 
@@ -246,6 +170,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
 
   const applyQueueStatus = useCallback((value: Awaited<ReturnType<typeof api.getQueueStatus>>) => {
     setIsPaused(Boolean(value?.isPaused));
+    setRecoveryMessage(value?.recoveryMessage);
     setStats(deriveQueueStats(value));
     statusBackoffRef.current = 10_000;
     setLoading(false);
@@ -357,6 +282,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
               updateProgressState((previous) => upsertProgressSnapshots(previous, [snapshot]));
             }
             scheduleStatusRefresh(0);
+            invalidateQueueQueries();
             dispatchActivityRefresh();
             return;
           }
@@ -634,6 +560,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     loading,
     stats,
     isPaused,
+    recoveryMessage,
     progressByJobId: progressState.byJobId,
     progressByProviderId: progressState.byProviderId,
     getProgress: (jobId: number) => progressState.byJobId.get(jobId),
@@ -653,6 +580,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     deleteItem,
     fetchQueueStatus,
     isPaused,
+    recoveryMessage,
     loading,
     pauseQueue,
     processItem,

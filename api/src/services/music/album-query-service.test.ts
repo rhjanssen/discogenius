@@ -36,7 +36,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM LibraryArtists").run();
-  db.prepare("DELETE FROM Albums").run();  db.prepare("DELETE FROM ArtistMetadata").run();
+  db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -442,4 +443,32 @@ test("album list pages from catalog so unmonitored albums of stored artists are 
   });
   assert.equal(all.items.some((album) => album.id === "monitored-visible"), true);
   assert.equal(all.items.some((album) => album.id === "unmonitored-visible"), true);
+});
+
+
+test("album substring search preserves title, artist, punctuation, short terms and pagination", () => {
+  const { db } = dbModule;
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('bastille', 'Bastille'), ('bakermat', 'Bakermat')").run();
+  const insert = db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)");
+  insert.run('bad-blood', 'bastille', 'Bad Blood');
+  insert.run('blood-live', 'bastille', 'Bad Blood (Live)');
+  insert.run('plus', 'bakermat', '+');
+  insert.run('apostrophe', 'bakermat', "Don't Stop");
+  for (const search of ['lood', 'BLOOD', 'astill', '+', "Don't", 'B', '%Blood%', 'missing-result']) {
+    const expected = db.prepare(`SELECT album.mbid FROM Albums album
+      JOIN ArtistMetadata artist ON artist.mbid = album.artist_mbid
+      WHERE album.title LIKE ? OR artist.name LIKE ? ORDER BY album.mbid`)
+      .all(`%${search}%`, `%${search}%`) as Array<{ mbid: string }>;
+    const actual = albumQueryModule.AlbumQueryService.listAlbums({ search, limit: 20, offset: 0 });
+    assert.deepEqual(actual.items.map(album => album.id).sort(), expected.map(album => album.mbid), search);
+    assert.equal(actual.total, expected.length, search);
+  }
+  const page = albumQueryModule.AlbumQueryService.listAlbums({ search: 'lood', limit: 1, offset: 1 });
+  assert.equal(page.items.length, 1);
+  assert.equal(page.total, 2);
+  assert.equal(page.hasMore, false);
+  db.prepare("UPDATE Albums SET title = 'Changed' WHERE mbid = 'bad-blood'").run();
+  assert.equal(albumQueryModule.AlbumQueryService.listAlbums({ search: 'lood', limit: 20, offset: 0 }).total, 1);
+  db.prepare("DELETE FROM Albums WHERE mbid = 'blood-live'").run();
+  assert.equal(albumQueryModule.AlbumQueryService.listAlbums({ search: 'lood', limit: 20, offset: 0 }).total, 0);
 });

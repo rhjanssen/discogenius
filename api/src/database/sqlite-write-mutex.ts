@@ -5,8 +5,8 @@
  * `BusyTimeout = 1000` and no per-route retry loops. That works because those
  * threads *block* on the lock and ASP.NET still serves other requests from the
  * thread pool. Discogenius cannot copy the blocking part on the HTTP event loop,
- * but it can copy the important half: **one writer at a time, at the app
- * layer**, so SQLite almost never sees overlapping connections.
+ * so Discogenius adds asynchronous admission for its shared SQLite writer.
+ * This mutex is a Node adaptation, not an implementation copied from Lidarr.
  *
  * Command / download / WAL workers take the mutex synchronously (`Atomics.wait`).
  * Async HTTP/scheduler writes take it with `Atomics.waitAsync` so the event loop
@@ -14,6 +14,7 @@
  * wait on itself.
  */
 import { isMainThread, workerData } from "node:worker_threads";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export const SQLITE_WRITE_MUTEX_WORKER_DATA_KEY = "sqliteWriteMutex";
 export const SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY = "sqliteWriteMutexOwner";
@@ -29,11 +30,19 @@ const TOTAL_WAIT_MS_INDEX = 5;
 const MAX_WAIT_MS_INDEX = 6;
 const MAX_QUEUE_DEPTH_INDEX = 7;
 const MAX_HOLD_MS_INDEX = 8;
-const MUTEX_BYTE_LENGTH = 9 * Int32Array.BYTES_PER_ELEMENT;
+const TICKET_INDEX = 9;
+const HELD_SLOT_INDEX = 10;
+const LABEL_CELLS = 48;
+const LONGEST_LABEL_INDEX = 11;
+const QUEUE_START = LONGEST_LABEL_INDEX + LABEL_CELLS;
+const QUEUE_CAPACITY = 256;
+const SLOT_CELLS = 2 + LABEL_CELLS;
+const MUTEX_BYTE_LENGTH = (QUEUE_START + QUEUE_CAPACITY * SLOT_CELLS) * Int32Array.BYTES_PER_ELEMENT;
 
-type MutexTls = { holds: number };
+type MutexTls = { holds: number; context: symbol | null };
 
-const tls: MutexTls = { holds: 0 };
+const tls: MutexTls = { holds: 0, context: null };
+const writeContext = new AsyncLocalStorage<symbol>();
 
 function readWorkerDataMutex(): SharedArrayBuffer | null {
   const data = workerData as Record<string, unknown> | null;
@@ -103,7 +112,7 @@ export function sqliteWriteMutexWorkerData(): Record<string, SharedArrayBuffer |
 }
 
 export function holdsSqliteWriteMutex(): boolean {
-  return tls.holds > 0;
+  return tls.holds > 0 && (tls.context === null || writeContext.getStore() === tls.context);
 }
 
 /** True when any thread in this process currently holds the writer mutex. */
@@ -118,6 +127,65 @@ function atomicMax(view: Int32Array, index: number, value: number): void {
     if (observed === current) return;
     current = observed;
   }
+}
+
+function writeLabel(view: Int32Array, offset: number, label: string): void {
+  const bytes = new Uint8Array(view.buffer, offset * 4, LABEL_CELLS * 4);
+  bytes.fill(0);
+  new TextEncoder().encodeInto(label, bytes.subarray(0, bytes.length - 1));
+}
+
+function readLabel(view: Int32Array, offset: number): string | null {
+  const bytes = new Uint8Array(view.buffer, offset * 4, LABEL_CELLS * 4);
+  const end = bytes.indexOf(0);
+  return new TextDecoder().decode(bytes.subarray(0, end < 0 ? bytes.length : end)) || null;
+}
+
+function busyError(): Error & { code: string } {
+  return Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+}
+
+type WriteRequest = { slot: number; waitingSince: number };
+
+function enqueueWrite(view: Int32Array, label: string): WriteRequest {
+  const owner = currentOwnerToken();
+  for (let index = 0; index < QUEUE_CAPACITY; index++) {
+    const slot = QUEUE_START + index * SLOT_CELLS;
+    if (Atomics.compareExchange(view, slot, 0, owner) !== 0) continue;
+    const waitingSince = beginMutexWait(view);
+    writeLabel(view, slot + 2, label);
+    let ticket = Atomics.add(view, TICKET_INDEX, 1) + 1;
+    if ((ticket | 0) === 0) ticket = Atomics.add(view, TICKET_INDEX, 1) + 1;
+    Atomics.store(view, slot + 1, ticket);
+    Atomics.notify(view, OWNER_INDEX);
+    return { slot, waitingSince };
+  }
+  throw busyError();
+}
+
+function abandonWrite(view: Int32Array, request: WriteRequest): void {
+  Atomics.store(view, request.slot + 1, 0);
+  Atomics.store(view, request.slot, 0);
+  Atomics.sub(view, WAITING_WRITERS_INDEX, 1);
+  Atomics.notify(view, OWNER_INDEX);
+}
+
+function grantWrite(view: Int32Array, request: WriteRequest): boolean {
+  if (Atomics.load(view, OWNER_INDEX) !== 0) return false;
+  const ticket = Atomics.load(view, request.slot + 1);
+  for (let index = 0; index < QUEUE_CAPACITY; index++) {
+    const slot = QUEUE_START + index * SLOT_CELLS;
+    if (slot === request.slot || Atomics.load(view, slot) === 0) continue;
+    const other = Atomics.load(view, slot + 1);
+    // Zero means another thread is publishing a request. It will notify us.
+    // Signed subtraction also preserves order across the ticket counter wrap.
+    if (other === 0 || ((other - ticket) | 0) < 0) return false;
+  }
+  if (Atomics.compareExchange(view, OWNER_INDEX, 0, currentOwnerToken()) !== 0) return false;
+  Atomics.store(view, HELD_SLOT_INDEX, request.slot);
+  tls.holds = 1;
+  recordMutexAcquired(view, request.waitingSince);
+  return true;
 }
 
 function beginMutexWait(view: Int32Array): number {
@@ -140,18 +208,29 @@ function recordMutexAcquired(view: Int32Array, waitingSince: number | null): voi
 function recordMutexReleased(view: Int32Array): void {
   const acquiredAt = Atomics.exchange(view, ACQUIRED_AT_SECONDS_INDEX, 0);
   if (acquiredAt > 0) {
-    atomicMax(view, MAX_HOLD_MS_INDEX, Math.max(0, Date.now() - acquiredAt * 1000));
+    const heldMs = Math.max(0, Date.now() - acquiredAt * 1000);
+    if (heldMs >= Atomics.load(view, MAX_HOLD_MS_INDEX)) {
+      const slot = Atomics.load(view, HELD_SLOT_INDEX);
+      writeLabel(view, LONGEST_LABEL_INDEX, slot ? readLabel(view, slot + 2) || "" : "");
+      atomicMax(view, MAX_HOLD_MS_INDEX, heldMs);
+    }
   }
 }
 
-function releaseMutexOwner(view: Int32Array, ownerToken: number): boolean {
+function releaseMutexOwner(view: Int32Array, ownerToken: number, exited = false): boolean {
   // Mark the owner as releasing before clearing its timestamp. A direct
   // owner-to-zero CAS lets a waiting worker acquire between those operations
   // and the old owner then wipes the new owner's start time.
-  if (Atomics.compareExchange(view, OWNER_INDEX, ownerToken, -ownerToken) !== ownerToken) {
+  const observed = Atomics.compareExchange(view, OWNER_INDEX, ownerToken, -ownerToken);
+  if (observed !== ownerToken && !(exited && observed === -ownerToken)) {
     return false;
   }
   recordMutexReleased(view);
+  const slot = Atomics.exchange(view, HELD_SLOT_INDEX, 0);
+  if (slot) {
+    Atomics.store(view, slot + 1, 0);
+    Atomics.store(view, slot, 0);
+  }
   Atomics.store(view, OWNER_INDEX, 0);
   Atomics.notify(view, OWNER_INDEX);
   return true;
@@ -167,6 +246,9 @@ export function sqliteWriteMutexDiagnostics(): {
   maxWaitMs: number;
   maxQueueDepth: number;
   longestHoldMs: number;
+  heldByLabel: string | null;
+  longestHoldLabel: string | null;
+  waitingLabels: string[];
 } {
   const view = mutexView();
   const rawOwnerToken = Atomics.load(view, OWNER_INDEX);
@@ -174,6 +256,14 @@ export function sqliteWriteMutexDiagnostics(): {
   const acquiredAt = Atomics.load(view, ACQUIRED_AT_SECONDS_INDEX);
   const grants = Math.max(0, Atomics.load(view, GRANTS_INDEX));
   const totalWaitMs = Math.max(0, Atomics.load(view, TOTAL_WAIT_MS_INDEX));
+  const heldSlot = Atomics.load(view, HELD_SLOT_INDEX);
+  const waitingLabels: string[] = [];
+  for (let index = 0; index < QUEUE_CAPACITY; index++) {
+    const slot = QUEUE_START + index * SLOT_CELLS;
+    if (slot !== heldSlot && Atomics.load(view, slot) !== 0) {
+      waitingLabels.push(readLabel(view, slot + 2) || "unlabelled");
+    }
+  }
   return {
     held: rawOwnerToken !== 0,
     ownerToken: ownerToken || null,
@@ -186,69 +276,70 @@ export function sqliteWriteMutexDiagnostics(): {
     maxWaitMs: Math.max(0, Atomics.load(view, MAX_WAIT_MS_INDEX)),
     maxQueueDepth: Math.max(0, Atomics.load(view, MAX_QUEUE_DEPTH_INDEX)),
     longestHoldMs: Math.max(0, Atomics.load(view, MAX_HOLD_MS_INDEX)),
+    heldByLabel: heldSlot ? readLabel(view, heldSlot + 2) : null,
+    longestHoldLabel: readLabel(view, LONGEST_LABEL_INDEX),
+    waitingLabels,
   };
 }
 
-export function tryAcquireSqliteWriteMutex(): boolean {
-  if (tls.holds > 0) {
+export function tryAcquireSqliteWriteMutex(label = "synchronous write"): boolean {
+  if (holdsSqliteWriteMutex()) {
     tls.holds += 1;
     return true;
   }
   const view = mutexView();
-  if (Atomics.compareExchange(view, OWNER_INDEX, 0, currentOwnerToken()) === 0) {
-    tls.holds = 1;
-    recordMutexAcquired(view, null);
-    return true;
-  }
+  if (Atomics.load(view, OWNER_INDEX) !== 0) return false;
+  // Admission uses the actual tickets below. A worker can die between updating
+  // a diagnostic counter and publishing/removing its ticket.
+  const request = enqueueWrite(view, label);
+  if (grantWrite(view, request)) return true;
+  abandonWrite(view, request);
   return false;
 }
 
-export function acquireSqliteWriteMutexSync(timeoutMs: number = 15_000): void {
-  if (tls.holds > 0) {
+export function acquireSqliteWriteMutexSync(timeoutMs: number = 15_000, label = "synchronous write"): void {
+  if (holdsSqliteWriteMutex()) {
     tls.holds += 1;
     return;
   }
+  // Waiting here would prevent the unrelated async owner on this thread
+  // from resuming and releasing its lock.
+  if (tls.holds > 0) throw busyError();
   const lock = mutexView();
-  const ownerToken = currentOwnerToken();
   const deadline = timeoutMs == null ? null : Date.now() + Math.max(0, timeoutMs);
-  let waitingSince: number | null = null;
-  while (Atomics.compareExchange(lock, OWNER_INDEX, 0, ownerToken) !== 0) {
-    if (waitingSince == null) waitingSince = beginMutexWait(lock);
+  const request = enqueueWrite(lock, label);
+  while (true) {
+    const observedOwner = Atomics.load(lock, OWNER_INDEX);
+    if (grantWrite(lock, request)) return;
     const remaining = deadline == null ? Infinity : deadline - Date.now();
     if (remaining <= 0) {
-      Atomics.sub(lock, WAITING_WRITERS_INDEX, 1);
-      const error = new Error("database is locked");
-      (error as { code?: string }).code = "SQLITE_BUSY";
-      throw error;
+      abandonWrite(lock, request);
+      throw busyError();
     }
     const waitMs = Number.isFinite(remaining) ? Math.min(remaining, 1_000_000) : undefined;
-    const observedOwner = Atomics.load(lock, OWNER_INDEX);
-    if (observedOwner !== 0) Atomics.wait(lock, OWNER_INDEX, observedOwner, waitMs);
+    Atomics.wait(lock, OWNER_INDEX, observedOwner, Math.min(waitMs ?? 100, 100));
   }
-  tls.holds = 1;
-  recordMutexAcquired(lock, waitingSince);
 }
 
-export async function acquireSqliteWriteMutexAsync(): Promise<void> {
-  // Do not re-enter across an `await`. Two concurrent async writers on the
-  // same thread (HTTP + timer, or two route handlers) must take turns, which
-  // is what Lidarr's one-writer model does. Nested *sync* `.run` still
-  // re-enters via `acquireSqliteWriteMutexSync`.
+export async function acquireSqliteWriteMutexAsync(label = "asynchronous write", context: symbol | null = null): Promise<void> {
+  // Unrelated async writers on the same thread must take turns. The wrapper
+  // recognizes nested calls through AsyncLocalStorage before reaching here.
   const lock = mutexView();
-  const ownerToken = currentOwnerToken();
-  let waitingSince: number | null = null;
-  while (Atomics.compareExchange(lock, OWNER_INDEX, 0, ownerToken) !== 0) {
-    if (waitingSince == null) waitingSince = beginMutexWait(lock);
+  const request = enqueueWrite(lock, label);
+  while (true) {
+    const observedOwner = Atomics.load(lock, OWNER_INDEX);
+    if (grantWrite(lock, request)) {
+      tls.context = context;
+      return;
+    }
     const waitAsync = (Atomics as typeof Atomics & {
-      waitAsync?: (typedArray: Int32Array, index: number, value: number) => (
+      waitAsync?: (typedArray: Int32Array, index: number, value: number, timeout?: number) => (
         { async: false; value: "ok" | "not-equal" | "timed-out" }
         | { async: true; value: Promise<"ok" | "timed-out"> }
       );
     }).waitAsync;
     if (typeof waitAsync === "function") {
-      const observedOwner = Atomics.load(lock, OWNER_INDEX);
-      if (observedOwner === 0) continue;
-      const result = waitAsync(lock, OWNER_INDEX, observedOwner);
+      const result = waitAsync(lock, OWNER_INDEX, observedOwner, 100);
       if (result.async) {
         await result.value;
       }
@@ -256,14 +347,13 @@ export async function acquireSqliteWriteMutexAsync(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
   }
-  tls.holds = 1;
-  recordMutexAcquired(lock, waitingSince);
 }
 
 export function releaseSqliteWriteMutex(): void {
   if (tls.holds <= 0) return;
   tls.holds -= 1;
   if (tls.holds > 0) return;
+  tls.context = null;
   const lock = mutexView();
   releaseMutexOwner(lock, currentOwnerToken());
 }
@@ -272,25 +362,33 @@ export function releaseSqliteWriteMutex(): void {
 export function forceReleaseSqliteWriteMutexOwner(ownerToken: number): boolean {
   if (!Number.isInteger(ownerToken) || ownerToken <= 0) return false;
   const lock = mutexView();
-  return releaseMutexOwner(lock, ownerToken);
+  // A worker can exit after marking itself as releasing. Only its supervisor,
+  // after physical exit, may finish that interrupted release.
+  const released = releaseMutexOwner(lock, ownerToken, true);
+  let removed = false;
+  for (let index = 0; index < QUEUE_CAPACITY; index++) {
+    const slot = QUEUE_START + index * SLOT_CELLS;
+    if (Atomics.load(lock, slot) === ownerToken) {
+      abandonWrite(lock, { slot, waitingSince: 0 });
+      removed = true;
+    }
+  }
+  return released || removed;
 }
 
 /**
  * Run a synchronous SQLite write with the process mutex held.
  *
  * Workers block until they own the mutex (Lidarr command threads). The HTTP
- * thread tries a non-blocking acquire first; if another writer holds it, it
- * waits up to Lidarr's 1s BusyTimeout rather than overlapping connections.
+ * thread never blocks: its callers must await the asynchronous write gate.
  */
-export function withSqliteWriteMutexSync<T>(work: () => T): T {
+export function withSqliteWriteMutexSync<T>(work: () => T, label = "synchronous write"): T {
   const nested = holdsSqliteWriteMutex();
   if (!nested) {
     if (isMainThread) {
-      if (!tryAcquireSqliteWriteMutex()) {
-        acquireSqliteWriteMutexSync(15_000);
-      }
+      if (!tryAcquireSqliteWriteMutex(label)) throw busyError();
     } else {
-      acquireSqliteWriteMutexSync();
+      acquireSqliteWriteMutexSync(15_000, label);
     }
   }
   try {
@@ -303,10 +401,15 @@ export function withSqliteWriteMutexSync<T>(work: () => T): T {
 }
 
 /** Async HTTP/scheduler writes: wait without freezing the event loop. */
-export async function withSqliteWriteMutexAsync<T>(work: () => T | Promise<T>): Promise<T> {
-  await acquireSqliteWriteMutexAsync();
+export async function withSqliteWriteMutexAsync<T>(work: () => T | Promise<T>, label = "asynchronous write"): Promise<T> {
+  if (holdsSqliteWriteMutex()) return work();
+  const context = Symbol(label);
+  await acquireSqliteWriteMutexAsync(label, context);
   try {
-    return await work();
+    const result = writeContext.run(context, work);
+    // Release synchronous work before yielding. Keeping an empty write section
+    // locked for another microtask can collide with an unrelated worker callback.
+    return result instanceof Promise ? await result : result;
   } finally {
     releaseSqliteWriteMutex();
   }

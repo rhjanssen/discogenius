@@ -52,6 +52,26 @@ function claim(id: number, owner: string, now = new Date('2026-01-01T00:00:00.00
 beforeEach(resetRows);
 afterEach(resetRows);
 
+test('buffered progress persists each exact disc occurrence and never infers completion from list position', () => {
+    const id = pushTrack('disc-progress');
+    const owner = 'disc-progress-owner';
+    claim(id, owner);
+    const processor = new DownloadProcessor() as any;
+    const tracks = [1, 2, 3].map(volumeNum => ({ title: 'Intro', providerTrackId: '123', trackNum: 1, volumeNum, status: 'queued' }));
+    try {
+        processor.persistDownloadState(id, { tracks, currentProviderTrackId: '123', currentVolumeNum: 2, trackStatus: 'completed' }, owner);
+        processor.persistDownloadState(id, { currentProviderTrackId: '123', currentVolumeNum: 3, trackStatus: 'completed' }, owner);
+        const buffered = processor.progressBuffer.get(id).state;
+        processor.writeDownloadState(id, buffered, owner);
+        assert.deepEqual(CommandQueueManager.get(id)!.payload.downloadState!.tracks!.map(t => t.status), ['queued', 'completed', 'completed']);
+        processor.writeDownloadState(id, { currentFileNum: 3, totalFiles: 3, state: 'downloading' }, owner);
+        assert.deepEqual(CommandQueueManager.get(id)!.payload.downloadState!.tracks!.map(t => t.status), ['queued', 'completed', 'completed']);
+    } finally {
+        clearTimeout(processor.progressFlushTimer);
+        processor.progressBuffer.clear();
+    }
+});
+
 test('dead download worker requeues a resumable attempt and rejects every late lifecycle write', () => {
     const id = pushTrack('worker-death');
     const original = CommandQueueManager.get(id)!;
@@ -288,4 +308,31 @@ test('initialization schedules recurring download supervision', async () => {
         await proxy.initialize();
         assert.ok(proxy.watchdogTimer, 'production initialization must schedule the watchdog');
     } finally { clearInterval(proxy.watchdogTimer); }
+});
+
+test('failed worker recovery clears stale activity and the watchdog retries before restarting', async () => {
+    const id = pushTrack('recovery-retry');
+    claim(id, 'download-attempt:dead');
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.initialized = true;
+    proxy.status.activeDownloadIds = [id];
+    proxy.status.processing = true;
+    let starts = 0;
+    proxy.request = async (kind: string) => { if (kind === 'initialize') starts++; };
+    const recover = CommandQueueManager.recoverOwnedCommand;
+    try {
+        CommandQueueManager.recoverOwnedCommand = () => { throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' }); };
+        await proxy.recoverAndRestart('worker exited');
+        assert.equal(proxy.getStatus().processing, false);
+        assert.deepEqual(proxy.getStatus().activeDownloadIds, []);
+        assert.match(proxy.getStatus().recoveryMessage, /restarting/);
+        assert.equal(starts, 0);
+        assert.equal(CommandQueueManager.get(id)?.worker_id, 'download-attempt:dead');
+        CommandQueueManager.recoverOwnedCommand = recover;
+        await proxy.runWatchdogOnce(new Date(Date.now() + 61_000));
+        await proxy.restartInFlight;
+        assert.equal(starts, 1);
+        assert.equal(CommandQueueManager.get(id)?.status, 'queued');
+        assert.equal(proxy.getStatus().recoveryMessage, undefined);
+    } finally { CommandQueueManager.recoverOwnedCommand = recover; }
 });

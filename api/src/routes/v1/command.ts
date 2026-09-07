@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
+import { isSqliteBusyError, withDbWrite } from "../../database.js";
 import { getCommandHistory, mapJob } from "../../services/commands/command-history.js";
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
 import { runCommandByName } from "../../services/commands/system-task-service.js";
@@ -9,7 +9,7 @@ import { CommandWorkerPool } from "../../services/commands/worker/command-worker
 const router = Router();
 
 function runCommandUserWrite<T>(operation: () => T): Promise<T> {
-  return runWithAsyncBusyRetry(operation, 30, 200);
+  return withDbWrite(operation);
 }
 
 function commandMutationHttpStatus(error: unknown): number {

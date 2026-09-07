@@ -12,6 +12,7 @@ export type QueueStatusContextType = {
   loading: boolean;
   stats: QueueStatsSummary;
   isPaused: boolean;
+  recoveryMessage?: string;
   progressByJobId: Map<number, DownloadProgress>;
   progressByProviderId: Map<string, DownloadProgress>;
   getProgress: (jobId: number) => DownloadProgress | undefined;

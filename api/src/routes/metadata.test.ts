@@ -106,14 +106,19 @@ test("metadata regenerate rejects unsupported scopes", async () => {
   assert.match(res.body.detail, /scope must be/);
 });
 
-test("metadata regenerate queues track tag regeneration by media id", async () => {
+test("metadata regenerate queues tag regeneration for the exact file row, not a matching provider id", async () => {
+  dbModule.db.prepare(`INSERT INTO TrackFiles
+    (id, file_path, relative_path, library_root, filename, extension, file_type, provider, provider_id)
+    VALUES (123, '/test/one.flac', 'one.flac', 'music', 'one.flac', 'flac', 'track', 'tidal', '999'),
+           (124, '/test/two.flac', 'two.flac', 'music', 'two.flac', 'flac', 'track', 'deezer', '123')`).run();
+
   const handler = getPostHandler("/regenerate");
   const res = createMockResponse();
 
   await handler({
     body: {
       scope: "track",
-      entityId: "track-file-123",
+      entityId: "123",
       kind: "tags",
     },
   }, res);
@@ -131,9 +136,19 @@ test("metadata regenerate queues track tag regeneration by media id", async () =
   `).get() as { name: string; ref_id: string | null; payload: string };
 
   assert.equal(command.name, "RetagFiles");
-  assert.equal(command.ref_id, 'retag-files:{"mediaIds":["track-file-123"]}');
+  assert.equal(command.ref_id, 'retag-files:{"ids":[123]}');
 
   const payload = JSON.parse(command.payload);
-  assert.deepEqual(payload.mediaIds, ["track-file-123"]);
+  assert.deepEqual(payload.ids, [123]);
   assert.equal(payload.applyAll, false);
+});
+
+test("track regeneration rejects ambiguous resource identifiers and missing file rows", async () => {
+  const handler = getPostHandler('/regenerate');
+  for (const [entityId, expected] of [['provider-track', 400], ['999999', 404]]) {
+    const res = createMockResponse();
+    await handler({ body: { scope: 'track', kind: 'tags', entityId } }, res);
+    assert.equal(res.statusCode, expected);
+  }
+  assert.equal((dbModule.db.prepare('SELECT COUNT(*) n FROM commands').get() as {n:number}).n, 0);
 });

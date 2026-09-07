@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
-import { runWithAsyncBusyRetry } from "../database.js";
+import { withDbWrite } from "../database.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { UnmappedFilesService } from "../services/mediafiles/unmapped-files.js";
@@ -28,7 +28,7 @@ function queueCanonicalVideoImport(canonicalVideo: {
     const sortedIds = canonicalVideo.mappings
         .map((mapping) => mapping.unmappedFileId)
         .sort((left, right) => left - right);
-    return runWithAsyncBusyRetry(() =>
+    return withDbWrite(() =>
         CommandQueueManager.push(
             CommandNames.ImportUnmappedFiles,
             {
@@ -49,7 +49,7 @@ function queueCanonicalUnmappedImport(canonical: {
     const sortedIds = canonical.mappings
         .map((mapping) => mapping.unmappedFileId)
         .sort((left, right) => left - right);
-    return runWithAsyncBusyRetry(() =>
+    return withDbWrite(() =>
         CommandQueueManager.push(
             CommandNames.ImportUnmappedFiles,
             {

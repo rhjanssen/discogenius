@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { after, before, beforeEach, test } from "node:test";
 import { Worker } from "node:worker_threads";
+import { sqliteWriteMutexWorkerData } from "../../database/sqlite-write-mutex.js";
 import {
     seedAcceptedProviderReleaseMatch,
     seedAcceptedProviderTrackMatch,
@@ -19,8 +19,7 @@ let dbModule: typeof import("../../database.js");
 let queueModule: typeof import("./command-queue-manager.js");
 let downloadQueueQueryModule: typeof import("../download/download-queue-query-service.js");
 let waitQueueModule: typeof import("../download/download-wait-queue.js");
-const require = createRequire(import.meta.url);
-const betterSqlite3ModulePath = require.resolve("better-sqlite3");
+
 
 before(async () => {
     dbModule = await import("../../database.js");
@@ -137,23 +136,11 @@ async function runWhilePeerWriteIsLocked<T>(
     params: unknown[],
     operation: () => T,
 ): Promise<T> {
-    const worker = new Worker(`
-        const { parentPort, workerData } = require("node:worker_threads");
-        const Database = require(workerData.modulePath);
-        const database = new Database(workerData.dbPath);
-        database.pragma("busy_timeout = 5000");
-        database.exec("BEGIN IMMEDIATE");
-        database.prepare(workerData.sql).run(...workerData.params);
-        parentPort.postMessage("locked");
-        setTimeout(() => {
-            database.exec("COMMIT");
-            database.close();
-            parentPort.postMessage("committed");
-        }, 100);
-    `, {
-        eval: true,
+    const worker = new Worker(new URL("./worker/command-worker-bootstrap.mjs", import.meta.url), {
         workerData: {
-            modulePath: betterSqlite3ModulePath,
+            ...sqliteWriteMutexWorkerData(),
+            __entry: new URL("../../database/sqlite-write-mutex.fixture.ts", import.meta.url).href,
+            mode: "peer-write",
             dbPath: process.env.DB_PATH,
             sql,
             params,
@@ -176,7 +163,7 @@ async function runWhilePeerWriteIsLocked<T>(
 
     let result: T;
     try {
-        result = operation();
+        result = await dbModule.withDbWrite(operation);
     } finally {
         await workerExit;
     }

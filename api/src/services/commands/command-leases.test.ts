@@ -48,6 +48,62 @@ function queueCommand(
     );
 }
 
+test("progress bursts stay in memory and the final outcome preserves the latest message", () => {
+    const id = queueCommand();
+    claim(id, "progress-owner", new Date(), 60_000);
+    const changes = () => (dbModule.db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
+    const before = changes();
+    for (let progress = 0; progress < 100; progress++) {
+        queueModule.CommandQueueManager.updateProgressMessage(id, {
+            progress, description: `Tagged ${progress} files`, workerId: "progress-owner",
+        });
+    }
+    assert.equal(changes(), before, "telemetry must not write once per file");
+    assert.equal(queueModule.CommandQueueManager.get(id)?.progress, 99);
+    assert.equal(queueModule.CommandQueueManager.get(id)?.payload.description, "Tagged 99 files");
+    assert.equal(queueModule.CommandQueueManager.complete(id, "progress-owner"), true);
+    const stored = dbModule.db.prepare("SELECT status, payload FROM commands WHERE id = ?").get(id) as { status: string; payload: string };
+    assert.equal(stored.status, "completed");
+    assert.equal(JSON.parse(stored.payload).description, "Tagged 99 files");
+});
+
+test("download imports and library file mutations share the disk exclusion rule", async () => {
+    const { CommandManager } = await import("./command.js");
+    const { DOWNLOAD_OR_IMPORT_COMMAND_NAMES } = await import("./command-names.js");
+    const rename = queueNamedCommand(queueModule.CommandNames.RenameArtist, { artistId: "artist" });
+    claim(rename, "rename-owner", new Date(), 60_000);
+    const download = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, { provider: "tidal", providerId: "album" });
+    claim(download, "download-owner", new Date(), 60_000);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), false);
+    queueModule.CommandQueueManager.complete(rename, "rename-owner");
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), false, "a reserved import cannot dispatch twice");
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagArtist, {}, null, {
+        excludeRunningTypes: DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+    }).canStart, false, "the scheduler must see an import even when it excludes provider downloads");
+    queueModule.CommandQueueManager.complete(download, "download-owner");
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagArtist).canStart, true);
+});
+
+test("recovery discards progress from the retired attempt before a new owner runs", () => {
+    const id = queueCommand();
+    claim(id, "old-owner", new Date(), 60_000);
+    queueModule.CommandQueueManager.updateProgressMessage(id, {
+        progress: 80, description: "Old attempt", workerId: "old-owner",
+    });
+    queueModule.CommandQueueManager.recoverOwnedCommand({
+        id, workerId: "old-owner", reason: "worker exited", maxAttempts: 3, retryDelayMs: 0,
+    });
+    assert.equal(queueModule.CommandQueueManager.get(id)?.progress, 0);
+    claim(id, "new-owner", new Date(), 60_000);
+    queueModule.CommandQueueManager.updateProgressMessage(id, {
+        progress: 90, description: "Late old attempt", workerId: "old-owner",
+    });
+    assert.equal(queueModule.CommandQueueManager.get(id)?.progress, 0);
+    queueModule.CommandQueueManager.complete(id, "new-owner");
+    assert.notEqual(queueModule.CommandQueueManager.get(id)?.payload.description, "Late old attempt");
+});
+
 function queueNamedCommand(
     name: typeof queueModule.CommandNames[keyof typeof queueModule.CommandNames],
     payload: Record<string, unknown>,

@@ -3,7 +3,8 @@ import { test, after } from 'node:test';
 import { prepareActiveSchemaEnv, openActiveSchemaDb, closeActiveSchemaDb } from '../../test-support/active-schema-fixture.js';
 const { tempDir } = prepareActiveSchemaEnv('execution-manifest');
 const { db, dbModule } = await openActiveSchemaDb();
-const { validateExecutionManifest, applyImportTrackProgress } = await import('./execution-manifest.js');
+const { applyTrackProgress } = await import('../../contracts/track-progress.js');
+const { validateExecutionManifest } = await import('./execution-manifest.js');
 after(() => closeActiveSchemaDb(dbModule, tempDir));
 
 test('stereo destination is authoritative without an accepted provider edition match', () => {
@@ -28,10 +29,10 @@ test('progress honors exact identity, disc occurrence, ambiguity and skipped sta
         { providerTrackId: '1', trackNum: 1, volumeNum: 1, title: 'Intro', status: 'queued' },
         { providerTrackId: '2', trackNum: 1, volumeNum: 2, title: 'Intro', status: 'queued' },
     ];
-    assert.deepEqual(applyImportTrackProgress(tracks, { currentProviderTrackId: '1', currentTrack: 'Intro', trackStatus: 'skipped' }).map(t => t.status), ['skipped', 'queued']);
-    assert.equal(applyImportTrackProgress(tracks, { currentTrack: 'Intro', trackStatus: 'completed' }), tracks);
-    assert.equal(applyImportTrackProgress(tracks, { currentProviderTrackId: '3', currentTrack: 'Intro', trackStatus: 'completed' }), tracks);
-    assert.deepEqual(applyImportTrackProgress(tracks, { currentTrackNum: 1, currentVolumeNum: 2, trackStatus: 'error' }).map(t => t.status), ['queued', 'error']);
+    assert.deepEqual(applyTrackProgress(tracks, { currentProviderTrackId: '1', currentTrack: 'Intro', trackStatus: 'skipped' }).map(t => t.status), ['skipped', 'queued']);
+    assert.equal(applyTrackProgress(tracks, { currentTrack: 'Intro', trackStatus: 'completed' }), tracks);
+    assert.equal(applyTrackProgress(tracks, { currentProviderTrackId: '3', currentTrack: 'Intro', trackStatus: 'completed' }), tracks);
+    assert.deepEqual(applyTrackProgress(tracks, { currentTrackNum: 1, currentVolumeNum: 2, trackStatus: 'error' }).map(t => t.status), ['queued', 'error']);
 });
 
 test('naming formats real bitrate units and does not invent a Proper revision', async () => {

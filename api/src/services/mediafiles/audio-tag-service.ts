@@ -230,13 +230,6 @@ type RetagApplyOptions = {
   onProgress?: (completed: number, total: number) => void;
 };
 
-export type RetagMediaIdOptions = {
-  provider?: string | null;
-  includeExternalLyrics?: boolean;
-  lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
-  onProgress?: (completed: number, total: number) => void;
-};
-
 export type RetagScopeOptions = {
   artistId?: string;
   artistIds?: string[];
@@ -296,28 +289,9 @@ const EMBEDDED_COVER_HEIGHT = 1200;
 // modest fan-out (matching the artwork/refresh services) is the sweet spot.
 const RETAG_EVALUATION_CONCURRENCY = 8;
 const RETAG_APPLY_QUERY_BATCH_SIZE = 250;
-const RETAG_FILE_TIMEOUT_MS = 30_000;
 
 function yieldRetagToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
-}
-
-function withRetagFileTimeout<T>(work: Promise<T>, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${RETAG_FILE_TIMEOUT_MS}ms`));
-    }, RETAG_FILE_TIMEOUT_MS);
-    work.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
 
 async function resolvePreferredEmbeddedCover(
@@ -1286,6 +1260,17 @@ export class AudioTagService {
       WHERE ${where.join(" AND ")}
       ORDER BY lf.artist_metadata_id, lf.release_group_id, lf.album_edition_id, lf.id
     `).all(...params) as Array<{ id: number }>).map((row) => row.id);
+  }
+
+  static getAffectedArtistIds(options: RetagScopeOptions & { ids?: number[] }): string[] {
+    const scope = options.ids?.length
+      ? { where: [`lf.id IN (${options.ids.map(() => '?').join(',')})`], params: options.ids }
+      : this.buildScope(options);
+    return (db.prepare(`
+      SELECT DISTINCT COALESCE(artist.mbid, CAST(artist.id AS TEXT)) AS artist_id
+      FROM TrackFiles lf JOIN ArtistMetadata artist ON artist.id = lf.artist_metadata_id
+      WHERE ${scope.where.join(' AND ')}
+    `).all(...scope.params) as Array<{ artist_id: string }>).map(row => row.artist_id);
   }
 
   private static getTrackRows(options: RetagScopeOptions = {}, includePaging = true): RetagTrackRow[] {
@@ -2951,11 +2936,11 @@ export class AudioTagService {
     let processedCount = 0;
     for (const id of ids) {
       processedCount++;
-      options.onProgress?.(processedCount, ids.length);
 
       const row = rowsById.get(id);
       if (!row) {
         result.errors.push({ id, error: "TrackFiles row not found" });
+        options.onProgress?.(processedCount, ids.length);
         continue;
       }
 
@@ -2965,7 +2950,7 @@ export class AudioTagService {
       // server (one file at a time against MusicBrainz while 5k refresh
       // commands fought for the writer).
       try {
-        await withRetagFileTimeout((async () => {
+        await (async () => {
           const resolvedPath = resolveStoredLibraryPath({
             filePath: row.file_path,
             libraryRoot: row.library_root,
@@ -3052,7 +3037,7 @@ export class AudioTagService {
           }
 
           result.retagged++;
-        })(), `retag file ${id}`);
+        })();
       } catch (error) {
         result.errors.push({
           id,
@@ -3060,6 +3045,7 @@ export class AudioTagService {
         });
       }
 
+      options.onProgress?.(processedCount, ids.length);
       if (processedCount % 5 === 0) {
         await yieldRetagToEventLoop();
       }
@@ -3086,51 +3072,6 @@ export class AudioTagService {
     }
 
     return result;
-  }
-
-  static async applyForMediaIds(
-    mediaIds: Array<string | number>,
-    options: RetagMediaIdOptions = {},
-  ): Promise<RetagApplyResult> {
-    const uniqueMediaIds = Array.from(new Set(mediaIds.map((id) => String(id).trim()).filter(Boolean)));
-    if (uniqueMediaIds.length === 0) {
-      return {
-        retagged: 0,
-        skipped: 0,
-        missing: 0,
-        errors: [],
-      };
-    }
-
-    // Imported track files are usually matched by provider track id. Keep this
-    // tolerant because organizer results from older/local import paths may carry
-    // canonical track or recording MBIDs instead, and provider_entity_type can be
-    // absent on rows created before the current provider-id-only pipeline.
-    const placeholders = uniqueMediaIds.map(() => "?").join(",");
-    const requestedProvider = String(options.provider || "").trim();
-    const providerClause = requestedProvider ? "AND provider = ?" : "";
-    const libraryFileIds = db.prepare(`
-      SELECT id
-      FROM TrackFiles
-      WHERE file_type = 'track'
-        AND (
-          provider_id IN (${placeholders})
-          OR canonical_track_mbid IN (${placeholders})
-          OR canonical_recording_mbid IN (${placeholders})
-        )
-        ${providerClause}
-    `).all(
-      ...uniqueMediaIds,
-      ...uniqueMediaIds,
-      ...uniqueMediaIds,
-      ...(requestedProvider ? [requestedProvider] : []),
-    ) as Array<{ id: number }>;
-
-    return this.apply(libraryFileIds.map((row) => row.id), {
-      includeExternalLyrics: options.includeExternalLyrics ?? false,
-      lyricsByProviderMedia: options.lyricsByProviderMedia,
-      onProgress: options.onProgress,
-    });
   }
 
   static async applyByQuery(options: RetagScopeOptions = {}): Promise<RetagApplyResult> {

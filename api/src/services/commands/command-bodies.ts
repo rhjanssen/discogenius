@@ -375,7 +375,6 @@ export interface SeedVideoCommand extends CommandBodyCommon {
 
 export interface RetagFilesCommand extends CommandBodyCommon {
   ids?: number[];
-  mediaIds?: Array<string | number>;
   artistId?: string;
   albumId?: string;
   editionId?: string | number;

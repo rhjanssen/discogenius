@@ -151,6 +151,18 @@ test("deep database audit records foreign-key violations as unhealthy", () => {
   }
 });
 
+test("deep audit rebuilds damaged FTS blobs from canonical data", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata(mbid, name) VALUES('fts-repair-test', 'Bastille')").run();
+  dbModule.db.unsafeMode(true);
+  try { dbModule.db.exec("UPDATE CatalogSearch_data SET block = x'00' WHERE id > 10"); }
+  finally { dbModule.db.unsafeMode(false); }
+  const result = healthModule.runDeepDatabaseHealthCheck();
+  assert.equal(result.status, "healthy");
+  assert.ok(result.quickCheck.results.some(line => line.includes("rebuilt CatalogSearch")));
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM CatalogSearch WHERE CatalogSearch MATCH 'Bastille'").get() as { n: number }).n, 1);
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM ArtistMetadata WHERE mbid = 'fts-repair-test'").get() as { n: number }).n, 1);
+});
+
 test("bounded diagnostics flag aging work, failed imports, and overdue tasks", () => {
   dbModule.db.prepare(`
     INSERT INTO commands (

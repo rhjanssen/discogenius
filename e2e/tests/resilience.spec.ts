@@ -78,7 +78,7 @@ test.describe('Restart resilience', () => {
     // Bottom tabs should be visible on mobile — use the bottom tab bar container
     // The bottom tabs are in a fixed-position div at the bottom
     // Navigate via bottom tab Dashboard button (aria-label match)
-    const dashboardBtn = page.getByRole('link', { name: /^Dashboard$/i }).last();
+    const dashboardBtn = page.getByRole('link', { name: /^Dashboard\b/i }).last();
     await dashboardBtn.click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 5_000 });
 
@@ -99,7 +99,7 @@ test.describe('Restart resilience', () => {
 
     await expect(page.locator('main')).toBeVisible();
 
-    const dashboardBtn = page.getByRole('link', { name: /^Dashboard$/i }).last();
+    const dashboardBtn = page.getByRole('link', { name: /^Dashboard\b/i }).last();
     await expect(dashboardBtn).toBeVisible({ timeout: 3_000 });
     await dashboardBtn.click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 5_000 });
@@ -120,7 +120,7 @@ test.describe('Restart resilience', () => {
 
     await expect(page.locator('main')).toBeVisible();
     await expect(page.locator('nav')).toBeVisible();
-    await expect(page.getByRole('link', { name: /^Dashboard$/i }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Dashboard\b/i }).first()).toBeVisible();
     await expect(page.getByRole('link', { name: /^Library$/i }).first()).toBeVisible();
     await expect(page.getByRole('link', { name: /^Settings$/i }).first()).toBeVisible();
   });
@@ -159,7 +159,7 @@ test.describe('Restart resilience', () => {
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('main')).toBeVisible();
-    await page.getByRole('link', { name: /^Dashboard$/i }).first().click();
+    await page.getByRole('link', { name: /^Dashboard\b/i }).first().click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 10_000 });
     await expect(page.getByRole('link', { name: /^Library$/i }).first()).toBeVisible();
 
@@ -172,7 +172,7 @@ test.describe('Restart resilience', () => {
     await page.getByRole('link', { name: /^Settings$/i }).first().click();
     await expect(page).toHaveURL(/\/settings/, { timeout: 10_000 });
 
-    await page.getByRole('link', { name: /^Dashboard$/i }).first().click();
+    await page.getByRole('link', { name: /^Dashboard\b/i }).first().click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 10_000 });
     await expect(page.locator('main')).toBeVisible();
 

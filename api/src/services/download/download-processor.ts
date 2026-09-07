@@ -1,8 +1,10 @@
-import { validateExecutionManifest, applyImportTrackProgress } from './execution-manifest.js';
+import { validateExecutionManifest } from './execution-manifest.js';
+import { applyTrackProgress } from '../../contracts/track-progress.js';
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { db } from '../../database.js';
+import { db, withSqliteWriteGate } from '../../database.js';
+import { startExecutionHeartbeat } from '../commands/worker/execution-heartbeat.js';
 import {CommandModel, CommandModelOf} from "../commands/command-model.js";
 import { DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
@@ -89,13 +91,6 @@ import {
     resolveDownloadQuality as resolveDownloadQualityFromModule,
     resolvePayloadProvider as resolvePayloadProviderFromMetadata,
 } from './download-metadata.js';
-
-export type QueueTrackRow = {
-    title: string;
-    trackNum?: number;
-    status: string;
-    providerTrackId?: string;
-};
 
 /**
  * Re-resolve the exact provider rows an offer names after a fallback.
@@ -239,36 +234,6 @@ export function isSqliteBusyError(error: unknown): boolean {
     return typeof message === 'string' && /database( table)? is locked/i.test(message);
 }
 
-export function applyTrackStatusByProviderId<T extends QueueTrackRow>(
-    tracks: T[],
-    statusByProviderTrackId: Record<string, string>,
-): T[] | null {
-    const updates = new Map<string, string>();
-    for (const [providerTrackId, status] of Object.entries(statusByProviderTrackId)) {
-        const key = String(providerTrackId || "").trim();
-        if (key) {
-            updates.set(key, status);
-        }
-    }
-
-    if (updates.size === 0) {
-        return null;
-    }
-
-    let changed = false;
-    const next = tracks.map((track) => {
-        const key = String(track.providerTrackId || "").trim();
-        const status = key ? updates.get(key) : undefined;
-        if (!status || track.status === status || (track.status === 'completed' && status !== 'completed')) {
-            return track;
-        }
-        changed = true;
-        return { ...track, status };
-    });
-
-    return changed ? next : null;
-}
-
 /**
  * Catalog-anchored X/Y for album jobs. Provider/tiddl queue totals must not
  * replace the MusicBrainz tracklist length (hybrids/edition mismatches).
@@ -397,63 +362,6 @@ export function listProviderAlbumFallbackTracks(
         input.releaseMbid,
         input.releaseMbid,
     ) as ProviderAlbumFallbackTrackRow[];
-}
-
-/**
- * Normalize a reported or catalog track title for matching: drop a leading
- * "Artist - " prefix (import filenames), lowercase, and reduce punctuation
- * to spaces so "Save My Love - Acoustic Version" matches
- * "Save My Love (Acoustic Version)". Keep in sync with the client-side copy
- * in QueueStatusProvider.
- */
-export function normalizeTrackTitleForMatch(value: string): string {
-    return value
-        .toLowerCase()
-        .replace(/^[^-]+\s-\s/, "")
-        .replace(/[^a-z0-9]+/g, " ")
-        .trim();
-}
-
-/**
- * Apply provider-reported per-title statuses to catalog track rows. Reported
- * titles are "<track title> <quality suffix>" (downloads) or file-derived
- * names (imports); match normalized prefixes and prefer the longest (most
- * specific) catalog title. Returns null when nothing matched so the caller
- * can fall back to index-based inference.
- */
-export function applyTrackStatusByTitle<T extends QueueTrackRow>(
-    tracks: T[],
-    statusByTitle: Record<string, string>,
-): T[] | null {
-    const updates = new Map<number, string>();
-    for (const [reportedTitle, status] of Object.entries(statusByTitle)) {
-        const reported = normalizeTrackTitleForMatch(reportedTitle);
-        if (!reported) continue;
-        let bestIdx = -1;
-        let bestLen = 0;
-        tracks.forEach((track, idx) => {
-            const title = normalizeTrackTitleForMatch(String(track.title || ""));
-            if (title && (reported.startsWith(title) || title.startsWith(reported)) && title.length > bestLen) {
-                bestIdx = idx;
-                bestLen = title.length;
-            }
-        });
-        if (bestIdx >= 0) {
-            updates.set(bestIdx, status);
-        }
-    }
-
-    if (updates.size === 0) {
-        return null;
-    }
-
-    return tracks.map((track, idx) => {
-        const status = updates.get(idx);
-        if (!status) return track;
-        // Never regress a row that already finished.
-        if (track.status === 'completed' && status !== 'completed') return track;
-        return { ...track, status };
-    });
 }
 
 export function formatQueueTimestamp(value: unknown): string {
@@ -656,7 +564,7 @@ const PROGRESS_WRITE_INTERVAL_MS = 1_000;
 export class DownloadProcessor {
     private isPaused: boolean = process.env.DISCOGENIUS_START_PAUSED === '1';
     private pollTimer?: NodeJS.Timeout;
-    private heartbeatTimer?: NodeJS.Timeout;
+    private stopHeartbeat?: () => Promise<void>;
     private lastBusyLogAt: number = 0;
     private queueEventsSubscribed: boolean = false;
 
@@ -714,11 +622,12 @@ export class DownloadProcessor {
     }
 
     private startHeartbeatLoop(): void {
-        if (this.heartbeatTimer) return;
-        this.heartbeatTimer = setInterval(() => {
-            this.renewOwnedAttemptLeases();
-        }, DOWNLOAD_HEARTBEAT_MS);
-        this.heartbeatTimer.unref();
+        if (this.stopHeartbeat) return;
+        this.stopHeartbeat = startExecutionHeartbeat({
+            intervalMs: DOWNLOAD_HEARTBEAT_MS,
+            renew: () => withSqliteWriteGate(() => this.renewOwnedAttemptLeases(), "download:heartbeat"),
+            onError: (error) => console.warn('[DOWNLOAD-PROCESSOR] Lease renewal failed:', error),
+        });
     }
 
     private renewOwnedAttemptLeases(now: Date = new Date()): void {
@@ -816,7 +725,7 @@ export class DownloadProcessor {
             const currentDownloadState = (currentJob?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
             let tracks = state.tracks ?? currentDownloadState.tracks;
             if (tracks && tracks.length > 0 && (state.currentProviderTrackId || state.currentTrackNum != null || state.currentTrack)) {
-                tracks = applyImportTrackProgress(tracks, state);
+                tracks = applyTrackProgress(tracks, state);
             }
             downloadEvents.emitProgress(commandId, {
                 providerId,
@@ -1137,8 +1046,6 @@ export class DownloadProcessor {
         currentVolumeNum?: number;
         trackProgress?: number;
         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
-        trackStatusByProviderTrackId?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
-        trackStatusByTitle?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
         statusMessage?: string;
         state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
         speed?: string;
@@ -1175,23 +1082,10 @@ export class DownloadProcessor {
                 merged[key] = value;
             }
         }
-        // Accumulate per-title statuses across the buffer window: tiddl runs
-        // parallel downloads, so several tracks can change state between two
-        // flushes and only the latest scalar snapshot would survive otherwise.
-        if (state.currentProviderTrackId && state.trackStatus) {
-            const bufferedById = (buffered as { trackStatusByProviderTrackId?: Record<string, string> } | undefined)?.trackStatusByProviderTrackId;
-            merged.trackStatusByProviderTrackId = {
-                ...bufferedById,
-                [state.currentProviderTrackId]: state.trackStatus,
-            };
-        }
-        if (state.currentTrack && state.trackStatus) {
-            const bufferedByTitle = (buffered as { trackStatusByTitle?: Record<string, string> } | undefined)?.trackStatusByTitle;
-            merged.trackStatusByTitle = {
-                ...bufferedByTitle,
-                [state.currentTrack]: state.trackStatus,
-            };
-        }
+        // Reduce every partial event before coalescing. Keeping only the last
+        // scalar event would lose other tracks completed during this interval.
+        const tracks = state.tracks ?? buffered?.tracks ?? this.getProgressTracksForEvent(commandId);
+        if (tracks) merged.tracks = applyTrackProgress(tracks, state);
         const snapshot = merged as typeof state;
 
         // Terminal / transition states bypass the buffer and write immediately.
@@ -1251,15 +1145,13 @@ export class DownloadProcessor {
         currentVolumeNum?: number;
         trackProgress?: number;
         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
-        trackStatusByProviderTrackId?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
-        trackStatusByTitle?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
         statusMessage?: string;
         state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
         speed?: string;
         eta?: string;
         size?: number;
         sizeleft?: number;
-        tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
+        tracks?: { title: string; trackNum?: number; volumeNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
         outcome?: 'ok' | 'completedWithWarning';
         warningMessage?: string;
         primaryProvider?: string;
@@ -1269,19 +1161,6 @@ export class DownloadProcessor {
         const currentDownloadState = (currentJob?.payload?.downloadState as Record<string, unknown> | undefined) || {};
 
         let mergedTracks = state.tracks ?? currentDownloadState.tracks as any[];
-
-        // Prefer provider-id updates from the tiddl wrapper. Title-level
-        // updates remain as a fallback for legacy/partial progress events
-        // because tiddl downloads tracks in parallel, so
-        // "rows before currentFileNum are complete" mismarks in-flight rows).
-        // Fall back to currentFileNum index inference only when the provider
-        // count matches the catalog tracklist length.
-        const providerAdjustedTracks = mergedTracks && state.trackStatusByProviderTrackId
-            ? applyTrackStatusByProviderId(mergedTracks, state.trackStatusByProviderTrackId)
-            : null;
-        const titleAdjustedTracks = !providerAdjustedTracks && mergedTracks && state.trackStatusByTitle
-            ? applyTrackStatusByTitle(mergedTracks, state.trackStatusByTitle)
-            : null;
 
         const catalogLen = Array.isArray(mergedTracks) ? mergedTracks.length : 0;
         const incomingTotal = typeof state.totalFiles === "number" && state.totalFiles > 0
@@ -1297,29 +1176,8 @@ export class DownloadProcessor {
                 ...track,
                 status: track.status === 'error' || track.status === 'skipped' ? track.status : 'completed',
             }));
-        } else if (providerAdjustedTracks) {
-            mergedTracks = providerAdjustedTracks;
-        } else if (titleAdjustedTracks) {
-            mergedTracks = titleAdjustedTracks;
-        } else if (mergedTracks && providerCountsMatchCatalog && typeof state.currentFileNum === 'number') {
-            const currentNum = state.currentFileNum;
-            const statusState = state.state;
-            mergedTracks = mergedTracks.map((t: any, idx: number) => {
-                const trackIdx = idx + 1;
-                let newStatus = t.status;
-                if (trackIdx < currentNum) newStatus = 'completed';
-                else if (trackIdx === currentNum && state.trackStatus === 'completed') newStatus = 'completed';
-                else if (
-                    trackIdx === currentNum
-                    && (
-                        statusState === 'downloading'
-                        || statusState === 'importing'
-                        || statusState === 'importPending'
-                        || state.trackStatus === 'downloading'
-                    )
-                ) newStatus = 'downloading';
-                return { ...t, status: newStatus };
-            });
+        } else if (mergedTracks) {
+            mergedTracks = applyTrackProgress(mergedTracks, state);
         }
 
         const catalogProgress = deriveCatalogFileProgress(mergedTracks);
@@ -1571,9 +1429,9 @@ export class DownloadProcessor {
         // block. No replacement work is dispatched until every old attempt is
         // either safely requeued or visibly failed closed.
         try {
-            const recovered = recoverInterruptedDownloadAttempts(
+            const recovered = await withSqliteWriteGate(() => recoverInterruptedDownloadAttempts(
                 'Dedicated download worker restarted before the attempt completed',
-            );
+            ), 'download:startup-recovery');
             if (recovered.requeued || recovered.failed || recovered.ignored) {
                 console.warn(
                     '[DOWNLOAD-PROCESSOR] Restart recovery: '
@@ -1602,6 +1460,9 @@ export class DownloadProcessor {
                 }
             });
             appEvents.on(AppEvent.QUEUE_CLEARED, () => this.scheduleNext());
+            appEvents.on(AppEvent.COMMAND_UPDATED, (event: CommandEventPayload) => {
+                if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.scheduleNext();
+            });
             this.queueEventsSubscribed = true;
         }
 
@@ -1611,6 +1472,10 @@ export class DownloadProcessor {
     }
 
     async processQueue(): Promise<void> {
+        return withSqliteWriteGate(() => this.scheduleQueueWithWriteLock(), 'download:schedule');
+    }
+
+    private scheduleQueueWithWriteLock(): void {
         if (process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') {
             return;
         }
@@ -1622,9 +1487,16 @@ export class DownloadProcessor {
         // ImportDownload queue row.
         this.claimRecoveredImportHandoffs();
         while (this.activeImports.size < MAX_CONCURRENT_IMPORTS && this.pendingImports.length > 0) {
-            const entry = this.pendingImports.shift();
+            const entry = this.pendingImports[0];
             if (!entry) break;
-            if (this.activeImports.has(entry.commandId)) continue;
+            if (this.activeImports.has(entry.commandId)) { this.pendingImports.shift(); continue; }
+            const owner = entry.workerId || this.attemptOwners.get(entry.commandId);
+            if (!owner || !CommandQueueManager.isExecutionOwner(entry.commandId, owner)) {
+                this.pendingImports.shift();
+                continue;
+            }
+            if (!CommandQueueManager.claimImportForExecution(entry.commandId, owner)) break;
+            this.pendingImports.shift();
             this.dispatchImportPhase(entry);
         }
 
@@ -2907,7 +2779,7 @@ export class DownloadProcessor {
     }
 }
 
-type DownloadProcessorStatus = ReturnType<DownloadProcessor['getStatus']>;
+type DownloadProcessorStatus = ReturnType<DownloadProcessor['getStatus']> & { recoveryMessage?: string };
 
 type DownloadWorkerRequestKind = 'initialize' | 'processQueue' | 'pause' | 'suspend' | 'resume' | 'cancelJob';
 
@@ -2961,6 +2833,9 @@ export class DownloadProcessorWorkerProxy {
     private watchdogTerminationReason: string | null = null;
     private restartInFlight: Promise<void> | null = null;
     private queuedRestartReason: string | null = null;
+    private recoveryReason: string | null = null;
+    private recoveryFailures = 0;
+    private nextRecoveryAt = 0;
     private status: DownloadProcessorStatus = {
         isPaused: process.env.DISCOGENIUS_START_PAUSED === '1',
         processing: false,
@@ -2994,6 +2869,11 @@ export class DownloadProcessorWorkerProxy {
      */
     async runWatchdogOnce(now: Date = new Date()): Promise<boolean> {
         const worker = this.worker;
+        if (!worker && this.recoveryReason && !this.stopping && !this.restartInFlight
+            && now.getTime() >= this.nextRecoveryAt) {
+            this.scheduleRecoverAndRestart(this.recoveryReason);
+            return true;
+        }
         if (!worker || this.stopping || this.restartInFlight || this.watchdogTerminationReason) {
             return false;
         }
@@ -3042,6 +2922,10 @@ export class DownloadProcessorWorkerProxy {
             if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
             this.kickQueue();
         });
+        appEvents.on(AppEvent.COMMAND_UPDATED, (event: CommandEventPayload) => {
+            if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
+            if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.kickQueue();
+        });
     }
 
     private kickQueue(): void {
@@ -3077,6 +2961,7 @@ export class DownloadProcessorWorkerProxy {
     getStatus(): DownloadProcessorStatus {
         return {
             ...this.status,
+            ...(this.recoveryReason ? { recoveryMessage: 'Downloads are restarting. Queued items will resume automatically.' } : {}),
             activeDownloadIds: [...this.status.activeDownloadIds],
             activeImportIds: [...this.status.activeImportIds],
         };
@@ -3093,6 +2978,10 @@ export class DownloadProcessorWorkerProxy {
         // process alive, which hangs the node test runner.
         if (kind !== 'initialize' && !this.initialized) {
             return Promise.resolve();
+        }
+        if (kind !== 'initialize' && this.recoveryReason) {
+            if (kind === 'processQueue' || kind === 'cancelJob') return Promise.resolve();
+            return Promise.reject(Object.assign(new Error('Downloads are restarting; try again shortly'), { status: 503 }));
         }
 
         const worker = this.ensureWorker();
@@ -3119,7 +3008,9 @@ export class DownloadProcessorWorkerProxy {
         this.worker = worker;
         this.stopping = false;
 
-        worker.on('message', (message: DownloadWorkerToMainMessage) => this.handleMessage(message));
+        worker.on('message', (message: DownloadWorkerToMainMessage) => {
+            if (this.worker === worker) this.handleMessage(message);
+        });
         worker.on('error', (error) => {
             console.error('[DOWNLOAD-PROCESSOR] Worker error:', error);
         });
@@ -3171,23 +3062,9 @@ export class DownloadProcessorWorkerProxy {
     }
 
     private async recoverAndRestart(reason: string): Promise<void> {
-        try {
-            const result = recoverInterruptedDownloadAttempts(reason);
-            console.warn(
-                '[DOWNLOAD-PROCESSOR] Worker-loss recovery: '
-                + `${result.requeued} requeued, ${result.failed} failed closed, `
-                + `${result.ignored} already retired`,
-            );
-        } catch (error) {
-            console.error('[DOWNLOAD-PROCESSOR] Could not recover interrupted attempts:', error);
-            // Do not spawn a replacement that could race rows still owned by
-            // the dead worker. A later API restart can retry deterministic boot
-            // recovery once the database is available again.
-            return;
-        }
-
+        this.recoveryReason = reason;
         this.status = {
-            isPaused: getDownloadQueueControlState().isPaused,
+            isPaused: this.status.isPaused,
             processing: false,
             activeDownloads: 0,
             activeDownloadIds: [],
@@ -3195,9 +3072,31 @@ export class DownloadProcessorWorkerProxy {
             activeImportIds: [],
         };
         try {
+            const result = await withSqliteWriteGate(
+                () => recoverInterruptedDownloadAttempts(reason), 'download:recover-worker',
+            );
+            console.warn(
+                '[DOWNLOAD-PROCESSOR] Worker-loss recovery: '
+                + `${result.requeued} requeued, ${result.failed} failed closed, `
+                + `${result.ignored} already retired`,
+            );
+        } catch (error) {
+            console.error('[DOWNLOAD-PROCESSOR] Could not recover interrupted attempts:', error);
+            this.nextRecoveryAt = Date.now() + Math.min(60_000, 1_000 * (2 ** Math.min(this.recoveryFailures++, 6)));
+            // The watchdog retries recovery after backoff. Never spawn while
+            // rows are still owned by the interrupted attempt.
+            return;
+        }
+        this.recoveryReason = null;
+        this.recoveryFailures = 0;
+        this.status.isPaused = getDownloadQueueControlState().isPaused;
+        if (this.stopping || !this.initialized) return;
+        try {
             await this.request('initialize');
         } catch (error) {
             console.error('[DOWNLOAD-PROCESSOR] Failed to restart download worker:', error);
+            this.recoveryReason = reason;
+            if (this.worker) await this.worker.terminate();
         }
     }
 

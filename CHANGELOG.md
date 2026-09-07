@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.5] - 2026-09-07
+
+### Fixed
+
+- Coordinate SQLite writers across command, download and maintenance workers without blocking HTTP while waiting for the writer. Recover abandoned locks and retry failed download recovery.
+- Keep worker heartbeats running while leases wait for storage. Apply the same disk-access exclusion to imports, renames and retagging.
+- Stop rewriting unchanged search entries and locate changed entries by exact integer identity. Rebuild damaged derived indexes from canonical catalogue rows.
+- Speed up dashboard totals and album substring searches on large catalogues while preserving per-library completion and existing search results.
+- Preserve original audio until a rewritten file is ready. Report individual rename/retag failures, wait for timed-out media tools to exit, and target retags by exact file identity.
+- Keep active imports/downloads above waiting items. Require authoritative queue rows for actions and match track progress by occurrence across persistence and the browser.
+- Restore Fluent UI's text and button color steps so brand-colored button labels remain readable.
+
+### Changed
+
+- Buffer command progress in memory and checkpoint it periodically; persist ownership and terminal outcomes immediately.
+- Consolidate media rewriting and track-progress handling, remove the retired write-lock protocol, and scope retag statistics updates to affected artists.
+- Add tests using the active schema, real worker threads and real media tools. Update browser tests to cover queue refresh identity and active-first ordering.
+
 ## [2.16.4] - 2026-09-06
 
 ### Fixed

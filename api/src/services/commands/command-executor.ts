@@ -10,7 +10,7 @@ import {
     resolveInfrastructureMaxAttempts,
 } from "./command-liveness-policy.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
-import { runWithAsyncBusyRetry, withSqliteWriteGate } from "../../database.js";
+import { withDbWrite, withSqliteWriteGate } from "../../database.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
@@ -274,11 +274,14 @@ export class CommandExecutor {
         // Inside the gate there is exactly one writer, so the wait is a promise
         // rather than a frozen server.
         const workerId = `command-attempt:${process.pid}:${job.id}:${randomUUID()}`;
-        const claimedJob = await withSqliteWriteGate(() => CommandQueueManager.claimForExecution(
-            job.id,
-            workerId,
-            COMMAND_LEASE_MS,
-        ), "commands:claim");
+        const claimedJob = await withSqliteWriteGate(() => {
+            // An import may reserve disk access while this scheduler awaits
+            // writer admission. Recheck inside the same critical section.
+            if (!CommandManager.canStartCommand(job.name, job.payload, job.ref_id, {
+                excludeRunningTypes: DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+            }).canStart) return null;
+            return CommandQueueManager.claimForExecution(job.id, workerId, COMMAND_LEASE_MS);
+        }, "commands:claim");
         if (!claimedJob) {
             return;
         }
@@ -297,7 +300,7 @@ export class CommandExecutor {
                 const message = error instanceof Error ? error.message : String(error);
                 console.error(`[CommandExecutor] Command #${claimedJob.id} (${claimedJob.name}) worker interrupted:`, message);
                 try {
-                    const recovered = await runWithAsyncBusyRetry(
+                    const recovered = await withDbWrite(
                         () => CommandQueueManager.recoverOwnedCommand({
                             id: claimedJob.id,
                             workerId,

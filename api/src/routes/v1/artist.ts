@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { Router } from "express";
-import { db, runWithAsyncBusyRetry } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
 import {
   queueArtistWorkflow,
 } from "../../services/music/artist-workflow.js";
@@ -298,7 +298,7 @@ const IMPORT_CATEGORIES = new Set(["library-artists", "followed-artists", "playl
 const MANUAL_IMPORT_PRIORITY = 1000;
 
 function enqueueProviderArtistImport(payload: ImportProviderArtistsCommand): Promise<number> {
-  return runWithAsyncBusyRetry(
+  return withDbWrite(
     () => CommandQueueManager.push(
       CommandNames.ImportProviderArtists,
       payload,
@@ -306,8 +306,6 @@ function enqueueProviderArtistImport(payload: ImportProviderArtistsCommand): Pro
       MANUAL_IMPORT_PRIORITY,
       CommandTrigger.Manual,
     ),
-    30,
-    200,
   );
 }
 
@@ -384,7 +382,7 @@ router.post("/:artistId/scan", async (req, res) => {
     // fetch — a refresh that looked like it ran and changed nothing. Scheduled
     // refreshes enqueue RefreshArtist directly and still honour staleness.
     const requested = (req.body as any)?.forceUpdate;
-    const queued = await runWithAsyncBusyRetry(() => queueArtistRefreshScan(artistId, {
+    const queued = await withDbWrite(() => queueArtistRefreshScan(artistId, {
       forceUpdate: requested == null ? true : Boolean(requested),
     }));
 
@@ -694,7 +692,7 @@ router.post("/:artistId/curate", async (req, res) => {
     }
 
     const artistName = String(artist.name || "").trim() || requireArtistName(artistId);
-    const commandId = await runWithAsyncBusyRetry(() => queueArtistWorkflow({
+    const commandId = await withDbWrite(() => queueArtistWorkflow({
       artistId,
       artistName,
       workflow: "curation",

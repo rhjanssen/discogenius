@@ -7,6 +7,7 @@ import { type Readable } from 'stream';
 import { Config } from '../config/config.js';
 import { execFile, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
+import { runMediaRewrite } from './media-file-rewrite.js';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
 import {
@@ -485,73 +486,17 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
     }
-    const tempPath = filePath + '.tmp' + path.extname(filePath);
+    const tempPath = path.join(path.dirname(filePath), `.discogenius-rewrite-${crypto.randomUUID()}${path.extname(filePath)}`);
     const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
     const args = buildMetadataWriteArgs(filePath, tags, removeKeys, tempPath, attachedPictures);
 
-    return new Promise((resolve) => {
-        const ffmpegBin = resolveFfmpegBinary();
-        let settled = false;
-        const finish = (value: boolean) => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            if (!value && fs.existsSync(tempPath)) {
-                fs.rmSync(tempPath, { force: true });
-            }
-            resolve(value);
-        };
-
-        const child = spawn(ffmpegBin, args, {
-            stdio: ['ignore', 'ignore', 'pipe'],
-            windowsHide: true,
-        });
-
-        const killTimer = setTimeout(() => {
-            console.error(`Metadata write timed out for ${filePath}`);
-            child.kill("SIGKILL");
-            finish(false);
-        }, 30_000);
-        const originalFinish = finish;
-        const finishWithTimer = (value: boolean) => {
-            clearTimeout(killTimer);
-            originalFinish(value);
-        };
-
-        let stderr = '';
-        child.stderr.on('data', (chunk) => {
-            stderr += chunk.toString();
-        });
-
-        child.on('error', (error) => {
-            console.error(`Failed to launch metadata write for ${filePath}`, error);
-            finishWithTimer(false);
-        });
-
-        child.on('close', (code) => {
-            if (code !== 0) {
-                console.error(`Failed to write metadata for ${filePath}: ${stderr.trim() || `ffmpeg exited with code ${code}`}`);
-                finishWithTimer(false);
-                return;
-            }
-
-            try {
-                if (!fs.existsSync(tempPath)) {
-                    console.error(`Metadata write failed silently: Temp file ${tempPath} missing.`);
-                    finishWithTimer(false);
-                    return;
-                }
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                fs.renameSync(tempPath, filePath);
-                finishWithTimer(true);
-            } catch (e) {
-                console.error(`Failed to rename temp file ${tempPath}`, e);
-                finishWithTimer(false);
-            }
-        });
-    });
+    try {
+        await runMediaRewrite({ originalPath: filePath, temporaryPath: tempPath, command: resolveFfmpegBinary(), args });
+        return true;
+    } catch (error) {
+        console.error(`Media rewrite failed for ${filePath}:`, error);
+        return false;
+    }
 }
 
 /**
@@ -569,7 +514,7 @@ export async function removeAllTags(filePath: string): Promise<boolean> {
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return runMutagenBridge(['clear', filePath], filePath);
     }
-    const tempPath = filePath + '.scrub' + path.extname(filePath);
+    const tempPath = path.join(path.dirname(filePath), `.discogenius-rewrite-${crypto.randomUUID()}${path.extname(filePath)}`);
     const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
     const dispositionArgs = attachedPictures.flatMap((index) => [`-disposition:v:${index}`, 'attached_pic']);
     const args = [
@@ -579,42 +524,13 @@ export async function removeAllTags(filePath: string): Promise<boolean> {
         tempPath,
     ];
 
-    return new Promise((resolve) => {
-        const ffmpegBin = resolveFfmpegBinary();
-        let settled = false;
-        const finish = (value: boolean) => {
-            if (settled) return;
-            settled = true;
-            if (!value && fs.existsSync(tempPath)) {
-                fs.rmSync(tempPath, { force: true });
-            }
-            resolve(value);
-        };
-
-        const child = spawn(ffmpegBin, args, {
-            stdio: ['ignore', 'ignore', 'pipe'],
-            windowsHide: true,
-        });
-
-        let stderr = '';
-        child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-        child.on('error', () => finish(false));
-        child.on('close', (code) => {
-            if (code !== 0) {
-                console.error(`Failed to scrub tags from ${filePath}: ${stderr.trim() || `exit ${code}`}`);
-                finish(false);
-                return;
-            }
-            try {
-                if (!fs.existsSync(tempPath)) { finish(false); return; }
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                fs.renameSync(tempPath, filePath);
-                finish(true);
-            } catch {
-                finish(false);
-            }
-        });
-    });
+    try {
+        await runMediaRewrite({ originalPath: filePath, temporaryPath: tempPath, command: resolveFfmpegBinary(), args });
+        return true;
+    } catch (error) {
+        console.error(`Media rewrite failed for ${filePath}:`, error);
+        return false;
+    }
 }
 
 export async function hasEmbeddedVideoThumbnail(filePath: string): Promise<boolean> {
@@ -963,7 +879,7 @@ export async function embedVideoThumbnail(videoPath: string, thumbnailPath: stri
         return true;
     }
 
-    const tempPath = videoPath + '.tmp' + extension;
+    const tempPath = path.join(path.dirname(videoPath), `.discogenius-rewrite-${crypto.randomUUID()}${extension}`);
     const args = [
         '-y',
         '-i', videoPath,
@@ -977,58 +893,13 @@ export async function embedVideoThumbnail(videoPath: string, thumbnailPath: stri
         tempPath,
     ];
 
-    return new Promise((resolve) => {
-        const ffmpegBin = resolveFfmpegBinary();
-        let settled = false;
-        const finish = (value: boolean) => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            if (!value && fs.existsSync(tempPath)) {
-                fs.rmSync(tempPath, { force: true });
-            }
-            resolve(value);
-        };
-
-        const child = spawn(ffmpegBin, args, {
-            stdio: ['ignore', 'ignore', 'pipe'],
-            windowsHide: true,
-        });
-
-        let stderr = '';
-        child.stderr.on('data', (chunk) => {
-            stderr += chunk.toString();
-        });
-
-        child.on('error', (error) => {
-            console.error(`Failed to launch video thumbnail embed for ${videoPath}`, error);
-            finish(false);
-        });
-
-        child.on('close', (code) => {
-            if (code !== 0) {
-                console.error(`Failed to embed thumbnail for ${videoPath}: ${stderr.trim() || `ffmpeg exited with code ${code}`}`);
-                finish(false);
-                return;
-            }
-
-            try {
-                if (!fs.existsSync(tempPath)) {
-                    console.error(`Video thumbnail embed failed silently: Temp file ${tempPath} missing.`);
-                    finish(false);
-                    return;
-                }
-                if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-                fs.renameSync(tempPath, videoPath);
-                finish(true);
-            } catch (error) {
-                console.error(`Failed to finalize embedded thumbnail for ${videoPath}`, error);
-                finish(false);
-            }
-        });
-    });
+    try {
+        await runMediaRewrite({ originalPath: videoPath, temporaryPath: tempPath, command: resolveFfmpegBinary(), args });
+        return true;
+    } catch (error) {
+        console.error(`Media rewrite failed for ${videoPath}:`, error);
+        return false;
+    }
 }
 
 export interface VideoTagSet {

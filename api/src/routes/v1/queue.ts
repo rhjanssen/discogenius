@@ -1,5 +1,5 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
-import { db, isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
+import { db, isSqliteBusyError, withDbWrite } from "../../database.js";
 import express, { Request, Response, Router } from 'express';
 import {AnyCommandBody, CommandStatus} from "../../services/commands/command-model.js";
 import {NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
@@ -32,7 +32,7 @@ const router: Router = express.Router();
 
 /** Same yield-and-retry budget as album/retag writes: ride out worker ingest locks. */
 function runQueueUserWrite<T>(operation: () => T): Promise<T> {
-  return runWithAsyncBusyRetry(operation, 30, 200);
+  return withDbWrite(operation);
 }
 
 function queueMutationHttpStatus(error: unknown): number {
@@ -761,7 +761,7 @@ router.post('/tasks/process-monitored', async (req: Request, res: Response) => {
   try {
     const body = getObjectBody(req.body ?? {});
     const artistId = getOptionalIdentifier(body, 'artistId');
-    const commandId = await runWithAsyncBusyRetry(() =>
+    const commandId = await withDbWrite(() =>
       queueDownloadMissingPass({
         trigger: CommandTrigger.Manual,
         artistIds: artistId ? [artistId] : undefined,

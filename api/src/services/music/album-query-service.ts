@@ -388,11 +388,20 @@ export class AlbumQueryService {
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
         const where: string[] = [
-            "rg.artist_mbid IN (SELECT mbid FROM ArtistMetadata WHERE mbid IS NOT NULL)",
+            "rg.artist_mbid IS NOT NULL",
         ];
 
         if (search) {
-            where.push("(rg.title LIKE ? OR a.name LIKE ?)");
+            // Resolve matching identities before joining album details. LIKE on
+            // the trigram index preserves infix matching without a catalogue join.
+            where.push(`(rg.id IN (
+                SELECT rowid / 4 FROM CatalogSubstringSearch
+                WHERE title LIKE ? AND entity_type = 'album'
+            ) OR rg.artist_mbid IN (
+                SELECT artist.mbid FROM CatalogSubstringSearch search
+                JOIN ArtistMetadata artist ON artist.id = search.rowid / 4
+                WHERE search.title LIKE ? AND search.entity_type = 'artist'
+            ))`);
             const searchParam = `%${search}%`;
             params.push(searchParam, searchParam);
             countParams.push(searchParam, searchParam);

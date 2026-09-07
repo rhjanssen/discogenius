@@ -1,4 +1,4 @@
-import { db, runWithSqliteBusyRetry } from "../../database.js";
+import { db } from "../../database.js";
 import path from "path";
 import { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR } from "./bootstrap.js";
 export { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR };
@@ -482,7 +482,7 @@ function normalizeConfig(config: Partial<DiscoGeniusConfig>): DiscoGeniusConfig 
 function readConfigFromDb(): DiscoGeniusConfig {
   const config = cloneConfig(DEFAULT_CONFIG);
   try {
-    const rows = runWithSqliteBusyRetry(() => db.prepare("SELECT key, value FROM config WHERE key LIKE 'settings.%'").all()) as Array<{key: string, value: string}>;
+    const rows = db.prepare("SELECT key, value FROM config WHERE key LIKE 'settings.%'").all() as Array<{key: string, value: string}>;
     for (const row of rows) {
       try {
         const parsed = JSON.parse(row.value);
@@ -544,7 +544,7 @@ export function writeConfig(config: DiscoGeniusConfig): void {
       stmt.run("settings.catalog", JSON.stringify(normalized.catalog));
       stmt.run("settings.account", JSON.stringify(normalized.account));
     });
-    runWithSqliteBusyRetry(() => run());
+    run();
     configCache = normalized;
     console.log("✅ Config saved to database");
   } catch (error) {

@@ -1,4 +1,4 @@
-import { isSqliteBusyError, runWithAsyncBusyRetry } from "../../database.js";
+import { isSqliteBusyError, withDbWrite } from "../../database.js";
 import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
 import { commandExecutors } from "./executors/registry.js";
 import type { CommandHandlerContext } from "./handlers/handler-context.js";
@@ -33,18 +33,10 @@ export function updateCommandDescription(
     job: CommandModel,
     options: { progress?: number; description?: string },
 ): void {
-    const payloadPatch: Record<string, unknown> = {};
-    if (options.description) {
-        payloadPatch.description = options.description;
-    }
-
-    CommandQueueManager.updateState(job.id, {
+    CommandQueueManager.updateProgressMessage(job.id, {
         progress: options.progress,
-        payloadPatch: Object.keys(payloadPatch).length > 0 ? payloadPatch : undefined,
+        description: options.description,
         workerId: job.worker_id ?? undefined,
-        progressPhase: options.description,
-        progressCurrent: options.progress,
-        progressTotal: options.progress == null ? undefined : 100,
     });
 }
 
@@ -140,7 +132,7 @@ export async function persistCommandOutcome(
     handlerError: unknown,
 ): Promise<"completed" | "failed" | "requeued" | false> {
     if (!handlerError) {
-        const completed = await runWithAsyncBusyRetry(
+        const completed = await withDbWrite(
             () => CommandQueueManager.complete(job.id, job.worker_id ?? undefined),
         );
         if (completed) {
@@ -159,7 +151,7 @@ export async function persistCommandOutcome(
         && job.worker_id
         && resolveInfrastructureMaxAttempts(job.name, COMMAND_MAX_ATTEMPTS) > 1
     ) {
-        const recovered = await runWithAsyncBusyRetry(
+        const recovered = await withDbWrite(
             () => CommandQueueManager.recoverOwnedCommand({
                 id: job.id,
                 workerId: job.worker_id as string,
@@ -179,7 +171,7 @@ export async function persistCommandOutcome(
         return false;
     }
 
-    const failed = await runWithAsyncBusyRetry(
+    const failed = await withDbWrite(
         () => CommandQueueManager.fail(job.id, message, job.worker_id ?? undefined),
     );
     return failed ? "failed" : false;

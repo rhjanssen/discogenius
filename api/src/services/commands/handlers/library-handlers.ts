@@ -186,23 +186,30 @@ export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ct
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds
         : (job.payload.artistId ? [job.payload.artistId] : []);
+    if (artistIds.length === 0) throw new Error("RenameArtist requires at least one artist id");
     let renamed = 0;
     let conflicts = 0;
     let missing = 0;
     let cleanedDirectories = 0;
+    const errors: Array<{ id: number; error: string }> = [];
     for (const artistId of artistIds) {
         const result = RenameTrackFileService.executeRenameArtist({ artistId });
-        ArtistStatisticsService.refresh([artistId]);
         renamed += result.renamed;
         conflicts += result.conflicts;
         missing += result.missing;
         cleanedDirectories += result.cleanedDirectories;
+        errors.push(...result.errors);
+        ctx.updateCommandDescription(job, {
+            progress: 5 + Math.floor(((artistIds.indexOf(artistId) + 1) / artistIds.length) * 90),
+            description: `Renamed ${renamed} files; ${errors.length} errors`,
+        });
         await ctx.yieldToEventLoop();
     }
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Renamed ${renamed} file(s), ${conflicts} conflict(s), ${missing} missing, ${cleanedDirectories} empty folder(s) cleaned`,
     });
+    throwOnFileErrors("Rename", errors);
 };
 
 export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx) => {
@@ -220,34 +227,32 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
             libraryRoot: job.payload.libraryRoot,
             fileTypes: job.payload.fileTypes,
         });
-    // An id-only rename does not change library counts. Passing undefined here
-    // used to trigger a full-library statistics rebuild after moving even one
-    // file, leaving RenameFiles stuck at 5% for minutes on large catalogs.
-    if (job.payload.artistId) {
-        ArtistStatisticsService.refresh([job.payload.artistId]);
-    }
+    // Renaming changes paths, not library counts or file sizes.
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
+    throwOnFileErrors("Rename", result.errors);
 };
 
-// Throttled per-file retag progress reporter: "Retag Files - writing file x/y"
-// with a 5..95% ramp. Caps DB/SSE writes to ~50 updates regardless of file count.
+function throwOnFileErrors(operation: string, errors: Array<{ id: number; error: string }>): void {
+    if (errors.length === 0) return;
+    const sample = errors.slice(0, 5).map(item => `file #${item.id}: ${item.error}`).join("; ");
+    throw new Error(`${operation} finished with ${errors.length} file error(s). ${sample}`);
+}
+
+// Progress is counted after each file settles. Command telemetry handles
+// buffering, so a large library does not have to finish 2% before showing life.
 function makeRetagProgress(
     ctx: Parameters<CommandHandler<"RetagFiles">>[1],
     // Shared by RetagFiles and RetagArtist handlers; the job command name differs.
     job: Parameters<CommandHandler<"RetagFiles" | "RetagArtist">>[0],
     label: string,
 ) {
-    let lastReported = 0;
     return (completed: number, total: number) => {
-        const step = Math.max(1, Math.floor(total / 50));
-        if (completed !== total && completed - lastReported < step) return;
-        lastReported = completed;
         ctx.updateCommandDescription(job as any, {
             progress: 5 + Math.floor((completed / Math.max(total, 1)) * 90),
-            description: `${label} - writing file ${completed}/${total}`,
+            description: `${label} - processed ${completed}/${total} files`,
         });
     };
 }
@@ -267,14 +272,16 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
         artistIds,
         onProgress: makeRetagProgress(ctx, job, 'Retag Artist'),
     });
-    ArtistStatisticsService.refresh(artistIds);
+    if (result.retagged > 0) ArtistStatisticsService.refresh(artistIds);
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
     });
+    throwOnFileErrors("Retag", result.errors);
 };
 
 export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) => {
+    const affectedArtists = AudioTagService.getAffectedArtistIds(job.payload);
     if (job.payload.stripOnly === true) {
         ctx.updateCommandDescription(job, {
             progress: 5,
@@ -291,11 +298,12 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
                 releaseMbid: job.payload.releaseMbid,
             });
         }
-        ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
+        if (result.retagged > 0 && affectedArtists.length > 0) ArtistStatisticsService.refresh(affectedArtists);
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: `Stripped tags on ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
         });
+        throwOnFileErrors("Strip tags", result.errors);
         return;
     }
 
@@ -338,9 +346,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             errors: [...audioResult.errors, ...videoResult.errors],
         };
     } else {
-        result = Array.isArray(job.payload.mediaIds) && job.payload.mediaIds.length > 0
-            ? await AudioTagService.applyForMediaIds(job.payload.mediaIds, { onProgress: makeRetagProgress(ctx, job, 'Retag Files') })
-            : await AudioTagService.applyByQuery({
+        result = await AudioTagService.applyByQuery({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
                 editionId: job.payload.editionId,
@@ -348,9 +354,10 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
                 onProgress: makeRetagProgress(ctx, job, 'Retag Files'),
             });
     }
-    ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
+    if (result.retagged > 0 && affectedArtists.length > 0) ArtistStatisticsService.refresh(affectedArtists);
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
     });
+    throwOnFileErrors("Retag", result.errors);
 };
