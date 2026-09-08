@@ -462,6 +462,16 @@ test("manual album download queues every monitored edition", async () => {
     mode: "additive",
   });
 
+  db.exec(`CREATE TRIGGER reject_second_album_enqueue BEFORE INSERT ON DownloadQueue
+    WHEN (SELECT COUNT(*) FROM DownloadQueue) = 1
+    BEGIN SELECT RAISE(ABORT, 'second edition enqueue failed'); END`);
+  try {
+    await assert.rejects(AlbumCommandService.addAlbum(ALBUM_MBID, true, "stereo"), /second edition enqueue failed/);
+    assert.deepEqual(db.prepare('SELECT id FROM DownloadQueue').all(), [],
+      'a failed multi-edition request must not leave the first edition queued');
+  } finally {
+    db.exec('DROP TRIGGER reject_second_album_enqueue');
+  }
   const result = await AlbumCommandService.addAlbum(ALBUM_MBID, true, "stereo");
   assert.equal(result.success, true);
   assert.equal(result.commandIds?.length, 2,

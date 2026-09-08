@@ -645,7 +645,7 @@ router.get('/tasks', (req: Request, res: Response) => {
  * POST /api/v1/queue/tasks/add (or POST /api/v1/queue/tasks)
  * Add non-download task to queue
  */
-router.post('/tasks/add', (req: Request, res: Response) => {
+router.post(['/tasks/add', '/tasks'], async (req: Request, res: Response) => {
   try {
     const body = getObjectBody(req.body);
     const type = getRequiredIdentifier(body, 'type');
@@ -657,36 +657,13 @@ router.post('/tasks/add', (req: Request, res: Response) => {
     const priority = getOptionalInteger(body, 'priority') ?? 0;
     const refId = getOptionalIdentifier(body, 'ref_id');
 
-    const id = CommandQueueManager.push(type as CommandName, payload as AnyCommandBody, refId, priority);
+    const id = await runQueueUserWrite(() => CommandQueueManager.push(type as CommandName, payload as AnyCommandBody, refId, priority));
     res.json({ id, message: 'Task added' });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ error: error.message });
     }
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Alias POST /api/v1/queue/tasks to POST /api/v1/queue/tasks/add
-router.post('/tasks', (req: Request, res: Response) => {
-  try {
-    const body = getObjectBody(req.body);
-    const type = getRequiredIdentifier(body, 'type');
-    if (!allowedJobTypes.has(type)) {
-      return res.status(400).json({ error: 'Unsupported job type' });
-    }
-
-    const payload = getObjectBody(body.payload, 'payload must be a JSON object');
-    const priority = getOptionalInteger(body, 'priority') ?? 0;
-    const refId = getOptionalIdentifier(body, 'ref_id');
-
-    const id = CommandQueueManager.push(type as CommandName, payload as AnyCommandBody, refId, priority);
-    res.json({ id, message: 'Task added' });
-  } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ error: error.message });
-    }
-    res.status(500).json({ error: error.message });
+    res.status(queueMutationHttpStatus(error)).json({ error: error.message });
   }
 });
 

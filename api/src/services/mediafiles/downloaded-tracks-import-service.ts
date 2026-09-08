@@ -37,6 +37,13 @@ import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
+/** A selected track subset need not cover its provider's entire edition. */
+export function expectedImportedTrackCount(payload: Pick<ImportDownloadJob['payload'], 'acquisitionMode' | 'trackOffers'>, providerCount: number | undefined): number | undefined {
+    return payload.acquisitionMode === 'trackOffers' && Array.isArray(payload.trackOffers) && payload.trackOffers.length > 0
+        ? payload.trackOffers.length
+        : providerCount;
+}
+
 /** Full-album jobs carry trackOffers for tagging; only trackOffers mode hard-fails on shortfalls. */
 export function shouldHardFailIncompleteAlbumImport(options: {
   type?: string;
@@ -1119,6 +1126,7 @@ export class DownloadedTracksImportService {
             }
 
             organizeResult = recovered;
+            organizeResult.expectedTracks = expectedImportedTrackCount(job.payload, organizeResult.expectedTracks);
 
             options.updateState({
                 progress: 70,
@@ -1196,6 +1204,7 @@ export class DownloadedTracksImportService {
             });
         }
 
+        organizeResult.expectedTracks = expectedImportedTrackCount(job.payload, organizeResult.expectedTracks);
         cancellationCheckpoint("after organizing downloaded files");
         if (type !== "video") {
             persistDownloadedProviderProvenance(

@@ -134,6 +134,10 @@ export function coalesceVideoRecordings(leftId: number, rightId: number): number
  * library selections move; the duplicate row is deleted.
  */
 export function mergeVideoRecordings(keeperId: number, duplicateId: number): number {
+  return db.transaction(() => mergeVideoRecordingRows(keeperId, duplicateId))();
+}
+
+function mergeVideoRecordingRows(keeperId: number, duplicateId: number): number {
   if (keeperId === duplicateId) return keeperId;
   const keeper = loadVideoRecording(keeperId);
   const duplicate = loadVideoRecording(duplicateId);
@@ -250,20 +254,21 @@ export function mergeVideoRecordings(keeperId: number, duplicateId: number): num
     UPDATE ProviderVideoMatches SET recording_id = ? WHERE recording_id = ?
   `).run(keeper.id, duplicate.id);
 
-  db.prepare(`
-    INSERT OR IGNORE INTO RecordingRelations (
-      source_recording_id, target_recording_id, source_foreign_recording_id,
-      target_foreign_recording_id, relation_type, foreign_relation_type_id,
-      source, confidence, data, updated_at
-    )
-    SELECT
-      CASE WHEN source_recording_id = ? THEN ? ELSE source_recording_id END,
-      CASE WHEN target_recording_id = ? THEN ? ELSE target_recording_id END,
-      source_foreign_recording_id, target_foreign_recording_id, relation_type,
-      foreign_relation_type_id, source, confidence, data, CURRENT_TIMESTAMP
-    FROM RecordingRelations
-    WHERE source_recording_id = ? OR target_recording_id = ?
-  `).run(duplicate.id, keeper.id, duplicate.id, keeper.id, duplicate.id, duplicate.id);
+  const relations = db.prepare(`SELECT id, source_recording_id, target_recording_id, relation_type
+    FROM RecordingRelations WHERE source_recording_id = ? OR target_recording_id = ?`)
+    .all(duplicate.id, duplicate.id) as Array<{
+      id: number; source_recording_id: number | null; target_recording_id: number | null; relation_type: string;
+    }>;
+  for (const relation of relations) {
+    const source = relation.source_recording_id === duplicate.id ? keeper.id : relation.source_recording_id;
+    const target = relation.target_recording_id === duplicate.id ? keeper.id : relation.target_recording_id;
+    const collision = db.prepare(`SELECT id FROM RecordingRelations
+      WHERE source_recording_id = ? AND target_recording_id = ? AND relation_type = ? AND id != ?`)
+      .get(source, target, relation.relation_type, relation.id);
+    if (collision) db.prepare('DELETE FROM RecordingRelations WHERE id = ?').run(relation.id);
+    else db.prepare('UPDATE RecordingRelations SET source_recording_id = ?, target_recording_id = ? WHERE id = ?')
+      .run(source, target, relation.id);
+  }
 
   db.prepare(`
     UPDATE TrackFiles
@@ -272,20 +277,47 @@ export function mergeVideoRecordings(keeperId: number, duplicateId: number): num
     WHERE recording_id = ?
   `).run(keeper.id, mbid, duplicate.id);
 
-  db.prepare(`
-    INSERT INTO LibraryVideos (
-      library_id, video_recording_id, preferred_offer_key, selection_mode,
-      placement_mode, placement_library_id, inline_track_id, inline_slot,
-      placement_selection_mode, reason, selected_at, updated_at
-    )
-    SELECT
-      merged.library_id, ?, merged.preferred_offer_key, merged.selection_mode,
-      'separated', NULL, NULL, NULL,
-      merged.placement_selection_mode, merged.reason, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-    FROM LibraryVideos merged
-    WHERE merged.video_recording_id = ?
-    ON CONFLICT(library_id, video_recording_id) DO NOTHING
-  `).run(keeper.id, duplicate.id);
+  // Move existing selections rather than inserting separated replacements.
+  // A manual placement survives a later automatic catalogue discovery.
+  type Selection = {
+    id: number; library_id: number; preferred_offer_key: string | null;
+    selection_mode: string; placement_mode: string; placement_library_id: number | null;
+    inline_track_id: number | null; inline_slot: string | null;
+    placement_selection_mode: string; reason: string | null; selected_at: string;
+  };
+  const selections = db.prepare('SELECT * FROM LibraryVideos WHERE video_recording_id = ?')
+    .all(duplicate.id) as Selection[];
+  for (const selection of selections) {
+    const target = db.prepare('SELECT * FROM LibraryVideos WHERE library_id = ? AND video_recording_id = ?')
+      .get(selection.library_id, keeper.id) as Selection | undefined;
+    if (!target) {
+      db.prepare('UPDATE LibraryVideos SET video_recording_id = ? WHERE id = ?').run(keeper.id, selection.id);
+      continue;
+    }
+    const curated = target.selection_mode === 'manual' ? target : selection;
+    const placement = target.placement_selection_mode === 'manual' ? target : selection;
+    // Release the duplicate's unique inline slot before assigning it to target.
+    db.prepare('DELETE FROM LibraryVideos WHERE id = ?').run(selection.id);
+    db.prepare(`UPDATE LibraryVideos SET preferred_offer_key = ?, selection_mode = ?,
+      placement_mode = ?, placement_library_id = ?, inline_track_id = ?, inline_slot = ?,
+      placement_selection_mode = ?, reason = ?, selected_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`).run(curated.preferred_offer_key, curated.selection_mode,
+      placement.placement_mode, placement.placement_library_id, placement.inline_track_id,
+      placement.inline_slot, placement.placement_selection_mode, curated.reason, curated.selected_at, target.id);
+  }
+
+  // Video recordings can occur on editions too. Deleting the duplicate without
+  // moving these FKs cascades into its tracks, matches and selected plans.
+  db.prepare('UPDATE Tracks SET recording_id = ?, recording_mbid = ? WHERE recording_id = ?')
+    .run(keeper.id, mbid, duplicate.id);
+  db.prepare('UPDATE ProviderTrackMatches SET recording_id = ? WHERE recording_id = ?')
+    .run(keeper.id, duplicate.id);
+  db.prepare('UPDATE TrackLibraryIndex SET recording_id = ? WHERE recording_id = ?').run(keeper.id, duplicate.id);
+  db.prepare('UPDATE ArtistTopTracks SET recording_id = ? WHERE recording_id = ?').run(keeper.id, duplicate.id);
+  db.prepare(`INSERT OR IGNORE INTO RecordingArtistCredits
+    (recording_id, artist_id, ordinal, credited_name, join_phrase, role)
+    SELECT ?, artist_id, ordinal, credited_name, join_phrase, role
+    FROM RecordingArtistCredits WHERE recording_id = ?`).run(keeper.id, duplicate.id);
 
   db.prepare(`DELETE FROM Recordings WHERE id = ?`).run(duplicate.id);
   return keeper.id;

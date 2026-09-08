@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
+import { once } from 'node:events';
+import { sqliteWriteMutexWorkerData, forceReleaseSqliteWriteMutexOwner, SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY } from '../../database/sqlite-write-mutex.js';
 import { afterEach, beforeEach, test } from 'node:test';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-download-liveness-'));
@@ -64,6 +67,7 @@ test('buffered progress persists each exact disc occurrence and never infers com
         const buffered = processor.progressBuffer.get(id).state;
         processor.writeDownloadState(id, buffered, owner);
         assert.deepEqual(CommandQueueManager.get(id)!.payload.downloadState!.tracks!.map(t => t.status), ['queued', 'completed', 'completed']);
+        assert.equal(CommandQueueManager.get(id)!.progress, 67, 'Command progress follows the same catalogue fraction as download details');
         processor.writeDownloadState(id, { currentFileNum: 3, totalFiles: 3, state: 'downloading' }, owner);
         assert.deepEqual(CommandQueueManager.get(id)!.payload.downloadState!.tracks!.map(t => t.status), ['queued', 'completed', 'completed']);
     } finally {
@@ -335,4 +339,53 @@ test('failed worker recovery clears stale activity and the watchdog retries befo
         assert.equal(CommandQueueManager.get(id)?.status, 'queued');
         assert.equal(proxy.getStatus().recoveryMessage, undefined);
     } finally { CommandQueueManager.recoverOwnedCommand = recover; }
+});
+
+
+test('download failure and import completion wait for a contended writer while progress remains responsive', { timeout: 30_000 }, async () => {
+    const failedId = pushTrack('contended-failure');
+    const completedId = pushTrack('contended-import-completion');
+    claim(failedId, 'failed-owner');
+    claim(completedId, 'completed-owner');
+    const processor = new DownloadProcessor() as any;
+    const mutexData = sqliteWriteMutexWorkerData();
+    const writer = new Worker(new URL('../commands/worker/command-worker-bootstrap.mjs', import.meta.url), {
+        workerData: { ...mutexData, mode: 'hold', name: 'test:provider-rematch', __entry: new URL('../../database/sqlite-write-mutex.fixture.ts', import.meta.url).href },
+    });
+    try {
+        await new Promise<void>((resolve, reject) => {
+            writer.on('message', message => { if (message.kind === 'acquired') resolve(); });
+            writer.once('error', reject);
+        });
+        const pendingFailure = processor.failAttempt(failedId, 'Provider unavailable', { state: 'failed', statusMessage: 'Provider unavailable' }, 'failed-owner');
+        const pendingCompletion = processor.completeAttempt(completedId, 'completed-owner');
+        // Exceed the synchronous worker timeout that previously killed the worker.
+        // The event loop must keep servicing heartbeat/progress callbacks meanwhile.
+        let ticks = 0;
+        const timer = setInterval(() => {
+            ticks++;
+            processor.persistDownloadState(completedId, { state: 'importing', progress: ticks }, 'completed-owner');
+        }, 100);
+        try {
+            await new Promise(resolve => setTimeout(resolve, 15_100));
+            assert.ok(ticks > 50, `Only ${ticks} heartbeat opportunities while waiting`);
+            assert.equal(CommandQueueManager.get(failedId)?.status, 'started');
+            assert.equal(CommandQueueManager.get(completedId)?.status, 'started');
+        } finally { clearInterval(timer); }
+        const exit = once(writer, 'exit');
+        writer.postMessage('release');
+        assert.equal(await pendingFailure, true);
+        assert.ok(await pendingCompletion);
+        await exit;
+        assert.equal(CommandQueueManager.get(failedId)?.status, 'failed');
+        assert.equal(CommandQueueManager.get(failedId)?.error, 'Provider unavailable');
+        assert.equal(CommandQueueManager.get(completedId)?.status, 'completed');
+        processor.flushProgressBuffer();
+        assert.equal(CommandQueueManager.get(completedId)?.status, 'completed', 'Late buffered progress cannot reopen a terminal attempt');
+    } finally {
+        await writer.terminate();
+        forceReleaseSqliteWriteMutexOwner(Number(mutexData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]));
+        clearInterval(processor.progressFlushTimer);
+        processor.progressBuffer.clear();
+    }
 });

@@ -318,7 +318,7 @@ router.post("/", async (req, res) => {
     res.status(status || 200).json(body2);
   } catch (error: any) {
     console.error(`[Albums] Failed to add album:`, error);
-    res.status(500).json({ detail: error.message });
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 

@@ -334,13 +334,9 @@ export class ProviderReleaseIngestionService {
   /** Editions whose barcode equals the provider UPC (after digit normalize). */
   private findEditionIdsByBarcode(normalizedUpc: string): number[] {
     if (!normalizedUpc) return [];
-    const rows = this.db.prepare(`
-      SELECT id, barcode FROM AlbumEditions
-      WHERE barcode IS NOT NULL AND TRIM(barcode) != ''
-    `).all() as Array<{ id: number; barcode: string }>;
-    return rows
-      .filter((row) => normalizeBarcodeDigits(row.barcode) === normalizedUpc)
-      .map((row) => row.id);
+    return (this.db.prepare(`
+      SELECT edition_id AS id FROM EditionBarcodeIndex WHERE barcode = ?
+    `).all(normalizedUpc) as Array<{ id: number }>).map(row => row.id);
   }
 
   private releaseGroupIdOf(editionId: number): number | null {

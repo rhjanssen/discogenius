@@ -1,3 +1,4 @@
+import { ensureEditionBarcodeIndex } from "./database/schema/edition-barcode-index.js";
 import Database from "better-sqlite3";
 import { BASE_SCHEMA_VERSION } from "./database/schema/version.js";
 import { isMainThread } from "node:worker_threads";
@@ -475,6 +476,7 @@ export function initDatabase() {
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
+  ensureEditionBarcodeIndex(db);
   ensureLibraryProjectionTriggers();
   const rebuiltSearchIndexes = ensureSearchIndexes(db);
   if (rebuiltSearchIndexes.length > 0) {
@@ -491,7 +493,31 @@ export function initDatabase() {
 function ensureLibraryLookupIndexes(): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_library_albums_release_group
-      ON LibraryAlbums(release_group_id)
+      ON LibraryAlbums(release_group_id);
+    CREATE INDEX IF NOT EXISTS idx_acquisition_sources_match
+      ON AcquisitionPlanSources(provider_edition_match_id);
+    CREATE INDEX IF NOT EXISTS idx_acquisition_tracks_variant
+      ON AcquisitionPlanTracks(provider_audio_variant_id);
+    CREATE INDEX IF NOT EXISTS idx_acquisition_tracks_track
+      ON AcquisitionPlanTracks(track_id);
+    CREATE INDEX IF NOT EXISTS idx_track_files_source_variant
+      ON TrackFiles(source_audio_variant_id);
+    CREATE INDEX IF NOT EXISTS idx_track_files_provider_item
+      ON TrackFiles(provider_item_id);
+    CREATE INDEX IF NOT EXISTS idx_library_editions_edition
+      ON LibraryEditions(edition_id);
+    CREATE INDEX IF NOT EXISTS idx_acquisition_plans_catalog_edition
+      ON AcquisitionPlans(edition_id);
+    CREATE INDEX IF NOT EXISTS idx_track_library_recording
+      ON TrackLibraryIndex(recording_id);
+    CREATE INDEX IF NOT EXISTS idx_track_library_edition
+      ON TrackLibraryIndex(album_edition_id);
+    CREATE INDEX IF NOT EXISTS idx_artist_top_tracks_recording
+      ON ArtistTopTracks(recording_id);
+    CREATE INDEX IF NOT EXISTS idx_artist_top_tracks_track
+      ON ArtistTopTracks(track_id);
+    CREATE INDEX IF NOT EXISTS idx_library_videos_inline_track_fk
+      ON LibraryVideos(inline_track_id);
   `);
 }
 

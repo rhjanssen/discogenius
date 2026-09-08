@@ -1,5 +1,5 @@
 import { CommandTrigger } from "./command-trigger.js";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { DownloadMissingService } from "../music/download-missing-service.js";
 import { RefreshArtistService } from "../music/refresh-artist-service.js";
@@ -873,12 +873,15 @@ export function startMonitoring() {
     console.log(`🔍 Starting scheduled task runner (artist refresh and root scan every ${MONITORING_DUE_CHECK_INTERVAL_MINUTES}m, housekeeping every ${Math.round(HOUSEKEEPING_INTERVAL_MS / 3_600_000)}h)`);
     isMonitoring = true;
 
+    let tickPending = false;
     const tick = () => {
-        try {
-            pollScheduledTasks();
-        } catch (error) {
+        if (tickPending) return;
+        tickPending = true;
+        void withSqliteWriteGate(() => {
+            if (isMonitoring) pollScheduledTasks();
+        }, 'scheduler:tick').catch(error => {
             console.error("[Monitoring] Scheduler tick failed:", error);
-        }
+        }).finally(() => { tickPending = false; });
     };
 
     tick();

@@ -150,7 +150,11 @@ test("syncMusicBrainzVideosForArtist creates youtube-music offers from free-stre
     }),
   } as Response)) as typeof globalThis.fetch;
 
-  const synced = await videoService.syncMusicBrainzVideosForArtist("artist-mbid-yt", { force: true });
+  // A prior public YouTube discovery must not suppress MusicBrainz enrichment.
+  dbModule.db.prepare(`INSERT INTO Recordings (artist_mbid, title, is_video, youtube_video_id, metadata_status)
+    VALUES ('artist-mbid-yt', 'Tears Dry on Their Own', 1, 'a1xFsoRYrds', 'youtube')`).run();
+  const synced = await videoService.syncMusicBrainzVideosForArtist("artist-mbid-yt");
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM Recordings WHERE is_video = 1").get() as { n: number }).n, 1);
   assert.equal(synced, 1);
 
   const recording = dbModule.db.prepare(`

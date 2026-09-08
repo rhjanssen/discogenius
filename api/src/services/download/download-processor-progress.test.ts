@@ -8,7 +8,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-download-prog
 process.env.DB_PATH = path.join(tempDir, "discogenius.download-progress.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
-const { deriveCatalogFileProgress } = await import("./download-processor.js");
+const { deriveCatalogFileProgress, resolveDownloadTrackOfferIndex } = await import("./download-processor.js");
 const databaseModule = await import("../../database.js");
 
 after(() => {
@@ -46,4 +46,16 @@ test("deriveCatalogFileProgress points at next queued row", () => {
 test("deriveCatalogFileProgress returns null without tracks", () => {
   assert.equal(deriveCatalogFileProgress([]), null);
   assert.equal(deriveCatalogFileProgress(null), null);
+});
+
+
+test('album track offers resolve the exact edition occurrence rather than the first repeated recording', () => {
+  const tracks = [
+    { title: 'Intro', canonicalTrackMbid: 'disc-one', canonicalRecordingMbid: 'same-recording', providerTrackId: 'same-provider-id', trackNum: 1, volumeNum: 1, status: 'queued' as const },
+    { title: 'Intro', canonicalTrackMbid: 'disc-two', canonicalRecordingMbid: 'same-recording', providerTrackId: 'same-provider-id', trackNum: 1, volumeNum: 2, status: 'queued' as const },
+  ];
+  assert.equal(resolveDownloadTrackOfferIndex(tracks, { provider: 'tidal', providerTrackId: 'same-provider-id', canonicalTrackMbid: 'disc-two' }), 1);
+  assert.equal(resolveDownloadTrackOfferIndex(tracks, { provider: 'tidal', providerTrackId: 'same-provider-id', trackNum: 1, volumeNum: 2 }), 1);
+  assert.equal(resolveDownloadTrackOfferIndex(tracks, { provider: 'tidal', providerTrackId: 'same-provider-id', canonicalRecordingMbid: 'same-recording' }), -1);
+  assert.equal(resolveDownloadTrackOfferIndex(tracks, { provider: 'tidal', providerTrackId: 'same-provider-id', canonicalTrackMbid: 'missing-occurrence' }), -1);
 });

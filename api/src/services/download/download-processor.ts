@@ -23,6 +23,8 @@ import {
 import {
     forceReleaseSqliteWriteMutexOwner,
     isSqliteWriteMutexHeld,
+    tryAcquireSqliteWriteMutex,
+    releaseSqliteWriteMutex,
     SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY,
     sqliteWriteMutexWorkerData,
 } from "../../database/sqlite-write-mutex.js";
@@ -238,6 +240,19 @@ export function isSqliteBusyError(error: unknown): boolean {
  * Catalog-anchored X/Y for album jobs. Provider/tiddl queue totals must not
  * replace the MusicBrainz tracklist length (hybrids/edition mismatches).
  */
+export function resolveDownloadTrackOfferIndex(tracks: DownloadTrackStateEntry[], offer: DownloadTrackOffer): number {
+    let candidates = tracks.map((track, index) => ({ track, index }));
+    if (offer.canonicalTrackMbid && tracks.some(track => track.canonicalTrackMbid)) {
+        candidates = candidates.filter(({ track }) => track.canonicalTrackMbid === offer.canonicalTrackMbid);
+    } else {
+        candidates = candidates.filter(({ track }) =>
+            track.providerTrackId === offer.providerTrackId
+            && (offer.trackNum == null || track.trackNum === offer.trackNum)
+            && (offer.volumeNum == null || track.volumeNum === offer.volumeNum));
+    }
+    return candidates.length === 1 ? candidates[0].index : -1;
+}
+
 export function deriveCatalogFileProgress(
     tracks: Array<{ status?: string | null }> | null | undefined,
 ): { totalFiles: number; currentFileNum: number; completed: number } | null {
@@ -773,19 +788,21 @@ export class DownloadProcessor {
                     resolved,
                     executionStartedAt: new Date().toISOString(),
                 };
-                const phaseUpdate = CommandQueueManager.updateState(commandId, {
-                    workerId,
-                    payloadPatch: { downloadImportHandoff: handoff } as any,
-                    progressPhase: 'importing',
-                    blockedReason: 'waiting on disk',
-                });
-                if (!phaseUpdate) {
-                    throw new Error('Import attempt lost durable ownership before execution');
-                }
-                this.persistDownloadState(commandId, {
-                    state: 'importing',
-                    statusMessage: 'Importing downloaded media',
-                }, workerId);
+                await withSqliteWriteGate(() => {
+                    const phaseUpdate = CommandQueueManager.updateState(commandId, {
+                        workerId,
+                        payloadPatch: { downloadImportHandoff: handoff } as any,
+                        progressPhase: 'importing',
+                        blockedReason: 'waiting on disk',
+                    });
+                    if (!phaseUpdate) {
+                        throw new Error('Import attempt lost durable ownership before execution');
+                    }
+                    this.persistDownloadState(commandId, {
+                        state: 'importing',
+                        statusMessage: 'Importing downloaded media',
+                    }, workerId);
+                }, 'download:import-start');
 
                 if (CommandWorkerPool.isActive()) {
                     // Run the heavy import (metadata parse + matching + tagging +
@@ -804,13 +821,14 @@ export class DownloadProcessor {
                     });
                 }
 
-                if (!CommandQueueManager.complete(commandId, workerId)) {
+                const completed = await this.completeAttempt(commandId, workerId);
+                if (!completed) {
                     console.warn(`[DOWNLOAD-PROCESSOR] Ignoring late import completion for retired attempt ${workerId || 'legacy'} on command #${commandId}`);
                     this.activeImports.delete(commandId);
                     this.clearAttempt(commandId, workerId);
                     return;
                 }
-                const waitJobId = DownloadWaitQueue.finishClaimed(commandId);
+                const { waitJobId } = completed;
                 this.activeImports.delete(commandId);
                 this.clearAttempt(commandId, workerId);
                 downloadEvents.emitCompleted(commandId, {
@@ -825,27 +843,24 @@ export class DownloadProcessor {
             } catch (error: any) {
                 if (error?.name === 'ImportDownloadCancelledError' || error?.constructor?.name === 'ImportDownloadCancelledError') {
                     console.log(`[DOWNLOAD-PROCESSOR] Import command #${commandId} cancelled (${error.message})`);
-                    CommandQueueManager.cancel(commandId);
-                    DownloadWaitQueue.removeByCommandId(commandId);
+                    await withSqliteWriteGate(() => {
+                        CommandQueueManager.cancel(commandId);
+                        DownloadWaitQueue.removeByCommandId(commandId);
+                    }, 'download:import-cancel');
                     this.clearAttempt(commandId, workerId);
-                    
+
                     const downloadPath = importPayload.path;
                     if (downloadPath) {
                         await this.cleanupDownloadSourcePath(downloadPath);
                     }
                 } else {
                     console.error(`[DOWNLOAD-PROCESSOR] Failed to import command #${commandId}:`, error);
-                    this.persistDownloadState(commandId, {
+                    const failed = await this.failAttempt(commandId, error?.message || 'Unknown import error', {
                         progress: command.progress,
                         description: `Import: ${error?.message || 'Import failed'}`,
                         statusMessage: error?.message || 'Import failed',
                         state: 'importFailed',
                     }, workerId);
-                    const failed = CommandQueueManager.fail(
-                        commandId,
-                        error?.message || 'Unknown import error',
-                        workerId,
-                    );
                     if (!failed) {
                         console.warn(`[DOWNLOAD-PROCESSOR] Ignoring late import failure for retired attempt ${workerId || 'legacy'} on command #${commandId}`);
                         this.activeImports.delete(commandId);
@@ -884,6 +899,25 @@ export class DownloadProcessor {
             workerId: workerId || '',
             promise: importPromise,
         });
+    }
+
+    private async completeAttempt(commandId: number, workerId?: string): Promise<{ waitJobId: number | null } | null> {
+        return withSqliteWriteGate(() => {
+            if (!CommandQueueManager.complete(commandId, workerId)) return null;
+            return { waitJobId: DownloadWaitQueue.finishClaimed(commandId) };
+        }, 'download:complete');
+    }
+
+    private async failAttempt(
+        commandId: number,
+        error: string,
+        state: Parameters<DownloadProcessor['persistDownloadState']>[1],
+        workerId?: string,
+    ): Promise<boolean> {
+        return withSqliteWriteGate(() => {
+            this.persistDownloadState(commandId, state, workerId);
+            return CommandQueueManager.fail(commandId, error, workerId);
+        }, 'download:fail');
     }
 
     private logBusy(): void {
@@ -1246,8 +1280,8 @@ export class DownloadProcessor {
                 : state.state === 'downloading'
                     ? 'downloading'
                     : state.state;
-        const progressChanged = state.progress !== undefined
-            && state.progress !== currentJob?.progress;
+        const progressChanged = nextProgress !== undefined
+            && nextProgress !== currentJob?.progress;
         const phaseChanged = phase !== undefined
             && phase !== currentJob?.progress_phase;
         const positionChanged = nextCurrentFileNum !== currentDownloadState.currentFileNum
@@ -1265,7 +1299,7 @@ export class DownloadProcessor {
                         : undefined;
 
         CommandQueueManager.updateState(commandId, {
-            progress: progressChanged ? state.progress : undefined,
+            progress: progressChanged ? nextProgress : undefined,
             payloadPatch,
             workerId,
             progressPhase: phaseChanged ? phase : undefined,
@@ -1282,6 +1316,9 @@ export class DownloadProcessor {
         state: Parameters<DownloadProcessor['writeDownloadState']>[1],
         workerId?: string,
     ): boolean {
+        // Progress callbacks must never synchronously wait behind catalogue work.
+        // Acquire atomically; checking whether the lock is free races other workers.
+        if (!tryAcquireSqliteWriteMutex('download:progress')) return false;
         try {
             this.writeDownloadState(commandId, state, workerId);
             return true;
@@ -1296,6 +1333,8 @@ export class DownloadProcessor {
                 console.warn('[DOWNLOAD-PROCESSOR] Progress state write deferred because SQLite is busy');
             }
             return false;
+        } finally {
+            releaseSqliteWriteMutex();
         }
     }
 
@@ -1774,10 +1813,11 @@ export class DownloadProcessor {
                         );
 
                         // Mark undownloadable tracks so the queue doesn't re-queue endlessly
-                        updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId));
+                        await withSqliteWriteGate(() => updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId)), 'download:album-status');
 
-                        if (!CommandQueueManager.complete(job.id, workerId)) return;
-                        const waitJobId = DownloadWaitQueue.finishClaimed(job.id);
+                        const completed = await this.completeAttempt(job.id, workerId);
+                        if (!completed) return;
+                        const { waitJobId } = completed;
                         this.clearAttempt(job.id, workerId);
                         await this.cleanupDownloadSourcePath(entry.downloadPath);
 
@@ -1796,8 +1836,9 @@ export class DownloadProcessor {
 
                     if (payload?.reason !== 'upgrade' && alreadyDownloaded) {
                         console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${providerId} is already downloaded — marking job as complete.`);
-                        if (!CommandQueueManager.complete(job.id, workerId)) return;
-                        const waitJobId = DownloadWaitQueue.finishClaimed(job.id);
+                        const completed = await this.completeAttempt(job.id, workerId);
+                        if (!completed) return;
+                        const { waitJobId } = completed;
                         this.clearAttempt(job.id, workerId);
                         await this.cleanupDownloadSourcePath(entry.downloadPath);
 
@@ -1890,28 +1931,30 @@ export class DownloadProcessor {
                 resolved,
                 executionStartedAt: null,
             };
-            if (!CommandQueueManager.updateState(job.id, {
-                workerId,
-                payloadPatch: { downloadImportHandoff: handoff } as any,
-                progressPhase: 'waiting to import',
-                blockedReason: 'waiting on import slot',
-            })) {
-                throw new Error('Download attempt lost durable ownership before import handoff');
-            }
+            await withSqliteWriteGate(() => {
+                if (!CommandQueueManager.updateState(job.id, {
+                    workerId,
+                    payloadPatch: { downloadImportHandoff: handoff } as any,
+                    progressPhase: 'waiting to import',
+                    blockedReason: 'waiting on import slot',
+                })) {
+                    throw new Error('Download attempt lost durable ownership before import handoff');
+                }
 
-            this.persistDownloadState(job.id, {
-                state: 'importPending',
-                statusMessage: completedDownloadState.outcome === 'completedWithWarning'
-                    && completedDownloadState.warningMessage
-                    ? completedDownloadState.warningMessage
-                    : 'Waiting to import',
-                tracks: importTracks,
-                totalFiles: completedDownloadState.totalFiles,
-                outcome: completedDownloadState.outcome,
-                warningMessage: completedDownloadState.warningMessage,
-                primaryProvider: completedDownloadState.primaryProvider,
-                fallbackProvider: completedDownloadState.fallbackProvider,
-            }, workerId);
+                this.persistDownloadState(job.id, {
+                    state: 'importPending',
+                    statusMessage: completedDownloadState.outcome === 'completedWithWarning'
+                        && completedDownloadState.warningMessage
+                        ? completedDownloadState.warningMessage
+                        : 'Waiting to import',
+                    tracks: importTracks,
+                    totalFiles: completedDownloadState.totalFiles,
+                    outcome: completedDownloadState.outcome,
+                    warningMessage: completedDownloadState.warningMessage,
+                    primaryProvider: completedDownloadState.primaryProvider,
+                    fallbackProvider: completedDownloadState.fallbackProvider,
+                }, workerId);
+            }, 'download:import-handoff');
 
             // SSE so the queue UI can leave "Downloading" immediately instead of
             // waiting for the import slot to start (which can be near-instant and
@@ -1951,7 +1994,7 @@ export class DownloadProcessor {
                 const current = CommandQueueManager.get(job.id);
                 if (current?.status === 'started' && current.worker_id === workerId) {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; returning to queue`);
-                    CommandQueueManager.requeuePausedDownload(job.id, workerId);
+                    await withSqliteWriteGate(() => CommandQueueManager.requeuePausedDownload(job.id, workerId), 'download:pause');
                     this.clearAttempt(job.id, workerId);
                 } else {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; keeping status=${current?.status ?? 'unknown'}`);
@@ -1959,16 +2002,11 @@ export class DownloadProcessor {
             } else {
                 console.error(`[DOWNLOAD-PROCESSOR] Failed to download job #${job.id}:`, error);
                 const currentJob = CommandQueueManager.get(job.id);
-                this.persistDownloadState(job.id, {
+                const failed = await this.failAttempt(job.id, error?.message || 'Unknown download error', {
                     progress: currentJob?.progress ?? job.progress,
                     state: 'failed',
                     statusMessage: error?.message || 'Unknown download error',
                 }, workerId);
-                const failed = CommandQueueManager.fail(
-                    job.id,
-                    error?.message || 'Unknown download error',
-                    workerId,
-                );
                 if (!failed) {
                     console.warn(`[DOWNLOAD-PROCESSOR] Ignoring late download failure for retired attempt ${workerId} on command #${job.id}`);
                     return;
@@ -2209,14 +2247,14 @@ export class DownloadProcessor {
                         activeProvider !== primaryProvider
                         || activeProviderItemId !== primaryProviderItemId
                     ) {
-                        CommandQueueManager.updateState(commandId, {
+                        await withSqliteWriteGate(() => CommandQueueManager.updateState(commandId, {
                             workerId: entry.workerId,
                             payloadPatch: {
                                 ...workingPayload,
                                 provider: activeProvider,
                                 providerId: activeProviderItemId,
                             } as any,
-                        });
+                        }), 'download:fallback-provenance');
                     }
                     return;
                 } catch (error) {
@@ -2358,16 +2396,16 @@ export class DownloadProcessor {
             tracks.length,
             offers.length,
         );
-        let completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
+
         let fallbackPrimary: string | null = null;
         let fallbackUsed: string | null = null;
         const durableOffers = offers.map((offer) => ({ ...offer }));
-        const persistFallbackOffer = (offerIndex: number, offer: DownloadTrackOffer): void => {
+        const persistFallbackOffer = async (offerIndex: number, offer: DownloadTrackOffer): Promise<void> => {
             durableOffers[offerIndex] = { ...offer };
-            const updated = CommandQueueManager.updateState(commandId, {
+            const updated = await withSqliteWriteGate(() => CommandQueueManager.updateState(commandId, {
                 workerId: entry.workerId,
                 payloadPatch: { trackOffers: durableOffers } as any,
-            });
+            }), 'download:track-fallback-provenance');
             if (!updated) {
                 throw new Error("Download attempt lost durable ownership while recording fallback provenance");
             }
@@ -2426,11 +2464,10 @@ export class DownloadProcessor {
                     librarySlot: slot,
                 }).filter(candidate => candidate.provider === defaultProvider);
 
-                const trackIndex = tracks.findIndex((track) => {
-                    if (offer.canonicalTrackMbid && track.canonicalTrackMbid === offer.canonicalTrackMbid) return true;
-                    if (offer.canonicalRecordingMbid && track.canonicalRecordingMbid === offer.canonicalRecordingMbid) return true;
-                    return track.providerTrackId === offer.providerTrackId;
-                });
+                const trackIndex = resolveDownloadTrackOfferIndex(tracks, offer);
+                if (trackIndex < 0) {
+                    throw new Error(`Download offer ${offer.providerTrackId} has no unique catalogue track occurrence`);
+                }
 
                 let downloaded = false;
                 while (!downloaded) {
@@ -2445,7 +2482,7 @@ export class DownloadProcessor {
                         fallbackPrimary ||= primaryOfferProvider;
                         fallbackUsed = next.provider;
                         offer = applyFallbackTrackOffer(offer, next);
-                        persistFallbackOffer(offerIndex, offer);
+                        await persistFallbackOffer(offerIndex, offer);
                         continue;
                     }
 
@@ -2458,12 +2495,13 @@ export class DownloadProcessor {
                         };
                     }
 
-                    const currentFileNum = completedBefore + offerIndex + 1;
+                    const currentFileNum = trackIndex + 1;
+                    const completedBefore = deriveCatalogFileProgress(tracks)?.completed ?? 0;
                     emitProgress({
                         state: "downloading",
                         currentFileNum,
                         totalFiles,
-                        progress: Math.round(((completedBefore + offerIndex) / totalFiles) * 100),
+                        progress: Math.round((completedBefore / totalFiles) * 100),
                         currentTrack: offer.title || tracks[trackIndex]?.title,
                         currentProviderTrackId: offer.providerTrackId,
                         currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
@@ -2517,12 +2555,12 @@ export class DownloadProcessor {
                                             state: "downloading",
                                             currentFileNum,
                                             totalFiles,
-                                            progress: Math.round((((completedBefore + offerIndex) + ((state.progress || 0) / 100)) / totalFiles) * 100),
+                                            progress: Math.round(((completedBefore + ((state.trackProgress ?? state.progress ?? 0) / 100)) / totalFiles) * 100),
                                             currentTrack: offer.title || state.currentTrack || tracks[trackIndex]?.title,
                                             currentProviderTrackId: offer.providerTrackId,
                                             currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
                                             currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
-                                            trackProgress: state.progress,
+                                            trackProgress: state.trackProgress ?? state.progress,
                                             trackStatus: state.trackStatus || "downloading",
                                             statusMessage: state.statusMessage || `Downloading track ${currentFileNum}/${totalFiles}`,
                                             speed: state.speed,
@@ -2542,11 +2580,17 @@ export class DownloadProcessor {
                         if (trackIndex >= 0) {
                             tracks[trackIndex] = {
                                 ...tracks[trackIndex],
-                                status: "queued",
+                                status: "completed",
                                 providerTrackId: offer.providerTrackId,
                                 provider: providerId,
                             };
                         }
+                        emitProgress({ state: 'downloading', currentFileNum, totalFiles,
+                            progress: Math.round(((deriveCatalogFileProgress(tracks)?.completed ?? 0) / totalFiles) * 100),
+                            currentProviderTrackId: offer.providerTrackId,
+                            currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
+                            currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
+                            trackStatus: 'completed', trackProgress: 100, tracks });
                         downloaded = true;
                     } catch (error) {
                         if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
@@ -2564,7 +2608,7 @@ export class DownloadProcessor {
                         fallbackPrimary ||= primaryOfferProvider;
                         fallbackUsed = next.provider;
                         offer = applyFallbackTrackOffer(offer, next);
-                        persistFallbackOffer(offerIndex, offer);
+                        await persistFallbackOffer(offerIndex, offer);
                         emitProgress({
                             state: "downloading",
                             statusMessage: `Falling back to ${formatProviderLabel(next.provider)}…`,
@@ -2574,12 +2618,12 @@ export class DownloadProcessor {
                 }
             }
 
-            completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
+            const completedFiles = deriveCatalogFileProgress(tracks)?.completed ?? 0;
             const finishState: DownloadStatePayload = {
                 state: "downloading",
-                currentFileNum: Math.min(totalFiles, completedBefore + offers.length),
+                currentFileNum: Math.min(totalFiles, completedFiles),
                 totalFiles,
-                progress: Math.round(((completedBefore + offers.length) / totalFiles) * 100),
+                progress: Math.round((completedFiles / totalFiles) * 100),
                 trackStatus: "completed",
                 statusMessage: "Download finished, preparing import",
                 tracks,

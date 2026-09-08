@@ -246,3 +246,67 @@ test("audio recordings still require mbid and cannot carry a YouTube watch id", 
     `).run();
   });
 });
+
+
+test('a video offer carrying both catalogue keys joins existing YouTube and MusicBrainz rows before linking the provider', () => {
+  const yt = catalog.mintVideoRecording({ artistMbid: 'artist-mbid', title: 'Pompeii', youtubeVideoId: 'a1xFsoRYrds' });
+  const mb = dbModule.db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status)
+    VALUES ('mb-pompeii-joined', 'artist-mbid', 'Pompeii', 1, 'musicbrainz') RETURNING id`).get() as { id: number };
+  seedAcceptedProviderVideoMatch(dbModule.db, { provider: 'tidal', providerVideoId: 'tidal-before-mb', recordingId: yt, title: 'Pompeii' });
+  refreshVideo.RefreshVideoService.upsertArtistVideos('artist-mbid', [{
+    provider: 'youtube-music', provider_id: 'a1xFsoRYrds', mbid: 'mb-pompeii-joined', title: 'Pompeii',
+  }], { deferRepair: true });
+  assert.deepEqual(dbModule.db.prepare('SELECT id, mbid, youtube_video_id FROM Recordings WHERE is_video = 1').all(), [
+    { id: mb.id, mbid: 'mb-pompeii-joined', youtube_video_id: 'a1xFsoRYrds' },
+  ]);
+  assert.deepEqual(dbModule.db.prepare("SELECT DISTINCT recording_id FROM ProviderVideoMatches WHERE match_state = 'accepted'").all(), [{ recording_id: mb.id }]);
+  assert.deepEqual(dbModule.db.pragma('foreign_key_check'), []);
+});
+
+
+test('contradictory provider MBID evidence cannot redirect an exact YouTube match', () => {
+  const other = catalog.mintVideoRecording({ artistMbid: 'artist-mbid', title: 'Pompeii', youtubeVideoId: 'dQw4w9WgXcQ' });
+  catalog.claimRecordingMbid(other, 'mb-other-cut');
+  const exact = catalog.mintVideoRecording({ artistMbid: 'artist-mbid', title: 'Pompeii', youtubeVideoId: 'a1xFsoRYrds' });
+  refreshVideo.RefreshVideoService.upsertArtistVideos('artist-mbid', [{
+    provider: 'youtube-music', provider_id: 'a1xFsoRYrds', mbid: 'mb-other-cut', title: 'Pompeii',
+  }], { deferRepair: true });
+  assert.deepEqual(dbModule.db.prepare(`SELECT match.recording_id FROM ProviderVideoMatches match
+    JOIN ProviderItems item ON item.id = match.provider_video_item_id
+    WHERE item.provider = 'youtube-music' AND item.entity_type = 'video'
+      AND item.provider_id = 'a1xFsoRYrds' AND match.match_state = 'accepted'`).all(), [{ recording_id: exact }]);
+  assert.equal(catalog.findVideoRecordingByYouTubeWatchId('dQw4w9WgXcQ'), other);
+  assert.equal(catalog.findVideoRecordingByYouTubeWatchId('a1xFsoRYrds'), exact);
+});
+
+test('catalogue merge preserves manual selection identity and rolls back all changes if a dependent write fails', () => {
+  const yt = catalog.mintVideoRecording({ artistMbid: 'artist-mbid', title: 'Pompeii', youtubeVideoId: 'a1xFsoRYrds' });
+  const mb = dbModule.db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status)
+    VALUES ('mb-atomic-merge', 'artist-mbid', 'Pompeii', 1, 'musicbrainz') RETURNING id`).get() as { id: number };
+  const library = dbModule.db.prepare("SELECT id FROM Libraries WHERE name = 'Video'").get() as { id: number };
+  dbModule.db.prepare(`INSERT INTO LibraryVideos (library_id, video_recording_id, selection_mode, placement_selection_mode, reason)
+    VALUES (?, ?, 'manual', 'manual', 'operator choice')`).run(library.id, yt);
+  const beforeSelection = dbModule.db.prepare('SELECT * FROM LibraryVideos WHERE video_recording_id = ?').get(yt) as Record<string, unknown>;
+  const audio = dbModule.db.prepare(`INSERT INTO Recordings (mbid, title, is_video)
+    VALUES ('audio-atomic-merge', 'Pompeii', 0) RETURNING id`).get() as { id: number };
+  dbModule.db.prepare(`INSERT INTO RecordingRelations
+    (source_recording_id, target_recording_id, source_foreign_recording_id, target_foreign_recording_id, relation_type)
+    VALUES (?, ?, 'mb-atomic-merge', 'audio-atomic-merge', 'music video')`).run(yt, audio.id);
+  const beforeRecordings = dbModule.db.prepare('SELECT * FROM Recordings ORDER BY id').all();
+  dbModule.db.exec(`CREATE TRIGGER reject_test_merge BEFORE DELETE ON Recordings
+    BEGIN SELECT RAISE(ABORT, 'fixture dependency failure'); END`);
+  try {
+    assert.throws(() => catalog.coalesceVideoRecordings(mb.id, yt), /fixture dependency failure/);
+    assert.deepEqual(dbModule.db.prepare('SELECT * FROM Recordings ORDER BY id').all(), beforeRecordings);
+    assert.deepEqual(dbModule.db.prepare('SELECT * FROM LibraryVideos WHERE video_recording_id = ?').get(yt), beforeSelection);
+  } finally { dbModule.db.exec('DROP TRIGGER reject_test_merge'); }
+  assert.equal(catalog.coalesceVideoRecordings(mb.id, yt), mb.id);
+  const selection = dbModule.db.prepare('SELECT * FROM LibraryVideos WHERE video_recording_id = ?').get(mb.id) as Record<string, unknown>;
+  assert.equal(selection.id, beforeSelection.id);
+  assert.equal(selection.selection_mode, 'manual');
+  assert.equal(selection.placement_selection_mode, 'manual');
+  assert.equal(selection.reason, 'operator choice');
+  assert.deepEqual(dbModule.db.prepare('SELECT source_recording_id, target_recording_id FROM RecordingRelations').all(),
+    [{ source_recording_id: mb.id, target_recording_id: audio.id }]);
+  assert.deepEqual(dbModule.db.pragma('foreign_key_check'), []);
+});

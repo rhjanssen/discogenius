@@ -136,6 +136,11 @@ test("cancellation after an organizer boundary preserves media already moved int
 });
 
 test("album-mode imports with provenance offers do not hard-fail a shortfall", () => {
+  const trackOffers = Array.from({ length: 30 }, (_, index) => ({ provider: 'tidal', providerTrackId: String(index) }));
+  assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'trackOffers', trackOffers }, 41), 30,
+    'a complete selected subset is not reported as a partial provider album');
+  assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', trackOffers }, 41), 41,
+    'provenance offers must not hide a real full-album shortfall');
   assert.equal(importModule.shouldHardFailIncompleteAlbumImport({
     type: "album",
     acquisitionMode: "album",

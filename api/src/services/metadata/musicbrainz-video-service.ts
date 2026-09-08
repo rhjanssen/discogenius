@@ -352,7 +352,7 @@ export async function syncMusicBrainzVideosForArtist(
     SELECT COUNT(*) AS count
     FROM Recordings
     WHERE artist_mbid = ?
-      AND is_video = 1
+      AND is_video = 1 AND mbid IS NOT NULL
   `).get(artistMbid) as { count?: number } | undefined;
 
   if (!options.force && Number(existing?.count || 0) > 0) {

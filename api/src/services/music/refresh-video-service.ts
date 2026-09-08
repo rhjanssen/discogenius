@@ -826,7 +826,25 @@ function ensureProviderVideoRecording(input: {
         : null;
 
     const finish = (recordingId: number): number => {
-        applyCatalogVideoIdentity(recordingId, {
+        // A provider's MBID is matching evidence, not authority to mint a
+        // MusicBrainz recording. Join only an already-ingested catalogue row.
+        const canonicalId = recordingMbid ? findVideoRecordingByMbid(recordingMbid) : null;
+        const conflictingIdentity = canonicalId != null && db.prepare(`
+            SELECT 1 FROM Recordings canonical JOIN Recordings selected ON selected.id = ?
+            WHERE canonical.id = ? AND (
+                (canonical.mbid IS NOT NULL AND selected.mbid IS NOT NULL AND canonical.mbid != selected.mbid)
+                OR (canonical.youtube_video_id IS NOT NULL AND selected.youtube_video_id IS NOT NULL
+                    AND canonical.youtube_video_id != selected.youtube_video_id)
+            )
+        `).get(recordingId, canonicalId);
+        // An exact watch-id match wins over contradictory provider MBID evidence.
+        // A refused merge must not redirect the offer to the other recording.
+        if (conflictingIdentity) return recordingId;
+        let survivor = canonicalId != null
+            ? coalesceVideoRecordings(canonicalId, recordingId)
+            : recordingId;
+        survivor = claimYouTubeWatchId(survivor, youtubeWatchId);
+        applyCatalogVideoIdentity(survivor, {
             groupTitle,
             offerVariant,
             lengthMs,
@@ -834,8 +852,7 @@ function ensureProviderVideoRecording(input: {
             artistMbid,
             artistCredit: nullableText(input.video.artist_name),
         });
-        backfillPlaceholderVideoTitle(recordingId, groupTitle);
-        let survivor = claimYouTubeWatchId(recordingId, youtubeWatchId);
+        backfillPlaceholderVideoTitle(survivor, groupTitle);
         if (input.existingRecordingId && input.existingRecordingId !== survivor) {
             const existing = db.prepare(`
                 SELECT id, mbid, youtube_video_id

@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.6] - 2026-09-09
+
+### Fixed
+
+- Keep download/import workers alive while terminal updates and handoffs wait for the SQLite writer. Buffer contended progress without blocking the worker, and serialize scheduler ticks and manual task submission through the same gate.
+- Index edition barcodes and acquisition dependencies so provider rematching no longer scans the full edition catalogue or dependent file tables for each release.
+- Complete the exact album track occurrence after each download and keep command percentages consistent with catalogue track progress.
+- Queue all selected album editions in one admitted transaction, preventing a database lock from leaving a partly queued download request.
+- Compare selected-track imports with their requested track count instead of the provider's full album, avoiding false partial-download reports.
+- Merge compatible YouTube and MusicBrainz video identities atomically, preserving files, edition tracks, recording relations and manual library placement. Reject contradictory provider identity evidence.
+- Continue MusicBrainz video discovery when an artist only has YouTube or provider-only video recordings. Exclusive Apple/TIDAL videos retain their own catalogue recording and accepted provider match.
+
+### Validation
+
+- Add active-schema regressions for barcode maintenance, recording merge rollback and a writer held beyond the former worker-failure timeout. Record same-data rematch measurements and successful ten-track Brand New Day import in `docs/STABILITY_VALIDATION_2026-09-08.md`.
+
 ## [2.16.5] - 2026-09-07
 
 ### Fixed

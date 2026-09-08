@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
 import { emitLibraryUpdated } from "../commands/app-events.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
@@ -120,6 +120,10 @@ export class AlbumCommandService {
 
     /** Mark a release group wanted and queue its selected provider offer. */
     static async addAlbum(albumId: string, shouldDownload: boolean, requestedSlot?: string | null): Promise<{ success: boolean; albumId?: string; commandId?: number | null; commandIds?: number[]; status?: number; message?: string }> {
+        return withDbWrite(() => db.transaction(() => this.addAlbumWithinTransaction(albumId, shouldDownload, requestedSlot))());
+    }
+
+    private static addAlbumWithinTransaction(albumId: string, shouldDownload: boolean, requestedSlot?: string | null): { success: boolean; albumId?: string; commandId?: number | null; commandIds?: number[]; status?: number; message?: string } {
         if (!this.releaseGroupExists(albumId)) {
             return { success: false, status: 404, message: 'Release group not found' };
         }

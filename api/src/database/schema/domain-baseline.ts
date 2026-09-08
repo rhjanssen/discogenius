@@ -1,3 +1,4 @@
+import { ensureEditionBarcodeIndex } from "./edition-barcode-index.js";
 import type Database from "better-sqlite3";
 
 /**
@@ -834,4 +835,5 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       END;
     END;
   `);
+  ensureEditionBarcodeIndex(db);
 }
