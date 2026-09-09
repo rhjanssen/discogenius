@@ -737,8 +737,9 @@ export class DownloadProcessor {
         const emitImportProgress = (state: any) => {
             this.persistDownloadState(commandId, state, workerId);
             const currentJob = CommandQueueManager.get(commandId);
-            const currentDownloadState = (currentJob?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
-            let tracks = state.tracks ?? currentDownloadState.tracks;
+            // The database may lag while another worker writes. Publish the
+            // accumulated in-memory track states, not the last persisted batch.
+            let tracks = this.getProgressTracksForEvent(commandId, state.tracks);
             if (tracks && tracks.length > 0 && (state.currentProviderTrackId || state.currentTrackNum != null || state.currentTrack)) {
                 tracks = applyTrackProgress(tracks, state);
             }
@@ -1214,12 +1215,17 @@ export class DownloadProcessor {
             mergedTracks = applyTrackProgress(mergedTracks, state);
         }
 
-        const catalogProgress = deriveCatalogFileProgress(mergedTracks);
+        // Downloaded rows are not imported rows. During import the organizer
+        // reports its own file count and phase progress; deriving those from
+        // completed downloads mixes two different stages after a list refresh.
+        const phaseState = state.state ?? currentDownloadState.state;
+        const isImportPhase = phaseState === 'importing' || phaseState === 'importPending' || phaseState === 'importFailed';
+        const catalogProgress = isImportPhase ? null : deriveCatalogFileProgress(mergedTracks);
         const nextTotalFiles = catalogProgress?.totalFiles
             ?? state.totalFiles
             ?? currentDownloadState.totalFiles;
         const nextCurrentFileNum = catalogProgress?.currentFileNum
-            ?? (providerCountsMatchCatalog ? state.currentFileNum : undefined)
+            ?? (isImportPhase || providerCountsMatchCatalog ? state.currentFileNum : undefined)
             ?? currentDownloadState.currentFileNum;
         // Catalog fraction owns album %, with optional in-file boost for the
         // active catalog row. Provider queue % is only trusted when counts match.

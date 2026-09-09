@@ -389,3 +389,20 @@ test('download failure and import completion wait for a contended writer while p
         processor.progressBuffer.clear();
     }
 });
+
+
+test('import progress counts organized files rather than previously completed downloads', () => {
+    const id = pushTrack('import-progress');
+    const owner = 'import-progress-owner';
+    claim(id, owner);
+    const processor = new DownloadProcessor() as any;
+    const tracks = Array.from({ length: 25 }, (_, index) => ({ title: 'Track ' + index, providerTrackId: String(index), trackNum: index + 1, volumeNum: 1, status: 'completed' }));
+    processor.writeDownloadState(id, { state: 'downloading', tracks, progress: 100, totalFiles: 25, currentFileNum: 25 }, owner);
+    processor.writeDownloadState(id, { state: 'importing', progress: 17, totalFiles: 25, currentFileNum: 1 }, owner);
+    const current = CommandQueueManager.get(id)!;
+    assert.equal(current.progress, 17);
+    assert.equal(current.payload.downloadState!.currentFileNum, 1);
+    assert.equal(current.payload.downloadState!.totalFiles, 25);
+    processor.writeDownloadState(id, { state: 'importing', progress: 86, currentFileNum: 25 }, owner);
+    assert.equal(CommandQueueManager.get(id)!.progress, 86, 'metadata finalization must not turn into 100% before completion');
+});

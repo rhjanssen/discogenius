@@ -3,7 +3,7 @@ import { validateExecutionManifest } from '../download/execution-manifest.js';
 import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { Config } from "../config/config.js";
 import { downloadAlbumVideoCover, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
 import { streamingProviderManager } from "../providers/index.js";
@@ -128,12 +128,12 @@ export async function resolveAlbumVideoCoverForLibrary(options: {
     const videoCover = String(album?.videoCover || "").trim() || null;
     const releaseGroupMbid = String(options.releaseGroupMbid || "").trim();
     if (videoCover && releaseGroupMbid) {
-      db.prepare(`
+      await withSqliteWriteGate(() => db.prepare(`
         UPDATE Albums
         SET video_cover = COALESCE(NULLIF(?, ''), video_cover),
             updated_at = CURRENT_TIMESTAMP
         WHERE mbid = ?
-      `).run(videoCover, releaseGroupMbid);
+      `).run(videoCover, releaseGroupMbid), "import:sidecar-facts");
     }
     return videoCover;
   } catch (error) {
@@ -831,7 +831,7 @@ export class OrganizerService {
     const albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
 
     let libraryFileId: number | null = null;
-    db.transaction(() => {
+    await withSqliteWriteGate(() => db.transaction(() => {
       // Refresh ONLY the provider VIDEO offer's own facts (never canonical ids,
       // never INSERT OR REPLACE). Match authority belongs to the matcher: the
       // organizer reads the accepted ProviderVideoMatches edge above and fails
@@ -847,7 +847,7 @@ export class OrganizerService {
         videoQuality: derivedVideoQuality,
       });
 
-      libraryFileId = this.upsertLibraryFile({
+      libraryFileId = this.persistLibraryFile({
         artistId: params.artistId,
         albumId: albumIdForFile,
         mediaId: params.providerTrackId,
@@ -881,7 +881,7 @@ export class OrganizerService {
       } catch (historyError) {
         console.warn(`[Organizer] Failed to record bundled-video import history for ${params.providerTrackId}:`, historyError);
       }
-    })();
+    })(), "import:media-commit");
 
     await this.ensureVideoThumbnailSidecar({
       artistId: params.artistId,
@@ -925,7 +925,7 @@ export class OrganizerService {
     console.log("[Organizer] Pruning disabled metadata files...");
 
     // TrackFiles is audio and video only (Lidarr invariant).
-    db.prepare("DELETE FROM TrackFiles WHERE file_type NOT IN ('track', 'video')").run();
+    await withSqliteWriteGate(() => db.prepare("DELETE FROM TrackFiles WHERE file_type NOT IN ('track', 'video')").run(), "import:sidecar-facts");
 
     const artists = db.prepare(`
       SELECT CAST(id AS TEXT) AS id FROM ArtistMetadata
@@ -1124,7 +1124,7 @@ export class OrganizerService {
     }
 
     const persistentCoverPath = metadataConfig.save_video_thumbnail
-      ? this.relocateLinkedSidecar({
+      ? await this.relocateLinkedSidecar({
         artistId: params.artistId,
         albumId: params.albumId || null,
         mediaId: params.mediaId,
@@ -1158,7 +1158,7 @@ export class OrganizerService {
     }
 
     if (persistentCoverPath && fs.existsSync(persistentCoverPath)) {
-      this.upsertLibraryFile({
+      await this.upsertLibraryFile({
         artistId: params.artistId,
         albumId: params.albumId || null,
         mediaId: params.mediaId,
@@ -1177,11 +1177,11 @@ export class OrganizerService {
         console.warn(`[Organizer] Failed to embed video thumbnail for ${params.providerId}`);
       } else if (params.libraryFileId != null) {
         const stat = fs.statSync(params.mediaPath);
-        db.prepare(`
+        await withSqliteWriteGate(() => db.prepare(`
           UPDATE TrackFiles
           SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(stat.size, stat.mtime.toISOString(), params.libraryFileId);
+        `).run(stat.size, stat.mtime.toISOString(), params.libraryFileId), "import:sidecar-facts");
       }
     }
 
@@ -1190,7 +1190,7 @@ export class OrganizerService {
     }
   }
 
-  private static relocateLinkedSidecar(params: {
+  private static async relocateLinkedSidecar(params: {
     artistId: string;
     albumId?: string | null;
     mediaId: string;
@@ -1199,7 +1199,7 @@ export class OrganizerService {
     fileType: "lyrics" | "video_thumbnail";
     quality?: string | null;
     namingTemplate?: string | null;
-  }): string {
+  }): Promise<string> {
     let expectedPath = this.getExpectedLinkedSidecarPath(params.mediaPath, params.fileType);
     const canonicalIdentity = resolveLibraryFileIdentity({
       artistId: params.artistId,
@@ -1276,7 +1276,7 @@ export class OrganizerService {
       const normalizedResolvedPath = this.normalizeResolvedPath(resolvedFilePath);
 
       if (!fs.existsSync(resolvedFilePath)) {
-        db.prepare(`DELETE FROM ${sidecarTable} WHERE id = ?`).run(sidecar.id);
+        await withSqliteWriteGate(() => db.prepare(`DELETE FROM ${sidecarTable} WHERE id = ?`).run(sidecar.id), "import:sidecar-facts");
         continue;
       }
 
@@ -1308,7 +1308,7 @@ export class OrganizerService {
     }
 
     if (fs.existsSync(expectedPath)) {
-      this.upsertLibraryFile({
+      await this.upsertLibraryFile({
         artistId: params.artistId,
         albumId: params.albumId || null,
         mediaId: params.mediaId,
@@ -1320,7 +1320,7 @@ export class OrganizerService {
         expectedPath,
       });
 
-      db.prepare(`
+      await withSqliteWriteGate(() => db.prepare(`
         DELETE FROM ${sidecarTable}
         WHERE provider = ?
           AND provider_entity_type = ?
@@ -1332,7 +1332,7 @@ export class OrganizerService {
       `).run(
         ...sidecarMatchValues,
         expectedPath,
-      );
+      ), "import:sidecar-facts");
     }
 
     return expectedPath;
@@ -1351,7 +1351,7 @@ export class OrganizerService {
     return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
   }
 
-  private static relocateSingletonSidecar(params: {
+  private static async relocateSingletonSidecar(params: {
     artistId: string;
     albumId?: string | null;
     expectedPath: string;
@@ -1359,7 +1359,7 @@ export class OrganizerService {
     fileType: "cover" | "video_cover" | "nfo";
     quality?: string | null;
     namingTemplate?: string | null;
-  }): string {
+  }): Promise<string> {
     const normalizedExpectedPath = this.normalizeResolvedPath(params.expectedPath);
     const artistMbid = resolveArtistMbid(params.artistId);
     if (!artistMbid) {
@@ -1410,7 +1410,7 @@ export class OrganizerService {
       const normalizedResolvedPath = this.normalizeResolvedPath(resolvedFilePath);
 
       if (!fs.existsSync(resolvedFilePath)) {
-        db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(sidecar.id);
+        await withSqliteWriteGate(() => db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(sidecar.id), "import:sidecar-facts");
         continue;
       }
 
@@ -1456,7 +1456,7 @@ export class OrganizerService {
     }
 
     if (fs.existsSync(params.expectedPath)) {
-      this.upsertLibraryFile({
+      await this.upsertLibraryFile({
         artistId: params.artistId,
         albumId: params.albumId || null,
         mediaId: null,
@@ -1494,11 +1494,11 @@ export class OrganizerService {
             libraryRoot: row.library_root,
           });
           if (!fs.existsSync(leftoverPath)) {
-            db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(row.id);
+            await withSqliteWriteGate(() => db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(row.id), "import:sidecar-facts");
           }
         }
       } else {
-        db.prepare(`
+        await withSqliteWriteGate(() => db.prepare(`
           DELETE FROM MetadataFiles
           WHERE artist_id = ?
             AND canonical_release_group_mbid IS NULL
@@ -1510,7 +1510,7 @@ export class OrganizerService {
             AND COALESCE(library_root, '') = COALESCE(?, '')
             AND file_type = ?
             AND file_path != ?
-        `).run(artistMbid, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
+        `).run(artistMbid, slotValue, params.libraryRoot, params.fileType, params.expectedPath), "import:sidecar-facts");
       }
     }
 
@@ -1745,7 +1745,11 @@ export class OrganizerService {
 
     fs.rmSync(sourcePath, { force: true });
   }
-  private static upsertLibraryFile(params: {
+  private static async upsertLibraryFile(params: Parameters<typeof OrganizerService.persistLibraryFile>[0]): Promise<number> {
+    return withSqliteWriteGate(() => this.persistLibraryFile(params), "import:file-record");
+  }
+
+  private static persistLibraryFile(params: {
     artistId: string;
     libraryId?: number | null;
     albumId?: string | null;
@@ -2354,8 +2358,8 @@ export class OrganizerService {
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
         const mediaIdStr = trackRow?.id ? String(trackRow.id) : trackId;
         let importedTrackFileId: number | null = null;
-        db.transaction(() => {
-          const libraryFileId = this.upsertLibraryFile({
+        await withSqliteWriteGate(() => db.transaction(() => {
+          const libraryFileId = this.persistLibraryFile({
             artistId,
             libraryId: raw.libraryId,
             albumId: libraryAlbumId,
@@ -2412,11 +2416,11 @@ export class OrganizerService {
             );
             this.cleanupSiblingMediaVariants(destFile, "track");
           }
-        })();
+        })(), "import:media-commit");
 
         if (metadataConfig.save_lyrics && trackId) {
           try {
-            const lyricPath = this.relocateLinkedSidecar({
+            const lyricPath = await this.relocateLinkedSidecar({
               artistId,
               albumId: libraryAlbumId,
               mediaId: trackId,
@@ -2432,7 +2436,7 @@ export class OrganizerService {
             // inline fallback could hold the import phase for many minutes
             // after every audio file was already safely organized.
             if (fs.existsSync(lyricPath)) {
-              this.upsertLibraryFile({
+              await this.upsertLibraryFile({
                 artistId,
                 libraryId: raw.libraryId,
                 albumId: libraryAlbumId,
@@ -2500,7 +2504,7 @@ export class OrganizerService {
       this.ensureDir(artistDir);
       const artistPicPath = path.join(artistDir, metadataConfig.artist_picture_name || "folder.jpg");
       if (metadataConfig.save_artist_picture) {
-        this.relocateSingletonSidecar({
+        await this.relocateSingletonSidecar({
           artistId,
           expectedPath: artistPicPath,
           libraryRoot: targetRoot,
@@ -2519,7 +2523,7 @@ export class OrganizerService {
             outputPath: artistPicPath,
           });
           if (fs.existsSync(artistPicPath)) {
-            this.upsertLibraryFile({
+            await this.upsertLibraryFile({
               artistId,
               libraryId: raw.libraryId,
               albumId: null,
@@ -2539,7 +2543,7 @@ export class OrganizerService {
 
       const albumCoverPath = path.join(targetAlbumDir, metadataConfig.album_cover_name || "cover.jpg");
       if (metadataConfig.save_album_cover) {
-        this.relocateSingletonSidecar({
+        await this.relocateSingletonSidecar({
           artistId,
           albumId: albumIds[0],
           expectedPath: albumCoverPath,
@@ -2558,7 +2562,7 @@ export class OrganizerService {
             outputPath: albumCoverPath,
           });
           if (fs.existsSync(albumCoverPath)) {
-            this.upsertLibraryFile({
+            await this.upsertLibraryFile({
               artistId,
               libraryId: raw.libraryId,
               albumId: albumIds[0],
@@ -2589,7 +2593,7 @@ export class OrganizerService {
           })
         : null;
       if (metadataConfig.save_album_cover && albumVideoCoverId) {
-        this.relocateSingletonSidecar({
+        await this.relocateSingletonSidecar({
           artistId,
           albumId: albumIds[0],
           expectedPath: albumVideoCoverPath,
@@ -2610,7 +2614,7 @@ export class OrganizerService {
             releaseGroupMbid: canonicalContext?.releaseGroupMbid || album.mb_release_group_id || null,
           });
           if (fs.existsSync(albumVideoCoverPath)) {
-            this.upsertLibraryFile({
+            await this.upsertLibraryFile({
               artistId,
               libraryId: raw.libraryId,
               albumId: albumIds[0],
@@ -2633,7 +2637,7 @@ export class OrganizerService {
         const albumNfoPath = path.join(targetAlbumDir, "album.nfo");
         try {
           await saveArtistNfoFile(artistId, artistNfoPath);
-          this.upsertLibraryFile({
+          await this.upsertLibraryFile({
             artistId,
             libraryId: raw.libraryId,
             albumId: null,
@@ -2657,7 +2661,7 @@ export class OrganizerService {
             provider: streamingProviderId,
             providerAlbumId: albumIds[0],
           });
-          this.upsertLibraryFile({
+          await this.upsertLibraryFile({
             artistId,
             libraryId: raw.libraryId,
             albumId: albumIds[0],
@@ -2723,7 +2727,7 @@ export class OrganizerService {
       if (importedStereoTrackFileIds.length > 0) {
         try {
           const { RenameTrackFileService } = await import("./rename-track-file-service.js");
-          RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio(importedStereoTrackFileIds);
+          await RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio(importedStereoTrackFileIds);
         } catch (error) {
           console.warn(`[Organizer] Failed to relocate related inline videos after album import:`, error);
         }
@@ -3020,8 +3024,8 @@ export class OrganizerService {
       const fileFingerprint: string | null = null;
       // Batch all per-track DB writes in a single transaction.
       let importedTrackFileId: number | null = null;
-      db.transaction(() => {
-        const libraryFileId = this.upsertLibraryFile({
+      await withSqliteWriteGate(() => db.transaction(() => {
+        const libraryFileId = this.persistLibraryFile({
           artistId,
           libraryId: raw.libraryId,
           albumId: libraryAlbumId,
@@ -3072,11 +3076,11 @@ export class OrganizerService {
         // changes replace the previous file instead of leaving duplicates behind.
         this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null, streamingProviderId);
         this.cleanupSiblingMediaVariants(dest, "track");
-      })();
+      })(), "import:media-commit");
 
       if (metadataConfig.save_lyrics) {
         try {
-          const lyricPath = this.relocateLinkedSidecar({
+          const lyricPath = await this.relocateLinkedSidecar({
             artistId,
             albumId: libraryAlbumId,
             mediaId: providerId,
@@ -3090,7 +3094,7 @@ export class OrganizerService {
           // by the library-metadata backfill so a slow/missing lyric cannot block the
           // download queue.
           if (fs.existsSync(lyricPath)) {
-            this.upsertLibraryFile({
+            await this.upsertLibraryFile({
               artistId,
               libraryId: raw.libraryId,
               albumId: libraryAlbumId,
@@ -3123,7 +3127,7 @@ export class OrganizerService {
       this.ensureDir(artistDir);
       const artistPicPath = path.join(artistDir, metadataConfig.artist_picture_name || "folder.jpg");
       if (metadataConfig.save_artist_picture) {
-        this.relocateSingletonSidecar({
+        await this.relocateSingletonSidecar({
           artistId,
           expectedPath: artistPicPath,
           libraryRoot: targetRoot,
@@ -3142,7 +3146,7 @@ export class OrganizerService {
             outputPath: artistPicPath,
           });
           if (fs.existsSync(artistPicPath)) {
-            this.upsertLibraryFile({
+            await this.upsertLibraryFile({
               artistId,
               libraryId: raw.libraryId,
               albumId: null,
@@ -3166,7 +3170,7 @@ export class OrganizerService {
 
       const albumCoverPath = path.join(targetAlbumDir, metadataConfig.album_cover_name || "cover.jpg");
       if (metadataConfig.save_album_cover) {
-        this.relocateSingletonSidecar({
+        await this.relocateSingletonSidecar({
           artistId,
           albumId: libraryAlbumId,
           expectedPath: albumCoverPath,
@@ -3184,7 +3188,7 @@ export class OrganizerService {
           outputPath: albumCoverPath,
         });
         if (fs.existsSync(albumCoverPath)) {
-          this.upsertLibraryFile({
+          await this.upsertLibraryFile({
             artistId,
             libraryId: raw.libraryId,
             albumId: libraryAlbumId,
@@ -3212,7 +3216,7 @@ export class OrganizerService {
           })
         : null;
       if (metadataConfig.save_album_cover && albumVideoCoverId) {
-        this.relocateSingletonSidecar({
+        await this.relocateSingletonSidecar({
           artistId,
           albumId: libraryAlbumId,
           expectedPath: albumVideoCoverPath,
@@ -3231,7 +3235,7 @@ export class OrganizerService {
             releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || album.mb_release_group_id || null,
           });
           if (fs.existsSync(albumVideoCoverPath)) {
-            this.upsertLibraryFile({
+            await this.upsertLibraryFile({
               artistId,
               libraryId: raw.libraryId,
               albumId: libraryAlbumId,
@@ -3254,7 +3258,7 @@ export class OrganizerService {
         const albumNfoPath = path.join(targetAlbumDir, "album.nfo");
         try {
           await saveArtistNfoFile(artistId, artistNfoPath);
-          this.upsertLibraryFile({
+          await this.upsertLibraryFile({
             artistId,
             libraryId: raw.libraryId,
             albumId: null,
@@ -3278,7 +3282,7 @@ export class OrganizerService {
             provider: streamingProviderId,
             providerAlbumId: albumId,
           });
-          this.upsertLibraryFile({
+          await this.upsertLibraryFile({
             artistId,
             libraryId: raw.libraryId,
             albumId: libraryAlbumId,
@@ -3311,7 +3315,7 @@ export class OrganizerService {
       ) {
         try {
           const { RenameTrackFileService } = await import("./rename-track-file-service.js");
-          RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio([importedTrackFileId]);
+          await RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio([importedTrackFileId]);
         } catch (error) {
           console.warn(`[Organizer] Failed to relocate related inline videos after track import:`, error);
         }
@@ -3452,14 +3456,14 @@ export class OrganizerService {
           artistName: fetchedArtistName,
           artistMbId: artistMbId || null,
         });
-        db.prepare(`
+        await withSqliteWriteGate(() => db.prepare(`
           INSERT INTO ArtistMetadata (mbid, name, picture, popularity)
           VALUES (?, ?, ?, ?)
           ON CONFLICT(mbid) DO UPDATE SET
             picture = COALESCE(ArtistMetadata.picture, excluded.picture),
             popularity = COALESCE(ArtistMetadata.popularity, excluded.popularity),
             name = COALESCE(NULLIF(TRIM(ArtistMetadata.name), ''), excluded.name)
-        `).run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0);
+        `).run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0), "import:sidecar-facts");
       }
       this.refreshArtistPathFromTemplateIfNeeded(artistId);
       artistPath = String((db.prepare(`
@@ -3572,8 +3576,8 @@ export class OrganizerService {
 
       // Batch all per-video DB writes in a single transaction.
       let libraryFileId: number | null = null;
-      db.transaction(() => {
-        libraryFileId = this.upsertLibraryFile({
+      await withSqliteWriteGate(() => db.transaction(() => {
+        libraryFileId = this.persistLibraryFile({
           artistId,
           libraryId: raw.libraryId,
           albumId: video.album_id ? String(video.album_id) : null,
@@ -3623,7 +3627,7 @@ export class OrganizerService {
         // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
         this.cleanupOldMediaFiles(providerId, dest, "video", videoIdentity.librarySlot ?? null, videoProvider);
         this.cleanupSiblingMediaVariants(dest, "video");
-      })();
+      })(), "import:media-commit");
 
       await this.ensureVideoThumbnailSidecar({
         artistId,
@@ -3642,7 +3646,7 @@ export class OrganizerService {
         const videoNfoPath = path.join(path.dirname(dest), `${path.parse(dest).name}.nfo`);
         try {
           await saveVideoNfoFile(providerId, videoNfoPath, videoProvider);
-          this.upsertLibraryFile({
+          await this.upsertLibraryFile({
             artistId,
             libraryId: raw.libraryId,
             albumId: video.album_id ? String(video.album_id) : null,

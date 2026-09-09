@@ -574,3 +574,33 @@ test("replanMonitoredEditions restores a selected plan after rematch deleted it"
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+
+test("planning one edition uses an indexed selected-plan lookup instead of materializing the library", async () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-planning-query-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    await createActiveSchema(db);
+    seedStandardDeluxeFixture(db);
+    const prepare = db.prepare.bind(db);
+    let queryPlan: string[] = [];
+    db.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      if (sql.includes("AS current_primary_provider_edition_match_id")) {
+        const get = statement.get.bind(statement);
+        statement.get = (...args: unknown[]) => {
+          queryPlan = (prepare("EXPLAIN QUERY PLAN " + sql).all(...args) as Array<{ detail: string }>).map(row => row.detail);
+          return get(...args);
+        };
+      }
+      return statement;
+    }) as typeof db.prepare;
+    new AcquisitionPlanningService(db).compute({ libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1 });
+    assert.ok(queryPlan.length > 0);
+    assert.ok(queryPlan.some(detail => /SEARCH current_plan USING INDEX/.test(detail)), queryPlan.join("\n"));
+    assert.ok(queryPlan.every(detail => !/MATERIALIZE|SCAN current_plan/.test(detail)), queryPlan.join("\n"));
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

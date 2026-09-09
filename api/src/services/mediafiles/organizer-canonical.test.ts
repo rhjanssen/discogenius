@@ -494,7 +494,7 @@ test("metadata pruning removes NFO files when save_nfo is disabled", async () =>
   assert.deepEqual(remaining.map((row) => row.file_type), ["cover"]);
 });
 
-test("singleton sidecar relocation uses clean metadata identity columns", () => {
+test("singleton sidecar relocation uses clean metadata identity columns", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
 
@@ -525,7 +525,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
     "stereo",
   );
 
-  (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+  await (organizerModule.OrganizerService as any).relocateSingletonSidecar({
     artistId: "artist-mbid",
     albumId: "provider-album-1",
     expectedPath: newPath,
@@ -551,7 +551,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
   assert.equal(rows[0].file_path, newPath);
 });
 
-test("sidecar relocate never copies artwork into a sibling edition folder", () => {
+test("sidecar relocate never copies artwork into a sibling edition folder", async () => {
   const artist = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
     RETURNING id
@@ -594,7 +594,7 @@ test("sidecar relocate never copies artwork into a sibling edition folder", () =
     "rg-bad-blood",
   );
 
-  (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+  await (organizerModule.OrganizerService as any).relocateSingletonSidecar({
     artistId: "artist-mbid-sibling",
     albumId: "rg-bad-blood",
     expectedPath: anniversaryCover,
@@ -607,7 +607,7 @@ test("sidecar relocate never copies artwork into a sibling edition folder", () =
   assert.equal(fs.readFileSync(deluxeCover, "utf8"), "canonical-cover");
 });
 
-test("artist sidecar relocation resolves numeric ArtistMetadata id to MetadataFiles.artist_id", () => {
+test("artist sidecar relocation resolves numeric ArtistMetadata id to MetadataFiles.artist_id", async () => {
   const artist = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
     RETURNING id
@@ -627,7 +627,7 @@ test("artist sidecar relocation resolves numeric ArtistMetadata id to MetadataFi
     ) VALUES (?, ?, ?, ?, 'jpg', 'cover', 'cover', 'stereo')
   `).run("artist-sidecar-mbid", "old-artist-sidecar/folder.jpg", oldPath, tempDir);
 
-  (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+  await (organizerModule.OrganizerService as any).relocateSingletonSidecar({
     artistId: String(artist.id),
     expectedPath: newPath,
     libraryRoot: tempDir,

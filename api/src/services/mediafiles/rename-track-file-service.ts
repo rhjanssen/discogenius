@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { Config } from "../config/config.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
@@ -469,7 +469,7 @@ export class RenameTrackFileService {
     return [...expanded];
   }
 
-  static executeRenameFilesByQuery(options: RenameScopeOptions = {}): RenameApplyResult {
+  static async executeRenameFilesByQuery(options: RenameScopeOptions = {}): Promise<RenameApplyResult> {
     const ids = this.evaluateRenameRows(this.getRenameRows(options, false), { persist: false })
       .filter((item) => item.needs_rename || item.drop_duplicate)
       .map((item) => item.id);
@@ -477,10 +477,10 @@ export class RenameTrackFileService {
     return this.executeRenameFiles(ids, { reconcileSeparatedSidecars: true });
   }
 
-  static executeRenameFiles(
+  static async executeRenameFiles(
     ids: number[],
     options: { reconcileSeparatedSidecars?: boolean } = {},
-  ): RenameApplyResult {
+  ): Promise<RenameApplyResult> {
     const result: RenameApplyResult = { renamed: 0, skipped: 0, conflicts: 0, missing: 0, cleanedDirectories: 0, errors: [] };
     if (!ids || ids.length === 0) {
       return result;
@@ -772,7 +772,7 @@ export class RenameTrackFileService {
 
     if (dbUpdates.length > 0 || historyEvents.length > 0) {
       try {
-        db.transaction(() => {
+        await withSqliteWriteGate(() => db.transaction(() => {
           for (const update of dbUpdates) {
             db.prepare(update.sql).run(...update.args);
           }
@@ -783,7 +783,7 @@ export class RenameTrackFileService {
               console.warn("[RenameTrackFileService] Failed to record rename history:", historyError);
             }
           }
-        })();
+        })(), "rename:commit");
       } catch (error) {
         const rollbackErrors = [
           ...rollbackPhysicalMoves(physicalMoves),
@@ -839,14 +839,14 @@ export class RenameTrackFileService {
     // running these library-wide passes made one-file jobs take minutes.
     if (result.renamed > 0 && options.reconcileSeparatedSidecars === true) {
       const artistIds = Array.from(new Set(rows.map((row) => String(row.artist_metadata_id || "")).filter(Boolean)));
-      this.replicateSeparatedSidecars(artistIds, pathCache);
+      await this.replicateSeparatedSidecars(artistIds, pathCache);
       result.cleanedDirectories = this.cleanEmptyDirectories();
     }
 
     return result;
   }
 
-  static executeRenameArtist(options: { artistId: string }): RenameApplyResult {
+  static async executeRenameArtist(options: { artistId: string }): Promise<RenameApplyResult> {
     return this.executeRenameFilesByQuery({ artistId: options.artistId });
   }
 
@@ -859,7 +859,7 @@ export class RenameTrackFileService {
    * Scoped to videos linked to the imported audio recordings only — not a
    * library-wide rename. No-op when layout is separated or no links exist.
    */
-  static relocateRelatedInlineVideosForImportedAudio(importedFileIds: number[]): RenameApplyResult {
+  static async relocateRelatedInlineVideosForImportedAudio(importedFileIds: number[]): Promise<RenameApplyResult> {
     const empty: RenameApplyResult = {
       renamed: 0,
       skipped: 0,
@@ -964,7 +964,7 @@ export class RenameTrackFileService {
     return this.executeRenameFiles(relatedVideoFileIds);
   }
 
-  private static replicateSeparatedSidecars(
+  private static async replicateSeparatedSidecars(
     artistIds: string[] = [],
     pathCache?: ExpectedPathCache,
   ) {
@@ -1012,7 +1012,7 @@ export class RenameTrackFileService {
       provider_id: string | null;
     }>;
 
-    const copyTrackedAsset = (source: any, target: {
+    const copyTrackedAsset = async (source: any, target: {
       artistId: string;
       albumId?: string | null;
       mediaId?: string | null;
@@ -1064,7 +1064,7 @@ export class RenameTrackFileService {
         fs.mkdirSync(path.dirname(expectedPath), { recursive: true });
         fs.copyFileSync(sourcePath, expectedPath);
       }
-      LibraryFilesService.upsertLibraryFile({
+      await withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
         artistId: target.artistId,
         albumId: target.albumId,
         mediaId: target.mediaId,
@@ -1082,7 +1082,7 @@ export class RenameTrackFileService {
         provider: target.provider,
         providerEntityType: target.providerEntityType,
         providerId: target.providerId,
-      });
+      }), "rename:sidecar");
     };
 
     for (const track of tracks) {
@@ -1101,7 +1101,7 @@ export class RenameTrackFileService {
           AND file_type IN ('cover', 'nfo')
       `).all(sidecarArtistId) as any[];
       for (const asset of artistAssets) {
-        copyTrackedAsset(asset, {
+        await copyTrackedAsset(asset, {
           artistId: track.artist_metadata_id,
           librarySlot: track.library_slot,
           libraryRoot: targetRoot,
@@ -1146,7 +1146,7 @@ export class RenameTrackFileService {
         track.album_id,
       ) as any[];
       for (const asset of albumAssets) {
-        copyTrackedAsset(asset, {
+        await copyTrackedAsset(asset, {
           artistId: track.artist_metadata_id,
           albumId: track.album_id,
           librarySlot: track.library_slot,
@@ -1199,7 +1199,7 @@ export class RenameTrackFileService {
         track.media_id,
       ) as any[];
       for (const lyric of lyrics) {
-        copyTrackedAsset(lyric, {
+        await copyTrackedAsset(lyric, {
           artistId: track.artist_metadata_id,
           albumId: track.album_id,
           mediaId: track.media_id,

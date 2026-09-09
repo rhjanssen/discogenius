@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { OrganizerService, type OrganizeResult } from "./organizer.js";
 import {
     updateAlbumDownloadStatus,
@@ -1207,20 +1207,21 @@ export class DownloadedTracksImportService {
         organizeResult.expectedTracks = expectedImportedTrackCount(job.payload, organizeResult.expectedTracks);
         cancellationCheckpoint("after organizing downloaded files");
         if (type !== "video") {
-            persistDownloadedProviderProvenance(
+            await withSqliteWriteGate(() => persistDownloadedProviderProvenance(
                 job.payload.libraryId,
                 organizeResult,
                 Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
                 job.payload.acquisitionPlanId,
-            );
+            ), "import:provenance");
         }
-        if (job.payload.libraryId != null && preparedImportQuality.size > 0) {
-            persistPreparedImportQuality(
-                job.payload.libraryId,
+        const importLibraryId = job.payload.libraryId;
+        if (importLibraryId != null && preparedImportQuality.size > 0) {
+            await withSqliteWriteGate(() => persistPreparedImportQuality(
+                importLibraryId,
                 preparedImportQuality,
                 organizeResult,
                 provider,
-            );
+            ), "import:quality");
         }
 
         options.updateState({
@@ -1232,10 +1233,10 @@ export class DownloadedTracksImportService {
             state: "importing",
         });
 
-        reconcileImportedDownload(type, providerId, organizeResult, provider, {
+        await withSqliteWriteGate(() => reconcileImportedDownload(type, providerId, organizeResult, provider, {
             releaseGroupMbid: job.payload.releaseGroupMbid || null,
             releaseMbid: job.payload.releaseMbid || null,
-        });
+        }), "import:reconcile");
         cancellationCheckpoint("after reconciling library state");
 
         const affectedArtistId = resolveAffectedArtistId(type, providerId, provider);
@@ -1260,7 +1261,7 @@ export class DownloadedTracksImportService {
             ).get(String(affectedArtistId)) as { count: number }).count;
 
             console.log(`[ImportDownload] Artist ${affectedArtistId}: ${trackedCount} library files tracked after import (skipped full disk scan)`);
-            ArtistStatisticsService.refresh([affectedArtistId]);
+            await withSqliteWriteGate(() => ArtistStatisticsService.refresh([affectedArtistId]), "import:statistics");
             cancellationCheckpoint("after refreshing artist statistics");
         }
 

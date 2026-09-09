@@ -59,7 +59,7 @@ export async function finalizeImportedDirectories(params: {
 
     if (importedFileIds.length > 0) {
         try {
-            RenameTrackFileService.executeRenameFiles(importedFileIds);
+            await RenameTrackFileService.executeRenameFiles(importedFileIds);
         } catch (error: any) {
             console.error(`[Import] Failed to apply renames for imported items:`, error);
         }
@@ -67,7 +67,7 @@ export async function finalizeImportedDirectories(params: {
         // library; once that audio is imported (layout=inline + association +
         // monitored stereo RG), relocate them beside the track.
         try {
-            RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio(importedFileIds);
+            await RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio(importedFileIds);
         } catch (error: any) {
             console.error(`[Import] Failed to relocate related inline videos:`, error);
         }

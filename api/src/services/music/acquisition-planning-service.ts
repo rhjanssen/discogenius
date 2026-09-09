@@ -187,8 +187,10 @@ export class AcquisitionPlanningService {
       LEFT JOIN LibraryEditions monitored_edition
         ON monitored_edition.library_id = library.id
        AND monitored_edition.edition_id = edition.id
-      LEFT JOIN SelectedAcquisitionPlans current_plan
-        ON current_plan.library_edition_id = monitored_edition.id
+      LEFT JOIN AcquisitionPlans current_plan
+        ON current_plan.library_id = monitored_edition.library_id
+       AND current_plan.edition_id = monitored_edition.edition_id
+       AND current_plan.plan_key = monitored_edition.preferred_plan_key
        AND current_plan.state = 'current'
       LEFT JOIN AcquisitionPlanSources primary_source
         ON primary_source.plan_id = current_plan.id

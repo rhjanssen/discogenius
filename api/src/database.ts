@@ -60,13 +60,11 @@ export function withDbWrite<T>(fn: () => T): Promise<T> {
 // A synchronous timeout on the HTTP thread would freeze unrelated requests.
 const SQLITE_BUSY_TIMEOUT_MS = isMainThread ? 0 : 1000;
 
-// Optional write profiling: log any write transaction that holds the SQLite write
-// lock longer than this (ms). Off unless DISCOGENIUS_WRITE_PROFILE_MS is set. Used
-// to find slow writes by data, not guesswork — short writes are what keep the DB
-// responsive under load, so this surfaces the ones to shorten.
+// Record the call site of transactions that block other writers for a second.
+// Operators can lower the threshold for profiling or set it to zero to disable.
 const WRITE_PROFILE_MS = (() => {
-  const raw = Number.parseInt(String(process.env.DISCOGENIUS_WRITE_PROFILE_MS ?? ""), 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+  const raw = Number.parseInt(String(process.env.DISCOGENIUS_WRITE_PROFILE_MS ?? "1000"), 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 1000;
 })();
 
 function profileWrite<T>(op: () => T): T {

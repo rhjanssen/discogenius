@@ -449,8 +449,10 @@ export class AcquisitionPlanRepository {
       FROM LibraryEditions monitored_edition
       JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
       JOIN Tracks track ON track.album_edition_id = edition.id
-      LEFT JOIN SelectedAcquisitionPlans plan
-        ON plan.library_edition_id = monitored_edition.id
+      LEFT JOIN AcquisitionPlans plan
+        ON plan.library_id = monitored_edition.library_id
+       AND plan.edition_id = monitored_edition.edition_id
+       AND plan.plan_key = monitored_edition.preferred_plan_key
        AND plan.state = 'current'
       LEFT JOIN AcquisitionPlanTracks plan_track
         ON plan_track.plan_id = plan.id

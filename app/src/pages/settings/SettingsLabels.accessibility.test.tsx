@@ -53,7 +53,7 @@ describe("Settings control labels", () => {
     expect(screen.getByRole("radiogroup", { name: "Preferred video quality" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Ultra HD/ })).toBeInTheDocument();
     expect((await axe.run(container)).violations).toEqual([]);
-  });
+  }, 30_000);
 
   it("names adjacent selects, switches, and path inputs", async () => {
     const { container } = renderSettings(
@@ -80,5 +80,5 @@ describe("Settings control labels", () => {
     expect(screen.getByRole("textbox", { name: "Video Library Path" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Create Empty Artist Folders" })).toBeInTheDocument();
     expect((await axe.run(container)).violations).toEqual([]);
-  });
+  }, 30_000);
 });

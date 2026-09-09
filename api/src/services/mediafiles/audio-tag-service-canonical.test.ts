@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { after, before, test } from "node:test";
-import { compareEmbeddedAudioCover } from "./audioUtils.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-audio-tag-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -13,12 +12,14 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let audioTagServiceModule: typeof import("./audio-tag-service.js");
+let compareEmbeddedAudioCover: typeof import("./audioUtils.js").compareEmbeddedAudioCover;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   configModule = await import("../config/config.js");
   audioTagServiceModule = await import("./audio-tag-service.js");
+  ({ compareEmbeddedAudioCover } = await import("./audioUtils.js"));
 });
 
 after(() => {
@@ -248,7 +249,7 @@ test("embedded cover resolution reads the exact edition cache", async () => {
   );
 });
 
-test("bulk artist retag writes tags and edition cover, verifies both, and is idempotent", {
+test("bulk artist retag waits for a catalog writer, verifies tags and cover, and is idempotent", {
   skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
 }, async () => {
   const row = dbModule.db.prepare(`
@@ -305,9 +306,26 @@ test("bulk artist retag writes tags and edition cover, verifies both, and is ide
   assert.ok(preview.changes.some((change) => change.field === "Artist"));
   assert.ok(preview.changes.some((change) => change.field === "Cover Art"));
 
-  const applied = await audioTagServiceModule.AudioTagService.applyByQuery({
-    artistIds: ["artist-mbid-1"],
-  });
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:catalog-writer");
+  await ready;
+  let applied;
+  try {
+    applied = await audioTagServiceModule.AudioTagService.applyByQuery({
+      artistIds: ["artist-mbid-1"],
+      onProgress: (completed) => {
+        if (completed === 1) setTimeout(release, 30);
+      },
+    });
+  } finally {
+    release();
+    await blocker;
+  }
   assert.deepEqual(applied, {
     retagged: 1,
     skipped: 0,

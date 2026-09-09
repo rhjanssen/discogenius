@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import * as mm from "music-metadata";
 import pLimit from "p-limit";
-import { db } from "../../database.js";
+import { db, runGatedChunkedWrite } from "../../database.js";
 import {
   type MetadataConfig,
   type QualityConfig,
@@ -2877,9 +2877,7 @@ export class AudioTagService {
         SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `);
-      db.transaction(() => {
-        for (const values of updated) update.run(...values);
-      })();
+      await runGatedChunkedWrite(updated, (values) => update.run(...values), 100, "retag:strip-file-facts");
     }
     return result;
   }
@@ -3055,20 +3053,12 @@ export class AudioTagService {
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort temp cleanup */ }
     }
 
-    // Commit DB updates in chunks with event loop yields
+    // Wait asynchronously between short commits. A catalog writer must not
+    // turn successfully written tags into a failed job at the batch boundary.
     if (pendingUpdates.length > 0) {
-      const chunkSize = 100;
-      for (let i = 0; i < pendingUpdates.length; i += chunkSize) {
-        const chunk = pendingUpdates.slice(i, i + chunkSize);
-        db.transaction(() => {
-          for (const [size, mtime, id] of chunk) {
-            updateFileRecord.run(size, mtime, id);
-          }
-        })();
-        if (i + chunkSize < pendingUpdates.length) {
-          await yieldRetagToEventLoop();
-        }
-      }
+      await runGatedChunkedWrite(pendingUpdates, ([size, mtime, id]) => {
+        updateFileRecord.run(size, mtime, id);
+      }, 100, "retag:file-facts");
     }
 
     return result;

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { writeMetadata } from "./audioUtils.js";
 import { AudioTagService, type ManagedTag, type RetagApplyResult } from "./audio-tag-service.js";
@@ -159,7 +159,7 @@ export class VideoTagService {
       }
 
       const stat = fs.statSync(resolvedPath);
-      update.run(stat.size, stat.mtime.toISOString(), row.id);
+      await withSqliteWriteGate(() => update.run(stat.size, stat.mtime.toISOString(), row.id), "retag:video-file-facts");
       result.retagged++;
     }
 

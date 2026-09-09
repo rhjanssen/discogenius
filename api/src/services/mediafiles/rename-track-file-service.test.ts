@@ -205,7 +205,7 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("RenameTrackFileService owns preview and apply flow for tracked renames", () => {
+test("RenameTrackFileService owns preview and apply flow for tracked renames", async () => {
   const seeded = seedTrackedFile();
 
   const statusBefore = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ artistId: "1" }, 10);
@@ -213,7 +213,7 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", (
   assert.equal(statusBefore.conflicts, 0);
   assert.equal(statusBefore.missing, 0);
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
 
   assert.equal(result.renamed, 1);
   assert.equal(result.conflicts, 0);
@@ -234,14 +234,14 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", (
   assert.equal(trackedFile.needsRename, 0);
 });
 
-test("id-only renames avoid library-wide post-processing", () => {
+test("id-only renames avoid library-wide post-processing", async () => {
   const seeded = seedTrackedFile();
   const unrelatedEmptyDir = path.join(configModule.Config.getVideoPath(), "Unrelated Artist", "Empty Album");
   fs.mkdirSync(unrelatedEmptyDir, { recursive: true });
   const trackedFile = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE provider_id = ?")
     .get("100") as { id: number };
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
 
   assert.equal(result.renamed, 1);
   assert.equal(result.cleanedDirectories, 0);
@@ -250,7 +250,7 @@ test("id-only renames avoid library-wide post-processing", () => {
   assert.equal(fs.existsSync(unrelatedEmptyDir), true);
 });
 
-test("RenameTrackFileService applies the same quality-token path shown in preview", () => {
+test("RenameTrackFileService applies the same quality-token path shown in preview", async () => {
   const config = configModule.readConfig();
   config.naming.album_track_path_single = "{albumTitle}/{QUALITY}/{trackNumber00} - {trackTitle}";
   configModule.writeConfig(config);
@@ -274,7 +274,7 @@ test("RenameTrackFileService applies the same quality-token path shown in previe
   assert.equal(statusBefore.renameNeeded, 1);
   assert.equal(path.resolve(statusBefore.sample[0]?.expected_path || ""), path.resolve(expectedPath));
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
   assert.equal(result.renamed, 1);
   assert.equal(fs.existsSync(expectedPath), true);
 
@@ -289,7 +289,7 @@ test("RenameTrackFileService applies the same quality-token path shown in previe
   assert.equal(trackedFile.needsRename, 0);
 });
 
-test("RenameTrackFileService accepts library root aliases for rename status and apply", () => {
+test("RenameTrackFileService accepts library root aliases for rename status and apply", async () => {
   const seeded = seedTrackedFile();
 
   const statusByAlias = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ libraryRoot: "music" }, 10);
@@ -300,7 +300,7 @@ test("RenameTrackFileService accepts library root aliases for rename status and 
   assert.equal(statusByPath.total, 1);
   assert.equal(statusByPath.renameNeeded, 1);
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFilesByQuery({ libraryRoot: "music" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFilesByQuery({ libraryRoot: "music" });
   assert.equal(result.renamed, 1);
   assert.equal(fs.existsSync(seeded.expectedPath), true);
 
@@ -309,14 +309,14 @@ test("RenameTrackFileService accepts library root aliases for rename status and 
   assert.equal(statusAfter.renameNeeded, 0);
 });
 
-test("RenameTrackFileService stores the destination root after a configured root change", () => {
+test("RenameTrackFileService stores the destination root after a configured root change", async () => {
   seedTrackedFile();
   const nextMusicRoot = path.join(tempDir, "library", "music-next");
   const config = configModule.readConfig();
   config.path.music_path = nextMusicRoot;
   configModule.writeConfig(config);
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
   assert.equal(result.renamed, 1);
 
   const trackedFile = dbModule.db.prepare(`
@@ -362,7 +362,7 @@ libraryFilesModule.LibraryFilesService.upsertLibraryFile({
   assert.equal(status.sample.length, 0);
 });
 
-test("RenameTrackFileService derives track paths from canonical MusicBrainz rows without provider catalog rows", () => {
+test("RenameTrackFileService derives track paths from canonical MusicBrainz rows without provider catalog rows", async () => {
   const musicRoot = configModule.Config.getMusicPath();
   const sourceDir = path.join(musicRoot, "Artist One", "Imports");
   const sourcePath = path.join(sourceDir, "providerless-track.flac");
@@ -411,7 +411,7 @@ dbModule.db.prepare(`
   assert.equal(statusBefore.renameNeeded, 1);
   assert.equal(path.resolve(statusBefore.sample[0]?.expected_path || ""), path.resolve(expectedPath));
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
   assert.equal(result.renamed, 1);
   assert.equal(fs.existsSync(expectedPath), true);
 
@@ -793,7 +793,7 @@ test("batched collision preload still disambiguates spatial audio in a shared ro
   assert.equal(spatial.conflict, false);
 });
 
-test("RenameTrackFileService derives video paths from canonical MusicBrainz recordings without provider media rows", () => {
+test("RenameTrackFileService derives video paths from canonical MusicBrainz recordings without provider media rows", async () => {
   const videoRoot = configModule.Config.getVideoPath();
   const sourceDir = path.join(videoRoot, "Artist One", "Imports");
   const sourcePath = path.join(sourceDir, "provider-video.mp4");
@@ -832,7 +832,7 @@ const recording = dbModule.db.prepare(`
   assert.equal(statusBefore.renameNeeded, 1);
   assert.equal(path.resolve(statusBefore.sample[0]?.expected_path || ""), path.resolve(expectedPath));
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFilesByQuery({ artistId: "1", libraryRoot: "videos" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFilesByQuery({ artistId: "1", libraryRoot: "videos" });
   assert.equal(result.renamed, 1);
   assert.equal(fs.existsSync(expectedPath), true);
 
@@ -848,7 +848,7 @@ const recording = dbModule.db.prepare(`
   assert.equal(trackedFile.providerId, "tidal-video-123");
 });
 
-test("RenameTrackFileService replicates canonical lyrics across separated roots without provider catalog rows", () => {
+test("RenameTrackFileService replicates canonical lyrics across separated roots without provider catalog rows", async () => {
   seedCanonicalGraph();
 
   const musicRoot = configModule.Config.getMusicPath();
@@ -893,7 +893,7 @@ test("RenameTrackFileService replicates canonical lyrics across separated roots 
 
   assertRetiredProviderCatalogTablesAbsent();
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
 
   assert.equal(result.renamed, 1);
   assert.equal(fs.existsSync(expectedMusicTrackPath), true);
@@ -923,7 +923,7 @@ test("RenameTrackFileService replicates canonical lyrics across separated roots 
   assert.ok(replicatedLyric.trackFileId);
 });
 
-test("RenameTrackFileService replicates album sidecars by ProviderItems release group, not provider titles", () => {
+test("RenameTrackFileService replicates album sidecars by ProviderItems release group, not provider titles", async () => {
   seedCanonicalGraph();
 
   const musicRoot = configModule.Config.getMusicPath();
@@ -987,7 +987,7 @@ test("RenameTrackFileService replicates album sidecars by ProviderItems release 
     providerId: "10",
   });
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
 
   assert.equal(result.renamed, 1);
   assert.equal(fs.existsSync(expectedSpatialCoverPath), true);
@@ -1140,7 +1140,7 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
   };
 }
 
-test("RenameTrackFileService moves separated video to inline when association and stereo RG are ready", () => {
+test("RenameTrackFileService moves separated video to inline when association and stereo RG are ready", async () => {
   const config = configModule.readConfig();
   config.path.video_folder_layout = "inline";
   configModule.writeConfig(config);
@@ -1155,7 +1155,7 @@ test("RenameTrackFileService moves separated video to inline when association an
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath(videoRow);
   assert.equal(path.resolve(expected.expectedPath || ""), path.resolve(fixture.inlineVideoPath));
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([fixture.videoFileId]);
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([fixture.videoFileId]);
   assert.equal(result.renamed, 1);
   assert.equal(fs.existsSync(fixture.separatedVideoPath), false);
   assert.equal(fs.existsSync(fixture.inlineVideoPath), true);
@@ -1168,13 +1168,13 @@ test("RenameTrackFileService moves separated video to inline when association an
   assert.equal(moved.needsRename, 0);
 });
 
-test("relocateRelatedInlineVideosForImportedAudio moves linked videos when stereo audio is imported", () => {
+test("relocateRelatedInlineVideosForImportedAudio moves linked videos when stereo audio is imported", async () => {
   const config = configModule.readConfig();
   config.path.video_folder_layout = "inline";
   configModule.writeConfig(config);
 
   const fixture = seedInlineVideoTransferFixture();
-  const result = renameTrackFileServiceModule.RenameTrackFileService
+  const result = await renameTrackFileServiceModule.RenameTrackFileService
     .relocateRelatedInlineVideosForImportedAudio([fixture.audioFileId]);
 
   assert.equal(result.renamed, 1);
@@ -1182,13 +1182,13 @@ test("relocateRelatedInlineVideosForImportedAudio moves linked videos when stere
   assert.equal(fs.existsSync(fixture.inlineVideoPath), true);
 });
 
-test("relocateRelatedInlineVideosForImportedAudio is a no-op when layout is separated", () => {
+test("relocateRelatedInlineVideosForImportedAudio is a no-op when layout is separated", async () => {
   const config = configModule.readConfig();
   config.path.video_folder_layout = "separated";
   configModule.writeConfig(config);
 
   const fixture = seedInlineVideoTransferFixture();
-  const result = renameTrackFileServiceModule.RenameTrackFileService
+  const result = await renameTrackFileServiceModule.RenameTrackFileService
     .relocateRelatedInlineVideosForImportedAudio([fixture.audioFileId]);
 
   assert.equal(result.renamed, 0);
@@ -1215,7 +1215,7 @@ test("relocateRelatedInlineVideosForImportedAudio does not move to inline when s
     `expected video to remain under videos root, got ${videoRow.filePath}`,
   );
 });
-test("relocateRelatedInlineVideosForImportedAudio ignores unrelated imported audio", () => {
+test("relocateRelatedInlineVideosForImportedAudio ignores unrelated imported audio", async () => {
   const config = configModule.readConfig();
   config.path.video_folder_layout = "inline";
   configModule.writeConfig(config);
@@ -1244,14 +1244,14 @@ test("relocateRelatedInlineVideosForImportedAudio ignores unrelated imported aud
     canonicalRecordingMbid: "recording-mbid-other",
   });
 
-  const result = renameTrackFileServiceModule.RenameTrackFileService
+  const result = await renameTrackFileServiceModule.RenameTrackFileService
     .relocateRelatedInlineVideosForImportedAudio([otherAudioId]);
 
   assert.equal(result.renamed, 0);
   assert.equal(fs.existsSync(fixture.separatedVideoPath), true);
 });
 
-test("rename preview lists media files only; id-based apply co-moves the linked lyric", () => {
+test("rename preview lists media files only; id-based apply co-moves the linked lyric", async () => {
   seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
   const musicRoot = configModule.Config.getMusicPath();
   const importDir = path.join(musicRoot, "Artist One", "Imports");
@@ -1284,7 +1284,7 @@ test("rename preview lists media files only; id-based apply co-moves the linked 
   assert.equal(previews[0].file_type, "track");
 
   // Applying by the media id alone must still move the linked lyric alongside it.
-  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([audioId]);
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([audioId]);
   assert.equal(result.renamed >= 1, true);
 
   const expectedAudio = path.join(musicRoot, "Artist One", "Album One", "01 - Track One.flac");
@@ -1299,7 +1299,7 @@ test("rename preview lists media files only; id-based apply co-moves the linked 
   assert.equal(path.resolve(lyricRow.file_path), path.resolve(expectedLyric));
 });
 
-test("a failed rename leaves the DB pointing at the surviving original file", () => {
+test("a failed rename leaves the DB pointing at the surviving original file", async () => {
   const seeded = seedTrackedFile();
   const trackedFile = dbModule.db.prepare(`
     SELECT id, file_path AS filePath FROM TrackFiles WHERE provider_id = ?
@@ -1313,9 +1313,9 @@ test("a failed rename leaves the DB pointing at the surviving original file", ()
   (fs as any).renameSync = () => { throw new Error("EACCES: simulated rename failure"); };
   (fs as any).copyFileSync = () => { throw new Error("EACCES: simulated copy failure"); };
 
-  let result: ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles>;
+  let result: Awaited<ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles>>;
   try {
-    result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
+    result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
   } finally {
     (fs as any).renameSync = realRename;
     (fs as any).copyFileSync = realCopy;
@@ -1335,7 +1335,7 @@ test("a failed rename leaves the DB pointing at the surviving original file", ()
   assert.equal(path.resolve(after.filePath), path.resolve(originalPath));
 });
 
-test("a failed rename database commit restores the original file path", () => {
+test("a failed rename database commit restores the original file path", async () => {
   const seeded = seedTrackedFile();
   const trackedFile = dbModule.db.prepare(`
     SELECT id, file_path AS filePath FROM TrackFiles WHERE provider_id = ?
@@ -1352,7 +1352,7 @@ test("a failed rename database commit restores the original file path", () => {
   `);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () => renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]),
       /simulated rename database failure/,
     );
@@ -1368,7 +1368,7 @@ test("a failed rename database commit restores the original file path", () => {
   assert.equal(path.resolve(after.filePath), path.resolve(originalPath));
 });
 
-test("a failed duplicate-sidecar commit restores the staged source sidecar", () => {
+test("a failed duplicate-sidecar commit restores the staged source sidecar", async () => {
   seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
   const musicRoot = configModule.Config.getMusicPath();
   const albumDir = path.join(musicRoot, "Artist One", "Album One");
@@ -1419,7 +1419,7 @@ test("a failed duplicate-sidecar commit restores the staged source sidecar", () 
   `);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () => renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([audioId]),
       /simulated duplicate sidecar database failure/,
     );
@@ -1452,4 +1452,34 @@ test("RenameTrackFileService supports albumId and editionId scopes without colum
 
   const statusByEdition = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ editionId: "edition-test-123" });
   assert.equal(typeof statusByEdition.total, "number");
+});
+
+
+test("rename waits for another database writer without failing or blocking timers", async () => {
+  const seeded = seedTrackedFile();
+  const row = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE provider_id = ?").get("100") as { id: number };
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:catalog-writer");
+  await ready;
+  let settled = false;
+  const rename = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([row.id]);
+  void rename.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(settled, false, "rename must wait for the writer rather than fail");
+  } finally {
+    release();
+    await blocker;
+  }
+  const result = await rename;
+  assert.equal(result.renamed, 1);
+  assert.deepEqual(result.errors, []);
+  const stored = dbModule.db.prepare("SELECT file_path FROM TrackFiles WHERE id = ?").get(row.id) as { file_path: string };
+  assert.equal(path.resolve(stored.file_path), path.resolve(seeded.expectedPath));
+  assert.equal(fs.existsSync(stored.file_path), true);
 });

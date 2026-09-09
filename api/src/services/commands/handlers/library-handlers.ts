@@ -1,4 +1,4 @@
-import { db } from "../../../database.js";
+import { db, withSqliteWriteGate } from "../../../database.js";
 import { getConfigSection } from "../../config/config.js";
 import { DiskScanService } from "../../mediafiles/library-scan.js";
 import { parseScanFileFilter } from "../../mediafiles/scan-file-filter.js";
@@ -193,7 +193,7 @@ export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ct
     let cleanedDirectories = 0;
     const errors: Array<{ id: number; error: string }> = [];
     for (const artistId of artistIds) {
-        const result = RenameTrackFileService.executeRenameArtist({ artistId });
+        const result = await RenameTrackFileService.executeRenameArtist({ artistId });
         renamed += result.renamed;
         conflicts += result.conflicts;
         missing += result.missing;
@@ -218,8 +218,8 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
         description: 'Rename Files - applying rename plan',
     });
     const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-        ? RenameTrackFileService.executeRenameFiles(job.payload.ids)
-        : RenameTrackFileService.executeRenameFilesByQuery({
+        ? await RenameTrackFileService.executeRenameFiles(job.payload.ids)
+        : await RenameTrackFileService.executeRenameFilesByQuery({
             artistId: job.payload.artistId,
             albumId: job.payload.albumId,
             editionId: job.payload.editionId,
@@ -272,7 +272,7 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
         artistIds,
         onProgress: makeRetagProgress(ctx, job, 'Retag Artist'),
     });
-    if (result.retagged > 0) ArtistStatisticsService.refresh(artistIds);
+    if (result.retagged > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(artistIds), "retag:statistics");
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
@@ -298,7 +298,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
                 releaseMbid: job.payload.releaseMbid,
             });
         }
-        if (result.retagged > 0 && affectedArtists.length > 0) ArtistStatisticsService.refresh(affectedArtists);
+        if (result.retagged > 0 && affectedArtists.length > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(affectedArtists), "retag:statistics");
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: `Stripped tags on ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
@@ -354,7 +354,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
                 onProgress: makeRetagProgress(ctx, job, 'Retag Files'),
             });
     }
-    if (result.retagged > 0 && affectedArtists.length > 0) ArtistStatisticsService.refresh(affectedArtists);
+    if (result.retagged > 0 && affectedArtists.length > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(affectedArtists), "retag:statistics");
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.7] - 2026-09-09
+
+### Fixed
+
+- Await SQLite writer admission for rename commits, retag file facts, import media records and post-import reconciliation. Keep tag writing and media moves outside the admitted database transaction.
+- Resolve the selected acquisition plan by library, edition and plan key instead of materializing every monitored edition for a single-edition planning or completion query.
+- Keep import file counts and percentages separate from completed download rows. Publish buffered import track progress while persisted progress waits for the database.
+- Isolate the canonical retag test database before importing media utilities, and await sidecar relocation in its regression tests.
+
+### Diagnostics
+
+- Log the call site of write transactions lasting at least one second by default. `DISCOGENIUS_WRITE_PROFILE_MS` overrides the threshold; zero disables profiling.
+
 ## [2.16.6] - 2026-09-09
 
 ### Fixed
