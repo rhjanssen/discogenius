@@ -25,6 +25,10 @@ export type NamingContext = {
   editionTitle?: string | null;
   /** MusicBrainz release (edition) disambiguation. */
   editionDisambiguation?: string | null;
+  /** MusicBrainz release (edition) MBID. */
+  editionMbId?: string | null;
+  /** Alias of editionMbId. */
+  releaseMbId?: string | null;
   releaseGroupMbId?: string | null;
   releaseYear?: string | number | null;
   albumYear?: string | number | null;
@@ -211,7 +215,9 @@ function buildDerived(context: NamingContext) {
   // {Edition Title} still work when only the album title is known.
   const editionTitle = String(context.editionTitle || "").trim() || albumTitle;
   const editionDisambiguation = context.editionDisambiguation || "";
-  const releaseGroupMbId = context.releaseGroupMbId || "";
+  const editionMbId = context.editionMbId || context.releaseMbId || "";
+  const releaseMbId = context.releaseMbId || editionMbId;
+  const releaseGroupMbId = context.releaseGroupMbId || albumMbId || "";
 
   const trackTitle = context.trackTitle || "Unknown Track";
   const trackArtistName = context.trackArtistName || artistName;
@@ -261,6 +267,8 @@ function buildDerived(context: NamingContext) {
     albumGenre,
     editionTitle,
     editionDisambiguation,
+    editionMbId,
+    releaseMbId,
     releaseGroupMbId,
     releaseYear,
     albumYear: resolvedAlbumYear,
@@ -397,6 +405,10 @@ function resolveTokenValue(
       break;
     case "albummbid":
       baseValue = derived.albumMbId;
+      break;
+    case "editionmbid":
+    case "releasembid":
+      baseValue = derived.editionMbId || derived.releaseMbId;
       break;
     case "releasegroupmbid":
       baseValue = derived.releaseGroupMbId;
@@ -844,6 +856,8 @@ const KNOWN_TOKEN_NAMES = new Set([
   "albumdisambiguation",
   "albumgenre",
   "albummbid",
+  "editionmbid",
+  "releasembid",
   "releasegroupmbid",
   "albumid",
   "releaseyear",
@@ -1030,11 +1044,13 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     albumTitle: "Bad Blood",
     albumType: "album",
     albumId: "26065586",
-    albumMbId: "a1a8c886-df06-44ec-b851-f76156a086cf",
+    albumMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
     albumDisambiguation: "extended cut",
     albumGenre: "Pop Rock",
     editionTitle: "Bad Blood",
     editionDisambiguation: "deluxe edition",
+    editionMbId: "a1a8c886-df06-44ec-b851-f76156a086cf",
+    releaseMbId: "a1a8c886-df06-44ec-b851-f76156a086cf",
     releaseGroupMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
     releaseYear: "2013",
     albumYear: "2013",

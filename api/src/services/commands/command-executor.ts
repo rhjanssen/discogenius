@@ -126,26 +126,35 @@ export class CommandExecutor {
     private static lastWatchdogAt = 0;
     private static activeJobs = new Map<number, ActiveCommandAttempt>();
 
-    static start() {
+    static async start(): Promise<void> {
         if (this.isRunning) return;
         this.isRunning = true;
 
         // Recover interrupted non-download jobs after process restart.
-        const recovered = CommandQueueManager.recoverInterruptedJobsByTypes({
-            types: NON_DOWNLOAD_COMMAND_NAMES,
-            reason: "Discogenius process restarted while command was running",
-            maxAttempts: COMMAND_MAX_ATTEMPTS,
-            resolveMaxAttempts: (name) => resolveInfrastructureMaxAttempts(
-                name,
-                COMMAND_MAX_ATTEMPTS,
-            ),
-        });
-        if (recovered.requeued > 0 || recovered.failed > 0) {
-            console.log(
-                `[CommandExecutor] Restart recovery re-queued ${recovered.requeued} and poison-failed ${recovered.failed} interrupted non-download job(s)`,
-            );
+        try {
+            const recovered = await withSqliteWriteGate(() => CommandQueueManager.recoverInterruptedJobsByTypes({
+                types: NON_DOWNLOAD_COMMAND_NAMES,
+                reason: "Discogenius process restarted while command was running",
+                maxAttempts: COMMAND_MAX_ATTEMPTS,
+                resolveMaxAttempts: (name) => resolveInfrastructureMaxAttempts(
+                    name,
+                    COMMAND_MAX_ATTEMPTS,
+                ),
+            }), "commands:restart-recovery");
+            if (recovered.requeued > 0 || recovered.failed > 0) {
+                console.log(
+                    `[CommandExecutor] Restart recovery re-queued ${recovered.requeued} and poison-failed ${recovered.failed} interrupted non-download job(s)`,
+                );
+            }
+        } catch (error) {
+            // A failed recovery must not leave the executor marked running
+            // without a polling loop. The in-loop watchdog still reclaims
+            // expired leases once workers are up.
+            console.error("[CommandExecutor] Restart recovery failed; starting workers anyway:", error);
         }
 
+        // stop() may have run while startup was waiting for another writer.
+        if (!this.isRunning) return;
         console.log("🚀 Command executor started");
         void this.loop();
     }

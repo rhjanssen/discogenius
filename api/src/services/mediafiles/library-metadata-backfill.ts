@@ -1101,9 +1101,13 @@ class LibraryMetadataBackfillService {
         const albumContext: NamingContext = {
             artistName: "",
             albumTitle: canonicalAlbum?.title || album.title,
+            albumMbId: canonicalAlbum?.albumMbid || album.mb_release_group_id || album.mbid || null,
+            releaseGroupMbId: canonicalAlbum?.releaseGroupMbid || album.mb_release_group_id || null,
             albumDisambiguation: canonicalAlbum?.disambiguation || null,
             editionTitle: canonicalAlbum?.editionTitle || canonicalAlbum?.title || album.title,
             editionDisambiguation: canonicalAlbum?.editionDisambiguation || null,
+            editionMbId: canonicalAlbum?.editionMbid || album.mbid || null,
+            releaseMbId: canonicalAlbum?.editionMbid || album.mbid || null,
             albumYear,
             editionYear,
             releaseYear,

@@ -4,7 +4,7 @@ import express, { Express } from "express";
 import fs from "fs";
 import path from "path";
 
-import { closeDatabase, initDatabase } from "./database.js";
+import { closeDatabase, initDatabase, withDbWrite } from "./database.js";
 import { startWalMaintenance, stopWalMaintenance } from "./services/database/wal-maintenance.js";
 import { authMiddleware } from "./middleware/auth.js";
 import albumsRouter from "./routes/v1/album.js";
@@ -379,12 +379,12 @@ const server = app.listen(port, () => {
     });
   }
 
-  setTimeout(() => {
+  setTimeout(async () => {
     if (process.env.DISCOGENIUS_DISABLE_MONITORING === "1") {
       console.log("[APP] Monitoring disabled via DISCOGENIUS_DISABLE_MONITORING=1");
     } else {
       try {
-        startMonitoring();
+        await withDbWrite(() => startMonitoring());
       } catch (error) {
         console.error("Failed to start monitoring:", error);
       }
@@ -394,13 +394,13 @@ const server = app.listen(port, () => {
       console.log("[APP] Command executor disabled via DISCOGENIUS_DISABLE_SCHEDULER=1");
     } else {
       try {
-        CommandExecutor.start();
+        await CommandExecutor.start();
         if (
           AlbumLibraryIndexService.needsRebuild()
           || TrackLibraryIndexService.needsRebuild()
           || ArtistTopTrackService.countMissingMonitoredArtists() > 0
         ) {
-          queueUpdateLibraryMetadata({ trigger: CommandTrigger.Scheduled });
+          await withDbWrite(() => queueUpdateLibraryMetadata({ trigger: CommandTrigger.Scheduled }));
         }
       } catch (error) {
         console.error("Failed to start command executor:", error);

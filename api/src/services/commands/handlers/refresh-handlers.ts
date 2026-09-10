@@ -89,6 +89,16 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
                     return;
                 }
 
+                if (event.kind === "matching") {
+                    const total = Math.max(event.total, 1);
+                    const progress = Math.min(95, 75 + Math.round((event.index / total) * 20));
+                    ctx.updateCommandDescription(job, {
+                        progress,
+                        description: ctx.formatArtistPhaseDescription(job, event.message),
+                    });
+                    return;
+                }
+
                 if (event.kind === "status") {
                     ctx.updateCommandDescription(job, {
                         progress: 85,

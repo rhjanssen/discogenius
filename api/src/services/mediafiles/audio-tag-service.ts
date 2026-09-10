@@ -1331,7 +1331,7 @@ export class AudioTagService {
         provider_track.replay_gain AS media_replay_gain,
         provider_track.peak AS media_peak,
         provider_track.musical_key AS media_musical_key,
-        COALESCE(canonical_group.title, canonical_release.title, provider_album.title) AS album_title,
+        COALESCE(NULLIF(TRIM(canonical_release.title), ''), canonical_group.title, provider_album.title) AS album_title,
         NULL AS album_version,
         canonical_release.date AS album_release_date,
         canonical_release.media_count AS album_num_volumes,
@@ -1728,10 +1728,20 @@ export class AudioTagService {
         continue;
       }
 
+      // Vorbis already has TRACKNUMBER/TRACKTOTAL. The combined `track`/`disc`
+      // keys exist for MP4 trkn/disk atoms; writing them as extra FLAC fields
+      // leaves leftover TRACK=1/12 next to TRACKNUMBER and makes retag diffs.
+      if (isFlac && (tag.key === "track" || tag.key === "disc")) {
+        continue;
+      }
+
       const formatKey = getFormatKey(tag);
       output[formatKey] = value;
 
-      if (!extension) {
+      // Picard/Vorbis aliases (MUSICBRAINZ_ALBUMTYPE, TOTALTRACKS, …) belong on
+      // FLAC/Ogg and on the extension-less ffmpeg fallback. MP3/M4A already map
+      // through format-specific frames/atoms; extra raw aliases are not valid there.
+      if (isFlac || !extension) {
         for (const alias of tag.writeAliases || []) {
           const key = String(alias || "").trim();
           if (key) {

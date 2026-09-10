@@ -69,6 +69,7 @@ const ALBUM_NAMING_TOKENS: NamingToken[] = [
     { section: "Album", token: "{Album Genre}", example: "Indie Pop" },
     { section: "Album", token: "{Album MbId}", example: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb" },
     { section: "Album", token: "{Release Group MbId}", example: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb" },
+    { section: "Album", token: "{mbid-{Album MbId}}", example: "{mbid-5b591b9a-4c28-444a-aab4-cd61be5bb5fb}" },
     { section: "Album", token: "{Album Id}", example: "1550545" },
 ];
 
@@ -78,6 +79,9 @@ const EDITION_NAMING_TOKENS: NamingToken[] = [
     { section: "Edition", token: "{Edition TitleThe}", example: "Bad Blood (The Extended Cut), The" },
     { section: "Edition", token: "{Edition CleanTitleThe}", example: "Bad Blood The Extended Cut, The" },
     { section: "Edition", token: "{Edition Disambiguation}", example: "deluxe edition" },
+    { section: "Edition", token: "{Edition MbId}", example: "a1a8c886-df06-44ec-b851-f76156a086cf" },
+    { section: "Edition", token: "{Release MbId}", example: "a1a8c886-df06-44ec-b851-f76156a086cf" },
+    { section: "Edition", token: "{mbid-{Edition MbId}}", example: "{mbid-a1a8c886-df06-44ec-b851-f76156a086cf}" },
     { section: "Edition", token: "{Release Title}", example: "Bad Blood (The Extended Cut)" },
     { section: "Edition", token: "{Release Disambiguation}", example: "deluxe edition" },
 ];

@@ -409,9 +409,9 @@ test("buildAudioTagWriteMap expands release_type writeAliases for FLAC/Vorbis", 
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
     RELEASETYPE: "album; live",
+    MUSICBRAINZ_ALBUMTYPE: "album; live",
   });
 
-  // Without extension (generic fallback), both writeAliases are emitted:
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags), {
     release_type: "album; live",
     RELEASETYPE: "album; live",

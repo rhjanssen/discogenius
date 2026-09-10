@@ -64,18 +64,21 @@ function queueCanonicalUnmappedImport(canonical: {
 
 /**
  * GET /api/unmapped
- * Returns all unmapped local files.
+ * Returns a page of unmapped local files.
+ *
+ * Candidate identification is Interactive Import, not list. Lidarr's unmapped
+ * table is path/size/date only; scoring every folder here stalled the API for
+ * ~20s on the live library.
  */
-router.get("/", async (req, res) => {
+router.get("/", (req, res) => {
     try {
         const limit = parseBoundedQueryInteger(req.query.limit, 100, { min: 1, max: 500 });
         const offset = parseBoundedQueryInteger(req.query.offset, 0);
         const result = unmappedFilesService.listFiles(limit, offset);
-        const candidates = await unmappedFilesService.getCandidateGuesses(result.items);
 
         res.json({
             ...result,
-            candidates,
+            candidates: {},
             limit,
             offset,
             hasMore: offset + result.items.length < result.total,

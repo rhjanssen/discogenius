@@ -77,6 +77,33 @@ test("release group and video id tokens render correctly", () => {
   assert.equal(rendered, "release-group-mbid-1 ; video-1 ; video-1 ; video-1");
 });
 
+test("edition and release MBID tokens render the MusicBrainz release id", () => {
+  const rendered = renderFileStem(
+    "{Album MbId} ; {Edition MbId} ; {Release MbId} ; {mbid-{Edition MbId}}",
+    {
+      artistName: "Bastille",
+      albumMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
+      editionMbId: "a1a8c886-df06-44ec-b851-f76156a086cf",
+      releaseYear: "2013",
+    },
+  );
+
+  assert.equal(
+    rendered,
+    "5b591b9a-4c28-444a-aab4-cd61be5bb5fb ; a1a8c886-df06-44ec-b851-f76156a086cf ; a1a8c886-df06-44ec-b851-f76156a086cf ; {mbid-a1a8c886-df06-44ec-b851-f76156a086cf}",
+  );
+});
+
+test("factory default edition MBID template is valid", () => {
+  const validation = validateNamingConfig({
+    artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
+    album_track_path_single: "{Edition Title} ({Release Year}) {mbid-{Edition MbId}}/{track:00} - {Track Title}",
+    album_track_path_multi: "{Edition Title} ({Release Year}) {mbid-{Edition MbId}}/{medium:0}{track:00} - {Track Title}",
+    video_file: "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}",
+  });
+  assert.equal(Object.values(validation).every((result) => result.valid), true);
+});
+
 test("provider media and recording tokens render without track/video split", () => {
   const rendered = renderFileStem(
     "{mediaId} ; {providerMediaId} ; {recordingId} ; {recordingMbId}",

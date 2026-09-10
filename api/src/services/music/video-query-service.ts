@@ -632,15 +632,10 @@ function associatedVideoSelectSql(input: {
     FROM Tracks t
     JOIN AlbumEditions ar
       ON ar.id = t.album_edition_id
-      OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
     WHERE ar.release_group_mbid = @releaseGroupMbid
       AND ${CURATED_EDITION_PREDICATE}
       ${editionFilter}
-      AND (
-        t.recording_id = ${input.trackRecordingExpr}.id
-        OR (${input.trackRecordingExpr}.mbid IS NOT NULL
-            AND t.recording_mbid = ${input.trackRecordingExpr}.mbid)
-      )
+      AND t.recording_id = ${input.trackRecordingExpr}.id
   `;
   // Within the curated Editions the richest medium wins the label, then
   // disc/track order. This picks WHICH row labels the video on this page; it
@@ -769,26 +764,22 @@ export function getAlbumAssociatedVideos(
       audioRecordingMbidExpr: "audio.mbid",
       editionScoped,
     })}
-    FROM RecordingRelations rr
-    JOIN Recordings video ON video.id = rr.source_recording_id AND video.is_video = 1
-    JOIN Recordings audio ON audio.id = rr.target_recording_id
+    FROM AlbumEditions ar
+    JOIN Tracks t
+      ON t.album_edition_id = ar.id
+    JOIN Recordings audio
+      ON audio.id = t.recording_id
+    JOIN RecordingRelations rr
+      ON rr.target_recording_id = audio.id
+     AND rr.relation_type IN ('provider_video_for', 'music_video_for')
+    JOIN Recordings video
+      ON video.id = rr.source_recording_id
+     AND video.is_video = 1
     ${PROVIDER_OFFER_JOIN}
-    WHERE rr.relation_type IN ('provider_video_for', 'music_video_for')
+    WHERE ar.release_group_mbid = @releaseGroupMbid
+      AND ${CURATED_EDITION_PREDICATE}
+      ${editionFilter}
       AND ${mayFollowRelatedAudio}
-      AND EXISTS (
-        SELECT 1
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = @releaseGroupMbid
-          AND ${CURATED_EDITION_PREDICATE}
-          ${editionFilter}
-          AND (
-            t.recording_id = audio.id
-            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
-          )
-      )
   `).all(params) as AssociatedVideoRow[];
 
   // (A) Direct: the video Recording is itself a canonical Track of the Edition.
@@ -800,23 +791,16 @@ export function getAlbumAssociatedVideos(
       audioRecordingMbidExpr: "CAST(NULL AS TEXT)",
       editionScoped,
     })}
-    FROM Recordings video
+    FROM AlbumEditions ar
+    JOIN Tracks t
+      ON t.album_edition_id = ar.id
+    JOIN Recordings video
+      ON video.id = t.recording_id
+     AND video.is_video = 1
     ${PROVIDER_OFFER_JOIN}
-    WHERE video.is_video = 1
-      AND EXISTS (
-        SELECT 1
-        FROM Tracks t
-        JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-        WHERE ar.release_group_mbid = @releaseGroupMbid
-          AND ${CURATED_EDITION_PREDICATE}
-          ${editionFilter}
-          AND (
-            t.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
-          )
-      )
+    WHERE ar.release_group_mbid = @releaseGroupMbid
+      AND ${CURATED_EDITION_PREDICATE}
+      ${editionFilter}
   `).all(params) as AssociatedVideoRow[];
 
   // A video whose type is turned off in Settings, or that no library selected,

@@ -173,6 +173,12 @@ export class ArtistPipelineService {
                         );
                         return;
                     }
+                    if (event.kind === "matching") {
+                        const total = Math.max(event.total, 1);
+                        const progress = Math.min(85, 52 + Math.round((event.index / total) * 33));
+                        options.onProgress?.(progress, event.message);
+                        return;
+                    }
                     if (event.kind === "status") {
                         options.onProgress?.(52, event.message);
                     }

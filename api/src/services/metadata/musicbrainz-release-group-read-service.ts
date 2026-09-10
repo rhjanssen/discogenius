@@ -84,11 +84,10 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
               library_release.id DESC
           ) AS selection_rank
         FROM Albums selected_group
-        JOIN LibraryEditions library_release
-          ON 1 = 1
         JOIN AlbumEditions release
-          ON release.id = library_release.edition_id
-         AND release.release_group_id = selected_group.id
+          ON release.release_group_id = selected_group.id
+        JOIN LibraryEditions library_release
+          ON library_release.edition_id = release.id
         JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
@@ -1269,9 +1268,10 @@ export class MusicBrainzReleaseGroupReadService {
             } catch (error) {
                 console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
             }
+            return queryReleaseGroup(releaseGroupMbid);
         }
 
-        return queryReleaseGroup(releaseGroupMbid);
+        return releaseGroup;
     }
 
     static async getAlbum(releaseGroupMbid: string): Promise<AlbumContract | null> {

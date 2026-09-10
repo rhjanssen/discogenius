@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.8] - 2026-09-10
+
+### Fixed
+
+- Wait asynchronously for SQLite writer admission during command restart recovery. A busy writer at startup no longer leaves the executor marked as running without actually processing queued jobs.
+- Keep command workers running if restart recovery still throws, so queued refresh, rename and retag jobs are not left idle until the next process start.
+- Reset executor state when startup fails, and await startup before scheduling the library metadata rebuild. Scheduled-task initialization uses the same writer admission.
+- Add regressions for startup contention and recovery that still starts workers. Interrupted imports that may already have changed files still fail visibly rather than replaying unsafe file operations.
+- Stop running Interactive Import matching on every unmapped-files list request. The tab now returns the file list immediately; identification stays on the folder action.
+- Load album-page videos from that album's tracks instead of scanning the whole video catalogue, and join library editions from the album's editions instead of `ON 1 = 1`.
+- Report artist-refresh progress while matching provider releases after tracklists, so a long rematch no longer sits at "fetching tracklists (N/N)".
+- Write the edition title into the ALBUM tag and fail download import when canonical tags cannot be applied, so a successful import is not immediately listed as needing retag.
+- Add `{Edition MbId}` / `{Release MbId}` naming tokens (and `{mbid-{Edition MbId}}`) for the MusicBrainz release id. Fresh default templates use the edition token.
+
 ## [2.16.7] - 2026-09-09
 
 ### Fixed

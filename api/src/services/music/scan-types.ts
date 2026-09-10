@@ -44,4 +44,5 @@ export type ArtistScanProgressEvent =
     | { kind: "status"; message: string }
     | { kind: "albums_total"; total: number }
     | { kind: "album"; index: number; total: number; albumId: string; title: string; created: boolean }
-    | { kind: "album_tracks"; index: number; total: number; albumId: string; title: string };
+    | { kind: "album_tracks"; index: number; total: number; albumId: string; title: string }
+    | { kind: "matching"; index: number; total: number; message: string };

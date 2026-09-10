@@ -698,3 +698,46 @@ test("command history sorts earlier ISO-formatted failures below later space-del
     assert.equal(history[0].status, "completed");
     assert.equal(history[1].status, "failed");
 });
+
+test("executor startup waits for a writer before recovering interrupted commands", async (t) => {
+    const { CommandExecutor } = await import("./command-executor.js");
+    const loop = t.mock.method(CommandExecutor as any, "loop", async () => {});
+    const id = queueCommand();
+    claim(id, "previous-process", new Date(), 60_000);
+    let release!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>(resolve => { acquired = resolve; });
+    const blocker = dbModule.withSqliteWriteGate(() => {
+        acquired();
+        return new Promise<void>(resolve => { release = resolve; });
+    }, "test:startup-writer");
+    await ready;
+    let settled = false;
+    const startup = Promise.resolve().then(() => CommandExecutor.start());
+    void startup.then(() => { settled = true; }, () => { settled = true; });
+    try {
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.equal(settled, false, "startup must wait without failing while another writer holds the gate");
+        assert.equal(loop.mock.callCount(), 0);
+    } finally {
+        release();
+        await blocker;
+        try { await startup; } finally { CommandExecutor.stop(); }
+    }
+    assert.equal(queueModule.CommandQueueManager.get(id)?.status, "queued");
+    assert.equal(loop.mock.callCount(), 1, "recovery must be followed by queue execution");
+});
+
+test("executor still starts after startup recovery fails", async (t) => {
+    const { CommandExecutor } = await import("./command-executor.js");
+    const loop = t.mock.method(CommandExecutor as any, "loop", async () => {});
+    t.mock.method(queueModule.CommandQueueManager, "recoverInterruptedJobsByTypes", () => {
+        throw new Error("injected recovery failure");
+    });
+    try {
+        await CommandExecutor.start();
+        assert.equal(loop.mock.callCount(), 1, "workers must start even when restart recovery throws");
+    } finally {
+        CommandExecutor.stop();
+    }
+});

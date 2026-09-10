@@ -1603,7 +1603,14 @@ export class RefreshArtistService {
                     await import("./refresh-album-service.js");
                 let rematchedReleases = 0;
                 const yieldIngest = createMatchingYield();
-                for (const album of albums) {
+                const ingestTotal = Math.max(albums.length, 1);
+                for (const [albumIndex, album] of albums.entries()) {
+                    options.progress?.({
+                        kind: "matching",
+                        index: albumIndex + 1,
+                        total: ingestTotal,
+                        message: `matching ${provider.name} releases (${albumIndex + 1}/${albums.length})`,
+                    });
                     await yieldIngest();
                     const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
                         providerReleaseGroupMatches.get(String(album.provider_id)) || null,

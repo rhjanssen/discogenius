@@ -13,6 +13,10 @@ export type CanonicalAlbumMetadata = {
   editionReleaseDate: string | null;
   albumType: string | null;
   albumMbid: string | null;
+  /** MusicBrainz release (edition) MBID when a specific edition was resolved. */
+  editionMbid: string | null;
+  /** MusicBrainz release-group MBID. */
+  releaseGroupMbid: string | null;
   volumeCount: number | null;
   coverImageId: string | null;
   vibrantColor: string | null;
@@ -51,6 +55,8 @@ export function getCanonicalAlbumMetadata(input: {
       release.date AS edition_release_date,
       release_group.primary_type AS album_type,
       COALESCE(release.mbid, release_group.mbid) AS album_mbid,
+      release.mbid AS edition_mbid,
+      release_group.mbid AS release_group_mbid,
       release.media_count AS volume_count,
       release_group.cover_image_id AS cover_image_id,
       release_group.vibrant_color AS vibrant_color,
@@ -75,6 +81,8 @@ export function getCanonicalAlbumMetadata(input: {
     edition_release_date: string | null;
     album_type: string | null;
     album_mbid: string | null;
+    edition_mbid: string | null;
+    release_group_mbid: string | null;
     volume_count: number | null;
     cover_image_id: string | null;
     vibrant_color: string | null;
@@ -99,6 +107,8 @@ export function getCanonicalAlbumMetadata(input: {
     editionReleaseDate: row.edition_release_date || null,
     albumType: row.album_type || null,
     albumMbid: row.album_mbid || null,
+    editionMbid: row.edition_mbid || null,
+    releaseGroupMbid: row.release_group_mbid || null,
     volumeCount: row.volume_count || null,
     coverImageId: row.cover_image_id || null,
     vibrantColor: row.vibrant_color || null,
