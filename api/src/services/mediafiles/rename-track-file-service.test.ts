@@ -1351,14 +1351,15 @@ test("a failed rename database commit restores the original file path", async ()
     END;
   `);
 
+  let result: Awaited<ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles>>;
   try {
-    await assert.rejects(
-      () => renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]),
-      /simulated rename database failure/,
-    );
+    result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
   } finally {
     dbModule.db.exec("DROP TRIGGER IF EXISTS fail_rename_file_commit");
   }
+  assert.equal(result.renamed, 0);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0]?.error || "", /simulated rename database failure/);
 
   assert.equal(fs.existsSync(originalPath), true);
   assert.equal(fs.existsSync(seeded.expectedPath), false);
@@ -1418,14 +1419,14 @@ test("a failed duplicate-sidecar commit restores the staged source sidecar", asy
     END;
   `);
 
+  let result: Awaited<ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles>>;
   try {
-    await assert.rejects(
-      () => renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([audioId]),
-      /simulated duplicate sidecar database failure/,
-    );
+    result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([audioId]);
   } finally {
     dbModule.db.exec("DROP TRIGGER IF EXISTS fail_duplicate_sidecar_commit");
   }
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0]?.error || "", /simulated duplicate sidecar database failure/);
 
   assert.equal(fs.existsSync(sourceLyricPath), true);
   assert.equal(fs.existsSync(destinationLyricPath), true);

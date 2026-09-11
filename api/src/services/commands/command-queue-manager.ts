@@ -1514,6 +1514,10 @@ ${orderBy}
         }>;
 
         return rows.flatMap((row): StaleCommandLease[] => {
+            // Lidarr TrackedDownload stays Completed while Organize/Rename
+            // holds disk. A blocked import slot is parked work, not a hung
+            // execution — killing it poisons finished downloads.
+            if (row.blocked_reason) return [];
             const noProgressMs = Math.max(
                 0,
                 options.noProgressMs
@@ -1521,7 +1525,6 @@ ${orderBy}
                     ?? 0,
             );
             const progressStopped = noProgressMs > 0
-                && row.blocked_reason == null
                 && row.last_progress_at != null
                 && parseSqliteDate(row.last_progress_at) <= now.getTime() - noProgressMs;
 

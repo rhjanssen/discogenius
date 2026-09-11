@@ -279,6 +279,122 @@ test('watchdog terminates a heartbeating worker whose command stopped making pro
     assert.equal(CommandQueueManager.get(id)?.worker_id, owner);
 });
 
+test('a parked import-pending download is requeued after max attempts', () => {
+    const id = pushTrack('parked-import');
+    const owner = 'download-attempt:parked';
+    claim(id, owner);
+    db.prepare('UPDATE commands SET attempt = 3 WHERE id = ?').run(id);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progressPhase: 'waiting to import',
+        blockedReason: 'waiting on import slot',
+        payloadPatch: {
+            downloadState: { state: 'importPending', progress: 100 },
+            downloadImportHandoff: {
+                importPayload: {
+                    type: 'track',
+                    provider: 'synthetic',
+                    providerId: 'track-parked-import',
+                    path: path.join(tempDir, 'parked-import-staging'),
+                },
+                resolved: {
+                    title: 'Parked import',
+                    artist: 'Lease Fixture',
+                    cover: null,
+                },
+                executionStartedAt: null,
+            },
+        } as any,
+    });
+
+    const recovered = recoverInterruptedDownloadAttempts(
+        'Download worker watchdog detected stale execution',
+        new Date('2026-01-01T00:00:10.000Z'),
+    );
+    assert.deepEqual(recovered, { requeued: 1, failed: 0, ignored: 0 });
+    const queued = CommandQueueManager.get(id)!;
+    assert.equal(queued.status, 'queued');
+    assert.match(String(queued.payload.downloadState?.state || ''), /importPending/);
+});
+
+test('watchdog ignores a parked import-pending lease', async () => {
+    const id = pushTrack('parked-watchdog');
+    const owner = 'download-attempt:parked-watchdog';
+    claim(id, owner);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progressPhase: 'waiting to import',
+        blockedReason: 'waiting on import slot',
+        payloadPatch: {
+            downloadState: { state: 'importPending', progress: 100 },
+        } as any,
+    });
+    db.prepare(`
+        UPDATE commands
+        SET heartbeat_at = '2026-01-01 00:00:00',
+            lease_expires_at = '2026-01-01 00:00:01',
+            last_progress_at = '2026-01-01 00:00:00'
+        WHERE id = ?
+    `).run(id);
+
+    let terminations = 0;
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.worker = {
+        terminate: async () => {
+            terminations += 1;
+            return 1;
+        },
+    };
+
+    const terminated = await proxy.runWatchdogOnce(
+        new Date('2026-01-01T00:00:10.000Z'),
+    );
+    assert.equal(terminated, false);
+    assert.equal(terminations, 0);
+    assert.equal(CommandQueueManager.get(id)?.status, 'started');
+});
+
+test('watchdog does not kill a worker while another writer holds SQLite', async () => {
+    const id = pushTrack('mutex-watchdog');
+    const owner = 'download-attempt:mutex-watchdog';
+    claim(id, owner);
+    db.prepare(`
+        UPDATE commands
+        SET heartbeat_at = '2026-01-01 00:00:00',
+            lease_expires_at = '2026-01-01 00:00:01',
+            last_progress_at = '2026-01-01 00:00:00'
+        WHERE id = ?
+    `).run(id);
+
+    let terminations = 0;
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.worker = {
+        terminate: async () => {
+            terminations += 1;
+            return 1;
+        },
+    };
+
+    let release!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const blocker = databaseModule.withSqliteWriteGate(() => {
+        acquired();
+        return new Promise<void>((resolve) => { release = resolve; });
+    }, 'test:rename-writer');
+    await ready;
+    try {
+        const terminated = await proxy.runWatchdogOnce(
+            new Date('2026-01-01T00:00:10.000Z'),
+        );
+        assert.equal(terminated, false);
+        assert.equal(terminations, 0);
+    } finally {
+        release();
+        await blocker;
+    }
+});
+
 test('bounded infrastructure retries poison the third interrupted download attempt', () => {
     const id = pushTrack('poison');
     for (let attempt = 1; attempt <= 3; attempt += 1) {

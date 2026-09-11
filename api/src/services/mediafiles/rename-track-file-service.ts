@@ -61,6 +61,29 @@ type StagedRenameDeletion = {
   id: number;
 };
 
+async function commitRenameRecords(
+  dbUpdates: Array<{ sql: string; args: unknown[] }>,
+  historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]>,
+): Promise<void> {
+  if (dbUpdates.length === 0 && historyEvents.length === 0) return;
+  await withSqliteWriteGate(() => db.transaction(() => {
+    for (const update of dbUpdates) {
+      db.prepare(update.sql).run(...update.args);
+    }
+    for (const event of historyEvents) {
+      try {
+        recordHistoryEvent(event);
+      } catch (historyError) {
+        console.warn("[RenameTrackFileService] Failed to record rename history:", historyError);
+      }
+    }
+  })(), "rename:commit");
+}
+
+function yieldRenameLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function rollbackPhysicalMoves(moves: RenamePhysicalMove[]): string[] {
   const errors: string[] = [];
   for (const move of [...moves].reverse()) {
@@ -554,14 +577,15 @@ export class RenameTrackFileService {
     preloadExpectedPathIdentities(rows, pathCache);
     preloadExpectedTrackPathOccupants(pathCache);
 
-    const dbUpdates: Array<{ sql: string; args: unknown[] }> = [];
-    const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
     const fileEvents: RenameFileEvent[] = [];
     const physicalMoves: RenamePhysicalMove[] = [];
     const stagedDeletions: StagedRenameDeletion[] = [];
 
     for (const id of effectiveIds) {
+      const dbUpdates: Array<{ sql: string; args: unknown[] }> = [];
+      const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
       let pendingMove: RenamePhysicalMove | null = null;
+      let pendingDeletion: StagedRenameDeletion | null = null;
       try {
         const row = rowMap.get(id);
         if (!row) {
@@ -596,6 +620,7 @@ export class RenameTrackFileService {
             sql: `UPDATE ${tableName} SET expected_path = ?, needs_rename = 0, ${tableTouchedAtColumn(tableName)} WHERE ${idCol} = ?`,
             args: [expectedPath, decoded.id],
           });
+          await commitRenameRecords(dbUpdates, historyEvents);
           result.skipped++;
           continue;
         }
@@ -646,12 +671,12 @@ export class RenameTrackFileService {
           if (duplicateOfSameScope) {
             try {
               const stagedPath = stageRenameDeletion(resolvedFilePath, id);
-              stagedDeletions.push({
+              pendingDeletion = {
                 originalPath: resolvedFilePath,
                 stagedPath,
                 sourceRoot: resolveLibraryRootPath(row.library_root, resolvedFilePath),
                 id,
-              });
+              };
             } catch (removeError) {
               result.errors.push({ id, error: removeError instanceof Error ? removeError.message : String(removeError) });
               continue;
@@ -675,6 +700,9 @@ export class RenameTrackFileService {
                   : "merged-root-sidecar-duplicate",
               },
             });
+            await commitRenameRecords(dbUpdates, historyEvents);
+            stagedDeletions.push(pendingDeletion);
+            pendingDeletion = null;
             result.renamed++;
             continue;
           }
@@ -683,6 +711,7 @@ export class RenameTrackFileService {
             sql: `UPDATE ${tableName} SET expected_path = ?, needs_rename = 1 WHERE ${idCol} = ?`,
             args: [expectedPath, decoded.id],
           });
+          await commitRenameRecords(dbUpdates, historyEvents);
           result.conflicts++;
           continue;
         }
@@ -755,11 +784,15 @@ export class RenameTrackFileService {
           previousPath: resolvedFilePath,
         });
 
+        await commitRenameRecords(dbUpdates, historyEvents);
         physicalMoves.push(pendingMove);
         pendingMove = null;
         result.renamed++;
       } catch (error) {
-        const rollbackErrors = pendingMove ? rollbackPhysicalMoves([pendingMove]) : [];
+        const rollbackErrors = [
+          ...(pendingMove ? rollbackPhysicalMoves([pendingMove]) : []),
+          ...(pendingDeletion ? rollbackStagedDeletions([pendingDeletion]) : []),
+        ];
         const message = error instanceof Error ? error.message : String(error);
         result.errors.push({
           id,
@@ -768,36 +801,7 @@ export class RenameTrackFileService {
             : `${message}; filesystem rollback failed: ${rollbackErrors.join("; ")}`,
         });
       }
-    }
-
-    if (dbUpdates.length > 0 || historyEvents.length > 0) {
-      try {
-        await withSqliteWriteGate(() => db.transaction(() => {
-          for (const update of dbUpdates) {
-            db.prepare(update.sql).run(...update.args);
-          }
-          for (const event of historyEvents) {
-            try {
-              recordHistoryEvent(event);
-            } catch (historyError) {
-              console.warn("[RenameTrackFileService] Failed to record rename history:", historyError);
-            }
-          }
-        })(), "rename:commit");
-      } catch (error) {
-        const rollbackErrors = [
-          ...rollbackPhysicalMoves(physicalMoves),
-          ...rollbackStagedDeletions(stagedDeletions),
-        ];
-        if (rollbackErrors.length > 0) {
-          throw new Error(
-            `${error instanceof Error ? error.message : String(error)}; `
-            + `filesystem rollback failed: ${rollbackErrors.join("; ")}`,
-            { cause: error },
-          );
-        }
-        throw error;
-      }
+      await yieldRenameLoop();
     }
 
     for (const deletion of stagedDeletions) {

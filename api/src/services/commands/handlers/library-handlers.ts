@@ -209,7 +209,7 @@ export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ct
         progress: 100,
         description: `Renamed ${renamed} file(s), ${conflicts} conflict(s), ${missing} missing, ${cleanedDirectories} empty folder(s) cleaned`,
     });
-    throwOnFileErrors("Rename", errors);
+    throwOnFileErrors("Rename", errors, renamed);
 };
 
 export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx) => {
@@ -232,11 +232,18 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
-    throwOnFileErrors("Rename", result.errors);
+    throwOnFileErrors("Rename", result.errors, result.renamed);
 };
 
-function throwOnFileErrors(operation: string, errors: Array<{ id: number; error: string }>): void {
+function throwOnFileErrors(
+    operation: string,
+    errors: Array<{ id: number; error: string }>,
+    succeeded = 0,
+): void {
     if (errors.length === 0) return;
+    // Lidarr finishes the command when some files succeeded. A single
+    // unreadable extra must not fail a library-wide rename after hours of work.
+    if (succeeded > 0) return;
     const sample = errors.slice(0, 5).map(item => `file #${item.id}: ${item.error}`).join("; ");
     throw new Error(`${operation} finished with ${errors.length} file error(s). ${sample}`);
 }

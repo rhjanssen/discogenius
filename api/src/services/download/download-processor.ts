@@ -499,6 +499,12 @@ function isUnsafeInterruptedImport(payload: Record<string, any>): boolean {
     return state === 'importing' || Boolean(handoff?.executionStartedAt);
 }
 
+function isParkedImportPending(payload: Record<string, any>): boolean {
+    const state = String(payload.downloadState?.state || '');
+    const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+    return state === 'importPending' && !handoff?.executionStartedAt;
+}
+
 /**
  * Recover attempts owned by a dead dedicated download worker.
  *
@@ -539,6 +545,8 @@ export function recoverInterruptedDownloadAttempts(
         }
 
         const unsafeImport = isUnsafeInterruptedImport(payload);
+        const parkedImport = isParkedImportPending(payload);
+        const currentAttempt = Math.max(1, Number(row.attempt) || 1);
         const recovery = CommandQueueManager.recoverOwnedCommand({
             id: row.id,
             workerId: owner,
@@ -547,9 +555,13 @@ export function recoverInterruptedDownloadAttempts(
                 : reason,
             // Setting maxAttempts to the current attempt makes the recovery API
             // take its visible poison/fail branch for unsafe partial imports.
+            // Parked "waiting to import" is Lidarr Completed-download state: it
+            // must not burn retry budget while Rename/Retag holds the disk slot.
             maxAttempts: unsafeImport
-                ? Math.max(1, Number(row.attempt) || 1)
-                : DOWNLOAD_RECOVERY_MAX_ATTEMPTS,
+                ? currentAttempt
+                : parkedImport
+                    ? currentAttempt + 1
+                    : DOWNLOAD_RECOVERY_MAX_ATTEMPTS,
             retryDelayMs: unsafeImport ? 0 : DOWNLOAD_RECOVERY_RETRY_MS,
             now,
         });
@@ -2925,6 +2937,12 @@ export class DownloadProcessorWorkerProxy {
             return true;
         }
         if (!worker || this.stopping || this.restartInFlight || this.watchdogTerminationReason) {
+            return false;
+        }
+        // A long rename/retag commit holds the writer. Heartbeats queue behind
+        // that gate, so lease expiry here means "blocked on SQLite", not a dead
+        // worker. Lidarr's busy timeout waits; it does not abort the client.
+        if (isSqliteWriteMutexHeld()) {
             return false;
         }
         const stale = CommandQueueManager.findStaleExecutionLeases({

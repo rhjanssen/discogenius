@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.9] - 2026-09-11
+
+### Fixed
+
+- Treat "waiting to import" as Lidarr's completed-download state: an expired lease there no longer kills the download worker, and a parked import is requeued instead of fail-closed after three watchdog restarts.
+- Do not terminate the download worker while another writer holds SQLite. Heartbeats queue behind a long rename commit; that is a blocked worker, not a dead one.
+- Commit each renamed file's database row after its move, matching Lidarr `RenameTrackFileService`. A library-wide rename no longer holds one multi-minute transaction that starves downloads and refreshes.
+
 ## [2.16.8] - 2026-09-10
 
 ### Fixed

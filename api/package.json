@@ -1,6 +1,6 @@
 {
   "name": "discogenius-api",
-  "version": "2.16.8",
+  "version": "2.16.9",
   "private": true,
   "type": "module",
   "license": "MIT",
