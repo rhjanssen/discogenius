@@ -90,6 +90,7 @@ export interface MetadataConfigContract {
   upc_target: UpcTargetValue;
   write_audio_tags_policy?: WriteAudioTagsPolicyValue;
   embed_replaygain?: boolean;
+  scrub_audio_tags?: boolean;
 }
 
 export interface CatalogConfigContract {
@@ -253,6 +254,7 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     upc_target: expectOneOf(record.upc_target, UPC_TARGET_VALUES, "metadata.upc_target"),
     write_audio_tags_policy: expectOptionalOneOf(record.write_audio_tags_policy, WRITE_AUDIO_TAGS_POLICY_VALUES, "metadata.write_audio_tags_policy"),
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
+    scrub_audio_tags: expectOptionalBoolean(record.scrub_audio_tags, "metadata.scrub_audio_tags"),
   };
 }
 

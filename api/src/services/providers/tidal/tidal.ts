@@ -87,8 +87,8 @@ export function loadToken(): TidalToken | null {
   };
 }
 
-export function saveToken(token: TidalToken) {
-  saveStoredTidalToken(token);
+export async function saveToken(token: TidalToken) {
+  await saveStoredTidalToken(token);
 }
 
 let lastRefreshAttempt = 0;
@@ -575,7 +575,7 @@ export async function getUserInfo(options?: { refreshOn401?: boolean }) {
             ...token,
             user: userInfo
           };
-          saveToken(updatedToken);
+          await saveToken(updatedToken);
         } else {
           // console.log('[getUserInfo] User info unchanged, skipping save');
         }

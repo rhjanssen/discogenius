@@ -108,3 +108,58 @@ on NAS storage. Packet hashing therefore remains a benchmark, diagnostic, and
 future opt-in deep-verification mode. The default path uses atomic mutation,
 exact tag/cover rereads, and the inexpensive structural comparison.
 
+
+## Import and retag verification
+
+Audio imports and retagging use AudioTagService. Ordinary retagging reads the local catalog,
+local lyric sidecars and cached covers. Provider lyric discovery requires an
+explicit import/repair option. Preview does not rename sidecars.
+
+Lyrics retain line breaks. Verification reads native Vorbis LYRICS, M4A
+`©lyr` and ID3 USLT fields because music-metadata's parsed timed-lyric
+objects are not the original LRC text. Its common musicbrainz_trackid is a
+release-track ID, so it cannot substitute for musicbrainz_recordingid.
+MP3 recording IDs use Picard's UFID frame with owner `http://musicbrainz.org`.
+Retagging replaces the former custom `MusicBrainz Track Id` text frame.
+M4A ISRC writes use the iTunes freeform ISRC field and remove the conflicting
+raw isrc atom, including on the Mutagen compatibility path.
+
+The complete canonical recording ISRC list is written, following Picard's
+`mbjson.add_isrcs_to_metadata` and format writers: repeated Vorbis ISRC fields,
+multiple iTunes freeform ISRC values, and ID3 TSRC text values. ID3v2.3 uses
+Picard's slash-separated representation because that version lacks general
+multivalue text support. Verification compares normalized sets. A provider ISRC
+is a fallback only when the canonical list is empty; provider evidence is not
+silently added to MusicBrainz facts. A missing ISRC in MusicBrainz alone does
+not establish a bad match, and an edition barcode alone does not establish the
+identity of each track.
+
+The canonical tag integration tests write real FLAC, M4A and MP3 files against
+the active schema, embed a local sidecar with tag scrubbing enabled, and require
+a second retag and preview to report no changes. The M4A ISRC regression begins
+with an existing Apple freeform field and checks decoded audio preservation.
+
+## Managed fields and cleanup
+
+Audio and video retagging share the native-field diff. Unchanged files are
+skipped. Obsolete aliases of managed fields are removed during the verified
+write. Unrelated custom tags remain unless `scrub_audio_tags`, exposed as
+"Remove unmanaged tags", is enabled. Scrubbing detects custom-only changes
+and removes them in the same atomic write. Cover art follows its separate
+policy, and MP4 iTunSMPB playback information is preserved.
+
+Track and edition artist IDs come from their respective canonical credits.
+ISRCs and artist IDs retain multiple native values. MP4 uses native integer
+advisory/media-kind atoms; music videos have media kind 6. Barcode and original
+date fields follow Picard's format mappings. Explicit edition context supplies
+album identifiers; ambiguous provider membership does not invent one.
+
+Video imports tag the exact returned TrackFiles rows and fail on tag-write
+errors. Artist retagging also includes videos. Video tag writes verify the
+result and a second unchanged retag skips the file. The real MP4 integration
+test checks that encoded audio and video hashes remain unchanged.
+
+This is not full Picard feature parity. Composer and performer relationship
+metadata needs canonical acquisition support before it can be written. The
+real-file regression coverage here is FLAC, MP3, M4A and MP4; it does not prove
+every legacy container or arbitrary custom tag representation.

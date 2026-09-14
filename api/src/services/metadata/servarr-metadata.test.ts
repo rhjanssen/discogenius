@@ -325,7 +325,7 @@ test("syncReleaseGroup persists recording ISRCs when the catalog source supplies
       ...DOOM_DAYS_PAYLOAD.Releases[0],
       Tracks: [{
         ...DOOM_DAYS_PAYLOAD.Releases[0].Tracks[0],
-        Isrcs: ["GBUM71902200"],
+        Isrcs: ["GBUM71902200", "USUM70809583"],
         IsVideo: true,
       }],
     }],
@@ -335,7 +335,7 @@ test("syncReleaseGroup persists recording ISRCs when the catalog source supplies
 
   const recording = db.prepare("SELECT isrcs, is_video, artist_mbid FROM Recordings WHERE mbid = ?")
     .get("rec-1") as { isrcs: string | null; is_video: number; artist_mbid: string | null };
-  assert.equal(recording.isrcs, JSON.stringify(["GBUM71902200"]));
+  assert.equal(recording.isrcs, JSON.stringify(["GBUM71902200", "USUM70809583"]));
   assert.equal(recording.is_video, 1);
   assert.equal(recording.artist_mbid, "artist-mbid");
 
@@ -363,6 +363,12 @@ test("syncReleaseGroup persists recording ISRCs when the catalog source supplies
   assert.equal(creditCounts.editions, 1);
   assert.equal(creditCounts.recordings, 1);
   assert.equal(creditCounts.tracks, 1);
+  // A subsequent Servarr-shaped response omits ISRCs. It must retain every
+  // code supplied by the MusicBrainz-local response, even when detail changes.
+  fetchReturning({ ...DOOM_DAYS_PAYLOAD, title: "Doom Days (Servarr refresh)" });
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal((db.prepare("SELECT isrcs FROM Recordings WHERE mbid = ?").get("rec-1") as { isrcs: string }).isrcs,
+    JSON.stringify(["GBUM71902200", "USUM70809583"]));
 });
 
 test("syncReleaseGroup persists typed curated release-group fields from MusicBrainz-shaped detail", async () => {

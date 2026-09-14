@@ -1,5 +1,5 @@
 import fs from "fs";
-import { db } from "../../../database.js";
+import { db, withSqliteWriteGate } from "../../../database.js";
 import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
 import { resolveStoredLibraryPath } from "../../mediafiles/library-paths.js";
 import { streamingProviderManager } from "../../providers/index.js";
@@ -517,7 +517,7 @@ async function fetchProviderLyrics(providerId: string, providerMediaId: string):
   }
 }
 
-function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyricsRow, sourceMedia: ProviderTrackLyricsRow): void {
+async function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyricsRow, sourceMedia: ProviderTrackLyricsRow): Promise<void> {
   if (media.provider === sourceMedia.provider && media.id === sourceMedia.id) {
     return;
   }
@@ -531,7 +531,7 @@ function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyrics
     return;
   }
 
-  db.prepare(`
+  await withSqliteWriteGate(() => db.prepare(`
     INSERT OR IGNORE INTO RecordingRelations (
       source_recording_id,
       target_recording_id,
@@ -545,7 +545,7 @@ function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyrics
     targetRecordingId,
     sourceForeignRecordingId,
     targetForeignRecordingId,
-  );
+  ), "lyrics:shared-relation");
 }
 
 export async function getLyricsForProviderMedia(
@@ -571,7 +571,7 @@ export async function getLyricsForProviderMedia(
     ? lyricFileToResolved(cachedCounterpart.provider, lyricCandidateFile(cachedCounterpart), "shared_from_related_recording", cachedCounterpart.id)
     : null;
   if (cachedCounterpart && cachedCounterpartLyrics) {
-    recordSharedLyricsRelation(provider, media, cachedCounterpart);
+    await recordSharedLyricsRelation(provider, media, cachedCounterpart);
     return cachedCounterpartLyrics;
   }
 
@@ -587,13 +587,13 @@ export async function getLyricsForProviderMedia(
       ? lyricFileToResolved(candidate.provider, candidateFile, "shared_from_related_recording", candidate.id)
       : null;
     if (candidateFileLyrics) {
-      recordSharedLyricsRelation(provider, media, candidate);
+      await recordSharedLyricsRelation(provider, media, candidate);
       return candidateFileLyrics;
     }
 
     const candidateLyrics = await fetchProviderLyrics(candidate.provider, candidate.id);
     if (candidateLyrics) {
-      recordSharedLyricsRelation(provider, media, candidate);
+      await recordSharedLyricsRelation(provider, media, candidate);
       return providerLyricsToResolved(candidate.provider, candidateLyrics, "shared_from_related_recording", candidate.id);
     }
   }

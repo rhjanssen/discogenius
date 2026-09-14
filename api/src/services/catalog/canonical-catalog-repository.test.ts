@@ -32,8 +32,11 @@ test("canonical catalogue writes resolve boundaries once and persist integer rel
     const recordingId = repository.upsertRecording({
       mbid: "recording",
       title: "Track",
-      isrcs: ["GB-AAA-26-00001"],
+      isrcs: ["GB-AAA-26-00001", "USUM70809583"],
     });
+    repository.upsertRecording({ mbid: "recording", title: "Track refreshed without ISRC data" });
+    assert.deepEqual(JSON.parse((db.prepare("SELECT isrcs FROM Recordings WHERE id = ?")
+      .get(recordingId) as { isrcs: string }).isrcs), ["GB-AAA-26-00001", "USUM70809583"]);
     const trackId = repository.upsertTrack({
       mbid: "track",
       editionId,

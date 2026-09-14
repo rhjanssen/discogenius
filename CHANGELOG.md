@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.10] - 2026-09-14
+
+### Fixed
+
+- Use indexed provider IDs and batch video candidate offers during refresh, avoiding repeated queries while holding the SQLite writer.
+- Await writer admission for import identity, tag supplements, lyric indexes and relations, artwork selection, history, TIDAL account caching, and the affected artist/video refresh writes. Provider requests and file operations stay outside those write sections.
+- Read local lyric sidecars during retagging without provider requests. Preserve lyric line breaks and verify native FLAC, M4A and MP3 lyric tags.
+- Resolve provider tag supplements through the file's canonical edition and omit ambiguous provider edition context.
+- Embed every canonical recording ISRC using native multivalue tags, retain the complete list across catalog refreshes, and compare ISRCs as sets. Replace conflicting M4A ISRC fields and distinguish MusicBrainz recording IDs from release-track IDs during verification.
+- Write MP3 recording IDs into Picard's MusicBrainz UFID frame and replace the former custom text frame during retagging.
+- Preserve distinct track and edition artist credits, write all artist MBIDs, and correct native barcode, original-date, release-type and MP4 advisory fields.
+- Compare and verify music-video tags, skip unchanged files, and include videos in artist retagging. Use exact imported file identities and fail imports when video tagging fails.
+- Expose "Remove unmanaged tags" separately from tag writing. Remove obsolete managed fields by default; optionally remove custom tags in the same verified write, preserving cover policy and gapless playback information.
+- Show parked downloads as "Waiting to import" without stale import percentages or file counts. Report artwork, lyrics and tag-supplement phases during import.
+
 ## [2.16.9] - 2026-09-11
 
 ### Fixed

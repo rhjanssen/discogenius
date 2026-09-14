@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
 import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-matching-utils.js";
 
@@ -60,48 +60,52 @@ function identityStatusStorageId(entityId: string, provider?: string | null): st
     return normalizedProvider ? `${normalizedProvider}:${entityId}` : entityId;
 }
 
-function recordIdentityStatus(result: MetadataIdentityResult, provider?: string | null): void {
-    db.prepare(`
-        INSERT INTO metadata_identity_status (
-            entity_type, entity_id, status, confidence, method, message, data, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-            status = excluded.status,
-            confidence = excluded.confidence,
-            method = excluded.method,
-            message = excluded.message,
-            data = excluded.data,
-            updated_at = CURRENT_TIMESTAMP
-    `).run(
-        result.entityType,
-        identityStatusStorageId(result.entityId, provider),
-        result.status,
-        result.confidence,
-        result.method,
-        result.message || null,
-        result.data ? JSON.stringify(result.data) : null,
-    );
+async function recordIdentityStatus(result: MetadataIdentityResult, provider?: string | null): Promise<void> {
+    await withSqliteWriteGate(() => {
+        db.prepare(`
+            INSERT INTO metadata_identity_status (
+                entity_type, entity_id, status, confidence, method, message, data, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+                status = excluded.status,
+                confidence = excluded.confidence,
+                method = excluded.method,
+                message = excluded.message,
+                data = excluded.data,
+                updated_at = CURRENT_TIMESTAMP
+        `).run(
+            result.entityType,
+            identityStatusStorageId(result.entityId, provider),
+            result.status,
+            result.confidence,
+            result.method,
+            result.message || null,
+            result.data ? JSON.stringify(result.data) : null,
+        );
+    }, "metadata-identity:status");
 }
 
-function updateArtistIdentityColumns(artistId: string, result: MetadataIdentityResult, mbid?: string | null): void {
-    db.prepare(`
-        UPDATE ArtistMetadata SET
-            mbid = COALESCE(?, mbid),
-            status = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE mbid = ? OR CAST(id AS TEXT) = ?
-    `).run(mbid || null, result.status, artistId, artistId);
+async function updateArtistIdentityColumns(artistId: string, result: MetadataIdentityResult, mbid?: string | null): Promise<void> {
+    await withSqliteWriteGate(() => db.transaction(() => {
+        db.prepare(`
+            UPDATE ArtistMetadata SET
+                mbid = COALESCE(?, mbid),
+                status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE mbid = ? OR CAST(id AS TEXT) = ?
+        `).run(mbid || null, result.status, artistId, artistId);
 
-    db.prepare(`
-        UPDATE LibraryArtists SET
-            metadata_status = ?,
-            metadata_last_checked_at = CURRENT_TIMESTAMP,
-            metadata_match_method = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE artist_metadata_id IN (
-            SELECT id FROM ArtistMetadata WHERE mbid = ? OR CAST(id AS TEXT) = ?
-        )
-    `).run(result.status, result.method, artistId, artistId);
+        db.prepare(`
+            UPDATE LibraryArtists SET
+                metadata_status = ?,
+                metadata_last_checked_at = CURRENT_TIMESTAMP,
+                metadata_match_method = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE artist_metadata_id IN (
+                SELECT id FROM ArtistMetadata WHERE mbid = ? OR CAST(id AS TEXT) = ?
+            )
+        `).run(result.status, result.method, artistId, artistId);
+    })(), "metadata-identity:artist");
 }
 
 /**
@@ -207,14 +211,14 @@ export class MetadataIdentityService {
         const artist = db.prepare("SELECT id, name, mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as ArtistRow | undefined;
         if (!artist) {
             const result = this.result("artist", artistId, "error", 0, "local-row", "Artist is not in the Discogenius database");
-            recordIdentityStatus(result);
+            await recordIdentityStatus(result);
             return result;
         }
 
         if (artist.mbid && !options.force) {
             const result = this.result("artist", artistId, "verified", 1, "existing-mbid", undefined, { mbid: artist.mbid });
-            recordIdentityStatus(result);
-            updateArtistIdentityColumns(artistId, result, artist.mbid);
+            await recordIdentityStatus(result);
+            await updateArtistIdentityColumns(artistId, result, artist.mbid);
             return result;
         }
 
@@ -223,8 +227,8 @@ export class MetadataIdentityService {
             const best = candidates[0];
             if (!best) {
                 const result = this.result("artist", artistId, "unmatched", 0, "artist-search", "No MusicBrainz artist candidate found");
-                recordIdentityStatus(result);
-                updateArtistIdentityColumns(artistId, result);
+                await recordIdentityStatus(result);
+                await updateArtistIdentityColumns(artistId, result);
                 return result;
             }
 
@@ -233,8 +237,8 @@ export class MetadataIdentityService {
                 const result = this.result("artist", artistId, "ambiguous", best.score, "artist-search", "MusicBrainz artist match is ambiguous", {
                     candidates: candidates.slice(0, 5),
                 });
-                recordIdentityStatus(result);
-                updateArtistIdentityColumns(artistId, result);
+                await recordIdentityStatus(result);
+                await updateArtistIdentityColumns(artistId, result);
                 return result;
             }
 
@@ -243,13 +247,13 @@ export class MetadataIdentityService {
                 name: best.name,
                 disambiguation: best.disambiguation,
             });
-            recordIdentityStatus(result);
-            updateArtistIdentityColumns(artistId, result, best.id);
+            await recordIdentityStatus(result);
+            await updateArtistIdentityColumns(artistId, result, best.id);
             return result;
         } catch (error) {
             const result = this.result("artist", artistId, "error", 0, "artist-search", error instanceof Error ? error.message : String(error));
-            recordIdentityStatus(result);
-            updateArtistIdentityColumns(artistId, result);
+            await recordIdentityStatus(result);
+            await updateArtistIdentityColumns(artistId, result);
             return result;
         }
     }
@@ -279,7 +283,7 @@ export class MetadataIdentityService {
 
         if (offers.length === 0) {
             const result = this.result("album", albumId, "error", 0, "local-row", "Album offer is not in the Discogenius database");
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -295,7 +299,7 @@ export class MetadataIdentityService {
                 "Accepted provider edition matches disagree on canonical release group",
                 { releaseGroupIds: releaseGroupMbids },
             );
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
         if (releaseGroupMbids.length === 1) {
@@ -306,7 +310,7 @@ export class MetadataIdentityService {
                 ...(releaseMbids.length === 1 ? { editionId: releaseMbids[0] } : {}),
                 releaseGroupId: releaseGroupMbids[0],
             });
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -318,7 +322,7 @@ export class MetadataIdentityService {
             "canonical-catalog-only",
             "provider offer has not been matched to the canonical MusicBrainz catalog",
         );
-        recordIdentityStatus(result, options.provider);
+        await recordIdentityStatus(result, options.provider);
         return result;
     }
 
@@ -345,7 +349,7 @@ export class MetadataIdentityService {
 
         if (offers.length === 0) {
             const result = this.result("track", mediaId, "error", 0, "local-row", "Track offer is not in the Discogenius database");
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -361,7 +365,7 @@ export class MetadataIdentityService {
                 "Accepted provider track matches disagree on canonical recording",
                 { recordingIds },
             );
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
         const offer = accepted[0];
@@ -369,7 +373,7 @@ export class MetadataIdentityService {
             const result = this.result("track", mediaId, "verified", 1, "typed-provider-track-match", undefined, {
                 recordingId: offer.recording_mbid,
             });
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -383,19 +387,19 @@ export class MetadataIdentityService {
                 "track maps to a provisional local recording without a MusicBrainz ID",
                 { recordingId: offer.recording_id },
             );
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
 
         const result = this.result("track", mediaId, "unmatched", 0, "track-lookup", "No canonical recording linked to this provider track");
-        recordIdentityStatus(result, options.provider);
+        await recordIdentityStatus(result, options.provider);
         return result;
     }
 
-    static markVideoKnown(
+    static async markVideoKnown(
         videoId: string,
         options: Pick<MetadataIdentityOptions, "provider"> = {},
-    ): MetadataIdentityResult {
+    ): Promise<MetadataIdentityResult> {
         const offers = db.prepare(`
             SELECT video_match.recording_id, recording.mbid AS recording_mbid
             FROM ProviderItems item
@@ -423,7 +427,7 @@ export class MetadataIdentityService {
                 "Accepted provider video matches disagree on canonical recording",
                 { recordingIds },
             );
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
         const offer = accepted[0];
@@ -432,7 +436,7 @@ export class MetadataIdentityService {
             const result = this.result("video", videoId, "verified", 1, "musicbrainz-recording", undefined, {
                 recordingId: recordingMbid,
             });
-            recordIdentityStatus(result, options.provider);
+            await recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -447,7 +451,7 @@ export class MetadataIdentityService {
                 : "No matching MusicBrainz video recording has been linked yet",
             offer?.recording_id ? { recordingId: offer.recording_id } : undefined,
         );
-        recordIdentityStatus(result, options.provider);
+        await recordIdentityStatus(result, options.provider);
         return result;
     }
 

@@ -77,10 +77,10 @@ export function parseRecordingIsrcs(raw: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(text);
     if (Array.isArray(parsed)) {
-      return parsed.map((v) => normalizeIsrcCode(String(v))).filter(Boolean);
+      return [...new Set(parsed.map((v) => normalizeIsrcCode(String(v))).filter(Boolean))];
     }
   } catch {
     // fall through
   }
-  return text.split(/[,\s]+/).map(normalizeIsrcCode).filter(Boolean);
+  return [...new Set(text.split(/[;,/\s\0]+/).map(normalizeIsrcCode).filter(Boolean))];
 }

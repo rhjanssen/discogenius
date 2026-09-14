@@ -11,6 +11,12 @@ import {
   type ManagedTag,
 } from "./audio-tag-service.js";
 
+test("ISRC comparison requires the complete set regardless of order or repeated codes", () => {
+  assert.equal(isTagValueEqual("isrc", "USUM70809583, USUM70722793, USUM70809583", "USUM70722793; USUM70809583"), true);
+  assert.equal(isTagValueEqual("isrc", "USUM70809583", "USUM70722793; USUM70809583"), false);
+  assert.equal(isTagValueEqual("isrc", "USUM70000000", "USUM70722793; USUM70809583"), false);
+});
+
 test("audio tag maintenance includes cover-only work and permits a true no-op policy", () => {
   const metadata = {
     write_audio_tags_policy: "no",
@@ -124,8 +130,8 @@ test("audio tag writer emits Picard canonical barcode fields", () => {
   }];
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), { BARCODE: "123456789012" });
-  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), { "TXXX:Barcode": "123456789012" });
-  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".m4a"), { "----:com.apple.iTunes:Barcode": "123456789012" });
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), { "TXXX:BARCODE": "123456789012" });
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".m4a"), { "----:com.apple.iTunes:BARCODE": "123456789012" });
 });
 
 test("audio tag writer emits genre and label fields for common formats", () => {
@@ -210,7 +216,7 @@ test("buildAudioTagWriteMap maps tags correctly for MP3 (.mp3)", () => {
   ];
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), {
-    "TXXX:MusicBrainz Track Id": "rec-id",
+    "UFID:http://musicbrainz.org": "rec-id",
     "TXXX:MusicBrainz Album Type": "album; compilation",
     "TXXX:MusicBrainz Album Release Country": "US",
   });
@@ -254,7 +260,7 @@ test("resolved sidecar lyrics become the managed embedded-lyrics tag", () => {
     label: "Lyrics",
     ffmpegKey: "lyrics-eng",
     targetValue: "[00:01.00]Synced line",
-    aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
+    aliases: ["lyrics", "LYRICS", "unsyncedlyrics", "©lyr", "USLT"],
   });
   assert.equal(buildEmbeddedLyricsManagedTag(null), null);
 });
@@ -291,7 +297,7 @@ test("plain txt sidecar lyrics remain plain when reused for the embedded tag", (
     label: "Lyrics",
     ffmpegKey: "lyrics-eng",
     targetValue: "Plain line without a timestamp",
-    aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
+    aliases: ["lyrics", "LYRICS", "unsyncedlyrics", "©lyr", "USLT"],
   });
 });
 

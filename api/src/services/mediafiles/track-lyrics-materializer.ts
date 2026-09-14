@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { Config, getConfigSection } from "../config/config.js";
 import {
   getLyricsForProviderMedia,
@@ -74,10 +74,10 @@ function fallbackLibraryRoot(row: TrackLyricsRow, resolvedFilePath: string): str
     || (row.library_slot === "spatial" ? Config.getSpatialPath() : Config.getMusicPath());
 }
 
-function removeUnsyncedLyricSidecar(
+async function removeUnsyncedLyricSidecar(
   existingSidecar: { filePath: string; synchronized: boolean } | null,
   replacementPath: string,
-): void {
+): Promise<void> {
   if (!existingSidecar || existingSidecar.synchronized) return;
   const previousPath = path.resolve(existingSidecar.filePath);
   if (previousPath === path.resolve(replacementPath)) return;
@@ -88,7 +88,9 @@ function removeUnsyncedLyricSidecar(
   } catch (error) {
     console.warn(`[Lyrics] Failed to remove unsynced sidecar ${previousPath}:`, error);
   }
-  db.prepare("DELETE FROM LyricFiles WHERE file_path = ?").run(existingSidecar.filePath);
+  await withSqliteWriteGate(() => {
+    db.prepare("DELETE FROM LyricFiles WHERE file_path = ?").run(existingSidecar.filePath);
+  }, "lyrics:remove-sidecar-index");
 }
 
 function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
@@ -303,13 +305,13 @@ export class TrackLyricsMaterializer {
           result.saved++;
         }
         if (classified.synchronized) {
-          removeUnsyncedLyricSidecar(existingSidecar, lyricPath);
+          await removeUnsyncedLyricSidecar(existingSidecar, lyricPath);
         }
       }
 
       if (fs.existsSync(lyricPath)) {
         const libraryRoot = fallbackLibraryRoot(row, resolvedFilePath);
-        LibraryFilesService.upsertLibraryFile({
+        await withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
           artistId: String(row.artist_id),
           albumId: row.album_id == null ? null : String(row.album_id),
           mediaId: providerId,
@@ -329,7 +331,7 @@ export class TrackLyricsMaterializer {
           canonicalReleaseMbid: row.canonical_release_mbid,
           canonicalTrackMbid: row.canonical_track_mbid,
           canonicalRecordingMbid: row.canonical_recording_mbid,
-        });
+        }), "lyrics:index-sidecar");
       }
     };
 

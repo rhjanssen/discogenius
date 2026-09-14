@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { RefreshOptions } from "./scan-types.js";
 import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
@@ -295,7 +295,7 @@ function findCanonicalVideoViaSharedTrackOffer(
          AND video_rec.is_video = 1
         WHERE track_item.provider = ?
           AND track_item.entity_type = 'track'
-          AND CAST(track_item.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND track_item.provider_id = ?
     `).all(provider, providerId) as Array<{ id: number }>;
     const ids = [...new Set(rows.map((row) => Number(row.id)))];
     return ids.length === 1 ? ids[0] : null;
@@ -455,7 +455,7 @@ function findAudioRecordingByProviderTrack(
         JOIN Recordings rec ON rec.id = track_match.recording_id
         WHERE track.provider = ?
           AND track.entity_type = 'track'
-          AND CAST(track.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND track.provider_id = ?
           AND rec.is_video = 0
         ORDER BY rec.id
     `).all(provider, providerTrackId) as Array<{
@@ -1214,18 +1214,8 @@ function authoritativeAcceptedVideoOffers(recording: {
     id: number;
     mbid: string | null;
     youtube_video_id: string | null;
-}): AcceptedVideoOfferFacts[] {
+}, offers: AcceptedVideoOfferFacts[]): AcceptedVideoOfferFacts[] {
     if (!recording.mbid && !recording.youtube_video_id) return [];
-    const offers = db.prepare(`
-        SELECT
-          item.provider, item.provider_id, item.title, item.duration_ms,
-          item.release_date, item.isrc, video_match.method
-        FROM ProviderVideoMatches video_match
-        JOIN ProviderItems item ON item.id = video_match.provider_video_item_id
-        WHERE video_match.recording_id = ?
-          AND video_match.match_state = 'accepted'
-          AND item.entity_type = 'video'
-    `).all(recording.id) as AcceptedVideoOfferFacts[];
     if (recording.youtube_video_id) {
         return offers.filter((offer) =>
             offer.provider === "youtube-music"
@@ -1327,16 +1317,7 @@ function findVideoRecordingIdByTitle(
           r.video_variant,
           r.release_date,
           r.mbid,
-          r.youtube_video_id,
-          (
-            SELECT GROUP_CONCAT(DISTINCT pi.provider)
-            FROM ProviderItems pi
-            JOIN ProviderVideoMatches video_match
-              ON video_match.provider_video_item_id = pi.id
-             AND video_match.match_state = 'accepted'
-            WHERE pi.entity_type = 'video'
-              AND video_match.recording_id = r.id
-          ) AS providers
+          r.youtube_video_id
         FROM Recordings r
         WHERE r.is_video = 1 AND r.artist_mbid = ?
     `).all(artistMbid) as Array<{
@@ -1347,21 +1328,36 @@ function findVideoRecordingIdByTitle(
         release_date: string | null;
         mbid: string | null;
         youtube_video_id: string | null;
-        providers: string | null;
     }>).filter((row) => row.id !== exclude?.recordingId);
-    const authoritativeOffersByRecording = new Map<number, AcceptedVideoOfferFacts[]>();
-    const canonicalOffers = (row: (typeof rows)[number]): AcceptedVideoOfferFacts[] => {
-        const cached = authoritativeOffersByRecording.get(row.id);
-        if (cached) return cached;
-        const loaded = authoritativeAcceptedVideoOffers(row);
-        authoritativeOffersByRecording.set(row.id, loaded);
-        return loaded;
-    };
+    // Read offer evidence once for this match. A per-recording lookup inside
+    // candidate scoring made artist repair issue hundreds of thousands of reads.
+    // Keep this snapshot local: accepted matches may change before the next call.
+    const offersByRecording = new Map<number, AcceptedVideoOfferFacts[]>();
+    const offers = db.prepare(`
+        SELECT video_match.recording_id,
+               item.provider, item.provider_id, item.title, item.duration_ms,
+               item.release_date, item.isrc, video_match.method
+        FROM Recordings recording
+        JOIN ProviderVideoMatches video_match
+          ON video_match.recording_id = recording.id
+         AND video_match.match_state = 'accepted'
+        JOIN ProviderItems item ON item.id = video_match.provider_video_item_id
+        WHERE recording.artist_mbid = ? AND recording.is_video = 1
+          AND item.entity_type = 'video'
+    `).all(artistMbid) as Array<AcceptedVideoOfferFacts & { recording_id: number }>;
+    for (const offer of offers) {
+        const entries = offersByRecording.get(offer.recording_id) ?? [];
+        entries.push(offer);
+        offersByRecording.set(offer.recording_id, entries);
+    }
+    const canonicalOffers = (row: (typeof rows)[number]): AcceptedVideoOfferFacts[] =>
+        authoritativeAcceptedVideoOffers(row, offersByRecording.get(row.id) ?? []);
     const wantedClass = videoVariantClass(title);
     const incomingProvider = exclude?.provider ?? null;
     const isEligibleCandidate = (row: (typeof rows)[number]): boolean => {
         if (!exclude?.provider || !exclude.providerId) return true;
-        const siblings = otherOffersFromProvider(row.id, exclude.provider, exclude.providerId);
+        const siblings = (offersByRecording.get(row.id) ?? []).filter((offer) =>
+            offer.provider === exclude.provider && String(offer.provider_id) !== exclude.providerId);
         if (siblings.length === 0) {
             return true;
         }
@@ -1377,11 +1373,8 @@ function findVideoRecordingIdByTitle(
         return sameProviderOffersAreExactTwins(title, lengthMs, releaseDate, exclude.isrc, siblings);
     };
     const peerProvider = (row: (typeof rows)[number]): string | null => {
-        const providers = String(row.providers || "")
-            .split(",")
-            .map((provider) => provider.trim())
-            .filter(Boolean)
-            .sort();
+        const providers = [...new Set((offersByRecording.get(row.id) ?? [])
+            .map((offer) => offer.provider))].sort();
         return providers.find((provider) => provider !== incomingProvider)
             ?? providers[0]
             ?? null;
@@ -2308,7 +2301,7 @@ export class RefreshVideoService {
                 const detailed: ProviderVideo = await provider.getVideo(String(row.providerId));
                 const quality = String(detailed?.quality || "").trim();
                 if (quality) {
-                    const result = updateQuality.run(quality, row.provider, String(row.providerId));
+                    const result = await withSqliteWriteGate(() => updateQuality.run(quality, row.provider, String(row.providerId)), "refresh-video:quality");
                     if (result.changes > 0) updated += 1;
                 }
             } catch (error) {

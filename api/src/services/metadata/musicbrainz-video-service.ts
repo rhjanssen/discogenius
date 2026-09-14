@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { getMusicBrainzHeaders, scheduleMusicBrainzRequest } from "../mediafiles/fingerprint.js";
 import { ProviderMatchRepository } from "../music/provider-match-repository.js";
 import { claimYouTubeWatchId, parseYouTubeWatchId } from "../music/video-recording-catalog.js";
@@ -368,7 +368,7 @@ export async function syncMusicBrainzVideosForArtist(
     if (typeof active.getArtistVideoRecordings === "function") {
       const recordings = await active.getArtistVideoRecordings(artistMbid);
       let synced = 0;
-      db.transaction(() => {
+      await withSqliteWriteGate(() => db.transaction(() => {
         const context = createSyncContext();
         for (const recording of recordings.filter(isVideoRecording)) {
           const recordingId = upsertRecording(recording, { artistMbid, isVideo: true }, context);
@@ -376,7 +376,7 @@ export async function syncMusicBrainzVideosForArtist(
           upsertMusicBrainzVideoUrlOffers(recording, recordingId, artistMbid);
           synced++;
         }
-      })();
+      })(), "musicbrainz:videos");
       return synced;
     }
   } catch (error) {
@@ -401,7 +401,7 @@ export async function syncMusicBrainzVideosForArtist(
     const recordings = page.recordings || [];
     total = Number(page["recording-count"] ?? recordings.length);
 
-    db.transaction(() => {
+    await withSqliteWriteGate(() => db.transaction(() => {
       const context = createSyncContext();
       for (const recording of recordings.filter(isVideoRecording)) {
         const recordingId = upsertRecording(recording, {
@@ -412,7 +412,7 @@ export async function syncMusicBrainzVideosForArtist(
         upsertMusicBrainzVideoUrlOffers(recording, recordingId, artistMbid);
         synced++;
       }
-    })();
+    })(), "musicbrainz:videos");
 
     offset += MUSICBRAINZ_PAGE_SIZE;
     if (recordings.length === 0) {

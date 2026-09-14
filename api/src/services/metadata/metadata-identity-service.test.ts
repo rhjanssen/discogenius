@@ -24,7 +24,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM LibraryArtists").run();
-  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();});
+  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+});
 
 after(() => {
   dbModule.closeDatabase();
@@ -115,7 +116,7 @@ test("provider-scoped identity lookup keeps equal album and track IDs independen
   );
 });
 
-test("provider-scoped video identity does not pick the newest colliding offer", () => {
+test("provider-scoped video identity does not pick the newest colliding offer", async () => {
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, is_video, metadata_status)
     VALUES
@@ -143,11 +144,34 @@ test("provider-scoped video identity does not pick the newest colliding offer", 
     WHERE item.entity_type = 'video' AND item.provider_id = '99'
   `).run();
 
-  const result = identityModule.MetadataIdentityService.markVideoKnown("99", { provider: "tidal" });
+  const result = await identityModule.MetadataIdentityService.markVideoKnown("99", { provider: "tidal" });
 
   assert.equal(result.data?.recordingId, "tidal-video-recording");
   assert.equal(
     identityModule.MetadataIdentityService.getStatus("video", "99", { provider: "tidal" })?.data?.recordingId,
     "tidal-video-recording",
   );
+});
+
+test("identity writes yield while another worker owns SQLite and resume without losing status", async () => {
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:refresh-writer");
+  await ready;
+  let settled = false;
+  const pending = identityModule.MetadataIdentityService.resolveAlbum("missing", { provider: "tidal" })
+    .finally(() => { settled = true; });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(settled, false, "status writes must wait asynchronously for the writer");
+  } finally {
+    release();
+    await blocker;
+  }
+  const result = await pending;
+  assert.equal(identityModule.MetadataIdentityService.getStatus("album", "missing", { provider: "tidal" })?.status, result.status);
 });

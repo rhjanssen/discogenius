@@ -1,6 +1,6 @@
 import { CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -1909,51 +1909,53 @@ function configuredArtistPictureResolution(): number {
   }
 }
 
-function persistResolvedFallbackArtwork(
+async function persistResolvedFallbackArtwork(
   table: "Albums" | "ArtistMetadata",
   mbid: string | null | undefined,
   coverType: string,
   url: string,
-): void {
+): Promise<void> {
   const canonicalMbid = String(mbid || "").trim();
   if (!canonicalMbid) {
     return;
   }
 
   try {
-    const row = db.prepare(`SELECT images FROM ${table} WHERE mbid = ?`).get(canonicalMbid) as {
-      images?: string | null;
-    } | undefined;
-    const parsed = row?.images ? JSON.parse(row.images) : [];
-    const existing = Array.isArray(parsed) ? parsed : [];
-    const coverEntity = table === "Albums" ? "Album" : "Artist";
-    const replacedTypes = new Set(canonicalArtworkCoverTypes(coverEntity, coverType));
-    const retained = existing.filter((image) => (
-      !image
-      || typeof image !== "object"
-      || !isProviderFallbackImage(image)
-      || !replacedTypes.has(imageCoverType(image))
-    ));
-    const normalizedUrl = normalizeArtworkUrl(url);
-    const current = existing.find((image) => (
-      image
-      && typeof image === "object"
-      && isProviderFallbackImage(image)
-      && replacedTypes.has(imageCoverType(image))
-      && imageUrl(image) === normalizedUrl
-    ));
-    if (current && retained.length === existing.length - 1) {
-      return;
-    }
+    await withSqliteWriteGate(() => {
+      const row = db.prepare(`SELECT images FROM ${table} WHERE mbid = ?`).get(canonicalMbid) as {
+        images?: string | null;
+      } | undefined;
+      const parsed = row?.images ? JSON.parse(row.images) : [];
+      const existing = Array.isArray(parsed) ? parsed : [];
+      const coverEntity = table === "Albums" ? "Album" : "Artist";
+      const replacedTypes = new Set(canonicalArtworkCoverTypes(coverEntity, coverType));
+      const retained = existing.filter((image) => (
+        !image
+        || typeof image !== "object"
+        || !isProviderFallbackImage(image)
+        || !replacedTypes.has(imageCoverType(image))
+      ));
+      const normalizedUrl = normalizeArtworkUrl(url);
+      const current = existing.find((image) => (
+        image
+        && typeof image === "object"
+        && isProviderFallbackImage(image)
+        && replacedTypes.has(imageCoverType(image))
+        && imageUrl(image) === normalizedUrl
+      ));
+      if (current && retained.length === existing.length - 1) {
+        return;
+      }
 
-    db.prepare(`UPDATE ${table} SET images = ?, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?`)
-      .run(
-        JSON.stringify([
-          ...retained,
-          { coverType, url: normalizedUrl || url, source: "provider-fallback" },
-        ]),
-        canonicalMbid,
-      );
+      db.prepare(`UPDATE ${table} SET images = ?, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?`)
+        .run(
+          JSON.stringify([
+            ...retained,
+            { coverType, url: normalizedUrl || url, source: "provider-fallback" },
+          ]),
+          canonicalMbid,
+        );
+    }, "media-cover:fallback");
   } catch (error) {
     console.warn(`[MediaCoverService] Failed to cache fallback artwork for ${table}:${canonicalMbid}:`, error);
   }
@@ -2052,11 +2054,11 @@ export async function resolveAlbumArtwork(options: {
     } | undefined)?.id ?? null
     : null;
   const selectionRepository = new MediaCoverSelectionRepository(db);
-  const persistSelection = (
+  const persistSelection = async (
     sourceUrl: string,
     sourceKind: MediaCoverSourceKind,
     supplemental = false,
-  ): void => {
+  ): Promise<void> => {
     if (releaseGroupId == null) return;
     const cached = existingMediaCover(options.albumMbid, "Album", "Cover");
     if (!cached) return;
@@ -2066,13 +2068,13 @@ export async function resolveAlbumArtwork(options: {
     } catch {
       return;
     }
-    selectionRepository.select({
+    await withSqliteWriteGate(() => selectionRepository.select({
       releaseGroupId,
       sourceKind,
       contentHash,
       sourceIdentity: sourceUrl,
       supplemental,
-    });
+    }), "media-cover:selection");
   };
 
   const cacheSource = async (
@@ -2091,7 +2093,7 @@ export async function resolveAlbumArtwork(options: {
       sourceUrl,
       fulfilledBy,
     });
-    if (localUrl) persistSelection(sourceUrl, fulfilledBy, supplemental);
+    if (localUrl) await persistSelection(sourceUrl, fulfilledBy, supplemental);
     return localUrl;
   };
 
@@ -2131,7 +2133,7 @@ export async function resolveAlbumArtwork(options: {
       options.size ?? "origin",
     );
     if (providerUrl) {
-      persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
+      await persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
       const cached = await cacheSource(providerUrl, "provider", supplemental);
       if (cached) return cached;
     }
@@ -2788,7 +2790,7 @@ export async function resolveArtistArtwork(options: {
       options.size ?? configuredArtistPictureResolution(),
     );
     if (providerUrl) {
-      persistResolvedFallbackArtwork("ArtistMetadata", options.artistMbid, coverTypeForCache, providerUrl);
+      await persistResolvedFallbackArtwork("ArtistMetadata", options.artistMbid, coverTypeForCache, providerUrl);
       const cached = await cacheSource(providerUrl, "provider");
       if (cached) return cached;
     }

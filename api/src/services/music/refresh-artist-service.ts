@@ -310,34 +310,37 @@ export class RefreshArtistService {
             throw new Error("Cannot monitor 'Various Artists'. Please monitor specific compilations instead.");
         }
 
-        db.prepare(`
-            UPDATE ArtistMetadata SET
-                name = ?,
-                picture = COALESCE(?, picture),
-                cover_image_url = COALESCE(?, cover_image_url),
-                popularity = ?,
-                overview = COALESCE(NULLIF(TRIM(overview), ''), ?),
-                type = COALESCE(?, type),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE mbid = ?
-        `).run(
-            artistName,
-            posterUrl,
-            fanartUrl,
-            maxPopularity,
-            artistData.overview || null,
-            artistData.type || null,
-            artistMbid,
-        );
+        await withSqliteWriteGate(() => {
+            db.prepare(`
+                UPDATE ArtistMetadata SET
+                    name = ?,
+                    picture = COALESCE(?, picture),
+                    cover_image_url = COALESCE(?, cover_image_url),
+                    popularity = ?,
+                    overview = COALESCE(NULLIF(TRIM(overview), ''), ?),
+                    type = COALESCE(?, type),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE mbid = ?
+            `).run(
+                artistName,
+                posterUrl,
+                fanartUrl,
+                maxPopularity,
+                artistData.overview || null,
+                artistData.type || null,
+                artistMbid,
+            );
 
-        const metadataId = resolveArtistMetadataId(artistMbid);
-        if (metadataId != null && resolvedArtistFolder.path) {
-            stampArtistLibraryPath(metadataId, resolvedArtistFolder.path, resolvedArtistFolder.shouldReplaceExistingPath);
-        }
+            const metadataId = resolveArtistMetadataId(artistMbid);
+            if (metadataId != null && resolvedArtistFolder.path) {
+                stampArtistLibraryPath(metadataId, resolvedArtistFolder.path, resolvedArtistFolder.shouldReplaceExistingPath);
+            }
 
-        if (shouldMonitor) {
-            syncLibraryArtistMonitoring(artistMbid, true);
-        }
+            if (shouldMonitor) {
+                syncLibraryArtistMonitoring(artistMbid, true);
+            }
+
+        }, "refresh-artist:identity");
 
         return artistMbid;
     }
@@ -1351,7 +1354,7 @@ export class RefreshArtistService {
                 }
                 await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
             }
-            ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+            await withSqliteWriteGate(() => ArtistTopTrackService.rebuildForArtist(artistId, artistMbid), "refresh-artist:top-tracks");
             await this.refreshMissingAlbumReviews(artistMbid, options.forceUpdate === true);
             await this.precacheArtistMediaCovers(artistId, artistMbid);
             return;
@@ -1362,7 +1365,7 @@ export class RefreshArtistService {
                 `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
                 `(no providers connected)`,
             );
-            ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+            await withSqliteWriteGate(() => ArtistTopTrackService.rebuildForArtist(artistId, artistMbid), "refresh-artist:top-tracks");
             await this.precacheArtistMediaCovers(artistId, artistMbid);
             return;
         }
@@ -1794,7 +1797,7 @@ export class RefreshArtistService {
 
         await this.replayStaleTrackMatches(artistMbid);
 
-        ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+        await withSqliteWriteGate(() => ArtistTopTrackService.rebuildForArtist(artistId, artistMbid), "refresh-artist:top-tracks");
         await this.refreshMissingAlbumReviews(artistMbid, options.forceUpdate === true);
         await this.precacheArtistMediaCovers(artistId, artistMbid);
     }
@@ -1970,7 +1973,7 @@ export class RefreshArtistService {
                 }
             }
             console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
-            RefreshVideoService.upsertArtistVideos(artistId, videos, options);
+            await withSqliteWriteGate(() => RefreshVideoService.upsertArtistVideos(artistId, videos, options), "refresh-artist:videos");
             await this.precacheArtistVideoArtwork(artistId);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);

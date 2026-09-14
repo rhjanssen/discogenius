@@ -1478,3 +1478,22 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(importTrackRow.locator('[data-queue-track-status="importing"]')).toHaveCount(0);
   });
 });
+
+for (const width of [1440, 390]) {
+  test(`parked imports show waiting instead of misleading import progress at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stubDashboardApis(page, { queue: { total: 1, items: [{
+      id: 8311, provider: 'tidal', providerId: '248852091', type: 'album',
+      status: 'started', stage: 'import', state: 'importPending', progress: 100,
+      currentFileNum: 1, totalFiles: 20, title: 'Alice', artist: 'Tom Waits',
+      album_id: 'e95110a2-d81c-3291-910c-8b80c878f99c', quality: 'HIGH',
+      statusMessage: 'Waiting to import', created_at: '2026-09-12T23:51:06Z', updated_at: '2026-09-12T23:51:46Z',
+    }] } });
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('Alice', { exact: true })).toBeVisible();
+    await expect(page.getByTitle('Waiting to import', { exact: true })).toBeVisible();
+    await expect(page.getByText('Waiting to import', { exact: true })).toBeVisible();
+    await expect(page.getByRole('progressbar')).toHaveCount(0);
+    await expect(page.getByText('Importing', { exact: true })).toHaveCount(0);
+  });
+}

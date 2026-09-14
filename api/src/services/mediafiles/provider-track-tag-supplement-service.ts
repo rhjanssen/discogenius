@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
 
@@ -62,14 +62,14 @@ export class ProviderTrackTagSupplementService {
        AND track_item.entity_type = 'track'
       WHERE release_item.provider = ?
         AND release_item.entity_type = 'release'
-        AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
+        AND release_item.provider_id = ?
     `);
     const trackNeedsRefresh = db.prepare(`
       SELECT replay_gain, peak, copyright
       FROM ProviderItems
       WHERE provider = ?
         AND entity_type = 'track'
-        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        AND provider_id = ?
       LIMIT 1
     `);
 
@@ -96,11 +96,11 @@ export class ProviderTrackTagSupplementService {
           updated_at = CURRENT_TIMESTAMP
       WHERE provider = ?
         AND entity_type = 'track'
-        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        AND provider_id = ?
     `);
 
     let updated = 0;
-    db.transaction(() => {
+    await withSqliteWriteGate(() => db.transaction(() => {
       for (const track of tracks) {
         const supplement = providerTrackTagSupplements(track);
         if (supplement.replayGain == null && supplement.peak == null && !supplement.copyright) continue;
@@ -112,7 +112,7 @@ export class ProviderTrackTagSupplementService {
           supplement.providerId,
         ).changes;
       }
-    })();
+    })(), "provider-track-tag-supplements");
     return updated;
   }
 }

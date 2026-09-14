@@ -267,7 +267,7 @@ function makeRetagProgress(
 export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
         progress: 5,
-        description: 'Retag Artist - applying artist-wide audio tag plan',
+        description: 'Retag Artist - applying artist-wide tag plan',
     });
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds
@@ -279,6 +279,11 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
         artistIds,
         onProgress: makeRetagProgress(ctx, job, 'Retag Artist'),
     });
+    const videos = await VideoTagService.applyForArtists(artistIds);
+    result.retagged += videos.retagged;
+    result.skipped += videos.skipped;
+    result.missing += videos.missing;
+    result.errors.push(...videos.errors);
     if (result.retagged > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(artistIds), "retag:statistics");
     ctx.updateCommandDescription(job, {
         progress: 100,

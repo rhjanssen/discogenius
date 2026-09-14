@@ -87,6 +87,7 @@ MP4_STRING_KEYS = {
     "composer": "\xa9wrt",
     "lyrics": "\xa9lyr",
     "lyrics-eng": "\xa9lyr",
+    "isrc": "----:com.apple.iTunes:ISRC",
     # ffmpeg accepts the friendly metadata names and maps them to the native
     # iTunes atoms. Mutagen requires those atoms explicitly.
     "track": "trkn",
@@ -99,6 +100,10 @@ def mp4_key(raw_key: str) -> str:
 
 
 def mp4_value(key: str, value: str):
+    if key in {"rtng", "stik"}:
+        return [int(value)]
+    if key in {"----:com.apple.iTunes:ISRC", "----:com.apple.iTunes:MusicBrainz Artist Id", "----:com.apple.iTunes:MusicBrainz Album Artist Id"}:
+        return [part.strip().encode("utf-8") for part in value.split(";") if part.strip()]
     if key.startswith("----:"):
         return [value.encode("utf-8")]
     if key in {"trkn", "disk"}:
@@ -116,12 +121,17 @@ def write_mp4_metadata(media_path: str, payload_path: str) -> None:
     if audio.tags is None:
         audio.add_tags()
     for raw_key in payload.get("removeKeys", []):
-        audio.tags.pop(mp4_key(str(raw_key)), None)
+        key = mp4_key(str(raw_key))
+        if key == "----:com.apple.iTunes:ISRC":
+            audio.tags.pop("isrc", None)
+        audio.tags.pop(key, None)
     for raw_key, raw_value in payload.get("tags", {}).items():
         value = str(raw_value)
         if not value:
             continue
         key = mp4_key(str(raw_key))
+        if key == "----:com.apple.iTunes:ISRC":
+            audio.tags.pop("isrc", None)
         audio.tags[key] = mp4_value(key, value)
     audio.save()
 

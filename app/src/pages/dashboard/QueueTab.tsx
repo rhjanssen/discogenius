@@ -1187,7 +1187,6 @@ const QueueTab = () => {
                             {visibleGroupedDownloads.map((group) => {
                                 const isVideo = group.type === 'video';
                                 const coverUrl = isVideo ? mediaCoverProxySrc(group) : mediaCoverSrc(group);
-                                const isDownloading = group.status === 'downloading';
                                 const isFailed = group.status === 'failed';
                                 const groupedTrackItems = group.items.filter((item) => item.type === 'track');
 
@@ -1199,8 +1198,10 @@ const QueueTab = () => {
                                         ? mergeProgressSnapshots(getEmbeddedQueueItemProgress(firstItem), getProgress(firstItem.id))
                                         : undefined;
                                 const activeStage = activeItem?.stage || firstItem?.stage;
-                                const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing' || prog?.state === 'importPending');
-                                const isImportPending = !isDownloading && !isFailed && (activeStage === 'import' || prog?.state === 'importPending' || prog?.state === 'importing');
+                                const isImportPending = !isFailed && (prog?.state === 'importPending'
+                                    || (group.status !== 'downloading' && activeStage === 'import'));
+                                const isDownloading = group.status === 'downloading' && !isImportPending;
+                                const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing');
                                 const shouldRenderGroupedTrackRows = group.type === 'album' && groupedTrackItems.length > 0;
                                 const groupError = firstItem?.error || (isFailed ? prog?.statusMessage : undefined);
                                 const groupNavPath = getQueueGroupNavPath(group.type, firstItem);
@@ -1366,6 +1367,7 @@ const QueueTab = () => {
                                                     ? (
                                                         <div className={styles.downloadStateIndicator} title="Waiting to import">
                                                             {renderPendingIndicator(styles)}
+                                                            <Text className={styles.downloadStatusText}>Waiting to import</Text>
                                                         </div>
                                                       )
                                                     : renderPendingIndicator(styles)

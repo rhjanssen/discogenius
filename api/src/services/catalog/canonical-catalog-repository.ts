@@ -174,7 +174,7 @@ export class CanonicalCatalogRepository {
         -- mode already stored.
         disambiguation = COALESCE(excluded.disambiguation, Recordings.disambiguation),
         is_video = excluded.is_video,
-        isrcs = excluded.isrcs,
+        isrcs = COALESCE(excluded.isrcs, Recordings.isrcs),
         updated_at = CURRENT_TIMESTAMP
       RETURNING id
     `).get(
@@ -183,7 +183,7 @@ export class CanonicalCatalogRepository {
       input.lengthMs ?? null,
       optional(input.disambiguation),
       Number(Boolean(input.isVideo)),
-      JSON.stringify(input.isrcs || []),
+      input.isrcs == null ? null : JSON.stringify([...new Set(input.isrcs)]),
     ) as { id: number };
     return row.id;
   }

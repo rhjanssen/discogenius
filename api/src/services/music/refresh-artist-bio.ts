@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { streamingProviderManager } from "../providers/index.js";
 import { firstProviderEditorialText } from "../providers/provider-editorial-text.js";
 import type { RefreshOptions } from "./scan-types.js";
@@ -165,12 +165,12 @@ export async function refreshArtistBiography(artistId: string, options: RefreshO
         });
 
         if (editorial) {
-            db.prepare(`
+            await withSqliteWriteGate(() => db.prepare(`
                 UPDATE ArtistMetadata SET
                     overview = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE mbid = ? OR CAST(id AS TEXT) = ?
-            `).run(editorial.text, artistMbid || artistId, artistId);
+            `).run(editorial.text, artistMbid || artistId, artistId), "refresh-artist:biography");
             return;
         }
 

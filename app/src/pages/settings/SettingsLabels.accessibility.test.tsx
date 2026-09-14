@@ -73,7 +73,8 @@ describe("Settings control labels", () => {
       </>,
     );
 
-    expect(screen.getByRole("combobox", { name: "Write audio tags" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Write media tags" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Remove unmanaged tags" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Preferred artwork" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Music Library Path" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Spatial Library Path" })).toBeInTheDocument();

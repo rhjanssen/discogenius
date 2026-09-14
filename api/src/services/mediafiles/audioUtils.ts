@@ -481,7 +481,10 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
         return true;
     }
     if (tagLibResult.handled) {
-        console.warn(`[MediaTags] TagLib write failed for ${filePath}; using compatibility backend: ${tagLibResult.error || "unknown error"}`);
+        console.warn(`[MediaTags] TagLib write failed for ${filePath}: ${tagLibResult.error || "unknown error"}`);
+        // FFmpeg cannot reproduce every native ID3/Xiph field, including UFID.
+        // Keep the original intact when the validated writer rejects a change.
+        if (!MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
     }
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return writeMp4MetadataWithMutagen(filePath, tags, removeKeys);

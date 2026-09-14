@@ -1,4 +1,6 @@
 import fs from "fs";
+import { nativeMediaTagKeys } from "./media-tag-io.js";
+import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import os from "node:os";
 import path from "node:path";
 import * as mm from "music-metadata";
@@ -30,7 +32,7 @@ import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
 import { cleanProviderText } from "./metadata-files.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
-import { classifyLyricsForSidecar } from "../extras/lyrics/lyric-sidecar.js";
+import { classifyLyricsForSidecar, findAdjacentLyricSidecar } from "../extras/lyrics/lyric-sidecar.js";
 
 export type ManagedTag = {
   key: string;
@@ -54,7 +56,7 @@ export function buildEmbeddedLyricsManagedTag(
     label: "Lyrics",
     ffmpegKey: "lyrics-eng",
     targetValue,
-    aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
+    aliases: ["lyrics", "LYRICS", "unsyncedlyrics", "©lyr", "USLT"],
   } : null;
 }
 
@@ -340,13 +342,16 @@ async function resolvePreferredEmbeddedCover(
 
 async function resolveLyricsForRetagRow(
   row: RetagTrackRow,
+  mediaPath: string,
   allowProviderFetch: boolean,
   cache?: Map<string, ResolvedLyrics | null>,
-): Promise<ResolvedLyrics | null> {
+): Promise<{ text?: string | null; subtitles?: string | null } | null> {
+  const sidecar = findAdjacentLyricSidecar(mediaPath);
+  if (sidecar) return sidecar;
+  if (!allowProviderFetch) return null;
   if (!row.file_provider_id) return null;
   const key = providerMediaLyricsKey(row.file_provider, row.file_provider_id);
   if (cache?.has(key)) return cache.get(key) ?? null;
-  if (!allowProviderFetch) return null;
   const lyrics = await getLyricsForProviderMedia(row.file_provider_id, row.file_provider);
   cache?.set(key, lyrics);
   return lyrics;
@@ -395,7 +400,7 @@ function normalizeReleaseDate(value: string | null | undefined): string | null {
   return match ? match[0] : raw;
 }
 
-function parseArtistCreditNames(artistCredit?: string | null, data?: string | null): string[] {
+export function parseArtistCreditNames(artistCredit?: string | null, data?: string | null): string[] {
   const names: string[] = [];
 
   if (data) {
@@ -425,6 +430,16 @@ function parseArtistCreditNames(artistCredit?: string | null, data?: string | nu
   }
 
   return Array.from(new Set(names));
+}
+
+export function parseArtistCreditIds(data?: string | null): string[] {
+  if (!data) return [];
+  try {
+    const parsed = JSON.parse(data);
+    const credits = Array.isArray(parsed) ? parsed : parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits || [];
+    if (!Array.isArray(credits)) return [];
+    return [...new Set(credits.map(credit => String(credit?.artist?.id || credit?.id || "").trim()).filter(Boolean))];
+  } catch { return []; }
 }
 
 function collapseWhitespace(value: string): string {
@@ -493,6 +508,19 @@ function normalizeComparableValue(value: string | null): string | null {
 }
 
 export function isTagValueEqual(tagKey: string, current: string | null, target: string | null): boolean {
+  if (tagKey === "isrc") {
+    const actual = parseRecordingIsrcs(current).sort();
+    const expected = parseRecordingIsrcs(target).sort();
+    return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+  }
+  if (tagKey === "musicbrainz_artistid" || tagKey === "musicbrainz_albumartistid") {
+    const values = (raw: string | null) => [...new Set((raw || "").toLowerCase().split(/[;,/\s]+/).filter(Boolean))].sort();
+    return JSON.stringify(values(current)) === JSON.stringify(values(target));
+  }
+  if (tagKey === "lyrics") {
+    return (current || "").replace(/\r\n?/gu, "\n").trim()
+      === (target || "").replace(/\r\n?/gu, "\n").trim();
+  }
   const normCurrent = normalizeComparableValue(current);
   const normTarget = normalizeComparableValue(target);
   if (normCurrent === normTarget) {
@@ -646,9 +674,8 @@ function evaluateFingerprintRecordingMatch(row: RetagTrackRow, recording: MusicB
   const albumScore = normalizedAlbumTitle && recordingAlbumScores.length > 0
     ? Math.max(...recordingAlbumScores)
     : 0;
-  const normalizedTrackIsrc = normalizeIdentifier(row.media_isrc);
-  const isrcMatch = normalizedTrackIsrc.length > 0
-    && recording.isrcs.some((isrc) => normalizeIdentifier(isrc) === normalizedTrackIsrc);
+  const trackIsrcs = new Set(parseRecordingIsrcs(row.media_isrc));
+  const isrcMatch = recording.isrcs.some((isrc) => trackIsrcs.has(normalizeIdentifier(isrc)));
 
   const rowDuration = Number(row.media_duration || 0);
   const recordingDuration = Number(recording.durationSeconds || 0);
@@ -780,7 +807,9 @@ function buildNativeLookup(metadata: mm.IAudioMetadata): Map<string, string> {
 
   for (const tagSet of Object.values(metadata.native || {})) {
     for (const tag of tagSet as Array<{ id?: string; value?: unknown }>) {
-      const value = normalizeValue(tag?.value);
+      const text = tag?.id === "USLT" && tag.value && typeof tag.value === "object"
+        ? (tag.value as { text?: unknown }).text : tag?.value;
+      const value = typeof text === "string" ? text.trim() : normalizeValue(text);
       if (!value) {
         continue;
       }
@@ -941,7 +970,7 @@ function mergeMp4KeyedNativeLookup(metadata: mm.IAudioMetadata, lookup: Map<stri
         continue;
       }
 
-      const value = normalizeValue(tag?.value);
+      const value = typeof tag?.value === "string" ? tag.value.trim() : normalizeValue(tag?.value);
       if (!value) {
         continue;
       }
@@ -1137,7 +1166,10 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
       return normalizeValue(typeVal) || fallback();
     }
     case "musicbrainz_recordingid":
-      return normalizeValue(common.musicbrainz_recordingid || common.musicbrainz_trackid) || fallback();
+      if (Object.keys(metadata.native || {}).some(format => format.startsWith("ID3v2"))) {
+        return normalizeValue(common.musicbrainz_recordingid);
+      }
+      return normalizeValue(common.musicbrainz_recordingid) || fallback();
     case "musicbrainz_albumid":
       return normalizeValue(common.musicbrainz_albumid) || fallback();
     case "musicbrainz_artistid":
@@ -1320,7 +1352,9 @@ export class AudioTagService {
         canonical_track.position AS media_track_number,
         canonical_track.medium_position AS media_volume_number,
         COALESCE(
-          CASE WHEN json_valid(canonical_recording.isrcs) THEN json_extract(canonical_recording.isrcs, '$[0]') ELSE canonical_recording.isrcs END,
+          CASE WHEN json_valid(canonical_recording.isrcs)
+            THEN (SELECT group_concat(value, '; ') FROM json_each(canonical_recording.isrcs))
+            ELSE NULLIF(canonical_recording.isrcs, '') END,
           provider_track.isrc
         ) AS media_isrc,
         COALESCE(
@@ -1393,7 +1427,7 @@ export class AudioTagService {
             FROM ProviderItems candidate
             WHERE candidate.entity_type = 'track'
               AND CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NOT NULL
-              AND CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+              AND candidate.provider_id = lf.provider_id
               AND lf.provider IS NOT NULL
               AND candidate.provider = lf.provider
             LIMIT 1
@@ -1403,8 +1437,18 @@ export class AudioTagService {
         ON provider_album.id = (
           SELECT pem.provider_edition_item_id
           FROM ProviderEditionMembers pem
+          JOIN ProviderItems edition_item ON edition_item.id = pem.provider_edition_item_id
+            AND edition_item.provider = provider_track.provider
+            AND edition_item.entity_type = 'release'
           WHERE pem.member_item_id = provider_track.id
-          LIMIT 1
+            AND (canonical_release.id IS NULL OR EXISTS (
+              SELECT 1 FROM ProviderEditionMatches edition_match
+              WHERE edition_match.provider_edition_item_id = pem.provider_edition_item_id
+                AND edition_match.edition_id = canonical_release.id
+                AND edition_match.match_state = 'accepted'
+            ))
+          GROUP BY pem.member_item_id
+          HAVING COUNT(DISTINCT pem.provider_edition_item_id) = 1
         )
       WHERE ${whereClause}
         AND (canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR lf.canonical_track_mbid IS NOT NULL OR lf.canonical_recording_mbid IS NOT NULL OR provider_track.provider_id IS NOT NULL OR lf.provider_id IS NOT NULL)
@@ -1446,6 +1490,13 @@ export class AudioTagService {
   }
 
   private static getAlbumArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
+    if (row.album_mbid) {
+      const credits = db.prepare(`SELECT COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS name
+        FROM ReleaseArtistCredits credit JOIN AlbumEditions edition ON edition.id = credit.edition_id
+        JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+        WHERE edition.mbid = ? ORDER BY credit.ordinal`).all(row.album_mbid) as Array<{ name: string }>;
+      if (credits.length) return credits.map(credit => credit.name);
+    }
     if (row.album_mb_release_group_id) {
       const canonicalRows = db.prepare(`
         SELECT COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS name
@@ -1488,6 +1539,31 @@ export class AudioTagService {
     return [fallbackArtistName];
   }
 
+  private static getArtistMbids(row: RetagTrackRow, album: boolean): string[] {
+    const queries: Array<[string, string | null]> = album ? [
+      [`SELECT artist.mbid FROM ReleaseArtistCredits credit JOIN AlbumEditions edition ON edition.id = credit.edition_id
+        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE edition.mbid = ? ORDER BY credit.ordinal`, row.album_mbid],
+      [`SELECT artist.mbid FROM ReleaseGroupArtistCredits credit JOIN Albums album ON album.id = credit.release_group_id
+        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE album.mbid = ? ORDER BY credit.ordinal`, row.album_mb_release_group_id],
+    ] : [
+      [`SELECT artist.mbid FROM TrackArtistCredits credit JOIN Tracks track ON track.id = credit.track_id
+        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE track.mbid = ? ORDER BY credit.ordinal`, row.canonical_track_mbid],
+      [`SELECT artist.mbid FROM RecordingArtistCredits credit JOIN Recordings recording ON recording.id = credit.recording_id
+        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE recording.mbid = ? ORDER BY credit.ordinal`, row.media_mbid],
+    ];
+    for (const [query, mbid] of queries) {
+      if (!mbid) continue;
+      const rows = db.prepare(query).all(mbid) as Array<{ mbid: string | null }>;
+      const ids = rows.map(item => item.mbid).filter((id): id is string => Boolean(id));
+      if (ids.length) return [...new Set(ids)];
+    }
+    if (!album && row.recording_data) {
+      const ids = parseArtistCreditIds(row.recording_data);
+      if (ids.length) return ids;
+    }
+    return row.artist_mbid ? [row.artist_mbid] : [];
+  }
+
   private static getTrackCountForDisc(albumId: number | null, volumeNumber: number, canonicalReleaseMbid?: string | null): number | null {
     if (canonicalReleaseMbid) {
       const canonicalRow = db.prepare(`
@@ -1515,8 +1591,8 @@ export class AudioTagService {
 
     // .opus is Ogg-container Vorbis comments, same scheme as FLAC/OGG
     // (matches Xiph tag-type handling, which covers Opus identically).
-    const isFlac = ext === ".flac" || ext === ".ogg" || ext === ".opus";
-    const isMp3 = ext === ".mp3";
+    const isFlac = [".flac", ".ogg", ".oga", ".opus"].includes(ext);
+    const isMp3 = ext === ".mp3" || ext === ".aac";
     const isM4a = ext === ".m4a" || ext === ".mp4";
     const isWma = ext === ".wma";
     const isApe = ext === ".ape";
@@ -1582,10 +1658,10 @@ export class AudioTagService {
       replaygain_track_peak: "TXXX:REPLAYGAIN_TRACK_PEAK",
       isrc: "isrc",
       copyright: "copyright",
-      barcode: "TXXX:Barcode",
+      barcode: "TXXX:BARCODE",
       label: "publisher",
       provider_url: "TXXX:PROVIDER_URL",
-      musicbrainz_recordingid: "TXXX:MusicBrainz Track Id",
+      musicbrainz_recordingid: "UFID:http://musicbrainz.org",
       musicbrainz_albumid: "TXXX:MusicBrainz Album Id",
       musicbrainz_artistid: "TXXX:MusicBrainz Artist Id",
       musicbrainz_albumartistid: "TXXX:MusicBrainz Album Artist Id",
@@ -1600,6 +1676,7 @@ export class AudioTagService {
     };
 
     const m4aMap: Record<string, string> = {
+      media_kind: "stik",
       lyrics: "lyrics-eng",
       title: "title",
       artist: "artist",
@@ -1612,7 +1689,7 @@ export class AudioTagService {
       disc_number: "----:com.apple.iTunes:Disc Number",
       disc_count: "----:com.apple.iTunes:Disc Count",
       date: "date",
-      original_date: "----:com.apple.iTunes:Original Date",
+      original_date: "----:com.apple.iTunes:originaldate",
       media_format: "----:com.apple.iTunes:MEDIA",
       genre: "genre",
       comment: "©cmt",
@@ -1621,7 +1698,7 @@ export class AudioTagService {
       replaygain_track_peak: "----:com.apple.iTunes:REPLAYGAIN_TRACK_PEAK",
       isrc: "isrc",
       copyright: "copyright",
-      barcode: "----:com.apple.iTunes:Barcode",
+      barcode: "----:com.apple.iTunes:BARCODE",
       label: "----:com.apple.iTunes:LABEL",
       provider_url: "----:com.apple.iTunes:PROVIDER_URL",
       musicbrainz_recordingid: "----:com.apple.iTunes:MusicBrainz Track Id",
@@ -1723,7 +1800,9 @@ export class AudioTagService {
     };
 
     for (const tag of tags) {
-      const value = normalizeComparableValue(tag.targetValue);
+      const value = tag.key === "lyrics"
+        ? tag.targetValue.replace(/\r\n?/gu, "\n").trim()
+        : normalizeComparableValue(tag.targetValue);
       if (!value) {
         continue;
       }
@@ -1734,6 +1813,8 @@ export class AudioTagService {
       if (isFlac && (tag.key === "track" || tag.key === "disc")) {
         continue;
       }
+      // ID3 TRCK/TPOS and MP4 trkn/disk already contain number and total.
+      if ((isMp3 || isM4a) && ["track_number", "track_count", "disc_number", "disc_count"].includes(tag.key)) continue;
 
       const formatKey = getFormatKey(tag);
       output[formatKey] = value;
@@ -1907,7 +1988,10 @@ export class AudioTagService {
     }
 
     if (nextRow.media_isrc && !nextRow.media_mbid) {
-      const recordings = await lookupMusicBrainzRecordingsByIsrc(nextRow.media_isrc);
+      const recordings: MusicBrainzRecording[] = [];
+      for (const isrc of parseRecordingIsrcs(nextRow.media_isrc)) {
+        recordings.push(...await lookupMusicBrainzRecordingsByIsrc(isrc));
+      }
       let bestIsrcMatch: FingerprintRecordingMatch | null = null;
 
       for (const recording of recordings) {
@@ -2053,7 +2137,7 @@ export class AudioTagService {
     }
 
     const fallbackIsrc = !nextRow.media_isrc && bestFingerprintMatch.recording.isrcs.length > 0
-      ? bestFingerprintMatch.recording.isrcs[0]
+      ? bestFingerprintMatch.recording.isrcs.join('; ')
       : null;
     const primaryArtistCredit = bestFingerprintMatch.recording.artistCredits?.[0];
 
@@ -2093,6 +2177,8 @@ export class AudioTagService {
     const fallbackArtistName = String(row.primary_artist_name || "").trim() || "Unknown Artist";
     const artistNames = this.getTrackArtistNames(row, fallbackArtistName);
     const albumArtistNames = this.getAlbumArtistNames(row, fallbackArtistName);
+    const artistMbids = this.getArtistMbids(row, false);
+    const albumArtistMbids = this.getArtistMbids(row, true);
     const discNumber = Number(row.media_volume_number || 1);
     const discCount = Number(row.album_num_volumes || 1);
     const trackCount = this.getTrackCountForDisc(row.album_id, discNumber, row.canonical_release_mbid || row.album_mbid);
@@ -2101,30 +2187,28 @@ export class AudioTagService {
     // Resolve the MusicBrainz release track ID from the canonical Tracks table
     let releaseTrackMbid: string | null = row.canonical_track_mbid;
     if (!releaseTrackMbid && row.album_mbid && row.media_mbid) {
-      const trackRow = db.prepare(`
+      const trackRows = db.prepare(`
         SELECT mbid FROM Tracks
         WHERE release_mbid = ?
           AND recording_mbid = ?
           AND medium_position = COALESCE(?, 1)
           AND position = COALESCE(?, 1)
-        LIMIT 1
-      `).get(
+      `).all(
         row.album_mbid,
         row.media_mbid,
         row.media_volume_number,
         row.media_track_number
-      ) as { mbid: string } | undefined;
+      ) as Array<{ mbid: string }>;
 
-      if (trackRow) {
-        releaseTrackMbid = trackRow.mbid;
+      if (trackRows.length === 1) {
+        releaseTrackMbid = trackRows[0].mbid;
       } else {
-        const fallbackRow = db.prepare(`
+        const fallbackRows = db.prepare(`
           SELECT mbid FROM Tracks
           WHERE release_mbid = ? AND recording_mbid = ?
-          LIMIT 1
-        `).get(row.album_mbid, row.media_mbid) as { mbid: string } | undefined;
-        if (fallbackRow) {
-          releaseTrackMbid = fallbackRow.mbid;
+        `).all(row.album_mbid, row.media_mbid) as Array<{ mbid: string }>;
+        if (fallbackRows.length === 1) {
+          releaseTrackMbid = fallbackRows[0].mbid;
         }
       }
     }
@@ -2176,7 +2260,6 @@ export class AudioTagService {
           ffmpegKey: "TRACKNUMBER",
           targetValue: trackNumber,
           aliases: ["tracknumber"],
-          writeAliases: ["tracknumber"],
         });
       }
       const trackTotal = formatPositiveNumber(trackCount);
@@ -2187,7 +2270,7 @@ export class AudioTagService {
           ffmpegKey: "TRACKTOTAL",
           targetValue: trackTotal,
           aliases: ["tracktotal", "totaltracks"],
-          writeAliases: ["TOTALTRACKS", "totaltracks"],
+          writeAliases: ["TOTALTRACKS"],
         });
       }
 
@@ -2208,7 +2291,6 @@ export class AudioTagService {
           ffmpegKey: "DISCNUMBER",
           targetValue: discNumberValue,
           aliases: ["discnumber"],
-          writeAliases: ["discnumber"],
         });
       }
       const discTotal = formatPositiveNumber(discCount);
@@ -2219,7 +2301,7 @@ export class AudioTagService {
           ffmpegKey: "DISCTOTAL",
           targetValue: discTotal,
           aliases: ["disctotal", "totaldiscs"],
-          writeAliases: ["TOTALDISCS", "totaldiscs"],
+          writeAliases: ["TOTALDISCS"],
         });
       }
 
@@ -2248,10 +2330,6 @@ export class AudioTagService {
             "tory",
             "original date",
           ],
-          writeAliases: [
-            "ORIGINALDATE",
-            "ORIGINALYEAR",
-          ],
         });
       }
 
@@ -2263,7 +2341,6 @@ export class AudioTagService {
           ffmpegKey: "media_format",
           targetValue: mediaFormat,
           aliases: ["media_format", "media", "tmed", "Media Format"],
-          writeAliases: ["MEDIA"],
         });
       }
 
@@ -2284,7 +2361,7 @@ export class AudioTagService {
           key: "isrc",
           label: "ISRC",
           ffmpegKey: "isrc",
-          targetValue: String(row.media_isrc),
+          targetValue: parseRecordingIsrcs(row.media_isrc).join('; '),
         });
       }
 
@@ -2362,12 +2439,12 @@ export class AudioTagService {
         });
       }
 
-      if (row.artist_mbid) {
+      if (albumArtistMbids.length) {
         tags.push({
           key: "musicbrainz_albumartistid",
           label: "MusicBrainz Album Artist ID",
           ffmpegKey: "musicbrainz_albumartistid",
-          targetValue: String(row.artist_mbid),
+          targetValue: albumArtistMbids.join("; "),
           aliases: [
             "musicbrainz_albumartistid",
             "musicbrainzalbumartistid",
@@ -2375,11 +2452,13 @@ export class AudioTagService {
             "MusicBrainz Album Artist Id",
           ],
         });
+      }
+      if (artistMbids.length) {
         tags.push({
           key: "musicbrainz_artistid",
           label: "MusicBrainz Artist ID",
           ffmpegKey: "musicbrainz_artistid",
-          targetValue: String(row.artist_mbid),
+          targetValue: artistMbids.join("; "),
           aliases: [
             "musicbrainz_artistid",
             "musicbrainzartistid",
@@ -2414,11 +2493,6 @@ export class AudioTagService {
             "musicbrainz_releasetrackid",
             "musicbrainzreleasetrackid",
             "musicbrainz release track id",
-            "MusicBrainz Release Track Id",
-          ],
-          writeAliases: [
-            "musicbrainz_releasetrackid",
-            "musicbrainzreleasetrackid",
             "MusicBrainz Release Track Id",
           ],
         });
@@ -2480,12 +2554,7 @@ export class AudioTagService {
             // ignore
           }
         }
-        // When secondary release types exist (e.g. live, compilation, soundtrack, remix),
-        // use "album" as the primary type so Plex and media servers categorize the
-        // release properly into categories (e.g. "album; live" instead of "ep; live").
-        const primary = secondaryList.length > 0
-          ? "album"
-          : row.release_primary_type.toLowerCase();
+        const primary = row.release_primary_type.toLowerCase();
 
         const typeSet = new Set<string>([primary, ...secondaryList]);
         releaseType = Array.from(typeSet).join("; ");
@@ -2504,10 +2573,6 @@ export class AudioTagService {
             "musicbrainz_albumtype",
             "MUSICBRAINZ_ALBUMTYPE",
           ],
-          writeAliases: [
-            "RELEASETYPE",
-            "MUSICBRAINZ_ALBUMTYPE",
-          ],
         });
       }
 
@@ -2522,7 +2587,7 @@ export class AudioTagService {
           key: "itunesadvisory",
           label: "iTunes Advisory",
           ffmpegKey: "ITUNESADVISORY",
-          targetValue: String(Number(row.media_explicit) ? 1 : 0),
+          targetValue: String(Number(row.media_explicit) ? 1 : 2),
           aliases: ["itunesadvisory", "rtng", "rating"],
         });
       }
@@ -2541,29 +2606,6 @@ export class AudioTagService {
         });
       }
 
-      // Role credits (Vocalist, Composer, Producer, etc.) — same convention as Orpheus.
-      if (row.media_credits) {
-        try {
-          const credits = JSON.parse(row.media_credits) as Array<{ type?: unknown; contributors?: Array<{ name?: unknown }> }>;
-          for (const credit of credits) {
-            const role = String(credit.type || "").trim().replace(/[:\\/*?"<>|$]/g, "");
-            if (!role) continue;
-            const contributors = (credit.contributors ?? [])
-              .map((c) => String(c.name || "").trim())
-              .filter(Boolean)
-              .join(", ");
-            if (!contributors) continue;
-            tags.push({
-              key: `credit_${role.toLowerCase()}`,
-              label: role,
-              ffmpegKey: role,
-              targetValue: contributors,
-            });
-          }
-        } catch {
-          // malformed credits JSON — skip silently
-        }
-      }
     }
 
     if (config.embed_replaygain) {
@@ -2593,11 +2635,70 @@ export class AudioTagService {
     return tags.filter((tag) => Boolean(normalizeComparableValue(tag.targetValue)));
   }
 
+  static async evaluateFileTags(
+    filePath: string,
+    desiredTags: ManagedTag[],
+    removals: ManagedTag[] = [],
+    scrub = false,
+  ): Promise<{ changes: RetagDifference[]; removalKeys: string[] }> {
+    const metadata = await mm.parseFile(filePath, { skipCovers: true, duration: false });
+    const lookup = buildNativeLookup(metadata);
+    mergeMp4KeyedNativeLookup(metadata, lookup, filePath);
+    const extension = path.extname(filePath);
+    const changes: RetagDifference[] = [];
+    for (const tag of desiredTags) {
+      const current = getCurrentTagValue(metadata, lookup, tag);
+      if (!isTagValueEqual(tag.key, current, tag.targetValue)) {
+        changes.push({ field: tag.label, oldValue: current, newValue: tag.targetValue });
+      }
+    }
+    for (const tag of removals) {
+      const current = getCurrentTagValue(metadata, lookup, tag);
+      if (normalizeComparableValue(current)) changes.push({ field: tag.label, oldValue: current, newValue: null });
+    }
+    const vorbis = [".flac", ".ogg", ".oga", ".opus"].includes(extension.toLowerCase());
+    const keyIdentity = (key: string) => vorbis ? key.toUpperCase() : key;
+    const desiredMap = this.buildAudioTagWriteMap(desiredTags, extension);
+    const allowed = new Set(Object.keys(desiredMap).flatMap(key => nativeMediaTagKeys(key, extension)).map(keyIdentity));
+    const semanticKey = (key: string) => key.replace(/^----:com\.apple\.iTunes:|^TXXX:/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+    const owned = new Set([...desiredTags, ...removals].flatMap(tag =>
+      [tag.key, tag.ffmpegKey, ...(tag.aliases || []).filter(alias => !["url", "purl", "rating", "key"].includes(alias.toLowerCase())), ...Object.keys(this.buildAudioTagWriteMap([tag], extension))],
+    ).map(semanticKey));
+    const keyMap = hasNumericMp4NativeIds(metadata) ? readMp4MdtaKeyMap(filePath) : new Map<string, string>();
+    const obsolete = new Set<string>();
+    const unmanaged = new Set<string>();
+    for (const [format, nativeTags] of Object.entries(metadata.native)) {
+      if (format === "ID3v1") {
+        if (scrub) unmanaged.add("ID3v1");
+        continue;
+      }
+      for (const tag of nativeTags) {
+        let key = keyMap.get(tag.id) || tag.id;
+        if (key === "UFID" && tag.value && typeof tag.value === "object") {
+          key = `UFID:${String((tag.value as { owner_identifier?: string }).owner_identifier || "")}`;
+        }
+        // Pictures are managed by the cover policy. Gapless playback information
+        // describes the encoded stream and must survive metadata cleanup.
+        if (/^(APIC(?::.*)?|METADATA_BLOCK_PICTURE|covr|COVERART|COVERARTMIME)$/i.test(key)
+          || key === "----:com.apple.iTunes:iTunSMPB" || isNumericMp4NativeId(key)) continue;
+        if (allowed.has(keyIdentity(key))) continue;
+        if (owned.has(semanticKey(key))) obsolete.add(key);
+        else if (scrub) unmanaged.add(key);
+      }
+    }
+    if (obsolete.size) changes.push({ field: "Obsolete tag fields", oldValue: [...obsolete].sort().join(", "), newValue: null });
+    if (unmanaged.size) changes.push({ field: "Unmanaged tags", oldValue: [...unmanaged].sort().join(", "), newValue: null });
+    return {
+      changes,
+      removalKeys: [...new Set([...this.buildAudioTagRemovalKeys(removals, extension), ...obsolete, ...unmanaged])],
+    };
+  }
+
   private static async evaluateRow(
     row: RetagTrackRow,
     config: MetadataConfig,
     options: RetagEvaluationOptions = {},
-  ): Promise<RetagPreviewItem> {
+  ): Promise<RetagPreviewItem & { removalKeys?: string[] }> {
     const resolvedPath = resolveStoredLibraryPath({
       filePath: row.file_path,
       libraryRoot: row.library_root,
@@ -2619,8 +2720,8 @@ export class AudioTagService {
     const desiredTags = this.buildDesiredTags(row, config);
 
     const quality = getConfigSection("quality");
-    if (options.includeExternalMetadata === true && quality.embed_lyrics && row.file_provider_id) {
-      const lyrics = await resolveLyricsForRetagRow(row, true, options.lyricsByProviderMedia);
+    if (quality.embed_lyrics) {
+      const lyrics = await resolveLyricsForRetagRow(row, resolvedPath, options.includeExternalMetadata === true, options.lyricsByProviderMedia);
       const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
       if (lyricTag) desiredTags.push(lyricTag);
     }
@@ -2639,30 +2740,7 @@ export class AudioTagService {
     }
 
     try {
-      const metadata = await mm.parseFile(resolvedPath, { skipCovers: true, duration: false });
-      const lookup = buildNativeLookup(metadata);
-      mergeMp4KeyedNativeLookup(metadata, lookup, resolvedPath);
-      const changes = desiredTags.reduce<RetagDifference[]>((result, tag) => {
-        const currentValue = getCurrentTagValue(metadata, lookup, tag);
-        if (!isTagValueEqual(tag.key, currentValue, tag.targetValue)) {
-          result.push({
-            field: tag.label,
-            oldValue: currentValue,
-            newValue: tag.targetValue,
-          });
-        }
-        return result;
-      }, []);
-      for (const tag of removals) {
-        const currentValue = getCurrentTagValue(metadata, lookup, tag);
-        if (normalizeComparableValue(currentValue)) {
-          changes.push({
-            field: tag.label,
-            oldValue: currentValue,
-            newValue: null,
-          });
-        }
-      }
+      const { changes, removalKeys } = await this.evaluateFileTags(resolvedPath, desiredTags, removals, config.scrub_audio_tags === true);
 
       if (quality.embed_cover) {
         // Compare the embedded cover exactly as the apply does, reusing the
@@ -2700,6 +2778,7 @@ export class AudioTagService {
         path: resolvedPath,
         missing: false,
         changes,
+        removalKeys,
       };
     } catch (error) {
       return {
@@ -2736,7 +2815,10 @@ export class AudioTagService {
     const limit = pLimit(RETAG_EVALUATION_CONCURRENCY);
     try {
       return await Promise.all(
-        rows.map((row) => limit(() => this.evaluateRow(row, config, scopedOptions))),
+        rows.map((row) => limit(async () => {
+          const { removalKeys: _removalKeys, ...preview } = await this.evaluateRow(row, config, scopedOptions);
+          return preview;
+        })),
       );
     } finally {
       if (!options.embeddedCoverContext) {
@@ -2982,14 +3064,14 @@ export class AudioTagService {
 
           const desiredTagsArr = this.buildDesiredTags(row, config);
 
-          if (options.includeExternalLyrics === true && quality.embed_lyrics && row.file_provider_id) {
-            const lyrics = await resolveLyricsForRetagRow(row, true, lyricsByProviderMedia);
+          if (quality.embed_lyrics) {
+            const lyrics = await resolveLyricsForRetagRow(row, resolvedPath, options.includeExternalLyrics === true, lyricsByProviderMedia);
             const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
             if (lyricTag) desiredTagsArr.push(lyricTag);
           }
 
           const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, row.extension);
-          const removalKeys = this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(row, config), row.extension);
+          const removalKeys = preview.removalKeys ?? this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(row, config), row.extension);
 
           if (shouldSkipEmbeddedAudioTagWrite(row)) {
             result.errors.push({
@@ -2999,15 +3081,8 @@ export class AudioTagService {
             return;
           }
 
-          // Scrub all existing tags before writing
-          if (config.scrub_audio_tags) {
-            const scrubbed = await removeAllTags(resolvedPath);
-            if (!scrubbed) {
-              result.errors.push({ id, error: "Tag scrub failed" });
-              return;
-            }
-          }
-
+          // Remove unwanted fields in the same atomic rewrite as the desired
+          // tags, so a failed write never leaves an already-scrubbed original.
           const success = await writeMetadata(resolvedPath, desiredTags, removalKeys);
           if (!success) {
             result.errors.push({ id, error: "Metadata write failed" });

@@ -1,4 +1,5 @@
 import { replaceMediaFile } from "./media-file-rewrite.js";
+import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -9,7 +10,9 @@ import {
   Id3v2FrameIdentifiers,
   Id3v2Tag,
   Id3v2UserTextInformationFrame,
+  Id3v2UniqueFileIdentifierFrame,
   Mpeg4AppleTag,
+  Mpeg4AppleDataBoxFlagType,
   Picture,
   PictureType,
   ReadStyle,
@@ -66,6 +69,37 @@ const MP4_TEXT_KEYS: Record<string, string> = {
   "lyrics-eng": "\xa9lyr",
   isrc: "isrc",
 };
+
+function isArtistIdList(key: string): boolean {
+  return /musicbrainz(?:album)?artistid$/i.test(key.replace(/[^a-z0-9]/gi, ""));
+}
+
+function tagValues(key: string, value: string): string[] {
+  if (key.toLowerCase() === "isrc") return parseRecordingIsrcs(value);
+  if (isArtistIdList(key)) return [...new Set(value.split(/[;,/\s]+/).filter(Boolean))];
+  return value ? [value] : [];
+}
+
+/** Native fields produced by a write key. Used by audio and video cleanup. */
+export function nativeMediaTagKeys(rawKey: string, extension: string): string[] {
+  const ext = extension.toLowerCase().replace(/^\./, "");
+  const lower = rawKey.toLowerCase();
+  if (["flac", "ogg", "oga", "opus"].includes(ext)) return [rawKey.toUpperCase()];
+  if (["mp3", "aac"].includes(ext)) {
+    if (["date", "year"].includes(lower)) return ["TDRC", "TYER", "TDAT", "TIME"];
+    if (["original_date", "tdor"].includes(lower)) return ["TDOR", "TORY"];
+    if (["lyrics", "lyrics-eng", "unsyncedlyrics"].includes(lower)) return ["USLT"];
+    if (lower === "comment") return ["COMM"];
+    return [ID3_TEXT_KEYS[lower] || (/^(TXXX:|UFID:)/i.test(rawKey) || rawKey.length === 4 ? rawKey : `TXXX:${rawKey}`)];
+  }
+  if (["m4a", "mp4", "m4v", "mov"].includes(ext)) {
+    if (lower === "isrc") return ["----:com.apple.iTunes:ISRC"];
+    if (lower === "track") return ["trkn"];
+    if (lower === "disc") return ["disk"];
+    return [MP4_TEXT_KEYS[lower] || (rawKey.startsWith("----:") || rawKey.length === 4 ? rawKey : `----:com.apple.iTunes:${rawKey}`)];
+  }
+  return [rawKey];
+}
 
 export type MediaTagWriteResult = {
   handled: boolean;
@@ -247,7 +281,8 @@ function setId3UserText(tag: Id3v2Tag, description: string, value: string): void
     return;
   }
   const frame = existing ?? Id3v2UserTextInformationFrame.fromDescription(description);
-  frame.text = [value];
+  const values = tagValues(description, value);
+  frame.text = tag.version >= 4 ? values : [values.join("/")];
   if (!existing) tag.addFrame(frame);
 }
 
@@ -258,6 +293,20 @@ function id3TextIdentifier(key: string) {
 }
 
 function setId3Value(tag: Id3v2Tag, rawKey: string, value: string): void {
+  if (rawKey.toLowerCase().startsWith("ufid:")) {
+    const owner = rawKey.slice(5);
+    const frames = tag.getFramesByClassType<Id3v2UniqueFileIdentifierFrame>(Id3v2FrameClassType.UniqueFileIdentifierFrame);
+    for (const frame of frames) if (frame.owner === owner) tag.removeFrame(frame);
+    if (owner === "http://musicbrainz.org") setId3UserText(tag, "MusicBrainz Track Id", "");
+    if (value) tag.addFrame(Id3v2UniqueFileIdentifierFrame.fromData(owner, ByteVector.fromString(value, StringType.Latin1)));
+    return;
+  }
+  if (["isrc", "tsrc"].includes(rawKey.toLowerCase())) {
+    const values = parseRecordingIsrcs(value);
+    // Picard writes separate text values in v2.4 and joins them in v2.3.
+    tag.setTextFrame(Id3v2FrameIdentifiers.TSRC, ...(tag.version >= 4 ? values : [values.join("/")]));
+    return;
+  }
   const key = rawKey.trim();
   const lower = key.toLowerCase();
   if (lower.startsWith("txxx:")) {
@@ -293,10 +342,14 @@ function setId3Value(tag: Id3v2Tag, rawKey: string, value: string): void {
 }
 
 function readId3Value(tag: Id3v2Tag, rawKey: string): string {
+  if (rawKey.toLowerCase().startsWith("ufid:")) {
+    const frames = tag.getFramesByClassType<Id3v2UniqueFileIdentifierFrame>(Id3v2FrameClassType.UniqueFileIdentifierFrame);
+    return frames.find(frame => frame.owner === rawKey.slice(5))?.identifier.toString(StringType.Latin1) ?? "";
+  }
   const key = rawKey.trim();
   const lower = key.toLowerCase();
   if (lower.startsWith("txxx:")) {
-    return findUserTextFrame(tag, key.slice(5))?.text?.[0] ?? "";
+    return findUserTextFrame(tag, key.slice(5))?.text?.join("; ") ?? "";
   }
   if (lower === "lyrics-eng" || lower === "lyrics" || lower === "unsyncedlyrics") {
     return tag.lyrics ?? "";
@@ -322,7 +375,7 @@ function readId3Value(tag: Id3v2Tag, rawKey: string): string {
   if (identifier) {
     return tag.getTextAsString(identifier) ?? "";
   }
-  return findUserTextFrame(tag, key)?.text?.[0] ?? "";
+  return findUserTextFrame(tag, key)?.text?.join("; ") ?? "";
 }
 
 function mp4FreeformName(rawKey: string): string | null {
@@ -334,8 +387,18 @@ function setMp4Value(tag: Mpeg4AppleTag, rawKey: string, value: string): void {
   const key = rawKey.trim();
   const lower = key.toLowerCase();
   const freeform = mp4FreeformName(key);
+  if (lower === "rtng" || lower === "stik") {
+    if (value && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 255)) throw new Error(`Invalid ${key} value`);
+    tag.setQuickTimeData(mp4BoxType(key), value ? [ByteVector.fromByte(Number(value))] : [], Mpeg4AppleDataBoxFlagType.ForTempo);
+    return;
+  }
+  if (lower === "isrc" || freeform?.toLowerCase() === "isrc") {
+    tag.setQuickTimeString(mp4BoxType("isrc"), "");
+    tag.setItunesStrings("com.apple.iTunes", "ISRC", ...parseRecordingIsrcs(value));
+    return;
+  }
   if (freeform !== null) {
-    tag.setItunesStrings("com.apple.iTunes", freeform, ...(value ? [value] : []));
+    tag.setItunesStrings("com.apple.iTunes", freeform, ...tagValues(freeform, value));
     return;
   }
   if (lower === "track") {
@@ -366,8 +429,16 @@ function readMp4Value(tag: Mpeg4AppleTag, rawKey: string): string {
   const key = rawKey.trim();
   const lower = key.toLowerCase();
   const freeform = mp4FreeformName(key);
+  if (lower === "rtng" || lower === "stik") {
+    const data = tag.getFirstQuickTimeData(mp4BoxType(key), Mpeg4AppleDataBoxFlagType.ForTempo);
+    return data?.length ? String(data.get(0)) : "";
+  }
+  if (lower === "isrc" || freeform?.toLowerCase() === "isrc") {
+    return tag.getItunesStrings("com.apple.iTunes", "ISRC").join("; ")
+      || tag.getFirstQuickTimeString(mp4BoxType("isrc")) || "";
+  }
   if (freeform !== null) {
-    return tag.getFirstItunesString("com.apple.iTunes", freeform) ?? "";
+    return tag.getItunesStrings("com.apple.iTunes", freeform).join("; ");
   }
   if (lower === "track") {
     return tag.trackCount > 0 ? `${tag.track}/${tag.trackCount}` : String(tag.track || "");
@@ -392,15 +463,21 @@ function writeTagLibValues(
 ): void {
   const extension = extensionOf(filePath);
   withTagLibFile(filePath, (file) => {
+    if (removeKeys.includes("ID3v1")) file.removeTags(TagTypes.Id3v1);
     if (XIPH_EXTENSIONS.has(extension)) {
       const tag = file.getTag(TagTypes.Xiph, true) as XiphComment;
       for (const key of removeKeys) tag.removeField(key);
       for (const [key, value] of Object.entries(tags)) {
-        if (value) tag.setFieldAsStrings(key, value);
+        if (value) tag.setFieldAsStrings(key, ...tagValues(key, value));
       }
     } else if (extension === ".mp3" || extension === ".aac") {
       const tag = file.getTag(TagTypes.Id3v2, true) as Id3v2Tag;
-      for (const key of removeKeys) setId3Value(tag, key, "");
+      for (const key of removeKeys) {
+        if (key === "ID3v1") continue;
+        const identifier = !key.includes(":") ? id3TextIdentifier(key) : undefined;
+        if (identifier) tag.removeFrames(identifier);
+        else setId3Value(tag, key, "");
+      }
       for (const [key, value] of Object.entries(tags)) {
         if (value) setId3Value(tag, key, value);
       }
@@ -418,9 +495,13 @@ function writeTagLibValues(
 function readTagLibValue(filePath: string, rawKey: string): string {
   const extension = extensionOf(filePath);
   return withTagLibFile(filePath, (file) => {
+    if (rawKey === "ID3v1") return (file.tagTypesOnDisk & TagTypes.Id3v1) ? "present" : "";
     if (XIPH_EXTENSIONS.has(extension)) {
+      if (rawKey.toLowerCase() === "isrc") {
+        return (file.getTag(TagTypes.Xiph, false) as XiphComment)?.getField(rawKey)?.join("; ") ?? "";
+      }
       return (file.getTag(TagTypes.Xiph, false) as XiphComment)
-        ?.getFieldFirstValue(rawKey) ?? "";
+        ?.getField(rawKey)?.join("; ") ?? "";
     }
     if (extension === ".mp3" || extension === ".aac") {
       return readId3Value(file.getTag(TagTypes.Id3v2, false) as Id3v2Tag, rawKey);
@@ -436,6 +517,16 @@ function verifyTagLibValues(
 ): void {
   for (const [key, expected] of Object.entries(tags)) {
     const actual = readTagLibValue(filePath, key);
+    if (isArtistIdList(key)) {
+      if (JSON.stringify(tagValues(key, actual).sort()) !== JSON.stringify(tagValues(key, expected).sort())) throw new Error(`Artist ID verification failed for ${key}`);
+      continue;
+    }
+    if (["isrc", "tsrc", "----:com.apple.itunes:isrc"].includes(key.toLowerCase())) {
+      if (parseRecordingIsrcs(actual).sort().join(";") !== parseRecordingIsrcs(expected).sort().join(";")) {
+        throw new Error(`ISRC verification failed for ${key}`);
+      }
+      continue;
+    }
     const normActual = normalizeTagValue(actual);
     const normExpected = normalizeTagValue(expected);
     if (normActual !== normExpected) {

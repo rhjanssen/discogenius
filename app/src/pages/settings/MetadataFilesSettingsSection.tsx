@@ -105,14 +105,14 @@ export const MetadataFilesSettingsSection = ({
             <SettingsCard>
                 <div className={styles.row}>
                     <div className={styles.rowContent}>
-                        <Text weight="semibold">Write audio tags</Text>
+                        <Text weight="semibold">Write media tags</Text>
                         <Text size={200} className={styles.mutedText}>
-                            Embed titles, artists, albums, and MusicBrainz IDs in audio files.
+                            Embed catalog metadata in audio files and music videos. Correct obsolete fields while keeping unrelated custom tags.
                         </Text>
                     </div>
                     <div className={styles.rowControl}>
                         <Select
-                            aria-label="Write audio tags"
+                            aria-label="Write media tags"
                             value={writeAudioTagsPolicy}
                             onChange={(_, data) => updateMetadataSettings({
                                 write_audio_tags_policy: data.value as "no" | "new_files" | "all_files",
@@ -126,6 +126,12 @@ export const MetadataFilesSettingsSection = ({
                     </div>
                 </div>
 
+                {renderToggleRow({
+                    title: "Remove unmanaged tags",
+                    description: "Also remove custom tags that Discogenius does not write. Cover art follows the artwork settings; playback information is preserved.",
+                    checked: metadataSettings?.scrub_audio_tags === true,
+                    onChange: (checked) => void updateMetadataSettings({ scrub_audio_tags: checked }),
+                })}
                 {renderToggleRow({
                     title: "Embed album covers",
                     description: "Write cover art into audio files when tags are written.",

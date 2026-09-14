@@ -21,6 +21,31 @@ import {
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
 
+for (const version of [3, 4]) {
+  test(`ISRC values follow Picard's ID3v2.${version} representation`, { skip: !hasFfmpeg }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-id3-isrc-"));
+    try {
+      const mediaPath = path.join(tempDir, "sample.mp3");
+      generateAudio(mediaPath, ["-c:a", "libmp3lame", "-id3v2_version", String(version)]);
+      const beforeHash = decodedAudioHash(mediaPath);
+      const result = await writeMediaTagsWithTagLib(mediaPath, { isrc: "USUM70722793; USUM70809583" });
+      assert.equal(result.success, true, result.error);
+      const { parseFile } = await import("music-metadata");
+      const metadata = await parseFile(mediaPath);
+      const native = metadata.native[`ID3v2.${version}`].filter(tag => tag.id === "TSRC").map(tag => tag.value);
+      assert.deepEqual(native, ["USUM70722793", "USUM70809583"]);
+      if (version === 3) {
+        // music-metadata also splits v2.3 native TSRC values on '/'. Check the
+        // serialized frame so parsing cannot hide an incorrect representation.
+        const bytes = fs.readFileSync(mediaPath);
+        const joined = "USUM70722793/USUM70809583";
+        assert.ok(bytes.includes(Buffer.from(joined, "utf8")) || bytes.includes(Buffer.from(joined, "utf16le")));
+      }
+      assert.equal(decodedAudioHash(mediaPath), beforeHash);
+    } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
+  });
+}
+
 const formats = [
   { extension: ".aac", codec: ["-c:a", "aac", "-f", "adts"] },
   { extension: ".flac", codec: ["-c:a", "flac"] },
@@ -265,4 +290,25 @@ test("TagLib work files do not exceed the filesystem name limit for long media n
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("M4A ISRC writes retain the Apple code when it belongs to the complete canonical list", {
+  skip: !hasFfmpeg,
+}, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-m4a-isrc-"));
+  try {
+    const filePath = path.join(tempDir, "sample.m4a");
+    generateAudio(filePath, ["-c:a", "aac", "-f", "mp4"]);
+    const file = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
+    try {
+      const tag = file.getTag(TagTypes.Apple, true) as Mpeg4AppleTag;
+      tag.setItunesStrings("com.apple.iTunes", "ISRC", "USUM70809583");
+      file.save();
+    } finally { file.dispose(); }
+    const beforeHash = decodedAudioHash(filePath);
+    assert.equal((await writeMediaTagsWithTagLib(filePath, { isrc: "USUM70722793; USUM70809583" })).success, true);
+    const { parseFile } = await import("music-metadata");
+    assert.deepEqual((await parseFile(filePath)).common.isrc, ["USUM70722793", "USUM70809583"]);
+    assert.equal(decodedAudioHash(filePath), beforeHash);
+  } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
 });

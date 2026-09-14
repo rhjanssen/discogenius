@@ -1,3 +1,4 @@
+import { withSqliteWriteGate } from "../../../database.js";
 import fs from "fs";
 import path from "path";
 import { CONFIG_DIR, updateConfig } from "../../config/config.js";
@@ -70,13 +71,13 @@ function buildTidalApiHeaders(accessToken: string): Record<string, string> {
     };
 }
 
-function cacheAccountInfo(user: TidalAuthUser | undefined): void {
+async function cacheAccountInfo(user: TidalAuthUser | undefined): Promise<void> {
     if (!user) {
         return;
     }
 
     try {
-        updateConfig("account", {
+        await withSqliteWriteGate(() => updateConfig("account", {
             userId: user.userId,
             username: user.username,
             email: user.email,
@@ -85,7 +86,7 @@ function cacheAccountInfo(user: TidalAuthUser | undefined): void {
             fullName: user.fullName,
             countryCode: user.countryCode,
             picture: user.picture,
-        });
+        }), "tidal:cache-account");
     } catch (error) {
         console.warn("[TIDAL-AUTH] Non-fatal: Failed to cache account info in config:", error);
     }
@@ -150,7 +151,7 @@ export function loadStoredTidalToken(): TidalAuthToken | null {
     return null;
 }
 
-export function saveStoredTidalToken(token: TidalAuthToken): void {
+export async function saveStoredTidalToken(token: TidalAuthToken): Promise<void> {
     ensureAuthDir();
     fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify(token, null, 2), "utf-8");
 
@@ -160,7 +161,7 @@ export function saveStoredTidalToken(token: TidalAuthToken): void {
         console.error("[TIDAL-AUTH] Failed to sync tiddl auth:", error);
     }
 
-    cacheAccountInfo(token.user);
+    await cacheAccountInfo(token.user);
 }
 
 export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {
@@ -237,7 +238,7 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
         expires_at: Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
     });
 
-    saveStoredTidalToken(refreshed);
+    await saveStoredTidalToken(refreshed);
     return refreshed;
 }
 
@@ -359,7 +360,7 @@ export async function pollTidalDeviceLogin(): Promise<{
         expires_at: Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
     });
 
-    saveStoredTidalToken(token);
+    await saveStoredTidalToken(token);
     activeDeviceLogin = null;
 
     return {

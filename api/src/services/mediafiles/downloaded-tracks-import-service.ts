@@ -1269,10 +1269,10 @@ export class DownloadedTracksImportService {
             cancellationCheckpoint("before resolving metadata identity");
             options.updateState({
                 progress: 86,
-                description: "ImportDownload: resolving MusicBrainz and AcoustID identity",
+                description: "ImportDownload: resolving catalog identity",
                 currentFileNum: organizeResult.processedTrackIds.length,
                 totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                statusMessage: "Resolving MusicBrainz and AcoustID identity",
+                statusMessage: "Resolving catalog identity",
                 state: "importing",
             });
 
@@ -1296,6 +1296,7 @@ export class DownloadedTracksImportService {
                 console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${providerId}:`, error);
             }
 
+            options.updateState({ progress: 88, description: "ImportDownload: fetching tag supplements", statusMessage: "Fetching tag supplements", state: "importing" });
             cancellationCheckpoint("before refreshing provider tag supplements");
             try {
                 await ProviderTrackTagSupplementService.refresh({
@@ -1319,11 +1320,13 @@ export class DownloadedTracksImportService {
             const metadataConfig = Config.getMetadataConfig();
             const qualityConfig = Config.getQualityConfig();
             if (metadataConfig.save_album_cover || qualityConfig.embed_cover) {
+                options.updateState({ progress: 90, description: "ImportDownload: caching artwork", statusMessage: "Caching artwork", state: "importing" });
                 cancellationCheckpoint("before caching dest album artwork");
                 await ensureDestAlbumArtworkForFileIds(importedFileIds);
             }
 
             let lyricResult: TrackLyricsMaterializeResult | null = null;
+            options.updateState({ progress: 92, description: "ImportDownload: preparing lyrics", statusMessage: "Preparing lyrics", state: "importing" });
             cancellationCheckpoint("before materializing lyrics");
             try {
                 lyricResult = importedFileIds.length > 0
@@ -1376,12 +1379,11 @@ export class DownloadedTracksImportService {
                 statusMessage: "Applying video tag rules",
                 state: "importing",
             });
-            const retagResult = await VideoTagService.applyForProviderIds(
-                organizeResult.processedTrackIds,
-                provider,
-            );
-            if (retagResult.errors.length > 0) {
-                console.warn(`[ImportDownload] Video tag rules completed with ${retagResult.errors.length} error(s) for ${providerId}:`, retagResult.errors);
+            const videoFileIds = importedLibraryFileIds(organizeResult);
+            if (videoFileIds.length === 0) throw new Error("Video importer did not report exact TrackFiles identities");
+            const retagResult = await VideoTagService.apply(videoFileIds);
+            if (retagResult.errors.length > 0 || retagResult.missing > 0) {
+                throw new Error(`Video tagging failed for ${providerId}: ${retagResult.errors.map(item => item.error).join("; ") || "imported file is missing"}`);
             }
             cancellationCheckpoint("after applying video tag rules");
         }
@@ -1389,7 +1391,7 @@ export class DownloadedTracksImportService {
         cancellationCheckpoint("before recording import history");
         const historyContext = resolveImportHistoryContext(type, providerId, provider);
         try {
-            recordHistoryEvent({
+            await withSqliteWriteGate(() => recordHistoryEvent({
                 artistId: historyContext.artistId,
                 albumId: historyContext.albumId,
                 mediaId: historyContext.mediaId,
@@ -1405,7 +1407,7 @@ export class DownloadedTracksImportService {
                         expected: organizeResult.expectedTracks ?? organizeResult.totalTracksInStaging ?? null,
                     },
                 },
-            });
+            }), "import:history");
         } catch (historyError) {
             console.warn(`[ImportDownload] Failed to write DownloadImported history event for ${type} ${providerId}:`, historyError);
         }
@@ -1432,7 +1434,7 @@ export class DownloadedTracksImportService {
 
         if (softIncomplete || hardIncomplete) {
             try {
-                recordHistoryEvent({
+                await withSqliteWriteGate(() => recordHistoryEvent({
                     artistId: historyContext.artistId,
                     albumId: historyContext.albumId,
                     mediaId: historyContext.mediaId,
@@ -1450,7 +1452,7 @@ export class DownloadedTracksImportService {
                                 : expectedProcessedTracks,
                         },
                     },
-                });
+                }), "import:history");
             } catch (historyError) {
                 console.warn(`[ImportDownload] Failed to write AlbumImportIncomplete history event for ${type} ${providerId}:`, historyError);
             }
@@ -1509,7 +1511,7 @@ export class DownloadedTracksImportService {
         const historyContext = resolveImportHistoryContext(type, providerId, provider);
         const message = error instanceof Error ? error.message : String(error);
         try {
-            recordHistoryEvent({
+            await withSqliteWriteGate(() => recordHistoryEvent({
                 artistId: historyContext.artistId,
                 albumId: historyContext.albumId,
                 mediaId: historyContext.mediaId,
@@ -1522,7 +1524,7 @@ export class DownloadedTracksImportService {
                     originalJobId: originalJobId ?? null,
                     error: message,
                 },
-            });
+            }), "import:history");
         } catch (historyError) {
             console.warn(`[ImportDownload] Failed to write DownloadFailed history event for ${type} ${providerId}:`, historyError);
         }

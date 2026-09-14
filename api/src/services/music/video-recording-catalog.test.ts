@@ -310,3 +310,32 @@ test('catalogue merge preserves manual selection identity and rolls back all cha
     [{ source_recording_id: mb.id, target_recording_id: audio.id }]);
   assert.deepEqual(dbModule.db.pragma('foreign_key_check'), []);
 });
+
+test("matching a video batches candidate offers instead of querying once per candidate", () => {
+  const insert = dbModule.db.prepare(`INSERT INTO Recordings
+    (artist_mbid, title, is_video, youtube_video_id, metadata_status, length_ms)
+    VALUES ('artist-mbid', ?, 1, ?, 'youtube', 180000)`);
+  const countQueries = (id: string): number => {
+    const prepare = dbModule.db.prepare;
+    let calls = 0;
+    dbModule.db.prepare = function (sql: string) {
+      calls++;
+      return prepare.call(dbModule.db, sql);
+    } as typeof prepare;
+    try {
+      refreshVideo.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
+        provider: "tidal", provider_id: id, title: "Unique unmatched performance", duration: 180,
+      }], { deferRepair: true });
+    } finally { dbModule.db.prepare = prepare; }
+    return calls;
+  };
+  insert.run("Unrelated candidate 0", "candidate-0");
+  const small = countQueries("small-offer");
+  dbModule.db.prepare("DELETE FROM ProviderItems WHERE provider = 'tidal'").run();
+  dbModule.db.prepare("DELETE FROM Recordings WHERE metadata_status = 'provider_catalog'").run();
+  for (let i = 1; i < 200; i++) insert.run(`Unrelated candidate ${i}`, `candidate-${i}`);
+  const large = countQueries("large-offer");
+  assert.ok(large <= small + 5, `one video used ${small} queries with 1 candidate and ${large} with 200`);
+  assert.equal((dbModule.db.prepare(`SELECT COUNT(*) AS n FROM Recordings
+    WHERE metadata_status = 'provider_catalog' AND title = 'Unique unmatched performance'`).get() as { n: number }).n, 1);
+});

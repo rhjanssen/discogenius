@@ -204,6 +204,27 @@ dbModule.db.prepare(`
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });
 
+test("tag supplements use the file edition and omit ambiguous provider edition context", () => {
+  const file = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE provider_id = 'provider-track-1'").get() as { id: number };
+  const track = dbModule.db.prepare("SELECT id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = 'provider-track-1'").get() as { id: number };
+  const edition = dbModule.db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, title, upc)
+    VALUES ('tidal', 'release', 'other-edition', 'Other edition', '111111111111') RETURNING id`).get() as { id: number };
+  dbModule.db.prepare(`INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
+    VALUES (?, ?, 1, 1)`).run(edition.id, track.id);
+  const barcode = () => audioTagServiceModule.AudioTagService.buildDesiredTagsForTrackFileIdsForTest([file.id])
+    .find(tag => tag.key === "barcode")?.targetValue;
+  try {
+    assert.equal(barcode(), "987654321000", "an unmatched membership cannot change the file's edition context");
+    dbModule.db.prepare(`INSERT INTO ProviderEditionMatches
+      (provider_edition_item_id, edition_id, relation, match_state, decision_source, confidence, method, matcher_version)
+      SELECT ?, id, 'exact', 'accepted', 'automatic', 1, 'test', 1 FROM AlbumEditions WHERE mbid = 'release-mbid-1'`)
+      .run(edition.id);
+    assert.equal(barcode(), undefined, "two plausible provider editions cannot supply an arbitrary barcode");
+  } finally {
+    dbModule.db.prepare("DELETE FROM ProviderItems WHERE id = ?").run(edition.id);
+  }
+});
+
 test("artist retag scope resolves both public MBIDs and internal metadata ids", async () => {
   const file = dbModule.db.prepare(`
     SELECT id, artist_metadata_id
@@ -341,3 +362,73 @@ test("bulk artist retag waits for a catalog writer, verifies tags and cover, and
   });
   assert.equal(after.some((item) => item.id === row.id), false);
 });
+
+for (const extension of ["flac", "m4a", "mp3"]) {
+  test(`local ${extension} retag embeds sidecar lyrics without a provider and remains idempotent after scrubbing`, {
+    skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+  }, async () => {
+    const row = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE canonical_recording_mbid = ?")
+      .get("recording-mbid-1") as { id: number };
+    const mediaPath = path.join(tempDir, `local-lyrics.${extension}`);
+    dbModule.db.prepare("UPDATE Recordings SET isrcs = ? WHERE mbid = ?")
+      .run(JSON.stringify(["USUM70722793", "USUM70809583"]), "recording-mbid-1");
+    const generated = spawnSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440",
+      "-t", "0.1", "-c:a", extension === "flac" ? "flac" : extension === "mp3" ? "libmp3lame" : "aac", mediaPath,
+    ], { windowsHide: true, encoding: "utf8" });
+    assert.equal(generated.status, 0, generated.stderr);
+    if (extension === "mp3") {
+      const { writeMediaTagsWithTagLib } = await import("./media-tag-io.js");
+      assert.equal((await writeMediaTagsWithTagLib(mediaPath, {
+        "TXXX:MusicBrainz Track Id": "recording-mbid-1",
+      })).success, true);
+    }
+    dbModule.db.prepare(`UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = ?,
+      provider_item_id = NULL, provider = NULL, provider_id = NULL WHERE id = ?`)
+      .run(mediaPath, path.basename(mediaPath), extension, row.id);
+    configModule.updateConfig("metadata", {
+      ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files", scrub_audio_tags: true,
+    });
+    configModule.updateConfig("quality", {
+      ...configModule.getConfigSection("quality"), embed_cover: false, embed_lyrics: true,
+    });
+    const sidecarPath = path.join(tempDir, "local-lyrics.lrc");
+    const lyrics = "[00:00.00] A test melody\n[00:00.05] Another test line";
+    fs.writeFileSync(sidecarPath, lyrics);
+    const preview = await audioTagServiceModule.AudioTagService.preview({ artistId: "artist-mbid-1" });
+    assert.ok(preview.find(item => item.id === row.id)?.changes.some(change => change.field === "Lyrics"));
+    assert.equal(fs.readFileSync(sidecarPath, "utf8"), lyrics);
+    const applied = await audioTagServiceModule.AudioTagService.apply([row.id]);
+    assert.deepEqual(applied, {
+      retagged: 1, skipped: 0, missing: 0, errors: [],
+    });
+    const { parseFile } = await import("music-metadata");
+    const metadata = await parseFile(mediaPath);
+    assert.deepEqual(metadata.common.musicbrainz_artistid, ["artist-mbid-1", "guest-mbid-1"]);
+    assert.deepEqual(metadata.common.musicbrainz_albumartistid, ["album-artist-mbid-1"]);
+    if (extension === "mp3") {
+      assert.equal(metadata.common.musicbrainz_recordingid, "recording-mbid-1");
+      assert.ok(Object.values(metadata.native).flat().some(tag => tag.id === "UFID"));
+      assert.equal(Object.values(metadata.native).flat().some(tag => tag.id === "TXXX:MusicBrainz Track Id"), false);
+    }
+    assert.deepEqual(metadata.common.isrc?.flatMap(value => value.split(/\s*\/\s*|;\s*/)).sort(),
+      ["USUM70722793", "USUM70809583"]);
+    const embedded = Object.values(metadata.native).flat().find(tag => ["LYRICS", "©lyr", "USLT"].includes(tag.id));
+    assert.equal(extension === "mp3" ? (embedded?.value as { text?: string } | undefined)?.text : embedded?.value, lyrics);
+    assert.deepEqual(await audioTagServiceModule.AudioTagService.apply([row.id]), {
+      retagged: 0, skipped: 1, missing: 0, errors: [],
+    });
+    assert.equal((await audioTagServiceModule.AudioTagService.preview({ artistId: "artist-mbid-1" })).length, 0);
+    const { writeMediaTagsWithTagLib } = await import("./media-tag-io.js");
+    const customKey = extension === "flac" ? "MY_CUSTOM_TAG" : extension === "mp3" ? "TXXX:MY_CUSTOM_TAG" : "----:com.apple.iTunes:MY_CUSTOM_TAG";
+    assert.equal((await writeMediaTagsWithTagLib(mediaPath, { [customKey]: "Keep my note" })).success, true);
+    configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), scrub_audio_tags: false });
+    assert.deepEqual(await audioTagServiceModule.AudioTagService.apply([row.id]), { retagged: 0, skipped: 1, missing: 0, errors: [] });
+    assert.ok(Object.values((await parseFile(mediaPath)).native).flat().some(tag => tag.id.includes("MY_CUSTOM_TAG")));
+    configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), scrub_audio_tags: true });
+    assert.ok((await audioTagServiceModule.AudioTagService.preview({ artistId: "artist-mbid-1" }))[0].changes.some(change => change.field === "Unmanaged tags"));
+    assert.deepEqual(await audioTagServiceModule.AudioTagService.apply([row.id]), { retagged: 1, skipped: 0, missing: 0, errors: [] });
+    assert.equal(Object.values((await parseFile(mediaPath)).native).flat().some(tag => tag.id.includes("MY_CUSTOM_TAG")), false);
+    assert.equal((await audioTagServiceModule.AudioTagService.preview({ artistId: "artist-mbid-1" })).length, 0);
+  });
+}
