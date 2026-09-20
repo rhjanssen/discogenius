@@ -332,7 +332,11 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const result = await runQueueUserWrite(() => retryDownloadQueueItem(queueItemId));
+    const source = req.query.source ?? "queue";
+    if (source !== "queue" && source !== "history") {
+      return res.status(400).json({ error: "Invalid retry source" });
+    }
+    const result = await runQueueUserWrite(() => retryDownloadQueueItem(queueItemId, source));
     return res.status(result.status).json(result.body);
   } catch (error: any) {
     console.error('[QUEUE-API] Error retrying job:', error);

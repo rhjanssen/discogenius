@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import {
   loadArtistMetadataIdentity,
 } from "./managed-artists.js";
@@ -77,20 +77,20 @@ export class CurationService {
         WHERE library_id = ? AND artist_metadata_id = ?
       `).all(library.id, identity.canonicalArtistId) as Array<{ id: number }>).map(({ id }) => id);
       if (libraryArtistIds.length === 0) continue;
-      curation.curateLibrary({
+      await withSqliteWriteGate(() => curation.curateLibrary({
         libraryId: library.id,
         curationVersion: 1,
         acquisitionPlannerVersion: 1,
         providerPriority,
         scope: { libraryArtistIds },
-      });
+      }), "curation:audio-library");
     }
     // Videos are curated after the audio editions, because inline placement can
     // only choose among Tracks of Editions that are monitored — which the loop
     // above has just decided.
     const identityMbid = String(identity.artistMbid || "").trim();
     if (identityMbid) {
-      for (const summary of curateArtistVideos(db, identityMbid)) {
+      for (const summary of await withSqliteWriteGate(() => curateArtistVideos(db, identityMbid), "curation:videos")) {
         console.log(
           `[Curation] Video library ${summary.libraryId} (${summary.layout}): `
           + `${summary.selected} selected (${summary.inline} inline, `

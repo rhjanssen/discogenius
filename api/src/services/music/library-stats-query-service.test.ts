@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { after, before, beforeEach, test } from "node:test";
 import { resetActiveSchemaRows } from "../../test-support/active-schema-fixture.js";
 
@@ -50,6 +51,26 @@ beforeEach(() => {
 after(() => {
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("cold statistics requests share a background read without querying the API connection", async () => {
+  const prepare = Database.prototype.prepare;
+  Database.prototype.prepare = function () {
+    throw new Error("Statistics SQL ran on the API thread");
+  } as typeof prepare;
+  try {
+    let eventLoopYielded = false;
+    setImmediate(() => { eventLoopYielded = true; });
+    const [first, second] = await Promise.all([
+      libraryStatsModule.LibraryStatsQueryService.getSnapshot(),
+      libraryStatsModule.LibraryStatsQueryService.getSnapshot(),
+    ]);
+    assert.equal(first, second, "concurrent requests share one worker result");
+    assert.equal(eventLoopYielded, true, "the API event loop remains available during the read");
+    assert.equal(first.artists.total, 0);
+  } finally {
+    Database.prototype.prepare = prepare;
+  }
 });
 
 function getLibrary(name: "Stereo" | "Spatial" | "Video"): LibraryFixture {
@@ -276,7 +297,7 @@ function addVideoFile(
   );
 }
 
-test("global stats deduplicate collaborations and require every selected Library track occurrence", () => {
+test("global stats deduplicate collaborations and require every selected Library track occurrence", async () => {
   const stereo = getLibrary("Stereo");
   const spatial = getLibrary("Spatial");
   const firstArtist = seedArtist("one");
@@ -311,21 +332,21 @@ test("global stats deduplicate collaborations and require every selected Library
   insertProjection.run(stereo.id, firstArtist.metadataId, firstArtist.mbid);
   insertProjection.run(stereo.id, collaborator.metadataId, collaborator.mbid);
 
-  let snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  let snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.artists, { total: 2, monitored: 2, downloaded: 0 });
   assert.deepEqual(snapshot.albums, { total: 1, monitored: 1, downloaded: 0 });
   assert.deepEqual(snapshot.tracks, { total: 2, monitored: 2, downloaded: 0 });
 
   addAudioFile(firstArtist, album, 0, stereo, "first");
   libraryStatsModule.LibraryStatsQueryService.clearCache();
-  snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.albums, { total: 1, monitored: 1, downloaded: 0 });
   assert.deepEqual(snapshot.tracks, { total: 2, monitored: 2, downloaded: 1 });
   assert.equal(snapshot.artists.downloaded, 1);
 
   addAudioFile(firstArtist, album, 1, stereo, "second");
   libraryStatsModule.LibraryStatsQueryService.clearCache();
-  snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(snapshot.albums.downloaded, 1);
   assert.equal(snapshot.tracks.downloaded, 2);
   assert.equal(snapshot.artists.downloaded, 1);
@@ -334,25 +355,25 @@ test("global stats deduplicate collaborations and require every selected Library
   // completion requirements but never additional dashboard entities.
   monitorAlbum(album, spatial);
   libraryStatsModule.LibraryStatsQueryService.clearCache();
-  snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.albums, { total: 1, monitored: 1, downloaded: 0 });
   assert.deepEqual(snapshot.tracks, { total: 2, monitored: 2, downloaded: 0 });
 
   addAudioFile(firstArtist, album, 0, spatial, "first");
   libraryStatsModule.LibraryStatsQueryService.clearCache();
-  snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(snapshot.albums.downloaded, 0);
   assert.equal(snapshot.tracks.downloaded, 1);
 
   addAudioFile(firstArtist, album, 1, spatial, "second");
   libraryStatsModule.LibraryStatsQueryService.clearCache();
-  snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.albums, { total: 1, monitored: 1, downloaded: 1 });
   assert.deepEqual(snapshot.tracks, { total: 2, monitored: 2, downloaded: 2 });
   assert.deepEqual(snapshot.artists, { total: 2, monitored: 2, downloaded: 1 });
 });
 
-test("video downloaded stats count selected canonical videos, not physical files", () => {
+test("video downloaded stats count selected canonical videos, not physical files", async () => {
   const videoLibrary = getLibrary("Video");
   const artist = seedArtist("video");
   monitorArtist(artist, videoLibrary);
@@ -364,20 +385,20 @@ test("video downloaded stats count selected canonical videos, not physical files
   addVideoFile(artist, selected, videoLibrary, "duplicate-copy");
   addVideoFile(artist, unselected, videoLibrary, "unselected-file");
 
-  let snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  let snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.videos, { total: 2, monitored: 1, downloaded: 1 });
   assert.deepEqual(snapshot.artists, { total: 1, monitored: 1, downloaded: 0 });
   assert.deepEqual(snapshot.files, { total: 3, totalSizeBytes: 600 });
 
   dbModule.db.prepare("UPDATE Libraries SET enabled = 0 WHERE id = ?").run(videoLibrary.id);
   libraryStatsModule.LibraryStatsQueryService.clearCache();
-  snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(snapshot.videos, { total: 2, monitored: 0, downloaded: 0 });
   assert.deepEqual(snapshot.artists, { total: 1, monitored: 0, downloaded: 0 });
   assert.deepEqual(snapshot.files, { total: 3, totalSizeBytes: 600 });
 });
 
-test("disabled audio Libraries do not contribute monitoring or completion", () => {
+test("disabled audio Libraries do not contribute monitoring or completion", async () => {
   const stereo = getLibrary("Stereo");
   const artist = seedArtist("disabled");
   monitorArtist(artist, stereo);
@@ -386,7 +407,7 @@ test("disabled audio Libraries do not contribute monitoring or completion", () =
   addAudioFile(artist, album, 0, stereo, "only");
 
   dbModule.db.prepare("UPDATE Libraries SET enabled = 0 WHERE id = ?").run(stereo.id);
-  const snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  const snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
 
   assert.deepEqual(snapshot.artists, { total: 1, monitored: 0, downloaded: 0 });
   assert.deepEqual(snapshot.albums, { total: 1, monitored: 0, downloaded: 0 });
@@ -394,12 +415,12 @@ test("disabled audio Libraries do not contribute monitoring or completion", () =
   assert.deepEqual(snapshot.files, { total: 1, totalSizeBytes: 100 });
 });
 
-test("snapshot caching is stable and mutation events invalidate it", () => {
-  const initial = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+test("snapshot caching is stable and mutation events invalidate it", async () => {
+  const initial = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(initial.artists.total, 0);
 
   seedArtist("cached");
-  const cached = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  const cached = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(cached, initial);
   assert.equal(cached.artists.total, 0);
 
@@ -412,13 +433,13 @@ test("snapshot caching is stable and mutation events invalidate it", () => {
     trigger: 0,
     priority: 0,
   });
-  const refreshed = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  const refreshed = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.notEqual(refreshed, initial);
   assert.equal(refreshed.artists.total, 1);
 });
 
 
-test("track totals exclude unresolved and video occurrences while counting each audio edition slot", () => {
+test("track totals exclude unresolved and video occurrences while counting each audio edition slot", async () => {
   const artist = seedArtist("counts");
   const album = seedAlbum("counts", artist, 4);
   dbModule.db.prepare("UPDATE Tracks SET recording_id = NULL WHERE id = ?").run(album.tracks[0].id);
@@ -429,5 +450,5 @@ test("track totals exclude unresolved and video occurrences while counting each 
   const expected = dbModule.db.prepare(`SELECT COUNT(*) AS count FROM Tracks track
     JOIN Recordings recording ON recording.id = track.recording_id AND recording.is_video = 0`).get() as { count: number };
   assert.equal(expected.count, 2);
-  assert.equal(libraryStatsModule.LibraryStatsQueryService.getSnapshot().tracks.total, expected.count);
+  assert.equal((await libraryStatsModule.LibraryStatsQueryService.getSnapshot()).tracks.total, expected.count);
 });

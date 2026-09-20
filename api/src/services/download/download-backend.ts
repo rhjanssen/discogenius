@@ -2,6 +2,8 @@ export interface DownloadRequest {
     provider: string;
     entityType: "album" | "track" | "video";
     providerId: string;
+    /** Exact same-provider tracks selected for an album acquisition. */
+    trackIds?: string[];
     downloadPath: string;
     quality?: string | null;
     /** The library variant selected by curation; one provider offer may serve more than one slot. */

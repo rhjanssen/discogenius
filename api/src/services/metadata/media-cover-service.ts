@@ -2843,7 +2843,7 @@ export async function resolveVideoArtwork(options: {
               candidate_match.updated_at DESC
             LIMIT 1
           )
-        WHERE CAST(recording.id AS TEXT) = CAST(? AS TEXT)
+        WHERE recording.id = ?
           AND recording.is_video = 1
         LIMIT 1
       `).get(normalizedVideoId) as Record<string, any> | undefined;
@@ -2863,12 +2863,12 @@ export async function resolveVideoArtwork(options: {
           // that previously received an immutable local URL fetch the new
           // bytes instead of displaying the old related-video thumbnail for a
           // year from cache.
-          db.prepare(`
+          await withSqliteWriteGate(() => db.prepare(`
             UPDATE Recordings
             SET cover_image_url = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+            WHERE id = ?
               AND is_video = 1
-          `).run(youtubeStill, normalizedVideoId);
+          `).run(youtubeStill, normalizedVideoId), "media-cover:video-source");
         }
       }
       if (row) {

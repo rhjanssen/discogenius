@@ -19,7 +19,7 @@ export type QueueStatusContextType = {
   getProgressByProviderId: (providerId: string) => DownloadProgress | undefined;
   addToQueue: (url: string | null | undefined, type: string, providerId?: string | null, options?: AddToQueueOptions) => Promise<void>;
   processItem: (id: number) => Promise<void>;
-  retryItem: (id: number) => Promise<void>;
+  retryItem: (id: number, source?: "queue" | "history") => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
   reorderItems: (
     params: {

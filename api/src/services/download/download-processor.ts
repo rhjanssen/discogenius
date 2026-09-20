@@ -1,3 +1,4 @@
+import { superviseDownloadProcesses } from "./download-child-process.js";
 import { validateExecutionManifest } from './execution-manifest.js';
 import { applyTrackProgress } from '../../contracts/track-progress.js';
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
@@ -2228,6 +2229,13 @@ export class DownloadProcessor {
                                 entityType: type as "album" | "track" | "video",
                                 providerId: activeProviderItemId,
                                 downloadPath,
+                                trackIds: type === "album"
+                                    ? (workingPayload as DownloadAlbumCommand).trackOffers?.map(offer => {
+                                        if (offer.provider !== activeProvider) {
+                                            throw new Error("Album download track identities must use the selected provider");
+                                        }
+                                        return offer.providerTrackId;
+                                    }) : undefined,
                                 quality: workingPayload.quality,
                                 slot,
                                 metadata: {
@@ -3067,6 +3075,7 @@ export class DownloadProcessorWorkerProxy {
 
         const { entry, workerData } = resolveDownloadWorkerSpawn();
         const worker = new Worker(entry, { workerData });
+        superviseDownloadProcesses(worker);
         this.workerSqliteWriteMutexOwnerToken = Number(
             workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY],
         ) || 0;

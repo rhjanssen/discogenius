@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnDownloadProcess as spawn } from "../../download/download-child-process.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -240,7 +240,16 @@ export class YtDlpBackend implements DownloadBackend {
     if (providerIds.length === 0) {
       throw new Error("YouTube Music download requested without a provider ID.");
     }
-    const urls = providerIds.map((id) => buildYouTubeMusicSourceUrl(request.entityType, id));
+    const selectedTracks = request.entityType === "album" && request.trackIds?.length
+      ? [...new Set(request.trackIds)] : null;
+    if (selectedTracks?.some(id => !VIDEO_ID.test(id))) {
+      throw new Error("YouTube album acquisition contains an invalid selected track ID.");
+    }
+    // Browse URLs can resolve to a different regional edition/playlist. The
+    // acquisition plan's exact track identities take precedence over that list.
+    const urls = selectedTracks
+      ? selectedTracks.map(id => buildYouTubeMusicSourceUrl("track", id))
+      : providerIds.map((id) => buildYouTubeMusicSourceUrl(request.entityType, id));
     const outputTemplate = path.join(request.downloadPath, "%(id)s.%(ext)s");
     const args = [
       "--ignore-config",
@@ -280,7 +289,7 @@ export class YtDlpBackend implements DownloadBackend {
       args.push("--no-playlist", "--format", format, "--merge-output-format", "mp4");
     } else {
       args.push(
-        request.entityType === "album" ? "--yes-playlist" : "--no-playlist",
+        request.entityType === "album" && !selectedTracks ? "--yes-playlist" : "--no-playlist",
         "--format", ytDlpLossyAudioFormat(),
         "--extract-audio",
         // `best` means "do not re-encode". YouTube serves AAC *or* Opus and the
@@ -317,6 +326,7 @@ export class YtDlpBackend implements DownloadBackend {
       let stdoutBuffer = "";
       let stderrBuffer = "";
       const errorLines: string[] = [];
+      let fatalError: string | undefined;
       let forceKillTimer: NodeJS.Timeout | null = null;
 
       const finish = (callback: () => void) => {
@@ -342,6 +352,7 @@ export class YtDlpBackend implements DownloadBackend {
         }
         const clean = stripAnsi(line);
         if (source === "stderr" && clean && !/^\[download\]/u.test(clean)) {
+          if (/^ERROR:/iu.test(clean)) fatalError = clean;
           errorLines.push(clean);
           if (errorLines.length > 12) errorLines.shift();
         }
@@ -371,7 +382,7 @@ export class YtDlpBackend implements DownloadBackend {
           return;
         }
         if (code !== 0) {
-          const detail = errorLines.at(-1);
+          const detail = fatalError || errorLines.at(-1);
           finish(() => reject(new Error(`yt-dlp exited with code ${code ?? "signal"}${detail ? `: ${detail}` : ""}`)));
           return;
         }

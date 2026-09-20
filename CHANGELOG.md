@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.11] - 2026-09-21
+
+### Fixed
+
+- Calculate dashboard library totals in a short-lived read-only worker, keeping HTTP requests responsive on large catalogs. Concurrent requests share the same snapshot calculation.
+- Reuse audio candidates within each video-matching pass instead of repeatedly querying an artist's discography. Index video artwork lookups by recording identity.
+- Await SQLite writer admission for artist statistics, curation, provider artist identities, catalog video relations, album top tracks, and library metadata file updates.
+- Download the exact selected YouTube album tracks when an acquisition plan supplies them, preventing album playlist redirects from downloading a different edition. Preserve the failing track error when later tracks emit warnings.
+- Reconcile YouTube imports against the selected tracks and count repeated formats of the same track once, avoiding misleading partial-album totals after retries.
+- Distinguish history command IDs from live queue IDs when retrying downloads, so colliding numeric IDs cannot retry an unrelated item.
+- Terminate native downloaders and their process groups when their download worker exits, before recovering attempts. This prevents abandoned downloaders from continuing to write or hold provider connections after a worker restart.
+- Persist the Remove unmanaged tags setting.
+
 ## [2.16.10] - 2026-09-14
 
 ### Fixed

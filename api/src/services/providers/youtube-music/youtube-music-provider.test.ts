@@ -702,6 +702,23 @@ test("yt-dlp Low format selector caps bitrate instead of taking Premium bestaudi
   assert.equal(ytDlpLossyAudioFormat("max"), "bestaudio/best");
 });
 
+test("yt-dlp album acquisition downloads exact selected tracks instead of a redirected album playlist", () => {
+  const backend = new YtDlpBackend({ cookiesPath: path.join(testConfigDir, "missing-cookies.txt") });
+  const request: DownloadRequest = {
+    provider: "youtube-music", entityType: "album", providerId: ALBUM_ID,
+    downloadPath: path.join(testConfigDir, "selected-album"),
+    trackIds: [TRACK_ID, VIDEO_ID, TRACK_ID],
+  };
+  const args = backend.buildArgs(request);
+  assert.deepEqual(args.filter(arg => arg.startsWith("https://")), [
+    `https://www.youtube.com/watch?v=${TRACK_ID}`,
+    `https://www.youtube.com/watch?v=${VIDEO_ID}`,
+  ]);
+  assert.ok(args.includes("--no-playlist"));
+  assert.ok(!args.includes("--yes-playlist"));
+  assert.throws(() => backend.buildArgs({ ...request, trackIds: ["invalid"] }), /invalid selected track ID/);
+});
+
 test("yt-dlp progress parser keeps provider identity and playlist-wide progress", () => {
   const event = parseYtDlpProgressLine(
     `DG_PROGRESS\t50.0%\t2\t4\t${TRACK_ID}\tPompeii\t1.2MiB/s\t00:05`,
@@ -795,4 +812,22 @@ test("yt-dlp backend terminates the child process when a running job is cancelle
     (error: unknown) => error instanceof Error && error.name === "AbortError",
   );
   assert.equal((child as FakeYtDlpProcess | null)?.killed, true);
+});
+
+test("yt-dlp keeps the actual failing track error when later downloads emit warnings", async () => {
+  const backend = new YtDlpBackend({
+    spawnImpl: () => {
+      const child = new FakeYtDlpProcess();
+      queueMicrotask(() => {
+        child.stderr.write("ERROR: [youtube] failed-track: Video unavailable\n");
+        for (let i = 0; i < 20; i++) child.stderr.write(`WARNING: later-track-${i}: fallback client used\n`);
+        child.emit("close", 1);
+      });
+      return child as unknown as YtDlpProcess;
+    },
+  });
+  await assert.rejects(
+    backend.download(baseDownloadRequest(path.join(testConfigDir, "failed-album")), { onProgress() {} }),
+    /ERROR: \[youtube\] failed-track: Video unavailable/,
+  );
 });

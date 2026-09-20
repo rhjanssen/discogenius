@@ -37,22 +37,28 @@ import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
+/** YouTube also downloads exact plan URLs for album-mode jobs. */
+function downloadsSelectedOffers(payload: { acquisitionMode?: string | null; provider?: string }): boolean {
+    return payload.acquisitionMode === 'trackOffers' || payload.provider === 'youtube-music';
+}
+
 /** A selected track subset need not cover its provider's entire edition. */
-export function expectedImportedTrackCount(payload: Pick<ImportDownloadJob['payload'], 'acquisitionMode' | 'trackOffers'>, providerCount: number | undefined): number | undefined {
-    return payload.acquisitionMode === 'trackOffers' && Array.isArray(payload.trackOffers) && payload.trackOffers.length > 0
-        ? payload.trackOffers.length
+export function expectedImportedTrackCount(payload: Pick<ImportDownloadJob['payload'], 'acquisitionMode' | 'trackOffers'> & { provider?: string }, providerCount: number | undefined): number | undefined {
+    return downloadsSelectedOffers(payload) && Array.isArray(payload.trackOffers) && payload.trackOffers.length > 0
+        ? new Set(payload.trackOffers.map(offer => `${offer.provider}:${offer.providerTrackId}`)).size
         : providerCount;
 }
 
-/** Full-album jobs carry trackOffers for tagging; only trackOffers mode hard-fails on shortfalls. */
+/** Full-album provenance is not exhaustive unless the backend downloads exact offers. */
 export function shouldHardFailIncompleteAlbumImport(options: {
   type?: string;
   acquisitionMode?: string | null;
+  provider?: string;
   processedCount: number;
   trackOfferCount: number;
 }): boolean {
   return options.type === "album"
-    && options.acquisitionMode === "trackOffers"
+    && downloadsSelectedOffers(options)
     && options.trackOfferCount > 0
     && options.processedCount < options.trackOfferCount;
 }
@@ -1205,6 +1211,9 @@ export class DownloadedTracksImportService {
         }
 
         organizeResult.expectedTracks = expectedImportedTrackCount(job.payload, organizeResult.expectedTracks);
+        // Retries can leave several formats of one provider track in staging.
+        // Count track identities, not the number of files organized for them.
+        organizeResult.processedTrackIds = [...new Set(organizeResult.processedTrackIds)];
         cancellationCheckpoint("after organizing downloaded files");
         if (type !== "video") {
             await withSqliteWriteGate(() => persistDownloadedProviderProvenance(
@@ -1415,10 +1424,7 @@ export class DownloadedTracksImportService {
         const expectedProcessedTracks = organizeResult.expectedTracks ?? 0;
         const trackOfferCount = Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers.length : 0;
         const acquisitionMode = String(job.payload.acquisitionMode || "").trim();
-        // Album-mode jobs still carry trackOffers for provenance. Only an
-        // explicit trackOffers download (hybrid / remaining missing tracks)
-        // must hard-fail when some offers never organized.
-        const isTrackOffersJob = acquisitionMode === "trackOffers";
+        const isTrackOffersJob = downloadsSelectedOffers(job.payload) && trackOfferCount > 0;
         // Soft-incomplete for normal full-album downloads (bonus files, etc.).
         // Hybrid trackOffers must not green-check when most catalog tracks never landed.
         const softIncomplete = type === "album"
@@ -1428,6 +1434,7 @@ export class DownloadedTracksImportService {
         const hardIncomplete = shouldHardFailIncompleteAlbumImport({
             type,
             acquisitionMode,
+            provider,
             processedCount: organizeResult.processedTrackIds.length,
             trackOfferCount,
         });

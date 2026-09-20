@@ -1515,13 +1515,13 @@ class ApiClient {
     });
   }
 
-  async retryQueueItem(id: number) {
+  async retryQueueItem(id: number, source: "queue" | "history" = "queue") {
     return this.request<{
       action?: 'retry-download' | 'retry-import' | 'queue-redownload';
       message: string;
       jobId?: number;
       sourceJobId?: number;
-    }>(`/v1/queue/${id}/retry`, { method: 'POST' });
+    }>(`/v1/queue/${id}/retry?source=${source}`, { method: 'POST' });
   }
 
   async deleteQueueItem(id: number) {

@@ -5,7 +5,7 @@
  * browser headers/cookies.
  */
 
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import {
   getYouTubeMusicCapabilitySnapshot,
   parseYouTubeMusicUrl,
@@ -360,12 +360,12 @@ async function resolveYouTubeCatalogArtistId(
   if (!selected?.providerId) return null;
 
   if (artistMbid) {
-    storeProviderArtistMatch(
+    await withSqliteWriteGate(() => storeProviderArtistMatch(
       provider as StreamingProvider,
       artistMbid,
       selected as ProviderArtist,
       "probable",
-    );
+    ), "youtube-catalog:artist-identity");
   }
   return selected.providerId;
 }
@@ -421,7 +421,7 @@ export async function syncYouTubeVideoCatalogForArtist(
       _provider: "youtube-music",
     }));
     if (videos.length === 0) return 0;
-    RefreshVideoService.upsertArtistVideos(artistId, videos);
+    await withSqliteWriteGate(() => RefreshVideoService.upsertArtistVideos(artistId, videos), "youtube-catalog:videos");
     return videos.length;
   } catch (error) {
     console.warn(`[YouTubeVideoCatalog] getArtistVideos failed for ${artistId}:`, error);

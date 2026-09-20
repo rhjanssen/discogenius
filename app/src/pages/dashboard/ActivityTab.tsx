@@ -309,7 +309,7 @@ const ActivityTab = ({
                                     icon={<ArrowClockwise20 />}
                                     aria-label="Retry job"
                                     title="Retry job"
-                                    onClick={() => retryItem(retryJobId)}
+                                    onClick={() => retryItem(retryJobId, "history")}
                                 />
                             ) : null}
                         </div>

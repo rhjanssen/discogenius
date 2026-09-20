@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import { after, before, beforeEach, test } from "node:test";
 import {
   closeActiveSchemaDb,
@@ -27,6 +28,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
+  dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
@@ -316,21 +319,22 @@ test("matching a video batches candidate offers instead of querying once per can
     (artist_mbid, title, is_video, youtube_video_id, metadata_status, length_ms)
     VALUES ('artist-mbid', ?, 1, ?, 'youtube', 180000)`);
   const countQueries = (id: string): number => {
-    const prepare = dbModule.db.prepare;
+    const prepare = Database.prototype.prepare;
     let calls = 0;
-    dbModule.db.prepare = function (sql: string) {
+    Database.prototype.prepare = function (this: Database.Database, sql: string) {
       calls++;
-      return prepare.call(dbModule.db, sql);
+      return prepare.call(this, sql);
     } as typeof prepare;
     try {
       refreshVideo.RefreshVideoService.upsertArtistVideos("artist-mbid", [{
         provider: "tidal", provider_id: id, title: "Unique unmatched performance", duration: 180,
       }], { deferRepair: true });
-    } finally { dbModule.db.prepare = prepare; }
+    } finally { Database.prototype.prepare = prepare; }
     return calls;
   };
   insert.run("Unrelated candidate 0", "candidate-0");
   const small = countQueries("small-offer");
+  assert.ok(small > 0, "instrument the underlying database, not the proxy wrapper");
   dbModule.db.prepare("DELETE FROM ProviderItems WHERE provider = 'tidal'").run();
   dbModule.db.prepare("DELETE FROM Recordings WHERE metadata_status = 'provider_catalog'").run();
   for (let i = 1; i < 200; i++) insert.run(`Unrelated candidate ${i}`, `candidate-${i}`);
@@ -338,4 +342,34 @@ test("matching a video batches candidate offers instead of querying once per can
   assert.ok(large <= small + 5, `one video used ${small} queries with 1 candidate and ${large} with 200`);
   assert.equal((dbModule.db.prepare(`SELECT COUNT(*) AS n FROM Recordings
     WHERE metadata_status = 'provider_catalog' AND title = 'Unique unmatched performance'`).get() as { n: number }).n, 1);
+});
+
+test("video matching loads artist audio candidates once per pass and sees later catalog changes", () => {
+  const videos = Array.from({ length: 12 }, (_, i) => ({
+    provider: "tidal", provider_id: `audio-cache-${i}`, artist_mbid: "artist-mbid", title: "Pompeii", duration: 180,
+  }));
+  const run = () => {
+    const prepare = Database.prototype.prepare;
+    let candidateReads = 0;
+    Database.prototype.prepare = function (this: Database.Database, sql: string) {
+      if (sql.includes("has_studio_album") && sql.includes("FROM Recordings rec")) candidateReads++;
+      return prepare.call(this, sql);
+    } as typeof prepare;
+    try {
+      refreshVideo.RefreshVideoService.upsertArtistVideos("artist-mbid", videos, { deferRepair: true });
+    } finally { Database.prototype.prepare = prepare; }
+    assert.equal(candidateReads, 1);
+  };
+  run();
+  const audio = dbModule.db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video, length_ms)
+    VALUES ('new-audio-candidate', 'artist-mbid', 'Pompeii', 0, 180000) RETURNING id`).get() as { id: number };
+  dbModule.db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-cache', 'artist-mbid', 'Bad Blood', 'Album')`).run();
+  dbModule.db.prepare(`INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title)
+    VALUES ('release-cache', 'rg-cache', 'artist-mbid', 'Bad Blood')`).run();
+  dbModule.db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_id, recording_mbid, title, position, medium_position)
+    VALUES ('track-cache', 'release-cache', ?, 'new-audio-candidate', 'Pompeii', 1, 1)`).run(audio.id);
+  run();
+  assert.ok((dbModule.db.prepare(`SELECT COUNT(*) AS n FROM RecordingRelations
+    WHERE relation_type = 'provider_video_for' AND target_recording_id = ?`).get(audio.id) as { n: number }).n > 0, 'the second pass sees the newly added studio recording');
 });

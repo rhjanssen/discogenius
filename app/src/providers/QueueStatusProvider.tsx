@@ -428,10 +428,10 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     }
   }, [invalidateQueueQueries, scheduleStatusRefresh]);
 
-  const retryItem = useCallback(async (id: number) => {
+  const retryItem = useCallback(async (id: number, source: "queue" | "history" = "queue") => {
     try {
-      const response = await api.retryQueueItem(id);
-      updateProgressState((previous) => removeTrackedProgress(previous, id));
+      const response = await api.retryQueueItem(id, source);
+      if (source === "queue") updateProgressState((previous) => removeTrackedProgress(previous, id));
       toastRef.current({
         title: response.action === "queue-redownload" ? "Download queued" : "Retry queued",
         description: response.message,

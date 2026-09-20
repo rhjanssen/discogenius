@@ -85,7 +85,7 @@ export async function resolveProviderArtistId(
             return null;
         }
 
-        storeProviderArtistMatch(provider, artistMbid, selected, resolution.status === "verified" ? "verified" : "probable");
+        await withSqliteWriteGate(() => storeProviderArtistMatch(provider, artistMbid, selected, resolution.status === "verified" ? "verified" : "probable"), "refresh-artist:identity");
         return selected.providerId;
     } catch (error) {
         console.warn(`[RefreshArtistService] Failed to resolve ${provider.name} artist for ${artistName} (${artistMbid}):`, error);

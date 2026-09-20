@@ -305,7 +305,7 @@ test("history retry by command id re-enqueues a wait row after finishClaimed", a
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
 
   const retryModule = await import("./download-queue-retry.js");
-  const result = retryModule.retryDownloadQueueItem(claimed.commandId);
+  const result = retryModule.retryDownloadQueueItem(claimed.commandId, "history");
   assert.equal(result.status, 200);
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
   const live = queryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
@@ -322,4 +322,20 @@ test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   const dropped = waitQueueModule.DownloadWaitQueue.recoverOrphanClaims();
   assert.equal(dropped, 1);
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
+});
+
+test("history retry cannot target an unrelated queue row with the same numeric ID", async () => {
+  const original = enqueueTrack("history-target", "History target");
+  const claimed = waitQueueModule.DownloadWaitQueue.claim(original.id)!;
+  queueModule.CommandQueueManager.fail(claimed.commandId, "download failed");
+  waitQueueModule.DownloadWaitQueue.finishClaimed(claimed.commandId);
+  const unrelated = enqueueTrack("unrelated", "Unrelated queued track");
+  dbModule.db.prepare("UPDATE DownloadQueue SET id = ? WHERE id = ?").run(claimed.commandId, unrelated.id);
+  const retryModule = await import("./download-queue-retry.js");
+  const result = retryModule.retryDownloadQueueItem(claimed.commandId, "history");
+  assert.equal(result.status, 200);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 2);
+  assert.equal(waitQueueModule.DownloadWaitQueue.get(claimed.commandId)?.provider_id, "unrelated");
+  assert.equal(waitQueueModule.DownloadWaitQueue.get(claimed.commandId)?.command_id, null);
+  assert.equal(result.body.sourceJobId, claimed.commandId);
 });

@@ -74,6 +74,7 @@ const METADATA_UPDATE_KEYS = [
   "upc_target",
   "write_audio_tags_policy",
   "embed_replaygain",
+  "scrub_audio_tags",
 ] as const satisfies readonly (keyof MetadataConfigContract)[];
 
 const PATH_UPDATE_KEYS = [

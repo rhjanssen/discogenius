@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { Config, getConfigSection } from "../config/config.js";
 import { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext } from "../config/naming.js";
 import { loadArtistMetadataIdentity } from "../music/managed-artists.js";
@@ -174,7 +174,7 @@ class LibraryMetadataBackfillService {
                         result.skipped++;
                     }
                     if (fs.existsSync(picPath)) {
-                        this.upsertLibraryFile({
+                        await this.upsertLibraryFile({
                             artistId,
                             filePath: picPath,
                             libraryRoot,
@@ -193,7 +193,7 @@ class LibraryMetadataBackfillService {
                 const nfoPath = path.join(artistDir, "artist.nfo");
                 try {
                     const updated = await saveArtistNfoFile(artistId, nfoPath);
-                    this.upsertLibraryFile({
+                    await this.upsertLibraryFile({
                         artistId,
                         filePath: nfoPath,
                         libraryRoot,
@@ -447,7 +447,7 @@ class LibraryMetadataBackfillService {
                             result.skipped++;
                         }
                         if (fs.existsSync(coverPath)) {
-                            this.upsertLibraryFile({
+                            await this.upsertLibraryFile({
                                 artistId,
                                 albumId: album.id ? String(album.id) : null,
                                 filePath: coverPath,
@@ -515,7 +515,7 @@ class LibraryMetadataBackfillService {
                                     },
                                 );
                                 if (fs.existsSync(videoCoverPath)) {
-                                    this.upsertLibraryFile({
+                                    await this.upsertLibraryFile({
                                         artistId,
                                         albumId: String(album.id),
                                         filePath: videoCoverPath,
@@ -537,7 +537,7 @@ class LibraryMetadataBackfillService {
                                 result.failed++;
                             }
                         } else {
-                            this.upsertLibraryFile({
+                            await this.upsertLibraryFile({
                                 artistId,
                                 albumId: String(album.id),
                                 filePath: videoCoverPath,
@@ -566,7 +566,7 @@ class LibraryMetadataBackfillService {
                             provider: album.provider,
                             providerAlbumId: album.id ? String(album.id) : null,
                         });
-                        this.upsertLibraryFile({
+                        await this.upsertLibraryFile({
                             artistId,
                             albumId: album.id ? String(album.id) : null,
                             filePath: nfoPath,
@@ -681,7 +681,7 @@ class LibraryMetadataBackfillService {
         for (const track of tracks) {
             const existingSidecar = findAdjacentLyricSidecar(track.file_path, { normalizeExtension: true });
             if (existingSidecar) {
-                this.upsertLibraryFile({
+                await this.upsertLibraryFile({
                     artistId,
                     albumId: track.album_id ? String(track.album_id) : null,
                     mediaId: String(track.provider_id),
@@ -708,7 +708,7 @@ class LibraryMetadataBackfillService {
                 const requestedPath = lyricSidecarPath(track.file_path, SYNCHRONIZED_LYRIC_EXTENSION);
                 const savedPath = await saveLyricsFile(String(track.provider_id), requestedPath, track.provider);
                 if (fs.existsSync(savedPath)) {
-                    this.upsertLibraryFile({
+                    await this.upsertLibraryFile({
                         artistId,
                         albumId: track.album_id ? String(track.album_id) : null,
                         mediaId: String(track.provider_id),
@@ -830,7 +830,7 @@ class LibraryMetadataBackfillService {
                     }
 
                     if (metadataConfig.save_video_thumbnail && fs.existsSync(thumbPath)) {
-                        this.upsertLibraryFile({
+                        await this.upsertLibraryFile({
                             artistId,
                             albumId: video.album_id ? String(video.album_id) : null,
                             mediaId: String(video.provider_id),
@@ -946,7 +946,7 @@ class LibraryMetadataBackfillService {
                 const nfoPath = path.join(path.dirname(video.file_path), `${path.parse(video.file_path).name}.nfo`);
                 try {
                     await saveVideoNfoFile(String(video.provider_id), nfoPath, video.provider);
-                    this.upsertLibraryFile({
+                    await this.upsertLibraryFile({
                         artistId,
                         albumId: video.album_id ? String(video.album_id) : null,
                         mediaId: String(video.provider_id),
@@ -1162,10 +1162,10 @@ class LibraryMetadataBackfillService {
         canonicalTrackMbid?: string | null;
         canonicalRecordingMbid?: string | null;
     }) {
-        LibraryFilesService.upsertLibraryFile({
+        return withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
             ...params,
             removeFromUnmapped: false,
-        });
+        }), "metadata-backfill:file");
     }
 }
 

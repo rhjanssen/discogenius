@@ -523,10 +523,10 @@ function directArtistProjection(fixture: Fixture) {
 
 async function assertAllTruth(label: string, fixture: Fixture, checkProjection = true): Promise<void> {
   const direct = directTruth();
-  const service = statsModule.LibraryStatsQueryService.getSnapshot();
+  const service = await statsModule.LibraryStatsQueryService.getSnapshot();
   assert.deepEqual(service, direct, `${label}: service snapshot differs from direct SQL truth`);
   assert.equal(
-    statsModule.LibraryStatsQueryService.getSnapshot(),
+    await statsModule.LibraryStatsQueryService.getSnapshot(),
     service,
     `${label}: hot cache should reuse the authoritative immutable snapshot`,
   );
@@ -556,7 +556,7 @@ test("release statistics stay equal across service, API, cache, projection, and 
   const library = libraries();
 
   // Prime a cold zero snapshot. The metadata completion event must discard it.
-  const zero = statsModule.LibraryStatsQueryService.getSnapshot();
+  const zero = await statsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(zero.artists.total, 0);
   const fixture = seedCanonicalFixture();
   eventsModule.appEvents.emit(eventsModule.AppEvent.ARTIST_REFRESH_COMPLETE, {
@@ -574,7 +574,7 @@ test("release statistics stay equal across service, API, cache, projection, and 
   // Provider availability and typed match decisions are not canonical/library
   // counters. A completed matching command still invalidates the cache, and the
   // recomputed result must remain identical.
-  const beforeProvider = statsModule.LibraryStatsQueryService.getSnapshot();
+  const beforeProvider = await statsModule.LibraryStatsQueryService.getSnapshot();
   seedProviderMatch(fixture);
   eventsModule.appEvents.emit(eventsModule.AppEvent.COMMAND_UPDATED, {
     id: 1,
@@ -582,7 +582,7 @@ test("release statistics stay equal across service, API, cache, projection, and 
     status: "completed",
     progress: 100,
   } as any);
-  const afterProvider = statsModule.LibraryStatsQueryService.getSnapshot();
+  const afterProvider = await statsModule.LibraryStatsQueryService.getSnapshot();
   assert.notEqual(afterProvider, beforeProvider);
   await assertAllTruth("provider matching", fixture);
 
@@ -678,7 +678,7 @@ test("release statistics stay equal across service, API, cache, projection, and 
   // exactly the same truth from the persisted schema-43 database.
   const childCode = `
     import { LibraryStatsQueryService } from "./src/services/music/library-stats-query-service.ts";
-    console.log("STAT_RESTART=" + JSON.stringify(LibraryStatsQueryService.getSnapshot()));
+    console.log("STAT_RESTART=" + JSON.stringify(await LibraryStatsQueryService.getSnapshot()));
   `;
   const child = spawnSync(
     process.execPath,

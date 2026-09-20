@@ -792,7 +792,7 @@ export class RefreshAlbumService {
 
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
         if (canonicalLink.releaseGroupMbid) {
-            ArtistTopTrackService.rebuildForReleaseGroup(canonicalLink.releaseGroupMbid);
+            await withSqliteWriteGate(() => ArtistTopTrackService.rebuildForReleaseGroup(canonicalLink.releaseGroupMbid!), "refresh-album:top-tracks");
         }
 
         console.log(`[RefreshAlbumService] refreshMetadata complete for ${albumId}`);

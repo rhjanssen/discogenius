@@ -441,6 +441,7 @@ function findAudioRecordingByProviderTrack(
     provider: string,
     providerTrackId: string,
     video: any,
+    audioCandidates?: Map<string, AudioRecordingCandidateRow[]>,
 ): { match: AudioRecordingVideoMatch | null; acceptedOccurrenceCount: number } {
     const rows = db.prepare(`
         SELECT DISTINCT rec.id, rec.artist_mbid
@@ -476,7 +477,7 @@ function findAudioRecordingByProviderTrack(
     // validate that exact target with the same title, variant, album-kind, and
     // duration rules used by every other video-to-audio path.
     const candidate = row.artist_mbid
-        ? loadAudioRecordingCandidatesForArtist(row.artist_mbid)
+        ? audioCandidatesForPass(row.artist_mbid, audioCandidates)
             .find((entry) => Number(entry.id) === Number(row.id))
         : null;
     if (!candidate) {
@@ -513,10 +514,11 @@ function resolveProviderVideoAudioMatch(input: {
     video: any;
     provider: string;
     artistMbid?: string | null;
+    audioCandidates?: Map<string, AudioRecordingCandidateRow[]>;
 }): AudioRecordingVideoMatch | null {
     const relatedTrackId = nullableText(input.video.related_track_id ?? input.video.relatedTrackId);
     if (relatedTrackId) {
-        const byTrack = findAudioRecordingByProviderTrack(input.provider, relatedTrackId, input.video);
+        const byTrack = findAudioRecordingByProviderTrack(input.provider, relatedTrackId, input.video, input.audioCandidates);
         if (byTrack.match) {
             return byTrack.match;
         }
@@ -575,10 +577,21 @@ function resolveProviderVideoAudioMatch(input: {
     const artistMbid = nullableText(input.artistMbid ?? input.video.artist_mbid);
     const offerVariant = parseVideoVariant(nullableText(input.video.title));
     if (artistMbid && isMainVideoVariant(offerVariant)) {
-        return findAudioRecordingByArtistTitleDuration(artistMbid, input.video);
+        return findAudioRecordingByArtistTitleDuration(artistMbid, input.video, input.audioCandidates);
     }
 
     return null;
+}
+
+function audioCandidatesForPass(
+    artistMbid: string,
+    candidates?: Map<string, AudioRecordingCandidateRow[]>,
+): AudioRecordingCandidateRow[] {
+    const existing = candidates?.get(artistMbid);
+    if (existing) return existing;
+    const rows = loadAudioRecordingCandidatesForArtist(artistMbid);
+    candidates?.set(artistMbid, rows);
+    return rows;
 }
 
 function loadAudioRecordingCandidatesForArtist(artistMbid: string): AudioRecordingCandidateRow[] {
@@ -661,11 +674,12 @@ function acceptArtistWideRelatedAudioMatch(
 function findAudioRecordingByArtistTitleDuration(
     artistMbid: string,
     video: any,
+    audioCandidates?: Map<string, AudioRecordingCandidateRow[]>,
 ): AudioRecordingVideoMatch | null {
     const offerVariant = parseVideoVariant(nullableText(video.title));
     const preferStudio = isMainVideoVariant(offerVariant);
     const match = acceptArtistWideRelatedAudioMatch(
-        findRelatedAudioRecordingForVideo(video, loadAudioRecordingCandidatesForArtist(artistMbid), {
+        findRelatedAudioRecordingForVideo(video, audioCandidatesForPass(artistMbid, audioCandidates), {
             videoVariant: offerVariant,
             preferStudioAudio: preferStudio,
         }),
@@ -1859,6 +1873,10 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
  * rows already in the database.
  */
 function repairProviderVideoAudioRelations(artistMbid: string): number {
+    // This pass changes video relations, never the audio catalog. Keep candidate
+    // reads local to the pass so each artist is loaded once, with no stale cache
+    // surviving a subsequent catalog refresh.
+    const audioCandidates = new Map<string, AudioRecordingCandidateRow[]>();
     const rows = db.prepare(`
         SELECT
             provider_item.provider,
@@ -2070,6 +2088,7 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
                 },
                 provider: candidate.provider,
                 artistMbid: candidate.artist_mbid ?? artistMbid,
+                audioCandidates,
             });
             return audioMatch ? [{ row: candidate, audioMatch }] : [];
         });
@@ -2464,6 +2483,7 @@ export class RefreshVideoService {
         // and doing it inside the transaction held the single SQLite write lock
         // for the whole matching pass, starving every other writer in the app.
         const canonicalArtistMbid = getArtistMusicBrainzId(artistId);
+        const audioCandidates = new Map<string, AudioRecordingCandidateRow[]>();
         const preparedVideos = videos.map((video) => {
             const artistMbid = String(video.artist_mbid || video.mb_artist_mbid || "").trim() || canonicalArtistMbid;
             const provider = String(video.provider || video._provider || streamingProviderManager.getDefaultProviderId());
@@ -2487,6 +2507,7 @@ export class RefreshVideoService {
                     video: videoForAudioMatch,
                     provider,
                     artistMbid,
+                    audioCandidates,
                 }),
             };
         });

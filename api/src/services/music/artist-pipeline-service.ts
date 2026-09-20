@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { DiskScanService, type ScanResult } from "../mediafiles/library-scan.js";
 import { parseScanFileFilter } from "../mediafiles/scan-file-filter.js";
@@ -79,7 +79,7 @@ export class ArtistPipelineService {
             },
         });
 
-        ArtistStatisticsService.refresh([artistId]);
+        await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
 
         if (isCancelled()) {
             return {
@@ -125,7 +125,7 @@ export class ArtistPipelineService {
 
         const isMonitored = isArtistLibraryMonitored(artistId);
         if (!isMonitored) {
-            RefreshArtistService.markArtistRefreshComplete(artistId);
+            await withSqliteWriteGate(() => RefreshArtistService.markArtistRefreshComplete(artistId), "artist-pipeline:refresh-complete");
             options.onProgress?.(100, "metadata refresh complete (unmonitored)");
             return {
                 artistId,
@@ -188,10 +188,10 @@ export class ArtistPipelineService {
         );
 
         if (refreshResult.shouldHydrateCatalog) {
-            RefreshArtistService.markArtistRefreshComplete(artistId);
+            await withSqliteWriteGate(() => RefreshArtistService.markArtistRefreshComplete(artistId), "artist-pipeline:refresh-complete");
         }
 
-        ArtistStatisticsService.refresh([artistId]);
+        await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
 
         if (isCancelled()) {
             return {
@@ -248,7 +248,7 @@ export class ArtistPipelineService {
                 }
             }
 
-            ArtistStatisticsService.refresh([artistId]);
+            await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
 
             if (isCancelled()) {
                 return {
@@ -282,7 +282,7 @@ export class ArtistPipelineService {
             options.onProgress?.(75, "applying release monitoring rules");
 
             await CurationService.processAll(artistId);
-            ArtistStatisticsService.refresh([artistId]);
+            await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
 
             if (isCancelled()) {
                 return {
@@ -315,7 +315,7 @@ export class ArtistPipelineService {
             options.onProgress?.(90, "checking and queueing missing downloads");
             try {
                 downloadsQueued = await DownloadMissingService.queueMonitoredItems(artistId);
-                ArtistStatisticsService.refresh([artistId]);
+                await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
                 const total = (downloadsQueued?.albums ?? 0) + (downloadsQueued?.tracks ?? 0) + (downloadsQueued?.videos ?? 0);
                 options.onProgress?.(
                     100,

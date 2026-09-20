@@ -154,3 +154,11 @@ test("album-mode imports with provenance offers do not hard-fail a shortfall", (
     trackOfferCount: 24,
   }), true);
 });
+
+test("YouTube album imports reconcile the exact downloaded plan instead of provider album membership", () => {
+  const trackOffers = Array.from({ length: 12 }, (_, index) => ({ provider: 'youtube-music', providerTrackId: String(index) }));
+  assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', provider: 'youtube-music', trackOffers }, 22), 12);
+  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 11, trackOfferCount: 12 }), true);
+  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 12, trackOfferCount: 12 }), false);
+  assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', provider: 'youtube-music' }, 22), 22);
+});

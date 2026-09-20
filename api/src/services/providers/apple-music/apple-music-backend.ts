@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawnDownloadProcess as spawn } from "../../download/download-child-process.js";
 import fs from "fs";
 import net from "net";
 import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download/download-backend.js";

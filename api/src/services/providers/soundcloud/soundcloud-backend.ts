@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnDownloadProcess as spawn } from "../../download/download-child-process.js";
 import fs from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";

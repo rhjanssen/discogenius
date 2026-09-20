@@ -7,9 +7,9 @@ const router = Router();
  * GET /stats
  * Returns counts and library summary.
  */
-router.get("/", (_, res) => {
+router.get("/", async (_, res) => {
   try {
-    res.json(LibraryStatsQueryService.getSnapshot());
+    res.json(await LibraryStatsQueryService.getSnapshot());
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

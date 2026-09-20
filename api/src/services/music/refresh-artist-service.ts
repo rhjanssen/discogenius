@@ -1255,7 +1255,7 @@ export class RefreshArtistService {
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
                 await yieldToEventLoop();
-                this.syncCatalogVideoAudioRelations(artistMbid);
+                await withSqliteWriteGate(() => this.syncCatalogVideoAudioRelations(artistMbid!), "refresh-artist:video-relations");
             }
         }
 
@@ -1268,7 +1268,7 @@ export class RefreshArtistService {
         // inline match so their single-job behaviour is unchanged.
         if (options.deferProviderMatching !== true) {
             await this.matchArtistProviders(artistId, artistMbid, options, shouldHydrateCatalog);
-            this.markArtistRefreshComplete(artistId);
+            await withSqliteWriteGate(() => this.markArtistRefreshComplete(artistId), "refresh-artist:complete");
         }
 
         console.log(`[RefreshArtistService] refreshArtist complete for ${artistId}`);

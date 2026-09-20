@@ -170,15 +170,17 @@ function retryExistingWait(waitId: number, commandId: number | null): DownloadRe
 }
 
 /**
- * Retry accepts either a wait-row id (live queue) or a command id (history).
+ * Retry identifies the ID namespace explicitly: a wait row or a history command.
  * History rows survive after finishClaimed deletes the wait row, so a command
  * id with no wait row re-enqueues a new wait item from the failed payload.
  */
-export function retryDownloadQueueItem(id: number): DownloadRetryResult {
-  const wait = DownloadWaitQueue.get(id) ?? DownloadWaitQueue.getByCommandId(id);
+export function retryDownloadQueueItem(id: number, source: "queue" | "history" = "queue"): DownloadRetryResult {
+  const wait = source === "history" ? DownloadWaitQueue.getByCommandId(id) : DownloadWaitQueue.get(id);
   if (wait) {
     return retryExistingWait(wait.id, wait.command_id);
   }
+
+  if (source === "queue") return { status: 404, body: { error: "Queue item not found" } };
 
   const job = CommandQueueManager.get(id);
   if (!job || !isDownloadOrImportJobType(job.name as CommandName)) {

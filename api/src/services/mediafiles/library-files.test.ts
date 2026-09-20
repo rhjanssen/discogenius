@@ -1163,7 +1163,7 @@ test("a provider-free path upsert returns the exact existing TrackFiles row", ()
   );
 });
 
-test("upsertLibraryFile keeps stereo and spatial track rows separate for the same canonical track", () => {
+test("upsertLibraryFile keeps stereo and spatial track rows separate for the same canonical track", async () => {
   writeTestConfig({ includeSpatial: true });
   seedCatalogArtist({ mbid: "artist-mbid-1", name: "Queen", path: "Queen" });
   dbModule.db.prepare(`
@@ -1266,7 +1266,7 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
   // before reading the library snapshot (which no longer recomputes on demand).
   artistStatisticsModule.ArtistStatisticsService.refresh();
   libraryStatsModule.LibraryStatsQueryService.clearCache();
-  const snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  const snapshot = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(snapshot.albums.total, 1);
   assert.equal(snapshot.albums.monitored, 1);
   assert.equal(snapshot.albums.downloaded, 1);

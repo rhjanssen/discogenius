@@ -101,6 +101,7 @@ test("config update parsers return only validated partial updates", () => {
     artwork_preference: "provider",
     write_audio_tags_policy: "new_files",
     enable_fingerprinting: false,
+    scrub_audio_tags: true,
   }, {
     artwork_preference: "canonical",
     save_album_cover: true,
@@ -126,6 +127,7 @@ test("config update parsers return only validated partial updates", () => {
     artwork_preference: "provider",
     write_audio_tags_policy: "new_files",
     enable_fingerprinting: false,
+    scrub_audio_tags: true,
   });
 });
 
