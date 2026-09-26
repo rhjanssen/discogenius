@@ -1577,9 +1577,13 @@ export class DiskScanService {
      * For each downloaded video:
      *   - Video thumbnail (if save_video_thumbnail enabled and file missing)
      */
-    static async fillMissingMetadataFiles(artistId: string): Promise<MetadataFillResult> {
+    static async fillMissingMetadataFiles(
+        artistId: string,
+        onProgress?: (message: string) => void,
+    ): Promise<MetadataFillResult> {
         return libraryMetadataBackfillService.fillMissingMetadataFiles(artistId, {
             writeEmbeddedMediaMetadata: false,
+            onProgress,
         });
     }
 

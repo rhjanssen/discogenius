@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.12] - 2026-09-26
+
+### Fixed
+
+- Copy database backups in one SQLite snapshot step and publish them through a temporary file, preventing command heartbeats from repeatedly restarting large live backups and leaving partial files behind.
+- Report album, lyric, and video sidecar progress during artist refreshes, so long metadata backfills do not lose their live workers to the 30-minute no-progress watchdog.
+
 ## [2.16.11] - 2026-09-21
 
 ### Fixed

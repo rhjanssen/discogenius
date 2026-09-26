@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import Database from "better-sqlite3";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-scheduler-hardening-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.scheduler-hardening.test.db");
@@ -129,7 +130,28 @@ test("BackupDatabase is executed by the non-download command executor", async ()
     assert.equal(completed?.status, "completed");
     assert.match(String((completed?.payload as Record<string, unknown>)?.description || ""), /^Created database backup /);
     const backupsDir = path.join(tempDir, "Backups");
-    assert.ok(fs.readdirSync(backupsDir).some((fileName) => fileName.endsWith(".db")));
+    const files = fs.readdirSync(backupsDir);
+    assert.ok(files.some((fileName) => fileName.endsWith(".db")));
+    assert.equal(files.some((fileName) => fileName.includes(".db.partial")), false);
+});
+
+test("database backups finish in one snapshot step despite command heartbeat writes", async () => {
+    const runtimeMaintenance = await import("./runtime-maintenance.js");
+    const originalBackup = Database.prototype.backup;
+    let requestedPages = 0;
+    Database.prototype.backup = async function (destination: string, options: { progress: (info: { totalPages: number; remainingPages: number }) => number }) {
+        requestedPages = options.progress({ totalPages: 2_700_000, remainingPages: 2_699_900 });
+        fs.writeFileSync(destination, "complete snapshot");
+        return { totalPages: 2_700_000, remainingPages: 0 };
+    } as typeof Database.prototype.backup;
+    try {
+        const result = await runtimeMaintenance.executeDatabaseBackup();
+        assert.equal(requestedPages, 0x7fffffff);
+        assert.equal(fs.existsSync(result.backupPath), true);
+        assert.equal(fs.existsSync(`${result.backupPath}.partial`), false);
+    } finally {
+        Database.prototype.backup = originalBackup;
+    }
 });
 
 test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a RefreshMetadata job", async () => {

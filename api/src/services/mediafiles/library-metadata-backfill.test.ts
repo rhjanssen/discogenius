@@ -124,18 +124,21 @@ before(async () => {
 test("disk scan metadata repair never rewrites embedded media metadata", async () => {
     const originalFill = backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles;
     let receivedOptions: import("./library-metadata-backfill.js").MetadataFillOptions | undefined;
+    const progress: string[] = [];
     backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles = (async (_artistId, options) => {
         receivedOptions = options;
         return { downloaded: 0, failed: 0, skipped: 0 };
     }) as typeof originalFill;
 
     try {
-        await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+        await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100", (message) => progress.push(message));
     } finally {
         backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles = originalFill;
     }
 
     assert.equal(receivedOptions?.writeEmbeddedMediaMetadata, false);
+    receivedOptions?.onProgress?.("checking lyrics (1/2)");
+    assert.deepEqual(progress, ["checking lyrics (1/2)"]);
 });
 
 beforeEach(() => {
@@ -417,10 +420,15 @@ function seedCanonicalLibraryFiles() {
 test("metadata backfill discovers album and video sidecars from canonical ProviderItems without legacy provider rows", async () => {
     seedCanonicalLibraryFiles();
 
-    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100");
+    const progress: string[] = [];
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100", {
+        onProgress: (message) => progress.push(message),
+    });
 
     assert.equal(result.failed, 0);
     assert.ok(result.downloaded >= 2);
+    assert.ok(progress.some((message) => message.startsWith("checking album sidecars (")));
+    assert.ok(progress.some((message) => message.startsWith("checking video thumbnails (")));
     assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
     assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 
@@ -517,10 +525,15 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
     fs.writeFileSync(albumCoverPath, "album image");
     fs.writeFileSync(legacyLyricPath, "plain lyrics without timestamps");
 
-    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100");
+    const progress: string[] = [];
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100", {
+        onProgress: (message) => progress.push(message),
+    });
 
     assert.equal(result.failed, 0);
     assert.ok(result.skipped >= 3);
+    assert.ok(progress.some((message) => message.startsWith("checking album sidecars (")));
+    assert.ok(progress.some((message) => message.startsWith("checking lyrics (")));
 
     const artistImage = dbModule.db.prepare(`
         SELECT type, file_type, file_path, provider_entity_type, provider_id

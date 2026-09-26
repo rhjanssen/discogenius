@@ -402,9 +402,28 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 export async function executeDatabaseBackup(): Promise<{ backupPath: string; prunedCount: number }> {
   const backupsDir = path.join(CONFIG_DIR, "Backups");
   fs.mkdirSync(backupsDir, { recursive: true });
+  for (const fileName of fs.readdirSync(backupsDir)) {
+    if (fileName.startsWith("discogenius_backup_") && fileName.includes(".db.partial")) {
+      fs.rmSync(path.join(backupsDir, fileName), { force: true });
+    }
+  }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(backupsDir, `discogenius_backup_${timestamp}.db`);
-  await db.backup(backupPath);
+  const partialPath = `${backupPath}.partial`;
+  try {
+    await db.backup(partialPath, {
+      // Command heartbeats use another SQLite connection. The default
+      // 100-page steps restart whenever that connection writes, so a large
+      // live database can copy hundreds of gigabytes without finishing. Copy
+      // all remaining pages in one SQLite backup step to pin one snapshot.
+      progress: () => 0x7fffffff,
+    });
+    fs.renameSync(partialPath, backupPath);
+  } catch (error) {
+    fs.rmSync(partialPath, { force: true });
+    fs.rmSync(`${partialPath}-journal`, { force: true });
+    throw error;
+  }
 
   const files = fs.readdirSync(backupsDir)
     .filter((f) => f.startsWith("discogenius_backup_") && f.endsWith(".db"))

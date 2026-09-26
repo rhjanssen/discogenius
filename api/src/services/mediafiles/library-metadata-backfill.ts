@@ -60,6 +60,8 @@ export interface MetadataFillOptions {
      * command, while scans may still repair missing sidecar files.
      */
     writeEmbeddedMediaMetadata?: boolean;
+    /** Report completed work within long sidecar passes to the command watchdog. */
+    onProgress?: (message: string) => void;
 }
 
 class LibraryMetadataBackfillService {
@@ -86,6 +88,7 @@ class LibraryMetadataBackfillService {
             path: artist.path || null,
         });
 
+        options.onProgress?.("checking artist sidecars");
         await this.fillArtistMetadata(metadataIdKey, artistFolder, metadataConfig, result);
         const writeEmbeddedMediaMetadata = options.writeEmbeddedMediaMetadata !== false;
         await this.fillAlbumMetadata(
@@ -95,9 +98,10 @@ class LibraryMetadataBackfillService {
             naming,
             result,
             writeEmbeddedMediaMetadata,
+            options.onProgress,
         );
-        await this.fillTrackMetadata(metadataIdKey, metadataConfig, result);
-        await this.fillVideoMetadata(metadataIdKey, metadataConfig, result, writeEmbeddedMediaMetadata);
+        await this.fillTrackMetadata(metadataIdKey, metadataConfig, result, options.onProgress);
+        await this.fillVideoMetadata(metadataIdKey, metadataConfig, result, writeEmbeddedMediaMetadata, options.onProgress);
 
         if (result.downloaded > 0 || result.failed > 0) {
             console.log(
@@ -219,6 +223,7 @@ class LibraryMetadataBackfillService {
         naming: ReturnType<typeof getNamingConfig>,
         result: MetadataFillResult,
         writeEmbeddedMediaMetadata: boolean,
+        onProgress?: (message: string) => void,
     ) {
         // Canonical-first: backfill each selected edition independently in
         // every library that owns imported audio for it. Grouping only by
@@ -257,7 +262,8 @@ class LibraryMetadataBackfillService {
     `).all(artistId) as any[];
         const processedLibraryAlbums = new Set<string>();
 
-        for (const sourceAlbum of albums) {
+        for (const [index, sourceAlbum] of albums.entries()) {
+            onProgress?.(`checking album sidecars (${index + 1}/${albums.length})`);
             const canonicalReleaseGroupMbid = String(sourceAlbum.canonical_release_group_mbid || "").trim();
             const librarySlot = String(sourceAlbum.library_class || "stereo");
             const libraryAlbumKey = `${sourceAlbum.library_id}:${sourceAlbum.release_group_id}:${sourceAlbum.album_edition_id}`;
@@ -601,6 +607,7 @@ class LibraryMetadataBackfillService {
         artistId: string,
         metadataConfig: any,
         result: MetadataFillResult,
+        onProgress?: (message: string) => void,
     ) {
         if (!metadataConfig.save_lyrics) return;
 
@@ -678,7 +685,8 @@ class LibraryMetadataBackfillService {
             album_id: string | null;
         }>;
 
-        for (const track of tracks) {
+        for (const [index, track] of tracks.entries()) {
+            onProgress?.(`checking lyrics (${index + 1}/${tracks.length})`);
             const existingSidecar = findAdjacentLyricSidecar(track.file_path, { normalizeExtension: true });
             if (existingSidecar) {
                 await this.upsertLibraryFile({
@@ -742,6 +750,7 @@ class LibraryMetadataBackfillService {
         metadataConfig: any,
         result: MetadataFillResult,
         writeEmbeddedMediaMetadata: boolean,
+        onProgress?: (message: string) => void,
     ) {
         const videoRoot = Config.getVideoPath();
 
@@ -797,7 +806,8 @@ class LibraryMetadataBackfillService {
                 recording_id: number | null;
             }>;
 
-            for (const video of thumbnailVideos) {
+            for (const [index, video] of thumbnailVideos.entries()) {
+                onProgress?.(`checking video thumbnails (${index + 1}/${thumbnailVideos.length})`);
                 const videoDir = path.dirname(video.file_path);
                 const videoStem = path.parse(video.file_path).name;
                 const persistentThumbPath = path.join(videoDir, `${videoStem}.jpg`);
@@ -942,7 +952,8 @@ class LibraryMetadataBackfillService {
                 canonical_release_group_mbid: string | null;
             }>;
 
-            for (const video of videos) {
+            for (const [index, video] of videos.entries()) {
+                onProgress?.(`checking video sidecars (${index + 1}/${videos.length})`);
                 const nfoPath = path.join(path.dirname(video.file_path), `${path.parse(video.file_path).name}.nfo`);
                 try {
                     await saveVideoNfoFile(String(video.provider_id), nfoPath, video.provider);

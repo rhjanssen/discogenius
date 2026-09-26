@@ -242,7 +242,10 @@ export class ArtistPipelineService {
             if (!options.skipMetadataBackfill) {
                 options.onProgress?.(72, "backfilling metadata files");
                 try {
-                    await DiskScanService.fillMissingMetadataFiles(artistId);
+                    await DiskScanService.fillMissingMetadataFiles(
+                        artistId,
+                        (message) => options.onProgress?.(72, `backfilling metadata files - ${message}`),
+                    );
                 } catch (error) {
                     console.warn(`[ArtistPipelineService] Failed to backfill metadata files for artist ${artistId}:`, error);
                 }

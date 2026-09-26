@@ -31,3 +31,17 @@ All local containers use isolated copies and volumes, without production library
 Full yarn ci covers lint, backend/frontend type checking, API tests, frontend tests, and production builds. The baseline had no failing assertions. Known Node test-runner structured-clone failures were rerun in isolation, preserving the main TAP result when comparing failure names.
 
 No schema change is included. Deployment must retain the current library/config volumes, verify the published version, check new logs and queue progress, and remove the temporary NAS SSH key after validation. The temporary NAS API key was already revoked after SSH access was established.
+
+## Live deployment follow-up
+
+Version 2.16.11 exposed a separate maintenance fault during its live validation. The overdue weekly backup wrote about 317 GB without completing a 6.7 GB destination because command-heartbeat writes came from another SQLite connection and repeatedly restarted the online backup. The task was cancelled, its incomplete file was removed, and 2.16.12 changes the backup to one SQLite snapshot step. Completed backups are renamed from a temporary path, so an interrupted run is never retained as a valid backup.
+
+The fixed backup completed against the isolated 10.1 GiB live database copy in 252 seconds while a second SQLite connection committed 5,032 writes. The resulting 10,884,165,632-byte database passed `PRAGMA quick_check` and the temporary test backup was removed.
+
+## September 26 live audit
+
+After five days on 2.16.11, the container remained healthy but command-queue diagnostics were unhealthy. Monitoring refreshes for Andrew Bird, Alison Moyet, Avicii, and many other artists repeatedly reached the 30-minute no-progress watchdog while their workers still sent heartbeats. Every affected command's last description was `backfilling metadata files`; the monitored library saves lyrics, and those sidecar passes did not report per-item progress. Version 2.16.12 now reports album, lyric, and video sidecar work through the command's existing progress callback. This lets the watchdog distinguish a long backfill from a stuck operation, and exposes the current item in the UI.
+
+The audit also found several `sqlite busy: database is locked` failures during file scans and one catalog statement timeout. Those are distinct faults and are not claimed as fixed by the backfill progress change.
+
+The 2.16.12 candidate passed full `yarn ci`: 1,851 API tests, 181 app tests, lint, type checking, and both production builds. The local Docker image built and ran healthy against isolated library volumes. In the browser, Bakermat's imported `I Love Life` file still showed its 24-bit/44.1 kHz FLAC details, the tag preview found no required changes, and a fresh Bakermat Refresh & Scan completed without error. The focused backfill tests verified progress callbacks for album, lyric, and video work.
