@@ -225,6 +225,39 @@ function providerTrackProjectionJoins(itemAlias: string): string {
   `;
 }
 
+function artistMatchedProviderItemsFilter(itemAlias: string): string {
+  return `${itemAlias}.id IN (
+    SELECT recording_match.provider_track_item_id
+    FROM Recordings scope_recording
+    JOIN ProviderTrackMatches recording_match
+      ON recording_match.recording_id = scope_recording.id
+     AND recording_match.match_state = 'accepted'
+    WHERE (
+      scope_recording.artist_mbid = ?
+      OR scope_recording.artist_metadata_id = (
+        SELECT id FROM ArtistMetadata WHERE mbid = ?
+      )
+    )
+    UNION
+    SELECT edition_match.provider_track_item_id
+    FROM Albums scope_album
+    JOIN AlbumEditions scope_edition
+      ON scope_edition.release_group_id = scope_album.id
+    JOIN ProviderEditionMatches scope_provider_edition
+      ON scope_provider_edition.edition_id = scope_edition.id
+     AND scope_provider_edition.match_state = 'accepted'
+    JOIN ProviderTrackMatches edition_match
+      ON edition_match.provider_edition_match_id = scope_provider_edition.id
+     AND edition_match.match_state = 'accepted'
+    WHERE (
+      scope_album.artist_mbid = ?
+      OR scope_album.artist_metadata_id = (
+        SELECT id FROM ArtistMetadata WHERE mbid = ?
+      )
+    )
+  )`;
+}
+
 function loadProviderTrack(provider: string, providerMediaId: string | number): ProviderTrackLyricsRow | null {
   const row = db.prepare(`
     SELECT
@@ -406,6 +439,7 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
         OR (candidate_recording.mbid IS NOT NULL AND lf.canonical_recording_mbid = candidate_recording.mbid)
       )
     WHERE candidate.provider IN (${providerPlaceholders})
+      AND ${artistMatchedProviderItemsFilter("candidate")}
       AND CAST(candidate_artist.mbid AS TEXT) = CAST(? AS TEXT)
       AND NOT (
         candidate.provider = ?
@@ -416,6 +450,10 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
   `).all(
     media.release_group_mbid,
     ...candidateProviders,
+    media.artist_id,
+    media.artist_id,
+    media.artist_id,
+    media.artist_id,
     media.artist_id,
     media.provider,
     media.id,
@@ -467,6 +505,7 @@ function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
     FROM ProviderItems candidate
     ${providerTrackProjectionJoins("candidate")}
     WHERE candidate.provider IN (${providerPlaceholders})
+      AND ${artistMatchedProviderItemsFilter("candidate")}
       AND CAST(candidate_artist.mbid AS TEXT) = CAST(? AS TEXT)
       AND NOT (
         candidate.provider = ?
@@ -474,7 +513,17 @@ function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
       )
       AND candidate.entity_type = 'track'
       AND COALESCE(candidate_track.title, candidate_recording.title, candidate.title) IS NOT NULL
-  `).all(media.release_group_mbid, ...lyricProviders, media.artist_id, media.provider, media.id) as CandidateRow[];
+  `).all(
+    media.release_group_mbid,
+    ...lyricProviders,
+    media.artist_id,
+    media.artist_id,
+    media.artist_id,
+    media.artist_id,
+    media.artist_id,
+    media.provider,
+    media.id,
+  ) as CandidateRow[];
 
   return rows
     .filter((row) => sameRecordingCandidate(media, row))

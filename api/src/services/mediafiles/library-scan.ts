@@ -1377,7 +1377,7 @@ export class DiskScanService {
                                  AND release_match.match_state = 'accepted'
                                 JOIN AlbumEditions release ON release.id = release_match.edition_id
                                 WHERE item.entity_type = 'release'
-                                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                                  AND item.provider_id = ?
                                   AND (? IS NULL OR item.provider = ?)
                                 HAVING COUNT(DISTINCT release.release_group_id) = 1
                             `).get(match.albumId, matchProvider, matchProvider) as {
@@ -2059,7 +2059,7 @@ export class DiskScanService {
                 SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
                 FROM ProviderItems pi
                 WHERE lower(pi.provider) = ?
-                  AND CAST(pi.provider_id AS TEXT) = ?
+                  AND pi.provider_id = ?
                   AND pi.entity_type IN ('track', 'video')
             `).all(token.provider, token.providerId) as Array<{
                 id: number;
@@ -2087,7 +2087,7 @@ export class DiskScanService {
                 SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
                 FROM ProviderItems pi
                 WHERE pi.entity_type IN ('track', 'video')
-                  AND CAST(pi.provider_id AS TEXT) = @providerId
+                  AND pi.provider_id = @providerId
                   AND ${LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL}
                 ORDER BY pi.updated_at DESC
             `).all({ providerId, artistId }) as Array<any>;
@@ -2128,7 +2128,7 @@ export class DiskScanService {
         const item = db.prepare(`
             SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
             FROM ProviderItems pi
-            WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE pi.provider_id = ?
               AND pi.provider = ?
               AND pi.entity_type = COALESCE(?, 'track')
             LIMIT 1
@@ -2156,7 +2156,7 @@ export class DiskScanService {
               FROM ProviderItems pi
               WHERE pi.entity_type = 'video'
                 AND pi.provider = @provider
-                AND CAST(pi.provider_id AS TEXT) = @providerId
+                AND pi.provider_id = @providerId
                 AND ${LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL}
               LIMIT 1
             `).get({ provider: embedded.provider, providerId: embedded.providerId, artistId }) as any;
@@ -2229,7 +2229,7 @@ export class DiskScanService {
               COALESCE(NULLIF(TRIM(lf.imported_quality), ''), NULLIF(TRIM(lf.quality), '')) AS quality
             FROM TrackFiles lf
             JOIN ProviderItems pi
-              ON CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+              ON pi.provider_id = lf.provider_id
              AND pi.entity_type = COALESCE(lf.provider_entity_type, pi.entity_type)
              AND pi.entity_type IN ('track', 'video')
              AND (lf.provider IS NULL OR pi.provider = lf.provider)
@@ -2346,7 +2346,7 @@ export class DiskScanService {
                   ON video_match.provider_video_item_id = item.id
                  AND video_match.match_state = 'accepted'
                 WHERE item.entity_type = 'video'
-                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                  AND item.provider_id = ?
                   AND (? IS NULL OR item.provider = ?)
                 HAVING COUNT(DISTINCT video_match.recording_id) = 1
             `).get(params.providerId, params.provider ?? null, params.provider ?? null) as {

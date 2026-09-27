@@ -220,7 +220,14 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
     });
 
     if (!response.ok) {
-        return null;
+        let errorCode = "";
+        try {
+            const payload = await response.json() as { error?: unknown };
+            if (typeof payload.error === "string") errorCode = payload.error;
+        } catch {
+            // The status alone is enough when the provider returns no JSON.
+        }
+        throw new Error(`TIDAL token refresh failed (HTTP ${response.status}${errorCode ? `: ${errorCode}` : ""})`);
     }
 
     const data = await response.json() as {

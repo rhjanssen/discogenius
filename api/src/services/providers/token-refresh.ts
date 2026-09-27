@@ -1,16 +1,13 @@
 import { streamingProviderManager } from "./index.js";
 
-// Check every 30 minutes (in milliseconds)
-export const TOKEN_CHECK_INTERVAL = 30 * 60 * 1000;
-
-// Refresh threshold: 30 minutes (in seconds)
-export const TOKEN_REFRESH_THRESHOLD = 30 * 60;
+// Check often enough to refresh before the downloader's own OAuth window.
+export const TOKEN_CHECK_INTERVAL = 5 * 60 * 1000;
 
 let tokenRefreshInterval: NodeJS.Timeout | null = null;
 
 /**
  * Initialize token refresh interval
- * Checks every 30 minutes if token needs refresh
+ * Checks every five minutes if a provider token needs refresh.
  */
 export function startTokenRefreshInterval() {
     // Clear any existing interval
@@ -19,13 +16,13 @@ export function startTokenRefreshInterval() {
     }
 
     console.log(
-        `✅ [TOKEN] Token refresh interval started (checks every ${TOKEN_REFRESH_THRESHOLD / 60} minutes)`
+        `✅ [TOKEN] Token refresh interval started (checks every ${TOKEN_CHECK_INTERVAL / 60_000} minutes)`
     );
 
     // Run immediately on startup
     void checkAndRefreshToken();
 
-    // Then check every 30 minutes
+    // Then check every five minutes.
     tokenRefreshInterval = setInterval(() => {
         void checkAndRefreshToken();
     }, TOKEN_CHECK_INTERVAL);

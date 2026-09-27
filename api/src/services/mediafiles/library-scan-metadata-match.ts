@@ -301,7 +301,7 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
         SELECT DISTINCT CAST(release_item.provider_id AS TEXT) AS album_id
         FROM TrackFiles tf
         JOIN ProviderItems pi
-          ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
+          ON pi.provider_id = tf.provider_id
          AND pi.entity_type IN ('track', 'video')
          AND tf.provider IS NOT NULL
          AND pi.provider = tf.provider
@@ -502,7 +502,7 @@ function existingTrackFileForOffer(
         WHERE artist_metadata_id = ?
           AND provider = ?
           AND provider_entity_type = 'track'
-          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+          AND provider_id = ?
           AND file_type = 'track'
           AND library_slot = ?
         ORDER BY verified_at DESC, id DESC
@@ -558,7 +558,7 @@ function offersByTitleInAlbums(
             FROM ProviderEditionMembers member
             JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
             WHERE member.member_item_id = pi.id
-              AND CAST(release_item.provider_id AS TEXT) IN (${placeholders})
+              AND release_item.provider_id IN (${placeholders})
           )
     `).all(params) as ProviderOfferRow[];
 
@@ -627,7 +627,7 @@ function findSameFolderDuplicate(
                pi.duration_ms / 1000.0 AS offer_duration
         FROM TrackFiles tf
         LEFT JOIN ProviderItems pi
-          ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
+          ON pi.provider_id = tf.provider_id
          AND pi.entity_type IN ('track', 'video')
          AND tf.provider IS NOT NULL
          AND pi.provider = tf.provider

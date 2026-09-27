@@ -590,7 +590,18 @@ const ArtistPage = () => {
       ? api.getArtistActivity(artistId, { signal, timeoutMs: 8_000 })
       : null,
     enabled: Boolean(artistId) && !pageLoading && !pageError,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => {
+      const current = query.state.data as {
+        scanning?: boolean;
+        curating?: boolean;
+        downloading?: boolean;
+        libraryScan?: boolean;
+      } | null;
+      return current?.scanning || current?.curating || current?.downloading || current?.libraryScan
+        ? 5_000
+        : false;
+    },
     staleTime: 10_000,
     retry: 1,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
@@ -842,6 +853,7 @@ const ArtistPage = () => {
     dispatchActivityRefresh();
     try {
       const result: any = await api.scanArtist(artistId, { forceUpdate: true });
+      dispatchActivityRefresh();
       toast({
         title: "Refresh & scan queued",
         description: result?.message || "Refreshing MusicBrainz metadata, provider availability, and local files.",

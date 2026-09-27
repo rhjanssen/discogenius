@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.13] - 2026-09-26
+
+### Fixed
+
+- Scope lyric reuse and provider lyric lookups to tracks with accepted matches for the artist, avoiding a provider-table scan for every missing sidecar.
+- Use indexed TEXT provider IDs during library file matching and reconciliation. This prevents a full provider scan for each newly discovered audio, video, or lyric file.
+- Refresh artist activity while a scan, curation, or download is active, so the artist page releases its busy controls when the command finishes even if an event was missed.
+- Check provider tokens every five minutes, allowing Discogenius to refresh TIDAL credentials before tiddl reaches its own refresh window and rejects downloads. Report rejected TIDAL refreshes as errors instead of silently treating them as success.
+
 ## [2.16.12] - 2026-09-26
 
 ### Fixed
