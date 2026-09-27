@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.17] - 2026-09-28
+
+### Fixed
+
+- Read the canonical MusicBrainz medium format from both catalog payload casings and select the track's medium number. Retagging no longer replaces cassette or CD metadata with the default "Digital Media" when the catalog stores `Format`, or assigns the first medium's format to every disc.
+
 ## [2.16.16] - 2026-09-28
 
 ### Fixed

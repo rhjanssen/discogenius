@@ -225,6 +225,28 @@ test("tag supplements use the file edition and omit ambiguous provider edition c
   }
 });
 
+test("retag reads the canonical medium format from active catalog payload casing", () => {
+  const file = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE provider_id = 'provider-track-1'").get() as { id: number };
+  try {
+    for (const media of [[{ Position: 1, Format: "Cassette" }], [{ position: 1, format: "CD" }]]) {
+      dbModule.db.prepare("UPDATE AlbumEditions SET media = ? WHERE mbid = 'release-mbid-1'").run(JSON.stringify(media));
+      const format = audioTagServiceModule.AudioTagService.buildDesiredTagsForTrackFileIdsForTest([file.id])
+        .find(tag => tag.key === "media_format")?.targetValue;
+      assert.equal(format, "Format" in media[0] ? media[0].Format : media[0].format);
+    }
+    dbModule.db.prepare("UPDATE AlbumEditions SET media = ? WHERE mbid = 'release-mbid-1'")
+      .run(JSON.stringify([{ Position: 2, Format: "CD" }, { Position: 1, Format: "Cassette" }]));
+    const formatForFile = () => audioTagServiceModule.AudioTagService.buildDesiredTagsForTrackFileIdsForTest([file.id])
+      .find(tag => tag.key === "media_format")?.targetValue;
+    assert.equal(formatForFile(), "Cassette", "medium number, rather than array order, determines the format");
+    dbModule.db.prepare("UPDATE Tracks SET medium_position = 2 WHERE mbid = 'track-mbid-1'").run();
+    assert.equal(formatForFile(), "CD");
+  } finally {
+    dbModule.db.prepare("UPDATE Tracks SET medium_position = 1 WHERE mbid = 'track-mbid-1'").run();
+    dbModule.db.prepare("UPDATE AlbumEditions SET media = NULL WHERE mbid = 'release-mbid-1'").run();
+  }
+});
+
 test("artist retag scope resolves both public MBIDs and internal metadata ids", async () => {
   const file = dbModule.db.prepare(`
     SELECT id, artist_metadata_id

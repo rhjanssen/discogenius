@@ -1373,7 +1373,16 @@ export class AudioTagService {
         COALESCE(canonical_group.genres, artist.genres) AS album_genres,
         canonical_group.first_release_date AS album_original_date,
         COALESCE(
-          CASE WHEN json_valid(canonical_release.media) AND json_extract(canonical_release.media, '$[0].format') IS NOT NULL AND json_extract(canonical_release.media, '$[0].format') != '' THEN json_extract(canonical_release.media, '$[0].format') END,
+          (SELECT MAX(COALESCE(
+            NULLIF(TRIM(json_extract(medium.value, '$.format')), ''),
+            NULLIF(TRIM(json_extract(medium.value, '$.Format')), '')
+          )) FROM json_each(CASE WHEN json_valid(canonical_release.media) THEN canonical_release.media ELSE '[]' END) medium
+          WHERE COALESCE(
+            json_extract(medium.value, '$.position'),
+            json_extract(medium.value, '$.Position'),
+            CAST(medium.key AS INTEGER) + 1
+          ) = COALESCE(canonical_track.medium_position, 1)
+          HAVING COUNT(*) = 1),
           'Digital Media'
         ) AS media_format,
         canonical_release.label AS album_label,
