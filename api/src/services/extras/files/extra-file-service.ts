@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db } from "../../../database.js";
+import { db, withSqliteWriteGate } from "../../../database.js";
 import { comparablePathColumnSql, normalizeComparablePath } from "../../mediafiles/path-utils.js";
 
 export const DUPLICATE_EXTRA_FILE_TYPE = "duplicate";
@@ -426,7 +426,7 @@ export class ExtraFileService {
    * Physical file is left on disk. Used when a previous pass attached the
    * wrong sibling (studio vs Abbey Road sessions) as a leftover extra.
    */
-  static releaseDuplicateForRescan(filePath: string): void {
+  static async releaseDuplicateForRescan(filePath: string): Promise<void> {
     const normPath = normalizeComparablePath(path.resolve(filePath));
     const exists = db.prepare(`
       SELECT 1 FROM ExtraFiles
@@ -435,11 +435,11 @@ export class ExtraFileService {
       LIMIT 1
     `).get(DUPLICATE_EXTRA_FILE_TYPE, normPath);
     if (!exists) return;
-    db.prepare(`
+    await withSqliteWriteGate(() => db.prepare(`
       DELETE FROM ExtraFiles
       WHERE file_type = ?
         AND ${comparablePathColumnSql("file_path")} = ?
-    `).run(DUPLICATE_EXTRA_FILE_TYPE, normPath);
+    `).run(DUPLICATE_EXTRA_FILE_TYPE, normPath), "scan:release-duplicate");
   }
 
   static deleteMissingRows(tableName: ExtraFileTableName, artistId?: string): number {

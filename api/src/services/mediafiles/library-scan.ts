@@ -1101,7 +1101,7 @@ export class DiskScanService {
 
                 const resolved = path.resolve(filePath);
                 if (existingPaths.has(resolved)) continue;
-                ExtraFileService.releaseDuplicateForRescan(resolved);
+                await ExtraFileService.releaseDuplicateForRescan(resolved);
 
                 // New file on disk — attempt to match and index
                 let match = this.matchFileToMedia(filePath, artistId, key);

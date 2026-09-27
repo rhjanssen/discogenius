@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.15] - 2026-09-27
+
+### Fixed
+
+- Wait asynchronously for the shared SQLite write gate when a library scan removes a duplicate-file marker. Concurrent imports no longer make this scan step fail after the synchronous lock timeout.
+
 ## [2.16.14] - 2026-09-27
 
 ### Fixed

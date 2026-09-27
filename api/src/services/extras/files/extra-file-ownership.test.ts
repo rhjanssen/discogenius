@@ -3,6 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { Worker } from "node:worker_threads";
+import {
+  forceReleaseSqliteWriteMutexOwner,
+  sqliteWriteMutexWorkerData,
+  SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY,
+} from "../../../database/sqlite-write-mutex.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-extra-ownership-"));
 const sharedRoot = path.join(tempDir, "music");
@@ -27,6 +33,7 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
+  db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM LibraryAlbums").run();
   // Candidate plans outlive the monitored rows now, so the reset has to
   // drop them explicitly instead of relying on a cascade.
@@ -45,6 +52,40 @@ beforeEach(() => {
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, 'Album', 'Album')
   `).run(ALBUM_MBID, ARTIST_MBID);
+});
+
+test("duplicate-file rescan waits for a concurrent writer before deleting its marker", { timeout: 10_000 }, async () => {
+  const filePath = path.join(sharedRoot, "Artist", "Album", "duplicate.flac");
+  dbModule.db.prepare(`
+    INSERT INTO ExtraFiles (artist_id, relative_path, file_path, library_root, extension, file_type)
+    VALUES (?, ?, ?, ?, 'flac', 'duplicate')
+  `).run(ARTIST_MBID, "Artist/Album/duplicate.flac", filePath, sharedRoot);
+
+  const data = sqliteWriteMutexWorkerData();
+  const worker = new Worker(new URL("../../commands/worker/command-worker-bootstrap.mjs", import.meta.url), {
+    workerData: {
+      ...data,
+      mode: "hold",
+      name: "test:duplicate-rescan",
+      __entry: new URL("../../../database/sqlite-write-mutex.fixture.ts", import.meta.url).href,
+    },
+  });
+  const acquired = new Promise<void>((resolve, reject) => {
+    worker.on("message", (message) => { if (message.kind === "acquired") resolve(); });
+    worker.once("error", reject);
+  });
+  try {
+    await acquired;
+    const release = serviceModule.ExtraFileService.releaseDuplicateForRescan(filePath);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.ok(dbModule.db.prepare("SELECT id FROM ExtraFiles WHERE file_path = ?").get(filePath));
+    worker.postMessage("release");
+    await release;
+    assert.equal(dbModule.db.prepare("SELECT id FROM ExtraFiles WHERE file_path = ?").get(filePath), undefined);
+  } finally {
+    await worker.terminate();
+    forceReleaseSqliteWriteMutexOwner(Number(data[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]));
+  }
 });
 
 after(() => {
@@ -202,7 +243,7 @@ test("duplicate leftover audio is tracked as an extra, not a mystery unmapped fi
   assert.equal(serviceModule.isLyricExtraFileType("duplicate"), false);
 });
 
-test("releaseDuplicateForRescan drops the extra row and leaves the file on disk", () => {
+test("releaseDuplicateForRescan drops the extra row and leaves the file on disk", async () => {
   const { lossless } = seedLibraries();
   const extraPath = path.join(sharedRoot, "202 - Things We Lost in the Fire (Abbey Road sessions).m4a");
   fs.writeFileSync(extraPath, "audio");
@@ -214,7 +255,7 @@ test("releaseDuplicateForRescan drops the extra row and leaves the file on disk"
     fileType: "duplicate",
   });
   assert.ok(extraId > 0);
-  serviceModule.ExtraFileService.releaseDuplicateForRescan(extraPath);
+  await serviceModule.ExtraFileService.releaseDuplicateForRescan(extraPath);
   assert.equal(serviceModule.ExtraFileService.findIdByPath("ExtraFiles", extraPath), null);
   assert.equal(fs.existsSync(extraPath), true);
 });
