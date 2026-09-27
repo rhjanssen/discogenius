@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.14] - 2026-09-27
+
+### Fixed
+
+- Skip staged album files outside a command's selected track offers. Provider album downloads can contain extra tracks; importing them left files in the library and then failed because those tracks had no exact offer provenance.
+
 ## [2.16.13] - 2026-09-26
 
 ### Fixed

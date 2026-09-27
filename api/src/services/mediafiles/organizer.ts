@@ -2010,6 +2010,12 @@ export class OrganizerService {
         const idFromName = /^\d+$/.test(base) ? base : null;
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         if (!trackId) return true;
+        // A selected-offer download may stage the provider's entire album (or
+        // retain a file from an earlier attempt). Only planned tracks have an
+        // exact provenance context that the importer can stamp onto TrackFiles.
+        if (raw.trackOffers?.length && !trackOffersByProviderIdEarly.has(String(trackId))) {
+          return true;
+        }
         // Hybrid tips with catalog MBIDs are importable even when the primary
         // album ProviderItems row cannot resolve them yet.
         const tipOffer = trackOffersByProviderIdEarly.get(String(trackId));
@@ -2048,7 +2054,7 @@ export class OrganizerService {
         // The import loop below already skips unmatched files, so the album's
         // real tracks still land.
         console.warn(
-          `[Organizer] ${unmatchedAudioFiles.length}/${audioFiles.length} downloaded file(s) for ${providerId} did not match a Discogenius track; importing the rest and skipping the extras.`,
+          `[Organizer] ${unmatchedAudioFiles.length}/${audioFiles.length} downloaded file(s) for ${providerId} were not selected or did not match a Discogenius track; importing the rest and skipping the extras.`,
         );
       }
 
@@ -2059,12 +2065,6 @@ export class OrganizerService {
         totalFiles: totalImportableTracks,
         statusMessage: "Importing downloaded album files",
       });
-
-      const trackOffersByProviderId = new Map<string, NonNullable<OrganizeRequest["trackOffers"]>[number]>();
-      for (const offer of raw.trackOffers || []) {
-        const key = String(offer.providerTrackId || "").trim();
-        if (key) trackOffersByProviderId.set(key, offer);
-      }
 
       const renderedTrackDirs: string[] = [];
       const destFiles: Array<{ trackId: string; destFile: string; ext: string }> = [];
@@ -2116,8 +2116,11 @@ export class OrganizerService {
         }
 
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
+        if (raw.trackOffers?.length && (!trackId || !trackOffersByProviderIdEarly.has(String(trackId)))) {
+          continue;
+        }
         const placeholders = albumIds.map(() => '?').join(', ');
-        const trackOffer = trackId ? trackOffersByProviderId.get(String(trackId)) : undefined;
+        const trackOffer = trackId ? trackOffersByProviderIdEarly.get(String(trackId)) : undefined;
         // Catalog-first: bind position/title via Tracks on the job's selected
         // release. Acquisition-plan offers supply the catalog MBIDs — never trust
         // ProviderItems track/RG MBIDs for hybrid composites (those can point at
