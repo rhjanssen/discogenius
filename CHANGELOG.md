@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.16] - 2026-09-28
+
+### Fixed
+
+- Verify embedded audio artwork after TagLib writes it and retry through Mutagen when the stored image differs. This fixes Opus imports that previously failed cover-art verification despite a reported successful write.
+- Keep completed downloads waiting for import when the queue cleans up unclaimed commands, and pause new download claims once four durable import handoffs are pending.
+- Wait for SQLite writer admission before recording cancellation of an active import, so a busy catalog writer cannot drop the cancellation request.
+- Judge stalled imports by their latest progress in the import phase, rather than the start of a long download.
+- Precache album artwork during artist refresh only for monitored albums, preventing catalog-only albums from growing the media-cover cache automatically.
+
 ## [2.16.15] - 2026-09-27
 
 ### Fixed

@@ -445,6 +445,7 @@ const MAX_RETRY_ATTEMPTS = readIntEnv('DISCOGENIUS_DOWNLOAD_MAX_RETRY_ATTEMPTS',
 const BUSY_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_BUSY_LOG_THROTTLE_MS', 30_000, 0);
 const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 2, 1);
 const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS', 2, 1);
+const MAX_PENDING_IMPORTS = readIntEnv('DISCOGENIUS_MAX_PENDING_IMPORTS', 4, 1);
 const DOWNLOAD_LEASE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_LEASE_MS', 90_000, 1_000);
 const DOWNLOAD_HEARTBEAT_MS = readIntEnv(
     'DISCOGENIUS_DOWNLOAD_HEARTBEAT_MS',
@@ -1569,6 +1570,21 @@ export class DownloadProcessor {
 
         DownloadWaitQueue.recoverOrphanClaims();
         DownloadWaitQueue.dropUnclaimedDownloadCommands();
+
+        // A completed download keeps its durable handoff until an import slot
+        // opens. Let that backlog drain before claiming more provider work;
+        // otherwise fast downloads can strand dozens of finished albums behind
+        // slow file moves and retags. Count queued handoffs too, so a worker
+        // restart cannot bypass the limit by emptying the in-memory list.
+        const pendingImportCount = db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM commands INDEXED BY idx_commands_status_name_started
+            WHERE status IN ('queued', 'started')
+              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
+              AND json_valid(payload)
+              AND json_extract(payload, '$.downloadState.state') = 'importPending'
+        `).get(...DOWNLOAD_COMMAND_NAMES) as { count: number };
+        if (pendingImportCount.count >= MAX_PENDING_IMPORTS) return;
 
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
         // most one per provider (same-provider downloads stay serialized). ──
@@ -2744,14 +2760,16 @@ export class DownloadProcessor {
             DownloadWaitQueue.removeByCommandId(commandId);
         } else if (this.activeImports.has(commandId)) {
             // Cannot abort active import; mark as cancelled for when it finishes
-            this.explicitlyCancelledDownloads.add(commandId);
             const activeImport = this.activeImports.get(commandId);
-            CommandQueueManager.updateState(commandId, {
+            const marked = await withSqliteWriteGate(() => CommandQueueManager.updateState(commandId, {
                 workerId: activeImport?.workerId || undefined,
                 payloadPatch: { importCancellationRequested: true } as any,
                 blockedReason: 'cancellation requested',
-            });
-            await activeImport?.promise;
+            }), 'download:cancel-import');
+            if (marked) {
+                this.explicitlyCancelledDownloads.add(commandId);
+                await activeImport?.promise;
+            }
         } else if (currentJob.status === 'queued' || currentJob.status === 'started') {
             CommandQueueManager.cancel(commandId);
             DownloadWaitQueue.removeByCommandId(commandId);

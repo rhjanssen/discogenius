@@ -212,6 +212,26 @@ test("bounded diagnostics flag aging work, failed imports, and overdue tasks", (
   }
 });
 
+test("import health measures import progress rather than download start or pending time", () => {
+  dbModule.db.prepare(`
+    INSERT INTO commands (name, payload, status, priority, started_at, last_progress_at, updated_at)
+    VALUES
+      ('DownloadAlbum', '{"downloadState":{"state":"importing"}}', 'started', 0,
+       datetime('now', '-3 hours'), datetime('now', '-5 minutes'), CURRENT_TIMESTAMP),
+      ('DownloadAlbum', '{"downloadState":{"state":"importPending"}}', 'started', 0,
+       datetime('now', '-3 hours'), datetime('now', '-3 hours'), CURRENT_TIMESTAMP)
+  `).run();
+  assert.equal(healthModule.collectHealthDiagnosticsSnapshot().subsystems.imports.status, "ok");
+
+  dbModule.db.prepare(`
+    UPDATE commands SET last_progress_at = datetime('now', '-3 hours')
+    WHERE json_extract(payload, '$.downloadState.state') = 'importing'
+  `).run();
+  const importCheck = healthModule.collectHealthDiagnosticsSnapshot().subsystems.imports;
+  assert.equal(importCheck.status, "error");
+  assert.equal((importCheck.details?.stale as unknown[]).length, 1);
+});
+
 test("production command-worker execution keeps deep PRAGMAs off the main thread", async () => {
   const commandId = queueModule.CommandQueueManager.push(queueModule.CommandNames.CheckHealth, {});
   const claimed = queueModule.CommandQueueManager.claimForExecution(

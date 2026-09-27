@@ -324,6 +324,16 @@ test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
 });
 
+test("dropUnclaimedDownloadCommands preserves a durable import handoff after its wait claim is gone", () => {
+  const handoffId = queueModule.CommandQueueManager.push(
+    queueModule.CommandNames.DownloadAlbum,
+    { type: "album", providerId: "ready-album", provider: "tidal", downloadImportHandoff: { importPayload: { type: "album" } } } as any,
+    "ready-album",
+  );
+  assert.equal(waitQueueModule.DownloadWaitQueue.dropUnclaimedDownloadCommands(), 0);
+  assert.ok(queueModule.CommandQueueManager.get(handoffId));
+});
+
 test("history retry cannot target an unrelated queue row with the same numeric ID", async () => {
   const original = enqueueTrack("history-target", "History target");
   const claimed = waitQueueModule.DownloadWaitQueue.claim(original.id)!;

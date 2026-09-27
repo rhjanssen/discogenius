@@ -280,6 +280,7 @@ export class DownloadWaitQueue {
       DELETE FROM commands
       WHERE name IN ('DownloadTrack', 'DownloadVideo', 'DownloadAlbum')
         AND status = 'queued'
+        AND (NOT json_valid(payload) OR json_type(payload, '$.downloadImportHandoff') IS NULL)
         AND id NOT IN (
           SELECT command_id FROM DownloadQueue WHERE command_id IS NOT NULL
         )

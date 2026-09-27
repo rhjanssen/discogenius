@@ -643,13 +643,17 @@ export async function embedAudioCover(filePath: string, coverPath: string): Prom
     }
 
     const tagLibResult = await replaceMediaCoverWithTagLib(filePath, coverPath);
-    if (tagLibResult.success) {
+    if (tagLibResult.success && (await compareEmbeddedAudioCover(filePath, coverPath)).matches) {
         return true;
     }
     if (tagLibResult.handled) {
-        console.warn(`[MediaTags] TagLib cover write failed for ${filePath}; using compatibility backend: ${tagLibResult.error || "unknown error"}`);
+        const reason = tagLibResult.success
+            ? "the stored cover differs from the requested image"
+            : tagLibResult.error || "unknown error";
+        console.warn(`[MediaTags] TagLib cover write failed for ${filePath}; using compatibility backend: ${reason}`);
     }
-    return runMutagenBridge(['cover', filePath, coverPath], filePath);
+    if (!await runMutagenBridge(['cover', filePath, coverPath], filePath)) return false;
+    return (await compareEmbeddedAudioCover(filePath, coverPath)).matches;
 }
 
 /**

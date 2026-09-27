@@ -27,6 +27,7 @@ const {
     CommandNames,
     CommandQueueManager,
 } = await import('../commands/command-queue-manager.js');
+const { DownloadWaitQueue } = await import('./download-wait-queue.js');
 
 function resetRows(): void {
     db.prepare('DELETE FROM commands').run();
@@ -54,6 +55,40 @@ function claim(id: number, owner: string, now = new Date('2026-01-01T00:00:00.00
 
 beforeEach(resetRows);
 afterEach(resetRows);
+
+test('a full durable import backlog stops new download claims', () => {
+    const wait = DownloadWaitQueue.enqueue({
+        refKey: 'backpressure-track',
+        mediaKind: 'track',
+        commandName: CommandNames.DownloadTrack,
+        provider: 'tidal',
+        providerId: 'backpressure-track',
+        title: 'Backpressure fixture',
+        payload: { type: 'track', provider: 'tidal', providerId: 'backpressure-track' },
+    });
+    try {
+        db.prepare(`
+            INSERT INTO commands (name, payload, status, priority, created_at, updated_at)
+            VALUES ('DownloadTrack', '{"downloadState":{"state":"importPending"}}',
+                    'started', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).run();
+        // The production limit is four. These handoffs are durable but absent
+        // from this processor's in-memory pending list after a worker restart.
+        db.prepare(`
+            INSERT INTO commands (name, payload, status, priority, created_at, updated_at)
+            VALUES
+              ('DownloadTrack', '{"downloadState":{"state":"importPending"}}', 'started', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+              ('DownloadTrack', '{"downloadState":{"state":"importPending"}}', 'started', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+              ('DownloadTrack', '{"downloadState":{"state":"importPending"}}', 'started', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).run();
+        const processor = new DownloadProcessor() as any;
+        processor.scheduleQueueWithWriteLock();
+        assert.equal(DownloadWaitQueue.get(wait.id)?.command_id, null);
+        assert.equal(processor.activeDownloads.size, 0);
+    } finally {
+        DownloadWaitQueue.remove(wait.id);
+    }
+});
 
 test('buffered progress persists each exact disc occurrence and never infers completion from list position', () => {
     const id = pushTrack('disc-progress');

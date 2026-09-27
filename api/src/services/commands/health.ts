@@ -581,7 +581,7 @@ function collectImportCheck(): HealthCheckResult {
         )
     `).get(...importCommandNames) as { count: number; latest: string | null };
     const active = db.prepare(`
-      SELECT id, name, started_at,
+      SELECT id, name, started_at, last_progress_at,
              json_extract(payload, '$.downloadState.state') AS import_state
       FROM commands INDEXED BY idx_commands_status_name_started
       WHERE status = 'started'
@@ -596,12 +596,17 @@ function collectImportCheck(): HealthCheckResult {
       id: number;
       name: string;
       started_at: string | null;
+      last_progress_at: string | null;
       import_state: string | null;
     }>;
 
     const stale = active.filter((command) => {
-      const startedAt = parseSqliteTimestamp(command.started_at);
-      return startedAt != null && Date.now() - startedAt >= staleImportMs;
+      // A long download or an import backlog is not a stalled import. Judge
+      // work that actually entered the import phase by its last progress.
+      if (command.name.startsWith("Download") && command.import_state !== "importing") return false;
+      const progressAt = parseSqliteTimestamp(command.last_progress_at)
+        ?? parseSqliteTimestamp(command.started_at);
+      return progressAt != null && Date.now() - progressAt >= staleImportMs;
     });
     const failedCount = Number(failed.count) || 0;
     const details = {
@@ -614,6 +619,7 @@ function collectImportCheck(): HealthCheckResult {
         commandName: command.name,
         state: command.import_state,
         startedAt: command.started_at,
+        lastProgressAt: command.last_progress_at,
       })),
     };
 

@@ -1917,7 +1917,7 @@ test("edition artwork candidates put the exact current acquisition plan before o
   );
 });
 
-test("cover precache targets monitored editions and primary albums, not unmonitored appears-on compilations", () => {
+test("cover precache targets monitored albums, not catalogue-only albums", () => {
   const artistMbid = "precache-art-artist";
   const primaryMbid = "precache-art-primary";
   const appearsOnMbid = "precache-art-appears-on";
@@ -1939,7 +1939,7 @@ test("cover precache targets monitored editions and primary albums, not unmonito
   `).run(artistMbid, appearsOn.id, appearsOnMbid);
 
   const beforeMonitor = mediaCoverServiceModule.listArtistCoverPrecacheTargets(artistMbid);
-  assert.deepEqual(beforeMonitor.albumMbids, [primaryMbid]);
+  assert.deepEqual(beforeMonitor.albumMbids, []);
   assert.deepEqual(beforeMonitor.editions, []);
 
   dbModule.db.prepare(`
@@ -1954,8 +1954,7 @@ test("cover precache targets monitored editions and primary albums, not unmonito
   });
 
   const afterMonitor = mediaCoverServiceModule.listArtistCoverPrecacheTargets(artistMbid);
-  assert.ok(afterMonitor.albumMbids.includes(primaryMbid));
-  assert.ok(afterMonitor.albumMbids.includes(appearsOnMbid));
+  assert.deepEqual(afterMonitor.albumMbids, [appearsOnMbid]);
   assert.equal(afterMonitor.editions.length, 0, "A single monitored edition shares the release-group cover");
 });
 

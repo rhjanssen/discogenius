@@ -328,6 +328,8 @@ test("cancelling an active import waits for a safe boundary before releasing its
   const cancellationObserved = new Promise<void>((resolve) => { signalCancellationObserved = resolve; });
   let releaseSafeBoundary!: () => void;
   const safeBoundary = new Promise<void>((resolve) => { releaseSafeBoundary = resolve; });
+  let releaseDbWriter!: () => void;
+  const dbWriterBoundary = new Promise<void>((resolve) => { releaseDbWriter = resolve; });
   const originalProcess = importServiceModule.DownloadedTracksImportService.process;
 
   (importServiceModule.DownloadedTracksImportService as any).process = async (_job: unknown, options: {
@@ -358,10 +360,21 @@ test("cancelling an active import waits for a safe boundary before releasing its
     });
     await importStarted;
 
+    let signalDbWriterEntered!: () => void;
+    const dbWriterEntered = new Promise<void>((resolve) => { signalDbWriterEntered = resolve; });
+    const dbWriter = dbModule.withSqliteWriteGate(async () => {
+      signalDbWriterEntered();
+      await dbWriterBoundary;
+    }, "test:busy-import-cancel");
+    await dbWriterEntered;
+
     let cancellationSettled = false;
     const cancellation = processor.cancelJob(commandId).then(() => {
       cancellationSettled = true;
     });
+    assert.equal(cancellationSettled, false);
+    releaseDbWriter();
+    await dbWriter;
     await cancellationObserved;
 
     const drainingCommand = queueModule.CommandQueueManager.get(commandId);
@@ -377,6 +390,7 @@ test("cancelling an active import waits for a safe boundary before releasing its
     assert.equal(processor.activeImports.has(commandId), false);
     assert.equal(fs.existsSync(downloadPath), false);
   } finally {
+    releaseDbWriter();
     releaseSafeBoundary();
     (importServiceModule.DownloadedTracksImportService as any).process = originalProcess;
   }

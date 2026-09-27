@@ -2351,8 +2351,10 @@ export function discardEditionCoverIfDuplicateOfAlbum(
 /**
  * Cover cache targets for an artist refresh/match.
  *
- * Release-group covers are the default (monitored albums plus the artist's
- * own unmonitored albums). Edition covers are only listed when two or more
+ * Precache only albums selected into a library. Catalogue-only albums resolve
+ * their artwork when viewed; eagerly caching every primary release group made
+ * the cache grow with the entire catalogue rather than the music library.
+ * Edition covers are only listed when two or more
  * editions of that group are monitored — a single monitored edition shares
  * the group image. Credited "appears on" compilations are skipped until
  * they are monitored.
@@ -2366,7 +2368,6 @@ export function listArtistCoverPrecacheTargets(artistMbid: string): {
 
   let editions: Array<{ releaseMbid: string; libraryId: number; albumMbid: string }> = [];
   let monitoredAlbums: string[] = [];
-  let primaryAlbums: string[] = [];
   try {
     editions = (db.prepare(`
       SELECT DISTINCT
@@ -2405,18 +2406,13 @@ export function listArtistCoverPrecacheTargets(artistMbid: string): {
       WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
     `).all(mbid, mbid) as Array<{ album_mbid: string }>).map((row) => row.album_mbid);
 
-    primaryAlbums = (db.prepare(`
-      SELECT DISTINCT rg.mbid AS album_mbid
-      FROM Albums rg
-      WHERE rg.artist_mbid = ?
-    `).all(mbid) as Array<{ album_mbid: string }>).map((row) => row.album_mbid);
   } catch (error) {
     console.warn("[MediaCoverService] Failed to list artist cover precache targets:", error);
   }
 
   return {
     editions,
-    albumMbids: [...new Set([...monitoredAlbums, ...primaryAlbums])].sort(),
+    albumMbids: monitoredAlbums.sort(),
   };
 }
 
