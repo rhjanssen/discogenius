@@ -31,7 +31,7 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("persisted queue pause wins over later startup defaults", () => {
+test("persisted queue pause wins over later startup defaults", async () => {
   process.env.DISCOGENIUS_START_PAUSED = "1";
   assert.deepEqual(controlModule.getDownloadQueueControlState(), {
     isPaused: true,
@@ -39,7 +39,7 @@ test("persisted queue pause wins over later startup defaults", () => {
     updatedAt: null,
   });
 
-  const resumed = controlModule.setDownloadQueuePaused(false);
+  const resumed = await controlModule.setDownloadQueuePaused(false);
   assert.equal(resumed.isPaused, false);
   assert.equal(resumed.persisted, true);
   assert.ok(resumed.updatedAt);
@@ -48,13 +48,39 @@ test("persisted queue pause wins over later startup defaults", () => {
   // operator's durable resume remains authoritative.
   assert.equal(controlModule.getDownloadQueueControlState().isPaused, false);
 
-  controlModule.setDownloadQueuePaused(true);
+  await controlModule.setDownloadQueuePaused(true);
   const row = dbModule.db.prepare(`
     SELECT value
     FROM runtime_controls
     WHERE control_key = 'download_queue_paused'
   `).get() as { value: string };
   assert.equal(row.value, "true");
+});
+
+test("pause and resume wait for an active database writer and acknowledge only persisted state", async () => {
+  for (const paused of [true, false]) {
+    let release!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>(resolve => { acquired = resolve; });
+    const blocker = dbModule.withSqliteWriteGate(() => {
+      acquired();
+      return new Promise<void>(resolve => { release = resolve; });
+    }, "test:import-writer");
+    await ready;
+    const timer = setTimeout(() => release(), 30);
+    try {
+      const pending = controlModule.setDownloadQueuePaused(paused);
+      assert.equal(controlModule.getDownloadQueueControlState().isPaused, !paused);
+      const result = await pending;
+      assert.equal(result.isPaused, paused);
+      assert.equal(result.persisted, true);
+      assert.equal(controlModule.getDownloadQueueControlState().isPaused, paused);
+    } finally {
+      clearTimeout(timer);
+      release();
+      await blocker;
+    }
+  }
 });
 
 // Regression: shutdown used to call downloadProcessor.pause(), which persists
@@ -88,11 +114,11 @@ test("shutdown suspend does not persist an operator pause", async () => {
   assert.match(bodyOf("pause"), /setDownloadQueuePaused\(true\)/);
 });
 
-test("resume survives a restart that only suspends", () => {
+test("resume survives a restart that only suspends", async () => {
   // Operator resumes, then the process restarts. The persisted state must still
   // read as resumed, so the queue comes back working.
-  controlModule.setDownloadQueuePaused(true);
-  controlModule.setDownloadQueuePaused(false);
+  await controlModule.setDownloadQueuePaused(true);
+  await controlModule.setDownloadQueuePaused(false);
 
   assert.deepEqual(
     {

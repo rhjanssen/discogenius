@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.19] - 2026-09-28
+
+### Fixed
+
+- Wait asynchronously for the SQLite writer when persisting download queue pause and resume, including first-start pause defaults. Queue controls no longer fail with a lock error during concurrent imports, and acknowledge only after the operator's choice is saved.
+
 ## [2.16.18] - 2026-09-28
 
 ### Fixed

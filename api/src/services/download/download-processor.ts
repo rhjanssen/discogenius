@@ -1479,7 +1479,7 @@ export class DownloadProcessor {
         const pauseState = getDownloadQueueControlState();
         this.isPaused = pauseState.isPaused;
         if (!pauseState.persisted && this.isPaused) {
-            setDownloadQueuePaused(true);
+            await setDownloadQueuePaused(true);
         }
 
         this.startHeartbeatLoop();
@@ -2801,7 +2801,7 @@ export class DownloadProcessor {
 
     async pause(): Promise<void> {
         console.log('[DOWNLOAD-PROCESSOR] Pausing queue...');
-        setDownloadQueuePaused(true);
+        await setDownloadQueuePaused(true);
         this.haltProcessing();
         console.log('[DOWNLOAD-PROCESSOR] Queue paused');
     }
@@ -2822,7 +2822,7 @@ export class DownloadProcessor {
         }
 
         console.log('[DOWNLOAD-PROCESSOR] Resuming queue...');
-        setDownloadQueuePaused(false);
+        await setDownloadQueuePaused(false);
         this.isPaused = false;
 
         downloadEvents.emitQueueStatus(false);

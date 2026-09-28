@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 
 const DOWNLOAD_QUEUE_PAUSED_KEY = "download_queue_paused";
 
@@ -63,14 +63,14 @@ export function getDownloadQueueControlState(): DownloadQueueControlState {
  * Persist before changing worker state so a process failure cannot acknowledge
  * a pause/resume that is immediately forgotten on restart.
  */
-export function setDownloadQueuePaused(isPaused: boolean): DownloadQueueControlState {
-  db.prepare(`
+export async function setDownloadQueuePaused(isPaused: boolean): Promise<DownloadQueueControlState> {
+  await withSqliteWriteGate(() => db.prepare(`
     INSERT INTO runtime_controls (control_key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(control_key) DO UPDATE SET
       value = excluded.value,
       updated_at = CURRENT_TIMESTAMP
-  `).run(DOWNLOAD_QUEUE_PAUSED_KEY, isPaused ? "true" : "false");
+  `).run(DOWNLOAD_QUEUE_PAUSED_KEY, isPaused ? "true" : "false"), "download:queue-control");
 
   return getDownloadQueueControlState();
 }
