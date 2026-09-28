@@ -639,6 +639,20 @@ export async function clearMediaTagsWithTagLib(
   }
 }
 
+export function readMediaCoverWithTagLib(filePath: string): Buffer | null {
+  if (!canHandleWithTagLib(filePath)) return null;
+  try {
+    return withTagLibFile(filePath, file => {
+      const pictures = file.tag.pictures;
+      const picture = pictures.find(item => item.type === PictureType.FrontCover) ?? pictures[0];
+      const bytes = picture?.data?.toByteArray();
+      return bytes?.length ? Buffer.from(bytes) : null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function replaceMediaCoverWithTagLib(
   filePath: string,
   coverPath: string,

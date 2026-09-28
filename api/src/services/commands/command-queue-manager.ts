@@ -1,4 +1,4 @@
-import { CommandTrigger } from "./command-trigger.js";
+import { CommandPriority, CommandTrigger } from "./command-trigger.js";
 import { CommandManager } from "./command.js";
 import { db, withDbWrite } from "../../database.js";
 import type {
@@ -11,6 +11,7 @@ import {
     CommandNames,
     DOWNLOAD_COMMAND_NAMES,
     DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+    NON_DOWNLOAD_COMMAND_NAMES,
     isDownloadJobType,
     type CommandName,
 } from "./command-names.js";
@@ -996,6 +997,25 @@ ${orderBy}
             if (!CommandManager.canStartCommand(CommandNames.ImportDownload, job.payload, job.ref_id, {
                 excludeCommandId: id, excludeRunningTypes: DOWNLOAD_COMMAND_NAMES,
             }).canStart) return false;
+            // A steady stream of completed downloads must not take every disk
+            // slot ahead of a file operation explicitly requested in the UI.
+            // Only yield to eligible work, so delayed retries or commands still
+            // blocked by exclusivity cannot strand an import handoff.
+            const diskTypes = NON_DOWNLOAD_COMMAND_NAMES.filter(name => CommandManager.getDefinition(name).requiresDiskAccess);
+            const waiting = db.prepare(`
+                SELECT * FROM commands WHERE status = 'queued'
+                  AND name IN (${diskTypes.map(() => '?').join(',')})
+                  AND trigger = ? AND priority >= ?
+                  AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
+                ORDER BY ${buildExecutionOrderClause()}
+                LIMIT 20
+            `).all(...diskTypes, CommandTrigger.Manual, CommandPriority.Interactive);
+            for (const row of waiting) {
+                const candidate = hydrateJobRow(row as Parameters<typeof hydrateJobRow>[0]);
+                if (candidate && CommandManager.canStartCommand(candidate.name, candidate.payload, candidate.ref_id, {
+                    excludeRunningTypes: DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+                }).canStart) return false;
+            }
             return db.prepare(`UPDATE commands SET progress_phase = 'importing', blocked_reason = NULL
                 WHERE id = ? AND status = 'started' AND worker_id = ?`).run(id, workerId).changes === 1;
         })();

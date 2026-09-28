@@ -1,7 +1,7 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
 import fs from "fs";
 import path from "path";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { Config, getConfigSection } from "../config/config.js";
 import { resolveArtistFolderFromRecord } from "../config/naming.js";
 import { ensureEmptyArtistFoldersIfEnabled } from "../music/artist-paths.js";
@@ -494,7 +494,7 @@ export class DiskScanService {
             message: "Verifying tracked file changes",
             progress: 80,
         });
-        const phaseC = this.updateChangedFiles(scanArtistId);
+        const phaseC = await this.updateChangedFiles(scanArtistId);
         result.filesUpdated = phaseC.updated;
 
         // A clean database can rediscover an existing library from tags, but
@@ -1495,7 +1495,7 @@ export class DiskScanService {
     /**
      * Phase C: Check existing track_files for size/mtime changes and update records.
      */
-    private static updateChangedFiles(artistId: string): { updated: number } {
+    private static async updateChangedFiles(artistId: string): Promise<{ updated: number }> {
         const rows = db.prepare(`
       SELECT id, file_path, relative_path, library_root, file_size, modified_at, file_type
       FROM TrackFiles
@@ -1526,11 +1526,11 @@ export class DiskScanService {
             const mtimeChanged = row.modified_at !== null && row.modified_at !== currentMtime;
 
             if (sizeChanged || mtimeChanged) {
-                db.prepare(`
+                await withSqliteWriteGate(() => db.prepare(`
           UPDATE TrackFiles
           SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(stats.size, currentMtime, row.id);
+        `).run(stats.size, currentMtime, row.id), "scan:changed-file-facts");
                 LibraryFilesService.emitFileUpgraded({
                     libraryFileId: row.id,
                     artistId,
@@ -1550,7 +1550,7 @@ export class DiskScanService {
             for (let i = 0; i < verifiedIds.length; i += BATCH_SIZE) {
                 const chunk = verifiedIds.slice(i, i + BATCH_SIZE);
                 const placeholders = chunk.map(() => "?").join(",");
-                db.prepare(`UPDATE TrackFiles SET verified_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).run(...chunk);
+                await withSqliteWriteGate(() => db.prepare(`UPDATE TrackFiles SET verified_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).run(...chunk), "scan:verified-file-facts");
             }
         }
 

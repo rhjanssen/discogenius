@@ -140,6 +140,41 @@ function writePcmWav(filePath: string): void {
   fs.writeFileSync(filePath, wav);
 }
 
+test("scan waits for an active database writer before updating changed and verified file facts", async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number };
+  const files = ["changed.wav", "unchanged.wav"].map(name => path.join(tempDir, name));
+  for (const [index, filePath] of files.entries()) {
+    writePcmWav(filePath);
+    insertMissingTrackFile(`track-${index + 1}`, `recording-${index + 1}`, path.basename(filePath), null);
+    const stat = fs.statSync(filePath);
+    db.prepare(`UPDATE TrackFiles SET file_path = ?, library_root = ?, file_size = ?, modified_at = ?, verified_at = NULL WHERE filename = ?`)
+      .run(filePath, tempDir, index === 0 ? 1 : stat.size, stat.mtime.toISOString(), path.basename(filePath));
+  }
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:import-writer");
+  await ready;
+  const timer = setTimeout(() => release(), 30);
+  try {
+    const result = await (DiskScanService as any).updateChangedFiles(String(artist.id));
+    assert.equal(result.updated, 1);
+  } finally {
+    clearTimeout(timer);
+    release();
+    await blocker;
+  }
+  for (const filePath of files) {
+    const row = db.prepare("SELECT file_size, verified_at FROM TrackFiles WHERE file_path = ?").get(filePath) as { file_size: number; verified_at: string | null };
+    assert.equal(row.file_size, fs.statSync(filePath).size);
+    assert.ok(row.verified_at);
+  }
+});
+
 test("scan backfills file-derived quality and technical facts on relinked library files", async () => {
   seedCanonicalArtistGraph();
   const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")

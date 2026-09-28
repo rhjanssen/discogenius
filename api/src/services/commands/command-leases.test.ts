@@ -85,6 +85,35 @@ test("download imports and library file mutations share the disk exclusion rule"
     assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagArtist).canStart, true);
 });
 
+test("import handoffs yield the disk slot to eligible interactive retags without waiting on delayed retries", () => {
+    const download = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, { provider: "tidal", providerId: "album" });
+    claim(download, "download-owner", new Date(), 60_000);
+    const retag = queueNamedCommand(queueModule.CommandNames.RetagFiles, { ids: [1] });
+    dbModule.db.prepare("UPDATE commands SET trigger = 1, priority = 2 WHERE id = ?").run(retag);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), false);
+    assert.notEqual(queueModule.CommandQueueManager.get(download)?.progress_phase, "importing");
+    dbModule.db.prepare("UPDATE commands SET retry_after = '2999-01-01' WHERE id = ?").run(retag);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
+});
+
+test("scheduled retags do not hold back a completed download import", () => {
+    const download = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, { provider: "tidal", providerId: "album" });
+    claim(download, "download-owner", new Date(), 60_000);
+    const retag = queueNamedCommand(queueModule.CommandNames.RetagFiles, { ids: [1] });
+    dbModule.db.prepare("UPDATE commands SET trigger = 2, priority = 0 WHERE id = ?").run(retag);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
+});
+
+test("interactive scans blocked by running catalog work do not strand import handoffs", () => {
+    const refresh = queueNamedCommand(queueModule.CommandNames.RefreshArtist, { artistId: "artist" }, "artist");
+    claim(refresh, "refresh-owner", new Date(), 60_000);
+    const scan = queueNamedCommand(queueModule.CommandNames.RescanFolders, { addNewArtists: true });
+    dbModule.db.prepare("UPDATE commands SET trigger = 1, priority = 2 WHERE id = ?").run(scan);
+    const download = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, { provider: "tidal", providerId: "album" });
+    claim(download, "download-owner", new Date(), 60_000);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
+});
+
 test("recovery discards progress from the retired attempt before a new owner runs", () => {
     const id = queueCommand();
     claim(id, "old-owner", new Date(), 60_000);

@@ -229,7 +229,7 @@ test("audio cover replacement preserves M4A MusicBrainz metadata", {
     }
 });
 
-test("replacing an Opus cover verifies the picture a normal reader sees", {
+test("replacing a multi-page Opus cover verifies the complete stored picture", {
     skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0
         || spawnSync("python", ["-c", "import mutagen"], { windowsHide: true }).status !== 0,
 }, async () => {
@@ -244,18 +244,20 @@ test("replacing an Opus cover verifies the picture a normal reader sees", {
             "-t", "1", "-c:a", "libopus", audioPath,
         ], { windowsHide: true, encoding: "utf-8" });
         assert.equal(audio.status, 0, audio.stderr);
-        for (const [color, coverPath] of [["blue", oldCover], ["red", newCover]]) {
+        for (const [source, coverPath] of [["color=c=blue:s=640x640", oldCover], ["testsrc2=s=1200x1200,noise=alls=30:allf=t", newCover]]) {
             const cover = spawnSync("ffmpeg", [
                 "-hide_banner", "-loglevel", "error", "-y",
-                "-f", "lavfi", "-i", `color=c=${color}:s=640x640`,
-                "-frames:v", "1", coverPath,
+                "-f", "lavfi", "-i", source,
+                "-frames:v", "1", "-q:v", "1", coverPath,
             ], { windowsHide: true, encoding: "utf-8" });
             assert.equal(cover.status, 0, cover.stderr);
         }
+        assert.ok(fs.statSync(newCover).size > 65_535, "picture must span multiple Ogg pages");
         assert.equal(await embedAudioCover(audioPath, oldCover), true);
         assert.equal((await compareEmbeddedAudioCover(audioPath, oldCover)).matches, true);
         assert.equal(await embedAudioCover(audioPath, newCover), true);
         assert.equal((await compareEmbeddedAudioCover(audioPath, newCover)).matches, true);
+        assert.equal((await compareEmbeddedAudioCover(audioPath, newCover, Buffer.from("truncated parser picture"))).matches, true);
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.18] - 2026-09-28
+
+### Fixed
+
+- Read complete Ogg/Opus artwork through TagLib when pictures span multiple container pages. Valid large-cover writes no longer fail verification or roll back, and previews no longer show a truncated image as the current cover.
+- Wait asynchronously for the shared SQLite writer before updating changed-file facts and verification timestamps during artist scans. Concurrent imports no longer make this scan phase fail with `SQLITE_BUSY` or block the event loop while waiting for the writer.
+- Give eligible interactive file operations a turn between download imports, so a continuous import backlog cannot starve a manually requested retag or rename. Delayed retries and blocked operations do not stop import progress.
+
 ## [2.16.17] - 2026-09-28
 
 ### Fixed

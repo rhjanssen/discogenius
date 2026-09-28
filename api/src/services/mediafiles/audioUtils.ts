@@ -12,6 +12,7 @@ import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
 import {
     clearMediaTagsWithTagLib,
+    readMediaCoverWithTagLib,
     replaceMediaCoverWithTagLib,
     writeMediaTagsWithTagLib,
 } from './media-tag-io.js';
@@ -22,6 +23,7 @@ const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mkv", ".mov", ".avi", ".ts",
 const VIDEO_THUMBNAIL_EMBED_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
 export const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".flac", ".mp3", ".ogg", ".oga", ".opus"]);
 const MUTAGEN_MP4_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".m4v"]);
+const OGG_COVER_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
 const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
@@ -733,10 +735,10 @@ function readMp4CoverAtomBytes(filePath: string): Buffer | null {
 /**
  * Bytes of the picture currently embedded in an audio file, or null when there
  * is none. No subprocess: MP4/M4A covers come from the container's covr atom
- * (codec-independent), everything else from music-metadata's single parse.
+ * (codec-independent), Ogg from TagLib, and other formats from music-metadata.
  *
  * `preread` lets a caller that already parsed the file hand over the picture it
- * found so we don't re-read: pass the Buffer when present, `null` when the parse
+ * found so we don't re-read non-Ogg files: pass the Buffer when present, `null` when the parse
  * found none (skips a redundant re-parse), or omit it entirely for a
  * self-contained read (the apply/backfill paths).
  */
@@ -744,11 +746,17 @@ async function readEmbeddedAudioCoverBytes(filePath: string, preread?: Buffer | 
     if (!fs.existsSync(filePath)) {
         return null;
     }
+    const extension = path.extname(filePath).toLowerCase();
+    // music-metadata truncates pictures whose comment packet spans Ogg pages.
+    // This also affects a caller's preread buffer, so use the container reader
+    // for Ogg even when the caller already supplied a parsed picture.
+    if (OGG_COVER_EXTENSIONS.has(extension)) {
+        return readMediaCoverWithTagLib(filePath);
+    }
     if (preread && preread.length > 0) {
         return Buffer.isBuffer(preread) ? preread : Buffer.from(preread);
     }
 
-    const extension = path.extname(filePath).toLowerCase();
     if (MUTAGEN_MP4_EXTENSIONS.has(extension)) {
         const covr = readMp4CoverAtomBytes(filePath);
         if (covr && covr.length > 0) {
@@ -836,7 +844,7 @@ function describeCoverBuffer(buffer: Buffer): CoverImageInfo {
 
 /**
  * Single source of truth for the retag cover comparison: reads the currently
- * embedded cover (covr atom for MP4, music-metadata otherwise — no subprocess),
+ * embedded cover (covr atom for MP4, TagLib for Ogg, music-metadata otherwise — no subprocess),
  * compares it byte-for-byte with coverPath, and returns pixel size + byte size
  * for both so the preview can show a real diff. The apply path consumes only
  * `.matches`; the preview also surfaces `.current` / `.target`.
