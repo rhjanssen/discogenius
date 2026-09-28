@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.24] - 2026-09-28
+
+### Fixed
+
+- Show recovered and retried activity items as queued, with earlier failures labelled as the previous attempt rather than the current error. Queued rename and retag jobs no longer display the old attempt's processed-file count.
+
 ## [2.16.23] - 2026-09-28
 
 ### Fixed

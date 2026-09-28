@@ -253,11 +253,11 @@ export function formatJobDescription(job: JobLike): string {
         case "RenameArtist":
         case "RenameFiles":
         case "ApplyRenames":
-            return desc || "Applying the current library naming plan";
+            return (job.status !== "queued" && desc) || "Applying the current library naming plan";
         case "RetagArtist":
         case "RetagFiles":
         case "ApplyRetags":
-            return desc || "Applying configured audio metadata tags";
+            return (job.status !== "queued" && desc) || "Applying configured audio metadata tags";
         default:
             return desc;
     }
