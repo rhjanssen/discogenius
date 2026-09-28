@@ -1184,6 +1184,35 @@ test("a YouTube self-OMV relation is removed when detailed metadata identifies a
   assert.equal(relation, undefined);
 });
 
+test("video matching preparation leaves provider rows unchanged until persistence", () => {
+  insertCanonicalVideo({ mbid: "mb-video-prepared", title: "Pompeii", lengthMs: 232000 });
+  const persist = refreshVideoModule.RefreshVideoService.prepareArtistVideoUpsert("artist-mbid", [{
+    provider: "youtube-music", provider_id: "prepared-pompeii", title: "Pompeii", duration: 232,
+  }]);
+  const lookup = dbModule.db.prepare("SELECT id FROM ProviderItems WHERE provider = 'youtube-music' AND entity_type = 'video' AND provider_id = 'prepared-pompeii'");
+  assert.equal(lookup.get(), undefined);
+  persist();
+  assert.ok(lookup.get());
+});
+
+test("album counterpart persistence rejects live-to-studio links without repairing unrelated videos", () => {
+  const audioId = seedStudioAudio({ recordingMbid: "album-studio-audio", title: "Pompeii", lengthMs: 232000 });
+  const unrelatedId = insertCanonicalVideo({ mbid: "unrelated-live-video", title: "Other Song (Live)", variant: "live", lengthMs: 232000 });
+  seedAcceptedProviderVideoMatch(dbModule.db, { provider: "youtube-music", providerVideoId: "unrelated-video", recordingId: unrelatedId, title: "Other Song (Live)", durationMs: 232000 });
+  dbModule.db.prepare(`INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, source, confidence, data)
+    VALUES (?, ?, 'provider_video_for', 'youtube-music', 0.98, '{}')`).run(unrelatedId, audioId);
+
+  refreshVideoModule.RefreshVideoService.upsertAlbumTrackCounterpartVideos({
+    artistId: "artist-mbid", provider: "youtube-music", albumId: "current-album",
+    counterparts: [{ providerId: "current-live-video", albumId: "current-album", title: "Pompeii (Live)", duration: 232, audioRecordingId: audioId }],
+  });
+  const current = acceptedVideoMatch("youtube-music", "current-live-video");
+  assert.ok(current);
+  const relation = dbModule.db.prepare("SELECT target_recording_id FROM RecordingRelations WHERE source_recording_id = ? AND relation_type = 'provider_video_for'");
+  assert.equal(relation.get(current.recordingId), undefined);
+  assert.ok(relation.get(unrelatedId), "unrelated video belongs to the separate artist-wide repair");
+});
+
 test("provider refresh preserves previously probed video quality", () => {
   insertCanonicalVideo({ mbid: "mb-video-quality", title: "Pompeii", lengthMs: 232000 });
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{

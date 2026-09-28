@@ -1,7 +1,7 @@
 import { linkCachedAlbumCoverSidecar } from "../metadata/media-cover-service.js";
 import fs from "fs";
 import path from "path";
-import { db, batchDelete, batchRun } from "../../database.js";
+import { db, batchDelete, batchRun, withSqliteWriteGate } from "../../database.js";
 import {
   Config,
   getConfigSection,
@@ -3666,7 +3666,7 @@ export class LibraryFilesService {
     return this.pruneUnmonitoredFiles(artist.id);
   }
 
-  static pruneUnmonitoredFilesForMonitoredArtists(): { artists: number; deleted: number; missing: number; errors: number } {
+  static async pruneUnmonitoredFilesForMonitoredArtists(): Promise<{ artists: number; deleted: number; missing: number; errors: number }> {
     if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
       return { artists: 0, deleted: 0, missing: 0, errors: 0 };
     }
@@ -3679,7 +3679,7 @@ export class LibraryFilesService {
     let missing = 0;
     let errors = 0;
     for (const artist of artists) {
-      const result = this.pruneUnmonitoredFiles(artist.id);
+      const result = await withSqliteWriteGate(() => this.pruneUnmonitoredFiles(artist.id), "housekeeping:prune-artist");
       deleted += result.deleted;
       missing += result.missing;
       errors += result.errors;

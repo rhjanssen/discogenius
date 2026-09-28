@@ -1973,7 +1973,8 @@ export class RefreshArtistService {
                 }
             }
             console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
-            await withSqliteWriteGate(() => RefreshVideoService.upsertArtistVideos(artistId, videos, options), "refresh-artist:videos");
+            const persistVideos = RefreshVideoService.prepareArtistVideoUpsert(artistId, videos, options);
+            await withSqliteWriteGate(persistVideos, "refresh-artist:videos");
             await this.precacheArtistVideoArtwork(artistId);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);

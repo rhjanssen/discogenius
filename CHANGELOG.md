@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.21] - 2026-09-28
+
+### Fixed
+
+- Limit album video-counterpart repairs to the recordings touched by that album, including their accepted offers. Whole-artist repairs no longer repeat for every album and monopolize the SQLite writer while completed downloads wait to import.
+- Prepare artist video matching before requesting writer admission.
+- Wait for writer admission during housekeeping, including per-artist file pruning, so maintenance cannot collide with rename, retag, or import persistence.
+
 ## [2.16.20] - 2026-09-28
 
 ### Fixed

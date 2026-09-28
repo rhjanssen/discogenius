@@ -1567,7 +1567,7 @@ function findVideoRecordingIdByTitle(
  * returned by this refresh. Same identity function as ingest. Splits legacy
  * lyric/live overmerges and attaches offers once a compatible MB recording exists.
  */
-function repairProviderVideoRecordingAssignments(artistMbid: string): number {
+function repairProviderVideoRecordingAssignments(artistMbid: string, recordingIds?: number[]): number {
     const loadRows = () => db.prepare(`
         SELECT
             video_match.id AS match_id,
@@ -1626,8 +1626,9 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         WHERE provider_item.entity_type = 'video'
           AND video_match.match_state = 'accepted'
           AND recording.artist_mbid = ?
+          ${recordingIds ? "AND recording.id IN (SELECT value FROM json_each(?))" : ""}
         ORDER BY provider_item.provider, provider_item.provider_id
-    `).all(artistMbid) as Array<{
+    `).all(...(recordingIds ? [artistMbid, JSON.stringify(recordingIds)] : [artistMbid])) as Array<{
         provider: string;
         match_id: number;
         decision_source: "automatic" | "manual";
@@ -1872,7 +1873,7 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
  * veto can land after the first write, so a refresh replays the decision on
  * rows already in the database.
  */
-function repairProviderVideoAudioRelations(artistMbid: string): number {
+function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: number[]): number {
     // This pass changes video relations, never the audio catalog. Keep candidate
     // reads local to the pass so each artist is loaded once, with no stale cache
     // surviving a subsequent catalog refresh.
@@ -1915,8 +1916,9 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         WHERE provider_item.entity_type = 'video'
           AND video_match.match_state = 'accepted'
           AND recording.artist_mbid = ?
+          ${recordingIds ? "AND recording.id IN (SELECT value FROM json_each(?))" : ""}
         ORDER BY provider_item.provider, provider_item.provider_id
-    `).all(artistMbid) as Array<{
+    `).all(...(recordingIds ? [artistMbid, JSON.stringify(recordingIds)] : [artistMbid])) as Array<{
         provider: string;
         provider_id: string;
         provider_album_id: string | null;
@@ -2421,6 +2423,7 @@ export class RefreshVideoService {
             WHERE id = ?
         `);
         db.transaction(() => {
+            const affectedRecordings = new Set<number>();
             for (const video of videos) {
                 const existingRecordingId = getAcceptedProviderVideoRecordingId(
                     video.provider,
@@ -2432,6 +2435,7 @@ export class RefreshVideoService {
                     existingRecordingId,
                 });
                 if (recordingId) {
+                    affectedRecordings.add(recordingId);
                     updateRecordingState.run(
                         nullableText(video.release_date),
                         nullableText(video.image_id),
@@ -2456,8 +2460,15 @@ export class RefreshVideoService {
             }
 
             if (artistMbid) {
-                repairProviderVideoRecordingAssignments(artistMbid);
-                repairProviderVideoAudioRelations(artistMbid);
+                // A counterpart update touches this album's videos. Rechecking
+                // thousands of unrelated artist videos for every album made
+                // each persistence transaction monopolize the shared writer.
+                repairProviderVideoRecordingAssignments(artistMbid, [...affectedRecordings]);
+                for (const video of videos) {
+                    const recordingId = getAcceptedProviderVideoRecordingId(video.provider, String(video.provider_id));
+                    if (recordingId) affectedRecordings.add(recordingId);
+                }
+                repairProviderVideoAudioRelations(artistMbid, [...affectedRecordings]);
                 deleteOrphanProviderOnlyVideoRecordings(artistMbid);
             }
         })();
@@ -2468,6 +2479,16 @@ export class RefreshVideoService {
         videos: any[],
         options: RefreshOptions & { deferRepair?: boolean } = {},
     ): void {
+        this.prepareArtistVideoUpsert(artistId, videos, options)();
+    }
+
+    /** Read/score candidates before requesting the shared writer. The returned
+     * callback performs only the persistence phase under writer admission. */
+    static prepareArtistVideoUpsert(
+        artistId: string,
+        videos: any[],
+        options: RefreshOptions & { deferRepair?: boolean } = {},
+    ): () => void {
         const updateRecordingState = db.prepare(`
             UPDATE Recordings
             SET
@@ -2512,7 +2533,7 @@ export class RefreshVideoService {
             };
         });
 
-        db.transaction(() => {
+        return () => db.transaction(() => {
             for (const { video, artistMbid, provider, audioMatch } of preparedVideos) {
                 const identity = buildVideoIdentity(video);
                 const recordingMbid = String(video.mbid || video.recording_mbid || "").trim() || null;

@@ -26,7 +26,7 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         progress: 10,
         description: 'Running housekeeping',
     });
-    const summary = runRuntimeMaintenance();
+    const summary = await runRuntimeMaintenance();
     const parts = [
         `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s)`,
         `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,

@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { Config, CONFIG_DIR } from "../config/config.js";
 import { invalidateAllDownloadState } from "../download/download-state.js";
 import { DownloadWaitQueue } from "../download/download-wait-queue.js";
@@ -315,7 +315,7 @@ export function correctVideoQualitiesFromDimensions(): number {
   return corrected;
 }
 
-export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
+export async function runRuntimeMaintenance(): Promise<RuntimeMaintenanceSummary> {
   const summary: RuntimeMaintenanceSummary = {
     duplicateLibraryFilesRemoved: 0,
     duplicateTrackedAssetsRemoved: 0,
@@ -329,43 +329,43 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     unmonitoredFilesRemoved: 0,
   };
 
-  summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
-  summary.duplicateTrackedAssetsRemoved = LibraryFilesService.pruneDuplicateTrackedAssets().removed;
+  summary.staleTrackedAssetsRemoved = await withSqliteWriteGate(() => LibraryFilesService.pruneStaleTrackedAssets().removed, "housekeeping:stale-assets");
+  summary.duplicateTrackedAssetsRemoved = await withSqliteWriteGate(() => LibraryFilesService.pruneDuplicateTrackedAssets().removed, "housekeeping:duplicate-assets");
   summary.orphanDownloadFoldersRemoved = pruneOrphanDownloadFolders();
   summary.staleTempDirsRemoved = pruneStaleTempDirectories();
-  summary.videoQualitiesCorrected = correctVideoQualitiesFromDimensions();
-  summary.unmonitoredFilesRemoved = LibraryFilesService.pruneUnmonitoredFilesForMonitoredArtists().deleted;
+  summary.videoQualitiesCorrected = await withSqliteWriteGate(correctVideoQualitiesFromDimensions, "housekeeping:video-quality");
+  summary.unmonitoredFilesRemoved = (await LibraryFilesService.pruneUnmonitoredFilesForMonitoredArtists()).deleted;
 
-  db.transaction(() => {
+  await withSqliteWriteGate(() => db.transaction(() => {
     dedupeLibraryFiles(summary);
-  })();
+  })(), "housekeeping:duplicate-files");
 
-  refreshDownloadState(summary);
+  await withSqliteWriteGate(() => refreshDownloadState(summary), "housekeeping:download-state");
   const monitoredArtistIds = (db.prepare(`
     SELECT CAST(a.id AS TEXT) AS id
     FROM ArtistMetadata a
     WHERE ${buildLibraryArtistMonitoredExistsSql("a")}
   `).all() as Array<{ id: string }>).map((row) => row.id);
   if (monitoredArtistIds.length > 0) {
-    ArtistStatisticsService.refresh(monitoredArtistIds);
+    await withSqliteWriteGate(() => ArtistStatisticsService.refresh(monitoredArtistIds), "housekeeping:statistics");
   }
 
   // Known-fixed video retag error from schema 46 (`file.artist_id`). Keeping
   // those rows made Activity and health look broken after the 2.13.0 join fix.
-  const staleVideoRetag = db.prepare(`
+  const staleVideoRetag = await withSqliteWriteGate(() => db.prepare(`
     DELETE FROM commands
     WHERE status = 'failed'
       AND error LIKE '%no such column: file.artist_id%'
-  `).run();
+  `).run(), "housekeeping:stale-history");
   // Prune finished commands rows older than 1 day
-  const pruneResult = db.prepare(`
+  const pruneResult = await withSqliteWriteGate(() => db.prepare(`
     DELETE FROM commands
     WHERE status IN ('completed', 'failed', 'cancelled')
       AND COALESCE(completed_at, updated_at) < datetime('now', '-1 day')
-  `).run();
+  `).run(), "housekeeping:history");
   summary.historyJobsPruned = pruneResult.changes + staleVideoRetag.changes;
   try {
-    DownloadWaitQueue.recoverOrphanClaims();
+    await withSqliteWriteGate(() => DownloadWaitQueue.recoverOrphanClaims(), "housekeeping:orphan-claims");
   } catch (orphanErr) {
     console.warn("[Maintenance] Failed to recover orphan wait queue claims:", orphanErr);
   }
