@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.22] - 2026-09-28
+
+### Fixed
+
+- Verify MP4 comments, lyrics, and other text from their raw UTF-8 atoms. Semicolons no longer truncate verification through TagLib's string-list reader and cause valid M4A retags to roll back.
+- Allow an authenticated Apple Music wrapper up to two minutes to open its ports after restarting before acquisition fails. Readiness waits remain cancellable and missing downloader tools still fail immediately.
+
 ## [2.16.21] - 2026-09-28
 
 ### Fixed

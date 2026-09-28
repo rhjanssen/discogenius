@@ -1,6 +1,7 @@
 import { spawnDownloadProcess as spawn } from "../../download/download-child-process.js";
 import fs from "fs";
 import net from "net";
+import { setTimeout as wait } from "node:timers/promises";
 import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download/download-backend.js";
 import { Config } from "../../config/config.js";
 import { classifyNeutralAudio } from "../provider-quality.js";
@@ -182,6 +183,22 @@ export function describeAppleDownloaderMissingPrerequisites(
   return missing;
 }
 
+/** A wrapper restart is transient; absent binaries or authentication are not. */
+export async function waitForAppleMusicDownloaderReadiness(
+  readSnapshot = getAppleMusicDownloaderCapabilitySnapshot,
+  options: { signal?: AbortSignal; timeoutMs?: number; pollMs?: number } = {},
+): Promise<AppleMusicDownloaderCapabilitySnapshot> {
+  const deadline = Date.now() + (options.timeoutMs ?? 120_000);
+  for (;;) {
+    options.signal?.throwIfAborted();
+    const snapshot = await readSnapshot();
+    options.signal?.throwIfAborted();
+    const missing = describeAppleDownloaderMissingPrerequisites(snapshot);
+    if (!snapshot.authenticated || !missing.length || missing.some(item => !item.startsWith("decryption wrapper port")) || Date.now() >= deadline) return snapshot;
+    await wait(Math.min(options.pollMs ?? 1_000, Math.max(1, deadline - Date.now())), undefined, { signal: options.signal });
+  }
+}
+
 export type AppleDownloaderProgressEvent = {
   currentFileNum?: number;
   totalFiles?: number;
@@ -303,11 +320,11 @@ export class AppleMusicBackend implements DownloadBackend {
   readonly supportedProviders = ["apple-music"];
   readonly capabilities: Array<"stereo" | "spatial" | "video"> = ["stereo", "spatial", "video"];
 
-  async preflight(): Promise<void> {
+  async preflight(_request?: DownloadRequest, options: { signal?: AbortSignal } = {}): Promise<void> {
     if (!loadStoredAppleMusicToken()) {
       throw new Error("Apple Music is not authenticated; cannot download");
     }
-    const missing = describeAppleDownloaderMissingPrerequisites(await getAppleMusicDownloaderCapabilitySnapshot());
+    const missing = describeAppleDownloaderMissingPrerequisites(await waitForAppleMusicDownloaderReadiness(undefined, options));
     if (missing.length > 0) {
       throw new Error(`Apple Music downloader provisioning is incomplete: missing ${missing.join(", ")}.`);
     }
@@ -335,7 +352,7 @@ export class AppleMusicBackend implements DownloadBackend {
       throw new Error("apple-music download requested without a provider ID");
     }
 
-    await this.preflight();
+    await this.preflight(request, { signal: options.signal });
 
     await fs.promises.mkdir(request.downloadPath, { recursive: true });
     for (let index = 0; index < providerIds.length; index++) {

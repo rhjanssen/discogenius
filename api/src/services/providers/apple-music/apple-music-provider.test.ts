@@ -34,6 +34,7 @@ import {
   getAppleMusicDownloaderCapabilitySnapshot,
   getAppleMusicDownloaderBinary,
   parseAppleDownloaderProgressLine,
+  waitForAppleMusicDownloaderReadiness,
 } from "./apple-music-backend.js";
 import { fixtureFor } from "./apple-music-fixtures.js";
 import {
@@ -42,6 +43,39 @@ import {
   shortImportListSubtitle,
 } from "./apple-music-library.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
+
+const readyDownloader = {
+  authenticated: true, downloaderBinary: "apple-music-dl", downloaderBinaryAvailable: true,
+  mp4BoxAvailable: true, mp4DecryptAvailable: true, wrapperDecryptPortOpen: true,
+  wrapperM3u8PortOpen: true, downloaderConfigExists: true, downloaderWorkingDirectory: "/test",
+};
+
+test("Apple acquisition waits through wrapper startup before accepting readiness", async () => {
+  let calls = 0;
+  const snapshot = await waitForAppleMusicDownloaderReadiness(async () => {
+    calls++;
+    return calls < 3 ? { ...readyDownloader, wrapperDecryptPortOpen: false, wrapperM3u8PortOpen: false } : readyDownloader;
+  }, { timeoutMs: 1000, pollMs: 1 });
+  assert.equal(calls, 3);
+  assert.equal(snapshot.wrapperDecryptPortOpen, true);
+  assert.equal(snapshot.wrapperM3u8PortOpen, true);
+});
+
+test("Apple readiness does not wait for absent tooling and bounds unavailable wrapper waits", async () => {
+  let calls = 0;
+  const tooling = { ...readyDownloader, downloaderBinaryAvailable: false, wrapperDecryptPortOpen: false };
+  assert.equal(await waitForAppleMusicDownloaderReadiness(async () => { calls++; return tooling; }), tooling);
+  assert.equal(calls, 1);
+  const unavailable = { ...readyDownloader, wrapperDecryptPortOpen: false };
+  assert.equal(await waitForAppleMusicDownloaderReadiness(async () => unavailable, { timeoutMs: 0 }), unavailable);
+});
+
+test("Apple wrapper readiness waits can be cancelled", async () => {
+  const controller = new AbortController();
+  const pending = waitForAppleMusicDownloaderReadiness(async () => ({ ...readyDownloader, wrapperDecryptPortOpen: false }), { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, { name: "AbortError" });
+});
 
 test("describeAppleDownloaderFailure maps decryption/session errors to a re-auth instruction", () => {
   const eof = describeAppleDownloaderFailure(1, "Error reading response from device: EOF");

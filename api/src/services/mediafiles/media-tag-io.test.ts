@@ -21,6 +21,24 @@ import {
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
 
+test("MP4 text verification retains semicolons and multiline comments and lyrics", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mp4-text-"));
+  try {
+    const mediaPath = path.join(tempDir, "sample.m4a");
+    generateAudio(mediaPath, ["-c:a", "aac", "-f", "mp4"]);
+    const beforeHash = decodedAudioHash(mediaPath);
+    const comment = "First observation; second observation.\nA full album review.";
+    const lyrics = "First lyric; second lyric\nA final line.";
+    const result = await writeMediaTagsWithTagLib(mediaPath, { "©cmt": comment, "©lyr": lyrics, artist: "Artist One; Artist Two" });
+    assert.equal(result.success, true, result.error);
+    const { parseFile } = await import("music-metadata");
+    const metadata = await parseFile(mediaPath);
+    assert.equal(metadata.common.comment?.[0]?.text, comment);
+    assert.equal(metadata.native.iTunes.find(tag => tag.id === "©lyr")?.value, lyrics);
+    assert.equal(decodedAudioHash(mediaPath), beforeHash);
+  } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
+});
+
 for (const version of [3, 4]) {
   test(`ISRC values follow Picard's ID3v2.${version} representation`, { skip: !hasFfmpeg }, async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-id3-isrc-"));

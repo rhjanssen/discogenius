@@ -448,12 +448,19 @@ function readMp4Value(tag: Mpeg4AppleTag, rawKey: string): string {
   }
   const box = MP4_TEXT_KEYS[lower];
   if (box) {
-    return tag.getFirstQuickTimeString(mp4BoxType(box)) ?? "";
+    return readMp4TextAtom(tag, box);
   }
   if (key.length === 4) {
-    return tag.getFirstQuickTimeString(mp4BoxType(key)) ?? "";
+    return readMp4TextAtom(tag, key);
   }
   return tag.getFirstItunesString("com.apple.iTunes", key) ?? "";
+}
+
+function readMp4TextAtom(tag: Mpeg4AppleTag, box: string): string {
+  // TagLib's string-list getter splits text on semicolons and trims every
+  // segment. Comments and lyrics are single UTF-8 values, not artist lists.
+  return tag.getFirstQuickTimeData(mp4BoxType(box), Mpeg4AppleDataBoxFlagType.ContainsText)
+    ?.toString(StringType.UTF8) ?? "";
 }
 
 function writeTagLibValues(
