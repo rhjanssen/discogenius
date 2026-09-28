@@ -265,6 +265,9 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
       kind = "geography";
     } else if (/quality.*(?:unavailable|not available|restricted)|format.*not available/iu.test(line)) {
       kind = "quality";
+    } else if (/domain name not found|name resolution|enotfound|eai_again|dns/iu.test(line)) {
+      kind = "transient";
+      permanent = false;
     } else if (/not found|no longer available|unavailable/iu.test(line)) {
       kind = "unavailable";
     } else if (/rate.?limit|too many requests|timeout|temporar|network|connection/iu.test(line)) {

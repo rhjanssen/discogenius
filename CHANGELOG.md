@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.23] - 2026-09-28
+
+### Fixed
+
+- Reject Streamrip's legacy Deezer fallback when the requested quality has no media URL. That fallback silently forces 128 kbps MP3 and uses retired CDN hosts; quality failures now explain why acquisition stopped.
+- Treat Deezer DNS failures as transient network errors rather than unavailable tracks.
+
 ## [2.16.22] - 2026-09-28
 
 ### Fixed

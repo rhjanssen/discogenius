@@ -290,6 +290,16 @@ test("Streamrip classifies its unsupported track-id template as configuration", 
   assert.equal(errors[0]?.permanent, true);
 });
 
+test("Streamrip distinguishes DNS failure from unavailable tracks and missing quality", () => {
+  const dns = classifyStreamripOutput("ERROR Persistent error downloading track: [Domain name not found]");
+  assert.equal(dns[0]?.kind, "transient");
+  assert.equal(dns[0]?.permanent, false);
+  const quality = classifyStreamripOutput("ERROR Deezer requested quality unavailable: no media URL for this track; legacy 128 kbps fallback disabled.");
+  assert.equal(quality[0]?.kind, "quality");
+  assert.equal(quality[0]?.permanent, true);
+  assert.equal(classifyStreamripOutput("ERROR track no longer available")[0]?.kind, "unavailable");
+});
+
 test("Streamrip exit zero still surfaces authentication and quality failures", async () => {
   saveDeezerCredentials({ arl: "c".repeat(192) });
   const request = {
