@@ -250,6 +250,17 @@ test("id-only renames avoid library-wide post-processing", async () => {
   assert.equal(fs.existsSync(unrelatedEmptyDir), true);
 });
 
+test("artist-wide renames clean moved parents without walking unrelated library folders", async () => {
+  const seeded = seedTrackedFile();
+  const unrelatedEmptyDir = path.join(configModule.Config.getVideoPath(), "Unrelated Artist", "Empty Album");
+  fs.mkdirSync(unrelatedEmptyDir, { recursive: true });
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(seeded.expectedPath), true);
+  assert.equal(fs.existsSync(seeded.sourceDir), false);
+  assert.equal(fs.existsSync(unrelatedEmptyDir), true);
+});
+
 test("RenameTrackFileService applies the same quality-token path shown in preview", async () => {
   const config = configModule.readConfig();
   config.naming.album_track_path_single = "{albumTitle}/{QUALITY}/{trackNumber00} - {trackTitle}";

@@ -81,24 +81,24 @@ export type LibraryViewMode = "grid" | "list";
 const useStyles = makeStyles({
   toolbar: {
     display: "flex",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     gap: tokens.spacingHorizontalXS,
     alignItems: "center",
     width: "100%",
     paddingTop: tokens.spacingVerticalXS,
     paddingBottom: tokens.spacingVerticalXS,
-    "@media (min-width: 640px)": {
+    "@media (min-width: 1200px)": {
       gap: tokens.spacingHorizontalS,
       justifyContent: "space-between",
     },
-    "@media (max-width: 639px)": {
+    "@media (max-width: 1199px)": {
       alignItems: "center",
       flexWrap: "nowrap",
     },
   },
   desktopControlsRow: {
     display: "none",
-    "@media (min-width: 640px)": {
+    "@media (min-width: 1200px)": {
       display: "flex",
       alignItems: "center",
       justifyContent: "flex-end",
@@ -112,20 +112,20 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "flex-end",
     flex: "0 0 auto",
-    "@media (min-width: 640px)": {
+    "@media (min-width: 1200px)": {
       display: "none",
     },
   },
   tabSlot: {
     minWidth: 0,
     flex: "0 1 auto",
-    "@media (max-width: 639px)": {
+    "@media (max-width: 1199px)": {
       flex: "1 1 auto",
     },
   },
   mobileTabs: {
     minWidth: 0,
-    "@media (max-width: 639px)": {
+    "@media (max-width: 1199px)": {
       maxWidth: "100%",
     },
   },
@@ -134,7 +134,7 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
     flexWrap: "nowrap",
-    "@media (max-width: 639px)": {
+    "@media (max-width: 1199px)": {
       flex: "0 0 auto",
       marginLeft: "auto",
     },
@@ -142,7 +142,7 @@ const useStyles = makeStyles({
   menuButtonIconOnly: {
     ...glassButtonStyles,
     minHeight: "36px",
-    "@media (max-width: 639px)": {
+    "@media (max-width: 1199px)": {
       minHeight: "40px",
       minWidth: "40px",
       paddingLeft: tokens.spacingHorizontalS,
@@ -150,7 +150,7 @@ const useStyles = makeStyles({
     },
   },
   mobileHiddenLabel: {
-    "@media (max-width: 639px)": {
+    "@media (max-width: 1199px)": {
       display: "none",
     },
   },

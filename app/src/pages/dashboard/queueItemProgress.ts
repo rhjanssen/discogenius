@@ -1,4 +1,5 @@
 import type { QueueItemContract as QueueItem, DownloadProgressContract as DownloadProgress } from "@contracts/status";
+import { mergeTrackProgress } from "@contracts/track-progress";
 
 function getLiveQueueItemStatus(progress: DownloadProgress): QueueItem["status"] {
     switch (progress.state) {
@@ -69,6 +70,13 @@ export function mergeQueueItemsWithProgress(
             return item;
         }
 
+        // A durable import snapshot outranks a lingering download event, including
+        // the backend's download-completed event before the import handoff.
+        const serverImporting = item.state === "importPending" || item.state === "importing";
+        const liveImporting = progress.state === "importPending" || progress.state === "importing";
+        if (serverImporting && !liveImporting && progress.state !== "importFailed") return item;
+        if (item.state === "importing" && progress.state === "importPending") return item;
+
         // Server is authoritative for clean queued rows. Client progress can linger
         // after a requeue that stripped downloadState, which otherwise resurrects
         // tracklists / "downloading" chrome on items that are only waiting.
@@ -113,7 +121,9 @@ export function mergeQueueItemsWithProgress(
             state: (progress.state === "completed" && (item.status === "started" || item.status === "downloading"))
                 ? (item.state === "importPending" || item.state === "importing" ? item.state : "downloading")
                 : (progress.state ?? item.state),
-            tracks: progress.tracks ?? item.tracks,
+            tracks: serverImporting !== liveImporting
+                ? progress.tracks
+                : mergeTrackProgress(item.tracks, progress.tracks),
         };
     });
 

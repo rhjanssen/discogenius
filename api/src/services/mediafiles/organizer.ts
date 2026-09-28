@@ -2523,6 +2523,7 @@ export class OrganizerService {
         // is harmless here and can be reconciled by a later metadata backfill.
         try {
           syncCachedMediaCoverToFile({
+            libraryRoot: targetRoot,
             entityId: artistMbId || artistId,
             coverEntity: "Artist",
             coverTypes: ["poster", "headshot"],
@@ -2561,11 +2562,15 @@ export class OrganizerService {
         // Materialize only the canonical album's cached full-resolution master.
         // This path neither chooses a provider nor performs network I/O.
         try {
-          syncCachedMediaCoverToFile({
+          const syncResult = syncCachedMediaCoverToFile({
+            libraryRoot: targetRoot,
             entityId: jobReleaseMbid || canonicalContext?.releaseMbid,
             coverEntity: "Edition",
             coverTypes: "cover",
             outputPath: albumCoverPath,
+          });
+          if (syncResult === "missing") syncCachedMediaCoverToFile({
+            entityId: canonicalContext?.releaseGroupMbid, coverEntity: "Album", outputPath: albumCoverPath,
           });
           if (fs.existsSync(albumCoverPath)) {
             await this.upsertLibraryFile({
@@ -3149,6 +3154,7 @@ export class OrganizerService {
         // is harmless here and can be reconciled by a later metadata backfill.
         try {
           syncCachedMediaCoverToFile({
+            libraryRoot: targetRoot,
             entityId: artistMbId || artistId,
             coverEntity: "Artist",
             coverTypes: ["poster", "headshot"],
@@ -3190,11 +3196,15 @@ export class OrganizerService {
       if (metadataConfig.save_album_cover) {
         // Materialize only the canonical album's cached full-resolution master.
         // This path neither chooses a provider nor performs network I/O.
-        syncCachedMediaCoverToFile({
+        const syncResult = syncCachedMediaCoverToFile({
+          libraryRoot: targetRoot,
           entityId: trackIdentity.canonicalReleaseMbid,
           coverEntity: "Edition",
           coverTypes: "cover",
           outputPath: albumCoverPath,
+        });
+        if (syncResult === "missing") syncCachedMediaCoverToFile({
+          entityId: trackIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: albumCoverPath,
         });
         if (fs.existsSync(albumCoverPath)) {
           await this.upsertLibraryFile({

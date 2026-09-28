@@ -556,7 +556,7 @@ export function reconcileWrapperLoginStatus(
   return saved;
 }
 
-function checkWrapperPort(host: string, port: number, timeoutMs = 250): Promise<boolean> {
+function checkWrapperPort(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host, port });
     const done = (open: boolean) => {

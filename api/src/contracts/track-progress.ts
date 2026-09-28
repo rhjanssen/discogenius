@@ -9,12 +9,37 @@ export interface TrackProgressUpdate {
 }
 
 type TrackRow = {
+  canonicalTrackMbid?: string;
   providerTrackId?: string;
   trackNum?: number;
   volumeNum?: number;
   title?: string;
   status: string;
 };
+
+/** Merge snapshots by a proven occurrence, never by array position. */
+export function mergeTrackProgress<T extends TrackRow>(previous: T[] | undefined, incoming: T[] | undefined): T[] | undefined {
+  if (!incoming) return previous;
+  if (!previous?.length) return incoming;
+  return incoming.map(track => {
+    const candidates = previous.filter(old => {
+      const sameOccurrence = (track.trackNum == null || old.trackNum == null || track.trackNum === old.trackNum)
+        && (track.volumeNum == null || old.volumeNum == null || track.volumeNum === old.volumeNum);
+      if (!sameOccurrence) return false;
+      if (track.canonicalTrackMbid && old.canonicalTrackMbid) return track.canonicalTrackMbid === old.canonicalTrackMbid;
+      return Boolean(track.providerTrackId) && track.providerTrackId === old.providerTrackId
+        && (track.trackNum == null || old.trackNum == null || track.trackNum === old.trackNum)
+        && (track.volumeNum == null || old.volumeNum == null || track.volumeNum === old.volumeNum);
+    });
+    if (candidates.length !== 1) return track;
+    const old = candidates[0];
+    if ((old.status === 'completed' || old.status === 'skipped') && (track.status === 'queued' || track.status === 'downloading')) {
+      return { ...track, status: old.status };
+    }
+    if (old.status === 'downloading' && track.status === 'queued') return { ...track, status: old.status };
+    return track;
+  });
+}
 
 function normalizeTitle(value: string): string {
   return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();

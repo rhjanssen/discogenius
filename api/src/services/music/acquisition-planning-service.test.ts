@@ -604,3 +604,29 @@ test("planning one edition uses an indexed selected-plan lookup instead of mater
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("a removed provider track cannot remain in a composite acquisition plan", async () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-unavailable-item-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    await createActiveSchema(db);
+    seedStandardDeluxeFixture(db);
+    const service = new AcquisitionPlanningService(db);
+    const args = { libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1 };
+    service.compute(args);
+    db.prepare("UPDATE ProviderItems SET availability = 'unavailable' WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = 'deluxe-1'").run();
+    service.compute(args);
+    const chosen = db.prepare(`
+      SELECT item.provider_id FROM AcquisitionPlanTracks pt
+      JOIN ProviderTrackMatches match ON match.id = pt.provider_track_match_id
+      JOIN ProviderEditionMembers member ON member.id = match.provider_edition_member_id
+      JOIN ProviderItems item ON item.id = member.member_item_id
+      WHERE item.provider_id = 'deluxe-1'
+    `).all();
+    assert.equal(chosen.length, 0, "a positive variant cannot override an unavailable resource");
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

@@ -1,3 +1,4 @@
+import { linkCachedAlbumCoverSidecar } from "../metadata/media-cover-service.js";
 import fs from "fs";
 import path from "path";
 import { db, batchDelete, batchRun } from "../../database.js";
@@ -1995,6 +1996,10 @@ export class LibraryFilesService {
 
       this.upsertExtraFileRecord(params, canonicalIdentity, libraryId);
       const insertedId = ExtraFileService.findIdByPath(tableName, params.filePath) || 0;
+      if (params.fileType === "cover" && insertedId > 0) {
+        linkCachedAlbumCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: params.filePath, metadataFileId: insertedId });
+        linkCachedAlbumCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseMbid, coverEntity: "Edition", outputPath: params.filePath, metadataFileId: insertedId });
+      }
 
       if (params.removeFromUnmapped !== false) {
         db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);

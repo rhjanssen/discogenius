@@ -844,7 +844,6 @@ export class RenameTrackFileService {
     if (result.renamed > 0 && options.reconcileSeparatedSidecars === true) {
       const artistIds = Array.from(new Set(rows.map((row) => String(row.artist_metadata_id || "")).filter(Boolean)));
       await this.replicateSeparatedSidecars(artistIds, pathCache);
-      result.cleanedDirectories = this.cleanEmptyDirectories();
     }
 
     return result;
@@ -993,8 +992,8 @@ export class RenameTrackFileService {
       FROM TrackFiles tf
       LEFT JOIN ProviderItems provider_track
         ON provider_track.entity_type = tf.provider_entity_type
-       AND (tf.provider IS NULL OR provider_track.provider = tf.provider)
-       AND CAST(provider_track.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
+       AND provider_track.provider = tf.provider
+       AND provider_track.provider_id = tf.provider_id
       WHERE tf.file_type IN ('track', 'video')
         AND (tf.library_slot IN ('stereo', 'spatial') OR tf.file_type = 'video')
         ${artistFilter}
@@ -1119,8 +1118,8 @@ export class RenameTrackFileService {
         FROM MetadataFiles mf
         LEFT JOIN ProviderItems album_item
           ON album_item.entity_type = 'release'
-         AND (mf.provider IS NULL OR album_item.provider = mf.provider)
-         AND CAST(album_item.provider_id AS TEXT) = CAST(mf.provider_id AS TEXT)
+         AND album_item.provider = mf.provider
+         AND album_item.provider_id = mf.provider_id
         LEFT JOIN ProviderEditionMatches album_match
           ON album_match.provider_edition_item_id = album_item.id
          AND album_match.match_state = 'accepted'
@@ -1170,8 +1169,8 @@ export class RenameTrackFileService {
         FROM LyricFiles lf
         LEFT JOIN ProviderItems lyric_item
           ON lyric_item.entity_type = 'track'
-         AND (lf.provider IS NULL OR lyric_item.provider = lf.provider)
-         AND CAST(lyric_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+         AND lyric_item.provider = lf.provider
+         AND lyric_item.provider_id = lf.provider_id
         LEFT JOIN ProviderEditionMembers lyric_member
           ON lyric_member.member_item_id = lyric_item.id
         LEFT JOIN ProviderTrackMatches lyric_match
@@ -1227,54 +1226,4 @@ export class RenameTrackFileService {
     }
   }
 
-  private static cleanEmptyDirectories(): number {
-    const roots = [Config.getMusicPath(), Config.getVideoPath()].filter(Boolean);
-
-    try {
-      const spatialPath = Config.getSpatialPath();
-      if (spatialPath) {
-        roots.push(spatialPath);
-      }
-    } catch {
-      // Spatial path may not be configured.
-    }
-
-    let removed = 0;
-    for (const root of roots) {
-      if (!fs.existsSync(root)) {
-        continue;
-      }
-      removed += this.removeEmptyDirsRecursive(root, root);
-    }
-
-    if (removed > 0) {
-      console.log(`[RenameTrackFileService] Cleaned ${removed} empty director${removed === 1 ? "y" : "ies"}`);
-    }
-
-    return removed;
-  }
-
-  private static removeEmptyDirsRecursive(dir: string, root: string): number {
-    let removed = 0;
-    try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          removed += this.removeEmptyDirsRecursive(path.join(dir, entry.name), root);
-        }
-      }
-
-      if (dir !== root) {
-        const remaining = fs.readdirSync(dir);
-        if (remaining.length === 0) {
-          fs.rmdirSync(dir);
-          removed += 1;
-        }
-      }
-    } catch {
-      // Permission error or race, skip.
-    }
-
-    return removed;
-  }
 }

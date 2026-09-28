@@ -1,4 +1,6 @@
-import { useCallback, useMemo } from "react";
+import { useDashboardDesktop } from "@/hooks/useDashboardDesktop";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import { useCallback, useMemo, useRef } from "react";
 import {
     Button,
     Spinner,
@@ -166,6 +168,20 @@ const ActivityTab = ({
         isFetchingNextPage: isLoadingMoreInFlightActivity,
         fetchNextPage: loadMoreInFlightActivity,
     } = useActivityInFlightFeed({ enabled: isActive });
+
+    const desktopAutoLoad = useDashboardDesktop();
+    const activeSentinel = useRef<HTMLDivElement | null>(null);
+    const historySentinel = useRef<HTMLDivElement | null>(null);
+    useInfiniteScroll({
+        sentinelRef: activeSentinel, hasMore: Boolean(hasMoreInFlightActivity),
+        isLoading: isLoadingMoreInFlightActivity, enabled: isActive && desktopAutoLoad,
+        onLoadMore: async () => { await loadMoreInFlightActivity(); },
+    });
+    useInfiniteScroll({
+        sentinelRef: historySentinel, hasMore: hasMoreActivity,
+        isLoading: isLoadingMoreActivity, enabled: isActive && desktopAutoLoad,
+        onLoadMore: async () => { await loadMoreActivity(); },
+    });
 
     const historyJobs = useMemo(
         () => activityItems.filter((job) => ["completed", "failed", "cancelled"].includes(String(job.status || ""))),
@@ -404,6 +420,7 @@ const ActivityTab = ({
                                 {renderSection("Queued", queuedEntries, "queued")}
                                 {hasMoreInFlightActivity ? (
                                     <div className={styles.loadMoreRow}>
+                                        <div ref={activeSentinel} aria-hidden="true" />
                                         <Button appearance="subtle" onClick={() => void loadMoreInFlightActivity()} disabled={isLoadingMoreInFlightActivity}>
                                             {isLoadingMoreInFlightActivity ? "Loading..." : "Load more pending"}
                                         </Button>
@@ -433,6 +450,7 @@ const ActivityTab = ({
                                         {historyEntries.map((entry) => renderActivityEntry(entry))}
                                         {hasMoreActivity ? (
                                             <div className={styles.loadMoreRow}>
+                                                <div ref={historySentinel} aria-hidden="true" />
                                                 <Button appearance="subtle" onClick={() => void loadMoreActivity()} disabled={isLoadingMoreActivity}>
                                                     {isLoadingMoreActivity ? "Loading..." : "Load more"}
                                                 </Button>

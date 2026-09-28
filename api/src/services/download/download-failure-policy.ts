@@ -1,3 +1,4 @@
+import { ProviderUnavailableError } from "./provider-unavailable-error.js";
 import { readIntEnv } from "../../utils/env.js";
 import { streamingProviderManager } from "../providers/index.js";
 
@@ -20,6 +21,9 @@ export const SAME_OFFER_BACKOFF_BASE_MS = readIntEnv(
 export type DownloadFailureKind = "transient" | "permanent";
 
 const PERMANENT_PATTERNS: RegExp[] = [
+  // Provisioning is provider-wide. Repeating it for each track cannot repair
+  // a missing binary or wrapper; the next queued attempt can recheck readiness.
+  /downloader provisioning is incomplete/i,
   /\b404\b/i,
   /\bnot[\s_-]?found\b/i,
   /\bunavailable\b/i,
@@ -99,6 +103,7 @@ export function isDownloadCancellationError(error: unknown): boolean {
  * Unknown / Traceback / exit-1 style errors default to transient.
  */
 export function classifyDownloadFailure(error: unknown): DownloadFailureKind {
+  if (error instanceof ProviderUnavailableError) return "permanent";
   const text = errorText(error);
   if (!text.trim()) {
     return "transient";

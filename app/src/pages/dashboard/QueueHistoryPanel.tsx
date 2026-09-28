@@ -1,3 +1,4 @@
+import { useDashboardDesktop } from "@/hooks/useDashboardDesktop";
 import { useEffect, useRef } from "react";
 import {
     Button,
@@ -247,12 +248,13 @@ export function QueueHistoryPanel({
     onFiltersChange,
 }: QueueHistoryPanelProps) {
     const styles = useDashboardStyles();
+    const desktopAutoLoad = useDashboardDesktop();
     const historySentinelRef = useRef<HTMLDivElement | null>(null);
     const hasHistoryRows = items.length > 0;
     const filtersActive = hasActiveQueueHistoryFilters(filters);
 
     useEffect(() => {
-        if (!hasHistoryRows || !hasMore) {
+        if (!desktopAutoLoad || !hasHistoryRows || !hasMore) {
             return;
         }
 
@@ -272,7 +274,7 @@ export function QueueHistoryPanel({
         if (historySentinel) observer.observe(historySentinel);
 
         return () => observer.disconnect();
-    }, [hasHistoryRows, hasMore, isLoadingMore, onLoadMore, items.length]);
+    }, [desktopAutoLoad, hasHistoryRows, hasMore, isLoadingMore, onLoadMore, items.length]);
 
     const sectionHeader = (
         <div className={styles.queueSectionHeader}>

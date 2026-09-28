@@ -12,6 +12,21 @@ function progress(jobId: number, patch: Partial<DownloadProgressContract> = {}):
 }
 
 describe("queue snapshot and progress reconciliation", () => {
+  it("does not replace a durable import snapshot with lingering download progress", () => {
+    const importing = item(1, { status: "started", state: "importing", stage: "import",
+      tracks: [{ providerTrackId: "one", title: "One", status: "queued" }, { providerTrackId: "two", title: "Two", status: "completed" }] });
+    expect(mergeQueueItemsWithProgress([importing], new Map([[1, progress(1, { state: "downloading",
+      tracks: [{ providerTrackId: "one", title: "One", status: "completed" }, { providerTrackId: "two", title: "Two", status: "queued" }] })]]))[0])
+      .toEqual(importing);
+  });
+
+  it("does not erase imported tracks with a stale same-phase event", () => {
+    const importing = item(1, { status: "started", state: "importing", stage: "import",
+      tracks: [{ providerTrackId: "one", title: "One", status: "completed" }] });
+    expect(mergeQueueItemsWithProgress([importing], new Map([[1, progress(1, { state: "importing",
+      tracks: [{ providerTrackId: "one", title: "One", status: "queued" }] })]]))[0].tracks?.[0].status)
+      .toBe("completed");
+  });
   it("keeps active work above waiting items without changing the waiting order", () => {
     const rows = [item(1, { status: "started", state: "queued" }), item(2, { status: "started", state: "downloading" }), item(3)];
     expect(mergeQueueItemsWithProgress(rows, new Map()).map(row => row.id)).toEqual([2, 1, 3]);

@@ -389,6 +389,10 @@ export class AcquisitionPlanningService {
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
+      AND member_item.availability NOT IN (
+          'unavailable', 'no_longer_available', 'geography_restricted',
+          'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
+        )
       ORDER BY release_match.id, target_track.id, track_match.id, track_variant.id, release_variant.id
     `).all(input.editionId, input.editionId) as CandidateRow[]);
 

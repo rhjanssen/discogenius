@@ -1810,16 +1810,20 @@ ${orderBy}
         appEvents.emit(AppEvent.QUEUE_CLEARED);
     }
 
-    static clearFinishedByTypes(types: string[]) {
+    static clearFinishedByTypes(types: string[], beforeCommandId?: number) {
         if (types.length === 0) {
             return;
         }
 
+        if (beforeCommandId !== undefined && (!Number.isSafeInteger(beforeCommandId) || beforeCommandId < 1)) {
+            throw new Error("History cutoff must be a positive command ID");
+        }
         const placeholders = types.map(() => '?').join(',');
         db.prepare(`
             DELETE FROM commands
             WHERE name IN (${placeholders}) AND status IN ('completed', 'failed', 'cancelled')
-        `).run(...types);
+            ${beforeCommandId === undefined ? "" : "AND id <= ?"}
+        `).run(...types, ...(beforeCommandId === undefined ? [] : [beforeCommandId]));
         appEvents.emit(AppEvent.QUEUE_CLEARED);
     }
 

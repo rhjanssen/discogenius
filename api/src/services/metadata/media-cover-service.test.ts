@@ -16,6 +16,59 @@ let mediaCoverServiceModule: typeof import("./media-cover-service.js");
 let configModule: typeof import("../config/config.js");
 const originalFetch = globalThis.fetch;
 
+test("library artwork moves the original into its sidecar and refetches when switching sources", async () => {
+  const root = path.join(tempDir, "master-library");
+  fs.mkdirSync(root, { recursive: true });
+  const mbid = "library-master-album";
+  const sourceA = "https://example.com/provider-original.jpg";
+  const sourceB = "https://example.com/canonical-original.jpg";
+  const masterA = Buffer.from(jpeg.encode({ width: 1500, height: 1500, data: Buffer.alloc(1500 * 1500 * 4, 200) }, 95).data);
+  const masterB = Buffer.from(jpeg.encode({ width: 1500, height: 1500, data: Buffer.alloc(1500 * 1500 * 4, 100) }, 95).data);
+  let fetchCount = 0;
+  globalThis.fetch = async (url) => {
+    fetchCount++;
+    return new Response(String(url) === sourceA ? masterA : masterB, { headers: { "content-type": "image/jpeg" } });
+  };
+  try {
+    const cache = path.join(tempDir, "media-cover", "Albums", mbid);
+    const outputPath = path.join(root, "Artist", "Album", "cover.jpg");
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId: mbid, coverEntity: "Album", coverType: "cover", sourceUrl: sourceA });
+    assert.equal(mediaCoverServiceModule.syncCachedMediaCoverToFile({ entityId: mbid, coverEntity: "Album", libraryRoot: root, outputPath }), "written");
+    assert.deepEqual(fs.readFileSync(outputPath), masterA);
+    assert.equal(fs.existsSync(path.join(cache, "cover.jpg")), false);
+    assert.equal(jpeg.decode(fs.readFileSync(path.join(cache, "cover-500.jpg"))).height, 500);
+    assert.equal(jpeg.decode(fs.readFileSync(path.join(cache, "cover-250.jpg"))).height, 250);
+    const storedA = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album")!;
+    assert.equal(jpeg.decode(fs.readFileSync(storedA)).height, 1500);
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId: mbid, coverEntity: "Album", coverType: "cover", sourceUrl: sourceB });
+    mediaCoverServiceModule.syncCachedMediaCoverToFile({ entityId: mbid, coverEntity: "Album", libraryRoot: root, outputPath });
+    assert.deepEqual(fs.readFileSync(outputPath), masterB);
+    assert.equal(storedA, outputPath, "The sidecar itself is the master, with no archive duplicate");
+    assert.equal(fs.existsSync(path.join(root, ".discogenius")), false);
+    assert.deepEqual(fs.readdirSync(path.dirname(outputPath)), ["cover.jpg"]);
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId: mbid, coverEntity: "Album", coverType: "cover", sourceUrl: sourceA });
+    mediaCoverServiceModule.syncCachedMediaCoverToFile({ entityId: mbid, coverEntity: "Album", libraryRoot: root, outputPath });
+    assert.deepEqual(fs.readFileSync(outputPath), masterA);
+    assert.equal(fetchCount, 3);
+    assert.equal(fs.existsSync(path.join(cache, "cover.jpg")), false);
+    const metadataId = Number(dbModule.db.prepare(`INSERT INTO MetadataFiles
+      (artist_id, type, relative_path, file_path, library_root, extension, file_type)
+      VALUES ('test-artist', 'album_cover', ?, ?, ?, 'jpg', 'cover')`)
+      .run(path.relative(root, outputPath), outputPath, root).lastInsertRowid);
+    mediaCoverServiceModule.linkCachedAlbumCoverSidecar({ entityId: mbid, coverEntity: "Album", outputPath, metadataFileId: metadataId });
+    const renamedDir = path.join(root, "Artist", "Renamed Album");
+    fs.renameSync(path.dirname(outputPath), renamedDir);
+    const renamedPath = path.join(renamedDir, "cover.jpg");
+    dbModule.db.prepare("UPDATE MetadataFiles SET file_path = ?, relative_path = ? WHERE id = ?")
+      .run(renamedPath, path.relative(root, renamedPath), metadataId);
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album"), renamedPath);
+    assert.deepEqual(fs.readFileSync(renamedPath), masterA);
+    fs.writeFileSync(renamedPath, masterB);
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album"), null,
+      "A different edition's sidecar cannot masquerade as this selected original");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 function sourceRevision(url: string): string {
   return crypto.createHash("sha256").update(url).digest("hex").slice(0, 16);
 }

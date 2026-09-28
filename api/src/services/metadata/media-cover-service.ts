@@ -1,3 +1,4 @@
+import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSidecar } from "./media-cover-library-storage.js";
 import { CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import { db, withSqliteWriteGate } from "../../database.js";
@@ -558,6 +559,13 @@ function existingOriginalMediaCover(
       // Try the next supported container.
     }
   }
+  try {
+    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(normalizedEntityId, coverEntity, coverType), "utf8"));
+    if (typeof marker.contentHash === "string") {
+      const master = findLibraryCoverMaster(mediaCoverFolder(normalizedEntityId, coverEntity), normalizedCoverType(coverType), marker.contentHash);
+      if (master) return { path: master, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
+    }
+  } catch { /* No relocated original. */ }
   return null;
 }
 
@@ -568,6 +576,17 @@ export function getCachedMediaCoverOriginalFilePath(
   coverType: string = "cover",
 ): string | null {
   return existingOriginalMediaCover(entityId, coverEntity, coverType)?.path ?? null;
+}
+
+/** Link the sidecar by exact row ID so album/artist renames preserve access. */
+export function linkCachedAlbumCoverSidecar(options: {
+  entityId: string | number | null | undefined; coverEntity: MediaCoverEntity;
+  outputPath: string; metadataFileId: number;
+}): void {
+  const entityId = normalizeMediaCoverEntityId(options.entityId);
+  if (!entityId || !["Album", "Edition"].includes(options.coverEntity)) return;
+  const folder = mediaCoverFolder(entityId, options.coverEntity);
+  if (fs.existsSync(folder)) linkLibraryCoverSidecar(folder, "cover", options.outputPath, options.metadataFileId);
 }
 
 function fileSha256(filePath: string): string {
@@ -599,6 +618,7 @@ export function syncCachedMediaCoverToFile(options: {
   coverEntity: MediaCoverEntity;
   coverTypes?: string | string[];
   outputPath: string;
+  libraryRoot?: string | null;
 }): MediaCoverSidecarSyncResult {
   const coverTypes = Array.isArray(options.coverTypes)
     ? options.coverTypes
@@ -611,24 +631,46 @@ export function syncCachedMediaCoverToFile(options: {
     ))
     .find((candidate): candidate is string => Boolean(candidate && fs.existsSync(candidate)));
   if (!sourcePath) return "missing";
-  if (mediaCoverFilesMatch(sourcePath, options.outputPath)) return "unchanged";
+  const unchanged = mediaCoverFilesMatch(sourcePath, options.outputPath);
 
-  fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
-  const temporaryPath = `${options.outputPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  try {
-    // Stage alongside the destination so rename is an atomic replacement on the
-    // same filesystem. A failed copy/rename therefore leaves the prior sidecar
-    // intact instead of exposing a partial image to library consumers.
-    fs.copyFileSync(sourcePath, temporaryPath);
-    fs.renameSync(temporaryPath, options.outputPath);
-  } finally {
+  if (!unchanged) {
+    fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
+    const temporaryPath = `${options.outputPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
     try {
-      fs.unlinkSync(temporaryPath);
-    } catch {
-      // Rename consumed the temporary file, or staging never created it.
+      // Stage alongside the destination so rename is an atomic replacement on the
+      // same filesystem. A failed copy/rename therefore leaves the prior sidecar
+      // intact instead of exposing a partial image to library consumers.
+      fs.copyFileSync(sourcePath, temporaryPath);
+      fs.renameSync(temporaryPath, options.outputPath);
+    } finally {
+      try {
+        fs.unlinkSync(temporaryPath);
+      } catch {
+        // Rename consumed the temporary file, or staging never created it.
+      }
     }
   }
-  return "written";
+  if (options.coverEntity === "Album" || options.coverEntity === "Edition") {
+    const entityId = normalizeMediaCoverEntityId(options.entityId)!;
+    const coverType = coverTypes.find(type => getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, type) === sourcePath)!;
+    const folder = mediaCoverFolder(entityId, options.coverEntity);
+    const hash = fileSha256(options.outputPath);
+    let metadataFileId: number | undefined;
+    try { metadataFileId = (db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ? AND file_type = 'cover'").get(options.outputPath) as { id: number } | undefined)?.id; } catch { /* Import has not registered its sidecar yet. */ }
+    rememberLibraryCoverSidecar(folder, normalizedCoverType(coverType), options.outputPath, hash, metadataFileId);
+    const markerPath = sourceMarkerPath(entityId, options.coverEntity, coverType);
+    let marker: Record<string, unknown> = {};
+    try { marker = JSON.parse(fs.readFileSync(markerPath, "utf8")); } catch { /* Legacy cache. */ }
+    marker.contentHash = hash;
+    const tempMarker = `${markerPath}.${crypto.randomUUID()}.tmp`;
+    try { fs.writeFileSync(tempMarker, JSON.stringify(marker)); fs.renameSync(tempMarker, markerPath); }
+    finally { if (fs.existsSync(tempMarker)) fs.unlinkSync(tempMarker); }
+    // Verify the sidecar before discarding the cache's full-resolution bytes.
+    // Unsupported image containers retain their original until proxies exist.
+    if (path.dirname(sourcePath) === folder && MEDIA_COVER_DEFAULT_HEIGHTS.every(height => fs.existsSync(getMediaCoverPath(entityId, options.coverEntity, coverType, ".jpg", height)))
+      && mediaCoverFilesMatch(sourcePath, options.outputPath)) fs.unlinkSync(sourcePath);
+  }
+  return unchanged ? "unchanged" : "written";
 }
 
 function appendMediaCoverQuery(url: string, key: string, value: string): string {
@@ -846,7 +888,8 @@ export async function ensureCachedMediaCover(options: {
   // (uncropped YT / landscape Apple mv) so we do not re-download every video
   // cover on every request.
   if (existing) {
-    if (cachedSourceMatches(entityId, options.coverEntity, options.coverType, sourceUrl)) {
+    if (cachedSourceMatches(entityId, options.coverEntity, options.coverType, sourceUrl)
+      && (!["Album", "Edition"].includes(options.coverEntity) || existingOriginalMediaCover(entityId, options.coverEntity, options.coverType))) {
       return existing.url;
     }
     if (options.coverEntity === "Video") {
@@ -2317,6 +2360,7 @@ export function releaseGroupHasMultipleMonitoredEditions(albumMbid?: string | nu
 export function getPreferredCachedAlbumCoverPath(options: {
   releaseMbid?: string | null;
   albumMbid?: string | null;
+  libraryRoot?: string | null;
 }): string | null {
   const releaseMbid = textOrNull(options.releaseMbid);
   const albumMbid = textOrNull(options.albumMbid) || albumMbidForEdition(releaseMbid);

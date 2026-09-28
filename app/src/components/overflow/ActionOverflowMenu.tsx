@@ -32,7 +32,7 @@ const OverflowMenuItem = ({ action }: { action: OverflowAction }) => {
   const isVisible = useIsOverflowItemVisible(action.key);
   if (isVisible) return null;
   return (
-    <MenuItem disabled={action.disabled} onClick={action.onClick}>
+    <MenuItem icon={action.icon} disabled={action.disabled} onClick={action.onClick}>
       {action.label}
     </MenuItem>
   );
@@ -44,7 +44,7 @@ const useStyles = makeStyles({
   },
 });
 
-export const ActionOverflowMenu = ({ actions, className }: { actions: OverflowAction[]; className?: string }) => {
+export const ActionOverflowMenu = ({ actions, className, iconOnly = false }: { actions: OverflowAction[]; className?: string; iconOnly?: boolean }) => {
   const styles = useStyles();
   const { ref, isOverflowing } = useOverflowMenu<HTMLButtonElement>();
   if (!isOverflowing) return null;
@@ -58,7 +58,7 @@ export const ActionOverflowMenu = ({ actions, className }: { actions: OverflowAc
           aria-label="More actions"
           className={mergeClasses(styles.moreButton, className)}
         >
-          More
+          {iconOnly ? undefined : "More"}
         </Button>
       </MenuTrigger>
       <MenuPopover>

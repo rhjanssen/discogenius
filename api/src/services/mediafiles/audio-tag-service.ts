@@ -282,11 +282,6 @@ type EmbeddedCoverContext = {
 
 type EmbeddedCoverSyncOutcome = "embedded" | "unchanged" | "failed";
 
-// Embed-time cap only. MediaCover stores origin + 250/500 UI proxies; there is
-// no cover-1200.jpg. If origin is taller than this, renderCappedCoverBuffer
-// downscales in memory for the tag write and leaves the cache untouched.
-const EMBEDDED_COVER_HEIGHT = 1200;
-
 // How many files the retag preview/status reads at once. Disk/parse bound, so a
 // modest fan-out (matching the artwork/refresh services) is the sweet spot.
 const RETAG_EVALUATION_CONCURRENCY = 8;
@@ -313,27 +308,13 @@ async function resolvePreferredEmbeddedCover(
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
-      const {
-        getPreferredCachedAlbumCoverPath,
-        renderCappedCoverBuffer,
-      } = await import("../metadata/media-cover-service.js");
+      const { getPreferredCachedAlbumCoverPath } = await import("../metadata/media-cover-service.js");
       const cover = getPreferredCachedAlbumCoverPath({
         releaseMbid: releaseMbid || null,
         albumMbid: albumMbid || null,
+        libraryRoot: row.library_root,
       });
-      if (!cover || !fs.existsSync(cover)) return null;
-
-      // Cap the embedded rendition at EMBEDDED_COVER_HEIGHT: scale down on the fly
-      // (from the local cached file, no network) only when it exceeds the cap;
-      // otherwise embed the cached cover as-is.
-      const capped = renderCappedCoverBuffer(cover, EMBEDDED_COVER_HEIGHT);
-      if (!capped) return cover;
-
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-embedded-cover-"));
-      context.temporaryDirectories.push(tempDir);
-      const tempCover = path.join(tempDir, "cover.jpg");
-      fs.writeFileSync(tempCover, capped);
-      return tempCover;
+      return cover && fs.existsSync(cover) ? cover : null;
     })();
     context.byAlbum.set(key, pending);
   }
@@ -2901,7 +2882,7 @@ export class AudioTagService {
 
   /**
    * Reconcile only embedded artwork for tracked files. This is the sole
-   * backfill/import entry point and shares the same cached-master + 1200px cap
+   * backfill/import entry point and shares the same cached-master + full-resolution original
    * as normal retagging; it never downloads artwork or rewrites other tags.
    */
   static async syncEmbeddedCovers(ids: number[]): Promise<RetagApplyResult> {

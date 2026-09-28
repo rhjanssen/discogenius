@@ -116,7 +116,7 @@ function commandExists(command: string): boolean {
   return false;
 }
 
-function checkPort(host: string, port: number, timeoutMs = 250): Promise<boolean> {
+function checkPort(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host, port });
     const done = (ok: boolean) => {
@@ -303,6 +303,16 @@ export class AppleMusicBackend implements DownloadBackend {
   readonly supportedProviders = ["apple-music"];
   readonly capabilities: Array<"stereo" | "spatial" | "video"> = ["stereo", "spatial", "video"];
 
+  async preflight(): Promise<void> {
+    if (!loadStoredAppleMusicToken()) {
+      throw new Error("Apple Music is not authenticated; cannot download");
+    }
+    const missing = describeAppleDownloaderMissingPrerequisites(await getAppleMusicDownloaderCapabilitySnapshot());
+    if (missing.length > 0) {
+      throw new Error(`Apple Music downloader provisioning is incomplete: missing ${missing.join(", ")}.`);
+    }
+  }
+
   async download(
     request: DownloadRequest,
     options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void },
@@ -325,11 +335,7 @@ export class AppleMusicBackend implements DownloadBackend {
       throw new Error("apple-music download requested without a provider ID");
     }
 
-    const readiness = await getAppleMusicDownloaderCapabilitySnapshot();
-    const missing = describeAppleDownloaderMissingPrerequisites(readiness);
-    if (missing.length > 0) {
-      throw new Error(`Apple Music downloader provisioning is incomplete: missing ${missing.join(", ")}.`);
-    }
+    await this.preflight();
 
     await fs.promises.mkdir(request.downloadPath, { recursive: true });
     for (let index = 0; index < providerIds.length; index++) {

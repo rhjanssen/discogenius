@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.16.20] - 2026-09-28
+
+### Fixed
+
+- Keep library selection controls visible and move excess actions into the overflow menu in portrait and landscape layouts.
+- Avoid walking all library roots after every artist rename, and use exact indexed provider identities when reconciling renamed sidecars.
+- Check Apple Music wrapper readiness before track acquisition, allow three seconds for port checks under load, and avoid repeating provider provisioning failures as track retries.
+- Preserve queue track progress by exact occurrence when partial events or stale polling snapshots arrive. Import handoffs clear download telemetry once, and older download events cannot replace an active import or reset completed tracks.
+- Check TIDAL tracks before acquiring album files, mark removed resources unavailable, and try proven alternatives from the same provider. Acquisition planning excludes unavailable provider tracks even when their audio variants still advertise availability.
+- Wait for SQLite writer admission when retrying background tasks or clearing history. Optional history cutoffs retain queued retries and newer failures after an audited snapshot.
+- Move cached full-resolution album artwork into the album's cover sidecar after a verified write, leaving only the 250/500 display proxies in MediaCover. The sidecar itself remains the original for retagging and follows its tracked identity through renames. Embedded audio covers retain the full-resolution bytes without the former 1200-pixel cap.
+- Reconcile embedded artwork when cover sidecars are disabled, and use the album cover when an edition-specific cover is absent. Switching artwork preference continues to refetch the selected source and reconcile library files without retaining alternate full-resolution archives.
+
+### Changed
+
+- Queue and activity lists use explicit load-more controls on mobile and load additional items on scrolling in the desktop layout.
+- Use consistent monochrome checkmark and warning glyphs across activity, queue history, and import status displays.
+
 ## [2.16.19] - 2026-09-28
 
 ### Fixed

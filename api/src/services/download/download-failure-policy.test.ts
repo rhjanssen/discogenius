@@ -27,6 +27,15 @@ test("classifyDownloadFailure treats 404 / not found as permanent", () => {
   assert.equal(classifyDownloadFailure(new Error("Album unavailable")), "permanent");
 });
 
+test("missing downloader provisioning does not repeat same-offer attempts", async () => {
+  let attempts = 0;
+  await assert.rejects(executeWithSameOfferRetries({ sleep: async () => {} }, async () => {
+    attempts++;
+    throw new Error("Apple Music downloader provisioning is incomplete: missing decryption wrapper port 10020.");
+  }), /provisioning is incomplete/);
+  assert.equal(attempts, 1);
+});
+
 test("classifyDownloadFailure treats private YouTube and SoundCloud DRM as permanent", () => {
   assert.equal(
     classifyDownloadFailure(new Error("ERROR: [youtube] 6NhkjW9DYLw: Private video. Sign in if you've been granted access")),

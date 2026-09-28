@@ -40,6 +40,8 @@ export interface DownloadBackend {
     readonly id: string;
     readonly supportedProviders: string[];
     readonly capabilities: Array<"stereo" | "spatial" | "video">;
+    /** Validate provider availability before any files are acquired. */
+    preflight?(request: DownloadRequest, options?: { signal?: AbortSignal }): Promise<void>;
     download(request: DownloadRequest, options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void }): Promise<void>;
 }
 

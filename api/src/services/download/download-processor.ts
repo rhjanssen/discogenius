@@ -1,3 +1,5 @@
+import { markAcquisitionPlanningStale } from "../music/acquisition-planning-control.js";
+import { ProviderUnavailableError } from "./provider-unavailable-error.js";
 import { superviseDownloadProcesses } from "./download-child-process.js";
 import { validateExecutionManifest } from './execution-manifest.js';
 import { applyTrackProgress } from '../../contracts/track-progress.js';
@@ -2303,6 +2305,7 @@ export class DownloadProcessor {
                     if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
                         throw error;
                     }
+                    await this.recordUnavailableProviderResource(error);
                     const next = nextOfferAfterTried(rankedAlternates, triedOffers);
                     if (!next) {
                         throw error;
@@ -2393,6 +2396,18 @@ export class DownloadProcessor {
      * Hybrid / partial album fetch: download only the missing track offers into
      * one job workspace, keeping catalog-anchored downloadState.tracks in sync.
      */
+    private async recordUnavailableProviderResource(error: unknown): Promise<void> {
+        if (!(error instanceof ProviderUnavailableError)) return;
+        const entityType = error.entityType === "album" ? "release" : error.entityType;
+        await withSqliteWriteGate(() => {
+            db.prepare(`
+            UPDATE ProviderItems SET availability = 'unavailable', availability_reason = ?, checked_at = ?
+            WHERE provider = ? AND entity_type = ? AND provider_id = ?
+        `).run(error.message, new Date().toISOString(), error.provider, entityType, error.providerId);
+            markAcquisitionPlanningStale();
+        }, 'download:unavailable-resource');
+    }
+
     private async downloadAlbumTrackOffers(
         commandId: number,
         payload: DownloadAlbumCommand,
@@ -2490,6 +2505,40 @@ export class DownloadProcessor {
         }, 500);
 
         try {
+            // Check all occurrences before acquiring any media, preserving exact
+            // same-provider fallback provenance for the subsequent importer.
+            emitProgress({ state: "downloading", progress: 0, totalFiles, tracks, statusMessage: "Checking track availability" });
+            for (let index = 0; index < offers.length; index++) {
+                let offer = { ...offers[index] };
+                const tried = new Set<string>();
+                const ranked = listRankedTrackOffers({ trackMbid: offer.canonicalTrackMbid,
+                    recordingMbid: offer.canonicalRecordingMbid, librarySlot: slot })
+                    .filter(candidate => candidate.provider === defaultProvider);
+                while (true) {
+                    const provider = offer.provider || defaultProvider;
+                    tried.add(makeOfferAttemptKey(provider, offer.providerTrackId));
+                    const backend = downloadBackendRegistry.resolve(provider, capability);
+                    if (!backend) throw new Error(`No download backend found for provider ${provider}`);
+                    try {
+                        await backend.preflight?.({ provider, entityType: "track", providerId: offer.providerTrackId,
+                            downloadPath, quality: offer.quality, slot }, { signal });
+                        break;
+                    } catch (error) {
+                        if (!(error instanceof ProviderUnavailableError)) throw error;
+                        await this.recordUnavailableProviderResource(error);
+                        const next = nextOfferAfterTried(ranked, tried);
+                        if (!next) throw error;
+                        fallbackPrimary ||= provider;
+                        fallbackUsed = next.provider;
+                        offer = applyFallbackTrackOffer(offer, next);
+                        await persistFallbackOffer(index, offer);
+                    }
+                }
+                const trackIndex = resolveDownloadTrackOfferIndex(tracks, offers[index]);
+                if (trackIndex < 0) throw new Error(`Download offer ${offer.providerTrackId} has no unique catalogue track occurrence`);
+                tracks[trackIndex] = { ...tracks[trackIndex], providerTrackId: offer.providerTrackId, provider: offer.provider || defaultProvider };
+                offers[index] = offer;
+            }
             for (let offerIndex = 0; offerIndex < offers.length; offerIndex++) {
                 if (entry.cancelRequested || signal.aborted) {
                     throw new Error("Download cancelled");
@@ -2638,6 +2687,7 @@ export class DownloadProcessor {
                         if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
                             throw error;
                         }
+                        await this.recordUnavailableProviderResource(error);
                         const next = nextOfferAfterTried(ranked, tried);
                         if (!next) {
                             throw error;

@@ -1,3 +1,6 @@
+import { getAlbumTracks, getTrack } from "./tidal.js";
+import { assertTidalTrackAvailable } from "./tidal-availability.js";
+import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
 import { spawnDownloadProcess as spawn } from "../../download/download-child-process.js";
 import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download/download-backend.js";
 import {
@@ -198,6 +201,28 @@ export class TiddlBackend implements DownloadBackend {
     readonly supportedProviders = ["tidal"];
     readonly capabilities: Array<"stereo" | "spatial" | "video"> = ["stereo", "spatial", "video"];
 
+    private readonly preflightCheckedAt = new Map<string, number>();
+
+    async preflight(request: DownloadRequest, options: { signal?: AbortSignal } = {}): Promise<void> {
+        if (request.entityType === "video") return;
+        const ids = request.trackIds?.length ? [...request.trackIds] : request.entityType === "track"
+            ? request.providerId.split(";").filter(Boolean) : [];
+        if (!ids.length && request.entityType === "album") {
+            for (const albumId of request.providerId.split(";").filter(Boolean)) {
+                ids.push(...(await getAlbumTracks(albumId)).map(track => String(track.provider_id)));
+            }
+        }
+        for (const id of new Set(ids)) {
+            if (options.signal?.aborted) throw new Error("Download aborted");
+            if (Date.now() - (this.preflightCheckedAt.get(id) ?? 0) < 60_000) continue;
+            await assertTidalTrackAvailable(id, getTrack);
+            this.preflightCheckedAt.set(id, Date.now());
+        }
+        for (const [id, checked] of this.preflightCheckedAt) {
+            if (Date.now() - checked >= 60_000) this.preflightCheckedAt.delete(id);
+        }
+    }
+
     async download(
         request: DownloadRequest,
         options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void }
@@ -213,6 +238,7 @@ export class TiddlBackend implements DownloadBackend {
             throw new Error("tiddl download requested without a provider ID");
         }
 
+        await this.preflight(request, options);
         await syncStoredTidalTokenToDownloaders().catch((err) => {
             console.warn("[TIDDL-BACKEND] Warning syncing stored token before download:", err);
         });
@@ -426,9 +452,10 @@ export class TiddlBackend implements DownloadBackend {
                     resolve();
                 } else {
                     const errorDetail = extractTiddlErrorDetail(capturedLines);
-                    reject(new Error(
-                        `tiddl exited with code ${code}${errorDetail ? `: ${errorDetail}` : ""}`,
-                    ));
+                    const unavailableTrack = errorDetail.match(/Track \[(\d+)\] not found, 404\/2001/i);
+                    reject(unavailableTrack
+                        ? new ProviderUnavailableError("tidal", "track", unavailableTrack[1], errorDetail)
+                        : new Error(`tiddl exited with code ${code}${errorDetail ? `: ${errorDetail}` : ""}`));
                 }
             });
 

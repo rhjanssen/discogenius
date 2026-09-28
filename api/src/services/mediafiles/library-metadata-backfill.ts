@@ -167,6 +167,7 @@ class LibraryMetadataBackfillService {
                     const artistRow = db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
                     const artistMbid = artistRow?.mbid ? String(artistRow.mbid) : artistId;
                     const syncResult = syncCachedMediaCoverToFile({
+                            libraryRoot: libraryRoot,
                         entityId: artistMbid,
                         coverEntity: "Artist",
                         coverTypes: ["poster", "headshot"],
@@ -412,6 +413,23 @@ class LibraryMetadataBackfillService {
                         : this.resolveAlbumDir(libraryRoot, artistFolder, album, naming));
                 if (!albumDir || !fs.existsSync(albumDir)) continue;
 
+                if (!metadataConfig.save_album_cover && getConfigSection("quality").embed_cover && writeEmbeddedMediaMetadata) {
+                    try {
+                        const albumMbid = albumMbidForEdition(canonicalReleaseMbid);
+                        if (albumMbid) await resolveAlbumArtwork({ albumMbid });
+                        if (albumMbid && releaseGroupHasMultipleMonitoredEditions(albumMbid)) {
+                            await resolveEditionArtwork({ releaseMbid: canonicalReleaseMbid, libraryId: sourceAlbum.library_id });
+                        }
+                        const ids = (db.prepare(`SELECT id FROM TrackFiles
+                            WHERE file_type = 'track' AND library_id = ? AND album_edition_id = ? AND library_root = ?`)
+                            .all(sourceAlbum.library_id, sourceAlbum.album_edition_id, libraryRoot) as Array<{ id: number }>).map(row => row.id);
+                        await AudioTagService.syncEmbeddedCovers(ids);
+                    } catch (error) {
+                        result.failed++;
+                        console.warn("[LibraryScan] Failed embedded album artwork reconciliation:", error);
+                    }
+                }
+
                 if (metadataConfig.save_album_cover) {
                     const coverName = metadataConfig.album_cover_name || "cover.jpg";
                     const coverPath = path.join(albumDir, coverName);
@@ -434,6 +452,7 @@ class LibraryMetadataBackfillService {
                             discardEditionCoverIfDuplicateOfAlbum(canonicalReleaseMbid, albumMbid);
                         }
                         let syncResult = syncCachedMediaCoverToFile({
+                            libraryRoot: libraryRoot,
                             entityId: canonicalReleaseMbid,
                             coverEntity: "Edition",
                             coverTypes: "cover",
@@ -441,6 +460,7 @@ class LibraryMetadataBackfillService {
                         });
                         if (syncResult === "missing" && albumMbid) {
                             syncResult = syncCachedMediaCoverToFile({
+                            libraryRoot: libraryRoot,
                                 entityId: albumMbid,
                                 coverEntity: "Album",
                                 coverTypes: "cover",

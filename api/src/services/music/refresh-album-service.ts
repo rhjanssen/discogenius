@@ -1,3 +1,4 @@
+import { tidalTrackAvailability } from "../providers/tidal/tidal-availability.js";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import { AlbumRefreshLevel, type RefreshOptions } from "./scan-types.js";
@@ -1154,7 +1155,7 @@ export class RefreshAlbumService {
                             : Math.round(Number(currentTrack.duration) * 1000),
                         releaseDate: textOrNull(currentTrack.release_date),
                         explicit: currentTrack.explicit == null ? null : Boolean(currentTrack.explicit),
-                        availability: "available",
+                        availability: providerId === "tidal" && tidalTrackAvailability(currentTrack) === "unavailable" ? "unavailable" : "available",
                         checkedAt: new Date().toISOString(),
                         providerUrl: textOrNull(currentTrack.url),
                         coverId: /^https?:\/\//i.test(String(currentTrack.cover || ""))

@@ -1,19 +1,19 @@
 import type { ReactNode } from "react";
 import {
-    CheckmarkCircle16Color,
-    CheckmarkCircle24Color,
+    CheckmarkCircle16Filled,
+    CheckmarkCircle24Filled,
     Clock16Filled,
     Clock16Regular,
     Clock24Filled,
     Clock24Regular,
-    DismissCircle16Color,
-    DismissCircle24Color,
-    QuestionCircle16Color,
-    QuestionCircle24Color,
+    DismissCircle16Filled,
+    DismissCircle24Filled,
+    QuestionCircle16Filled,
+    QuestionCircle24Filled,
     Prohibited16Regular,
     Prohibited24Regular,
-    Warning16Color,
-    Warning24Color,
+    Warning16Filled,
+    Warning24Filled,
     bundleIcon,
 } from "@fluentui/react-icons";
 import { tokens } from "@fluentui/react-components";
@@ -58,27 +58,27 @@ export function StatusIconSlot({ size = 16, className, children }: StatusIconSlo
     );
 }
 
-function colorStatusIcon(status: SemanticStatus, size: 16 | 24, iconProps: Record<string, unknown>) {
+function filledStatusIcon(status: SemanticStatus, size: 16 | 24, iconProps: Record<string, unknown>) {
     if (size === 24) {
-        if (status === "success") return <CheckmarkCircle24Color {...iconProps} />;
-        if (status === "warning") return <Warning24Color {...iconProps} />;
-        if (status === "error") return <DismissCircle24Color {...iconProps} />;
-        return <QuestionCircle24Color {...iconProps} />;
+        if (status === "success") return <CheckmarkCircle24Filled {...iconProps} />;
+        if (status === "warning") return <Warning24Filled {...iconProps} />;
+        if (status === "error") return <DismissCircle24Filled {...iconProps} />;
+        return <QuestionCircle24Filled {...iconProps} />;
     }
-    if (status === "success") return <CheckmarkCircle16Color {...iconProps} />;
-    if (status === "warning") return <Warning16Color {...iconProps} />;
-    if (status === "error") return <DismissCircle16Color {...iconProps} />;
-    return <QuestionCircle16Color {...iconProps} />;
+    if (status === "success") return <CheckmarkCircle16Filled {...iconProps} />;
+    if (status === "warning") return <Warning16Filled {...iconProps} />;
+    if (status === "error") return <DismissCircle16Filled {...iconProps} />;
+    return <QuestionCircle16Filled {...iconProps} />;
 }
 
 export function SemanticStatusIcon({ status, size = 16, className, ...props }: SemanticStatusIconProps) {
-    const glyph = statusIconGlyphPx("color", size);
+    const glyph = statusIconGlyphPx("filled", size);
     return (
         <StatusIconSlot size={size} className={className}>
-            {colorStatusIcon(status, size, {
+            {filledStatusIcon(status, size, {
                 ...props,
                 fontSize: glyph,
-                style: statusIconGlyphStyle("color", size),
+                style: { ...statusIconGlyphStyle("filled", size), color: tokens.colorNeutralForeground2 },
             })}
         </StatusIconSlot>
     );

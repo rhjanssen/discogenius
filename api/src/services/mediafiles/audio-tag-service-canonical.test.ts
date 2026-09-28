@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { after, before, test } from "node:test";
+import * as jpeg from "jpeg-js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-audio-tag-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -290,6 +291,14 @@ test("embedded cover resolution reads the exact edition cache", async () => {
     await audioTagServiceModule.AudioTagService.readPreferredEmbeddedCoverForTest("release-mbid-2"),
     secondCover,
   );
+});
+
+test("embedded cover resolution preserves the full-resolution original above 1200 pixels", async () => {
+  const bytes = Buffer.from(jpeg.encode({ width: 1500, height: 1500, data: Buffer.alloc(1500 * 1500 * 4, 160) }, 95).data);
+  const folder = path.join(tempDir, "media-cover", "AlbumEditions", "full-res-edition");
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover.jpg"), bytes);
+  assert.deepEqual(await audioTagServiceModule.AudioTagService.readPreferredEmbeddedCoverForTest("full-res-edition"), bytes);
 });
 
 test("bulk artist retag waits for a catalog writer, verifies tags and cover, and is idempotent", {

@@ -21,6 +21,7 @@ import { getCommandTypesForQueueCategory, type CommandQueueCategory } from '../.
 import { parseActivityFilters, parseListPagination } from '../../utils/activity-query.js';
 import { parseQueueHistoryFilters } from '../../utils/queue-history-query.js';
 import {
+  rejectUnknownKeys,
   getObjectBody,
   getOptionalIdentifier,
   getOptionalInteger,
@@ -502,16 +503,21 @@ router.post('/reorder', async (req: Request, res: Response) => {
  * POST /api/v1/queue/clear-completed
  * Clear all completed download queue items
  */
-router.post('/clear-completed', async (_req: Request, res: Response) => {
+router.post('/clear-completed', async (req: Request, res: Response) => {
   try {
-    CommandQueueManager.clearFinishedByTypes([
+    const body = getObjectBody(req.body ?? {});
+    rejectUnknownKeys(body, ['beforeCommandId']);
+    const beforeCommandId = getOptionalInteger(body, 'beforeCommandId');
+    if (beforeCommandId !== undefined && beforeCommandId < 1) return res.status(400).json({ error: 'Invalid history cutoff' });
+    await runQueueUserWrite(() => CommandQueueManager.clearFinishedByTypes([
       CommandNames.DownloadAlbum,
       CommandNames.DownloadTrack,
       CommandNames.DownloadVideo,
       CommandNames.ImportDownload,
-    ]);
+    ], beforeCommandId));
     res.json({ message: 'Finished download jobs cleared' });
   } catch (error: any) {
+    if (isRequestValidationError(error)) return res.status(400).json({ error: error.message });
     console.error('[QUEUE-API] Error clearing completed:', error);
     res.status(500).json({ error: 'Failed to clear completed', message: error.message });
   }
@@ -675,16 +681,25 @@ router.post(['/tasks/add', '/tasks'], async (req: Request, res: Response) => {
  * POST /api/v1/queue/tasks/clear-completed
  * Clear completed non-download tasks
  */
-router.post('/tasks/clear-completed', (_req: Request, res: Response) => {
-  CommandQueueManager.clearFinishedByTypes([...NON_DOWNLOAD_COMMAND_NAMES]);
-  res.json({ message: 'Completed tasks cleared' });
+router.post('/tasks/clear-completed', async (req: Request, res: Response) => {
+  try {
+    const body = getObjectBody(req.body ?? {});
+    rejectUnknownKeys(body, ['beforeCommandId']);
+    const beforeCommandId = getOptionalInteger(body, 'beforeCommandId');
+    if (beforeCommandId !== undefined && beforeCommandId < 1) return res.status(400).json({ error: 'Invalid history cutoff' });
+    await runQueueUserWrite(() => CommandQueueManager.clearFinishedByTypes([...NON_DOWNLOAD_COMMAND_NAMES], beforeCommandId));
+    res.json({ message: 'Completed tasks cleared' });
+  } catch (error: any) {
+    if (isRequestValidationError(error)) return res.status(400).json({ error: error.message });
+    res.status(500).json({ error: 'Failed to clear task history', message: error.message });
+  }
 });
 
 /**
  * POST /api/v1/queue/tasks/:id/retry
  * Retry a failed non-download task
  */
-router.post('/tasks/:id/retry', (req: Request, res: Response) => {
+router.post('/tasks/:id/retry', async (req: Request, res: Response) => {
   const { id } = req.params;
   const commandId = parseInt(String(id), 10);
   if (Number.isNaN(commandId)) {
@@ -703,8 +718,17 @@ router.post('/tasks/:id/retry', (req: Request, res: Response) => {
     return res.status(409).json({ error: 'Task is processing' });
   }
 
-  CommandQueueManager.retry(commandId);
-  res.json({ message: 'Task retried' });
+  try {
+    const retried = await runQueueUserWrite(() => {
+      if (CommandQueueManager.get(commandId)?.status === 'started') return false;
+      CommandQueueManager.retry(commandId);
+      return true;
+    });
+    if (!retried) return res.status(409).json({ error: 'Task is processing' });
+    res.json({ message: 'Task retried' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to retry task', message: error.message });
+  }
 });
 
 /**

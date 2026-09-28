@@ -1,4 +1,3 @@
-import { applyTrackProgress } from "@contracts/track-progress";
 import React, {
   useCallback,
   useEffect,
@@ -18,6 +17,8 @@ import {
   type QueueStatusContextType,
 } from "@/providers/queueStatusContext";
 import {
+  buildProgressSnapshot,
+  type QueueProgressEvent,
   createEmptyProgressState,
   deriveQueueStats,
   removeProgressSnapshot,
@@ -33,14 +34,6 @@ type QueueGlobalJobEventData = {
   status?: CommandStatusRaw;
 };
 
-type QueueProgressEvent = Partial<DownloadProgress> & {
-  jobId?: number;
-  commandId?: number;
-  providerId?: string;
-  type?: DownloadProgress["type"];
-  state?: DownloadProgress["state"];
-  error?: string | null;
-};
 
 const DEFAULT_STATS: QueueStatsSummary = {
   pending: 0,
@@ -86,47 +79,6 @@ function shouldRefreshQueueStatusForGlobalEvent(event: GlobalEventPayload): bool
   return jobEventData.status !== undefined && STRUCTURAL_QUEUE_UPDATE_STATUSES.has(jobEventData.status);
 }
 
-function buildProgressSnapshot(
-  data: QueueProgressEvent,
-  existing?: DownloadProgress,
-): DownloadProgress | null {
-  const jobId = Number(data.jobId ?? data.commandId ?? existing?.jobId);
-  const providerId = String(data.providerId ?? existing?.providerId ?? "").trim();
-  const type = data.type ?? existing?.type;
-
-  if (!Number.isFinite(jobId) || jobId <= 0 || !type || providerId.length === 0) {
-    return null;
-  }
-
-  const sourceTracks = data.tracks ?? existing?.tracks;
-  const tracks = sourceTracks ? applyTrackProgress(sourceTracks, data) : undefined;
-
-  return {
-    jobId,
-    providerId,
-    type,
-    quality: data.quality ?? existing?.quality ?? null,
-    title: data.title ?? existing?.title,
-    artist: data.artist ?? existing?.artist,
-    cover: data.cover ?? existing?.cover ?? null,
-    progress: data.progress ?? existing?.progress ?? 0,
-    speed: data.speed ?? existing?.speed,
-    eta: data.eta ?? existing?.eta,
-    totalFiles: data.totalFiles ?? existing?.totalFiles,
-    currentFileNum: data.currentFileNum ?? existing?.currentFileNum,
-    currentTrack: data.currentTrack ?? existing?.currentTrack,
-    currentProviderTrackId: data.currentProviderTrackId ?? existing?.currentProviderTrackId,
-    currentTrackNum: data.currentTrackNum ?? existing?.currentTrackNum,
-    currentVolumeNum: data.currentVolumeNum ?? existing?.currentVolumeNum,
-    trackProgress: data.trackProgress ?? existing?.trackProgress,
-    trackStatus: data.trackStatus ?? existing?.trackStatus,
-    statusMessage: data.statusMessage ?? (typeof data.error === "string" ? data.error : existing?.statusMessage),
-    state: data.state ?? existing?.state ?? "downloading",
-    tracks,
-    size: data.size ?? existing?.size,
-    sizeleft: data.sizeleft ?? existing?.sizeleft,
-  };
-}
 
 function removeTrackedProgress(state: ProgressState, jobId: number, providerId?: string | null): ProgressState {
   return removeProgressSnapshot(state, jobId, providerId);
@@ -261,7 +213,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
 
           if (event === "progress" || event === "progress-batch") {
             const batch = (Array.isArray(data) ? data : [data])
-              .map((item) => buildProgressSnapshot(item))
+              .map((item) => buildProgressSnapshot(item, progressStateRef.current.byJobId.get(getProgressEventJobId(item))))
               .filter((item): item is DownloadProgress => item !== null);
 
             if (batch.length === 0) {
@@ -277,7 +229,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
               ...data,
               state: data?.state ?? "downloading",
               progress: data?.progress ?? 0,
-            });
+            }, progressStateRef.current.byJobId.get(getProgressEventJobId(data)));
             if (snapshot) {
               updateProgressState((previous) => upsertProgressSnapshots(previous, [snapshot]));
             }

@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
-import { Button, Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { Button, Badge, Overflow, OverflowItem, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { ActionOverflowMenu } from "@/components/overflow/ActionOverflowMenu";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
 import { collectionActionSurfacePadding } from "@/components/ui/sharedLayoutStyles";
@@ -45,16 +46,13 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
     minWidth: 0,
-    flexShrink: 1,
+    flexShrink: 0,
     "@media (min-width: 600px)": {
       gap: tokens.spacingHorizontalS,
     },
   },
   metaButton: {
-    display: "none",
-    "@media (min-width: 480px)": {
-      display: "inline-flex",
-    },
+    whiteSpace: "nowrap",
   },
   summary: {
     color: tokens.colorNeutralForeground3,
@@ -70,7 +68,10 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalXXS,
-    flexShrink: 0,
+    minWidth: 0,
+    flex: "1 1 0px",
+    overflow: "hidden",
+    justifyContent: "flex-end",
     "@media (min-width: 600px)": {
       gap: tokens.spacingHorizontalXS,
     },
@@ -126,8 +127,10 @@ export function LibrarySelectionBar({
         </Button>
       </div>
 
+      <Overflow padding={40}>
       <div className={styles.actionRow}>
         {actions.map((action) => (
+          <OverflowItem key={action.key} id={action.key}>
           <AppTooltip key={action.key} content={action.label} relationship="label">
             <Button
               appearance={action.appearance ?? "subtle"}
@@ -140,8 +143,11 @@ export function LibrarySelectionBar({
               <span className={styles.actionLabel}>{action.label}</span>
             </Button>
           </AppTooltip>
+          </OverflowItem>
         ))}
+        <ActionOverflowMenu actions={actions} iconOnly />
       </div>
+      </Overflow>
     </div>
   );
 }

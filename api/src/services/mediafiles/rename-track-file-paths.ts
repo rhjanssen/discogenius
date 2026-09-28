@@ -124,9 +124,9 @@ export function buildRenameFilters(options: RenameScopeOptions = {}): { where: s
     const metaId = resolveArtistMetadataId(key);
     const mbid = resolveArtistMbid(key);
     const keys = Array.from(new Set(
-      [key, metaId != null ? String(metaId) : null, mbid].filter(Boolean) as string[],
+      [key, metaId, mbid].filter((value) => value != null),
     ));
-    where.push(`CAST(lf.artist_metadata_id AS TEXT) IN (${keys.map(() => "?").join(",")})`);
+    where.push(`lf.artist_metadata_id IN (${keys.map(() => "?").join(",")})`);
     params.push(...keys);
   }
   const editionTarget = options.releaseMbid

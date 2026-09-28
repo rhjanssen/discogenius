@@ -1,3 +1,5 @@
+import { mergeTrackProgress } from "@contracts/track-progress";
+import { useDashboardDesktop } from "@/hooks/useDashboardDesktop";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
 import {
     Badge,
@@ -216,9 +218,13 @@ function inferAlbumTrackStatus(
         return 'completed';
     }
 
+    // Backend rows carry exact occurrence progress. File order may differ from
+    // display order, especially for composite acquisitions and imports.
+    if (persistedStatus) return persistedStatus;
+
     // Unmatched sibling rows must stay pending — never treat -1 as "already done".
     if (trackIndex < 0) {
-        return persistedStatus && persistedStatus !== 'queued' ? persistedStatus : 'queued';
+        return 'queued';
     }
 
     const activeTrackIndex = findActiveAlbumTrackIndex(progress, tracks);
@@ -236,9 +242,6 @@ function inferAlbumTrackStatus(
         : 0;
 
     if (isImportPhase) {
-        if (persistedStatus === 'error') {
-            return persistedStatus;
-        }
 
         if (trackIndex < completedThreshold) {
             return 'completed';
@@ -261,9 +264,6 @@ function inferAlbumTrackStatus(
         return 'queued';
     }
 
-    if (persistedStatus && persistedStatus !== 'queued') {
-        return persistedStatus;
-    }
 
     if (trackIndex < completedThreshold) {
         return 'completed';
@@ -487,7 +487,10 @@ function mergeProgressSnapshots(
         trackStatus: preferred.trackStatus ?? fallback.trackStatus,
         statusMessage: preferred.statusMessage ?? fallback.statusMessage,
         state: preferred.state ?? fallback.state,
-        tracks: preferred.tracks ?? fallback.tracks,
+        tracks: (preferred.state === 'importing' || preferred.state === 'importPending')
+            !== (fallback.state === 'importing' || fallback.state === 'importPending')
+            ? preferred.tracks
+            : mergeTrackProgress(fallback.tracks, preferred.tracks),
         size: preferred.size ?? fallback.size,
         sizeleft: preferred.sizeleft ?? fallback.sizeleft,
     };
@@ -551,6 +554,7 @@ const QueueTab = () => {
     const [activeBulkAction, setActiveBulkAction] = useState<string | null>(null);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const desktopAutoLoad = useDashboardDesktop();
     const activeSentinelRef = useRef<HTMLDivElement | null>(null);
 
     const liveQueueItems = useMemo(
@@ -688,8 +692,9 @@ const QueueTab = () => {
         }
     }, [groupedDownloads.length]);
 
-    // Infinite scroll: auto-load next page when sentinel enters viewport
+    // Stacked mobile sections retain their explicit load-more controls.
     useEffect(() => {
+        if (!desktopAutoLoad) return;
         const observer = new IntersectionObserver(
             (entries) => {
                 for (const entry of entries) {
@@ -711,6 +716,7 @@ const QueueTab = () => {
 
         return () => observer.disconnect();
     }, [
+        desktopAutoLoad,
         hasMoreActiveGroups,
         hasMoreLocalActiveGroups,
         hasMoreQueueItems,
