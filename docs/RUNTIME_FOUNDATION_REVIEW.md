@@ -188,10 +188,11 @@ Implemented locally:
   MD5. Independent tag inspection found the expected title in the 26 settled
   files and the deliberately stale title in the one pending file.
 
-MoveArtist and new-artist discovery still retain whole-command disk ownership. TagLib
-and Mutagen metadata writers still edit files in place. Their intent/outcome
-records prevent false success and unsafe automatic replay, but are not an atomic
-replacement protocol for interrupted tag writes. Newly created sidecar copies
+MoveArtist and new-artist discovery still retain whole-command disk ownership. TagLib and FFmpeg already prepare a working file and replace the original with
+one filesystem rename. The Mutagen compatibility backend now uses the same
+working-copy protocol, with a bounded child lifetime. Both scanners exclude
+owned rewrite files, so an interrupted working copy cannot become a library track.
+Power-loss durability and recovery of abandoned rewrite files still need tests. Newly created sidecar copies
 also need wider filesystem journal coverage before 3.0.
 
 Provider edition ingestion was traced to one provider edition per transaction,
@@ -268,3 +269,26 @@ but would not fix filesystem recovery or command starvation.
 Future Plex, Jellyfin and Navidrome refresh integrations should consume settled
 file/library events after commit. They must not report success before local
 files, tags and artwork are verified.
+
+## Live follow-up after 2.17.0
+
+The NAS replay exposed remaining relation batches holding the writer for six to
+ten seconds. Casts on provider identity columns forced repeated scans while
+resolving album and video memberships. Exact TEXT equality restores the
+provider/entity/id index. Repair relation reads now use the current recording
+batch, and album counterpart repair runs after the edition transaction releases
+writer admission. Identical database copies produced identical normalized
+recordings, matches and relations. The 275-offer Olly Murs replay fell from
+23.5 to 4.3 seconds; its longest writer hold fell from 6,486 to 270 ms.
+
+The main-thread download proxy listened only for terminal maintenance updates.
+It now relays queued checkpoints too, and the worker schedules the earliest
+future download retry deadline. A recovered handoff no longer needs an
+unrelated terminal event to obtain admission after its retry delay expires.
+
+New-file indexing, duplicate indexing, unresolved-file relinking, unmapped
+tracking and derived selection updates await short writer sections. A real
+PCM WAV discovery test holds a competing writer and verifies both persistence
+and exclusion of abandoned tag/FFmpeg files. Mutagen now modifies a private
+working copy; a real M4A test verifies successful tags independently, unchanged
+decoded audio and byte-identical preservation after a failing writer.

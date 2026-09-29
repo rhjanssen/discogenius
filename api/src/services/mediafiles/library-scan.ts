@@ -1,7 +1,7 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
 import fs from "fs";
 import path from "path";
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db, isSqliteBusyError, withSqliteWriteGate } from "../../database.js";
 import { Config, getConfigSection } from "../config/config.js";
 import { resolveArtistFolderFromRecord } from "../config/naming.js";
 import { ensureEmptyArtistFoldersIfEnabled } from "../music/artist-paths.js";
@@ -45,6 +45,7 @@ import { shouldRematchUnmatchedFiles, type ScanFileFilter } from "./scan-file-fi
 import { parseProviderFilenameToken } from "./path-utils.js";
 import { resolveVideoLibraryIds, selectLibraryVideo } from "../music/library-video-monitoring.js";
 import { deriveQuality, parseAudioFile } from "./audioUtils.js";
+import { isMediaRewriteTemporaryName } from "./media-file-rewrite.js";
 
 // ============================================================================
 // Types
@@ -82,7 +83,7 @@ function shouldSkipScanDirectory(name: string): boolean {
 
 function shouldSkipScanFile(name: string): boolean {
     const normalized = name.trim().toLowerCase();
-    return normalized.startsWith('._') || IGNORED_SCAN_FILES.has(normalized);
+    return normalized.startsWith('._') || isMediaRewriteTemporaryName(normalized) || IGNORED_SCAN_FILES.has(normalized);
 }
 
 /**
@@ -541,7 +542,7 @@ export class DiskScanService {
         // Phase D/E rematch unmatched existing files. Lidarr FilterFilesType.Known
         // skips this: only new files and size/mtime changes. Matched/None rematch.
         if (shouldRematchUnmatchedFiles(options?.filter ?? "matched")) {
-            const phaseD = relinkUnresolvedLibraryFiles({
+            const phaseD = await relinkUnresolvedLibraryFiles({
                 artistId: scanArtistId,
                 fileExists: (filePath) => fs.existsSync(filePath),
                 resolveStoredLibraryPath,
@@ -1250,7 +1251,7 @@ export class DiskScanService {
                                         db.prepare("SELECT 1 FROM TrackFiles WHERE file_path = ? LIMIT 1").get(resolved)
                                     );
                                     if (isSelfTrackFile) {
-                                        db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
+                                        await withSqliteWriteGate(() => db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved), "scan:clear-unmapped");
                                         unmappedReason = null;
                                     } else {
                                         const existing = metadataMatch.existingFilePath
@@ -1268,7 +1269,7 @@ export class DiskScanService {
                                                 canonical_release_group_mbid: string | null;
                                             } | undefined
                                             : undefined;
-                                        LibraryFilesService.upsertLibraryFile({
+                                        await withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
                                             artistId,
                                             albumId: metadataMatch.albumId,
                                             mediaId: metadataMatch.mediaId,
@@ -1293,7 +1294,7 @@ export class DiskScanService {
                                                 ?? null,
                                             librarySlot: metadataMatch.librarySlot,
                                             removeFromUnmapped: true,
-                                        });
+                                        }), "scan:index-duplicate");
                                         unmappedReason = null;
                                         indexed++;
                                         existingPaths.add(resolved);
@@ -1329,7 +1330,7 @@ export class DiskScanService {
                             } else if (videoExtensions.has(ext)) {
                                 const videoMatch = matchVideoFileByMetadata(resolved, artistId, key, parsedTags);
                                 if (videoMatch?.duplicateOfExisting) {
-                                    db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
+                                    await withSqliteWriteGate(() => db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved), "scan:clear-unmapped");
                                     unmappedReason = null;
                                 } else if (videoMatch) {
                                     match = {
@@ -1353,6 +1354,7 @@ export class DiskScanService {
                                 unmappedReason = "No matching provider item found";
                             }
                         } catch (e) {
+                            if (isSqliteBusyError(e)) throw e;
                             console.error(`[DiskScan] Failed to inspect unmatched file ${resolved}:`, e);
                         }
                     }
@@ -1360,7 +1362,7 @@ export class DiskScanService {
 
                 if (match) {
                     const measured = parsedForUnmapped?.metrics;
-                    this.upsertLibraryFile({
+                    await this.upsertLibraryFile({
                         artistId,
                         albumId: match.albumId,
                         mediaId: match.mediaId,
@@ -1384,6 +1386,7 @@ export class DiskScanService {
                         importedQuality: match.fileType === "track" ? match.quality : null,
                     });
 
+                    await withSqliteWriteGate(() => {
                     if (match.fileType === "track" || match.fileType === "video") {
                         if (match.mediaId || canonicalLink?.canonicalRecordingMbid || canonicalLink?.canonicalTrackMbid) {
                             shouldPromoteArtist = true;
@@ -1439,11 +1442,13 @@ export class DiskScanService {
                         }
                     }
 
+                    }, "scan:index-state");
+
                     indexed++;
                     existingPaths.add(resolved);
 
                     // Cleanup any existing unmapped_file record for this path
-                    db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
+                    await withSqliteWriteGate(() => db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved), "scan:clear-unmapped");
                 } else if (options?.trackUnmappedFiles !== false && parsedForUnmapped && unmappedReason) {
                     try {
                         const {
@@ -1455,7 +1460,7 @@ export class DiskScanService {
                             stats,
                             ext,
                         } = parsedForUnmapped;
-                        db.prepare(`
+                        await withSqliteWriteGate(() => db.prepare(`
                             INSERT INTO UnmappedFiles (
                                 file_path, relative_path, library_root, filename, extension, file_size, duration,
                                 bitrate, sample_rate, bit_depth, channels, codec,
@@ -1495,16 +1500,16 @@ export class DiskScanService {
                             detectedTrack,
                             metrics.audioQuality,
                             unmappedReason
-                        );
+                        ), "scan:track-unmapped");
                     } catch (e) {
-                        console.error(`[DiskScan] Failed to track unmapped file ${resolved}:`, e);
+                        throw new Error(`Failed to persist unmapped file ${resolved}`, { cause: e });
                     }
                 }
             }
         }
 
         if (shouldPromoteArtist && options?.promoteOnMatch !== false) {
-            syncLibraryArtistMonitoring(artistId, true);
+            await withSqliteWriteGate(() => syncLibraryArtistMonitoring(artistId, true), "scan:promote-artist");
         }
 
         if (totalFiles > 0) {
@@ -2397,7 +2402,7 @@ export class DiskScanService {
     /**
      * Simple upsert into track_files (subset of OrganizerService.upsertLibraryFile).
      */
-    private static upsertLibraryFile(params: {
+    private static async upsertLibraryFile(params: {
         artistId: string;
         albumId?: string | null;
         mediaId?: string | null;
@@ -2420,9 +2425,9 @@ export class DiskScanService {
         duration?: number | null;
         importedQuality?: string | null;
     }) {
-        LibraryFilesService.upsertLibraryFile({
+        await withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
             ...params,
             removeFromUnmapped: false,
-        });
+        }), "scan:index-file");
     }
 }

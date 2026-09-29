@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import * as mm from "music-metadata";
 import { probeMediaDuration } from "./audioUtils.js";
+import { isMediaRewriteTemporaryName } from "./media-file-rewrite.js";
 import type { library_root } from "../config/naming.js";
 import type { AutoImportedGroupSummary, ImportCandidate, LocalFile, LocalGroup } from "./import-types.js";
 
@@ -68,7 +69,7 @@ export async function scanImportDirectory(
                 continue;
             }
 
-            if (entry.name.startsWith("._") || IGNORED_IMPORT_FILES.has(entry.name.toLowerCase())) {
+            if (entry.name.startsWith("._") || isMediaRewriteTemporaryName(entry.name) || IGNORED_IMPORT_FILES.has(entry.name.toLowerCase())) {
                 continue;
             }
 

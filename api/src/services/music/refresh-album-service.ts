@@ -1214,13 +1214,9 @@ export class RefreshAlbumService {
             `).get(providerId, albumId) as { id: number; mbid: string; release_group_mbid: string } | undefined;
 
         if (canonicalRelease) {
-            // Ingestion and its counterpart-video follow-up are one write
-            // section. Ungated, three refresh workers enter SQLite's *synchronous*
-            // busy handler at once: the loser blocks its whole thread for up to
-            // 30s per attempt, its lease heartbeat is a timer that cannot fire
-            // while blocked, and the watchdog then kills a worker that was only
-            // waiting its turn. Taking the process-global gate makes that wait
-            // asynchronous, so the worker stays alive while another writes.
+            // Keep edition persistence atomic. Counterpart repair releases the
+            // writer between independent batches after this section commits.
+            let counterpartInput: Parameters<typeof RefreshVideoService.upsertAlbumTrackCounterpartVideos>[0] | undefined;
             await withSqliteWriteGate(() => {
             const ingested = new ProviderReleaseIngestionService(db).ingest({
                 canonicalReleaseId: canonicalRelease.id,
@@ -1283,17 +1279,18 @@ export class RefreshAlbumService {
                     }];
                 });
                 if (counterparts.length > 0 && fallbackArtistId) {
-                    RefreshVideoService.upsertAlbumTrackCounterpartVideos({
+                    counterpartInput = {
                         artistId: fallbackArtistId,
                         provider: providerId,
                         albumId: String(albumId),
                         releaseGroupMbid: canonicalRelease.release_group_mbid,
                         releaseMbid: canonicalRelease.mbid,
                         counterparts,
-                    });
+                    };
                 }
             }
             }, `provider-release-ingest:${providerId}`);
+            if (counterpartInput) await RefreshVideoService.upsertAlbumTrackCounterpartVideos(counterpartInput);
             return;
         }
 

@@ -319,8 +319,8 @@ function loadAudioRecordingCandidatesForProviderAlbum(
             SELECT 1
             FROM Tracks t
             JOIN AlbumEditions ar
-              ON ar.id = t.album_edition_id
-              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+              ON ar.id IN (t.album_edition_id,
+                  (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -334,8 +334,8 @@ function loadAudioRecordingCandidatesForProviderAlbum(
             SELECT 1
             FROM Tracks t
             JOIN AlbumEditions ar
-              ON ar.id = t.album_edition_id
-              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+              ON ar.id IN (t.album_edition_id,
+                  (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -357,7 +357,7 @@ function loadAudioRecordingCandidatesForProviderAlbum(
         JOIN Recordings rec ON rec.id = track_match.recording_id
         WHERE release_item.provider = ?
           AND track.entity_type = 'track'
-          AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND release_item.provider_id = ?
           AND rec.is_video = 0
     `).all(provider, providerAlbumId) as AudioRecordingCandidateRow[];
 }
@@ -392,8 +392,8 @@ function loadAudioRecordingCandidatesForProviderVideoMembership(
             SELECT 1
             FROM Tracks t
             JOIN AlbumEditions ar
-              ON ar.id = t.album_edition_id
-              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+              ON ar.id IN (t.album_edition_id,
+                  (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -407,8 +407,8 @@ function loadAudioRecordingCandidatesForProviderVideoMembership(
             SELECT 1
             FROM Tracks t
             JOIN AlbumEditions ar
-              ON ar.id = t.album_edition_id
-              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+              ON ar.id IN (t.album_edition_id,
+                  (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -433,7 +433,7 @@ function loadAudioRecordingCandidatesForProviderVideoMembership(
         JOIN Recordings rec ON rec.id = track_match.recording_id
         WHERE video_item.provider = ?
           AND video_item.entity_type = 'video'
-          AND CAST(video_item.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND video_item.provider_id = ?
           AND rec.is_video = 0
     `).all(provider, providerVideoId) as AudioRecordingCandidateRow[];
 }
@@ -608,8 +608,8 @@ function loadAudioRecordingCandidatesForArtist(artistMbid: string): AudioRecordi
             SELECT 1
             FROM Tracks t
             JOIN AlbumEditions ar
-              ON ar.id = t.album_edition_id
-              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+              ON ar.id IN (t.album_edition_id,
+                  (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -623,8 +623,8 @@ function loadAudioRecordingCandidatesForArtist(artistMbid: string): AudioRecordi
             SELECT 1
             FROM Tracks t
             JOIN AlbumEditions ar
-              ON ar.id = t.album_edition_id
-              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+              ON ar.id IN (t.album_edition_id,
+                  (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND LOWER(COALESCE(a.primary_type, '')) IN ('album', 'ep', 'single')
@@ -638,8 +638,8 @@ function loadAudioRecordingCandidatesForArtist(artistMbid: string): AudioRecordi
             SELECT 1
             FROM Tracks t
             JOIN AlbumEditions ar
-              ON ar.id = t.album_edition_id
-              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+              ON ar.id IN (t.album_edition_id,
+                  (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -1264,7 +1264,7 @@ function recordingHasOtherAcceptedVideoOffer(
           AND item.entity_type = 'video'
           AND NOT (
             item.provider = ?
-            AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+            AND item.provider_id = ?
           )
         LIMIT 1
     `).get(recordingId, provider, providerId) as { hit?: number } | undefined;
@@ -1953,8 +1953,9 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
         WHERE rr.relation_type = 'provider_video_for'
           AND rr.source_recording_id IN (
             SELECT id FROM Recordings WHERE artist_mbid = ? AND is_video = 1
+              ${recordingIds ? 'AND id IN (SELECT value FROM json_each(?))' : ''}
           )
-    `).all(artistMbid) as Array<{
+    `).all(artistMbid, ...(recordingIds ? [JSON.stringify(recordingIds)] : [])) as Array<{
         video_id: number;
         audio_id: number;
         relation_source: string | null;
@@ -1979,8 +1980,8 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
         SELECT 1 AS hit
         FROM Tracks t
         JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+          ON ar.id IN (t.album_edition_id,
+              (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
           AND (
@@ -1996,8 +1997,8 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
         SELECT 1 AS hit
         FROM Tracks t
         JOIN AlbumEditions ar
-          ON ar.id = t.album_edition_id
-          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+          ON ar.id IN (t.album_edition_id,
+              (SELECT id FROM AlbumEditions WHERE mbid = t.release_mbid))
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
           AND (
@@ -2202,6 +2203,12 @@ export class RefreshVideoService {
             const loadIds = () => (db.prepare(`
                 SELECT id FROM Recordings WHERE artist_mbid = ? AND is_video = 1 ORDER BY id
             `).all(artist) as Array<{ id: number }>).map(row => row.id);
+            await this.repairVideoRecordsInBatches(artist, loadIds);
+        }
+    }
+
+    private static async repairVideoRecordsInBatches(artist: string, loadIds: () => number[]): Promise<void> {
+        const batchSize = 10;
             // Assignment changes can merge records or unblock a sibling offer.
             // Reload identities between passes; never carry positional identity
             // across a merge. Keep the existing eight-pass convergence bound.
@@ -2230,7 +2237,6 @@ export class RefreshVideoService {
                     deleteOrphanProviderOnlyVideoRecordings(artist, batch))(), "videos:orphan-batch");
                 await yieldToEventLoop();
             }
-        }
     }
 
     /**
@@ -2409,7 +2415,7 @@ export class RefreshVideoService {
      * video offers linked to the audio recording. Powers video-page "From album"
      * links, download offers, and inline video layout via provider_video_for.
      */
-    static upsertAlbumTrackCounterpartVideos(input: {
+    static async upsertAlbumTrackCounterpartVideos(input: {
         artistId: string;
         provider: string;
         albumId: string;
@@ -2429,7 +2435,7 @@ export class RefreshVideoService {
             audioProviderTrackId?: string | null;
             artistName?: string | null;
         }>;
-    }): void {
+    }): Promise<void> {
         if (!input.counterparts.length) {
             return;
         }
@@ -2490,9 +2496,10 @@ export class RefreshVideoService {
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `);
-        db.transaction(() => {
-            const affectedRecordings = new Set<number>();
-            for (const video of videos) {
+        const affectedRecordings = new Set<number>();
+        for (let offset = 0; offset < videos.length; offset += 10) {
+          await withSqliteWriteGate(() => db.transaction(() => {
+            for (const video of videos.slice(offset, offset + 10)) {
                 const existingRecordingId = getAcceptedProviderVideoRecordingId(
                     video.provider,
                     String(video.provider_id),
@@ -2527,19 +2534,18 @@ export class RefreshVideoService {
                 });
             }
 
-            if (artistMbid) {
-                // A counterpart update touches this album's videos. Rechecking
-                // thousands of unrelated artist videos for every album made
-                // each persistence transaction monopolize the shared writer.
-                repairProviderVideoRecordingAssignments(artistMbid, [...affectedRecordings]);
+          })(), "videos:counterpart-batch");
+          await yieldToEventLoop();
+        }
+        if (artistMbid) {
+            await this.repairVideoRecordsInBatches(artistMbid, () => {
                 for (const video of videos) {
                     const recordingId = getAcceptedProviderVideoRecordingId(video.provider, String(video.provider_id));
                     if (recordingId) affectedRecordings.add(recordingId);
                 }
-                repairProviderVideoAudioRelations(artistMbid, [...affectedRecordings]);
-                deleteOrphanProviderOnlyVideoRecordings(artistMbid);
-            }
-        })();
+                return [...affectedRecordings];
+            });
+        }
     }
 
     static upsertArtistVideos(

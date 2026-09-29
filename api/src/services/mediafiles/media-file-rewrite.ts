@@ -1,6 +1,31 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+
+export function mediaRewritePath(originalPath: string, kind: "tags" | "rewrite" = "rewrite"): string {
+  return path.join(path.dirname(originalPath), `.discogenius-${kind}-${randomUUID()}${path.extname(originalPath)}`);
+}
+
+/** Only exclude files owned by our rewrite protocol, not arbitrary hidden music. */
+export function isMediaRewriteTemporaryName(name: string): boolean {
+  return /^\.discogenius-(?:tags|rewrite)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[^/\\]+$/i.test(name);
+}
+
+export async function rewriteMediaCopy(
+  originalPath: string,
+  mutate: (workingPath: string) => Promise<boolean>,
+): Promise<boolean> {
+  const workingPath = mediaRewritePath(originalPath, "tags");
+  try {
+    await fs.promises.copyFile(originalPath, workingPath, fs.constants.COPYFILE_EXCL);
+    if (!await mutate(workingPath)) return false;
+    replaceMediaFile(originalPath, workingPath);
+    return true;
+  } finally {
+    await fs.promises.rm(workingPath, { force: true });
+  }
+}
 
 /** Replace in one filesystem rename. A failed replacement leaves the original
  * name and contents intact; never unlink it or move it out of the way first. */

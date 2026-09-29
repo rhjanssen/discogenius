@@ -13,6 +13,47 @@ dbModule.initDatabase();
 const { db } = dbModule;
 const downloadState = await import("../download/download-state.js");
 const { DiskScanService } = await import("./library-scan.js");
+const { Config } = await import("../config/config.js");
+const { mediaRewritePath } = await import("./media-file-rewrite.js");
+
+test("new-file scan awaits a competing writer and excludes abandoned rewrite audio", async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number };
+  const root = fs.mkdtempSync(path.join(tempDir, "index-under-contention-"));
+  const folder = path.join(root, "Canonical Artist {mbid-artist-mbid}");
+  fs.mkdirSync(folder);
+  const audio = path.join(folder, "Unknown Song.wav");
+  writePcmWav(audio);
+  for (const kind of ["tags", "rewrite"] as const) fs.copyFileSync(audio, mediaRewritePath(audio, kind));
+  const musicPath = Config.getMusicPath;
+  const filtering = Config.getFilteringConfig;
+  const naming = await import("../config/naming.js");
+  const actualFolder = naming.resolveArtistFolderFromRecord({ name: "Canonical Artist", mbid: "artist-mbid", path: null });
+  if (path.basename(folder) !== actualFolder) fs.renameSync(folder, path.join(root, actualFolder));
+  Config.getMusicPath = () => root;
+  Config.getFilteringConfig = () => ({ ...filtering(), include_videos: false, include_spatial: false });
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:index-competing-writer");
+  await ready;
+  let timerFired = false;
+  const timer = setTimeout(() => { timerFired = true; release(); }, 30);
+  try {
+    await (DiskScanService as any).indexNewFiles(String(artist.id), { promoteOnMatch: false });
+    assert.equal(timerFired, true, "scan must leave the event loop available for writer release");
+    const rows = db.prepare("SELECT filename FROM UnmappedFiles WHERE file_path LIKE ?").all(root + "%") as Array<{ filename: string }>;
+    assert.deepEqual(rows.map(row => row.filename), ["Unknown Song.wav"]);
+  } finally {
+    clearTimeout(timer); release(); await blocker;
+    Config.getMusicPath = musicPath; Config.getFilteringConfig = filtering;
+    db.prepare("DELETE FROM UnmappedFiles WHERE file_path LIKE ?").run(root + "%");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();

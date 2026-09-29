@@ -1227,14 +1227,14 @@ test("batched artist repair revisits stored videos when the provider response is
   assert.equal(acceptedVideoMatch("youtube-music", "batch-live-offer")?.recordingId, videoId);
 });
 
-test("album counterpart persistence rejects live-to-studio links without repairing unrelated videos", () => {
+test("album counterpart persistence rejects live-to-studio links without repairing unrelated videos", async () => {
   const audioId = seedStudioAudio({ recordingMbid: "album-studio-audio", title: "Pompeii", lengthMs: 232000 });
   const unrelatedId = insertCanonicalVideo({ mbid: "unrelated-live-video", title: "Other Song (Live)", variant: "live", lengthMs: 232000 });
   seedAcceptedProviderVideoMatch(dbModule.db, { provider: "youtube-music", providerVideoId: "unrelated-video", recordingId: unrelatedId, title: "Other Song (Live)", durationMs: 232000 });
   dbModule.db.prepare(`INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, source, confidence, data)
     VALUES (?, ?, 'provider_video_for', 'youtube-music', 0.98, '{}')`).run(unrelatedId, audioId);
 
-  refreshVideoModule.RefreshVideoService.upsertAlbumTrackCounterpartVideos({
+  await refreshVideoModule.RefreshVideoService.upsertAlbumTrackCounterpartVideos({
     artistId: "artist-mbid", provider: "youtube-music", albumId: "current-album",
     counterparts: [{ providerId: "current-live-video", albumId: "current-album", title: "Pompeii (Live)", duration: 232, audioRecordingId: audioId }],
   });

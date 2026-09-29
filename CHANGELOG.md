@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.17.1] - 2026-09-29
+
+### Fixed
+
+- Wake the dedicated download worker when a maintenance command checkpoints and releases disk admission. Schedule delayed retries at their deadline so recovered downloads do not depend on an unrelated queue event.
+- Restore indexed provider identity lookups in video-to-audio repair and scope relation reads to each exact recording batch. Album counterpart ingestion now commits separately from its bounded repair follow-up.
+- Await shared writer admission when indexing, relinking and tracking newly discovered library files. Persistence failures stop the scan instead of reporting skipped files as a successful reconciliation.
+- Write Mutagen compatibility tags to a private working copy with a child-process timeout, then replace the original only after success. Library and import scanners exclude both tag and FFmpeg working files.
+
+### Validation
+
+- Equivalent production-database replays produced identical recordings, video matches and relations. A 275-video replay fell from 23.5 to 4.3 seconds, with its longest writer hold reduced from 6.5 seconds to 270 ms.
+- Real M4A compatibility tagging retained decoded audio. A deliberately failing writer retained the exact original bytes and cleaned its working file. Real WAV discovery and competing-writer scan regressions pass.
+
 ## [2.17.0] - 2026-09-29
 
 ### Changed

@@ -56,6 +56,48 @@ function claim(id: number, owner: string, now = new Date('2026-01-01T00:00:00.00
 beforeEach(resetRows);
 afterEach(resetRows);
 
+test('a delayed download wakes at its retry deadline without another queue event', async () => {
+    const id = pushTrack('deadline-wake');
+    db.prepare('UPDATE commands SET retry_after = ? WHERE id = ?').run(new Date(Date.now() + 100).toISOString(), id);
+    const processor = new DownloadProcessor() as any;
+    let wakeCount = 0;
+    processor.scheduleNext = () => { wakeCount++; };
+    try {
+        processor.armRetryWake();
+        assert.ok(processor.retryWakeTimer);
+        await new Promise(resolve => setTimeout(resolve, 200));
+        assert.equal(wakeCount, 1);
+        assert.equal(processor.retryWakeTimer, undefined);
+        processor.suspended = true;
+        db.prepare('UPDATE commands SET retry_after = ? WHERE id = ?').run(new Date(Date.now() + 100).toISOString(), id);
+        processor.armRetryWake();
+        assert.equal(processor.retryWakeTimer, undefined, 'shutdown cannot rearm download admission');
+    } finally { clearTimeout(processor.retryWakeTimer); }
+});
+
+test('a maintenance checkpoint relays disk availability to the dedicated download worker', async () => {
+    const { appEvents, AppEvent } = await import('../commands/app-events.js');
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.initialized = true;
+    let kicks = 0;
+    proxy.kickQueue = () => { kicks++; };
+    const events = [AppEvent.COMMAND_UPDATED, AppEvent.COMMAND_ADDED, AppEvent.QUEUE_CLEARED];
+    const before = new Map(events.map(event => [event, appEvents.listeners(event)]));
+    try {
+        proxy.subscribeToQueueEvents();
+        appEvents.emit(AppEvent.COMMAND_UPDATED, { id: 99, type: CommandNames.RetagArtist, status: 'queued', progress: 0 });
+        assert.equal(kicks, 1);
+        appEvents.emit(AppEvent.COMMAND_UPDATED, { id: 99, type: CommandNames.RetagArtist, status: 'started', progress: 0 });
+        assert.equal(kicks, 1, 'a busy writer does not trigger an admission loop');
+    } finally {
+        for (const event of events) {
+            for (const listener of appEvents.listeners(event)) {
+                if (!before.get(event)!.includes(listener)) appEvents.removeListener(event, listener as (...args: unknown[]) => void);
+            }
+        }
+    }
+});
+
 test('a full durable import backlog stops new download claims', () => {
     const wait = DownloadWaitQueue.enqueue({
         refKey: 'backpressure-track',

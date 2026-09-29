@@ -1,8 +1,7 @@
-import { replaceMediaFile } from "./media-file-rewrite.js";
+import { mediaRewritePath, replaceMediaFile } from "./media-file-rewrite.js";
 import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import {
   ByteVector,
   File as TagLibFile,
@@ -558,14 +557,6 @@ function verifyTagLibValues(
   }
 }
 
-function workingCopyPath(filePath: string): string {
-  const extension = extensionOf(filePath);
-  return path.join(
-    path.dirname(filePath),
-    `.discogenius-tags-${randomUUID()}${extension}`,
-  );
-}
-
 export async function writeMediaTagsWithTagLib(
   filePath: string,
   tags: Record<string, string>,
@@ -575,7 +566,7 @@ export async function writeMediaTagsWithTagLib(
     return { handled: false, success: false };
   }
 
-  const workingPath = workingCopyPath(filePath);
+  const workingPath = mediaRewritePath(filePath, "tags");
   try {
     const mediaStructure = readMediaStructure(filePath);
     fs.copyFileSync(filePath, workingPath);
@@ -602,7 +593,7 @@ export async function clearMediaTagsWithTagLib(
     return { handled: false, success: false };
   }
 
-  const workingPath = workingCopyPath(filePath);
+  const workingPath = mediaRewritePath(filePath, "tags");
   try {
     const mediaStructure = readMediaStructure(filePath);
     fs.copyFileSync(filePath, workingPath);
@@ -668,7 +659,7 @@ export async function replaceMediaCoverWithTagLib(
     return { handled: false, success: false };
   }
 
-  const workingPath = workingCopyPath(filePath);
+  const workingPath = mediaRewritePath(filePath, "tags");
   try {
     const expected = fs.readFileSync(coverPath);
     const mediaStructure = readMediaStructure(filePath);

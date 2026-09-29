@@ -27,10 +27,10 @@ export interface RelinkUnresolvedLibraryFilesParams {
         fileType: string;
         quality?: string | null;
         expectedPath?: string | null;
-    }) => void;
+    }) => void | Promise<void>;
 }
 
-export function relinkUnresolvedLibraryFiles(params: RelinkUnresolvedLibraryFilesParams): { relinked: number } {
+export async function relinkUnresolvedLibraryFiles(params: RelinkUnresolvedLibraryFilesParams): Promise<{ relinked: number }> {
     const rows = db.prepare(`
         SELECT id, file_path, relative_path, library_root, extension, file_type
         FROM TrackFiles
@@ -68,7 +68,7 @@ export function relinkUnresolvedLibraryFiles(params: RelinkUnresolvedLibraryFile
         }
 
         const rootPath = params.resolveLibraryRootPath(row.library_root, resolvedPath) || params.getDefaultLibraryRootPath();
-        params.upsertLibraryFile({
+        await params.upsertLibraryFile({
             artistId: params.artistId,
             albumId: match.albumId,
             mediaId: match.mediaId,

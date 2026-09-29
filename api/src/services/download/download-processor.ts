@@ -645,6 +645,27 @@ export class DownloadProcessor {
     private progressFlushTimer?: NodeJS.Timeout;
     private lastProgressBusyLogAt: number = 0;
 
+    private retryWakeTimer?: NodeJS.Timeout;
+    private suspended = false;
+
+    private armRetryWake(): void {
+        clearTimeout(this.retryWakeTimer);
+        this.retryWakeTimer = undefined;
+        if (this.suspended || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
+        const next = db.prepare(`
+            SELECT MIN((julianday(retry_after) - julianday('now')) * 86400000.0) AS delay
+            FROM commands WHERE status = 'queued'
+              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
+              AND julianday(retry_after) > julianday('now')
+        `).get(...DOWNLOAD_COMMAND_NAMES) as { delay: number | null };
+        if (next.delay == null) return;
+        this.retryWakeTimer = setTimeout(() => {
+            this.retryWakeTimer = undefined;
+            this.scheduleNext();
+        }, Math.min(2_147_483_647, Math.max(1, Math.ceil(next.delay))));
+        this.retryWakeTimer.unref();
+    }
+
     private scheduleNext(): void {
         setImmediate(() => {
             this.processQueue().catch((error) => {
@@ -1536,7 +1557,11 @@ export class DownloadProcessor {
     }
 
     async processQueue(): Promise<void> {
-        return withSqliteWriteGate(() => this.scheduleQueueWithWriteLock(), 'download:schedule');
+        if (this.suspended) return;
+        return withSqliteWriteGate(() => {
+            this.scheduleQueueWithWriteLock();
+            this.armRetryWake();
+        }, 'download:schedule');
     }
 
     private scheduleQueueWithWriteLock(): void {
@@ -2863,6 +2888,9 @@ export class DownloadProcessor {
     /** Shutdown-only halt. Leaves the persisted pause state untouched. */
     async suspend(): Promise<void> {
         console.log('[DOWNLOAD-PROCESSOR] Suspending queue for shutdown...');
+        this.suspended = true;
+        clearTimeout(this.retryWakeTimer);
+        this.retryWakeTimer = undefined;
         this.haltProcessing();
         console.log('[DOWNLOAD-PROCESSOR] Queue suspended');
     }
@@ -2877,6 +2905,7 @@ export class DownloadProcessor {
 
         console.log('[DOWNLOAD-PROCESSOR] Resuming queue...');
         await setDownloadQueuePaused(false);
+        this.suspended = false;
         this.isPaused = false;
 
         downloadEvents.emitQueueStatus(false);
@@ -3072,7 +3101,7 @@ export class DownloadProcessorWorkerProxy {
         });
         appEvents.on(AppEvent.COMMAND_UPDATED, (event: CommandEventPayload) => {
             if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
-            if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.kickQueue();
+            if (event.status === 'queued' || event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.kickQueue();
         });
     }
 

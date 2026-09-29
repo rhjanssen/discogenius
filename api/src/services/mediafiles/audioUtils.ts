@@ -7,7 +7,7 @@ import { type Readable } from 'stream';
 import { Config } from '../config/config.js';
 import { execFile, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
-import { runMediaRewrite } from './media-file-rewrite.js';
+import { mediaRewritePath, rewriteMediaCopy, runMediaRewrite } from './media-file-rewrite.js';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
 import {
@@ -491,7 +491,7 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
     }
-    const tempPath = path.join(path.dirname(filePath), `.discogenius-rewrite-${crypto.randomUUID()}${path.extname(filePath)}`);
+    const tempPath = mediaRewritePath(filePath);
     const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
     const args = buildMetadataWriteArgs(filePath, tags, removeKeys, tempPath, attachedPictures);
 
@@ -519,7 +519,7 @@ export async function removeAllTags(filePath: string): Promise<boolean> {
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return runMutagenBridge(['clear', filePath], filePath);
     }
-    const tempPath = path.join(path.dirname(filePath), `.discogenius-rewrite-${crypto.randomUUID()}${path.extname(filePath)}`);
+    const tempPath = mediaRewritePath(filePath);
     const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
     const dispositionArgs = attachedPictures.flatMap((index) => [`-disposition:v:${index}`, 'attached_pic']);
     const args = [
@@ -598,14 +598,16 @@ function resolveMutagenBridge(): { python: string; script: string } | null {
     return { python, script };
 }
 
-function runMutagenBridge(args: string[], targetPath: string): Promise<boolean> {
+async function runMutagenBridge(args: string[], targetPath: string): Promise<boolean> {
     const bridge = resolveMutagenBridge();
-    if (!bridge) return Promise.resolve(false);
-    return new Promise((resolve) => {
+    if (!bridge) return false;
+    if (args[1] !== targetPath) throw new Error('Mutagen target must be the media argument');
+    try {
+    return await rewriteMediaCopy(targetPath, workingPath => new Promise<boolean>((resolve) => {
         execFile(
             bridge.python,
-            [bridge.script, ...args],
-            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            [bridge.script, args[0]!, workingPath, ...args.slice(2)],
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024, timeout: 30_000, killSignal: 'SIGKILL' },
             (error, _stdout, stderr) => {
                 if (error) {
                     console.warn(`[MediaTags] Mutagen update failed for ${targetPath}: ${String(stderr || error.message).trim()}`);
@@ -615,7 +617,11 @@ function runMutagenBridge(args: string[], targetPath: string): Promise<boolean> 
                 resolve(true);
             },
         );
-    });
+    }));
+    } catch (error) {
+        console.warn(`[MediaTags] Mutagen replacement failed for ${targetPath}: ${String(error)}`);
+        return false;
+    }
 }
 
 async function writeMp4MetadataWithMutagen(
@@ -894,7 +900,7 @@ export async function embedVideoThumbnail(videoPath: string, thumbnailPath: stri
         return true;
     }
 
-    const tempPath = path.join(path.dirname(videoPath), `.discogenius-rewrite-${crypto.randomUUID()}${extension}`);
+    const tempPath = mediaRewritePath(videoPath);
     const args = [
         '-y',
         '-i', videoPath,

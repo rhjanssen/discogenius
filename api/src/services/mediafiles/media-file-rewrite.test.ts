@@ -3,7 +3,44 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { replaceMediaFile, runMediaRewrite } from "./media-file-rewrite.js";
+import { isMediaRewriteTemporaryName, mediaRewritePath, replaceMediaFile, rewriteMediaCopy, runMediaRewrite } from "./media-file-rewrite.js";
+
+test("failed compatibility tag writes retain the original and remove only their working copy", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-tag-copy-"));
+  try {
+    const original = path.join(root, "track.m4a");
+    fs.writeFileSync(original, "original media");
+    for (const throws of [false, true]) {
+      const write = rewriteMediaCopy(original, async working => {
+        assert.equal(fs.readFileSync(working, "utf8"), "original media");
+        assert.equal(isMediaRewriteTemporaryName(path.basename(working)), true);
+        fs.writeFileSync(working, "partial metadata");
+        if (throws) throw new Error("writer failed");
+        return false;
+      });
+      if (throws) await assert.rejects(write, /writer failed/);
+      else assert.equal(await write, false);
+      assert.equal(fs.readFileSync(original, "utf8"), "original media");
+      assert.deepEqual(fs.readdirSync(root), ["track.m4a"]);
+    }
+    assert.equal(await rewriteMediaCopy(original, async working => {
+      fs.writeFileSync(working, "complete metadata");
+      return true;
+    }), true);
+    assert.equal(fs.readFileSync(original, "utf8"), "complete metadata");
+    assert.deepEqual(fs.readdirSync(root), ["track.m4a"]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("rewrite names exclude both owned protocols while retaining user hidden filenames", () => {
+  for (const kind of ["tags", "rewrite"] as const) {
+    const temporary = mediaRewritePath("/library/track.FLAC", kind);
+    assert.equal(path.resolve(path.dirname(temporary)), path.resolve(path.dirname("/library/track.FLAC")));
+    assert.equal(isMediaRewriteTemporaryName(path.basename(temporary)), true);
+  }
+  for (const name of [".hidden.flac", ".discogenius-tags-my-song.flac", "track.flac"])
+    assert.equal(isMediaRewriteTemporaryName(name), false);
+});
 
 test("media replacement installs complete output and preserves the original on invalid output", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-rewrite-"));
