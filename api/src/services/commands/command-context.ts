@@ -7,6 +7,7 @@ import {
 } from "./command-liveness-policy.js";
 import { queueNextMonitoringPass } from "./scheduler.js";
 import { normalizeUnclassifiedRemoteError } from "../../utils/remote-operation-error.js";
+import { CommandContinuation } from "./command-continuation.js";
 
 const COMMAND_MAX_ATTEMPTS = 3;
 const COMMAND_RETRY_BASE_MS = 1_000;
@@ -130,7 +131,17 @@ export function buildHandlerContext(): CommandHandlerContext {
 export async function persistCommandOutcome(
     job: CommandModel,
     handlerError: unknown,
-): Promise<"completed" | "failed" | "requeued" | false> {
+): Promise<"completed" | "failed" | "requeued" | "cancelled" | false> {
+    if (job.worker_id && CommandQueueManager.get(job.id)?.payload.cancelRequested === true) {
+        const cancelled = await withDbWrite(() => CommandQueueManager.cancel(job.id, job.worker_id!));
+        return cancelled ? "cancelled" : false;
+    }
+    if (handlerError instanceof CommandContinuation && job.worker_id) {
+        const continued = await withDbWrite(() => CommandQueueManager.continueOwnedCommand(
+            job.id, job.worker_id!, handlerError.payloadPatch,
+        ));
+        return continued ? "requeued" : false;
+    }
     if (!handlerError) {
         const completed = await withDbWrite(
             () => CommandQueueManager.complete(job.id, job.worker_id ?? undefined),
@@ -189,7 +200,7 @@ export async function executeCommand(job: CommandModel): Promise<void> {
         }
     } catch (error) {
         handlerError = error;
-        console.error(`[Queue] Command #${job.id} failed:`, error);
+        if (!(error instanceof CommandContinuation)) console.error(`[Queue] Command #${job.id} failed:`, error);
     }
 
     // Persist the outcome with an async busy-retry that yields this thread's
@@ -199,7 +210,7 @@ export async function executeCommand(job: CommandModel): Promise<void> {
     // unhandled rejection and aborted the whole process. If the write still
     // fails after retries, the row stays 'started' and is recovered as an
     // interrupted job on the next executor start.
-    let outcome: "completed" | "failed" | "requeued" | false = false;
+    let outcome: "completed" | "failed" | "requeued" | "cancelled" | false = false;
     try {
         outcome = await persistCommandOutcome(job, handlerError);
     } catch (persistError) {

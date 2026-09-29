@@ -16,6 +16,7 @@ import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
 import { CommandWorkerPool, isPoolShutdownError } from "./worker/command-worker-pool.js";
 import { shouldDeferCatalogHydration } from "./command-ordering.js";
+import { FileMutationJournal } from "../mediafiles/file-mutation-journal.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
@@ -76,6 +77,10 @@ export async function recoverStaleNonDownloadCommands(options: {
 
     for (const command of stale) {
         await CommandWorkerPool.abortCommandAndWait(command.id, command.workerId, `Command watchdog recovered ${command.reason}`);
+        if (CommandManager.getDefinition(command.name).requiresDiskAccess) {
+            const errors = await FileMutationJournal.recoverPending();
+            if (errors.length) console.error("[CommandExecutor] File recovery requires attention:", errors);
+        }
         const result = await withSqliteWriteGate(() => CommandQueueManager.recoverOwnedCommand({
             id: command.id,
             workerId: command.workerId,

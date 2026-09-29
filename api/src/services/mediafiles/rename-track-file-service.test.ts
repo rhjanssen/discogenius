@@ -1319,16 +1319,16 @@ test("a failed rename leaves the DB pointing at the surviving original file", as
   assert.equal(fs.existsSync(originalPath), true);
 
   // Make the move fail the way a cross-device/permission error would.
-  const realRename = fs.renameSync;
+  const realLink = fs.linkSync;
   const realCopy = fs.copyFileSync;
-  (fs as any).renameSync = () => { throw new Error("EACCES: simulated rename failure"); };
+  (fs as any).linkSync = () => { throw new Error("EACCES: simulated move failure"); };
   (fs as any).copyFileSync = () => { throw new Error("EACCES: simulated copy failure"); };
 
   let result: Awaited<ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles>>;
   try {
     result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
   } finally {
-    (fs as any).renameSync = realRename;
+    (fs as any).linkSync = realLink;
     (fs as any).copyFileSync = realCopy;
   }
 

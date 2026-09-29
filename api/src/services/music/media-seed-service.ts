@@ -77,7 +77,7 @@ export class MediaSeedService {
             });
         }
 
-        RefreshVideoService.upsertArtistVideos(artistId, [{ ...videoData, album_id: albumId || null }], options);
+        await RefreshVideoService.upsertArtistVideosInBatches(artistId, [{ ...videoData, album_id: albumId || null }], options);
         return videoData;
     }
 }

@@ -82,6 +82,26 @@ test("duplicate refKey does not insert a second wait row", () => {
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
 });
 
+test("queue pages preserve running-first order across claimed, unclaimed and terminal rows", () => {
+  const rows = Array.from({ length: 9 }, (_, i) => enqueueTrack(`page-${i}`, `Track ${i}`));
+  for (const i of [0, 2, 4, 6, 8]) {
+    const claimed = waitQueueModule.DownloadWaitQueue.claim(rows[i].id)!;
+    dbModule.db.prepare("UPDATE commands SET status = ? WHERE id = ?")
+      .run(i === 0 ? "completed" : i === 8 ? "queued" : "started", claimed.commandId);
+  }
+  // Equal ranks remain stable by exact row ID within each state bucket.
+  dbModule.db.prepare("UPDATE DownloadQueue SET queue_order = -1 WHERE id IN (?, ?, ?)").run(rows[2].id, rows[4].id, rows[7].id);
+  const expected = [2, 4, 6, 7, 1, 3, 5, 8].map(i => `Track ${i}`);
+  for (let limit = 1; limit <= 5; limit++) {
+    for (let offset = 0; offset <= expected.length + 1; offset++) {
+      const page = queryModule.DownloadQueueQueryService.getQueue({ limit, offset });
+      assert.equal(page.total, expected.length);
+      assert.deepEqual(page.items.map(item => item.title), expected.slice(offset, offset + limit), `limit ${limit}, offset ${offset}`);
+      assert.equal(page.hasMore, offset + page.items.length < expected.length);
+    }
+  }
+});
+
 test("the same provider id can identify different media kinds without queue collisions", () => {
   const track = enqueueTrack("shared-id", "Track");
   const album = waitQueueModule.DownloadWaitQueue.enqueue({

@@ -211,12 +211,12 @@ export class RefreshArtistService {
      * Video→audio relations that need hydrated Tracks: mixed-edition membership
      * first, then the shared title+duration function for leftover standalone OMVs.
      */
-    private static syncCatalogVideoAudioRelations(artistMbid: string): void {
-        const editionVideoRelations = syncVideoRelationsFromEditionMembership(artistMbid);
+    private static async syncCatalogVideoAudioRelations(artistMbid: string): Promise<void> {
+        const editionVideoRelations = await syncVideoRelationsFromEditionMembership(artistMbid);
         if (editionVideoRelations > 0) {
             console.log(`[RefreshArtistService] Derived ${editionVideoRelations} video→audio relation(s) from canonical edition membership for ${artistMbid}`);
         }
-        const inferred = RefreshVideoService.linkCatalogVideoAudioRelations(artistMbid);
+        const inferred = await RefreshVideoService.linkCatalogVideoAudioRelations(artistMbid);
         if (inferred > 0) {
             console.log(`[RefreshArtistService] Linked ${inferred} catalog video→audio relation(s) for ${artistMbid}`);
         }
@@ -1255,7 +1255,7 @@ export class RefreshArtistService {
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
                 await yieldToEventLoop();
-                await withSqliteWriteGate(() => this.syncCatalogVideoAudioRelations(artistMbid!), "refresh-artist:video-relations");
+                await this.syncCatalogVideoAudioRelations(artistMbid);
             }
         }
 
@@ -1973,8 +1973,7 @@ export class RefreshArtistService {
                 }
             }
             console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
-            const persistVideos = RefreshVideoService.prepareArtistVideoUpsert(artistId, videos, options);
-            await withSqliteWriteGate(persistVideos, "refresh-artist:videos");
+            await RefreshVideoService.upsertArtistVideosInBatches(artistId, videos, options);
             await this.precacheArtistVideoArtwork(artistId);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);

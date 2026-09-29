@@ -140,6 +140,14 @@ export class VideoTagService {
     return result;
   }
 
+  static getFileIdsForArtists(artistIds: string[]): number[] {
+    if (artistIds.length === 0) return [];
+    return (db.prepare(`SELECT file.id FROM TrackFiles file
+      JOIN ArtistMetadata artist ON artist.id = file.artist_metadata_id
+      WHERE file.file_type = 'video' AND artist.mbid IN (SELECT value FROM json_each(?))
+      ORDER BY file.id`).all(JSON.stringify(artistIds)) as Array<{ id: number }>).map(row => row.id);
+  }
+
   private static async applyRows(rows: VideoTagRow[]): Promise<RetagApplyResult> {
     const result: RetagApplyResult = { retagged: 0, skipped: 0, missing: 0, errors: [] };
     const config = getConfigSection("metadata");

@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.17.0] - 2026-09-29
+
+### Changed
+
+- Rename, retag and tag stripping now keep durable file plans and release the disk queue between bounded work units. Completed downloads waiting for import take precedence over new manual maintenance after one minute.
+- Ordinary library scans checkpoint each artist, release the disk queue between artists, and perform missing-file checks outside the database writer lock.
+- Artist video refresh and catalogue video relations release database writer admission between small batches instead of holding it for the artist's entire repair pass.
+- Planned shutdown drains command work units, and file cancellation waits for the current file to settle before releasing its reservation. Compose allows 90 seconds for shutdown.
+
+### Fixed
+
+- Journal exact file moves and duplicate deletion before filesystem mutation. Startup and watchdog recovery reconcile interrupted operations with committed database rows; unresolved evidence blocks conflicting disk work.
+- Limit queue details to the requested page and scope artist album, video and top-track queries before loading related library/provider facts. Cover pending queue counts with an index to avoid reading large payload rows.
+- Preserve continuation progress, original start time and retry budget. Import waiting time now uses its readiness timestamp rather than progress heartbeats.
+- Reject checkpoint writes from retired workers, including terminal commands. Close streaming HTTP connections during shutdown after worker drain completes.
+- Verify file facts after tag stripping and emit rename events only after the database commit.
+- Upgrade the pinned SQLite binding to better-sqlite3 12.8.0 with SQLite 3.51.3, including the upstream WAL reset fix.
+
+### Validation
+
+- Full CI, an 11.4 GB production database copy, real M4A retag/rename/cancellation, Linux process-crash recovery on both filesystem paths, and browser/mobile checks. Remaining architecture work and the separate 3.0 acceptance gates are documented in `docs/RUNTIME_FOUNDATION_REVIEW.md`.
+
 ## [2.16.24] - 2026-09-28
 
 ### Fixed

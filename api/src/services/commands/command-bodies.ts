@@ -96,7 +96,25 @@ export interface ResolvedDownloadMetadata {
   cover?: string | null;
 }
 
+export interface RetagWorkCheckpoint {
+  version: 1;
+}
+
+export interface ScanWorkCheckpoint {
+  version: 1;
+  configRevision: string;
+  artistIds: string[];
+  cursor: number;
+  result: { artists: number; orphansRemoved: number; filesIndexed: number; filesUpdated: number;
+    downloadFlagsReset: number; unmappedOrphans: number };
+  cleanupDone: boolean;
+}
+
 export interface CommandBodyCommon {
+  cancelRequested?: boolean;
+  retagWork?: RetagWorkCheckpoint;
+  renameWork?: { version: 1 };
+  scanWork?: ScanWorkCheckpoint;
   id?: string;
   ids?: number[];
   providerId?: string;

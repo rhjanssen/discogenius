@@ -785,6 +785,33 @@ const WAIT_QUEUE_ORDER_SQL = `
     dq.id ASC
 `;
 
+// Running rows precede pending rows, but sorting their joined payloads across
+// the entire waiting catalogue blocks HTTP. Select page identities with the
+// command/status and queue/order indexes, then load only that page's details.
+// One statement keeps both portions of the page in the same read snapshot.
+const WAIT_QUEUE_PAGE_SQL = `
+  WITH running AS MATERIALIZED (
+    SELECT dq.id FROM commands c
+    JOIN DownloadQueue dq ON dq.command_id = c.id
+    WHERE c.status = 'started'
+    ORDER BY dq.queue_order, dq.id LIMIT @limit OFFSET @offset
+  ), running_count AS MATERIALIZED (
+    SELECT COUNT(*) AS n FROM commands c
+    JOIN DownloadQueue dq ON dq.command_id = c.id
+    WHERE c.status = 'started'
+  ), pending AS MATERIALIZED (
+    SELECT dq.id FROM DownloadQueue dq
+    WHERE dq.command_id IS NULL
+       OR dq.command_id IN (SELECT id FROM commands WHERE status = 'queued')
+    ORDER BY dq.queue_order, dq.id
+    LIMIT MAX(0, @limit - (SELECT COUNT(*) FROM running))
+    OFFSET MAX(0, @offset - (SELECT n FROM running_count))
+  )
+  ${WAIT_QUEUE_LIST_SQL}
+  WHERE dq.id IN (SELECT id FROM running UNION ALL SELECT id FROM pending)
+  ${WAIT_QUEUE_ORDER_SQL}
+`;
+
 function countActiveWaitRows(): number {
   // qBittorrent/Tidarr keep the live list as waiting+running only. Counting
   // through a LEFT JOIN of every finished command row is what made GET /queue
@@ -793,12 +820,7 @@ function countActiveWaitRows(): number {
     SELECT COUNT(*) AS count
     FROM DownloadQueue dq
     WHERE dq.command_id IS NULL
-       OR EXISTS (
-         SELECT 1
-         FROM commands c
-         WHERE c.id = dq.command_id
-           AND c.status IN ('queued', 'started')
-       )
+       OR dq.command_id IN (SELECT id FROM commands WHERE status IN ('queued', 'started'))
   `).get() as { count?: number };
   return Number(row.count || 0);
 }
@@ -1077,12 +1099,7 @@ export class DownloadQueueQueryService {
 
   private static buildQueue(params: { limit: number; offset: number }): QueueListResponseContract {
     const total = countActiveWaitRows();
-    const rows = db.prepare(`
-      ${WAIT_QUEUE_LIST_SQL}
-      WHERE ${WAIT_QUEUE_ACTIVE_PREDICATE}
-      ${WAIT_QUEUE_ORDER_SQL}
-      LIMIT ? OFFSET ?
-    `).all(params.limit, params.offset) as WaitQueueJoinedRow[];
+    const rows = db.prepare(WAIT_QUEUE_PAGE_SQL).all(params) as WaitQueueJoinedRow[];
     attachStartedCommandPayloads(rows);
     const jobs = rows.map((row) => waitRowToQueueJob(row));
     const queuePositionById = getPendingDownloadQueuePositionsForWaitIds(

@@ -23,6 +23,20 @@ import {
   withSqliteWriteMutexSync,
 } from "./sqlite-write-mutex.js";
 
+test("writer hold diagnostics preserve milliseconds across a second boundary", () => {
+  const actualNow = Date.now;
+  let now = 1_800_000_000_980;
+  Date.now = () => now;
+  try {
+    withSqliteWriteMutexSync(() => {
+      now += 37;
+      assert.equal(sqliteWriteMutexDiagnostics().heldForMs, 37);
+    }, "test:precise-hold");
+  } finally {
+    Date.now = actualNow;
+  }
+});
+
 function holdWorker(name: string, onAcquired?: () => void) {
   const data = sqliteWriteMutexWorkerData();
   const worker = new Worker(new URL("../services/commands/worker/command-worker-bootstrap.mjs", import.meta.url), {

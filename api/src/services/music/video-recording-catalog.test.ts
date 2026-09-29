@@ -202,7 +202,7 @@ test("later MusicBrainz attach merges onto a YouTube-only row", () => {
   );
 });
 
-test("related-audio matching works for a video recording without mbid", () => {
+test("related-audio matching works for a video recording without mbid", async () => {
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES ('rg-pompeii', 'artist-mbid', 'Bad Blood', 'Album')
@@ -227,7 +227,7 @@ test("related-audio matching works for a video recording without mbid", () => {
     lengthMs: 223000,
     videoVariant: "official",
   });
-  const linked = refreshVideo.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid");
+  const linked = await refreshVideo.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid");
   assert.equal(linked, 1);
   const relation = dbModule.db.prepare(`
     SELECT target_recording_id AS audioId FROM RecordingRelations

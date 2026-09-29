@@ -51,6 +51,7 @@ import { ArtistTopTrackService } from "./services/music/artist-top-track-service
 import { AlbumLibraryIndexService } from "./services/music/album-library-index-service.js";
 import { TrackLibraryIndexService } from "./services/music/track-library-index-service.js";
 import { CommandTrigger } from "./services/commands/command-trigger.js";
+import { FileMutationJournal } from "./services/mediafiles/file-mutation-journal.js";
 
 function initializeAuthEnvironment() {
   // DB-driven config, no local config.toml generation needed
@@ -184,6 +185,8 @@ app.use(cors((req, callback) => {
 initDatabase();
 
 initAppLogging();
+const fileRecoveryErrors = await FileMutationJournal.recoverPending();
+for (const error of fileRecoveryErrors) console.error(`[FileRecovery] ${error}`);
 startRuntimeDiagnostics();
 const startupHealthSnapshot = collectHealthDiagnosticsSnapshot();
 if (startupHealthSnapshot.status !== "healthy") {
@@ -418,6 +421,7 @@ async function shutdown(signal: string) {
   shuttingDown = true;
 
   console.log(`[APP] ${signal} received, shutting down...`);
+  CommandExecutor.stop();
 
   try {
     // Suspend, not pause: pausing would persist download_queue_paused and the
@@ -428,7 +432,7 @@ async function shutdown(signal: string) {
   }
 
   try {
-    await CommandWorkerPool.stop();
+    await CommandWorkerPool.stop({ drain: true });
   } catch (error) {
     console.warn("[APP] Failed to stop command worker pool during shutdown:", error);
   }
@@ -450,6 +454,10 @@ async function shutdown(signal: string) {
     clearTimeout(forceExitTimer);
     process.exit(0);
   });
+  // Activity/event streams can stay open indefinitely. Writers have drained;
+  // these response connections must not force an otherwise clean shutdown to
+  // hit the exit timeout.
+  server.closeAllConnections();
 }
 
 process.on("SIGTERM", () => {

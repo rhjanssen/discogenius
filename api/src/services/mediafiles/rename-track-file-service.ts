@@ -21,6 +21,7 @@ import { allowsInlineVideoPlacement } from "./video-folder-layout.js";
 import { normalizeResolvedPath } from "./path-utils.js";
 import { providerUnambiguousAlbumIdSql } from "../providers/provider-item-artist-scope.js";
 import { resolveArtistMbid } from "../music/managed-artists.js";
+import { FileMutationJournal } from "./file-mutation-journal.js";
 import {
   buildRenameFilters,
   buildRenameStatusSummary,
@@ -34,19 +35,6 @@ import {
   type RenameLibraryFileRow,
   type RenameTableName,
 } from "./rename-track-file-paths.js";
-
-function moveFileCrossDevice(sourcePath: string, destPath: string) {
-  fs.mkdirSync(path.dirname(destPath), { recursive: true });
-  try {
-    fs.renameSync(sourcePath, destPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
-      throw error;
-    }
-    fs.copyFileSync(sourcePath, destPath, fs.constants.COPYFILE_EXCL);
-    fs.rmSync(sourcePath, { force: true });
-  }
-}
 
 type RenamePhysicalMove = {
   sourcePath: string;
@@ -64,9 +52,11 @@ type StagedRenameDeletion = {
 async function commitRenameRecords(
   dbUpdates: Array<{ sql: string; args: unknown[] }>,
   historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]>,
+  intentId?: string | null,
 ): Promise<void> {
   if (dbUpdates.length === 0 && historyEvents.length === 0) return;
   await withSqliteWriteGate(() => db.transaction(() => {
+    if (intentId) FileMutationJournal.assertBeforeCommit(intentId);
     for (const update of dbUpdates) {
       db.prepare(update.sql).run(...update.args);
     }
@@ -77,70 +67,12 @@ async function commitRenameRecords(
         console.warn("[RenameTrackFileService] Failed to record rename history:", historyError);
       }
     }
+    if (intentId) FileMutationJournal.markCommitted(intentId);
   })(), "rename:commit");
 }
 
 function yieldRenameLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
-}
-
-function rollbackPhysicalMoves(moves: RenamePhysicalMove[]): string[] {
-  const errors: string[] = [];
-  for (const move of [...moves].reverse()) {
-    try {
-      if (!fs.existsSync(move.destinationPath)) {
-        continue;
-      }
-      if (fs.existsSync(move.sourcePath)) {
-        throw new Error(`source already exists: ${move.sourcePath}`);
-      }
-      moveFileCrossDevice(move.destinationPath, move.sourcePath);
-    } catch (error) {
-      errors.push(
-        `${move.destinationPath} -> ${move.sourcePath}: `
-        + `${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  return errors;
-}
-
-function rollbackStagedDeletions(deletions: StagedRenameDeletion[]): string[] {
-  const errors: string[] = [];
-  for (const deletion of [...deletions].reverse()) {
-    try {
-      if (!fs.existsSync(deletion.stagedPath)) {
-        continue;
-      }
-      if (fs.existsSync(deletion.originalPath)) {
-        throw new Error(`original path already exists: ${deletion.originalPath}`);
-      }
-      moveFileCrossDevice(deletion.stagedPath, deletion.originalPath);
-    } catch (error) {
-      errors.push(
-        `${deletion.stagedPath} -> ${deletion.originalPath}: `
-        + `${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  return errors;
-}
-
-function stageRenameDeletion(filePath: string, id: number): string {
-  const directory = path.dirname(filePath);
-  const extension = path.extname(filePath);
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const stagedPath = path.join(
-      directory,
-      `.discogenius-delete-${process.pid}-${Date.now()}-${id}-${attempt}${extension}`,
-    );
-    if (fs.existsSync(stagedPath)) {
-      continue;
-    }
-    fs.renameSync(filePath, stagedPath);
-    return stagedPath;
-  }
-  throw new Error(`Could not allocate a rollback path for ${filePath}`);
 }
 
 // Files the rename *preview* lists. Extras (cover/nfo/lyrics/thumbnails) are not
@@ -478,18 +410,21 @@ export class RenameTrackFileService {
       return ids;
     }
 
-    const placeholders = trackFileIds.map(() => "?").join(",");
     const expanded = new Set<number>(ids);
     const extraTables: Array<Exclude<RenameTableName, "TrackFiles">> = ["MetadataFiles", "ExtraFiles", "LyricFiles"];
     for (const table of extraTables) {
       const linked = db.prepare(
-        `SELECT id FROM ${table} WHERE track_file_id IN (${placeholders})`,
-      ).all(...trackFileIds) as Array<{ id: number }>;
+        `SELECT id FROM ${table} WHERE track_file_id IN (SELECT value FROM json_each(?))`,
+      ).all(JSON.stringify(trackFileIds)) as Array<{ id: number }>;
       for (const row of linked) {
         expanded.add(encodeSyntheticId(row.id, table));
       }
     }
     return [...expanded];
+  }
+
+  static getRenameWorkIds(options: RenameScopeOptions = {}): number[] {
+    return this.getRenameRows(options, false).map(row => row.id);
   }
 
   static async executeRenameFilesByQuery(options: RenameScopeOptions = {}): Promise<RenameApplyResult> {
@@ -502,7 +437,7 @@ export class RenameTrackFileService {
 
   static async executeRenameFiles(
     ids: number[],
-    options: { reconcileSeparatedSidecars?: boolean } = {},
+    options: { reconcileSeparatedSidecars?: boolean; boundedSidecarReconciliation?: boolean } = {},
   ): Promise<RenameApplyResult> {
     const result: RenameApplyResult = { renamed: 0, skipped: 0, conflicts: 0, missing: 0, cleanedDirectories: 0, errors: [] };
     if (!ids || ids.length === 0) {
@@ -586,6 +521,7 @@ export class RenameTrackFileService {
       const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
       let pendingMove: RenamePhysicalMove | null = null;
       let pendingDeletion: StagedRenameDeletion | null = null;
+      let pendingIntent: string | null = null;
       try {
         const row = rowMap.get(id);
         if (!row) {
@@ -669,18 +605,14 @@ export class RenameTrackFileService {
           }
 
           if (duplicateOfSameScope) {
-            try {
-              const stagedPath = stageRenameDeletion(resolvedFilePath, id);
-              pendingDeletion = {
-                originalPath: resolvedFilePath,
-                stagedPath,
-                sourceRoot: resolveLibraryRootPath(row.library_root, resolvedFilePath),
-                id,
-              };
-            } catch (removeError) {
-              result.errors.push({ id, error: removeError instanceof Error ? removeError.message : String(removeError) });
-              continue;
-            }
+            pendingIntent = await FileMutationJournal.prepare(tableName, decoded.id, row.file_path, resolvedFilePath, null);
+            const stagedPath = await FileMutationJournal.move(pendingIntent);
+            pendingDeletion = {
+              originalPath: resolvedFilePath,
+              stagedPath,
+              sourceRoot: resolveLibraryRootPath(row.library_root, resolvedFilePath),
+              id,
+            };
             dbUpdates.push({
               sql: `DELETE FROM ${tableName} WHERE ${idCol} = ?`,
               args: [decoded.id],
@@ -700,10 +632,12 @@ export class RenameTrackFileService {
                   : "merged-root-sidecar-duplicate",
               },
             });
-            await commitRenameRecords(dbUpdates, historyEvents);
+            await commitRenameRecords(dbUpdates, historyEvents, pendingIntent);
             stagedDeletions.push(pendingDeletion);
             pendingDeletion = null;
             result.renamed++;
+            await FileMutationJournal.recoverOne(pendingIntent!);
+            pendingIntent = null;
             continue;
           }
 
@@ -716,7 +650,8 @@ export class RenameTrackFileService {
           continue;
         }
 
-        moveFileCrossDevice(resolvedFilePath, expectedPath);
+        pendingIntent = await FileMutationJournal.prepare(tableName, decoded.id, row.file_path, resolvedFilePath, expectedPath);
+        await FileMutationJournal.move(pendingIntent);
         pendingMove = {
           sourcePath: resolvedFilePath,
           destinationPath: expectedPath,
@@ -773,7 +708,7 @@ export class RenameTrackFileService {
             fileType: row.file_type,
           },
         });
-        fileEvents.push({
+        const fileEvent: RenameFileEvent = {
           libraryFileId: row.id,
           artistId: row.artist_metadata_id,
           albumId: row.album_id,
@@ -782,17 +717,21 @@ export class RenameTrackFileService {
           filePath: expectedPath,
           libraryRoot: root,
           previousPath: resolvedFilePath,
-        });
+        };
 
-        await commitRenameRecords(dbUpdates, historyEvents);
+        await commitRenameRecords(dbUpdates, historyEvents, pendingIntent);
+        fileEvents.push(fileEvent);
         physicalMoves.push(pendingMove);
         pendingMove = null;
         result.renamed++;
+        await FileMutationJournal.recoverOne(pendingIntent);
+        pendingIntent = null;
       } catch (error) {
-        const rollbackErrors = [
-          ...(pendingMove ? rollbackPhysicalMoves([pendingMove]) : []),
-          ...(pendingDeletion ? rollbackStagedDeletions([pendingDeletion]) : []),
-        ];
+        const rollbackErrors: string[] = [];
+        if (pendingIntent) {
+          try { await FileMutationJournal.recoverOne(pendingIntent); }
+          catch (recoveryError) { rollbackErrors.push(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)); }
+        }
         const message = error instanceof Error ? error.message : String(error);
         result.errors.push({
           id,
@@ -800,13 +739,13 @@ export class RenameTrackFileService {
             ? message
             : `${message}; filesystem rollback failed: ${rollbackErrors.join("; ")}`,
         });
+        if (FileMutationJournal.hasPending()) break;
       }
       await yieldRenameLoop();
     }
 
     for (const deletion of stagedDeletions) {
       try {
-        fs.rmSync(deletion.stagedPath, { force: true });
         if (deletion.sourceRoot) {
           removeEmptyParents(path.dirname(deletion.originalPath), deletion.sourceRoot);
         }
@@ -843,7 +782,9 @@ export class RenameTrackFileService {
     // running these library-wide passes made one-file jobs take minutes.
     if (result.renamed > 0 && options.reconcileSeparatedSidecars === true) {
       const artistIds = Array.from(new Set(rows.map((row) => String(row.artist_metadata_id || "")).filter(Boolean)));
-      await this.replicateSeparatedSidecars(artistIds, pathCache);
+      await this.replicateSeparatedSidecars(artistIds, pathCache, options.boundedSidecarReconciliation
+        ? effectiveIds.map(decodeSyntheticId).filter(row => row.tableName === "TrackFiles").map(row => row.id)
+        : undefined);
     }
 
     return result;
@@ -970,7 +911,9 @@ export class RenameTrackFileService {
   private static async replicateSeparatedSidecars(
     artistIds: string[] = [],
     pathCache?: ExpectedPathCache,
+    trackFileIds?: number[],
   ) {
+    if (trackFileIds?.length === 0) return;
     const musicRoot = Config.getMusicPath();
     const spatialRoot = Config.getSpatialPath();
     const videoRoot = Config.getVideoPath();
@@ -997,7 +940,8 @@ export class RenameTrackFileService {
       WHERE tf.file_type IN ('track', 'video')
         AND (tf.library_slot IN ('stereo', 'spatial') OR tf.file_type = 'video')
         ${artistFilter}
-    `).all(...artistIds) as Array<{
+        ${trackFileIds ? "AND tf.id IN (SELECT value FROM json_each(?))" : ""}
+    `).all(...artistIds, ...(trackFileIds ? [JSON.stringify(trackFileIds)] : [])) as Array<{
       id: number;
       artist_metadata_id: string;
       album_id: string | null;

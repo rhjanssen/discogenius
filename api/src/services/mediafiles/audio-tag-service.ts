@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import * as mm from "music-metadata";
 import pLimit from "p-limit";
-import { db, runGatedChunkedWrite } from "../../database.js";
+import { db, runGatedChunkedWrite, withSqliteWriteGate } from "../../database.js";
 import {
   type MetadataConfig,
   type QualityConfig,
@@ -220,6 +220,8 @@ export type RetagApplyResult = {
 };
 
 type RetagApplyOptions = {
+  /** Owned by a bounded retag session; the session disposes its temporary art. */
+  embeddedCoverContext?: EmbeddedCoverContext;
   /**
    * Permit provider lyric discovery while writing tags. Off by default:
    * Write Tags is a local command (Lidarr AudioTagService). Lyrics belong
@@ -1265,7 +1267,7 @@ export class AudioTagService {
     return Number(row?.count || 0);
   }
 
-  private static getTrackFileIds(options: RetagScopeOptions = {}): number[] {
+  static getTrackFileIds(options: RetagScopeOptions = {}): number[] {
     const { where, params } = this.buildScope(options);
     return (db.prepare(`
       SELECT lf.id
@@ -1277,7 +1279,7 @@ export class AudioTagService {
 
   static getAffectedArtistIds(options: RetagScopeOptions & { ids?: number[] }): string[] {
     const scope = options.ids?.length
-      ? { where: [`lf.id IN (${options.ids.map(() => '?').join(',')})`], params: options.ids }
+      ? { where: ["lf.id IN (SELECT value FROM json_each(?))"], params: [JSON.stringify(options.ids)] }
       : this.buildScope(options);
     return (db.prepare(`
       SELECT DISTINCT COALESCE(artist.mbid, CAST(artist.id AS TEXT)) AS artist_id
@@ -2964,6 +2966,21 @@ export class AudioTagService {
     return result;
   }
 
+  static createRetagSession(): { apply: (ids: number[]) => Promise<RetagApplyResult>; close: () => void } {
+    const embeddedCoverContext: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [] };
+    const lyricsByProviderMedia = new Map<string, ResolvedLyrics | null>();
+    return {
+      apply: ids => this.apply(ids, { includeExternalLyrics: false, embeddedCoverContext, lyricsByProviderMedia }),
+      close: () => {
+        for (const directory of embeddedCoverContext.temporaryDirectories) {
+          try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* best-effort session cleanup */ }
+        }
+        embeddedCoverContext.byAlbum.clear();
+        embeddedCoverContext.temporaryDirectories.length = 0;
+      },
+    };
+  }
+
   static async apply(ids: number[], options: RetagApplyOptions = {}): Promise<RetagApplyResult> {
     const config = getConfigSection("metadata") as MetadataConfig;
     if (!isAudioTagMaintenanceEnabled(config)) {
@@ -2991,7 +3008,7 @@ export class AudioTagService {
     const pendingUpdates: Array<[number, string, number]> = []; // [size, mtime, id]
     const lyricsByProviderMedia = options.lyricsByProviderMedia ?? new Map<string, ResolvedLyrics | null>();
     const quality = getConfigSection("quality");
-    const embeddedCoverContext: EmbeddedCoverContext = {
+    const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext ?? {
       byAlbum: new Map(),
       temporaryDirectories: [],
     };
@@ -3124,7 +3141,7 @@ export class AudioTagService {
       }
     }
 
-    for (const tempDir of embeddedCoverContext.temporaryDirectories) {
+    for (const tempDir of options.embeddedCoverContext ? [] : embeddedCoverContext.temporaryDirectories) {
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort temp cleanup */ }
     }
 
@@ -3211,6 +3228,10 @@ export class AudioTagService {
         result.errors.push({ id: row.id, error: "Tag strip failed" });
         continue;
       }
+      const stats = fs.statSync(resolvedPath);
+      await withSqliteWriteGate(() => db.prepare(`UPDATE TrackFiles
+        SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP WHERE id = ? AND file_path = ?`)
+        .run(stats.size, stats.mtime.toISOString(), row.id, row.file_path), "retag:strip-file-facts");
       result.retagged++;
     }
 

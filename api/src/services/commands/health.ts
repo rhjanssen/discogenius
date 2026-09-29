@@ -1018,6 +1018,14 @@ export function collectHealthDiagnosticsSnapshot(
       importCheck,
       statisticsCheck,
       catalogCheck,
+      safeCheck("files.recovery", "File mutation recovery", () => {
+        const failures = db.prepare("SELECT COUNT(*) AS count FROM FileMutationJournal WHERE recovery_error IS NOT NULL").get() as { count: number };
+        return {
+          scope: "files.recovery", status: failures.count > 0 ? "error" : "ok",
+          message: failures.count > 0 ? `${failures.count} file mutation(s) need recovery; library file jobs are blocked` : "No unresolved file mutation recovery errors",
+          details: { count: failures.count },
+        };
+      }),
     ],
     capabilities.tiddl.checks,
   );

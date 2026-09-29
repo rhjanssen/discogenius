@@ -32,8 +32,9 @@ const MAX_QUEUE_DEPTH_INDEX = 7;
 const MAX_HOLD_MS_INDEX = 8;
 const TICKET_INDEX = 9;
 const HELD_SLOT_INDEX = 10;
+const ACQUIRED_AT_MILLISECOND_INDEX = 11;
 const LABEL_CELLS = 48;
-const LONGEST_LABEL_INDEX = 11;
+const LONGEST_LABEL_INDEX = 12;
 const QUEUE_START = LONGEST_LABEL_INDEX + LABEL_CELLS;
 const QUEUE_CAPACITY = 256;
 const SLOT_CELLS = 2 + LABEL_CELLS;
@@ -199,7 +200,9 @@ function recordMutexAcquired(view: Int32Array, waitingSince: number | null): voi
     ? 0
     : Math.min(0x7fffffff, Math.max(0, Date.now() - waitingSince));
   if (waitingSince != null) Atomics.sub(view, WAITING_WRITERS_INDEX, 1);
-  Atomics.store(view, ACQUIRED_AT_SECONDS_INDEX, Math.floor(Date.now() / 1000));
+  const acquiredAt = Date.now();
+  Atomics.store(view, ACQUIRED_AT_MILLISECOND_INDEX, acquiredAt % 1000);
+  Atomics.store(view, ACQUIRED_AT_SECONDS_INDEX, Math.floor(acquiredAt / 1000));
   Atomics.add(view, GRANTS_INDEX, 1);
   Atomics.add(view, TOTAL_WAIT_MS_INDEX, Math.min(waitedMs, 0x7fffffff));
   atomicMax(view, MAX_WAIT_MS_INDEX, waitedMs);
@@ -207,8 +210,9 @@ function recordMutexAcquired(view: Int32Array, waitingSince: number | null): voi
 
 function recordMutexReleased(view: Int32Array): void {
   const acquiredAt = Atomics.exchange(view, ACQUIRED_AT_SECONDS_INDEX, 0);
+  const millisecond = Atomics.exchange(view, ACQUIRED_AT_MILLISECOND_INDEX, 0);
   if (acquiredAt > 0) {
-    const heldMs = Math.max(0, Date.now() - acquiredAt * 1000);
+    const heldMs = Math.max(0, Date.now() - (acquiredAt * 1000 + millisecond));
     if (heldMs >= Atomics.load(view, MAX_HOLD_MS_INDEX)) {
       const slot = Atomics.load(view, HELD_SLOT_INDEX);
       writeLabel(view, LONGEST_LABEL_INDEX, slot ? readLabel(view, slot + 2) || "" : "");
@@ -254,6 +258,7 @@ export function sqliteWriteMutexDiagnostics(): {
   const rawOwnerToken = Atomics.load(view, OWNER_INDEX);
   const ownerToken = Math.abs(rawOwnerToken);
   const acquiredAt = Atomics.load(view, ACQUIRED_AT_SECONDS_INDEX);
+  const millisecond = Atomics.load(view, ACQUIRED_AT_MILLISECOND_INDEX);
   const grants = Math.max(0, Atomics.load(view, GRANTS_INDEX));
   const totalWaitMs = Math.max(0, Atomics.load(view, TOTAL_WAIT_MS_INDEX));
   const heldSlot = Atomics.load(view, HELD_SLOT_INDEX);
@@ -268,7 +273,7 @@ export function sqliteWriteMutexDiagnostics(): {
     held: rawOwnerToken !== 0,
     ownerToken: ownerToken || null,
     heldForMs: rawOwnerToken !== 0 && acquiredAt > 0
-      ? Math.max(0, Date.now() - acquiredAt * 1000)
+      ? Math.max(0, Date.now() - (acquiredAt * 1000 + millisecond))
       : 0,
     queueDepth: Math.max(0, Atomics.load(view, WAITING_WRITERS_INDEX)),
     grants,

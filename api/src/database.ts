@@ -31,6 +31,7 @@ import {
   createCommandsSchema,
   createCommandsIndexes,
   createDownloadQueueSchema,
+  createCommandFileWorkSchema,
 } from "./database/schema/commands.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
@@ -145,11 +146,9 @@ function getDbInstance(): Database.Database {
   _db.pragma("synchronous = NORMAL");
   _db.pragma("cache_size = -64000"); // 64 MB per connection, not a 500 MB budget per worker
   _db.pragma("foreign_keys = ON");
-  // Bound the WAL on disk: without a size limit a write storm (worker pool +
-  // main) grows the WAL into the hundreds of MB, and every reader then has to
-  // traverse it — turning the library list into a multi-second read. Cap the
-  // file so it's truncated back down after each checkpoint, and checkpoint a bit
-  // more eagerly than the 1000-frame default.
+  // Limit retained WAL allocation after a successful reset. This is not a hard
+  // size cap: active readers can prevent reset while writers keep appending.
+  // The maintenance worker monitors growth and attempts bounded checkpoints.
   _db.pragma("journal_size_limit = 67108864"); // 64 MB
   _db.pragma("wal_autocheckpoint = 400");
 
@@ -265,11 +264,14 @@ export function checkpointWal(): void {
 }
 
 export function closeDatabase() {
+  if (!_db) return;
   flushDatabase();
   try {
-    db.close();
+    _db.close();
   } catch (error) {
     console.warn("⚠️  Failed to close SQLite database cleanly:", error);
+  } finally {
+    _db = null;
   }
 }
 
@@ -448,6 +450,7 @@ function runStartupIntegrityCheck(): void {
   } else {
     console.log("[SQLite] Startup integrity check skipped. Set DISCOGENIUS_STARTUP_INTEGRITY_CHECK=quick or full to run one at boot.");
   }
+
 }
 
 export function initDatabase() {
@@ -471,6 +474,9 @@ export function initDatabase() {
     console.log(`✅ Opened existing schema ${BASE_SCHEMA_VERSION} database`);
   }
 
+  // Durable runtime work records are additive command-queue objects, not a
+  // second catalogue schema or a compatibility writer.
+  createCommandFileWorkSchema(db, { ifNotExists: true });
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
@@ -706,6 +712,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
   createCatalogSchema(schemaDb);
   createCanonicalCreditSchemaV41(schemaDb);
   createCommandsSchema(schemaDb);
+  createCommandFileWorkSchema(schemaDb);
   createRuntimeControlSchema(schemaDb);
   createLibrarySchemaV41(schemaDb);
 

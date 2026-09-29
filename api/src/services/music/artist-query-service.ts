@@ -979,10 +979,10 @@ export class ArtistQueryService {
                  provider_item.provider_id ASC
              ) AS rank
            FROM artist_videos
-           JOIN ProviderVideoMatches video_match
+           CROSS JOIN ProviderVideoMatches video_match
              ON video_match.recording_id = artist_videos.id
             AND video_match.match_state = 'accepted'
-           JOIN ProviderItems provider_item
+           CROSS JOIN ProviderItems provider_item
              ON provider_item.id = video_match.provider_video_item_id
             AND provider_item.entity_type = 'video'
          ),
@@ -1093,6 +1093,9 @@ export class ArtistQueryService {
       -- Ranking is maintained off the page-read path in ArtistTopTracks. The
       -- request only materializes and enriches a bounded top-100 integer-id
       -- slice, so large discographies do not rescan/sort every edition track.
+      -- CROSS JOIN keeps that slice outside each detail lookup. Reordering
+      -- these joins previously walked every selected acquisition plan before
+      -- checking whether its tracks belonged to the requested artist's page.
       WITH
       top_tracks AS MATERIALIZED (
         SELECT
@@ -1156,27 +1159,27 @@ export class ArtistQueryService {
               plan_track.id DESC
           ) AS rank
         FROM top_tracks
-        JOIN AcquisitionPlanTracks plan_track
+        CROSS JOIN AcquisitionPlanTracks plan_track
           ON plan_track.track_id = top_tracks.track_row_id
-        JOIN SelectedAcquisitionPlans plan
+        CROSS JOIN SelectedAcquisitionPlans plan
           ON plan.id = plan_track.plan_id
          AND plan.state = 'current'
-        JOIN LibraryEditions library_release
+        CROSS JOIN LibraryEditions library_release
           ON library_release.id = plan.library_edition_id
          AND library_release.edition_id = top_tracks.album_release_row_id
-        JOIN Libraries library
+        CROSS JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
-        JOIN quality_profiles quality_profile
+        CROSS JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
-        JOIN ProviderTrackMatches track_match
+        CROSS JOIN ProviderTrackMatches track_match
           ON track_match.id = plan_track.provider_track_match_id
          AND track_match.match_state = 'accepted'
-        JOIN ProviderEditionMembers member
+        CROSS JOIN ProviderEditionMembers member
           ON member.id = track_match.provider_edition_member_id
-        JOIN ProviderItems provider_item
+        CROSS JOIN ProviderItems provider_item
           ON provider_item.id = member.member_item_id
-        JOIN ProviderItemAudioVariants variant
+        CROSS JOIN ProviderItemAudioVariants variant
           ON variant.id = plan_track.provider_audio_variant_id
       ),
       provider_albums AS (
@@ -1197,22 +1200,22 @@ export class ArtistQueryService {
               source.id
         ) AS rank
         FROM top_tracks
-        JOIN LibraryEditions library_release
+        CROSS JOIN LibraryEditions library_release
           ON library_release.edition_id = top_tracks.album_release_row_id
-        JOIN Libraries library
+        CROSS JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
-        JOIN quality_profiles quality_profile
+        CROSS JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
-        JOIN SelectedAcquisitionPlans plan
+        CROSS JOIN SelectedAcquisitionPlans plan
           ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
-        JOIN AcquisitionPlanSources source
+        CROSS JOIN AcquisitionPlanSources source
           ON source.plan_id = plan.id
-        JOIN ProviderEditionMatches release_match
+        CROSS JOIN ProviderEditionMatches release_match
           ON release_match.id = source.provider_edition_match_id
          AND release_match.match_state = 'accepted'
-        JOIN ProviderItems provider_item
+        CROSS JOIN ProviderItems provider_item
           ON provider_item.id = release_match.provider_edition_item_id
       ),
       selected_libraries AS (
@@ -1231,15 +1234,15 @@ export class ArtistQueryService {
               library_release.id DESC
         ) AS rank
         FROM top_tracks
-        JOIN LibraryEditions library_release
+        CROSS JOIN LibraryEditions library_release
           ON library_release.edition_id = top_tracks.album_release_row_id
-        JOIN LibraryAlbums library_group
+        CROSS JOIN LibraryAlbums library_group
           ON library_group.library_id = library_release.library_id
          AND library_group.release_group_id = top_tracks.release_group_row_id
-        JOIN Libraries library
+        CROSS JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
-        JOIN quality_profiles quality_profile
+        CROSS JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
       ),
       primary_files AS (
@@ -1257,11 +1260,11 @@ export class ArtistQueryService {
               file.id ASC
           ) AS rank
         FROM top_tracks
-        JOIN TrackFiles file
+        CROSS JOIN TrackFiles file
           ON file.track_id = top_tracks.track_row_id
          AND (file.file_class = 'audio' OR file.file_type = 'track')
-        JOIN Libraries library ON library.id = file.library_id
-        JOIN quality_profiles quality_profile
+        CROSS JOIN Libraries library ON library.id = file.library_id
+        CROSS JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
       ),
       quality_values(track_id, quality) AS (
@@ -1272,7 +1275,7 @@ export class ArtistQueryService {
         UNION
         SELECT top_tracks.id, file.quality
         FROM top_tracks
-        JOIN TrackFiles file ON file.track_id = top_tracks.track_row_id
+        CROSS JOIN TrackFiles file ON file.track_id = top_tracks.track_row_id
         WHERE (file.file_class = 'audio' OR file.file_type = 'track')
           AND file.quality IS NOT NULL AND TRIM(file.quality) != ''
       ),
@@ -1284,21 +1287,21 @@ export class ArtistQueryService {
       monitored_groups AS (
         SELECT DISTINCT top_tracks.release_group_row_id
         FROM top_tracks
-        JOIN LibraryAlbums library_group
+        CROSS JOIN LibraryAlbums library_group
           ON library_group.release_group_id = top_tracks.release_group_row_id
-        JOIN Libraries library
+        CROSS JOIN Libraries library
           ON library.id = library_group.library_id
          AND library.enabled = 1
       ),
       downloaded_tracks(track_id) AS (
         SELECT DISTINCT top_tracks.id
         FROM top_tracks
-        JOIN TrackFiles file ON file.track_id = top_tracks.track_row_id
+        CROSS JOIN TrackFiles file ON file.track_id = top_tracks.track_row_id
         WHERE file.file_class = 'audio' OR file.file_type = 'track'
         UNION
         SELECT DISTINCT top_tracks.id
         FROM top_tracks
-        JOIN TrackFiles file ON file.recording_id = top_tracks.recording_row_id
+        CROSS JOIN TrackFiles file ON file.recording_id = top_tracks.recording_row_id
         WHERE file.file_class = 'audio' OR file.file_type = 'track'
       )
       SELECT

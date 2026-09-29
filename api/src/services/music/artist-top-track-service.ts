@@ -135,7 +135,7 @@ export class ArtistTopTrackService {
           updated_at
         )
         WITH preferred_provider(id) AS (VALUES (@preferredProvider)),
-        artist_rgs(id) AS (
+        artist_rgs(id) AS MATERIALIZED (
           SELECT album.id
           FROM Albums album
           WHERE album.artist_metadata_id = @artistMetadataId
@@ -158,11 +158,14 @@ export class ArtistTopTrackService {
         artist_releases(id) AS (
           SELECT DISTINCT library_release.edition_id
           FROM artist_rgs
-          JOIN LibraryAlbums library_group
+          CROSS JOIN LibraryAlbums library_group
             ON library_group.release_group_id = artist_rgs.id
-          JOIN LibraryEditions library_release
+          CROSS JOIN LibraryEditions library_release
             ON library_release.library_id = library_group.library_id
-          JOIN AlbumEditions selected_release
+           AND library_release.edition_id IN (
+             SELECT id FROM AlbumEditions WHERE release_group_id = artist_rgs.id
+           )
+          CROSS JOIN AlbumEditions selected_release
             ON selected_release.id = library_release.edition_id
            AND selected_release.release_group_id = library_group.release_group_id
         ),
@@ -220,7 +223,7 @@ export class ArtistTopTrackService {
                 track.id ASC
             ) AS recording_rank
           FROM artist_releases
-          JOIN Tracks track INDEXED BY idx_tracks_album_release_position
+          CROSS JOIN Tracks track INDEXED BY idx_tracks_album_release_position
             ON track.album_edition_id = artist_releases.id
           JOIN AlbumEditions release ON release.id = track.album_edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id

@@ -21,6 +21,14 @@ export function releaseGroupLibraryStateCte(wantedGroupsSql: string): string {
   WITH wanted_groups AS MATERIALIZED (
     ${wantedGroupsSql}
   ),
+  selected_plans AS MATERIALIZED (
+    -- Scope the authoritative view before putting it on the nullable side of
+    -- a join. SQLite otherwise materializes every library's selected plans.
+    SELECT plan.*
+    FROM wanted_groups
+    CROSS JOIN AlbumEditions edition ON edition.release_group_id = wanted_groups.id
+    CROSS JOIN SelectedAcquisitionPlans plan ON plan.edition_id = edition.id AND plan.state = 'current'
+  ),
   ranked_library_state AS MATERIALIZED (
     SELECT
       library_group.release_group_id,
@@ -60,24 +68,22 @@ export function releaseGroupLibraryStateCte(wantedGroupsSql: string): string {
           library.id ASC
       ) AS state_rank
     FROM wanted_groups
-    JOIN LibraryAlbums library_group
+    CROSS JOIN LibraryAlbums library_group
       ON library_group.release_group_id = wanted_groups.id
-    JOIN Libraries library
+    CROSS JOIN Libraries library
       ON library.id = library_group.library_id
      AND library.enabled = 1
-    JOIN quality_profiles quality_profile
+    CROSS JOIN quality_profiles quality_profile
       ON quality_profile.id = library.quality_profile_id
     LEFT JOIN LibraryEditions library_release
       ON library_release.library_id = library_group.library_id
-     AND EXISTS (
-       SELECT 1
-       FROM AlbumEditions selected_release
-       WHERE selected_release.id = library_release.edition_id
-         AND selected_release.release_group_id = library_group.release_group_id
+     AND library_release.edition_id IN (
+       SELECT id FROM AlbumEditions
+       WHERE release_group_id = library_group.release_group_id
      )
     LEFT JOIN AlbumEditions release
       ON release.id = library_release.edition_id
-    LEFT JOIN SelectedAcquisitionPlans plan
+    LEFT JOIN selected_plans plan
       ON plan.library_edition_id = library_release.id
      AND plan.state = 'current'
     LEFT JOIN AcquisitionPlanSources plan_source

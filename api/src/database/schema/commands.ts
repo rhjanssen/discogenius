@@ -1,5 +1,82 @@
 import type Database from "better-sqlite3";
 
+export function createCommandFileWorkSchema(db: Database.Database, options: { ifNotExists?: boolean } = {}): void {
+  const guard = options.ifNotExists ? "IF NOT EXISTS" : "";
+  db.exec(`
+    CREATE TABLE ${guard} CommandRenamePlans (
+      command_id INTEGER PRIMARY KEY REFERENCES commands(id) ON DELETE CASCADE,
+      config_revision TEXT NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 1,
+      total INTEGER NOT NULL,
+      cursor INTEGER NOT NULL DEFAULT 0,
+      result TEXT NOT NULL,
+      CHECK (cursor >= 0 AND cursor <= total)
+    );
+    CREATE TABLE ${guard} CommandRenameWork (
+      command_id INTEGER NOT NULL REFERENCES CommandRenamePlans(command_id) ON DELETE CASCADE,
+      generation INTEGER NOT NULL DEFAULT 1,
+      ordinal INTEGER NOT NULL,
+      file_id INTEGER NOT NULL,
+      identity_snapshot TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'started', 'settled')),
+      result TEXT,
+      PRIMARY KEY (command_id, generation, ordinal),
+      UNIQUE (command_id, generation, file_id)
+    );
+    CREATE TABLE ${guard} FileMutationJournal (
+      id TEXT PRIMARY KEY,
+      table_name TEXT NOT NULL CHECK (table_name IN ('TrackFiles', 'MetadataFiles', 'ExtraFiles', 'LyricFiles')),
+      row_id INTEGER NOT NULL,
+      operation TEXT NOT NULL CHECK (operation IN ('move', 'delete')),
+      phase TEXT NOT NULL DEFAULT 'prepared' CHECK (phase IN ('prepared', 'committed')),
+      source_path TEXT NOT NULL,
+      destination_path TEXT NOT NULL,
+      temporary_path TEXT NOT NULL,
+      source_stat TEXT NOT NULL,
+      source_sha256 TEXT,
+      row_snapshot TEXT NOT NULL,
+      recovery_error TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (table_name, row_id)
+    );
+    CREATE TABLE ${guard} CommandFileWorkPlans (
+      command_id INTEGER PRIMARY KEY REFERENCES commands(id) ON DELETE CASCADE,
+      operation TEXT NOT NULL CHECK (operation IN ('retag', 'strip')),
+      config_revision TEXT NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 1,
+      total INTEGER NOT NULL,
+      cursor INTEGER NOT NULL DEFAULT 0,
+      retagged INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      missing INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK (cursor >= 0 AND cursor <= total)
+    );
+    CREATE TABLE ${guard} CommandFileWork (
+      command_id INTEGER NOT NULL REFERENCES CommandFileWorkPlans(command_id) ON DELETE CASCADE,
+      generation INTEGER NOT NULL,
+      ordinal INTEGER NOT NULL,
+      -- Historical operation identity survives removal of a TrackFiles row.
+      track_file_id INTEGER NOT NULL,
+      identity_snapshot TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'started', 'settled')),
+      intent_path TEXT,
+      intent_size INTEGER,
+      intent_modified_at TEXT,
+      retagged INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      missing INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      started_at DATETIME,
+      settled_at DATETIME,
+      PRIMARY KEY (command_id, generation, ordinal),
+      UNIQUE (command_id, generation, track_file_id)
+    );
+  `);
+}
+
 export function createDownloadQueueSchema(
   db: Database.Database,
   options: { ifNotExists?: boolean } = {},
@@ -44,6 +121,10 @@ export function createDownloadQueueSchema(
     WHERE command_id IS NULL
   `);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_command_id ON DownloadQueue(command_id)`);
+  // Queue status groups all unclaimed names. Cover that aggregate without
+  // reading thousands of large payload rows on the HTTP event loop.
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_unclaimed_names
+    ON DownloadQueue(command_name) WHERE command_id IS NULL`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_album_id ON DownloadQueue(album_id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_artist_id ON DownloadQueue(artist_id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_provider_id ON DownloadQueue(provider_id)`);

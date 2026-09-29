@@ -12,6 +12,9 @@ import { CommandTrigger } from "../command-trigger.js";
 import { CommandQueueManager } from "../command-queue-manager.js";
 import type { ScanResult } from "../../mediafiles/library-scan.js";
 import type { CommandHandler } from "./handler-context.js";
+import { runRetagWorkUnit } from "../retag-work.js";
+import { runRenameWorkUnit } from "../rename-work.js";
+import { runScanWorkUnit } from "../scan-work.js";
 
 /**
  * Report what the scan actually reconciled in the file table, so "Completed"
@@ -64,43 +67,43 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         perArtist ? "matched" : "known",
     );
 
-    if (perArtist) {
-        const baseLabel = ctx.formatWorkflowCommandLabel(job, "Rescan folders");
-        const scanResult = await DiskScanService.scan({
-            artistIds,
-            filter,
-            trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
-            onProgress: (event) => {
-                ctx.updateCommandDescription(job as any, {
-                    progress: event.progress,
-                    description: `${baseLabel} - ${event.message}`,
+    if (!addNewArtists) {
+        const baseLabel = perArtist ? ctx.formatWorkflowCommandLabel(job, "Rescan folders") : "Scanning library root folders";
+        const scanResult = await runScanWorkUnit(job,
+            () => perArtist ? artistIds : DiskScanService.getScanArtistIds(),
+            async (artistId, cursor, total) => {
+                const progress = (fraction: number) => Math.floor(5 + ((cursor + fraction) / Math.max(total, 1)) * 85);
+                const result = await DiskScanService.scan({
+                    artistIds: [artistId], filter,
+                    trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
+                    onProgress: event => ctx.updateCommandDescription(job, {
+                        progress: progress(Math.max(0, Math.min(1, event.progress / 100)) * 0.8),
+                        description: `${baseLabel} - ${event.message} (${cursor + 1}/${total})`,
+                    }),
                 });
+                await fillSidecarMetadata([artistId], job.payload.skipMetadataBackfill,
+                    description => ctx.updateCommandDescription(job, { progress: progress(0.85), description }), baseLabel);
+                ctx.updateCommandDescription(job, {
+                    progress: progress(0.95), description: `${baseLabel} - updating artist statistics (${cursor + 1}/${total})`,
+                });
+                await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "scan:artist-statistics");
+                ctx.updateCommandDescription(job, { progress: progress(1), description: `${baseLabel} - processed ${cursor + 1}/${total} artists` });
+                return result;
             },
-        });
-
-        await fillSidecarMetadata(
-            artistIds,
-            job.payload.skipMetadataBackfill,
-            (description) => ctx.updateCommandDescription(job, { progress: 90, description }),
-            baseLabel,
+            perArtist ? null : () => DiskScanService.pruneUnmappedFiles(),
         );
-
-        ctx.updateCommandDescription(job, {
-            progress: 95,
-            description: `${baseLabel} - updating artist statistics`,
-        });
-        ArtistStatisticsService.refresh(artistIds);
 
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: formatReconcileSummary(baseLabel, scanResult),
         });
 
-        if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
+        if (job.worker_id && (!CommandQueueManager.isExecutionOwner(job.id, job.worker_id)
+            || CommandQueueManager.get(job.id)?.payload.cancelRequested)) {
             return;
         }
 
-        for (const artistId of artistIds) {
+        for (const artistId of perArtist ? artistIds : []) {
             appEvents.emit(AppEvent.ARTIST_SCANNED, {
                 commandId: job.id,
                 workerId: job.worker_id ?? undefined,
@@ -180,57 +183,42 @@ export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) =
 
 export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
-        progress: 5,
+        progress: Math.max(5, job.progress),
         description: 'Rename Artist - applying artist-wide rename plan',
     });
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds
         : (job.payload.artistId ? [job.payload.artistId] : []);
     if (artistIds.length === 0) throw new Error("RenameArtist requires at least one artist id");
-    let renamed = 0;
-    let conflicts = 0;
-    let missing = 0;
-    let cleanedDirectories = 0;
-    const errors: Array<{ id: number; error: string }> = [];
-    for (const artistId of artistIds) {
-        const result = await RenameTrackFileService.executeRenameArtist({ artistId });
-        renamed += result.renamed;
-        conflicts += result.conflicts;
-        missing += result.missing;
-        cleanedDirectories += result.cleanedDirectories;
-        errors.push(...result.errors);
-        ctx.updateCommandDescription(job, {
-            progress: 5 + Math.floor(((artistIds.indexOf(artistId) + 1) / artistIds.length) * 90),
-            description: `Renamed ${renamed} files; ${errors.length} errors`,
-        });
-        await ctx.yieldToEventLoop();
-    }
+    const result = await runRenameWorkUnit(job, ctx, () => artistIds.flatMap(artistId =>
+        RenameTrackFileService.getRenameWorkIds({ artistId })), true);
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: `Renamed ${renamed} file(s), ${conflicts} conflict(s), ${missing} missing, ${cleanedDirectories} empty folder(s) cleaned`,
+        description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.errors.length} error(s), ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
-    throwOnFileErrors("Rename", errors, renamed);
+    throwOnFileErrors("Rename", result.errors, result.renamed);
 };
 
 export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
-        progress: 5,
+        progress: Math.max(5, job.progress),
         description: 'Rename Files - applying rename plan',
     });
-    const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-        ? await RenameTrackFileService.executeRenameFiles(job.payload.ids)
-        : await RenameTrackFileService.executeRenameFilesByQuery({
+    const explicitIds = Array.isArray(job.payload.ids) && job.payload.ids.length > 0;
+    const result = await runRenameWorkUnit(job, ctx, () => explicitIds
+        ? job.payload.ids!
+        : RenameTrackFileService.getRenameWorkIds({
             artistId: job.payload.artistId,
             albumId: job.payload.albumId,
             editionId: job.payload.editionId,
             releaseMbid: job.payload.releaseMbid,
             libraryRoot: job.payload.libraryRoot,
             fileTypes: job.payload.fileTypes,
-        });
+        }), !explicitIds);
     // Renaming changes paths, not library counts or file sizes.
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.cleanedDirectories} empty folder(s) cleaned`,
+        description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.errors.length} error(s), ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
     throwOnFileErrors("Rename", result.errors, result.renamed);
 };
@@ -248,25 +236,9 @@ function throwOnFileErrors(
     throw new Error(`${operation} finished with ${errors.length} file error(s). ${sample}`);
 }
 
-// Progress is counted after each file settles. Command telemetry handles
-// buffering, so a large library does not have to finish 2% before showing life.
-function makeRetagProgress(
-    ctx: Parameters<CommandHandler<"RetagFiles">>[1],
-    // Shared by RetagFiles and RetagArtist handlers; the job command name differs.
-    job: Parameters<CommandHandler<"RetagFiles" | "RetagArtist">>[0],
-    label: string,
-) {
-    return (completed: number, total: number) => {
-        ctx.updateCommandDescription(job as any, {
-            progress: 5 + Math.floor((completed / Math.max(total, 1)) * 90),
-            description: `${label} - processed ${completed}/${total} files`,
-        });
-    };
-}
-
 export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
-        progress: 5,
+        progress: Math.max(5, job.progress),
         description: 'Retag Artist - applying artist-wide tag plan',
     });
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
@@ -275,15 +247,10 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
     if (artistIds.length === 0) {
         throw new Error("RetagArtist requires at least one artist id");
     }
-    const result = await AudioTagService.applyByQuery({
-        artistIds,
-        onProgress: makeRetagProgress(ctx, job, 'Retag Artist'),
-    });
-    const videos = await VideoTagService.applyForArtists(artistIds);
-    result.retagged += videos.retagged;
-    result.skipped += videos.skipped;
-    result.missing += videos.missing;
-    result.errors.push(...videos.errors);
+    const result = await runRetagWorkUnit(job, ctx, () => [
+        ...AudioTagService.getTrackFileIds({ artistIds }),
+        ...VideoTagService.getFileIdsForArtists(artistIds),
+    ]);
     if (result.retagged > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(artistIds), "retag:statistics");
     ctx.updateCommandDescription(job, {
         progress: 100,
@@ -296,20 +263,18 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
     const affectedArtists = AudioTagService.getAffectedArtistIds(job.payload);
     if (job.payload.stripOnly === true) {
         ctx.updateCommandDescription(job, {
-            progress: 5,
+            progress: Math.max(5, job.progress),
             description: 'Strip Tags - removing embedded metadata',
         });
-        let result;
-        if (Array.isArray(job.payload.ids) && job.payload.ids.length > 0) {
-            result = await AudioTagService.stripTags(job.payload.ids);
-        } else {
-            result = await AudioTagService.stripTagsByScope({
-                artistId: job.payload.artistId,
-                albumId: job.payload.albumId,
-                editionId: job.payload.editionId,
-                releaseMbid: job.payload.releaseMbid,
-            });
-        }
+        const result = await runRetagWorkUnit(job, ctx, () =>
+            Array.isArray(job.payload.ids) && job.payload.ids.length > 0
+                ? job.payload.ids
+                : AudioTagService.getTrackFileIds({
+                    artistId: job.payload.artistId,
+                    albumId: job.payload.albumId,
+                    editionId: job.payload.editionId,
+                    releaseMbid: job.payload.releaseMbid,
+                }), true);
         if (result.retagged > 0 && affectedArtists.length > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(affectedArtists), "retag:statistics");
         ctx.updateCommandDescription(job, {
             progress: 100,
@@ -320,52 +285,19 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
     }
 
     ctx.updateCommandDescription(job, {
-        progress: 5,
+        progress: Math.max(5, job.progress),
         description: 'Retag Files - applying media tag plan',
     });
-    let result;
-    if (Array.isArray(job.payload.ids) && job.payload.ids.length > 0) {
-        const marks = job.payload.ids.map(() => "?").join(",");
-        const videoIds = (db.prepare(`SELECT id FROM TrackFiles WHERE file_type = 'video' AND id IN (${marks})`).all(...job.payload.ids) as Array<{ id: number }>).map((row) => row.id);
-        const videoSet = new Set(videoIds);
-        const audioIds = job.payload.ids.filter((id) => !videoSet.has(id));
-        const emptyResult = { retagged: 0, skipped: 0, missing: 0, errors: [] as Array<{ id: number; error: string }> };
-        // A file-specific repair must remain local and deterministic. Missing
-        // lyrics are handled by the metadata backfill, not one network request
-        // per file while a RetagFiles command owns the worker.
-        const audioResult = audioIds.length > 0
-            ? await AudioTagService.apply(audioIds, { includeExternalLyrics: false, onProgress: makeRetagProgress(ctx, job, 'Retag Files') })
-            : emptyResult;
-        const videoResult = { ...emptyResult, errors: [] as Array<{ id: number; error: string }> };
-        for (let index = 0; index < videoIds.length; index++) {
-            const status = (db.prepare("SELECT status FROM commands WHERE id = ?").get(job.id) as { status?: string } | undefined)?.status;
-            if (status === "cancelled") return;
-            ctx.updateCommandDescription(job, {
-                progress: 5 + Math.floor(((index + 1) / Math.max(videoIds.length, 1)) * 90),
-                description: `Retag Files - writing video ${index + 1}/${videoIds.length}`,
-            });
-            const itemResult = await VideoTagService.apply([videoIds[index]]);
-            videoResult.retagged += itemResult.retagged;
-            videoResult.skipped += itemResult.skipped;
-            videoResult.missing += itemResult.missing;
-            videoResult.errors.push(...itemResult.errors);
-            await ctx.yieldToEventLoop();
-        }
-        result = {
-            retagged: audioResult.retagged + videoResult.retagged,
-            skipped: audioResult.skipped + videoResult.skipped,
-            missing: audioResult.missing + videoResult.missing,
-            errors: [...audioResult.errors, ...videoResult.errors],
-        };
-    } else {
-        result = await AudioTagService.applyByQuery({
+    const result = await runRetagWorkUnit(job, ctx, () =>
+        Array.isArray(job.payload.ids) && job.payload.ids.length > 0
+            ? job.payload.ids
+            : AudioTagService.getTrackFileIds({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
                 editionId: job.payload.editionId,
                 releaseMbid: job.payload.releaseMbid,
-                onProgress: makeRetagProgress(ctx, job, 'Retag Files'),
-            });
-    }
+            }),
+    );
     if (result.retagged > 0 && affectedArtists.length > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(affectedArtists), "retag:statistics");
     ctx.updateCommandDescription(job, {
         progress: 100,

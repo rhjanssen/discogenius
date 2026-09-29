@@ -903,7 +903,8 @@ ${orderBy}
                 UPDATE commands
                 SET
                     status = 'started',
-                    started_at = ?,
+                    started_at = CASE WHEN progress_phase = 'checkpoint ready'
+                        THEN COALESCE(started_at, ?) ELSE ? END,
                     completed_at = NULL,
                     updated_at = ?,
                     worker_id = ?,
@@ -921,6 +922,7 @@ ${orderBy}
                   AND status = 'queued'
                   AND (retry_after IS NULL OR julianday(retry_after) <= julianday(?))
             `).run(
+                startedAt,
                 startedAt,
                 startedAt,
                 workerId,
@@ -986,6 +988,31 @@ ${orderBy}
 
     static updateProgress(id: number, progress: number, workerId?: string) {
         this.updateProgressMessage(id, { progress, workerId });
+    }
+
+    /** Release resources only after a handler has finished its current work
+     * unit. Ownership fencing prevents a retired worker from requeueing work. */
+    static continueOwnedCommand(id: number, workerId: string, payloadPatch: Partial<CommandBodyCommon>): boolean {
+        return db.transaction(() => {
+            if (!this.isExecutionOwner(id, workerId)) return false;
+            this.updateState(id, { payloadPatch, workerId });
+            const result = db.prepare(`
+                UPDATE commands SET status = 'queued', worker_id = NULL,
+                    heartbeat_at = NULL, lease_expires_at = NULL,
+                    attempt = MAX(attempt - 1, 0), blocked_reason = NULL,
+                    progress_phase = 'checkpoint ready', retry_after = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'started' AND worker_id = ?
+            `).run(id, workerId);
+            if (result.changes !== 1) return false;
+            clearCommandOverlay(id);
+            clearCommandUpdateThrottle(id);
+            const job = this.get(id);
+            if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, {
+                id, type: job.name, status: 'queued', progress: job.progress, payload: job.payload,
+            } as CommandEventPayload);
+            return true;
+        })();
     }
 
     /** The download keeps its queue identity while its import takes the shared
@@ -1067,7 +1094,7 @@ ${orderBy}
     }) {
         const current = this.get(id);
         if (!current) return null;
-        if (TERMINAL_COMMAND_STATUSES.has(current.status)) return current;
+        if (TERMINAL_COMMAND_STATUSES.has(current.status)) return options.workerId ? null : current;
         if (options.workerId && (current.status !== "started" || current.worker_id !== options.workerId)) {
             return null;
         }
@@ -1218,12 +1245,18 @@ ${orderBy}
         return true;
     }
 
-    static cancel(id: number) {
-        db.prepare("UPDATE commands SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    static cancel(id: number, workerId?: string): boolean {
+        flushCommandOverlay(id, workerId);
+        const result = db.prepare(`UPDATE commands SET status = 'cancelled', progress_phase = 'cancelled',
+            lease_expires_at = NULL, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? ${workerId ? "AND status = 'started' AND worker_id = ?" : ""}`)
+            .run(id, ...(workerId ? [workerId] : []));
+        if (result.changes === 0) return false;
         clearCommandOverlay(id);
         clearCommandUpdateThrottle(id);
         const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'cancelled', progress: job.progress } as CommandEventPayload);
+        return true;
     }
 
     /**
@@ -1285,7 +1318,7 @@ ${orderBy}
                     last_progress_at = NULL, progress_phase = NULL, progress_current = NULL,
                     progress_total = NULL, lease_expires_at = NULL, blocked_reason = NULL,
                     retry_after = NULL, last_retry_reason = NULL,
-                    payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
+                    payload = json_remove(COALESCE(payload, '{}'), '$.downloadState', '$.cancelRequested')
                 WHERE id = ?
             `).run(queueOrder, id);
         });

@@ -473,6 +473,7 @@ const DOWNLOAD_RECOVERY_RETRY_MS = readIntEnv(
 export const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
 
 type DurableImportHandoff = {
+    readyAt?: string;
     importPayload: ImportDownloadCommand;
     resolved: { title: string; artist: string; cover: string | null };
     executionStartedAt?: string | null;
@@ -1522,7 +1523,9 @@ export class DownloadProcessor {
             });
             appEvents.on(AppEvent.QUEUE_CLEARED, () => this.scheduleNext());
             appEvents.on(AppEvent.COMMAND_UPDATED, (event: CommandEventPayload) => {
-                if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.scheduleNext();
+                // A checkpointed maintenance command also releases disk
+                // admission. Wake pending imports before its next work unit.
+                if (event.status === 'queued' || event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.scheduleNext();
             });
             this.queueEventsSubscribed = true;
         }
@@ -1964,6 +1967,7 @@ export class DownloadProcessor {
             } as ImportDownloadCommand;
 
             const handoff: DurableImportHandoff = {
+                readyAt: new Date().toISOString(),
                 importPayload,
                 resolved,
                 executionStartedAt: null,

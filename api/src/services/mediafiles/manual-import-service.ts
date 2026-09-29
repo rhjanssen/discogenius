@@ -560,15 +560,22 @@ export class ManualImportService {
         const videoEntries = collected.filter((c) => c.isVideo && !c.canonicalRecordingId);
         if (videoEntries.length > 0) {
             const { RefreshVideoService } = await import("../music/refresh-video-service.js");
+            const videosByArtist = new Map<string, any[]>();
             for (const c of videoEntries) {
-                RefreshVideoService.upsertArtistVideos(String(c.artistMbid || c.artistId), [{
+                const artistId = String(c.artistMbid || c.artistId);
+                const videos = videosByArtist.get(artistId) ?? [];
+                videos.push({
                     ...c.trackData,
                     provider_id: c.providerId,
                     album_id: c.albumId || null,
                     title: c.trackData.title || "Unknown Video",
                     quality: c.trackData.quality || null,
                     provider: provider.id,
-                }]);
+                });
+                videosByArtist.set(artistId, videos);
+            }
+            for (const [artistId, videos] of videosByArtist) {
+                await RefreshVideoService.upsertArtistVideosInBatches(artistId, videos);
             }
         }
 

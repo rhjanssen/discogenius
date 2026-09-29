@@ -220,6 +220,30 @@ test("scan backfills file-derived quality and technical facts on relinked librar
   assert.equal(row.duration, 1);
 });
 
+test("orphan reconciliation awaits writer admission without blocking its release", async () => {
+  seedCanonicalArtistGraph();
+  insertMissingTrackFile("track-1", "recording-1", "missing-under-contention.flac", null);
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:competing-writer");
+  await ready;
+  const timer = setTimeout(() => release(), 30);
+  try {
+    const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number };
+    const result = await DiskScanService.scan({ artistIds: [String(artist.id)], trackUnmappedFiles: false });
+    assert.equal(result.orphansRemoved, 1);
+    assert.equal((db.prepare("SELECT COUNT(*) n FROM TrackFiles").get() as { n: number }).n, 0);
+  } finally {
+    clearTimeout(timer);
+    release();
+    await blocker;
+  }
+});
+
 test("orphan removal invalidates the cached album download status (provider-linked row)", async () => {
   seedCanonicalArtistGraph();
   insertMissingTrackFile("track-1", "recording-1", "track-one.flac", "provider-track-1");

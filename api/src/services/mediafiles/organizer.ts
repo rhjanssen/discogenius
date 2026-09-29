@@ -3418,7 +3418,7 @@ export class OrganizerService {
       const resolvedVideoArtistId = canonicalArtistId;
 
       const { RefreshVideoService } = await import("../music/refresh-video-service.js");
-      RefreshVideoService.upsertArtistVideos(resolvedVideoArtistId, [{
+      await RefreshVideoService.upsertArtistVideosInBatches(resolvedVideoArtistId, [{
         ...videoData,
         provider_id: providerId,
         provider: videoProvider,

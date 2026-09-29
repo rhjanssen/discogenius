@@ -157,7 +157,7 @@ export class CommandWorkerPool {
     }
 
     static start(): void {
-        if (this.started) return;
+        if (this.started || this.stopping) return;
         this.started = true;
 
         const size = Math.max(1, readIntEnv("DISCOGENIUS_SCHEDULER_THREAD_LIMIT", 3, 1));
@@ -178,8 +178,11 @@ export class CommandWorkerPool {
         this.testWorkerEntryUrl = entryUrl;
     }
 
-    static async stop(): Promise<void> {
+    private static stopping = false;
+
+    static async stop(options: { drain?: boolean; drainTimeoutMs?: number } = {}): Promise<void> {
         if (!this.started) return;
+        this.stopping = true;
         this.started = false;
 
         // Reject anything still queued; in-flight jobs are rejected on worker exit.
@@ -190,12 +193,35 @@ export class CommandWorkerPool {
         const workers = this.workers.splice(0);
         await Promise.all(workers.map(async (entry) => {
             try {
+                if (options.drain && entry.busy && entry.settle) {
+                    const commandId = entry.settle.commandId;
+                    await new Promise<void>(resolve => {
+                        const finish = () => {
+                            clearTimeout(timer);
+                            entry.worker.off("message", onMessage);
+                            entry.worker.off("exit", finish);
+                            entry.worker.off("error", finish);
+                            resolve();
+                        };
+                        const onMessage = (message: WorkerToMainMessage) => {
+                            if ((message.kind === "done" || message.kind === "error") && message.commandId === commandId) finish();
+                        };
+                        const timer = setTimeout(() => {
+                            console.warn(`[CommandWorkerPool] Drain timeout for command #${commandId}; preserving interruption evidence`);
+                            finish();
+                        }, options.drainTimeoutMs ?? 60_000);
+                        entry.worker.on("message", onMessage);
+                        entry.worker.once("exit", finish);
+                        entry.worker.once("error", finish);
+                    });
+                }
                 entry.worker.postMessage({ kind: "shutdown" } satisfies MainToWorkerMessage);
                 await entry.worker.terminate();
             } catch {
                 // best-effort shutdown
             }
         }));
+        this.stopping = false;
         console.log("🧵 Command worker pool stopped");
     }
 
@@ -206,6 +232,7 @@ export class CommandWorkerPool {
      * queue is a safety valve rather than the normal path).
      */
     static run(job: CommandModel, options: JobRunOptions = {}): Promise<void> {
+        if (this.stopping) return Promise.reject(new Error(POOL_SHUTDOWN_MESSAGE));
         if (!this.started) {
             // Lazily start so callers don't depend on init ordering.
             this.start();

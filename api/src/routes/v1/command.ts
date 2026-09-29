@@ -4,7 +4,7 @@ import { getCommandHistory, mapJob } from "../../services/commands/command-histo
 import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
 import { runCommandByName } from "../../services/commands/system-task-service.js";
 import { getObjectBody, getRequiredString, isRequestValidationError } from "../../utils/request-validation.js";
-import { CommandWorkerPool } from "../../services/commands/worker/command-worker-pool.js";
+import { cancelNonDownloadCommand } from "../../services/commands/command-control-service.js";
 
 const router = Router();
 
@@ -77,14 +77,7 @@ router.delete("/:id", async (req, res) => {
       return res.status(400).json({ detail: "Invalid command id" });
     }
 
-    const job = await runCommandUserWrite(() => {
-      const current = CommandQueueManager.get(commandId);
-      CommandQueueManager.cancel(commandId);
-      return current;
-    });
-    if (job?.status === "started" && job.worker_id) {
-      CommandWorkerPool.abortCommand(commandId, job.worker_id, "Command cancelled by user");
-    }
+    await cancelNonDownloadCommand(commandId);
     res.json({ success: true });
   } catch (error: any) {
     res.status(commandMutationHttpStatus(error)).json({ detail: error.message });

@@ -1195,6 +1195,38 @@ test("video matching preparation leaves provider rows unchanged until persistenc
   assert.ok(lookup.get());
 });
 
+test("bulk video persistence admits another writer before the artist finishes", async () => {
+  const videos = Array.from({ length: 25 }, (_, index) => {
+    insertCanonicalVideo({ mbid: `batch-video-${index}`, title: `Batch song ${index}`, lengthMs: 232000 });
+    return { provider: "youtube-music", provider_id: `batch-offer-${index}`, title: `Batch song ${index}`, duration: 232 };
+  });
+  const count = () => (dbModule.db.prepare("SELECT COUNT(*) n FROM ProviderItems WHERE entity_type = 'video'").get() as { n: number }).n;
+  const refresh = refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", videos);
+  const seenByOtherWriter = await dbModule.withSqliteWriteGate(() => {
+    dbModule.db.prepare("UPDATE ArtistMetadata SET name = 'Concurrent operator update' WHERE mbid = 'artist-mbid'").run();
+    return count();
+  }, "test:operator-write");
+  await refresh;
+  assert.ok(seenByOtherWriter < videos.length, "the writer must not wait for the entire artist");
+  assert.equal(count(), videos.length);
+  for (let index = 0; index < videos.length; index++) {
+    const match = acceptedVideoMatch("youtube-music", `batch-offer-${index}`);
+    const canonical = dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(`batch-video-${index}`) as { id: number };
+    assert.equal(match?.recordingId, canonical.id);
+  }
+});
+
+test("batched artist repair revisits stored videos when the provider response is empty", async () => {
+  const audioId = seedStudioAudio({ recordingMbid: "batch-studio-audio", title: "Pompeii", lengthMs: 232000 });
+  const videoId = insertCanonicalVideo({ mbid: "batch-live-video", title: "Pompeii (Live)", variant: "live", lengthMs: 232000 });
+  seedAcceptedProviderVideoMatch(dbModule.db, { provider: "youtube-music", providerVideoId: "batch-live-offer", recordingId: videoId, title: "Pompeii (Live)", durationMs: 232000 });
+  dbModule.db.prepare(`INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, source, confidence, data)
+    VALUES (?, ?, 'provider_video_for', 'youtube-music', 0.98, '{}')`).run(videoId, audioId);
+  await refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
+  assert.equal(dbModule.db.prepare("SELECT 1 FROM RecordingRelations WHERE source_recording_id = ? AND target_recording_id = ?").get(videoId, audioId), undefined);
+  assert.equal(acceptedVideoMatch("youtube-music", "batch-live-offer")?.recordingId, videoId);
+});
+
 test("album counterpart persistence rejects live-to-studio links without repairing unrelated videos", () => {
   const audioId = seedStudioAudio({ recordingMbid: "album-studio-audio", title: "Pompeii", lengthMs: 232000 });
   const unrelatedId = insertCanonicalVideo({ mbid: "unrelated-live-video", title: "Other Song (Live)", variant: "live", lengthMs: 232000 });
@@ -1379,7 +1411,7 @@ function seedStudioAudio(input: {
   return audio.id;
 }
 
-test("catalog ingest links a standalone OMV to studio audio with no provider offers", () => {
+test("catalog ingest links a standalone OMV to studio audio with no provider offers", async () => {
   const audioId = seedStudioAudio({
     recordingMbid: "audio-pompeii",
     title: "Pompeii",
@@ -1392,7 +1424,7 @@ test("catalog ingest links a standalone OMV to studio audio with no provider off
     variant: "official",
   });
 
-  const linked = refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid");
+  const linked = await refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid");
   assert.equal(linked, 1);
 
   const relation = dbModule.db.prepare(`
@@ -1406,7 +1438,7 @@ test("catalog ingest links a standalone OMV to studio audio with no provider off
   assert.equal(countRows("SELECT COUNT(*) AS count FROM ProviderItems"), 0);
 });
 
-test("catalog ingest does not attach a session video to studio audio", () => {
+test("catalog ingest does not attach a session video to studio audio", async () => {
   seedStudioAudio({
     recordingMbid: "audio-overjoyed-catalog",
     title: "Overjoyed",
@@ -1421,7 +1453,7 @@ test("catalog ingest does not attach a session video to studio audio", () => {
     .run("Watch Listen Tell session", videoId);
 
   assert.equal(
-    refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
+    await refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
     0,
   );
   assert.equal(
@@ -1432,7 +1464,7 @@ test("catalog ingest does not attach a session video to studio audio", () => {
   );
 });
 
-test("catalog ingest does not attach a live video to studio-only audio", () => {
+test("catalog ingest does not attach a live video to studio-only audio", async () => {
   seedStudioAudio({
     recordingMbid: "audio-oblivion",
     title: "Oblivion",
@@ -1446,7 +1478,7 @@ test("catalog ingest does not attach a live video to studio-only audio", () => {
   });
 
   assert.equal(
-    refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
+    await refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
     0,
   );
   assert.equal(
@@ -1457,7 +1489,7 @@ test("catalog ingest does not attach a live video to studio-only audio", () => {
   );
 });
 
-test("catalog ingest leaves an existing music_video_for relation alone", () => {
+test("catalog ingest leaves an existing music_video_for relation alone", async () => {
   const audioId = seedStudioAudio({
     recordingMbid: "audio-flaws",
     title: "Flaws",
@@ -1476,11 +1508,25 @@ test("catalog ingest leaves an existing music_video_for relation alone", () => {
   `).run(videoId, audioId);
 
   assert.equal(
-    refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
+    await refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid"),
     0,
   );
   const rows = dbModule.db.prepare(`
     SELECT relation_type AS type FROM RecordingRelations WHERE source_recording_id = ?
   `).all(videoId) as Array<{ type: string }>;
   assert.deepEqual(rows.map((row) => row.type), ["music_video_for"]);
+});
+
+test("catalog video linking releases writer admission before the artist is complete", async () => {
+  seedStudioAudio({ recordingMbid: "audio-bounded-catalog", title: "Pompeii", lengthMs: 214000 });
+  for (let index = 0; index < 30; index += 1) {
+    insertCanonicalVideo({ mbid: `video-bounded-catalog-${index}`, title: "Pompeii", lengthMs: 223000, variant: "official" });
+  }
+  const linking = refreshVideoModule.RefreshVideoService.linkCatalogVideoAudioRelations("artist-mbid");
+  const admittedCount = await dbModule.withSqliteWriteGate(() => countRows(
+    "SELECT COUNT(*) AS count FROM RecordingRelations WHERE source = 'canonical'",
+  ), "test:catalog-concurrent-writer");
+  assert.ok(admittedCount < 30, "another writer must enter before whole-artist completion");
+  assert.equal(await linking, 30);
+  assert.equal(countRows("SELECT COUNT(*) AS count FROM RecordingRelations WHERE source = 'canonical'"), 30);
 });

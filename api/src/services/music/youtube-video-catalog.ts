@@ -421,7 +421,7 @@ export async function syncYouTubeVideoCatalogForArtist(
       _provider: "youtube-music",
     }));
     if (videos.length === 0) return 0;
-    await withSqliteWriteGate(() => RefreshVideoService.upsertArtistVideos(artistId, videos), "youtube-catalog:videos");
+    await RefreshVideoService.upsertArtistVideosInBatches(artistId, videos);
     return videos.length;
   } catch (error) {
     console.warn(`[YouTubeVideoCatalog] getArtistVideos failed for ${artistId}:`, error);

@@ -1,4 +1,5 @@
 import { db, withSqliteWriteGate } from "../../database.js";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { streamingProviderManager } from "../providers/index.js";
 import type { RefreshOptions } from "./scan-types.js";
 import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
@@ -701,7 +702,7 @@ function findAudioRecordingByArtistTitleDuration(
  * relation. Same function as provider ingest (`findRelatedAudioRecordingForVideo`).
  * Skips videos that already have music_video_for or an inferred relation.
  */
-function linkUnrelatedCatalogVideosToAudio(artistMbid: string): number {
+async function linkUnrelatedCatalogVideosToAudio(artistMbid: string): Promise<number> {
     const mbid = nullableText(artistMbid);
     if (!mbid) return 0;
 
@@ -761,7 +762,11 @@ function linkUnrelatedCatalogVideosToAudio(artistMbid: string): number {
             preferStudio,
         );
         if (!match) continue;
-        upsertProviderVideoAudioRelation({
+        await withSqliteWriteGate(() => {
+            // A canonical relation may have arrived while admission was pending.
+            if (db.prepare(`SELECT 1 FROM RecordingRelations WHERE source_recording_id = ?
+                AND relation_type IN ('music_video_for', 'provider_video_for')`).get(video.id)) return;
+            upsertProviderVideoAudioRelation({
             videoRecordingId: video.id,
             videoRecordingMbid: video.mbid,
             audioMatch: {
@@ -775,8 +780,10 @@ function linkUnrelatedCatalogVideosToAudio(artistMbid: string): number {
             provider: "canonical",
             videoVariant,
             videoTitle: foldedTitle,
-        });
-        linked += 1;
+            });
+            linked += 1;
+        }, "videos:catalog-relation");
+        await yieldToEventLoop();
     }
     return linked;
 }
@@ -2138,7 +2145,7 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
     return changed;
 }
 
-function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
+function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string, recordingIds?: number[]): number {
     const rows = db.prepare(`
         SELECT recording.id
         FROM Recordings recording
@@ -2146,6 +2153,7 @@ function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
           AND recording.mbid IS NULL
           AND recording.youtube_video_id IS NULL
           AND recording.artist_mbid = ?
+          ${recordingIds ? "AND recording.id IN (SELECT value FROM json_each(?))" : ""}
           AND NOT EXISTS (SELECT 1 FROM LibraryVideos selected_video JOIN Libraries selected_video_library ON selected_video_library.id = selected_video.library_id AND selected_video_library.enabled = 1 WHERE selected_video.video_recording_id = recording.id AND selected_video.selection_mode = 'manual')
           AND NOT EXISTS (
             SELECT 1
@@ -2155,7 +2163,7 @@ function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
           )
           AND NOT EXISTS (SELECT 1 FROM TrackFiles file WHERE file.recording_id = recording.id)
           AND NOT EXISTS (SELECT 1 FROM Tracks track WHERE track.recording_id = recording.id)
-    `).all(artistMbid) as Array<{ id: number }>;
+    `).all(artistMbid, ...(recordingIds ? [JSON.stringify(recordingIds)] : [])) as Array<{ id: number }>;
     for (const row of rows) {
         db.prepare(`DELETE FROM RecordingRelations WHERE source_recording_id = ? OR target_recording_id = ?`)
             .run(row.id, row.id);
@@ -2165,12 +2173,72 @@ function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
 }
 
 export class RefreshVideoService {
+    /** Artist refresh must release writer admission between independent video
+     * units. A whole-artist transaction also owns every fuzzy repair pass and
+     * can prevent imports and command heartbeats from writing for minutes. */
+    static async upsertArtistVideosInBatches(
+        artistId: string,
+        videos: any[],
+        options: RefreshOptions & { deferRepair?: boolean } = {},
+    ): Promise<void> {
+        const batchSize = 10;
+        for (let offset = 0; offset < videos.length; offset += batchSize) {
+            const persist = this.prepareArtistVideoUpsert(
+                artistId, videos.slice(offset, offset + batchSize), { ...options, deferRepair: true },
+            );
+            await withSqliteWriteGate(persist, "videos:upsert-batch");
+            await yieldToEventLoop();
+        }
+        if (options.deferRepair) return;
+
+        const artists = new Set<string>();
+        const canonicalArtist = getArtistMusicBrainzId(artistId);
+        if (canonicalArtist) artists.add(canonicalArtist);
+        for (const video of videos) {
+            const artist = nullableText(video.artist_mbid) ?? nullableText(video.mb_artist_mbid);
+            if (artist) artists.add(artist);
+        }
+        for (const artist of artists) {
+            const loadIds = () => (db.prepare(`
+                SELECT id FROM Recordings WHERE artist_mbid = ? AND is_video = 1 ORDER BY id
+            `).all(artist) as Array<{ id: number }>).map(row => row.id);
+            // Assignment changes can merge records or unblock a sibling offer.
+            // Reload identities between passes; never carry positional identity
+            // across a merge. Keep the existing eight-pass convergence bound.
+            for (let pass = 0; pass < 8; pass++) {
+                const ids = loadIds();
+                let changed = 0;
+                for (let offset = 0; offset < ids.length; offset += batchSize) {
+                    const batch = ids.slice(offset, offset + batchSize);
+                    changed += await withSqliteWriteGate(() => db.transaction(() =>
+                        repairProviderVideoRecordingAssignments(artist, batch))(), "videos:assignment-batch");
+                    await yieldToEventLoop();
+                }
+                if (changed === 0) break;
+            }
+            const ids = loadIds();
+            for (let offset = 0; offset < ids.length; offset += batchSize) {
+                const batch = ids.slice(offset, offset + batchSize);
+                await withSqliteWriteGate(() => db.transaction(() =>
+                    repairProviderVideoAudioRelations(artist, batch))(), "videos:relation-batch");
+                await yieldToEventLoop();
+            }
+            const cleanupIds = loadIds();
+            for (let offset = 0; offset < cleanupIds.length; offset += batchSize) {
+                const batch = cleanupIds.slice(offset, offset + batchSize);
+                await withSqliteWriteGate(() => db.transaction(() =>
+                    deleteOrphanProviderOnlyVideoRecordings(artist, batch))(), "videos:orphan-batch");
+                await yieldToEventLoop();
+            }
+        }
+    }
+
     /**
      * Catalog-time audio↔video links for MusicBrainz video recordings that have
      * no music_video_for and no inferred relation yet. Uses the same
      * `findRelatedAudioRecordingForVideo` policy as provider ingest.
      */
-    static linkCatalogVideoAudioRelations(artistMbid: string): number {
+    static linkCatalogVideoAudioRelations(artistMbid: string): Promise<number> {
         return linkUnrelatedCatalogVideosToAudio(artistMbid);
     }
 

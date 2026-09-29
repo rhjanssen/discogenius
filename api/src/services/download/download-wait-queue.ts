@@ -263,7 +263,7 @@ export class DownloadWaitQueue {
   static countUnclaimedByCommandName(): Map<string, number> {
     const rows = db.prepare(`
       SELECT command_name AS name, COUNT(*) AS count
-      FROM DownloadQueue
+      FROM DownloadQueue INDEXED BY idx_download_queue_unclaimed_names
       WHERE command_id IS NULL
       GROUP BY command_name
     `).all() as Array<{ name: string; count: number }>;

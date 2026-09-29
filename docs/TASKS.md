@@ -61,6 +61,24 @@ UI that the schema work does not finish:
 
 Not 2.12.0. After the model is stable, replace the public history with a clean initial commit. No compatibility migrations, no dual writers, no leftover `Artists` / slot / `ProviderItemMatches` names in the tree. Until then, do not pretend the repo is already that commit.
 
+### Runtime and file safety gates
+
+The measured ownership problems and remaining acceptance gates are in
+`RUNTIME_FOUNDATION_REVIEW.md`. Complete these before the 3.0 history prune:
+
+- pending: atomic replacement for embedded metadata writes and journal coverage
+  for new sidecar copies; test process crashes separately from power loss.
+- pending: bounded MoveArtist and new-artist discovery; split very large artist
+  reconciliation further if measured import waiting time requires it.
+- pending: separate provider-edition matching preparation from persistence and
+  move first-read ranking initialization into queued work.
+- pending: representative mixed acquisition/import/retag/scan observation across
+  enabled providers, including partial failures and exact file identity.
+- pending: verify selected artwork source changes across originals, proxies,
+  sidecars and embedded covers, then validate media-server presentation.
+- pending: compare a typed dedicated writer with the bounded fair-mutex design
+  on measured workloads before changing runtimes or database engines.
+
 ## Decisions worth keeping
 
 - TypeScript stack. Do not port to .NET.

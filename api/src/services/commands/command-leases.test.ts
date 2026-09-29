@@ -104,6 +104,43 @@ test("scheduled retags do not hold back a completed download import", () => {
     assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
 });
 
+test("checkpoint continuation releases disk admission and preserves progress without spending a retry", async () => {
+    const id = queueNamedCommand(queueModule.CommandNames.RetagFiles, { ids: [1, 2] });
+    const first = claim(id, "unit-owner", new Date("2026-09-29T00:00:00Z"), 60_000);
+    queueModule.CommandQueueManager.updateProgressMessage(id, { progress: 50, description: "Settled one file", workerId: "unit-owner" });
+    const context = await import("./command-context.js");
+    const { CommandContinuation } = await import("./command-continuation.js");
+    assert.equal(await context.persistCommandOutcome(queueModule.CommandQueueManager.get(id)!, new CommandContinuation({ title: "durable checkpoint" })), "requeued");
+    const yielded = queueModule.CommandQueueManager.get(id)!;
+    assert.equal(yielded.status, "queued");
+    assert.equal(yielded.progress, 50);
+    assert.equal(yielded.worker_id, null);
+    assert.equal(yielded.attempt, 0);
+    assert.equal(yielded.payload.title, "durable checkpoint");
+    assert.equal(queueModule.CommandQueueManager.continueOwnedCommand(id, "unit-owner", { title: "stale" }), false);
+    const next = queueModule.CommandQueueManager.claimForExecution(id, "next-unit-owner", 60_000, new Date("2026-09-29T00:05:00Z"))!;
+    assert.equal(next.started_at, first.started_at, "a work-unit boundary must not reset the command's elapsed time");
+    assert.equal(next.progress, 50);
+    assert.equal(next.attempt, 1);
+    assert.equal(queueModule.CommandQueueManager.complete(id, "unit-owner"), false);
+});
+
+test("an aged import handoff gets the next disk slot ahead of queued manual maintenance", async () => {
+    const download = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, {
+        provider: "tidal", providerId: "finished-album", downloadState: { state: "importPending" },
+        downloadImportHandoff: { readyAt: new Date(Date.now() - 120_000).toISOString() },
+    });
+    claim(download, "download-owner", new Date(), 60_000);
+    // Heartbeats and telemetry must not reset the import's waiting time.
+    dbModule.db.prepare("UPDATE commands SET updated_at = datetime('now') WHERE id = ?").run(download);
+    const retag = queueNamedCommand(queueModule.CommandNames.RetagFiles, { ids: [1] });
+    dbModule.db.prepare("UPDATE commands SET trigger = 1, priority = 2 WHERE id = ?").run(retag);
+    const { CommandManager } = await import("./command.js");
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagFiles, { ids: [1] }).canStart, false);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagFiles, { ids: [1] }).canStart, false, "the admitted import keeps disk exclusivity");
+});
+
 test("interactive scans blocked by running catalog work do not strand import handoffs", () => {
     const refresh = queueNamedCommand(queueModule.CommandNames.RefreshArtist, { artistId: "artist" }, "artist");
     claim(refresh, "refresh-owner", new Date(), 60_000);
@@ -635,6 +672,22 @@ test("worker death rejects the owned attempt and the pool respawns capacity", as
     const healthy = claim(healthyId, "attempt-after-crash", new Date(), 200);
     await poolModule.CommandWorkerPool.run(healthy, { leaseMs: 200, heartbeatMs: 20 });
     assert.equal(queueModule.CommandQueueManager.complete(healthyId, "attempt-after-crash"), true);
+});
+
+test("planned shutdown drains a running work unit and refuses new admission", async () => {
+    const fixtureExt = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
+    const fixtureUrl = new URL(`./worker/command-worker-liveness.fixture${fixtureExt}`, import.meta.url);
+    poolModule.CommandWorkerPool.configureTestWorkerEntry(fixtureUrl.href);
+    poolModule.CommandWorkerPool.start();
+    const id = queueCommand("complete", 80);
+    const job = claim(id, "drain-owner", new Date(), 2_000);
+    const running = poolModule.CommandWorkerPool.run(job, { leaseMs: 2_000, heartbeatMs: 50 });
+    const stopping = poolModule.CommandWorkerPool.stop({ drain: true, drainTimeoutMs: 3_000 });
+    await assert.rejects(poolModule.CommandWorkerPool.run(job), /shutting down/i);
+    await running;
+    await stopping;
+    assert.equal(poolModule.CommandWorkerPool.isActive(), false);
+    assert.equal(poolModule.CommandWorkerPool.getSnapshot().workers.length, 0);
 });
 
 test("an unexpected clean worker exit is recovered and capacity is restored", async () => {

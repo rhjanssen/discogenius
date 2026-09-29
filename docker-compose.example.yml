@@ -4,6 +4,7 @@ services:
     # Some hosts cache `latest` unless you force a pull before redeploying.
     image: rhjanssen/discogenius:latest
     container_name: discogenius
+    stop_grace_period: 90s
     # Optional overrides file. Everything below has a built-in default, so a
     # fresh clone runs without a .env; copy .env.example to .env only to override.
     env_file:

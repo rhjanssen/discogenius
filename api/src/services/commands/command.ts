@@ -16,6 +16,8 @@
  */
 
 import { db } from '../../database.js';
+import { FileMutationJournal } from '../mediafiles/file-mutation-journal.js';
+import { hasAgedImportHandoff } from './import-admission.js';
 import {CommandModel} from "./command-model.js";
 import {CommandNames, DOWNLOAD_COMMAND_NAMES, isCommandName} from "./command-names.js";
 import {type CommandName} from "./command-queue-manager.js";
@@ -45,6 +47,12 @@ export class CommandManager {
      */
     static canStartCommand(jobType: string, payload?: CommandBodyCommon, refId?: string | null, options?: CanStartCommandOptions): { canStart: boolean; reason?: string } {
         const definition = this.getDefinition(jobType);
+        if (definition.requiresDiskAccess && FileMutationJournal.hasPending()) {
+            return { canStart: false, reason: 'Recover pending file mutations before modifying library files' };
+        }
+        if (definition.requiresDiskAccess && jobType !== CommandNames.ImportDownload && hasAgedImportHandoff()) {
+            return { canStart: false, reason: 'A completed download is waiting for disk admission' };
+        }
 
         // Dynamic exclusivity: RescanFolders with addNewArtists behaves as exclusive + type-exclusive
         const isLibraryWideScan = jobType === CommandNames.RescanFolders && (payload as any)?.addNewArtists === true;

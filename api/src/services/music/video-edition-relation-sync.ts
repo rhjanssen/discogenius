@@ -1,4 +1,5 @@
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   deriveVideoRelationsFromEdition,
   type EditionMember,
@@ -50,7 +51,7 @@ function parseIsrcs(raw: string | null): string[] {
  * Derive and store relations for every Edition of one artist that mixes audio
  * and video Tracks. Returns the number of relations written or refreshed.
  */
-export function syncVideoRelationsFromEditionMembership(artistMbid: string): number {
+export async function syncVideoRelationsFromEditionMembership(artistMbid: string): Promise<number> {
   const mbid = String(artistMbid || "").trim();
   if (!mbid) return 0;
 
@@ -120,10 +121,13 @@ export function syncVideoRelationsFromEditionMembership(artistMbid: string): num
   `);
 
   let written = 0;
-  db.transaction(() => {
-    for (const [editionId, members] of [...byEdition.entries()].sort((a, b) => a[0] - b[0])) {
-      for (const relation of deriveVideoRelationsFromEdition(members)) {
-        upsert.run({
+  for (const [editionId, members] of [...byEdition.entries()].sort((a, b) => a[0] - b[0])) {
+    // Derive evidence without holding writer admission. Persist independent
+    // relations in small transactions so imports and heartbeats can write.
+    const relations = deriveVideoRelationsFromEdition(members);
+    for (let offset = 0; offset < relations.length; offset += 10) {
+      await withSqliteWriteGate(() => db.transaction(() => {
+        for (const relation of relations.slice(offset, offset + 10)) upsert.run({
           videoRecordingId: relation.videoRecordingId,
           audioRecordingId: relation.audioRecordingId,
           source: VIDEO_RELATION_SOURCE,
@@ -134,9 +138,11 @@ export function syncVideoRelationsFromEditionMembership(artistMbid: string): num
             evidence: relation.evidence,
           }),
         });
-        written += 1;
-      }
+      })(), "videos:edition-relations-batch");
+      written += Math.min(10, relations.length - offset);
+      await yieldToEventLoop();
     }
-  })();
+    await yieldToEventLoop();
+  }
   return written;
 }

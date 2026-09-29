@@ -1,6 +1,6 @@
 {
   "name": "discogenius-api",
-  "version": "2.16.24",
+  "version": "2.17.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -14,7 +14,7 @@
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "axios": "^1.19.0",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "12.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

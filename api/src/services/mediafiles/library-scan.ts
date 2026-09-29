@@ -282,6 +282,29 @@ function usesNestedArtistFolders(): boolean {
  * 4. Backfill missing metadata files (covers, NFO, lyrics, etc.)
  */
 export class DiskScanService {
+    /** Snapshot the same managed/on-disk catalogue scope used by root scans.
+     * Command continuations persist these identities rather than rediscovering
+     * a changing library between artists. Each artist walks its own folders. */
+    static getScanArtistIds(): string[] {
+        return this.collectScanArtists().map(artist => String(artist.artistMetadataId));
+    }
+
+    private static collectScanArtists(): Array<{ artistMetadataId: number; name: string }> {
+        const artists = getManagedArtists({ includeLibraryFiles: true }).map(artist => ({
+            artistMetadataId: artist.artist_metadata_id, name: artist.name || String(artist.id),
+        }));
+        const filtering = Config.getFilteringConfig();
+        const seen = new Set(artists.map(artist => artist.artistMetadataId));
+        for (const artist of collectOnDiskCatalogArtists([
+            Config.getMusicPath(), filtering.include_videos === true ? Config.getVideoPath() : null,
+            filtering.include_spatial === true ? Config.getSpatialPath() : null,
+        ])) {
+            if (seen.has(artist.id)) continue;
+            artists.push({ artistMetadataId: artist.id, name: artist.name });
+            seen.add(artist.id);
+        }
+        return artists;
+    }
     // ==========================================================================
     // Public API — Scan(folders, filter, addNewArtists, artistIds)
     // ==========================================================================
@@ -408,14 +431,25 @@ export class DiskScanService {
     /**
      * Delete any unmapped_files records where the file no longer exists on disk.
      */
-    static pruneUnmappedFiles(): number {
+    static async pruneUnmappedFiles(): Promise<number> {
         let unmappedOrphans = 0;
-        const unmappedRows = db.prepare("SELECT id, file_path FROM UnmappedFiles").all() as Array<{ id: number; file_path: string }>;
-        for (const row of unmappedRows) {
-            if (!fs.existsSync(row.file_path)) {
-                db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(row.id);
-                unmappedOrphans++;
+        let cursor = 0;
+        const read = db.prepare("SELECT id, file_path FROM UnmappedFiles WHERE id > ? ORDER BY id LIMIT 100");
+        const remove = db.prepare("DELETE FROM UnmappedFiles WHERE id = ? AND file_path = ?");
+        while (true) {
+            const rows = read.all(cursor) as Array<{ id: number; file_path: string }>;
+            if (!rows.length) break;
+            const missing = rows.filter(row => !fs.existsSync(row.file_path));
+            for (let start = 0; start < missing.length; start += 25) {
+                const batch = missing.slice(start, start + 25);
+                unmappedOrphans += await withSqliteWriteGate(() => db.transaction(() => {
+                    let removed = 0;
+                    for (const row of batch) removed += remove.run(row.id, row.file_path).changes;
+                    return removed;
+                })(), "scan:unmapped-cleanup");
             }
+            cursor = rows[rows.length - 1].id;
+            await yieldToEventLoop();
         }
         return unmappedOrphans;
     }
@@ -468,7 +502,7 @@ export class DiskScanService {
             message: "Checking tracked files against disk",
             progress: 10,
         });
-        const phaseA = this.cleanOrphanedRecords(scanArtistId);
+        const phaseA = await this.cleanOrphanedRecords(scanArtistId);
         result.orphansRemoved = phaseA.removed;
         result.downloadFlagsReset = phaseA.flagsReset;
 
@@ -698,11 +732,7 @@ export class DiskScanService {
         onProgress?: (event: FullLibraryScanProgress) => void,
         options?: { trackUnmappedFiles?: boolean; filter?: ScanFileFilter },
     ): Promise<{ artists: number; totalOrphans: number; totalFlagsReset: number; filesIndexed: number; filesUpdated: number; unmappedOrphans: number }> {
-        const artists = getManagedArtists({ includeLibraryFiles: true })
-            .map((artist) => ({
-                artistMetadataId: artist.artist_metadata_id,
-                name: artist.name || String(artist.id),
-            }));
+        const artists = this.collectScanArtists();
         let totalOrphans = 0;
         let totalFlagsReset = 0;
         let filesIndexed = 0;
@@ -717,12 +747,6 @@ export class DiskScanService {
         const filtering = Config.getFilteringConfig();
         const videoPath = filtering.include_videos === true ? Config.getVideoPath() : null;
         const spatialPath = filtering.include_spatial === true ? Config.getSpatialPath() : null;
-        const seenArtistIds = new Set(artists.map((artist) => artist.artistMetadataId));
-        for (const extra of collectOnDiskCatalogArtists([musicPath, videoPath, spatialPath])) {
-            if (seenArtistIds.has(extra.id)) continue;
-            artists.push({ artistMetadataId: extra.id, name: extra.name });
-            seenArtistIds.add(extra.id);
-        }
 
         if (usePrebuiltRootIndex) {
             fileIndex.set(musicPath, await this.buildRootFileIndex(musicPath));
@@ -781,7 +805,7 @@ export class DiskScanService {
             progress: 68,
             message: "Cleaning stale manual import entries",
         });
-        unmappedOrphans = this.pruneUnmappedFiles();
+        unmappedOrphans = await this.pruneUnmappedFiles();
 
         if (totalOrphans > 0 || totalFlagsReset > 0 || filesIndexed > 0 || filesUpdated > 0 || unmappedOrphans > 0) {
             console.log(
@@ -801,7 +825,7 @@ export class DiskScanService {
     /**
     * Phase A: Remove track_files records whose file no longer exists on disk.
      */
-    private static cleanOrphanedRecords(artistId: string): { removed: number; flagsReset: number } {
+    private static async cleanOrphanedRecords(artistId: string): Promise<{ removed: number; flagsReset: number }> {
         const rows = db.prepare(`
       SELECT id, file_path, relative_path, library_root,
              provider_id AS media_id,
@@ -843,7 +867,10 @@ export class DiskScanService {
             if (fs.existsSync(resolvedPath)) continue;
 
             // File is gone — remove DB record
-            db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
+            const changed = await withSqliteWriteGate(() => db.prepare(`
+                DELETE FROM TrackFiles WHERE id = ? AND artist_metadata_id = ? AND file_path = ?
+            `).run(row.id, artistId, row.file_path).changes, "scan:orphaned-file");
+            if (!changed) continue;
             LibraryFilesService.emitFileDeleted({
                 libraryFileId: row.id,
                 artistId,
@@ -856,6 +883,7 @@ export class DiskScanService {
                 missing: true,
             });
             removed++;
+            if (removed % 25 === 0) await yieldToEventLoop();
 
             if (row.canonical_release_group_mbid) {
                 affectedReleaseGroupMbids.add(String(row.canonical_release_group_mbid));
