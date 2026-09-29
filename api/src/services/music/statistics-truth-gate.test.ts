@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -523,7 +524,12 @@ function directArtistProjection(fixture: Fixture) {
 
 async function assertAllTruth(label: string, fixture: Fixture, checkProjection = true): Promise<void> {
   const direct = directTruth();
-  const service = await statsModule.LibraryStatsQueryService.getSnapshot();
+  let service = await statsModule.LibraryStatsQueryService.getSnapshot();
+  const deadline = Date.now() + 5000;
+  while (!isDeepStrictEqual(service, direct) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    service = await statsModule.LibraryStatsQueryService.getSnapshot();
+  }
   assert.deepEqual(service, direct, `${label}: service snapshot differs from direct SQL truth`);
   assert.equal(
     await statsModule.LibraryStatsQueryService.getSnapshot(),
@@ -555,7 +561,7 @@ async function assertAllTruth(label: string, fixture: Fixture, checkProjection =
 test("release statistics stay equal across service, API, cache, projection, and direct SQL lifecycle truth", async () => {
   const library = libraries();
 
-  // Prime a cold zero snapshot. The metadata completion event must discard it.
+  // Prime a cold zero snapshot. Metadata completion triggers background refresh.
   const zero = await statsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(zero.artists.total, 0);
   const fixture = seedCanonicalFixture();
@@ -583,11 +589,11 @@ test("release statistics stay equal across service, API, cache, projection, and 
     progress: 100,
   } as any);
   const afterProvider = await statsModule.LibraryStatsQueryService.getSnapshot();
-  assert.notEqual(afterProvider, beforeProvider);
+  assert.equal(afterProvider, beforeProvider, "a warm response remains available during recount");
   await assertAllTruth("provider matching", fixture);
 
   // Artist monitoring and canonical Edition selection are direct route/service
-  // mutations; library.updated must make an immediate /stats refetch truthful.
+  // mutations; background statistics must converge to exact /stats truth.
   assert.equal(artistMonitoringModule.applyArtistMonitoringState(fixture.artistId, true), 1);
   new selectionModule.LibraryReleaseSelectionService(dbModule.db).selectRelease({
     releaseGroupMbid: fixture.releaseGroupMbid,

@@ -35,7 +35,7 @@ function formatReconcileSummary(prefix: string, result: ScanResult): string {
 
 /**
  * Cover.jpg / album.nfo / lyrics are disk artifacts, not catalog hydration.
- * RescanFolders repairs missing sidecars unless a test explicitly sets
+ * RescanFolders repairs covers/NFO and indexes existing lyrics unless a test sets
  * skipMetadataBackfill. The backfill is invoked in sidecar-only mode: embedded
  * covers, thumbnails, and container tags remain import/Retag responsibilities.
  */

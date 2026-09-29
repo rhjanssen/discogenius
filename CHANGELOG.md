@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.18.0] - 2026-09-29
+
+### Changed
+
+- Checkpointed maintenance releases its FIFO queue turn after each completed work unit. Waiting rename, retag and scan commands can alternate without changing their priority or manual-trigger ordering.
+- Ordinary disk reconciliation indexes existing lyric sidecars without fetching missing lyrics online while holding disk admission. Imports and explicit artist metadata refreshes retain lyric enrichment.
+- Dashboard statistics retain the last valid snapshot during mutation-triggered background recounts. Bursts of file events share one read worker instead of making each request wait for the full catalogue.
+
+### Fixed
+
+- Persist download completion and failure state under writer admission before retiring the attempt. Buffered progress can no longer leave completed imports displaying an old importing phase.
+
+### Validation
+
+- Active-schema regressions cover queue rotation after real checkpoint transitions, matching activity/execution order, statistics invalidation during a 100-event burst, local lyric indexing without provider requests, and terminal writes behind a competing writer.
+
 ## [2.17.1] - 2026-09-29
 
 ### Fixed

@@ -942,6 +942,12 @@ export class DownloadProcessor {
 
     private async completeAttempt(commandId: number, workerId?: string): Promise<{ waitJobId: number | null } | null> {
         return withSqliteWriteGate(() => {
+            // Terminal state is durable workflow data, not lossy telemetry.
+            // The final callback may have buffered behind another writer; do
+            // not retire the command and discard that buffered completion.
+            const buffered = this.progressBuffer.get(commandId);
+            const snapshot = buffered && buffered.workerId === workerId ? buffered.state : {};
+            this.writeDownloadState(commandId, { ...snapshot, state: 'completed', progress: 100 }, workerId);
             if (!CommandQueueManager.complete(commandId, workerId)) return null;
             return { waitJobId: DownloadWaitQueue.finishClaimed(commandId) };
         }, 'download:complete');
@@ -954,7 +960,9 @@ export class DownloadProcessor {
         workerId?: string,
     ): Promise<boolean> {
         return withSqliteWriteGate(() => {
-            this.persistDownloadState(commandId, state, workerId);
+            const buffered = this.progressBuffer.get(commandId);
+            const snapshot = buffered && buffered.workerId === workerId ? buffered.state : {};
+            this.writeDownloadState(commandId, { ...snapshot, ...state }, workerId);
             return CommandQueueManager.fail(commandId, error, workerId);
         }, 'download:fail');
     }

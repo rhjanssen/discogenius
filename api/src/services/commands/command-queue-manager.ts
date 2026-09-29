@@ -996,14 +996,24 @@ ${orderBy}
         return db.transaction(() => {
             if (!this.isExecutionOwner(id, workerId)) return false;
             this.updateState(id, { payloadPatch, workerId });
+            // A completed work unit releases its turn as well as its worker.
+            // Keeping the original rank lets a root scan reclaim every slice
+            // ahead of operator work. Priority and manual-trigger rank remain
+            // authoritative; this only rotates FIFO within those groups.
+            const tail = db.prepare(`
+                SELECT MAX(queue_order) AS rank FROM commands
+                WHERE status IN ('queued', 'started')
+                  AND name IN (${buildTypeInClause(NON_DOWNLOAD_COMMAND_NAMES)})
+            `).get(...NON_DOWNLOAD_COMMAND_NAMES) as { rank: number | null };
             const result = db.prepare(`
                 UPDATE commands SET status = 'queued', worker_id = NULL,
                     heartbeat_at = NULL, lease_expires_at = NULL,
                     attempt = MAX(attempt - 1, 0), blocked_reason = NULL,
                     progress_phase = 'checkpoint ready', retry_after = NULL,
+                    queue_order = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status = 'started' AND worker_id = ?
-            `).run(id, workerId);
+            `).run((tail.rank ?? 0) + QUEUE_RANK_STEP, id, workerId);
             if (result.changes !== 1) return false;
             clearCommandOverlay(id);
             clearCommandUpdateThrottle(id);

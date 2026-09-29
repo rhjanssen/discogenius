@@ -60,6 +60,9 @@ export interface MetadataFillOptions {
      * command, while scans may still repair missing sidecar files.
      */
     writeEmbeddedMediaMetadata?: boolean;
+    /** Ordinary disk reconciliation indexes existing lyric sidecars. Online
+     * lyric enrichment belongs to import or explicit artist metadata refresh. */
+    fetchMissingLyrics?: boolean;
     /** Report completed work within long sidecar passes to the command watchdog. */
     onProgress?: (message: string) => void;
 }
@@ -100,7 +103,7 @@ class LibraryMetadataBackfillService {
             writeEmbeddedMediaMetadata,
             options.onProgress,
         );
-        await this.fillTrackMetadata(metadataIdKey, metadataConfig, result, options.onProgress);
+        await this.fillTrackMetadata(metadataIdKey, metadataConfig, result, options.onProgress, options.fetchMissingLyrics !== false);
         await this.fillVideoMetadata(metadataIdKey, metadataConfig, result, writeEmbeddedMediaMetadata, options.onProgress);
 
         if (result.downloaded > 0 || result.failed > 0) {
@@ -628,6 +631,7 @@ class LibraryMetadataBackfillService {
         metadataConfig: any,
         result: MetadataFillResult,
         onProgress?: (message: string) => void,
+        fetchMissingLyrics = true,
     ) {
         if (!metadataConfig.save_lyrics) return;
 
@@ -728,6 +732,11 @@ class LibraryMetadataBackfillService {
                     canonicalTrackMbid: track.canonical_track_mbid,
                     canonicalRecordingMbid: track.canonical_recording_mbid,
                 });
+                result.skipped++;
+                continue;
+            }
+
+            if (!fetchMissingLyrics) {
                 result.skipped++;
                 continue;
             }

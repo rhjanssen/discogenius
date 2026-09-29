@@ -572,9 +572,13 @@ test('download failure and import completion wait for a contended writer while p
         await exit;
         assert.equal(CommandQueueManager.get(failedId)?.status, 'failed');
         assert.equal(CommandQueueManager.get(failedId)?.error, 'Provider unavailable');
+        assert.equal(CommandQueueManager.get(failedId)?.payload.downloadState?.state, 'failed');
         assert.equal(CommandQueueManager.get(completedId)?.status, 'completed');
+        assert.equal(CommandQueueManager.get(completedId)?.payload.downloadState?.state, 'completed');
+        assert.equal(CommandQueueManager.get(completedId)?.payload.downloadState?.progress, 100);
         processor.flushProgressBuffer();
         assert.equal(CommandQueueManager.get(completedId)?.status, 'completed', 'Late buffered progress cannot reopen a terminal attempt');
+        assert.equal(CommandQueueManager.get(completedId)?.payload.downloadState?.state, 'completed');
     } finally {
         await writer.terminate();
         forceReleaseSqliteWriteMutexOwner(Number(mutexData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]));

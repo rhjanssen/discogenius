@@ -292,3 +292,47 @@ PCM WAV discovery test holds a competing writer and verifies both persistence
 and exclusion of abandoned tag/FFmpeg files. Mutagen now modifies a private
 working copy; a real M4A test verifies successful tags independently, unchanged
 decoded audio and byte-identical preservation after a failing writer.
+
+## Live admission and telemetry follow-up
+
+The published 2.17.1 image was verified on the NAS at revision
+`8a7d391587a2d780e8b8d66fe4d4f9a1cba281a4`. The five recovered TIDAL and
+Apple handoffs completed. The live workload also exposed three separate
+boundaries that writer batching alone does not fix:
+
+- A checkpoint released the worker but retained its original FIFO rank. An
+  older root scan could immediately reclaim the disk slot ahead of waiting
+  rename and retag work. Continuations now move to the maintenance queue tail;
+  priority and trigger rank still govern admission.
+- Routine filesystem scans performed online lyric enrichment while reserving
+  the disk queue. Scans now register existing lyrics locally. Import and
+  explicit metadata refresh remain the enrichment paths. Cover and NFO repair
+  remain part of scanning; this does not claim every optional network phase is
+  bounded yet.
+- File events deleted the statistics snapshot, forcing dashboard requests to
+  await repeated catalogue recounts. Mutation invalidation now marks a valid
+  snapshot stale and refreshes it in the background. Explicit cache resets
+  still discard it.
+
+Download terminal state also shared the lossy telemetry buffer. Completing the
+command then clearing its buffer could discard its final state under writer
+contention. Completion and failure now write their buffered state directly
+under the owned terminal writer section before retiring the command. Late
+progress remains fenced out.
+
+The local 2.18.0 container replayed three 27-file retag commands together. These
+were idempotent replays of already-correct files, and all settled without missing
+files or errors. The dispatch sequence rotated through all three first work
+units before returning to their remaining files. Twenty HTTP statistics reads
+during that workload took 3–4 ms each; the initial cold recount remains a worker
+read and can take several seconds on the production-sized catalogue. The live
+cache audit measured 97 GiB. Several recovered imports retained only 250/500
+proxies with their full-resolution sidecar, while a multi-edition album still
+retained a separate album-level original. This does not establish complete
+library-wide artwork cleanup.
+
+Remaining 3.0 work includes bounded optional enrichment, finer scan work units
+for very large artists, interrupted-import journaling and library-wide artwork
+ownership verification. A clean shutdown can still interrupt an import after
+partial file work; recovery deliberately requires an explicit retry instead of
+automatically replaying mutations.

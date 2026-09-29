@@ -8,10 +8,20 @@ export class LibraryStatsQueryService {
     private static cachedSnapshot: { value: LibraryStatsContract; createdAtMs: number } | null = null;
     private static pending: Promise<LibraryStatsContract> | null = null;
     private static generation = 0;
+    private static resetGeneration = 0;
 
     static clearCache(): void {
         this.generation++;
+        this.resetGeneration++;
         this.cachedSnapshot = null;
+    }
+
+    /** Mutations make the last snapshot stale, but do not make it unusable.
+     * A scan emits hundreds of file events; dropping the snapshot on each one
+     * forces every dashboard poll to await a new whole-catalogue read. */
+    static invalidateCache(): void {
+        this.generation++;
+        if (this.cachedSnapshot) this.cachedSnapshot.createdAtMs = 0;
     }
 
     static async getSnapshot(): Promise<LibraryStatsContract> {
@@ -28,6 +38,7 @@ export class LibraryStatsQueryService {
     private static computeSnapshot(): Promise<LibraryStatsContract> {
         if (this.pending) return this.pending;
         const generation = this.generation;
+        const resetGeneration = this.resetGeneration;
         // Open a short-lived read-only connection. Large catalog counters must
         // never block HTTP or retain a WAL reader between refreshes.
         const source = import.meta.url.endsWith(".ts");
@@ -56,8 +67,11 @@ export class LibraryStatsQueryService {
                     reject(new Error(message.error || "Library statistics worker returned no result"));
                     return;
                 }
-                if (generation === this.generation) {
-                    this.cachedSnapshot = { value: message.value, createdAtMs: Date.now() };
+                if (resetGeneration === this.resetGeneration) {
+                    // Publish a usable result even during continuous writes,
+                    // but leave it stale if another mutation happened mid-read.
+                    this.cachedSnapshot = { value: message.value,
+                        createdAtMs: generation === this.generation ? Date.now() : 0 };
                 }
                 resolve(message.value);
             });
@@ -78,7 +92,7 @@ export class LibraryStatsQueryService {
 // Keep the server-side snapshot coherent with mutations performed by command
 // workers as well as direct file/config operations. Worker events are bridged
 // back onto this main-thread emitter by the worker protocol.
-const invalidateLibraryStats = () => LibraryStatsQueryService.clearCache();
+const invalidateLibraryStats = () => LibraryStatsQueryService.invalidateCache();
 appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETE, invalidateLibraryStats);
 appEvents.on(AppEvent.ARTIST_SCANNED, invalidateLibraryStats);
 appEvents.on(AppEvent.CONFIG_UPDATED, invalidateLibraryStats);

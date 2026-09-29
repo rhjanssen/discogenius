@@ -48,7 +48,8 @@ beforeEach(() => {
   libraryStatsModule.LibraryStatsQueryService.clearCache();
 });
 
-after(() => {
+after(async () => {
+  await (libraryStatsModule.LibraryStatsQueryService as unknown as { pending: Promise<unknown> | null }).pending;
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -415,7 +416,7 @@ test("disabled audio Libraries do not contribute monitoring or completion", asyn
   assert.deepEqual(snapshot.files, { total: 1, totalSizeBytes: 100 });
 });
 
-test("snapshot caching is stable and mutation events invalidate it", async () => {
+test("mutation bursts keep a warm statistics response while one worker refreshes it", async () => {
   const initial = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.equal(initial.artists.total, 0);
 
@@ -433,6 +434,19 @@ test("snapshot caching is stable and mutation events invalidate it", async () =>
     trigger: 0,
     priority: 0,
   });
+  const duringRefresh = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  assert.equal(duringRefresh, initial, "mutations do not block HTTP on a catalogue recount");
+  const service = libraryStatsModule.LibraryStatsQueryService as unknown as {
+    pending: Promise<unknown> | null;
+  };
+  const pending = service.pending;
+  assert.ok(pending, "invalidation starts a background refresh");
+  for (let index = 0; index < 100; index++) {
+    appEventsModule.appEvents.emit(appEventsModule.AppEvent.FILE_ADDED, {});
+    assert.equal(await libraryStatsModule.LibraryStatsQueryService.getSnapshot(), initial);
+    assert.equal(service.pending, pending, "a file-event burst shares one read worker");
+  }
+  await pending;
   const refreshed = await libraryStatsModule.LibraryStatsQueryService.getSnapshot();
   assert.notEqual(refreshed, initial);
   assert.equal(refreshed.artists.total, 1);

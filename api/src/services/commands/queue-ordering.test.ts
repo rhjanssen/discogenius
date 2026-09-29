@@ -1334,3 +1334,27 @@ test("download queue history sorts earlier ISO-formatted failures below later sp
     assert.equal(history.items[1]?.title, "Morning Failed Album");
 });
 
+test("a checkpoint releases its queue turn to waiting maintenance without changing priority", async () => {
+    const { CommandQueueManager: queue, CommandNames: names } = queueModule;
+    const scan = queue.push(names.RescanFolders, {}, 'roots');
+    const rename = queue.push(names.RenameArtist, {}, 'library-rename');
+    const retag = queue.push(names.RetagArtist, {}, 'library-retag');
+    const stamp = dbModule.db.prepare('UPDATE commands SET created_at = ?, updated_at = ? WHERE id = ?');
+    stamp.run('2026-01-01 00:00:00', '2026-01-01 00:00:00', scan);
+    stamp.run('2026-01-01T00:01:00Z', '2026-01-01T00:01:00Z', rename);
+    stamp.run('2026-01-01 00:02:00', '2026-01-01 00:02:00', retag);
+    const types = [names.RescanFolders, names.RenameArtist, names.RetagArtist];
+    assert.deepEqual(queue.getTopPendingJobsByTypes(types).map(job => job.id), [scan, rename, retag]);
+    assert.ok(queue.claimForExecution(scan, 'scan-owner', 60_000));
+    assert.equal(queue.continueOwnedCommand(scan, 'scan-owner', {}), true);
+    const pending = queue.getTopPendingJobsByTypes(types);
+    assert.deepEqual(pending.map(job => job.id), [rename, retag, scan]);
+    const { compareJobsByExecutionOrder } = await import('./command-ordering.js');
+    assert.deepEqual([...pending].reverse().sort(compareJobsByExecutionOrder).map(job => job.id), [rename, retag, scan]);
+    assert.deepEqual(queue.listLive(20).map(job => job.id), [rename, retag, scan]);
+    assert.ok(queue.claimForExecution(rename, 'rename-owner', 60_000));
+    assert.equal(queue.continueOwnedCommand(rename, 'rename-owner', {}), true);
+    assert.equal(queue.getTopPendingJobsByTypes(types)[0].id, retag);
+    assert.equal(queue.get(scan)?.priority, queue.get(rename)?.priority);
+});
+

@@ -137,6 +137,7 @@ test("disk scan metadata repair never rewrites embedded media metadata", async (
     }
 
     assert.equal(receivedOptions?.writeEmbeddedMediaMetadata, false);
+    assert.equal(receivedOptions?.fetchMissingLyrics, false);
     receivedOptions?.onProgress?.("checking lyrics (1/2)");
     assert.deepEqual(progress, ["checking lyrics (1/2)"]);
 });
@@ -597,6 +598,36 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
     assert.equal(fs.readFileSync(lyricPath, "utf8"), "plain lyrics without timestamps");
 
     assert.equal(path.relative(musicRoot, artistPicPath).startsWith("The Example Artist"), true);
+});
+
+test("ordinary disk repair indexes existing lyrics without waiting for a missing provider lyric", async () => {
+    seedCanonicalLibraryFiles();
+    configModule.updateConfig("metadata", {
+        save_album_cover: false, save_artist_picture: false, save_video_thumbnail: false,
+        save_lyrics: true, save_nfo: false,
+    });
+    const provider = providersModule.streamingProviderManager.getStreamingProvider('tidal');
+    const originalLyrics = provider.getLyrics;
+    const originalCapability = provider.capabilities.lyrics;
+    let requests = 0;
+    provider.capabilities.lyrics = true;
+    provider.getLyrics = async () => { requests++; return null; };
+    try {
+        await diskScanModule.DiskScanService.fillMissingMetadataFiles('artist-mbid-100');
+        assert.equal(requests, 0, 'filesystem reconciliation must not perform optional lyric lookups');
+        const track = dbModule.db.prepare("SELECT id, file_path FROM TrackFiles WHERE file_type = 'track' LIMIT 1")
+            .get() as { id: number; file_path: string };
+        const sidecar = track.file_path.replace(/\.flac$/i, '.lrc');
+        fs.writeFileSync(sidecar, '[00:01.00]Existing local lyrics');
+        await diskScanModule.DiskScanService.fillMissingMetadataFiles('artist-mbid-100');
+        assert.equal(requests, 0);
+        const row = dbModule.db.prepare('SELECT track_file_id FROM LyricFiles WHERE file_path = ?')
+            .get(sidecar) as { track_file_id: number } | undefined;
+        assert.equal(row?.track_file_id, track.id);
+    } finally {
+        provider.getLyrics = originalLyrics;
+        provider.capabilities.lyrics = originalCapability;
+    }
 });
 
 test("canonical albums without any provider match still regenerate album.nfo", async () => {

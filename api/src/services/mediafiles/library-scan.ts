@@ -1616,6 +1616,7 @@ export class DiskScanService {
     ): Promise<MetadataFillResult> {
         return libraryMetadataBackfillService.fillMissingMetadataFiles(artistId, {
             writeEmbeddedMediaMetadata: false,
+            fetchMissingLyrics: false,
             onProgress,
         });
     }
@@ -1623,6 +1624,7 @@ export class DiskScanService {
     static async fillMissingMetadataFilesForLibrary(): Promise<MetadataFillResult> {
         return libraryMetadataBackfillService.fillMissingMetadataFilesForLibrary({
             writeEmbeddedMediaMetadata: false,
+            fetchMissingLyrics: false,
         });
     }
 
