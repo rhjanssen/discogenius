@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.19.1] - 2026-10-03
+
+### Fixed
+
+- Attach the exact canonical edition and track before manual-import finalization writes tags. Retain unmapped work until tagging succeeds, so a failed write can be retried without losing the operation or reporting a false success.
+
+### Validation
+
+- Active-schema regression checks canonical binding before a simulated tag failure and a retry using the same file identity. Local testing follows a real TIDAL acquisition through import, native tags and decoded-audio verification.
+
 ## [2.19.0] - 2026-10-02
 
 ### Changed

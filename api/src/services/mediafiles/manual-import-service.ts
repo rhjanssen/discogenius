@@ -1,3 +1,4 @@
+import { withSqliteWriteGate } from "../../database.js";
 import fs from "fs";
 import path from "path";
 import {
@@ -59,7 +60,7 @@ export function resolveManualImportArtistIdentity(artistKey: string): ManualImpo
 export class ManualImportService {
     async bulkImportUnmapped(
         items: { id: number, providerId: string }[],
-        options?: { libraryRootPath?: string },
+        options?: { libraryRootPath?: string; onImportedFiles?: (files: Record<string, number>) => void | Promise<void> },
     ): Promise<ManualImportSummary> {
         const { db } = await import("../../database.js");
         const { streamingProviderManager } = await import("../providers/index.js");
@@ -579,7 +580,7 @@ export class ManualImportService {
             }
         }
 
-        db.transaction(() => {
+        await withSqliteWriteGate(() => db.transaction(() => {
             for (const c of collected) {
                 // Ensure catalog artist shell exists (unmonitored — no LibraryArtists row).
                 if (c.artistId && c.artistInfo) {
@@ -838,10 +839,6 @@ export class ManualImportService {
                     });
                 }
 
-                // Monitoring is canonical now (slot for albums, Recordings for
-                // videos — both set above); just remove from unmapped.
-                db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(c.id);
-
                 // Track finalization targets (outside transaction, post-commit).
                 // Fail closed: the TrackFiles row for this path was just written in
                 // this transaction, so not finding it means the write and read paths
@@ -876,18 +873,25 @@ export class ManualImportService {
                     providerBacked: !c.canonicalRecordingId,
                 });
             }
-        })();
+        })(), "manual-import:rows");
+
+        // Canonical identity must be attached to the exact operation rows before
+        // finalization and tags read them. Keep UnmappedFiles until those phases
+        // succeed so a failed write remains explicitly retryable.
+        await options?.onImportedFiles?.(importedFileIds);
 
         // ── Phase 3: Post-commit cache refresh + finalization ────────────
         for (const su of statusUpdates) {
             try {
-                if (su.albumId) {
-                    updateAlbumDownloadStatus(su.albumId);
-                } else if (su.providerBacked) {
-                    // Scope to the active provider — an unscoped provider_id can
-                    // collide with another provider's resource.
-                    updateArtistDownloadStatusFromMedia(su.providerId, provider.id);
-                }
+                await withSqliteWriteGate(() => {
+                    if (su.albumId) {
+                        updateAlbumDownloadStatus(su.albumId);
+                    } else if (su.providerBacked) {
+                        // Scope to the active provider — an unscoped provider_id can
+                        // collide with another provider's resource.
+                        updateArtistDownloadStatusFromMedia(su.providerId, provider.id);
+                    }
+                }, "manual-import:status");
             } catch { /* best-effort */ }
         }
 
@@ -964,6 +968,11 @@ export class ManualImportService {
                 );
             }
         }
+
+        await withSqliteWriteGate(() => db.transaction(() => {
+            const remove = db.prepare("DELETE FROM UnmappedFiles WHERE id = ?");
+            for (const id of reportedIds) remove.run(Number(id));
+        })(), "manual-import:completed");
 
         return {
             requested: items.length,

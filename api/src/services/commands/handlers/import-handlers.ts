@@ -78,7 +78,7 @@ export const handleImportUnmappedFiles: CommandHandler<"ImportUnmappedFiles"> = 
         description: `Importing ${importCount} mapped file${importCount === 1 ? "" : "s"}`,
     });
 
-    const legacyImporter = (legacyItems: Array<{ id: number; providerId: string }>, options?: { libraryRootPath?: string }) =>
+    const legacyImporter = (legacyItems: Array<{ id: number; providerId: string }>, options?: { libraryRootPath?: string; onImportedFiles?: (files: Record<string, number>) => void | Promise<void> }) =>
         new ManualImportService().bulkImportUnmapped(legacyItems, options);
     const summary = canonical
         ? await new CanonicalManualImportService(

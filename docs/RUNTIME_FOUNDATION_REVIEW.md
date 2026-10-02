@@ -409,3 +409,26 @@ for very large artists, interrupted-import journaling and library-wide artwork
 ownership verification. A clean shutdown can still interrupt an import after
 partial file work; recovery deliberately requires an explicit retry instead of
 automatically replaying mutations.
+
+
+## Manual import recovery found during release validation
+
+A real Bakermat TIDAL acquisition took nine seconds. A local canonical import
+then failed on filesystem permissions after writing a TrackFiles row and deleting
+its UnmappedFiles work. Retry skipped the consumed mapping and reported completion
+without the canonical edition or MusicBrainz tags. The audio still decoded, but
+the operation had not completed.
+
+Canonical import now binds the exact operation file IDs before finalization and
+tag writing. Unmapped work is consumed after those phases succeed. Database row
+creation, canonical binding, status updates and completion use writer admission;
+provider reads and native media work remain outside those sections. This follows
+Lidarr's separation of a resolved LocalTrack/TrackFile from tagging and import
+results, as shown in `.ref_lidarr/src/NzbDrone.Core/MediaFiles/TrackImport/ImportApprovedTracks.cs`.
+
+The revised container reproduced the permission failure with the canonical
+edition already attached and unmapped work retained. Retrying the same command
+kept TrackFiles ID 33810, moved the file to the canonical album directory, wrote
+MusicBrainz album tags and preserved decoded audio exactly. The mutation journal
+was empty after completion. Publication of the earlier 2.19.0 candidate was
+cancelled; it was not deployed to the NAS.

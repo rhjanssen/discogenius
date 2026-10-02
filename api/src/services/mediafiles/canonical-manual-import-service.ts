@@ -1,3 +1,4 @@
+import { withSqliteWriteGate } from "../../database.js";
 import type Database from "better-sqlite3";
 import type { ManualImportSummary } from "./manual-import-service.js";
 
@@ -41,7 +42,7 @@ export type LegacyManualImportResult = ManualImportSummary & {
 
 export type LegacyManualImporter = (
   items: Array<{ id: number; providerId: string }>,
-  options?: { libraryRootPath?: string },
+  options?: { libraryRootPath?: string; onImportedFiles?: (files: Record<string, number>) => void | Promise<void> },
 ) => Promise<LegacyManualImportResult>;
 
 /**
@@ -88,8 +89,9 @@ export class CanonicalManualImportService {
     if (!library) throw new Error(`Library ${request.libraryId} is unavailable`);
 
     const release = this.db.prepare(`
-      SELECT id, release_group_id FROM AlbumEditions WHERE id = ?
-    `).get(request.editionId) as { id: number; release_group_id: number } | undefined;
+      SELECT edition.id, edition.mbid, edition.release_group_id, album.mbid AS group_mbid
+      FROM AlbumEditions edition JOIN Albums album ON album.id = edition.release_group_id WHERE edition.id = ?
+    `).get(request.editionId) as { id: number; mbid: string; release_group_id: number; group_mbid: string } | undefined;
     if (!release) throw new Error(`Canonical release ${request.editionId} does not exist`);
 
     const unmappedIds = new Set<number>();
@@ -164,12 +166,133 @@ export class CanonicalManualImportService {
       };
     }
 
+    const bindImportedFiles = (files: Record<string, number>): void => {
+      const fileIds = new Map(Object.entries(files));
+      const submitted = new Set(pending.map(mapping => String(mapping.unmappedFileId)));
+      if ([...fileIds].some(([key, id]) => !submitted.has(key) || !Number.isSafeInteger(id) || id <= 0)
+        || new Set(fileIds.values()).size !== fileIds.size) {
+        throw new Error("Importer reported invalid or ambiguous operation file identities");
+      }
+      const loadReportedFile = this.db.prepare(`
+        SELECT id, library_id, file_path FROM TrackFiles WHERE id = ?
+      `);
+      const updateImportedFile = this.db.prepare(`
+        UPDATE TrackFiles
+        SET
+          library_id = @libraryId,
+          album_edition_id = @editionId,
+          release_group_id = @groupId,
+          canonical_release_mbid = @releaseMbid,
+          canonical_release_group_mbid = @groupMbid,
+          canonical_track_mbid = @trackMbid,
+          canonical_recording_mbid = @recordingMbid,
+          track_id = @trackId,
+          recording_id = @recordingId,
+          file_class = 'audio',
+          provider_item_id = NULL,
+          provider = NULL,
+          provider_entity_type = NULL,
+          provider_id = NULL,
+          source_audio_variant_id = NULL,
+          source_quality = COALESCE(source_quality, quality),
+          imported_quality = COALESCE(imported_quality, quality),
+          verified_at = CURRENT_TIMESTAMP
+        WHERE id = @fileId
+      `);
+
+      this.db.transaction(() => {
+        // Importing establishes a CUSTOM selected release and monitors its group.
+        // It deliberately does NOT lock: lock is a separate user intent
+        // ("automatic curation may not change this outcome"), and silently
+        // entrenching it is the selectRelease bug this cutover is removing. A row
+        // that is already locked keeps its lock.
+        this.db.prepare(`
+          INSERT INTO LibraryAlbums (
+            library_id, release_group_id, selection_mode, locked,
+            reason, curation_version, updated_at
+          ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
+          ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+            selection_mode = 'manual',
+            reason = excluded.reason,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(request.libraryId, release.release_group_id);
+        // Importing files for an Edition monitors it. Whether it becomes the
+        // Album's representative is left to whatever already holds that role:
+        // an import is evidence about one Edition, not a verdict on the Album.
+        this.db.prepare(`
+          INSERT INTO LibraryEditions (
+            library_id, edition_id, selection_mode, representative, reason,
+            curation_version, selected_at, updated_at
+          ) VALUES (
+            ?, ?, 'manual',
+            NOT EXISTS (
+              SELECT 1 FROM LibraryEditions existing
+              JOIN AlbumEditions existing_edition ON existing_edition.id = existing.edition_id
+              WHERE existing.library_id = ?
+                AND existing_edition.release_group_id = ?
+                AND existing.representative = 1
+            ),
+            'canonical_manual_import', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT(library_id, edition_id) DO UPDATE SET
+            selection_mode = 'manual',
+            reason = excluded.reason,
+            selected_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          request.libraryId,
+          request.editionId,
+          request.libraryId,
+          release.release_group_id,
+        );
+        for (const mapping of pending) {
+          const track = trackById.get(mapping.trackId)!;
+          const exactFileId = fileIds.get(String(mapping.unmappedFileId));
+          if (exactFileId == null) {
+            // Nothing was imported for this mapping (duplicate/skipped) — the
+            // importer's own summary already reports that. Never guess a row.
+            continue;
+          }
+          const reported = loadReportedFile.get(exactFileId) as
+            { id: number; library_id: number | null; file_path: string } | undefined;
+          if (!reported) {
+            throw new Error(
+              `Importer reported TrackFiles ${exactFileId} for unmapped file ${mapping.unmappedFileId}, but no such row exists`,
+            );
+          }
+          if (reported.library_id != null && reported.library_id !== request.libraryId) {
+            throw new Error(
+              `Importer reported TrackFiles ${exactFileId} in library ${reported.library_id}, expected ${request.libraryId}`,
+            );
+          }
+          if (!isUnderLibraryRoot(reported.file_path, library.root_path)) {
+            throw new Error(
+              `Imported file ${reported.file_path} is outside library root ${library.root_path}`,
+            );
+          }
+          updateImportedFile.run({
+            fileId: reported.id,
+            libraryId: request.libraryId,
+            editionId: request.editionId,
+            groupId: release.release_group_id,
+            releaseMbid: release.mbid,
+            groupMbid: release.group_mbid,
+            trackMbid: track.mbid,
+            recordingMbid: track.recording_mbid,
+            trackId: track.id,
+            recordingId: track.recording_id,
+          });
+        }
+      })();
+
+    };
+
     const summary = await this.importFiles(
       pending.map((mapping) => ({
         id: mapping.unmappedFileId,
         providerId: trackById.get(mapping.trackId)!.mbid,
       })),
-      { libraryRootPath: library.root_path },
+      { libraryRootPath: library.root_path, onImportedFiles: files => withSqliteWriteGate(() => bindImportedFiles(files), "manual-import:canonical-bind") },
     );
 
     // Exact per-mapping operation identity from the importer, keyed by the
@@ -211,107 +334,9 @@ export class CanonicalManualImportService {
     // closed otherwise. There is no mbid-based rediscovery fallback: adopting an
     // arbitrary legacy row (including one with a NULL library_id) would silently
     // re-point another library's file.
-    const loadReportedFile = this.db.prepare(`
-      SELECT id, library_id, file_path FROM TrackFiles WHERE id = ?
-    `);
-    const updateImportedFile = this.db.prepare(`
-      UPDATE TrackFiles
-      SET
-        library_id = @libraryId,
-        album_edition_id = @editionId,
-        track_id = @trackId,
-        recording_id = @recordingId,
-        file_class = 'audio',
-        provider_item_id = NULL,
-        provider = NULL,
-        provider_entity_type = NULL,
-        provider_id = NULL,
-        source_audio_variant_id = NULL,
-        source_quality = COALESCE(source_quality, quality),
-        imported_quality = COALESCE(imported_quality, quality),
-        verified_at = CURRENT_TIMESTAMP
-      WHERE id = @fileId
-    `);
-
-    this.db.transaction(() => {
-      // Importing establishes a CUSTOM selected release and monitors its group.
-      // It deliberately does NOT lock: lock is a separate user intent
-      // ("automatic curation may not change this outcome"), and silently
-      // entrenching it is the selectRelease bug this cutover is removing. A row
-      // that is already locked keeps its lock.
-      this.db.prepare(`
-        INSERT INTO LibraryAlbums (
-          library_id, release_group_id, selection_mode, locked,
-          reason, curation_version, updated_at
-        ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
-        ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-          selection_mode = 'manual',
-          reason = excluded.reason,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(request.libraryId, release.release_group_id);
-      // Importing files for an Edition monitors it. Whether it becomes the
-      // Album's representative is left to whatever already holds that role:
-      // an import is evidence about one Edition, not a verdict on the Album.
-      this.db.prepare(`
-        INSERT INTO LibraryEditions (
-          library_id, edition_id, selection_mode, representative, reason,
-          curation_version, selected_at, updated_at
-        ) VALUES (
-          ?, ?, 'manual',
-          NOT EXISTS (
-            SELECT 1 FROM LibraryEditions existing
-            JOIN AlbumEditions existing_edition ON existing_edition.id = existing.edition_id
-            WHERE existing.library_id = ?
-              AND existing_edition.release_group_id = ?
-              AND existing.representative = 1
-          ),
-          'canonical_manual_import', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        )
-        ON CONFLICT(library_id, edition_id) DO UPDATE SET
-          selection_mode = 'manual',
-          reason = excluded.reason,
-          selected_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(
-        request.libraryId,
-        request.editionId,
-        request.libraryId,
-        release.release_group_id,
-      );
-      for (const mapping of pending) {
-        const track = trackById.get(mapping.trackId)!;
-        const exactFileId = importedFileIdByUnmappedId.get(mapping.unmappedFileId);
-        if (exactFileId == null) {
-          // Nothing was imported for this mapping (duplicate/skipped) — the
-          // importer's own summary already reports that. Never guess a row.
-          continue;
-        }
-        const reported = loadReportedFile.get(exactFileId) as
-          { id: number; library_id: number | null; file_path: string } | undefined;
-        if (!reported) {
-          throw new Error(
-            `Importer reported TrackFiles ${exactFileId} for unmapped file ${mapping.unmappedFileId}, but no such row exists`,
-          );
-        }
-        if (reported.library_id != null && reported.library_id !== request.libraryId) {
-          throw new Error(
-            `Importer reported TrackFiles ${exactFileId} in library ${reported.library_id}, expected ${request.libraryId}`,
-          );
-        }
-        if (!isUnderLibraryRoot(reported.file_path, library.root_path)) {
-          throw new Error(
-            `Imported file ${reported.file_path} is outside library root ${library.root_path}`,
-          );
-        }
-        updateImportedFile.run({
-          fileId: reported.id,
-          libraryId: request.libraryId,
-          editionId: request.editionId,
-          trackId: track.id,
-          recordingId: track.recording_id,
-        });
-      }
-    })();
+    await withSqliteWriteGate(() => bindImportedFiles(
+      Object.fromEntries([...importedFileIdByUnmappedId].map(([key, id]) => [String(key), id])),
+    ), "manual-import:canonical-final");
 
     return summary;
   }

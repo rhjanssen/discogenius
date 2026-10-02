@@ -579,3 +579,28 @@ test("a retry finishes the mappings an interrupted attempt left behind", async (
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles", "TrackFiles"]);
   }
 });
+
+
+test("canonical operation identities are bound before tag finalization and survive a failed writer", async () => {
+  fixture();
+  let attempts = 0;
+  const service = new CanonicalManualImportService(db, async (_items, options) => {
+    attempts++;
+    db.prepare(`INSERT INTO TrackFiles (id, artist_metadata_id, file_type, file_path, relative_path, library_root, filename, extension)
+      VALUES (123, 1, 'track', '/library/stereo/recovery.flac', 'recovery.flac', '/library/stereo', 'recovery.flac', 'flac')
+      ON CONFLICT(id) DO NOTHING`).run();
+    await options!.onImportedFiles!({ 1: 123 });
+    assert.deepEqual(db.prepare(`SELECT track_id, album_edition_id, canonical_release_mbid, canonical_track_mbid
+      FROM TrackFiles WHERE id=123`).get(), {
+      track_id: 1000, album_edition_id: 10, canonical_release_mbid: 'release-a', canonical_track_mbid: 'track-a',
+    });
+    if (attempts === 1) throw new Error("simulated tag writer failure");
+    db.prepare('DELETE FROM UnmappedFiles WHERE id=1').run();
+    return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 123 } };
+  });
+  const request = { libraryId: 1, editionId: 10, mappings: [{ unmappedFileId: 1, trackId: 1000 }] };
+  await assert.rejects(service.import(request), /tag writer failure/);
+  assert.ok(db.prepare('SELECT id FROM UnmappedFiles WHERE id=1').get());
+  assert.equal((await service.import(request)).imported, 1);
+  assert.equal((db.prepare('SELECT COUNT(*) count FROM TrackFiles WHERE id=123').get() as { count: number }).count, 1);
+});
