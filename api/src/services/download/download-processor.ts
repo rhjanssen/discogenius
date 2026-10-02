@@ -1,5 +1,6 @@
 import { markAcquisitionPlanningStale } from "../music/acquisition-planning-control.js";
 import { ProviderUnavailableError } from "./provider-unavailable-error.js";
+import { providerRequestWorkerData } from "../providers/provider-request-state.js";
 import { superviseDownloadProcesses } from "./download-child-process.js";
 import { validateExecutionManifest } from './execution-manifest.js';
 import { applyTrackProgress } from '../../contracts/track-progress.js';
@@ -2983,6 +2984,8 @@ function resolveDownloadWorkerSpawn(): { entry: string; workerData: Record<strin
     const workerData: Record<string, unknown> = {
         [DOWNLOAD_WORKER_MARKER]: true,
         ...sqliteWriteMutexWorkerData(),
+        ...mediaFileLockWorkerData(),
+        ...providerRequestWorkerData(),
     };
 
     if (isCompiled) {
@@ -3184,6 +3187,7 @@ export class DownloadProcessorWorkerProxy {
 
         const { entry, workerData } = resolveDownloadWorkerSpawn();
         const worker = new Worker(entry, { workerData });
+        const mediaFileOwner = Number(workerData[MEDIA_FILE_LOCK_OWNER_KEY]) || 0;
         superviseDownloadProcesses(worker);
         this.workerSqliteWriteMutexOwnerToken = Number(
             workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY],
@@ -3201,6 +3205,7 @@ export class DownloadProcessorWorkerProxy {
             console.error('[DOWNLOAD-PROCESSOR] Worker error:', error);
         });
         worker.on('exit', (code) => {
+            releaseExitedMediaFileOwner(mediaFileOwner);
             if (this.worker !== worker) return;
             forceReleaseSqliteWriteMutexOwner(this.workerSqliteWriteMutexOwnerToken);
             this.workerSqliteWriteMutexOwnerToken = 0;
@@ -3394,3 +3399,4 @@ export const downloadProcessor = isMainThread
     : isDownloadWorkerThread
         ? new DownloadProcessor()
         : new DownloadProcessorCommandWorkerStub();
+import { mediaFileLockWorkerData, MEDIA_FILE_LOCK_OWNER_KEY, releaseExitedMediaFileOwner } from "../mediafiles/media-file-lock.js";

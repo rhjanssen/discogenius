@@ -76,6 +76,79 @@ version and verifies the actual embedded engine, rather than assuming a package
 version proves what production runs.
 [Upstream release](https://github.com/WiseLibs/better-sqlite3/releases/tag/v12.8.0).
 
+## October 2 follow-up on 2.18.0
+
+The NAS was verified running revision `78ca1d51` and API version 2.18.0 after
+the user's manual update. Download admission remained paused. Rename 14723
+stopped when a lyric's linked TrackFiles identity changed. Retag 14724 reached
+all 34,919 planned files, with 33,797 tagged, 1,038 skipped, 16 missing and 73
+reported errors. It was not a wholly stalled retag.
+
+The longest writer hold was 64,056 ms under `housekeeping:stale-assets`.
+The long hold was application admission, not evidence of SQLite corruption.
+Housekeeping also removed audio rows without removing their physical files,
+allowing the next scan to mint new IDs and rebind sidecars. This defeated the
+identity guarantees of persisted file plans. Acquisition/import owns physical
+replacement; housekeeping now preserves distinct physical audio paths.
+
+Stale-sidecar stat calls now run asynchronously outside writer admission.
+Only definite missing-path errors qualify for deletion. A short commit compares
+the captured ID and path facts so a concurrent rename or scan repair survives.
+Directory checks use expression indexes and bounded prefix ranges. Sidecar
+deduplication still performs synchronous filesystem work under a writer gate,
+but each artist releases that gate before the next artist. Further splitting
+requires measuring the largest artist, not assuming this boundary is sufficient.
+
+Artist refresh can write media without owning the maintenance disk slot. Shared
+file reservations now cover native writes, compatibility rewrites and rename
+source/destination paths across the command and download workers. Retag keeps
+its reservation through read/write/verification and uses one desired metadata
+snapshot. A worker's reservation is reclaimed only after its physical exit.
+These reservations do not replace durable intent or the mutation journal.
+
+Of the retag errors, 65 were embedded-cover failures. Two copied source covers
+were 18.5 and 27.6 MB, above FLAC's 24-bit metadata-block size limit. Embedded
+copies retain their 4,000 by 4,000 dimensions and use JPEG encoding below that
+limit; the library sidecar remains byte-identical. Five errors were track-field
+verification notices and three were native writes. All ten copied problem files
+accepted native tag/cover writes locally without changing decoded audio. Live
+retries are still needed to validate the remaining context-dependent failures.
+
+Apple Music repeatedly returned HTTP 429 during collaboration searches.
+Lidarr's `TooManyRequestsException` parses seconds or HTTP-date Retry-After and
+its indexer records a cooldown. Discogenius now follows that behavior with a
+shared worker cooldown and ends the throttled collaboration search pass.
+It does not interpret throttling as unavailable media or silently claim that
+provider authentication and acquisition are healthy.
+
+A read-only container audit decoded 123 live audio files, including problem
+tracks and samples from successful retag work. All decoded successfully. Of
+the 98 present in the September 29 snapshot, all decoded audio hashes matched.
+The other 25 had no baseline in that snapshot. No whole-library integrity claim
+or complete Plex presentation claim follows from this sample.
+
+Linux validation wrote tags and embedded artwork on ten copied problem files.
+Each retained identical decoded audio and original sidecar bytes. On the
+production database copy, 27-file strip and retag commands completed with no
+errors in four seconds while sharing checkpointed admission. Mobile portrait
+and landscape selection controls remain accessible through the overflow menu.
+
+Manual API testing also found that an empty file selection fell through to
+the default all-library query. Both retag routes and command execution now
+reject empty or malformed selections. An all-files query requires an explicit
+artist, album or edition scope and `applyAll`. This protects persisted commands
+as well as HTTP callers.
+
+The stopped Bob Marley rename provided a second authority mismatch: its stored
+edition differed from the curated sibling used by rename's identity resolver.
+Its adjacent audio still carried tags for a third, older album context. Rename
+now requests stored-file edition context, retaining its recorded canonical
+edition regardless of monitoring selection. Acquisition retains the deliberate
+curated-destination behavior before import. Rebinding a stored file remains an
+explicit reconciliation operation that changes its file identity before a new
+rename plan. Cached and uncached rename tests cover the same unmonitored sibling
+alongside acquisition remapping tests.
+
 ## Changes and validation still required
 
 Implemented locally:

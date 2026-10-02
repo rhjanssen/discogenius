@@ -5,6 +5,7 @@ import { parseScanFileFilter } from "../../mediafiles/scan-file-filter.js";
 import { MoveArtistService } from "../../mediafiles/move-artist-service.js";
 import { RenameTrackFileService } from "../../mediafiles/rename-track-file-service.js";
 import { AudioTagService } from "../../mediafiles/audio-tag-service.js";
+import { parseFileSelectionIds } from "../../mediafiles/file-selection.js";
 import { VideoTagService } from "../../mediafiles/video-tag-service.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { appEvents, AppEvent } from "../app-events.js";
@@ -200,13 +201,19 @@ export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ct
 };
 
 export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx) => {
+    const ids = parseFileSelectionIds(job.payload.ids);
+    if (!ids && (job.payload.applyAll !== true || ![
+        job.payload.artistId, job.payload.albumId, job.payload.editionId, job.payload.releaseMbid, job.payload.libraryRoot,
+    ].some(value => value != null && String(value).trim()))) {
+        throw new Error("RenameFiles requires file identifiers or an explicit artist/album/edition/root scope");
+    }
     ctx.updateCommandDescription(job, {
         progress: Math.max(5, job.progress),
         description: 'Rename Files - applying rename plan',
     });
-    const explicitIds = Array.isArray(job.payload.ids) && job.payload.ids.length > 0;
+    const explicitIds = Boolean(ids);
     const result = await runRenameWorkUnit(job, ctx, () => explicitIds
-        ? job.payload.ids!
+        ? ids!
         : RenameTrackFileService.getRenameWorkIds({
             artistId: job.payload.artistId,
             albumId: job.payload.albumId,
@@ -260,6 +267,12 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
 };
 
 export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) => {
+    const ids = parseFileSelectionIds(job.payload.ids);
+    if (!ids && (job.payload.applyAll !== true || ![
+        job.payload.artistId, job.payload.albumId, job.payload.editionId, job.payload.releaseMbid,
+    ].some(value => value != null && String(value).trim()))) {
+        throw new Error("RetagFiles requires file identifiers or an explicit artist/album/edition scope");
+    }
     const affectedArtists = AudioTagService.getAffectedArtistIds(job.payload);
     if (job.payload.stripOnly === true) {
         ctx.updateCommandDescription(job, {
@@ -267,8 +280,8 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             description: 'Strip Tags - removing embedded metadata',
         });
         const result = await runRetagWorkUnit(job, ctx, () =>
-            Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-                ? job.payload.ids
+            ids
+                ? ids
                 : AudioTagService.getTrackFileIds({
                     artistId: job.payload.artistId,
                     albumId: job.payload.albumId,
@@ -289,8 +302,8 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
         description: 'Retag Files - applying media tag plan',
     });
     const result = await runRetagWorkUnit(job, ctx, () =>
-        Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-            ? job.payload.ids
+        ids
+            ? ids
             : AudioTagService.getTrackFileIds({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,

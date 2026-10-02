@@ -20,7 +20,7 @@ import { FileMutationJournal } from "../mediafiles/file-mutation-journal.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
-const POLL_INTERVAL = readIntEnv('DISCOGENIUS_SCHEDULER_POLL_MS', 2000, 1); // 2 seconds default
+const POLL_INTERVAL = readIntEnv('DISCOGENIUS_SCHEDULER_POLL_MS', 250, 1);
 const BLOCKED_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_SCHEDULER_BLOCKED_LOG_THROTTLE_MS', 30_000, 0);
 // Five minutes tolerates a long synchronous SQLite/fs call that temporarily
 // prevents the worker's timer from firing, while the 30s heartbeat normally

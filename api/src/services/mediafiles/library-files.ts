@@ -266,6 +266,7 @@ function getCanonicalIdentityForLibraryFile(
   if (cached) return cached;
 
   const resolved = resolveLibraryFileIdentity({
+    editionContext: "stored-file",
     artistId: row.artist_metadata_id,
     albumId: row.album_id,
     mediaId: row.media_id,
@@ -744,6 +745,7 @@ export function preloadExpectedPathIdentities(rows: LibraryFileRow[], cache: Exp
     }
   }
   const resolved = resolveLibraryFileIdentities(unresolvedRows.map((row) => ({
+    editionContext: "stored-file",
     artistId: row.artist_metadata_id,
     albumId: row.album_id,
     mediaId: row.media_id,
@@ -2941,7 +2943,7 @@ export class LibraryFilesService {
     return { removed };
   }
 
-  static pruneStaleTrackedAssets(artistId?: string): { removed: number } {
+  static async pruneStaleTrackedAssets(artistId?: string): Promise<{ removed: number }> {
     let totalRemoved = 0;
     const sidecarArtistKey = artistId ? (resolveArtistMbid(artistId) ?? artistId) : null;
     const params = sidecarArtistKey ? [sidecarArtistKey] : [];
@@ -2953,63 +2955,75 @@ export class LibraryFilesService {
     ] as const;
 
     for (const table of tables) {
-      const rows = db.prepare(`
-        SELECT id AS id,
-          artist_id AS artist_metadata_id,
-          COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
-          COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
-          file_path AS file_path,
-          relative_path AS relative_path,
-          library_root AS library_root,
-          ${table.fileTypeSql},
-          ${table.qualitySql}
-        FROM ${table.name}
-        ${sidecarArtistKey ? "WHERE artist_id = ?" : ""}
-        ORDER BY id ASC
-      `).all(...params) as Array<{
-        id: number;
-        artist_metadata_id: number;
-        album_id: number | null;
-        media_id: number | null;
-        file_path: string;
-        relative_path: string | null;
-        library_root: string | null;
-        file_type: string;
-        quality: string | null;
-      }>;
+      let cursor = 0;
+      while (true) {
+        const rows = db.prepare(`
+          SELECT id AS id,
+            artist_id AS artist_metadata_id,
+            COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+            COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+            file_path AS file_path,
+            relative_path AS relative_path,
+            library_root AS library_root,
+            ${table.fileTypeSql},
+            ${table.qualitySql}
+          FROM ${table.name}
+          WHERE id > ? ${sidecarArtistKey ? "AND artist_id = ?" : ""}
+          ORDER BY id ASC
+          LIMIT 128
+        `).all(cursor, ...params) as Array<{
+          id: number;
+          artist_metadata_id: number;
+          album_id: number | null;
+          media_id: number | null;
+          file_path: string;
+          relative_path: string | null;
+          library_root: string | null;
+          file_type: string;
+          quality: string | null;
+        }>;
 
-      const idsToDelete: number[] = [];
+        if (!rows.length) break;
+        cursor = rows[rows.length - 1].id;
+        const missing: Array<{ row: typeof rows[number]; resolvedPath: string }> = [];
 
-      for (const row of rows) {
-        const resolvedPath = resolveStoredLibraryPath({
-          filePath: row.file_path,
-          libraryRoot: row.library_root,
-          relativePath: row.relative_path,
-        });
+        for (const row of rows) {
+          const resolvedPath = resolveStoredLibraryPath({
+            filePath: row.file_path,
+            libraryRoot: row.library_root,
+            relativePath: row.relative_path,
+          });
 
-        if (fs.existsSync(resolvedPath)) {
-          continue;
+          try {
+            await fs.promises.stat(resolvedPath);
+          } catch (error) {
+            if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+              missing.push({ row, resolvedPath });
+            }
+          }
         }
-
-        idsToDelete.push(row.id);
-        this.emitFileDeleted({
-          libraryFileId: row.id,
-          artistId: row.artist_metadata_id,
-          albumId: row.album_id,
-          mediaId: row.media_id,
-          fileType: row.file_type,
-          filePath: resolvedPath,
-          libraryRoot: row.library_root,
-          quality: row.quality,
-          reason: "stale-tracked-asset",
-          missing: true,
-        });
-      }
-
-      if (idsToDelete.length > 0) {
-        batchDelete(table.name, idsToDelete);
-        console.log(`[${table.name}] Removed ${idsToDelete.length} stale tracked sidecar row(s).`);
-        totalRemoved += idsToDelete.length;
+        if (missing.length) await withSqliteWriteGate(() => db.transaction(() => {
+          const remove = db.prepare(`DELETE FROM ${table.name} WHERE id = ?
+            AND file_path = ? AND relative_path IS ? AND library_root IS ?`);
+          for (const { row, resolvedPath } of missing) {
+            // A scan/rename may have repaired the row while stat yielded.
+            if (!remove.run(row.id, row.file_path, row.relative_path, row.library_root).changes) continue;
+            totalRemoved++;
+            this.emitFileDeleted({
+              libraryFileId: row.id,
+              artistId: row.artist_metadata_id,
+              albumId: row.album_id,
+              mediaId: row.media_id,
+              fileType: row.file_type,
+              filePath: resolvedPath,
+              libraryRoot: row.library_root,
+              quality: row.quality,
+              reason: "stale-tracked-asset",
+              missing: true,
+            });
+          }
+        })(), "housekeeping:stale-assets:batch");
+        await new Promise<void>(resolve => setImmediate(resolve));
       }
     }
 
@@ -3366,26 +3380,26 @@ export class LibraryFilesService {
   private static directoryHasTrackedAudio(directory: string): boolean {
     const normalized = normalizeComparablePath(directory);
     if (!normalized) return false;
-    const like = `${normalized.replace(/([\\%_])/g, "\\$1")}/%`;
     const rows = db.prepare(`
       SELECT file_path
       FROM TrackFiles
       WHERE file_type IN ('track', 'video')
-        AND ${comparablePathColumnSql("file_path")} LIKE ? ESCAPE '\\'
-    `).all(like) as Array<{ file_path: string }>;
+        AND ${comparablePathColumnSql("file_path")} >= ?
+        AND ${comparablePathColumnSql("file_path")} < ?
+    `).all(`${normalized}/`, `${normalized}0`) as Array<{ file_path: string }>;
     return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
   }
 
   private static directoryHasMonitoredAudio(directory: string): boolean {
     const normalizedDir = normalizeComparablePath(directory);
     if (!normalizedDir) return false;
-    const like = `${normalizedDir.replace(/([\\%_])/g, "\\$1")}/%`;
     const rows = db.prepare(`
       SELECT lf.file_path, lf.library_id, lf.album_edition_id
       FROM TrackFiles lf
       WHERE lf.file_type IN ('track', 'video')
-        AND ${comparablePathColumnSql("lf.file_path")} LIKE ? ESCAPE '\\'
-    `).all(like) as Array<{ file_path: string; library_id: number | null; album_edition_id: number | null }>;
+        AND ${comparablePathColumnSql("lf.file_path")} >= ?
+        AND ${comparablePathColumnSql("lf.file_path")} < ?
+    `).all(`${normalizedDir}/`, `${normalizedDir}0`) as Array<{ file_path: string; library_id: number | null; album_edition_id: number | null }>;
     return rows.some((row) => {
       if (normalizeComparablePath(path.dirname(row.file_path)) !== normalizedDir) return false;
       if (row.library_id == null || row.album_edition_id == null) return false;

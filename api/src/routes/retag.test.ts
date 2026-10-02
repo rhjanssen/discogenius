@@ -9,12 +9,14 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.retag-route.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
+let renameRouter: typeof import("./library-files.js").default;
 let retagRouter: typeof import("./retag.js").default;
 
 before(async () => {
   dbModule = await import("../database.js");
   retagRouter = (await import("./retag.js")).default;
   dbModule.initDatabase();
+  renameRouter = (await import("./library-files.js")).default;
 });
 
 beforeEach(() => {
@@ -48,8 +50,8 @@ function createMockResponse(): MockResponse {
   };
 }
 
-function getPostHandler(pathName: string): (req: any, res: any) => Promise<void> | void {
-  const layer = (retagRouter as any).stack.find((entry: any) => entry.route?.path === pathName && entry.route?.methods?.post);
+function getPostHandler(pathName: string, router = retagRouter): (req: any, res: any) => Promise<void> | void {
+  const layer = (router as any).stack.find((entry: any) => entry.route?.path === pathName && entry.route?.methods?.post);
   assert.ok(layer, `Expected POST handler for path ${pathName}`);
   return layer.route.stack[0].handle;
 }
@@ -90,4 +92,37 @@ test("applyAll retag rejects an unscoped library-wide request", async () => {
   assert.match(res.body.detail, /artistId, artistIds, albumId, or editionId/);
   const commandCount = dbModule.db.prepare("SELECT COUNT(*) AS count FROM commands").get() as { count: number };
   assert.equal(commandCount.count, 0);
+});
+
+test("empty and malformed retag or strip selections never expand into a library-wide command", async () => {
+  for (const endpoint of ["/apply", "/strip"]) {
+    for (const body of [{}, { ids: [] }, { ids: [0] }, { ids: [1, "bad"] }, { ids: "1" }, { ids: [null] }, { ids: [1.5] }]) {
+      const res = createMockResponse();
+      await getPostHandler(endpoint)({ body }, res);
+      assert.equal(res.statusCode, 400, `${endpoint} ${JSON.stringify(body)}`);
+      assert.equal((dbModule.db.prepare("SELECT COUNT(*) count FROM commands").get() as { count: number }).count, 0);
+    }
+  }
+});
+
+test("persisted invalid RetagFiles commands fail before catalogue scope or file work is evaluated", async () => {
+  const { handleRetagFiles } = await import("../services/commands/handlers/library-handlers.js");
+  for (const payload of [{ ids: [] }, {}, { applyAll: true }, { ids: [-1], stripOnly: true }]) {
+    await assert.rejects(handleRetagFiles({ name: "RetagFiles", payload } as any, {} as any), /identifiers|scope/);
+  }
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) count FROM CommandFileWorkPlans").get() as { count: number }).count, 0);
+});
+
+
+test("malformed rename selections never expand into a library-wide command", async () => {
+  for (const body of [{}, { ids: [] }, { ids: ["bad"] }, { ids: [0] }, { ids: [1, "bad"] }, { ids: [1.5] }]) {
+    const res = createMockResponse();
+    await getPostHandler("/rename/apply", renameRouter)({ body }, res);
+    assert.equal(res.statusCode, 400, JSON.stringify(body));
+    assert.equal((dbModule.db.prepare("SELECT COUNT(*) count FROM commands").get() as { count: number }).count, 0);
+  }
+  const { handleRenameFiles } = await import("../services/commands/handlers/library-handlers.js");
+  for (const payload of [{ ids: [] }, {}, { applyAll: true }, { ids: [-1] }]) {
+    await assert.rejects(handleRenameFiles({ name: "RenameFiles", payload } as any, {} as any), /identifiers|scope/);
+  }
 });

@@ -7,6 +7,7 @@ import { type Readable } from 'stream';
 import { Config } from '../config/config.js';
 import { execFile, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
+import { withMediaFileLock } from './media-file-lock.js';
 import { mediaRewritePath, rewriteMediaCopy, runMediaRewrite } from './media-file-rewrite.js';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
@@ -24,6 +25,7 @@ const VIDEO_THUMBNAIL_EMBED_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
 export const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".flac", ".mp3", ".ogg", ".oga", ".opus"]);
 const MUTAGEN_MP4_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".m4v"]);
 const OGG_COVER_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
+const XIPH_EXTENSIONS = new Set(['.flac', '.ogg', '.oga', '.opus']);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
 const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
@@ -478,6 +480,10 @@ export function buildMetadataWriteArgs(
 }
 
 export async function writeMetadata(filePath: string, tags: Record<string, string>, removeKeys: string[] = []): Promise<boolean> {
+    return withMediaFileLock(filePath, () => writeMetadataUnlocked(filePath, tags, removeKeys));
+}
+
+async function writeMetadataUnlocked(filePath: string, tags: Record<string, string>, removeKeys: string[]): Promise<boolean> {
     const tagLibResult = await writeMediaTagsWithTagLib(filePath, tags, removeKeys);
     if (tagLibResult.success) {
         return true;
@@ -486,9 +492,11 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
         console.warn(`[MediaTags] TagLib write failed for ${filePath}: ${tagLibResult.error || "unknown error"}`);
         // FFmpeg cannot reproduce every native ID3/Xiph field, including UFID.
         // Keep the original intact when the validated writer rejects a change.
-        if (!MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
+        if (!MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+            && !XIPH_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
     }
-    if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+    if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+        || XIPH_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         return writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
     }
     const tempPath = mediaRewritePath(filePath);
@@ -509,6 +517,10 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
  * Uses ffmpeg with `-map_metadata -1` to remove all existing tags before a clean rewrite.
  */
 export async function removeAllTags(filePath: string): Promise<boolean> {
+    return withMediaFileLock(filePath, () => removeAllTagsUnlocked(filePath));
+}
+
+async function removeAllTagsUnlocked(filePath: string): Promise<boolean> {
     const tagLibResult = await clearMediaTagsWithTagLib(filePath);
     if (tagLibResult.success) {
         return true;
@@ -644,7 +656,45 @@ async function writeMp4MetadataWithMutagen(
  * Mutagen is used because ffmpeg's MP4 `use_metadata_tags` mode cannot retain
  * both MusicBrainz mdta atoms and a `covr` attached-picture atom.
  */
+// FLAC metadata blocks have a 24-bit length. Keep the original sidecar, and
+// encode only an oversized embedded copy at its original pixel dimensions.
+export async function prepareEmbeddedAudioCover(filePath: string, coverPath: string,
+    temporaryDirectories: string[]): Promise<string> {
+    if (path.extname(filePath).toLowerCase() !== '.flac' || fs.statSync(coverPath).size < 0xffffff - 1024) return coverPath;
+    const dimensions = readImageDimensionsFromBuffer(fs.readFileSync(coverPath));
+    if (!dimensions) throw new Error('Oversized FLAC cover must be a readable JPEG or PNG');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-embedded-cover-'));
+    temporaryDirectories.push(directory);
+    const output = path.join(directory, 'cover.jpg');
+    for (const quality of [2, 4, 6, 8]) {
+        await new Promise<void>((resolve, reject) => execFile(resolveFfmpegBinary(),
+            ['-v', 'error', '-y', '-i', coverPath, '-frames:v', '1', '-c:v', 'mjpeg',
+                '-q:v', String(quality), '-pix_fmt', 'yuvj444p', '-threads', '1', output],
+            { windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024 },
+            error => error ? reject(error) : resolve()));
+        const encoded = fs.readFileSync(output);
+        const actual = readImageDimensionsFromBuffer(encoded);
+        if (actual?.width !== dimensions.width || actual?.height !== dimensions.height) throw new Error('Embedded cover encoding changed image dimensions');
+        if (encoded.length < 0xffffff - 1024) return output;
+    }
+    throw new Error('Cover cannot fit a FLAC picture block at its original resolution');
+}
+
 export async function embedAudioCover(filePath: string, coverPath: string): Promise<boolean> {
+    return withMediaFileLock(filePath, () => embedAudioCoverUnlocked(filePath, coverPath));
+}
+
+async function embedAudioCoverUnlocked(filePath: string, coverPath: string): Promise<boolean> {
+    const directories: string[] = [];
+    try {
+        if (!fs.existsSync(coverPath)) return false;
+        return await embedPreparedAudioCover(filePath, await prepareEmbeddedAudioCover(filePath, coverPath, directories));
+    } finally {
+        for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });
+    }
+}
+
+async function embedPreparedAudioCover(filePath: string, coverPath: string): Promise<boolean> {
     const extension = path.extname(filePath).toLowerCase();
     if (!AUDIO_COVER_EMBED_EXTENSIONS.has(extension) || !fs.existsSync(filePath) || !fs.existsSync(coverPath)) {
         return false;
@@ -867,6 +917,13 @@ export async function compareEmbeddedAudioCover(
     const extension = path.extname(filePath).toLowerCase();
     if (!AUDIO_COVER_EMBED_EXTENSIONS.has(extension) || !fs.existsSync(coverPath)) {
         return { matches: false, current: null, target: null };
+    }
+    const directories: string[] = [];
+    try {
+        const prepared = await prepareEmbeddedAudioCover(filePath, coverPath, directories);
+        if (prepared !== coverPath) return await compareEmbeddedAudioCover(filePath, prepared, currentCover);
+    } finally {
+        for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });
     }
 
     const currentBytes = await readEmbeddedAudioCoverBytes(filePath, currentCover);

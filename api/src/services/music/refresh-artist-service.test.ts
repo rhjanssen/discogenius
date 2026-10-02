@@ -931,6 +931,16 @@ test("targeted collaboration search retries only unmatched releases unless force
   await (refreshServiceModule.RefreshArtistService as any)
     .searchCanonicalCollaborationOffers(provider, selectedArtistMbid, true);
   assert.equal(searches, 4, "force refresh rechecks both capability slots");
+
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  provider.searchReleaseGroup = async () => {
+    searches++;
+    throw new ProviderRateLimitError(provider.id, Date.now() + 60_000);
+  };
+  const deferred = await (refreshServiceModule.RefreshArtistService as any)
+    .searchCanonicalCollaborationOffers(provider, selectedArtistMbid, true);
+  assert.equal(searches, 5, "a provider rate limit stops the rest of the search pass");
+  assert.equal(deferred.albums.length, 0);
 });
 
 test("provider matching consumes targeted collaboration offers without a selected-artist provider identity", async () => {

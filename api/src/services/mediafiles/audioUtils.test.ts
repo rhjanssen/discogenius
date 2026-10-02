@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomFillSync } from "node:crypto";
+import { PNG } from "pngjs";
 import test from "node:test";
 
 import { UpgradableSpecification } from "../config/upgradable-specification.js";
@@ -13,6 +15,7 @@ import {
     embedAudioCover,
     embedVideoThumbnail,
     compareEmbeddedAudioCover,
+    readImageDimensionsFromBuffer,
     getMetadataRewriteContainerArgs,
     getVideoThumbnailProbeArgs,
     hasEmbeddedVideoThumbnail,
@@ -268,6 +271,37 @@ test("an unclassifiable container is not reported as lossless", () => {
   // already satisfied a lossless cutoff, suppressing allowed upgrades.
   assert.equal(deriveQuality(".xyz", {}), "UNKNOWN");
   assert.equal(deriveQuality("", {}), "UNKNOWN");
+});
+
+test("oversized FLAC artwork keeps the full original sidecar and embeds a same-resolution compatible copy", {
+  skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+}, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-flac-cover-limit-"));
+  const file = path.join(root, "audio.flac");
+  const cover = path.join(root, "cover.png");
+  try {
+    const png = new PNG({ width: 2300, height: 2300 });
+    randomFillSync(png.data);
+    for (let i = 3; i < png.data.length; i += 4) png.data[i] = 255;
+    const original = PNG.sync.write(png, { deflateLevel: 0 });
+    fs.writeFileSync(cover, original);
+    assert.ok(original.length > 0xffffff);
+    const created = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "1", file], { windowsHide: true, encoding: "utf8" });
+    assert.equal(created.status, 0, created.stderr);
+    const audioHash = () => {
+      const decoded = spawnSync("ffmpeg", ["-v", "error", "-i", file, "-map", "0:a:0", "-f", "hash", "-hash", "sha256", "-"], { windowsHide: true, encoding: "utf8" });
+      assert.equal(decoded.status, 0, decoded.stderr);
+      return decoded.stdout;
+    };
+    const before = audioHash();
+    assert.equal(await embedAudioCover(file, cover), true);
+    const compared = await compareEmbeddedAudioCover(file, cover);
+    assert.equal(compared.matches, true);
+    assert.deepEqual({ width: compared.target?.width, height: compared.target?.height }, readImageDimensionsFromBuffer(original));
+    assert.ok(compared.target!.bytes < 0xffffff);
+    assert.ok(fs.readFileSync(cover).equals(original));
+    assert.equal(audioHash(), before);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("24-bit lossless is MAX class, including 24/48", () => {

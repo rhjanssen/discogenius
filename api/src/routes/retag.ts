@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { withDbWrite } from "../database.js";
 import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
+import { parseFileSelectionIds } from "../services/mediafiles/file-selection.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { CommandPriority, CommandTrigger } from "../services/commands/command-trigger.js";
-import { parseBoundedQueryInteger } from "../utils/request-validation.js";
+import { isRequestValidationError, parseBoundedQueryInteger } from "../utils/request-validation.js";
 
 const router = Router();
 
@@ -64,9 +65,8 @@ router.post("/apply", async (req, res) => {
       ...rawArtistIds.map((id) => String(id).trim()),
       ...(artistId ? [artistId] : []),
     ]));
-    const normalizedIds = ids && Array.isArray(ids)
-      ? ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
-      : undefined;
+    const normalizedIds = parseFileSelectionIds(ids);
+    if (!applyAll && !normalizedIds) return res.status(400).json({ detail: "ids are required unless applyAll is true" });
     const isArtistWideRetag = applyAll
       && artistIds.length > 0
       && !albumId
@@ -109,7 +109,7 @@ router.post("/apply", async (req, res) => {
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : "Retag failed";
-    const status = /enable fingerprinting|enable imported audio tag correction|replaygain/i.test(message) ? 400 : 500;
+    const status = isRequestValidationError(error) || /enable fingerprinting|enable imported audio tag correction|replaygain/i.test(message) ? 400 : 500;
     res.status(status).json({ detail: message });
   }
 });
@@ -126,9 +126,7 @@ router.post("/strip", async (req, res) => {
     const albumId = (req.body as any)?.albumId as string | undefined;
     const editionId = (req.body as any)?.editionId != null ? String((req.body as any).editionId).trim() : undefined;
     const releaseMbid = typeof (req.body as any)?.releaseMbid === "string" ? (req.body as any).releaseMbid.trim() : undefined;
-    const normalizedIds = ids && Array.isArray(ids)
-      ? ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
-      : undefined;
+    const normalizedIds = parseFileSelectionIds(ids);
 
     if ((!normalizedIds || normalizedIds.length === 0) && !applyAll) {
       return res.status(400).json({ detail: "ids array is required unless applyAll is true" });
@@ -161,7 +159,7 @@ router.post("/strip", async (req, res) => {
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : "Strip tags failed";
-    res.status(500).json({ detail: message });
+    res.status(isRequestValidationError(error) ? 400 : 500).json({ detail: message });
   }
 });
 

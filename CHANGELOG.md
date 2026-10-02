@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.19.0] - 2026-10-02
+
+### Changed
+
+- Housekeeping checks stale sidecars outside database writer admission and commits guarded removals in small batches. Directory ownership checks use normalized-path indexes, and sidecar deduplication releases the writer between artists.
+- Maintenance dispatch checks every 250 ms by default so checkpointed rename and retag work can make progress without repeated two-second admission gaps.
+- Apple Music honors Retry-After, shares provider cooldowns across workers, bounds network requests, and stops collaboration searches when the service throttles requests.
+
+### Fixed
+
+- Keep distinct physical audio files as distinct TrackFiles instead of deleting their rows during housekeeping. Row-only deduplication made scans recreate file IDs and broke durable rename plans and linked sidecars.
+- Serialize media mutation across refresh, retag and rename workers with shared file locks. Worker exit releases its reservations only after physical termination. Retag verification uses the metadata snapshot actually written.
+- Continue a rename plan after safely refusing a file whose catalogue identity changed. Preserve the individual error without aborting the rest of the library.
+- Embed full-dimension JPEG artwork within FLAC's metadata-block limit while retaining the untouched full-resolution original sidecar. Share the prepared embedded image within each bounded retag session.
+- Fall back to atomic Mutagen Xiph-comment writes when native FLAC, Ogg or Opus tagging fails.
+- Reject empty or malformed rename/retag/strip selections at both the API and command execution boundaries instead of expanding them to the whole library.
+- Keep a stored file's edition context when computing rename paths. Curation may choose an acquisition destination, but cannot make rename disagree with the file identity used for tagging.
+
+### Validation
+
+- Active-schema regressions cover competing housekeeping writers, guarded stale-sidecar removal, retained physical-file identities, shared media locks and worker termination, catalogue changes during retag verification, oversized artwork, and provider cooldowns across workers.
+- Live media audit: 123 sampled tracks decode successfully. All 98 samples present in the pre-maintenance snapshot have identical decoded audio. This is a sample audit, not verification of every library file.
+
 ## [2.18.0] - 2026-09-29
 
 ### Changed
@@ -1854,7 +1877,7 @@ any other `user_version` and creates a fresh database.
 - Download offer retry/fallback with yellow warning UX when a fallback offer
   completes (`completedWithWarning`).
 - Video type filters (official / lyric / live) and strip-tags manage action on
-  artist/album (`POST /api/v1/retag/strip`).
+  artist/album (`POST /api/v1/rename/retag/strip`).
 
 ### Changed
 - Video placement: inline stereo linked videos, release-group gate, and

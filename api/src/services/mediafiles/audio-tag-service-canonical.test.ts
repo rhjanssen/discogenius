@@ -463,3 +463,39 @@ for (const extension of ["flac", "m4a", "mp3"]) {
     assert.equal((await audioTagServiceModule.AudioTagService.preview({ artistId: "artist-mbid-1" })).length, 0);
   });
 }
+
+test("retag verifies its written track-count snapshot while catalogue hydration changes the edition", {
+  skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+}, async () => {
+  const row = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE canonical_recording_mbid = ?")
+    .get("recording-mbid-1") as { id: number };
+  const mediaPath = path.join(tempDir, "concurrent-catalog.flac");
+  const generated = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.1", mediaPath], { windowsHide: true, encoding: "utf8" });
+  assert.equal(generated.status, 0, generated.stderr);
+  dbModule.db.prepare("UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = 'flac' WHERE id = ?")
+    .run(mediaPath, path.basename(mediaPath), row.id);
+  configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files" });
+  configModule.updateConfig("quality", { ...configModule.getConfigSection("quality"), embed_cover: false, embed_lyrics: false });
+  const service = audioTagServiceModule.AudioTagService;
+  const evaluate = service.evaluateFileTags;
+  let hydrated = false;
+  service.evaluateFileTags = async (...args) => {
+    const result = await evaluate.apply(service, args);
+    if (!hydrated) {
+      hydrated = true;
+      dbModule.db.prepare(`INSERT INTO Tracks (foreign_track_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+        VALUES ('concurrent-track', 'concurrent-track', 'release-mbid-1', 'recording-mbid-1', 1, 2, '2', 'Added during hydration')`).run();
+    }
+    return result;
+  };
+  try {
+    assert.deepEqual(await service.apply([row.id]), { retagged: 1, skipped: 0, missing: 0, errors: [] });
+    const { parseFile } = await import("music-metadata");
+    assert.equal((await parseFile(mediaPath)).common.track.of, 1, "the completed write verified the original snapshot");
+    const next = await service.preview({ artistId: "artist-mbid-1" });
+    assert.ok(next.some(item => item.changes.some(change => change.field === "Track")), "the next pass sees the new catalogue count");
+  } finally {
+    service.evaluateFileTags = evaluate;
+    dbModule.db.prepare("DELETE FROM Tracks WHERE mbid = 'concurrent-track'").run();
+  }
+});

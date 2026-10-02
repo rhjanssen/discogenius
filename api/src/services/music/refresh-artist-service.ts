@@ -25,6 +25,7 @@ import {
 import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metadata/provider-artist-identity-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-provider.js";
+import { ProviderRateLimitError } from "../providers/provider-request-state.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isUntrustedTidalCatalogVideoQuality } from "../providers/tidal/tidal-quality.js";
 import {
@@ -634,6 +635,10 @@ export class RefreshArtistService {
                         matches.set(providerAlbumId, match);
                     }
                 } catch (error) {
+                    if (error instanceof ProviderRateLimitError) {
+                        console.warn(`[RefreshArtistService] Deferring ${provider.name} collaboration searches: ${error.message}`);
+                        return { albums: Array.from(albumsByProviderId.values()), matches };
+                    }
                     console.warn(
                         `[RefreshArtistService] Failed to search ${provider.name} for canonical collaboration ` +
                         `${target.title} (${target.mbid}):`,

@@ -943,6 +943,30 @@ test("unmonitored sibling job release remaps onto the unique monitored edition",
   assert.equal(remapped.canonicalReleaseMbid, "rel-basket-selected");
   assert.equal(remapped.canonicalTrackMbid, "t-basket-selected");
 
+  const stored = identityModule.resolveLibraryFileIdentity({
+    editionContext: "stored-file",
+    fileType: "track", librarySlot: "stereo",
+    canonicalReleaseGroupMbid: "rg-basket",
+    canonicalReleaseMbid: "rel-basket-sibling",
+    canonicalTrackMbid: "t-basket-sibling",
+    canonicalRecordingMbid: "rec-basket",
+  });
+  assert.equal(stored.canonicalReleaseMbid, "rel-basket-sibling", "curation cannot reinterpret an existing file's edition");
+  assert.equal(stored.canonicalTrackMbid, "t-basket-sibling");
+  const { LibraryFilesService, createExpectedPathCache, preloadExpectedPathIdentities } = await import("./library-files.js");
+  const file = {
+    id: 1, artist_metadata_id: "artist-mbid", album_id: "rg-basket", media_id: "t-basket-sibling",
+    file_type: "track", extension: "flac", library_slot: "stereo", library_root: path.join(tempDir, "basket-stereo"),
+    file_path: path.join(tempDir, "old.flac"), relative_path: "old.flac",
+    canonical_release_group_mbid: "rg-basket", canonical_release_mbid: "rel-basket-sibling",
+    canonical_track_mbid: "t-basket-sibling", canonical_recording_mbid: "rec-basket",
+  };
+  const uncached = LibraryFilesService.computeExpectedPath(file);
+  assert.ok(uncached.expectedPath?.includes("rel-basket-sibling"), JSON.stringify(uncached));
+  const cache = createExpectedPathCache();
+  preloadExpectedPathIdentities([file], cache);
+  assert.deepEqual(LibraryFilesService.computeExpectedPath(file, cache), uncached);
+
   const siblingEdition = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-basket-sibling'")
     .get() as { id: number };
   dbModule.db.prepare(`

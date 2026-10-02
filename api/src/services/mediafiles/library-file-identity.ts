@@ -4,6 +4,9 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 export type library_slot = "stereo" | "spatial" | "video";
 
 export type LibraryFileIdentityInput = {
+  /** Stored file facts retain their edition; acquisition may choose a curated
+   * destination before a new file is imported. */
+  editionContext?: "stored-file" | "acquisition";
   artistId?: string | number | null;
   albumId?: string | number | null;
   mediaId?: string | number | null;
@@ -854,8 +857,12 @@ export function resolveLibraryFileIdentities(
       // An unmonitored sibling named on the download job must not steal
       // TrackFiles.track_id. Prefer the job edition when it is monitored,
       // otherwise the unique monitored edition that carries this recording.
+      const storedRelease = entry.prepared.input.editionContext === "stored-file"
+        ? nullableText(entry.prepared.input.canonicalReleaseMbid) ?? entry.inputTrack?.releaseMbid
+        : null;
       entry.releaseMbid =
-        (explicitReleaseIsMonitored ? explicitRelease?.mbid : null)
+        storedRelease
+        ?? (explicitReleaseIsMonitored ? explicitRelease?.mbid : null)
         ?? uniqueMonitoredRelease
         ?? selectedForResolvedGroup?.releaseMbid
         ?? explicitRelease?.mbid

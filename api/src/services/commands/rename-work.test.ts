@@ -69,7 +69,7 @@ test("retired rename ownership cannot start a second file", async () => {
     assert.equal((database.db.prepare("SELECT cursor FROM CommandRenamePlans WHERE command_id = ?").get(job.id) as { cursor: number }).cursor, 1);
 });
 
-test("changed catalogue identity is refused before any file mutation", async () => {
+test("changed catalogue identity is refused and recorded without abandoning the rest of the plan", async () => {
     const job = claim("identity-one");
     let continuation: unknown;
     try { await work.runRenameWorkUnit(job, context.buildHandlerContext(), () => ids, false); }
@@ -78,6 +78,11 @@ test("changed catalogue identity is refused before any file mutation", async () 
     database.db.prepare("UPDATE TrackFiles SET canonical_recording_mbid = 'changed-recording' WHERE id = ?").run(ids[25]);
     try {
         const next = queue.CommandQueueManager.claimForExecution(job.id, "identity-two", 60_000)!;
-        await assert.rejects(work.runRenameWorkUnit(next, context.buildHandlerContext(), () => ids, false), /changed catalogue identity/);
+        const result = await work.runRenameWorkUnit(next, context.buildHandlerContext(), () => ids, false);
+        assert.equal(result.missing, 25);
+        assert.equal(result.errors.length, 1);
+        assert.equal(result.errors[0].id, ids[25]);
+        assert.match(result.errors[0].error, /changed catalogue identity/);
+        assert.equal((database.db.prepare("SELECT cursor FROM CommandRenamePlans WHERE command_id = ?").get(job.id) as { cursor: number }).cursor, 26);
     } finally { database.db.prepare("UPDATE TrackFiles SET canonical_recording_mbid = NULL WHERE id = ?").run(ids[25]); }
 });

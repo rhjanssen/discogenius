@@ -79,17 +79,21 @@ export async function runRenameWorkUnit(job: CommandModel, ctx: CommandHandlerCo
                 .get(job.id, plan!.generation, plan!.cursor) as { file_id: number; identity_snapshot: string } | undefined;
             if (!item) throw new Error("Rename cursor does not identify a pending file");
             const current = identity(item.file_id);
-            if (current !== "null" && current !== item.identity_snapshot) throw new Error(`File #${item.file_id} changed catalogue identity during rename`);
+            const refused = current !== "null" && current !== item.identity_snapshot;
             db.prepare("UPDATE CommandRenameWork SET status = 'started' WHERE command_id = ? AND generation = ? AND ordinal = ?").run(job.id, plan!.generation, plan!.cursor);
-            return item;
+            return { ...item, refused };
         }, "rename:file-intent");
-        const result = await RenameTrackFileService.executeRenameFiles([file.file_id], {
+        // Refuse this file without stopping every subsequent file in a library
+        // plan. Keep its error and original identity for review/manual retry.
+        const result: RenameApplyResult = file.refused
+            ? { ...empty(), errors: [{ id: file.file_id, error: `File #${file.file_id} changed catalogue identity during rename` }] }
+            : await RenameTrackFileService.executeRenameFiles([file.file_id], {
             reconcileSeparatedSidecars: reconcileSidecars, boundedSidecarReconciliation: true,
         });
         plan = await withSqliteWriteGate(() => db.transaction(() => {
             assertOwner(job);
             const current = identity(file.file_id);
-            if (current !== "null" && current !== file.identity_snapshot) throw new Error(`File #${file.file_id} changed identity before rename settlement`);
+            if (!file.refused && current !== "null" && current !== file.identity_snapshot) throw new Error(`File #${file.file_id} changed identity before rename settlement`);
             const aggregate = JSON.parse(plan!.result) as RenameApplyResult;
             for (const key of ["renamed", "skipped", "conflicts", "missing", "cleanedDirectories"] as const) aggregate[key] += result[key];
             const written = db.prepare("UPDATE CommandRenameWork SET status = 'settled', result = ? WHERE command_id = ? AND generation = ? AND ordinal = ? AND status = 'started'")

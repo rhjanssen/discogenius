@@ -136,6 +136,27 @@ def write_mp4_metadata(media_path: str, payload_path: str) -> None:
     audio.save()
 
 
+def write_metadata(media_path: str, payload_path: str) -> None:
+    extension = os.path.splitext(media_path)[1].lower()
+    classes = {".flac": FLAC, ".opus": OggOpus, ".ogg": OggVorbis, ".oga": OggVorbis}
+    if extension not in classes:
+        write_mp4_metadata(media_path, payload_path)
+        return
+    with open(payload_path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    audio = classes[extension](media_path)
+    for key in payload.get("removeKeys", []):
+        audio.pop(str(key), None)
+    for key, value in payload.get("tags", {}).items():
+        if str(value):
+            values = str(value).split(";") if str(key).lower() in {
+                "isrc", "musicbrainz_artistid", "musicbrainz_albumartistid"
+            } else [str(value)]
+            audio[str(key)] = [value.strip() for value in values if value.strip()]
+    audio.save()
+    classes[extension](media_path)
+
+
 def clear_mp4_metadata(media_path: str) -> None:
     audio = MP4(media_path)
     retained_cover = list((audio.tags or {}).get("covr", []))
@@ -155,7 +176,7 @@ if __name__ == "__main__":
     if command == "cover" and len(sys.argv) == 4:
         replace_cover(sys.argv[2], sys.argv[3])
     elif command == "metadata" and len(sys.argv) == 4:
-        write_mp4_metadata(sys.argv[2], sys.argv[3])
+        write_metadata(sys.argv[2], sys.argv[3])
     elif command == "clear" and len(sys.argv) == 3:
         clear_mp4_metadata(sys.argv[2])
     else:

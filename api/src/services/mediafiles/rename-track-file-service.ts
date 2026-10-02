@@ -522,6 +522,7 @@ export class RenameTrackFileService {
       let pendingMove: RenamePhysicalMove | null = null;
       let pendingDeletion: StagedRenameDeletion | null = null;
       let pendingIntent: string | null = null;
+      let releaseFileLocks: (() => void) | undefined;
       try {
         const row = rowMap.get(id);
         if (!row) {
@@ -560,6 +561,8 @@ export class RenameTrackFileService {
           result.skipped++;
           continue;
         }
+
+        releaseFileLocks = await acquireMediaFileLocks([resolvedFilePath, expectedPath]);
 
         const dbConflict = db.prepare(`
           SELECT ${idCol} AS id
@@ -740,6 +743,8 @@ export class RenameTrackFileService {
             : `${message}; filesystem rollback failed: ${rollbackErrors.join("; ")}`,
         });
         if (FileMutationJournal.hasPending()) break;
+      } finally {
+        releaseFileLocks?.();
       }
       await yieldRenameLoop();
     }
@@ -1171,3 +1176,4 @@ export class RenameTrackFileService {
   }
 
 }
+import { acquireMediaFileLocks } from "./media-file-lock.js";

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { withMediaFileLock } from "./media-file-lock.js";
 
 export function mediaRewritePath(originalPath: string, kind: "tags" | "rewrite" = "rewrite"): string {
   return path.join(path.dirname(originalPath), `.discogenius-${kind}-${randomUUID()}${path.extname(originalPath)}`);
@@ -13,6 +14,12 @@ export function isMediaRewriteTemporaryName(name: string): boolean {
 }
 
 export async function rewriteMediaCopy(
+  originalPath: string, mutate: (workingPath: string) => Promise<boolean>,
+): Promise<boolean> {
+  return withMediaFileLock(originalPath, () => rewriteMediaCopyUnlocked(originalPath, mutate));
+}
+
+async function rewriteMediaCopyUnlocked(
   originalPath: string,
   mutate: (workingPath: string) => Promise<boolean>,
 ): Promise<boolean> {
@@ -55,6 +62,10 @@ export async function runMediaRewrite(options: {
   args: string[];
   timeoutMs?: number;
 }): Promise<void> {
+  return withMediaFileLock(options.originalPath, () => runMediaRewriteUnlocked(options));
+}
+
+async function runMediaRewriteUnlocked(options: Parameters<typeof runMediaRewrite>[0]): Promise<void> {
   const original = path.resolve(options.originalPath);
   const temporary = path.resolve(options.temporaryPath);
   if (original === temporary || path.dirname(original) !== path.dirname(temporary)) {

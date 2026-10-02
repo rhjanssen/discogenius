@@ -13,8 +13,10 @@ import {CommandQueueManager} from "../services/commands/command-queue-manager.js
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
-import { parseBoundedQueryInteger } from "../utils/request-validation.js";
+import { isRequestValidationError, parseBoundedQueryInteger } from "../utils/request-validation.js";
 import { parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
+
+import { parseFileSelectionIds } from "../services/mediafiles/file-selection.js";
 
 const router = Router();
 const streamPipeline = promisify(pipeline);
@@ -104,9 +106,7 @@ router.post("/rename/apply", async (req, res) => {
     const releaseMbid = typeof (req.body as any)?.releaseMbid === "string" ? (req.body as any).releaseMbid.trim() : undefined;
     const libraryRoot = (req.body as any)?.libraryRoot as string | undefined;
     const fileTypes = parseFileTypes((req.body as any)?.fileTypes);
-    const normalizedIds = ids && Array.isArray(ids)
-      ? ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
-      : undefined;
+    const normalizedIds = parseFileSelectionIds(ids);
 
     if (applyAll && (!artistIds || artistIds.length === 0) && !albumId && !editionId) {
       return res.status(400).json({ detail: "artistId, artistIds, albumId, or editionId is required when applyAll is true" });
@@ -151,7 +151,7 @@ router.post("/rename/apply", async (req, res) => {
       message: "Rename task queued",
     });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(isRequestValidationError(error) ? 400 : 500).json({ detail: error.message });
   }
 });
 

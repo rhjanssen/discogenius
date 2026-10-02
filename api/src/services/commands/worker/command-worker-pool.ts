@@ -4,6 +4,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { readIntEnv } from "../../../utils/env.js";
+import { mediaFileLockWorkerData, MEDIA_FILE_LOCK_OWNER_KEY, releaseExitedMediaFileOwner } from "../../mediafiles/media-file-lock.js";
+import { providerRequestWorkerData } from "../../providers/provider-request-state.js";
 import {
     forceReleaseSqliteWriteMutexOwner,
     SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY,
@@ -93,6 +95,7 @@ interface PoolWorker {
     exited: boolean;
     forcedExitError?: Error;
     sqliteWriteMutexOwnerToken: number;
+    mediaFileLockOwnerToken: number;
     settle?: JobSettle;
 }
 
@@ -131,6 +134,8 @@ export class CommandWorkerPool {
             [COMMAND_WORKER_MARKER]: true,
             [COMMAND_WORKER_ID]: workerId,
             ...sqliteWriteMutexWorkerData(),
+            ...mediaFileLockWorkerData(),
+            ...providerRequestWorkerData(),
         };
 
         if (this.testWorkerEntryUrl) {
@@ -294,11 +299,13 @@ export class CommandWorkerPool {
             lastSeenAt: Date.now(),
             exited: false,
             sqliteWriteMutexOwnerToken: Number(workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]) || 0,
+            mediaFileLockOwnerToken: Number(workerData[MEDIA_FILE_LOCK_OWNER_KEY]) || 0,
         };
 
         worker.on("message", (message: WorkerToMainMessage) => this.handleMessage(poolWorker, message));
         worker.on("error", (error) => this.handleWorkerExit(poolWorker, error));
         worker.on("exit", (code) => {
+            releaseExitedMediaFileOwner(poolWorker.mediaFileLockOwnerToken);
             forceReleaseSqliteWriteMutexOwner(poolWorker.sqliteWriteMutexOwnerToken);
             this.handleWorkerExit(
                 poolWorker,

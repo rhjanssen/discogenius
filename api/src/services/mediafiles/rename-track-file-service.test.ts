@@ -436,7 +436,7 @@ dbModule.db.prepare(`
   assert.equal(trackedFile.canonicalTrackMbid, "track-mbid-1");
 });
 
-test("rename preload follows the selected-release track identity for hybrid source tracks", () => {
+test("rename preload retains stored track identity until an explicit edition rebind", () => {
   const musicRoot = configModule.Config.getMusicPath();
   const sourcePath = path.join(musicRoot, "Artist One", "Imports", "hybrid-source.flac");
   fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
@@ -520,8 +520,8 @@ test("rename preload follows the selected-release track identity for hybrid sour
     providerId: "hybrid-track",
   });
 
-  // Reproduce a pre-remap row from a source provider album. Preview must resolve
-  // it through the selected LibraryRelease before bulk-loading canonical metadata.
+  // A pre-remap row must retain its recorded track identity during rename.
+  // Explicit edition rebinding owns the migration to the curated destination.
   dbModule.db.prepare(`
     UPDATE TrackFiles
     SET canonical_release_mbid = 'source-release',
@@ -530,7 +530,7 @@ test("rename preload follows the selected-release track identity for hybrid sour
   `).run();
 
   const previews = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({ artistId: "1" });
-  const expectedPath = path.join(musicRoot, "Artist One", "Hybrid Album", "02 - Selected Track.flac");
+  const expectedPath = path.join(musicRoot, "Artist One", "Hybrid Album", "01 - Source Track.flac");
 
   assert.equal(previews.length, 1);
   assert.equal(path.resolve(previews[0]?.expected_path || ""), path.resolve(expectedPath));

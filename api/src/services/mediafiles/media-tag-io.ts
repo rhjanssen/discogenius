@@ -1,4 +1,5 @@
 import { mediaRewritePath, replaceMediaFile } from "./media-file-rewrite.js";
+import { withMediaFileLock } from "./media-file-lock.js";
 import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -558,6 +559,12 @@ function verifyTagLibValues(
 }
 
 export async function writeMediaTagsWithTagLib(
+  filePath: string, tags: Record<string, string>, removeKeys: string[] = [],
+): Promise<MediaTagWriteResult> {
+  return withMediaFileLock(filePath, () => writeMediaTagsWithTagLibUnlocked(filePath, tags, removeKeys));
+}
+
+async function writeMediaTagsWithTagLibUnlocked(
   filePath: string,
   tags: Record<string, string>,
   removeKeys: string[] = [],
@@ -587,6 +594,12 @@ export async function writeMediaTagsWithTagLib(
 }
 
 export async function clearMediaTagsWithTagLib(
+  filePath: string,
+): Promise<MediaTagWriteResult> {
+  return withMediaFileLock(filePath, () => clearMediaTagsWithTagLibUnlocked(filePath));
+}
+
+async function clearMediaTagsWithTagLibUnlocked(
   filePath: string,
 ): Promise<MediaTagWriteResult> {
   if (!canHandleWithTagLib(filePath)) {
@@ -652,6 +665,12 @@ export function readMediaCoverWithTagLib(filePath: string): Buffer | null {
 }
 
 export async function replaceMediaCoverWithTagLib(
+  filePath: string, coverPath: string,
+): Promise<MediaTagWriteResult> {
+  return withMediaFileLock(filePath, () => replaceMediaCoverWithTagLibUnlocked(filePath, coverPath));
+}
+
+async function replaceMediaCoverWithTagLibUnlocked(
   filePath: string,
   coverPath: string,
 ): Promise<MediaTagWriteResult> {

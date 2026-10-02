@@ -5,29 +5,10 @@ import { db, withSqliteWriteGate } from "../../database.js";
 import { Config, CONFIG_DIR } from "../config/config.js";
 import { invalidateAllDownloadState } from "../download/download-state.js";
 import { DownloadWaitQueue } from "../download/download-wait-queue.js";
-import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-files.js";
-import { normalizeComparablePath } from "../mediafiles/path-utils.js";
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { buildLibraryArtistMonitoredExistsSql } from "../music/managed-artists.js";
-
-interface LibraryFileRow {
-  id: number;
-  canonical_recording_mbid: string | null;
-  canonical_track_mbid: string | null;
-  track_id: number | null;
-  recording_id: number | null;
-  library_slot: string | null;
-  file_type: string;
-  file_path: string;
-  library_root: string | null;
-  relative_path: string | null;
-  expected_path: string | null;
-  verified_at: string | null;
-  modified_at: string | null;
-  created_at: string | null;
-}
 
 export interface RuntimeMaintenanceSummary {
   duplicateLibraryFilesRemoved: number;
@@ -45,158 +26,6 @@ export interface RuntimeMaintenanceSummary {
   videoQualitiesCorrected: number;
   /** Files deleted because they belong to unmonitored albums/editions */
   unmonitoredFilesRemoved: number;
-}
-
-function toTimestamp(value: string | null | undefined): number {
-  if (!value) return 0;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function scoreLibraryFile(row: LibraryFileRow) {
-  const resolvedPath = resolveStoredLibraryPath({
-    filePath: row.file_path,
-    libraryRoot: row.library_root,
-    relativePath: row.relative_path,
-  });
-  const normalizedExpected = normalizeComparablePath(row.expected_path);
-  const normalizedPath = normalizeComparablePath(row.file_path);
-  const normalizedResolvedPath = normalizeComparablePath(resolvedPath);
-  const exists = fs.existsSync(resolvedPath);
-
-  return {
-    resolvedMatchesExpected: normalizedExpected.length > 0 && normalizedResolvedPath === normalizedExpected ? 1 : 0,
-    pathMatchesExpected: normalizedExpected.length > 0 && normalizedPath === normalizedExpected ? 1 : 0,
-    exists: exists ? 1 : 0,
-    verified: row.verified_at ? 1 : 0,
-    modifiedAt: toTimestamp(row.modified_at),
-    createdAt: toTimestamp(row.created_at),
-    id: row.id,
-  };
-}
-
-type LibraryFileScore = ReturnType<typeof scoreLibraryFile>;
-
-let libraryFileScoreCache: Map<number, LibraryFileScore> | null = null;
-
-function getLibraryFileScore(row: LibraryFileRow): LibraryFileScore {
-  if (!libraryFileScoreCache) {
-    return scoreLibraryFile(row);
-  }
-
-  const cached = libraryFileScoreCache.get(row.id);
-  if (cached) {
-    return cached;
-  }
-
-  const computed = scoreLibraryFile(row);
-  libraryFileScoreCache.set(row.id, computed);
-  return computed;
-}
-
-function compareLibraryFileScores(leftScore: LibraryFileScore, rightScore: LibraryFileScore): number {
-  return (
-    rightScore.resolvedMatchesExpected - leftScore.resolvedMatchesExpected ||
-    rightScore.pathMatchesExpected - leftScore.pathMatchesExpected ||
-    rightScore.exists - leftScore.exists ||
-    rightScore.verified - leftScore.verified ||
-    rightScore.modifiedAt - leftScore.modifiedAt ||
-    rightScore.createdAt - leftScore.createdAt ||
-    rightScore.id - leftScore.id
-  );
-}
-
-function compareLibraryFiles(left: LibraryFileRow, right: LibraryFileRow): number {
-  const leftScore = getLibraryFileScore(left);
-  const rightScore = getLibraryFileScore(right);
-  return compareLibraryFileScores(leftScore, rightScore);
-}
-
-/**
- * A file's canonical identity is the **track** (the release↔recording mapping),
- * NOT the recording:
- * one recording legitimately appears as a track on several releases, so the same
- * recording downloaded from two different releases yields two *distinct* files
- * that must NOT be merged. So audio dedupes by `track_id`/`canonical_track_mbid`
- * (release-specific) within a slot. Videos have no release/track, so they dedupe
- * by `recording_id`/`canonical_recording_mbid`. library_slot is part of the key
- * (a track's stereo and spatial copies are distinct files). Returns "" when the
- * relevant canonical id is missing.
- */
-function canonicalIdentityKey(row: LibraryFileRow): string {
-  const slot = String(row.library_slot ?? "").trim().toLowerCase();
-  if (row.file_type === "video") {
-    const recording = row.recording_id != null
-      ? `id:${row.recording_id}`
-      : String(row.canonical_recording_mbid ?? "").trim();
-    return recording ? `vid:${recording}:${slot}` : "";
-  }
-  const track = row.track_id != null
-    ? `id:${row.track_id}`
-    : String(row.canonical_track_mbid ?? "").trim();
-  return track ? `trk:${track}:${slot}` : "";
-}
-
-function dedupeLibraryFilesByKey(
-  keyFn: (row: LibraryFileRow) => string,
-  summary: RuntimeMaintenanceSummary,
-) {
-  const rows = db.prepare(`
-    SELECT
-      id,
-      canonical_recording_mbid,
-      canonical_track_mbid,
-      track_id,
-      recording_id,
-      library_slot,
-      file_type,
-      file_path,
-      library_root,
-      relative_path,
-      expected_path,
-      verified_at,
-      modified_at,
-      created_at
-    FROM TrackFiles
-    WHERE (canonical_recording_mbid IS NOT NULL OR track_id IS NOT NULL OR recording_id IS NOT NULL)
-      AND file_type IN ('track', 'video')
-    ORDER BY id ASC
-  `).all() as LibraryFileRow[];
-
-  const deleteRow = db.prepare("DELETE FROM TrackFiles WHERE id = ?");
-  const buckets = new Map<string, LibraryFileRow[]>();
-  for (const row of rows) {
-    const key = keyFn(row);
-    if (!key) {
-      continue;
-    }
-    const bucket = buckets.get(key);
-    if (bucket) {
-      bucket.push(row);
-    } else {
-      buckets.set(key, [row]);
-    }
-  }
-
-  for (const bucket of buckets.values()) {
-    if (bucket.length <= 1) {
-      continue;
-    }
-
-    libraryFileScoreCache = new Map<number, LibraryFileScore>();
-    const [keep, ...remove] = [...bucket].sort(compareLibraryFiles);
-    libraryFileScoreCache = null;
-
-    for (const row of remove) {
-      if (row.id === keep.id) continue;
-      deleteRow.run(row.id);
-      summary.duplicateLibraryFilesRemoved++;
-    }
-  }
-}
-
-export function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
-  dedupeLibraryFilesByKey(canonicalIdentityKey, summary);
 }
 
 function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
@@ -329,16 +158,26 @@ export async function runRuntimeMaintenance(): Promise<RuntimeMaintenanceSummary
     unmonitoredFilesRemoved: 0,
   };
 
-  summary.staleTrackedAssetsRemoved = await withSqliteWriteGate(() => LibraryFilesService.pruneStaleTrackedAssets().removed, "housekeeping:stale-assets");
-  summary.duplicateTrackedAssetsRemoved = await withSqliteWriteGate(() => LibraryFilesService.pruneDuplicateTrackedAssets().removed, "housekeeping:duplicate-assets");
+  summary.staleTrackedAssetsRemoved = (await LibraryFilesService.pruneStaleTrackedAssets()).removed;
+  // Scope deduplication to one artist at a time. An all-library pass holds the
+  // shared writer across thousands of filesystem calls.
+  const sidecarArtists = db.prepare(`SELECT artist_id FROM MetadataFiles
+    UNION SELECT artist_id FROM ExtraFiles UNION SELECT artist_id FROM LyricFiles`).all() as Array<{ artist_id: string }>;
+  for (const artist of sidecarArtists) {
+    summary.duplicateTrackedAssetsRemoved += await withSqliteWriteGate(
+      () => LibraryFilesService.pruneDuplicateTrackedAssets(artist.artist_id).removed,
+      "housekeeping:duplicate-assets:artist",
+    );
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
   summary.orphanDownloadFoldersRemoved = pruneOrphanDownloadFolders();
   summary.staleTempDirsRemoved = pruneStaleTempDirectories();
   summary.videoQualitiesCorrected = await withSqliteWriteGate(correctVideoQualitiesFromDimensions, "housekeeping:video-quality");
   summary.unmonitoredFilesRemoved = (await LibraryFilesService.pruneUnmonitoredFilesForMonitoredArtists()).deleted;
 
-  await withSqliteWriteGate(() => db.transaction(() => {
-    dedupeLibraryFiles(summary);
-  })(), "housekeeping:duplicate-files");
+  // Distinct physical paths remain distinct TrackFiles. Deleting only their
+  // rows makes the next scan mint new IDs for the same files and breaks linked
+  // extras and durable file plans. Acquisition/import owns quality replacement.
 
   await withSqliteWriteGate(() => refreshDownloadState(summary), "housekeeping:download-state");
   const monitoredArtistIds = (db.prepare(`

@@ -506,6 +506,10 @@ function ensureLibraryLookupIndexes(): void {
       ON AcquisitionPlanTracks(track_id);
     CREATE INDEX IF NOT EXISTS idx_track_files_source_variant
       ON TrackFiles(source_audio_variant_id);
+    CREATE INDEX IF NOT EXISTS idx_track_files_normalized_path
+      ON TrackFiles(REPLACE(file_path, '\\', '/'));
+    CREATE INDEX IF NOT EXISTS idx_track_files_normalized_path_folded
+      ON TrackFiles(LOWER(REPLACE(file_path, '\\', '/')));
     CREATE INDEX IF NOT EXISTS idx_track_files_provider_item
       ON TrackFiles(provider_item_id);
     CREATE INDEX IF NOT EXISTS idx_library_editions_edition

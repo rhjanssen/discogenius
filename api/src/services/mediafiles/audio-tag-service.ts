@@ -1,5 +1,6 @@
 import fs from "fs";
 import { nativeMediaTagKeys } from "./media-tag-io.js";
+import { withMediaFileLock } from "./media-file-lock.js";
 import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,7 @@ import {
   type WriteAudioTagsPolicy,
   getConfigSection,
 } from "../config/config.js";
-import { embedAudioCover, compareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, removeAllTags } from "./audioUtils.js";
+import { embedAudioCover, compareEmbeddedAudioCover, prepareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, removeAllTags } from "./audioUtils.js";
 import {
   type AcoustIdLookupResult,
   type MusicBrainzRecording,
@@ -246,6 +247,10 @@ export type RetagScopeOptions = {
 };
 
 type RetagEvaluationOptions = {
+  /** Verify the catalogue snapshot written, even if hydration changes track
+   * counts while native I/O is awaiting completion. */
+  desiredTags?: ManagedTag[];
+  removals?: ManagedTag[];
   includeExternalMetadata?: boolean;
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
   /** Shared across a batch so an album's cover is resolved/rendered only once. */
@@ -306,7 +311,7 @@ async function resolvePreferredEmbeddedCover(
   const albumMbid = String(row.canonical_release_group_mbid || row.album_mb_release_group_id || "").trim();
   if (!releaseMbid && !albumMbid) return null;
 
-  const key = `cover:${releaseMbid || albumMbid}`;
+  const key = `cover:${row.library_root}:${releaseMbid || albumMbid}:${path.extname(_resolvedMediaPath).toLowerCase()}`;
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
@@ -316,7 +321,8 @@ async function resolvePreferredEmbeddedCover(
         albumMbid: albumMbid || null,
         libraryRoot: row.library_root,
       });
-      return cover && fs.existsSync(cover) ? cover : null;
+      return cover && fs.existsSync(cover)
+        ? prepareEmbeddedAudioCover(_resolvedMediaPath, cover, context.temporaryDirectories) : null;
     })();
     context.byAlbum.set(key, pending);
   }
@@ -2709,16 +2715,16 @@ export class AudioTagService {
       };
     }
 
-    const desiredTags = this.buildDesiredTags(row, config);
+    const desiredTags = options.desiredTags ?? this.buildDesiredTags(row, config);
 
     const quality = getConfigSection("quality");
-    if (quality.embed_lyrics) {
+    if (!options.desiredTags && quality.embed_lyrics) {
       const lyrics = await resolveLyricsForRetagRow(row, resolvedPath, options.includeExternalMetadata === true, options.lyricsByProviderMedia);
       const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
       if (lyricTag) desiredTags.push(lyricTag);
     }
 
-    const removals = this.buildRowManagedTagRemovals(row, config);
+    const removals = options.removals ?? this.buildRowManagedTagRemovals(row, config);
     if (desiredTags.length === 0 && removals.length === 0) {
       return {
         id: row.id,
@@ -3047,25 +3053,17 @@ export class AudioTagService {
       // server (one file at a time against MusicBrainz while 5k refresh
       // commands fought for the writer).
       try {
-        await (async () => {
-          const resolvedPath = resolveStoredLibraryPath({
-            filePath: row.file_path,
-            libraryRoot: row.library_root,
-            relativePath: row.relative_path,
-          });
+        const resolvedPath = resolveStoredLibraryPath({
+          filePath: row.file_path,
+          libraryRoot: row.library_root,
+          relativePath: row.relative_path,
+        });
+        await withMediaFileLock(resolvedPath, async () => {
+          const current = db.prepare("SELECT file_path FROM TrackFiles WHERE id = ?").get(id) as { file_path: string } | undefined;
+          if (!current || current.file_path !== row.file_path) throw new Error(`TrackFiles #${id} changed path before retag`);
 
           if (!fs.existsSync(resolvedPath)) {
             result.missing++;
-            return;
-          }
-
-          const preview = await this.evaluateRow(row, config, {
-            includeExternalMetadata: options.includeExternalLyrics === true,
-            lyricsByProviderMedia,
-            embeddedCoverContext,
-          });
-          if (!preview.missing && preview.changes.length === 0) {
-            result.skipped++;
             return;
           }
 
@@ -3075,6 +3073,17 @@ export class AudioTagService {
             const lyrics = await resolveLyricsForRetagRow(row, resolvedPath, options.includeExternalLyrics === true, lyricsByProviderMedia);
             const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
             if (lyricTag) desiredTagsArr.push(lyricTag);
+          }
+
+          const evaluationOptions: RetagEvaluationOptions = {
+            desiredTags: desiredTagsArr,
+            removals: this.buildRowManagedTagRemovals(row, config),
+            embeddedCoverContext,
+          };
+          const preview = await this.evaluateRow(row, config, evaluationOptions);
+          if (!preview.missing && preview.changes.length === 0) {
+            result.skipped++;
+            return;
           }
 
           const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, row.extension);
@@ -3104,11 +3113,7 @@ export class AudioTagService {
           const stat = fs.statSync(resolvedPath);
           pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
 
-          const verification = await this.evaluateRow(row, config, {
-            includeExternalMetadata: options.includeExternalLyrics === true,
-            lyricsByProviderMedia,
-            embeddedCoverContext,
-          });
+          const verification = await this.evaluateRow(row, config, evaluationOptions);
           if (verification.missing || verification.error || verification.changes.length > 0) {
             const remainingFields = verification.changes
               .map((change) => change.field)
@@ -3127,7 +3132,7 @@ export class AudioTagService {
           }
 
           result.retagged++;
-        })();
+        });
       } catch (error) {
         result.errors.push({
           id,
