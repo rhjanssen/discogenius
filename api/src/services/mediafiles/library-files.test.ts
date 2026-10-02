@@ -1064,7 +1064,7 @@ test("upsertLibraryFile links lyric sidecars through TrackFiles provider identit
   assert.equal(lyric?.trackFileId, trackFileId);
 });
 
-test("upsertLibraryFile merges duplicate path and media identity rows during rescan", () => {
+test("upsertLibraryFile preserves distinct physical files sharing a provider resource", () => {
   seedCatalogArtist({ mbid: "1", name: "Queen", path: "Queen" });
 
 const root = configModule.Config.getMusicPath();
@@ -1110,12 +1110,63 @@ const root = configModule.Config.getMusicPath();
     ORDER BY id
   `).all() as Array<{ id: number; provider_id: string; file_path: string }>;
 
-  assert.equal(rows.length, 1);
+  assert.equal(rows.length, 2);
   assert.equal(rows[0]?.id, id);
   assert.equal(rows[0]?.provider_id, "100");
   assert.equal(rows[0]?.file_path, targetPath);
+  assert.equal(rows[1]?.provider_id, "100");
+  assert.equal(rows[1]?.file_path, stalePath);
+  assert.equal(fs.readFileSync(stalePath, "utf8"), "audio");
+  assert.equal(libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1", libraryId: library.id,
+    provider: "tidal", providerEntityType: "track", providerId: "100",
+    filePath: targetPath, libraryRoot: root, fileType: "track", quality: "LOSSLESS",
+  }), id);
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM TrackFiles").get() as { count: number }).count, 2);
 });
 
+test("provider copies and their linked lyrics survive across edition folders", () => {
+  seedCatalogArtist({ mbid: "edition-copies", name: "Edition Copies" });
+  const root = configModule.Config.getMusicPath();
+  const linked: Array<{ audioId: number; lyricId: number; lyricPath: string }> = [];
+  for (const edition of ["original", "deluxe"]) {
+    const audioPath = path.join(root, "Edition Copies", edition, "song.flac");
+    const lyricPath = path.join(root, "Edition Copies", edition, "song.lrc");
+    fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+    fs.writeFileSync(audioPath, edition);
+    fs.writeFileSync(lyricPath, edition);
+    const common = { artistId: "edition-copies", provider: "tidal", providerEntityType: "track",
+      providerId: "shared-provider-track", mediaId: "shared-provider-track", libraryRoot: root };
+    const audioId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+      ...common, fileType: "track", filePath: audioPath,
+    });
+    const lyricId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+      ...common, fileType: "lyrics", filePath: lyricPath, trackFileId: audioId,
+    });
+    linked.push({ audioId, lyricId, lyricPath });
+  }
+  assert.notEqual(linked[0].audioId, linked[1].audioId);
+  for (const file of linked) {
+    const row = dbModule.db.prepare("SELECT track_file_id FROM LyricFiles WHERE id = ?")
+      .get(file.lyricId) as { track_file_id: number } | undefined;
+    assert.equal(row?.track_file_id, file.audioId);
+    assert.ok(fs.existsSync(file.lyricPath));
+  }
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM TrackFiles").get() as { count: number }).count, 2);
+});
+test("an exact physical path cannot silently change its owning library", () => {
+  seedCatalogArtist({ mbid: "path-owner", name: "Path Owner" });
+  const root = path.join(tempDir, "shared-owner-root");
+  const firstLibrary = seedTestLibrary(dbModule.db, { name: "Path owner A", rootPath: root });
+  const secondLibrary = seedTestLibrary(dbModule.db, { name: "Path owner B", rootPath: root });
+  const filePath = path.join(root, "song.flac");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(filePath, "audio");
+  const common = { artistId: "path-owner", filePath, libraryRoot: root, fileType: "track" };
+  const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({ ...common, libraryId: firstLibrary });
+  assert.throws(() => libraryFilesModule.LibraryFilesService.upsertLibraryFile({ ...common, libraryId: secondLibrary }), /already belongs to library/);
+  assert.equal((dbModule.db.prepare("SELECT library_id FROM TrackFiles WHERE id = ?").get(id) as { library_id: number }).library_id, firstLibrary);
+});
 test("a provider-free path upsert returns the exact existing TrackFiles row", () => {
   const { db } = dbModule;
   seedCatalogArtist({ mbid: "exact-row-artist", name: "Exact Row Artist", path: "Exact Row Artist" });

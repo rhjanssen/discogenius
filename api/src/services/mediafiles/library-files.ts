@@ -211,6 +211,7 @@ type LibraryFileRow = {
 };
 
 type TrackedAssetRow = LibraryFileRow & {
+  track_file_id?: number | null;
   relative_path: string | null;
   library_root: string;
   expected_path: string | null;
@@ -1909,7 +1910,7 @@ export class LibraryFilesService {
     const filename = path.basename(params.filePath);
     const extension = path.extname(params.filePath).replace(".", "");
     const existingPathRow = db.prepare(`
-      SELECT id, artist_metadata_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
+      SELECT id, library_id, artist_metadata_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
       FROM TrackFiles
       WHERE file_path = ?
       LIMIT 1
@@ -2069,172 +2070,9 @@ export class LibraryFilesService {
       );
     }
 
-    if (
-      canonicalIdentity.provider
-      && canonicalIdentity.providerId
-      && canonicalIdentity.providerEntityType
-      && (params.fileType === "track" || params.fileType === "video")
-    ) {
-      const existingRow = db.prepare(`
-        SELECT id, library_id, artist_metadata_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
-        FROM TrackFiles
-        WHERE provider = ?
-          AND provider_entity_type = ?
-          AND provider_id = ?
-          AND file_type = ?
-          AND library_id = ?
-        ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
-        LIMIT 1
-      `).get(
-        canonicalIdentity.provider,
-        canonicalIdentity.providerEntityType,
-        canonicalIdentity.providerId,
-        params.fileType,
-        libraryId,
-        params.filePath,
-      ) as ExistingLibraryFileIdentity | undefined;
-
-      if (existingRow) {
-        const rowToUpdate = existingPathRow && existingPathRow.id !== existingRow.id
-          ? existingPathRow
-          : existingRow;
-
-        if (rowToUpdate.id !== existingRow.id) {
-          db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(existingRow.id);
-        }
-
-        db.prepare(`
-          UPDATE TrackFiles
-          SET library_id = ?,
-              artist_metadata_id = ?,
-              release_group_id = COALESCE(?, release_group_id),
-              album_edition_id = COALESCE(?, album_edition_id),
-              track_id = COALESCE(?, track_id),
-              recording_id = COALESCE(?, recording_id),
-              canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
-              canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
-              canonical_release_mbid = COALESCE(?, canonical_release_mbid),
-              canonical_track_mbid = COALESCE(?, canonical_track_mbid),
-              canonical_recording_mbid = COALESCE(?, canonical_recording_mbid),
-              provider = COALESCE(?, provider),
-              provider_entity_type = COALESCE(?, provider_entity_type),
-              provider_id = COALESCE(?, provider_id),
-              library_slot = COALESCE(?, library_slot),
-              file_path = ?,
-              relative_path = ?,
-              library_root = ?,
-              filename = ?,
-              extension = ?,
-              file_size = ?,
-              file_type = ?,
-              quality = ?,
-              naming_template = COALESCE(?, naming_template),
-              expected_path = ?,
-              needs_rename = CASE WHEN ? IS NOT NULL AND ? != ? THEN 1 ELSE 0 END,
-              modified_at = ?,
-              verified_at = CURRENT_TIMESTAMP,
-              bit_depth = COALESCE(?, bit_depth),
-              sample_rate = COALESCE(?, sample_rate),
-              bitrate = COALESCE(?, bitrate),
-              codec = COALESCE(?, codec),
-              video_codec = COALESCE(?, video_codec),
-              channels = COALESCE(?, channels),
-              width = COALESCE(?, width),
-              height = COALESCE(?, height),
-              duration = COALESCE(?, duration),
-              fingerprint = COALESCE(?, fingerprint)
-          WHERE id = ?
-        `).run(
-          libraryId,
-          artistMetadataId,
-          catalogIds.release_group_id,
-          catalogIds.album_edition_id,
-          catalogIds.track_id,
-          catalogIds.recording_id,
-          canonicalIdentity.canonicalArtistMbid,
-          canonicalIdentity.canonicalReleaseGroupMbid,
-          canonicalIdentity.canonicalReleaseMbid,
-          canonicalIdentity.canonicalTrackMbid,
-          canonicalIdentity.canonicalRecordingMbid,
-          canonicalIdentity.provider,
-          canonicalIdentity.providerEntityType,
-          canonicalIdentity.providerId,
-          canonicalIdentity.librarySlot,
-          params.filePath,
-          relativePath,
-          params.libraryRoot,
-          filename,
-          extension,
-          fileSize,
-          params.fileType,
-          params.quality || null,
-          params.namingTemplate || null,
-          expectedPath,
-          expectedPath,
-          expectedPath,
-          params.filePath,
-          modifiedAt,
-          params.bitDepth || null,
-          params.sampleRate || null,
-          params.bitrate || null,
-          params.codec || null,
-          params.videoCodec || null,
-          params.channels || null,
-          params.width || null,
-          params.height || null,
-          params.duration || null,
-          params.fingerprint || null,
-          rowToUpdate.id,
-        );
-
-        db.prepare(`
-          DELETE FROM TrackFiles
-          WHERE provider = ?
-            AND provider_entity_type = ?
-            AND provider_id = ?
-            AND file_type = ?
-            AND library_id = ?
-            AND id != ?
-        `).run(
-          canonicalIdentity.provider,
-          canonicalIdentity.providerEntityType,
-          canonicalIdentity.providerId,
-          params.fileType,
-          libraryId,
-          rowToUpdate.id,
-        );
-
-        if (params.removeFromUnmapped !== false) {
-          db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);
-        }
-
-        if (hasMeaningfulLibraryFileChange(rowToUpdate, {
-          artistId: params.artistId,
-          albumId: params.albumId || null,
-          mediaId: params.mediaId || null,
-          filePath: params.filePath,
-          relativePath,
-          libraryRoot: params.libraryRoot,
-          fileType: params.fileType,
-          quality: params.quality || null,
-        })) {
-          this.emitFileUpgraded({
-            libraryFileId: existingRow.id,
-            artistId: params.artistId,
-            albumId: params.albumId || null,
-            mediaId: params.mediaId || null,
-            fileType: params.fileType,
-            filePath: params.filePath,
-            libraryRoot: params.libraryRoot,
-            quality: params.quality || null,
-            previousPath: rowToUpdate.file_path,
-            previousQuality: rowToUpdate.quality || null,
-          });
-        }
-
-        return rowToUpdate.id;
-      }
-    }
+    // A provider resource can be downloaded into several edition folders.
+    // Physical file identity is the unique path, not its source provider ID.
+    // Retiring or moving an existing file requires an explicit file operation.
 
     if (this.isTrackedAssetFileType(params.fileType)) {
       const existingTrackedAssetId = this.findTrackedAssetRecordId({
@@ -2646,6 +2484,7 @@ export class LibraryFilesService {
 
     const rows = db.prepare(`
       SELECT id AS id,
+        track_file_id,
         artist_id AS artist_metadata_id,
         COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
         COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
@@ -2669,7 +2508,22 @@ export class LibraryFilesService {
 
     const folderScoped = !params.mediaId && FOLDER_SCOPED_METADATA_TYPES.has(params.fileType);
     if (!folderScoped) {
-      return { removed: this.removeDuplicateTrackedAssetRows(tableName, rows) };
+      // Lyrics/extras belong to a physical playable file. The same recording
+      // or provider track may occur in several editions in this library.
+      const copies = new Map<string, TrackedAssetRow[]>();
+      for (const row of rows) {
+        const key = row.track_file_id != null
+          ? `track-file:${row.track_file_id}`
+          : `folder:${path.dirname(normalizeResolvedPath(resolveStoredLibraryPath({
+            filePath: row.file_path, libraryRoot: row.library_root, relativePath: row.relative_path,
+          })))}`;
+        const group = copies.get(key) ?? [];
+        group.push(row);
+        copies.set(key, group);
+      }
+      let removed = 0;
+      for (const group of copies.values()) removed += this.removeDuplicateTrackedAssetRows(tableName, group);
+      return { removed };
     }
 
     // Each monitored edition has its own album folder. Cover.jpg / album.nfo in

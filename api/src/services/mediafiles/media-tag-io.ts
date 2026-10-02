@@ -470,7 +470,9 @@ function writeTagLibValues(
 ): void {
   const extension = extensionOf(filePath);
   withTagLibFile(filePath, (file) => {
-    if (removeKeys.includes("ID3v1")) file.removeTags(TagTypes.Id3v1);
+    // TagLib creates default tags in memory. Do not introduce an ID3v1 tag
+    // that was absent on disk, or scrub verification sees a new legacy tag.
+    if (removeKeys.includes("ID3v1") || !(file.tagTypesOnDisk & TagTypes.Id3v1)) file.removeTags(TagTypes.Id3v1);
     if (XIPH_EXTENSIONS.has(extension)) {
       const tag = file.getTag(TagTypes.Xiph, true) as XiphComment;
       for (const key of removeKeys) tag.removeField(key);

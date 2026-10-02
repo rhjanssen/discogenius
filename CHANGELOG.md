@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.19.2] - 2026-10-03
+
+### Fixed
+
+- Keep each physical audio/video path's exact TrackFiles row when several files share a provider resource. Scans no longer retire another edition's file row, and an existing playable path cannot silently change its owning Library.
+- Deduplicate track sidecars within the linked physical file, with directory scope for unresolved links, instead of deleting lyrics from other edition folders.
+- Preserve stored track/disc positions when a recording has no canonical track occurrence. A known edition count must not become track zero, and tag scrubbing must not erase the unresolved position.
+- Avoid introducing an ID3v1 tag when TagLib creates default tags in memory for a file that did not have one on disk.
+
+### Validation
+
+- Active-schema regressions reproduce cross-path row loss, cross-edition lyric deletion and silent library reassignment. Native FLAC, M4A and MP3 retags verify unresolved positions remain intact and the second pass is a no-op.
 ## [2.19.1] - 2026-10-03
 
 ### Fixed

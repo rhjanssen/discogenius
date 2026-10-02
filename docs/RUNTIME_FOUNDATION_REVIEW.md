@@ -432,3 +432,27 @@ kept TrackFiles ID 33810, moved the file to the canonical album directory, wrote
 MusicBrainz album tags and preserved decoded audio exactly. The mutation journal
 was empty after completion. Publication of the earlier 2.19.0 candidate was
 cancelled; it was not deployed to the NAS.
+
+## Physical file identity at every entry point
+
+The live 2.19.1 retry repaired the 65 oversized-cover failures and the three
+native-write failures. Five unresolved recording-level files still received a
+track-zero target because their edition count was known but their canonical
+track occurrence was not. Retag now leaves track/disc positions under the
+existing file's authority until that occurrence is resolved. Native tests cover
+FLAC, M4A and MP3, including scrubbing and an idempotent second pass.
+
+Housekeeping was not the only file-row deduplication entry point. The shared
+upsert selected a provider resource's newest file and deleted the remaining rows,
+even when their physical paths differed. Its active-schema regression retained
+one of two real files before correction. Upsert now resolves only the path it
+writes; explicit replacement/rename services own file retirement. Track-sidecar
+deduplication uses the linked TrackFiles ID, with directory scope for unresolved
+links. An existing path's Library ownership is validated before writing.
+
+Lidarr was also configured with automatic tag writing set to `sync` and tag
+scrubbing enabled while importing 23,612 existing tracks from the shared Music
+root. Both settings were disabled on the NAS after preserving a settings backup.
+Both apps remain connected for recognition/database comparison. This prevents
+Lidarr's automatic retags; it does not make its writable mount read-only or
+prevent explicitly requested manual file changes.

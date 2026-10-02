@@ -2241,66 +2241,71 @@ export class AudioTagService {
         },
       );
 
-      const trackPosition = formatPosition(row.media_track_number, trackCount);
-      if (trackPosition) {
-        tags.push({
-          key: "track",
-          label: "Track",
-          ffmpegKey: "track",
-          targetValue: trackPosition,
-        });
-      }
-      const trackNumber = formatPositiveNumber(row.media_track_number);
-      if (trackNumber) {
-        tags.push({
-          key: "track_number",
-          label: "Track Number",
-          ffmpegKey: "TRACKNUMBER",
-          targetValue: trackNumber,
-          aliases: ["tracknumber"],
-        });
-      }
-      const trackTotal = formatPositiveNumber(trackCount);
-      if (trackTotal) {
-        tags.push({
-          key: "track_count",
-          label: "Track Count",
-          ffmpegKey: "TRACKTOTAL",
-          targetValue: trackTotal,
-          aliases: ["tracktotal", "totaltracks"],
-          writeAliases: ["TOTALTRACKS"],
-        });
-      }
+      // Edition counts do not identify this recording's occurrence. Keep the
+      // file's position until a canonical track supplies its number and medium.
+      if (formatPositiveNumber(row.media_track_number)) {
+        const trackPosition = formatPosition(row.media_track_number, trackCount);
+        if (trackPosition) {
+          tags.push({
+            key: "track",
+            label: "Track",
+            ffmpegKey: "track",
+            targetValue: trackPosition,
+          });
+        }
+        const trackNumber = formatPositiveNumber(row.media_track_number);
+        if (trackNumber) {
+          tags.push({
+            key: "track_number",
+            label: "Track Number",
+            ffmpegKey: "TRACKNUMBER",
+            targetValue: trackNumber,
+            aliases: ["tracknumber"],
+          });
+        }
+        const trackTotal = formatPositiveNumber(trackCount);
+        if (trackTotal) {
+          tags.push({
+            key: "track_count",
+            label: "Track Count",
+            ffmpegKey: "TRACKTOTAL",
+            targetValue: trackTotal,
+            aliases: ["tracktotal", "totaltracks"],
+            writeAliases: ["TOTALTRACKS"],
+          });
+        }
 
-      const discPosition = formatPosition(discNumber, discCount);
-      if (discPosition) {
-        tags.push({
-          key: "disc",
-          label: "Disc",
-          ffmpegKey: "disc",
-          targetValue: discPosition,
-        });
-      }
-      const discNumberValue = formatPositiveNumber(discNumber);
-      if (discNumberValue) {
-        tags.push({
-          key: "disc_number",
-          label: "Disc Number",
-          ffmpegKey: "DISCNUMBER",
-          targetValue: discNumberValue,
-          aliases: ["discnumber"],
-        });
-      }
-      const discTotal = formatPositiveNumber(discCount);
-      if (discTotal) {
-        tags.push({
-          key: "disc_count",
-          label: "Disc Count",
-          ffmpegKey: "DISCTOTAL",
-          targetValue: discTotal,
-          aliases: ["disctotal", "totaldiscs"],
-          writeAliases: ["TOTALDISCS"],
-        });
+        const discPosition = formatPosition(discNumber, discCount);
+        if (discPosition) {
+          tags.push({
+            key: "disc",
+            label: "Disc",
+            ffmpegKey: "disc",
+            targetValue: discPosition,
+          });
+        }
+        const discNumberValue = formatPositiveNumber(discNumber);
+        if (discNumberValue) {
+          tags.push({
+            key: "disc_number",
+            label: "Disc Number",
+            ffmpegKey: "DISCNUMBER",
+            targetValue: discNumberValue,
+            aliases: ["discnumber"],
+          });
+        }
+        const discTotal = formatPositiveNumber(discCount);
+        if (discTotal) {
+          tags.push({
+            key: "disc_count",
+            label: "Disc Count",
+            ffmpegKey: "DISCTOTAL",
+            targetValue: discTotal,
+            aliases: ["disctotal", "totaldiscs"],
+            writeAliases: ["TOTALDISCS"],
+          });
+        }
+
       }
 
       if (releaseDate) {
@@ -2659,6 +2664,17 @@ export class AudioTagService {
     const desiredMap = this.buildAudioTagWriteMap(desiredTags, extension);
     const allowed = new Set(Object.keys(desiredMap).flatMap(key => nativeMediaTagKeys(key, extension)).map(keyIdentity));
     const semanticKey = (key: string) => key.replace(/^----:com\.apple\.iTunes:|^TXXX:/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+    for (const position of ["track", "disc"] as const) {
+      const keys = [position, `${position}_number`, `${position}_count`];
+      if ([...desiredTags, ...removals].some(tag => keys.includes(tag.key))) continue;
+      // Unknown positions are outside this write's authority, even with scrub
+      // enabled. Preserve their native fields rather than inventing track zero.
+      const preserved = this.buildAudioTagWriteMap(keys.map(key => ({
+        key, label: key, ffmpegKey: key, targetValue: "1",
+        writeAliases: key.endsWith("_count") ? [position === "track" ? "TOTALTRACKS" : "TOTALDISCS"] : [],
+      })), extension);
+      for (const key of Object.keys(preserved).flatMap(key => nativeMediaTagKeys(key, extension))) allowed.add(keyIdentity(key));
+    }
     const owned = new Set([...desiredTags, ...removals].flatMap(tag =>
       [tag.key, tag.ffmpegKey, ...(tag.aliases || []).filter(alias => !["url", "purl", "rating", "key"].includes(alias.toLowerCase())), ...Object.keys(this.buildAudioTagWriteMap([tag], extension))],
     ).map(semanticKey));

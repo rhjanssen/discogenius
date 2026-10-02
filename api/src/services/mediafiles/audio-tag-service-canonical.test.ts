@@ -499,3 +499,36 @@ test("retag verifies its written track-count snapshot while catalogue hydration 
     dbModule.db.prepare("DELETE FROM Tracks WHERE mbid = 'concurrent-track'").run();
   }
 });
+
+for (const extension of ["flac", "m4a", "mp3"]) {
+  test(`retag preserves ${extension} positions when the file has no canonical track occurrence`, {
+    skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+  }, async () => {
+    const row = dbModule.db.prepare("SELECT id, track_id, canonical_track_mbid FROM TrackFiles WHERE canonical_recording_mbid = ?")
+      .get("recording-mbid-1") as { id: number; track_id: number | null; canonical_track_mbid: string | null };
+    const mediaPath = path.join(tempDir, `unresolved-position.${extension}`);
+    const codec = extension === "flac" ? "flac" : extension === "m4a" ? "aac" : "libmp3lame";
+    const generated = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.1",
+      "-c:a", codec, "-metadata", "track=7/12", "-metadata", "disc=2/3", "-metadata", "title=Wrong title", mediaPath], { windowsHide: true, encoding: "utf8" });
+    assert.equal(generated.status, 0, generated.stderr);
+    dbModule.db.prepare("UPDATE TrackFiles SET file_path=?, relative_path=?, extension=?, track_id=NULL, canonical_track_mbid=NULL WHERE id=?")
+      .run(mediaPath, path.basename(mediaPath), extension, row.id);
+    configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files", scrub_audio_tags: true });
+    configModule.updateConfig("quality", { ...configModule.getConfigSection("quality"), embed_cover: false, embed_lyrics: false });
+    const { parseFile } = await import("music-metadata");
+    const before = (await parseFile(mediaPath)).common;
+    try {
+      const desired = audioTagServiceModule.AudioTagService.buildDesiredTagsForTrackFileIdsForTest([row.id]);
+      assert.equal(desired.some(tag => /^(track|disc)(_|$)/.test(tag.key)), false);
+      const applied = await audioTagServiceModule.AudioTagService.apply([row.id]);
+      assert.deepEqual(applied, { retagged: 1, skipped: 0, missing: 0, errors: [] }, JSON.stringify((await parseFile(mediaPath)).native));
+      const after = (await parseFile(mediaPath)).common;
+      assert.deepEqual(after.track, before.track);
+      assert.deepEqual(after.disk, before.disk);
+      assert.equal(after.title, "Canonical Song");
+      assert.deepEqual(await audioTagServiceModule.AudioTagService.apply([row.id]), { retagged: 0, skipped: 1, missing: 0, errors: [] });
+    } finally {
+      dbModule.db.prepare("UPDATE TrackFiles SET track_id=?, canonical_track_mbid=? WHERE id=?").run(row.track_id, row.canonical_track_mbid, row.id);
+    }
+  });
+}
