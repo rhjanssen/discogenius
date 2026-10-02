@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-servarr-metadata-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -154,6 +155,48 @@ function resetCatalog(): void {
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
 }
+
+test("artist hydration persists each bounded catalogue batch before fetching the next", async () => {
+  resetCatalog();
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const original = catalogProviderRegistry.getActive;
+  const ids = Array.from({ length: CATALOG_DETAIL_BATCH_SIZE * 2 + 3 }, (_, index) => `batch-group-${index}`);
+  let fetched = 0;
+  catalogProviderRegistry.getActive = () => ({
+    getReleaseGroupDetails: async (batch: string[]) => {
+      const persisted = dbModule.db.prepare("SELECT count(*) AS n FROM Albums WHERE mbid LIKE 'batch-group-%'").get() as { n: number };
+      assert.equal(persisted.n, fetched, "previous batch must be reconciled before another fetch");
+      assert.ok(batch.length <= CATALOG_DETAIL_BATCH_SIZE);
+      fetched += batch.length;
+      return batch.map((id) => ({ releaseGroupMbid: id, detail: { id, title: id, artistid: "artist-mbid", type: "Album", images: [], Releases: [] } }));
+    },
+  }) as any;
+  try {
+    await servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", [...ids, ids[0]]);
+    assert.equal(fetched, ids.length);
+    assert.deepEqual(dbModule.db.prepare("SELECT mbid FROM Albums ORDER BY id").all().map((row: any) => row.mbid), ids);
+  } finally { catalogProviderRegistry.getActive = original; }
+});
+
+test("a failed later catalogue fetch preserves earlier batches and fails the refresh", async () => {
+  resetCatalog();
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const original = catalogProviderRegistry.getActive;
+  const ids = Array.from({ length: CATALOG_DETAIL_BATCH_SIZE * 3 }, (_, index) => `partial-group-${index}`);
+  let calls = 0;
+  catalogProviderRegistry.getActive = () => ({
+    getReleaseGroupDetails: async (batch: string[]) => {
+      if (++calls === 2) throw new Error("catalogue read timed out");
+      return batch.map((id) => ({ releaseGroupMbid: id, detail: { id, title: id, artistid: "artist-mbid", type: "Album", images: [], Releases: [] } }));
+    },
+  }) as any;
+  try {
+    await assert.rejects(servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", ids), /catalogue read timed out/);
+    assert.equal(calls, 2);
+    const persisted = dbModule.db.prepare("SELECT mbid FROM Albums ORDER BY id").all().map((row: any) => row.mbid);
+    assert.deepEqual(persisted, ids.slice(0, CATALOG_DETAIL_BATCH_SIZE));
+  } finally { catalogProviderRegistry.getActive = original; }
+});
 
 test("Servarr metadata retries bounded transient responses and honors Retry-After", async () => {
   let calls = 0;

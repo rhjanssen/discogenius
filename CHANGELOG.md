@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.19.3] - 2026-10-03
+
+### Fixed
+
+- Bound canonical catalogue detail queries to 32 release groups. Artist refresh reconciles each batch before fetching the next instead of querying and retaining a prolific artist's entire edition/track catalogue at once.
+- Preserve committed catalogue batches when a later bulk fetch fails, and propagate the fetch error to the command.
+
+### Validation
+
+- Reproduced Bruce Springsteen's local MusicBrainz timeout with 2,138 groups. The bounded replay returned all groups and 146,972 track occurrences; its longest query took 615 ms. A 32-group comparison produced identical metadata.
+- Full local CI passed with 1,945 API and 186 frontend tests. Active-schema regressions cover persistence before the next fetch and recovery after a later fetch failure.
+
 ## [2.19.2] - 2026-10-03
 
 ### Fixed
@@ -14,6 +26,7 @@ All notable changes to this project are documented in this file.
 ### Validation
 
 - Active-schema regressions reproduce cross-path row loss, cross-edition lyric deletion and silent library reassignment. Native FLAC, M4A and MP3 retags verify unresolved positions remain intact and the second pass is a no-op.
+
 ## [2.19.1] - 2026-10-03
 
 ### Fixed

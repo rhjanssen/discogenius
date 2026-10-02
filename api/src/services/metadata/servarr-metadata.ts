@@ -10,6 +10,7 @@ import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
+import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
 export interface ServarrMetadataRating {
@@ -773,10 +774,8 @@ export class ServarrMetadataService {
   }
 
   /**
-   * Fetch full detail for many of an artist's release groups in ONE bulk call
-   * (the "one fetch per artist" path that removes the per-RG N+1 during refresh),
-   * then reconcile each with the identical write path. Falls back to per-RG
-   * getReleaseGroup for providers that can't batch (hosted Servarr).
+   * Fetch and reconcile bounded catalogue batches. Keep edition/track payloads
+   * out of memory after their batch and persist progress before the next fetch.
    */
   async syncArtistReleaseGroups(artistMbid: string, releaseGroupMbids: string[]): Promise<void> {
     const mbids = Array.from(new Set(releaseGroupMbids.map((mbid) => String(mbid || "").trim()).filter(Boolean)));
@@ -785,38 +784,41 @@ export class ServarrMetadataService {
     }
     const { catalogProviderRegistry } = await import("../catalog/index.js");
     const provider = catalogProviderRegistry.getActive();
-    if (typeof provider.getReleaseGroupDetails === "function") {
-      const details = await provider.getReleaseGroupDetails(mbids);
-      // Each release group is independently consistent, and reconcile takes the
-      // gate itself per header transaction and per track chunk, so a prolific
-      // artist's catalogue never serialises behind one long acquisition.
-      for (const entry of details) {
-        try {
-          await this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
-        } catch (error) {
-          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
+    for (let offset = 0; offset < mbids.length; offset += CATALOG_DETAIL_BATCH_SIZE) {
+      const batch = mbids.slice(offset, offset + CATALOG_DETAIL_BATCH_SIZE);
+      if (typeof provider.getReleaseGroupDetails === "function") {
+        const details = await provider.getReleaseGroupDetails(batch);
+        // Each release group is independently consistent, and reconcile takes the
+        // gate itself per header transaction and per track chunk, so a prolific
+        // artist's catalogue never serialises behind one long acquisition.
+        for (const entry of details) {
+          try {
+            await this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
+          } catch (error) {
+            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
+          }
         }
-      }
-    } else {
-      // Hosted Servarr exposes one album-detail endpoint per release group, as
-      // Lidarr itself uses. Fetch a small bounded group concurrently, then
-      // reconcile serially so network latency overlaps without multiplying
-      // writers across RefreshArtist jobs.
-      const limit = pLimit(4);
-      const details = await Promise.all(mbids.map((mbid) => limit(async () => {
-        try {
-          return { mbid, detail: await provider.getReleaseGroup(mbid) };
-        } catch (error) {
-          console.warn(`[ServarrMetadata] Failed to fetch release group ${mbid}:`, error);
-          return null;
-        }
-      })));
-      for (const entry of details) {
-        if (!entry) continue;
-        try {
-          await this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
-        } catch (error) {
-          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
+      } else {
+        // Hosted Servarr exposes one album-detail endpoint per release group, as
+        // Lidarr itself uses. Fetch a small bounded group concurrently, then
+        // reconcile serially so network latency overlaps without multiplying
+        // writers across RefreshArtist jobs.
+        const limit = pLimit(4);
+        const details = await Promise.all(batch.map((mbid) => limit(async () => {
+          try {
+            return { mbid, detail: await provider.getReleaseGroup(mbid) };
+          } catch (error) {
+            console.warn(`[ServarrMetadata] Failed to fetch release group ${mbid}:`, error);
+            return null;
+          }
+        })));
+        for (const entry of details) {
+          if (!entry) continue;
+          try {
+            await this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
+          } catch (error) {
+            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
+          }
         }
       }
     }

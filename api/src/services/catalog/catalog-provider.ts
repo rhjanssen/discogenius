@@ -35,6 +35,9 @@ export type {
   LidarrTrack,
 } from "../metadata/servarr-metadata.js";
 
+/** Bound full edition/track hydration independently of an artist's catalogue size. */
+export const CATALOG_DETAIL_BATCH_SIZE = 32;
+
 /**
  * A canonical recording, keyed by MBID. Servarr Metadata Server does not expose a standalone
  * recording endpoint (recordings only arrive embedded in a release's tracks),
@@ -165,9 +168,8 @@ export interface CatalogProvider {
   getReleaseGroup(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail>;
 
   /**
-   * Bulk variant of getReleaseGroup: full details for MANY release groups in a
-   * fixed number of set-based queries instead of one round-trip per group — the
-   * "one fetch per artist" path that removes the per-RG N+1 during refresh.
+   * Bulk variant of getReleaseGroup. Implementations bound their backend queries;
+   * refresh callers also reconcile one CATALOG_DETAIL_BATCH_SIZE batch at a time.
    * Optional: providers that can't batch (hosted Servarr) let callers fall back
    * to per-RG getReleaseGroup.
    */

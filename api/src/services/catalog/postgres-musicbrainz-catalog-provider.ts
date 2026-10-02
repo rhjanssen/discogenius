@@ -36,7 +36,7 @@ import type {
   LidarrReleaseGroupDetail,
   LidarrRelease,
 } from "./catalog-provider.js";
-import { releaseGroupsFromArtist } from "./catalog-provider.js";
+import { CATALOG_DETAIL_BATCH_SIZE, releaseGroupsFromArtist } from "./catalog-provider.js";
 import type { MusicBrainzReleaseGroupForMatching } from "../metadata/provider-release-group-matcher.js";
 import {
   mapMbArtistToLidarr,
@@ -248,10 +248,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
   }
 
   /**
-   * Bulk variant of getReleaseGroup — full detail for many release groups in a
-   * fixed number of set-based queries (one header query + two release/track
-   * queries) instead of ~3 per group. This is the "one fetch per artist" path:
-   * an 80-RG artist goes from ~240 round-trips to 3.
+   * Set-based full detail in bounded batches. An artist's thousands of credited
+   * groups must not turn the track join into a whole-catalogue scan or timeout.
    */
   async getReleaseGroupDetails(
     releaseGroupMbids: string[],
@@ -260,6 +258,17 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     if (mbids.length === 0) {
       return [];
     }
+
+    const result: Array<{ releaseGroupMbid: string; detail: LidarrReleaseGroupDetail }> = [];
+    for (let offset = 0; offset < mbids.length; offset += CATALOG_DETAIL_BATCH_SIZE) {
+      result.push(...await this.loadReleaseGroupDetailsBatch(mbids.slice(offset, offset + CATALOG_DETAIL_BATCH_SIZE)));
+    }
+    return result;
+  }
+
+  private async loadReleaseGroupDetailsBatch(
+    mbids: string[],
+  ): Promise<Array<{ releaseGroupMbid: string; detail: LidarrReleaseGroupDetail }>> {
 
     const headers = await this.query<{
       id: number; gid: string; name: string; primary_type: string | null; comment: string | null;

@@ -2,6 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PostgresMusicBrainzCatalogProvider, earlierDate } from "./postgres-musicbrainz-catalog-provider.js";
+import { CATALOG_DETAIL_BATCH_SIZE } from "./catalog-provider.js";
+
+test("large MusicBrainz detail reads bound every track query and preserve every unique group", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({ connectionString: "postgresql://unused:unused@127.0.0.1:1/unused" });
+  const ids = Array.from({ length: CATALOG_DETAIL_BATCH_SIZE * 2 + 3 }, (_, index) => `group-${index}`);
+  const seen: string[][] = [];
+  (provider as any).query = async (sql: string, values: unknown[]) => {
+    assert.ok((values[0] as unknown[]).length <= CATALOG_DETAIL_BATCH_SIZE, "backend query must not expand to a whole artist");
+    if (!sql.includes("WHERE rg.gid = ANY")) return [];
+    const batch = values[0] as string[];
+    seen.push(batch);
+    return batch.map((gid) => ({ id: ids.indexOf(gid) + 1, gid, name: gid, secondary_types: [] }));
+  };
+  try {
+    const result = await provider.getReleaseGroupDetails([...ids, ` ${ids[0]} `, ""]);
+    assert.deepEqual(seen.map((batch) => batch.length), [32, 32, 3]);
+    assert.deepEqual(result.map((entry) => entry.releaseGroupMbid), ids);
+    assert.deepEqual(result.map((entry) => entry.detail.title), ids);
+  } finally { await provider.dispose(); }
+});
 
 test("bulk MusicBrainz hydration keeps release-group and unknown-country dates", async () => {
   const provider = new PostgresMusicBrainzCatalogProvider({

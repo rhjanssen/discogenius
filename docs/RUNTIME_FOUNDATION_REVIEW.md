@@ -1,7 +1,8 @@
 # Runtime foundation review
 
-Status: local 2.17.0 release gates passed, 2026-09-29.
-Working branch: `codex/runtime-foundation`. NAS verification follows publication.
+Status: 2.19.2 deployed and verified on the NAS, 2026-10-03. Bounded catalogue
+hydration follow-up is in validation.
+Working branch: `codex/runtime-foundation`.
 
 ## Production evidence
 
@@ -456,3 +457,30 @@ root. Both settings were disabled on the NAS after preserving a settings backup.
 Both apps remain connected for recognition/database comparison. This prevents
 Lidarr's automatic retags; it does not make its writable mount read-only or
 prevent explicitly requested manual file changes.
+
+## Bounded catalogue hydration
+
+After 2.19.2 deployment, retag command 14724 retried its five remaining failed
+files. Generation 3 completed all five with zero errors or missing files; all
+five were already correct under the resolved-position rules and needed no write.
+Each retained its exact TrackFiles ID and decoded SHA-256 from the pre-update
+snapshot. Rename 14723 resumed generation 1 above cursor 12,758 of 64,047. It
+is still unfinished; the retag result does not establish rename completion.
+
+Bruce Springsteen refresh 14730 still failed against the local MusicBrainz
+server. A read-only replay reproduced the 20-second statement timeout in the
+edition/track/recording join for all 2,138 credited release groups. The previous
+"one fetch per artist" optimization removed round trips but made the artist's
+entire catalogue one unbounded query and payload.
+
+Full-detail queries now use at most 32 groups per backend batch. The refresh
+service reconciles each batch before requesting the next, including the hosted
+Servarr fallback, so it does not retain the complete artist track payload before
+starting persistence. A later failed bulk fetch propagates the error while
+earlier groups remain committed. Active-schema tests verify that order and
+partial progress; backend tests verify all unique identities survive batching.
+
+The revised read-only replay returned all 2,138 groups and 146,972 track
+occurrences. Across 670 queries, total SQL time was 34,706 ms and the longest
+statement was 615 ms. This measures the catalogue read, not complete artist
+refresh duration, provider matching, sidecar enrichment or a cold mirror.
