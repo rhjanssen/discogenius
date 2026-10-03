@@ -792,11 +792,7 @@ export class ServarrMetadataService {
         // gate itself per header transaction and per track chunk, so a prolific
         // artist's catalogue never serialises behind one long acquisition.
         for (const entry of details) {
-          try {
-            await this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
-          } catch (error) {
-            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
-          }
+          await this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
         }
       } else {
         // Hosted Servarr exposes one album-detail endpoint per release group, as
@@ -804,21 +800,11 @@ export class ServarrMetadataService {
         // reconcile serially so network latency overlaps without multiplying
         // writers across RefreshArtist jobs.
         const limit = pLimit(4);
-        const details = await Promise.all(batch.map((mbid) => limit(async () => {
-          try {
-            return { mbid, detail: await provider.getReleaseGroup(mbid) };
-          } catch (error) {
-            console.warn(`[ServarrMetadata] Failed to fetch release group ${mbid}:`, error);
-            return null;
-          }
-        })));
+        const details = await Promise.all(batch.map((mbid) => limit(async () => ({
+          mbid, detail: await provider.getReleaseGroup(mbid),
+        }))));
         for (const entry of details) {
-          if (!entry) continue;
-          try {
-            await this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
-          } catch (error) {
-            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
-          }
+          await this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
         }
       }
     }
@@ -846,7 +832,18 @@ export class ServarrMetadataService {
       WHERE rg.mbid = ?
     `).get(releaseGroupMbid) as { contentHash?: string | null; hasReleases?: number } | undefined;
     if (existing?.contentHash && existing.contentHash === contentHash && existing.hasReleases) {
-      return;
+      // Older completion markers may precede an interrupted track chunk. Check
+      // exact catalogue track identities, using the indexed edition boundary,
+      // so a matching hash cannot suppress repair of absent/pruned children.
+      const editionExists = db.prepare("SELECT 1 FROM AlbumEditions WHERE mbid = ?");
+      const storedTracks = db.prepare("SELECT mbid FROM Tracks WHERE release_mbid = ?");
+      const complete = (detail.Releases || []).every(release => {
+        if (!editionExists.get(release.Id)) return false;
+        const stored = new Set((storedTracks.all(release.Id) as Array<{ mbid: string }>)
+          .map(row => row.mbid));
+        return (release.Tracks || []).every(track => stored.has(track.Id));
+      });
+      if (complete) return;
     }
 
     const insertRg = db.prepare(`
@@ -959,7 +956,7 @@ export class ServarrMetadataService {
           JSON.stringify(detail.rating ?? rawDetail.rating ?? rawDetail.Rating ?? null),
           JSON.stringify(detail.aliases ?? rawDetail.aliases ?? []),
           JSON.stringify(rawDetail.oldids ?? rawDetail.oldIds ?? []),
-          contentHash,
+          null, // Completion is committed only after every track chunk and credit succeeds.
         );
         MusicBrainzArtistCreditService.ensurePrimaryScope(releaseGroupMbid, ownerArtistMbid);
 
@@ -1033,7 +1030,10 @@ export class ServarrMetadataService {
       );
     }, 50, "servarr:release-group-tracks");
     await withSqliteWriteGate(() => {
-      MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
+      db.transaction(() => {
+        MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
+        db.prepare("UPDATE Albums SET content_hash = ? WHERE mbid = ?").run(contentHash, releaseGroupMbid);
+      })();
     }, "servarr:release-group-credits");
   }
 }

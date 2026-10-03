@@ -522,3 +522,32 @@ that enrichment from scans avoids those requests, but does not establish that
 provider authentication or sustained downloads are healthy. Cold local startup
 also produced slow stats/search requests against the large cloned catalogue;
 that latency still needs a separate query/profile review.
+
+## Catalogue completion after interruption
+
+Recovery review found that the catalogue header transaction saved the content
+hash before all track chunks were persisted. A failed chunk or process restart
+could leave an incomplete release group with a hash that the next refresh
+accepted as complete. Bulk reconciliation also caught persistence errors and
+continued, so a command could report completion despite missing child rows.
+
+The header now clears the completion hash. Only the final successful credits
+transaction commits it. A matching hash also requires every incoming edition
+and exact catalogue track identity to be present, using indexed edition lookups.
+This repairs earlier incomplete markers and pruned children. Fetch and
+persistence errors propagate to the command while completed earlier chunks
+remain durable and the incomplete group can be retried.
+
+An active-schema test aborts track 51 after the first 50-track transaction. It
+reproduced a false successful refresh before correction. The fixed retry retains
+50 incomplete tracks, restores all 51 from the same payload, commits completion,
+and makes the next unchanged refresh a no-op. Deleting one child track under an
+existing hash also triggers repair. The 2.19.4 release workflow was cancelled
+before image publication; these scan and recovery changes are combined in 2.20.0.
+
+The built 2.20.0 container also fetched a real 68-track release group from the
+local MusicBrainz mirror into an isolated active-schema database. An interruption
+after 50 tracks failed visibly with no completion marker. Retry restored all
+68 exact identities, the unchanged pass made no writes, and removing one child
+triggered repair. The source library clone and mirror were mounted/read as
+read-only; this validation did not mutate live catalogue or media files.

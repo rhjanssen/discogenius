@@ -2,10 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
-## [2.19.4] - 2026-10-03
+## [2.20.0] - 2026-10-03
 
 ### Fixed
 
+- Commit catalogue completion hashes only after all track chunks and artist credits succeed. Interrupted refreshes retain incomplete state and retry the same payload instead of silently skipping unfinished tracks.
+- Verify exact edition and catalogue track identities before skipping a matching hash, so previously interrupted or pruned children are repaired. Catalogue fetch and persistence failures now fail the refresh visibly.
 - Ordinary folder scans repair missing sidecars and index existing files without regenerating existing artwork or NFO content. Explicit metadata refresh still updates those files.
 - Skip database writer admission for unchanged sidecar records while preserving canonical facts and repairing missing library ownership associations.
 - Discover local lyrics directly from physical TrackFiles, including files without provider matches. Ordinary scans no longer perform provider matching or animated-artwork lookups for this repair pass.
@@ -14,8 +16,10 @@ All notable changes to this project are documented in this file.
 ### Validation
 
 - Active-schema regressions cover unchanged filesystem contents and timestamps, zero repeated sidecar writes, missing-NFO repair, explicit metadata refresh, provider-free lyrics and ownership-link repair.
+- An isolated production container used a real 68-track MusicBrainz release group, interrupted after 50 tracks. Retry restored every track, the next unchanged pass made no writes, and a deleted child was repaired.
 - Repeated scans in the local production container reported no file changes for two artists with 29 staged media files. The final warm scan took 204 ms; existing indexed sidecars retained identical contents, timestamps and database rows.
-- Full local CI passed with 1,947 API tests and 186 frontend tests, with no failures.
+- Publication of the 2.19.4 candidate was cancelled before image publication when the interruption flaw was found during recovery review.
+- Full local CI passed. The API run had no failing assertions; the known provider-registry test-runner clone failure passed all three tests on its isolated retry. All 186 frontend tests passed.
 
 ## [2.19.3] - 2026-10-03
 

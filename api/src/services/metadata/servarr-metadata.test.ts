@@ -236,6 +236,59 @@ test("Servarr metadata retries bounded transient responses and honors Retry-Afte
   assert.deepEqual(delays, [1]);
 });
 
+test("a hosted catalogue detail failure fails the refresh instead of silently omitting a group", async () => {
+  resetCatalog();
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const original = catalogProviderRegistry.getActive;
+  catalogProviderRegistry.getActive = () => ({ getReleaseGroup: async () => { throw new Error("hosted detail unavailable"); } }) as any;
+  try {
+    await assert.rejects(servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", ["missing-group"]),
+      /hosted detail unavailable/);
+  } finally { catalogProviderRegistry.getActive = original; }
+});
+
+test("interrupted catalogue track chunks remain incomplete and the same payload repairs them on retry", async () => {
+  resetCatalog();
+  const { db } = dbModule;
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const original = catalogProviderRegistry.getActive;
+  const payload = {
+    ...DOOM_DAYS_PAYLOAD,
+    Releases: [{ ...DOOM_DAYS_PAYLOAD.Releases[0], TrackCount: 51,
+      Tracks: Array.from({ length: 51 }, (_, index) => ({
+        ...DOOM_DAYS_PAYLOAD.Releases[0].Tracks[0], Id: `interrupted-track-${index}`,
+        RecordingId: `interrupted-recording-${index}`, TrackPosition: index + 1, TrackNumber: String(index + 1),
+      })),
+    }],
+  };
+  catalogProviderRegistry.getActive = () => ({
+    getReleaseGroupDetails: async () => [{ releaseGroupMbid: "rg-skip", detail: payload }],
+  }) as any;
+  db.exec(`CREATE TEMP TRIGGER interrupt_catalogue_chunk BEFORE INSERT ON Tracks
+    WHEN NEW.mbid = 'interrupted-track-50' BEGIN SELECT RAISE(ABORT, 'simulated catalogue interruption'); END`);
+  try {
+    await assert.rejects(servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", ["rg-skip"]),
+      /simulated catalogue interruption/);
+    assert.equal((db.prepare("SELECT count(*) AS n FROM Tracks").get() as { n: number }).n, 50);
+    assert.equal((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null,
+      "partial tracks must not be marked as a complete catalogue payload");
+    db.exec("DROP TRIGGER interrupt_catalogue_chunk");
+    await servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", ["rg-skip"]);
+    assert.equal((db.prepare("SELECT count(*) AS n FROM Tracks").get() as { n: number }).n, 51);
+    assert.ok((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash);
+    const changes = db.prepare("SELECT total_changes() AS n").get();
+    await servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", ["rg-skip"]);
+    assert.deepEqual(db.prepare("SELECT total_changes() AS n").get(), changes, "a completed unchanged payload should remain a no-op");
+    db.prepare("DELETE FROM Tracks WHERE mbid = 'interrupted-track-50'").run();
+    await servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", ["rg-skip"]);
+    assert.equal((db.prepare("SELECT count(*) AS n FROM Tracks").get() as { n: number }).n, 51,
+      "a matching completion hash must not hide an absent child track");
+  } finally {
+    db.exec("DROP TRIGGER IF EXISTS interrupt_catalogue_chunk");
+    catalogProviderRegistry.getActive = original;
+  }
+});
+
 test("Servarr metadata does not retry permanent or malformed responses", async () => {
   let permanentCalls = 0;
   const permanent = new servarrMetadataModule.ServarrMetadataService({
