@@ -1617,6 +1617,7 @@ export class DiskScanService {
         return libraryMetadataBackfillService.fillMissingMetadataFiles(artistId, {
             writeEmbeddedMediaMetadata: false,
             fetchMissingLyrics: false,
+            repairMissingOnly: true,
             onProgress,
         });
     }
@@ -1625,6 +1626,7 @@ export class DiskScanService {
         return libraryMetadataBackfillService.fillMissingMetadataFilesForLibrary({
             writeEmbeddedMediaMetadata: false,
             fetchMissingLyrics: false,
+            repairMissingOnly: true,
         });
     }
 

@@ -356,6 +356,26 @@ export class ExtraFileService {
     };
   }
 
+  /** Read-only reconciliation check. Canonical nulls preserve existing facts, as
+   * the upsert does; a missing ownership association still requires repair. */
+  static findUnchangedRecordId(
+    tableName: ExtraFileTableName,
+    input: ExtraFileUpsertInput,
+    fields: Record<string, string | number | null>,
+  ): number | null {
+    const row = db.prepare(`SELECT * FROM ${tableName} WHERE file_path = ?`).get(input.filePath) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const base = this.buildBaseRecord(input);
+    for (const [key, value] of Object.entries({ ...base, ...fields })) {
+      if (key.startsWith("canonical_") && value == null) continue;
+      if (row[key] !== value) return null;
+    }
+    const desired = this.resolveOwningLibraryIds({ ...input, trackFileId: base.track_file_id });
+    if (!desired.length) return null;
+    const existing = new Set(this.libraryIds(tableName, Number(row.id)));
+    return desired.every(id => existing.has(id)) ? Number(row.id) : null;
+  }
+
   static upsert(input: ExtraFileUpsertInput): number {
     const base = this.buildBaseRecord(input);
     const row = db.prepare(`

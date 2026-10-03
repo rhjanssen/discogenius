@@ -47,7 +47,7 @@ async function fillSidecarMetadata(
     progressPrefix: string,
 ): Promise<void> {
     if (skip) return;
-    onProgress(`${progressPrefix} - backfilling metadata files`);
+    onProgress(`${progressPrefix} - checking sidecar files`);
     if (artistIds.length > 0) {
         for (const artistId of artistIds) {
             await DiskScanService.fillMissingMetadataFiles(artistId);

@@ -138,6 +138,7 @@ test("disk scan metadata repair never rewrites embedded media metadata", async (
 
     assert.equal(receivedOptions?.writeEmbeddedMediaMetadata, false);
     assert.equal(receivedOptions?.fetchMissingLyrics, false);
+    assert.equal(receivedOptions?.repairMissingOnly, true);
     receivedOptions?.onProgress?.("checking lyrics (1/2)");
     assert.deepEqual(progress, ["checking lyrics (1/2)"]);
 });
@@ -628,6 +629,73 @@ test("ordinary disk repair indexes existing lyrics without waiting for a missing
         provider.getLyrics = originalLyrics;
         provider.capabilities.lyrics = originalCapability;
     }
+});
+
+test("unchanged disk repair preserves sidecar contents and performs no sidecar database writes", async () => {
+    seedCanonicalLibraryFiles();
+    configModule.updateConfig("metadata", {
+        save_album_cover: true, save_artist_picture: false, save_video_thumbnail: false,
+        save_lyrics: true, save_nfo: true,
+    });
+    const track = dbModule.db.prepare("SELECT id, file_path FROM TrackFiles WHERE file_type = 'track' LIMIT 1")
+        .get() as { id: number; file_path: string };
+    const coverPath = path.join(path.dirname(track.file_path), "cover.jpg");
+    const nfoPath = path.join(path.dirname(track.file_path), "album.nfo");
+    const lyricPath = track.file_path.replace(/\.flac$/i, ".lrc");
+    fs.writeFileSync(coverPath, "original full-resolution artwork");
+    fs.writeFileSync(nfoPath, "existing external NFO content");
+    fs.writeFileSync(lyricPath, "[00:01.00]Existing lyrics");
+    await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+    const paths = [coverPath, nfoPath, lyricPath];
+    const before = paths.map(filePath => ({ bytes: fs.readFileSync(filePath), mtime: fs.statSync(filePath).mtimeMs }));
+    const originalUpsert = libraryFilesModule.LibraryFilesService.upsertLibraryFile;
+    let writes = 0;
+    libraryFilesModule.LibraryFilesService.upsertLibraryFile = (...args) => {
+        writes++;
+        return originalUpsert.apply(libraryFilesModule.LibraryFilesService, args);
+    };
+    try {
+        await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+        assert.equal(writes, 0, "existing sidecars must not enter the writer gate for an unchanged scan");
+        for (let i = 0; i < paths.length; i++) {
+            assert.deepEqual(fs.readFileSync(paths[i]), before[i].bytes);
+            assert.equal(fs.statSync(paths[i]).mtimeMs, before[i].mtime);
+        }
+        fs.unlinkSync(nfoPath);
+        await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+        assert.match(fs.readFileSync(nfoPath, "utf8"), /<title>Canonical Album<\/title>/);
+        assert.deepEqual(fs.readFileSync(coverPath), before[0].bytes);
+        assert.equal(fs.statSync(coverPath).mtimeMs, before[0].mtime);
+    } finally {
+        libraryFilesModule.LibraryFilesService.upsertLibraryFile = originalUpsert;
+    }
+    dbModule.db.prepare("UPDATE Albums SET title = 'Updated Canonical Album' WHERE mbid = 'release-group-mbid-200'").run();
+    await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("artist-mbid-100", {
+        fetchMissingLyrics: false, writeEmbeddedMediaMetadata: false,
+    });
+    assert.match(fs.readFileSync(nfoPath, "utf8"), /<title>Updated Canonical Album<\/title>/);
+});
+
+test("disk repair indexes provider-free lyrics and repairs a missing library association", async () => {
+    seedCanonicalLibraryFiles();
+    configModule.updateConfig("metadata", {
+        save_album_cover: false, save_artist_picture: false, save_video_thumbnail: false,
+        save_lyrics: true, save_nfo: false,
+    });
+    dbModule.db.prepare("UPDATE TrackFiles SET provider = NULL, provider_id = NULL WHERE file_type = 'track'").run();
+    const track = dbModule.db.prepare("SELECT id, file_path, library_id FROM TrackFiles WHERE file_type = 'track' LIMIT 1")
+        .get() as { id: number; file_path: string; library_id: number };
+    const lyricPath = track.file_path.replace(/\.flac$/i, ".lrc");
+    fs.writeFileSync(lyricPath, "[00:01.00]Local canonical-only lyrics");
+    await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+    const row = dbModule.db.prepare("SELECT id, track_file_id, provider_id FROM LyricFiles WHERE file_path = ?")
+        .get(lyricPath) as { id: number; track_file_id: number; provider_id: string | null };
+    assert.equal(row.track_file_id, track.id);
+    assert.equal(row.provider_id, null);
+    dbModule.db.prepare("DELETE FROM LyricFileLibraries WHERE lyric_file_id = ?").run(row.id);
+    await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+    assert.deepEqual(dbModule.db.prepare("SELECT library_id FROM LyricFileLibraries WHERE lyric_file_id = ?").all(row.id),
+        [{ library_id: track.library_id }]);
 });
 
 test("canonical albums without any provider match still regenerate album.nfo", async () => {

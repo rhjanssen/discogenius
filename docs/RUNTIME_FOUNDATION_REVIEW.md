@@ -484,3 +484,41 @@ The revised read-only replay returned all 2,138 groups and 146,972 track
 occurrences. Across 670 queries, total SQL time was 34,706 ms and the longest
 statement was 615 ms. This measures the catalogue read, not complete artist
 refresh duration, provider matching, sidecar enrichment or a cold mirror.
+
+## Ordinary scan reconciliation
+
+Lidarr filters known files by size and modification time before reading audio
+tags in `MediaFileService.FilterUnchangedFiles` and
+`TrackImport.ImportDecisionMaker.GetLocalTracks`. Discogenius already excludes
+known files from its new-file import pass, but its sidecar repair still updated
+every existing sidecar record and resolved provider artwork on each scan.
+That made a filesystem check perform enrichment work and consume writer
+admission even when the existing sidecars were correct.
+
+Ordinary scans now use missing-only repair. Existing artwork and NFO content
+remain untouched, while missing files are repaired and unindexed local files
+are registered. A read-only comparison checks persisted sidecar facts and
+owning-library associations before admitting a write. Null canonical inputs
+preserve existing canonical facts, matching the normal upsert semantics.
+Missing ownership links still require a write. Explicit metadata refresh keeps
+the existing content-update behavior.
+
+Local lyric discovery reads physical TrackFiles directly and works without a
+provider match. It does not run the provider membership/matching query or fetch
+lyrics. Animated artwork uses already stored availability during ordinary
+repair rather than making a provider album request for every folder.
+
+The production-container clone completed three scans of 10cc and Bakermat with
+29 staged media files. The final warm scan took 204 ms and reported no file
+changes. Both existing indexed sidecars retained byte-identical contents,
+filesystem timestamps and complete database rows. This is a scoped warm-cache
+result; it does not establish whole-library timing. Active-schema tests also
+cover missing-NFO recreation, explicit NFO refresh, provider-free lyrics and
+missing ownership-link repair.
+
+Live 2.19.3 logs separately showed TIDAL rejecting token refresh with HTTP 403
+`abuse_detected` while the old ordinary scan looked up animated covers. Removing
+that enrichment from scans avoids those requests, but does not establish that
+provider authentication or sustained downloads are healthy. Cold local startup
+also produced slow stats/search requests against the large cloned catalogue;
+that latency still needs a separate query/profile review.

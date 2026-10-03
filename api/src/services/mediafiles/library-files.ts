@@ -43,7 +43,7 @@ import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata
 import { ExtraFileService, FOLDER_SCOPED_METADATA_TYPES, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "../extras/files/extra-file-service.js";
 import { captureLinkedExtras, releaseExtrasForDeletedTrackFiles } from "../extras/files/extra-file-deletion.js";
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
-import { MetadataFileService } from "../extras/metadata/files/metadata-file-service.js";
+import { MetadataFileService, getMetadataType } from "../extras/metadata/files/metadata-file-service.js";
 import { resolveVideoTypeSuffix } from "./video-naming.js";
 import { resolvePersistedVideoPlacement } from "../music/video-placement-resolver.js";
 import {
@@ -1840,16 +1840,12 @@ export class LibraryFilesService {
     return row?.id ?? null;
   }
 
-  private static upsertExtraFileRecord(
+  private static buildExtraFileInput(
     params: LibraryFileUpsertParams,
     identity: ReturnType<typeof resolveLibraryFileIdentity>,
     libraryId: number | null,
-  ): void {
-    if (!isExtraFileType(params.fileType)) {
-      return;
-    }
-
-    const input = {
+  ) {
+    return {
       // Sidecar tables keep TEXT artist_id as the MusicBrainz mbid.
       artistId: resolveArtistMbid(String(params.artistId)) ?? String(params.artistId),
       libraryId,
@@ -1871,6 +1867,38 @@ export class LibraryFilesService {
       canonicalTrackMbid: identity.canonicalTrackMbid,
       canonicalRecordingMbid: identity.canonicalRecordingMbid,
     };
+  }
+
+  static findUnchangedTrackedAssetId(params: LibraryFileUpsertParams): number | null {
+    if (!isExtraFileType(params.fileType)) return null;
+    const ownershipRoot = resolveLibraryRootPath(params.libraryRoot, params.filePath) ?? params.libraryRoot;
+    if (!resolvedPathIsInsideRoot(params.filePath, ownershipRoot)
+      || (params.expectedPath && !resolvedPathIsInsideRoot(params.expectedPath, ownershipRoot))) return null;
+    const identity = resolveLibraryFileIdentity(params);
+    const targetRoot = normalizeComparablePath(params.libraryRoot);
+    const owners = (db.prepare("SELECT id, root_path FROM Libraries WHERE enabled = 1").all() as Array<{ id: number; root_path: string }>)
+      .filter(row => normalizeComparablePath(row.root_path) === targetRoot);
+    const requestedId = params.libraryId == null ? null : Number(params.libraryId);
+    const libraryId = owners.some(row => row.id === requestedId) ? requestedId : owners.length === 1 ? owners[0].id : null;
+    const input = this.buildExtraFileInput(params, identity, libraryId);
+    if (isLyricExtraFileType(params.fileType)) {
+      return ExtraFileService.findUnchangedRecordId("LyricFiles", input, { quality: params.quality || null });
+    }
+    if (isMetadataExtraFileType(params.fileType)) {
+      return ExtraFileService.findUnchangedRecordId("MetadataFiles", input, {
+        consumer: "Discogenius", type: getMetadataType(input), file_type: params.fileType,
+      });
+    }
+    return ExtraFileService.findUnchangedRecordId("ExtraFiles", input, { file_type: params.fileType });
+  }
+
+  private static upsertExtraFileRecord(
+    params: LibraryFileUpsertParams,
+    identity: ReturnType<typeof resolveLibraryFileIdentity>,
+    libraryId: number | null,
+  ): void {
+    if (!isExtraFileType(params.fileType)) return;
+    const input = this.buildExtraFileInput(params, identity, libraryId);
 
     if (isLyricExtraFileType(params.fileType)) {
       LyricFileService.upsert(input);
@@ -1915,17 +1943,6 @@ export class LibraryFilesService {
       WHERE file_path = ?
       LIMIT 1
     `).get(params.filePath) as ExistingLibraryFileIdentity | undefined;
-
-    let fileSize: number | null = null;
-    let modifiedAt: string | null = null;
-
-    try {
-      const stats = fs.statSync(params.filePath);
-      fileSize = stats.size;
-      modifiedAt = stats.mtime.toISOString();
-    } catch {
-      // Allow DB reconciliation even when the file is not yet materialized.
-    }
 
     const expectedPath = params.expectedPath || params.filePath;
     const canonicalIdentity = resolveLibraryFileIdentity(params);
@@ -2050,6 +2067,16 @@ export class LibraryFilesService {
       }
 
       return insertedId;
+    }
+
+    let fileSize: number | null = null;
+    let modifiedAt: string | null = null;
+    try {
+      const stats = fs.statSync(params.filePath);
+      fileSize = stats.size;
+      modifiedAt = stats.mtime.toISOString();
+    } catch {
+      // Allow DB reconciliation even when the file is not yet materialized.
     }
 
     if (libraryId == null) {

@@ -54,6 +54,8 @@ export interface MetadataFillResult {
 }
 
 export interface MetadataFillOptions {
+    /** Ordinary scans repair missing sidecars; explicit refresh updates content. */
+    repairMissingOnly?: boolean;
     /**
      * Rewrite embedded cover art, thumbnails, or container tags. Disk scans
      * pass false: media-file mutation belongs to import or an explicit Retag
@@ -92,7 +94,7 @@ class LibraryMetadataBackfillService {
         });
 
         options.onProgress?.("checking artist sidecars");
-        await this.fillArtistMetadata(metadataIdKey, artistFolder, metadataConfig, result);
+        await this.fillArtistMetadata(metadataIdKey, artistFolder, metadataConfig, result, options.repairMissingOnly === true);
         const writeEmbeddedMediaMetadata = options.writeEmbeddedMediaMetadata !== false;
         await this.fillAlbumMetadata(
             metadataIdKey,
@@ -102,9 +104,10 @@ class LibraryMetadataBackfillService {
             result,
             writeEmbeddedMediaMetadata,
             options.onProgress,
+            options.repairMissingOnly === true,
         );
         await this.fillTrackMetadata(metadataIdKey, metadataConfig, result, options.onProgress, options.fetchMissingLyrics !== false);
-        await this.fillVideoMetadata(metadataIdKey, metadataConfig, result, writeEmbeddedMediaMetadata, options.onProgress);
+        await this.fillVideoMetadata(metadataIdKey, metadataConfig, result, writeEmbeddedMediaMetadata, options.onProgress, options.repairMissingOnly === true);
 
         if (result.downloaded > 0 || result.failed > 0) {
             console.log(
@@ -143,6 +146,7 @@ class LibraryMetadataBackfillService {
         artistFolder: string,
         metadataConfig: any,
         result: MetadataFillResult,
+        repairMissingOnly: boolean,
     ) {
         const hasFiles = db.prepare("SELECT 1 FROM TrackFiles WHERE artist_metadata_id = ? LIMIT 1").get(artistId);
         if (!hasFiles) return;
@@ -169,7 +173,7 @@ class LibraryMetadataBackfillService {
                 try {
                     const artistRow = db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
                     const artistMbid = artistRow?.mbid ? String(artistRow.mbid) : artistId;
-                    const syncResult = syncCachedMediaCoverToFile({
+                    const syncResult = repairMissingOnly && fs.existsSync(picPath) ? "unchanged" : syncCachedMediaCoverToFile({
                             libraryRoot: libraryRoot,
                         entityId: artistMbid,
                         coverEntity: "Artist",
@@ -200,7 +204,7 @@ class LibraryMetadataBackfillService {
             if (metadataConfig.save_nfo) {
                 const nfoPath = path.join(artistDir, "artist.nfo");
                 try {
-                    const updated = await saveArtistNfoFile(artistId, nfoPath);
+                    const updated = repairMissingOnly && fs.existsSync(nfoPath) ? false : await saveArtistNfoFile(artistId, nfoPath);
                     await this.upsertLibraryFile({
                         artistId,
                         filePath: nfoPath,
@@ -228,6 +232,7 @@ class LibraryMetadataBackfillService {
         result: MetadataFillResult,
         writeEmbeddedMediaMetadata: boolean,
         onProgress?: (message: string) => void,
+        repairMissingOnly = false,
     ) {
         // Canonical-first: backfill each selected edition independently in
         // every library that owns imported audio for it. Grouping only by
@@ -438,37 +443,40 @@ class LibraryMetadataBackfillService {
                     const coverPath = path.join(albumDir, coverName);
                     try {
                         const albumMbid = albumMbidForEdition(canonicalReleaseMbid);
-                        if (albumMbid) {
-                            await resolveAlbumArtwork({ albumMbid });
-                        }
-                        if (albumMbid && releaseGroupHasMultipleMonitoredEditions(albumMbid)) {
-                            await resolveEditionArtwork({
-                                releaseMbid: canonicalReleaseMbid,
-                                libraryId: sourceAlbum.library_id,
-                                providerCandidates: albumProviderItem ? [{
-                                    provider: albumProviderItem.provider,
-                                    entityId: albumProviderItem.provider_id,
-                                    imageId: albumProviderItem.cover,
-                                    title: albumProviderItem.title,
-                                }] : [],
-                            });
-                            discardEditionCoverIfDuplicateOfAlbum(canonicalReleaseMbid, albumMbid);
-                        }
-                        let syncResult = syncCachedMediaCoverToFile({
-                            libraryRoot: libraryRoot,
-                            entityId: canonicalReleaseMbid,
-                            coverEntity: "Edition",
-                            coverTypes: "cover",
-                            outputPath: coverPath,
-                        });
-                        if (syncResult === "missing" && albumMbid) {
+                        let syncResult = "unchanged";
+                        if (!repairMissingOnly || !fs.existsSync(coverPath)) {
+                            if (albumMbid) {
+                                await resolveAlbumArtwork({ albumMbid });
+                            }
+                            if (albumMbid && releaseGroupHasMultipleMonitoredEditions(albumMbid)) {
+                                await resolveEditionArtwork({
+                                    releaseMbid: canonicalReleaseMbid,
+                                    libraryId: sourceAlbum.library_id,
+                                    providerCandidates: albumProviderItem ? [{
+                                        provider: albumProviderItem.provider,
+                                        entityId: albumProviderItem.provider_id,
+                                        imageId: albumProviderItem.cover,
+                                        title: albumProviderItem.title,
+                                    }] : [],
+                                });
+                                discardEditionCoverIfDuplicateOfAlbum(canonicalReleaseMbid, albumMbid);
+                            }
                             syncResult = syncCachedMediaCoverToFile({
-                            libraryRoot: libraryRoot,
-                                entityId: albumMbid,
-                                coverEntity: "Album",
+                                libraryRoot: libraryRoot,
+                                entityId: canonicalReleaseMbid,
+                                coverEntity: "Edition",
                                 coverTypes: "cover",
                                 outputPath: coverPath,
                             });
+                            if (syncResult === "missing" && albumMbid) {
+                                syncResult = syncCachedMediaCoverToFile({
+                                    libraryRoot,
+                                    entityId: albumMbid,
+                                    coverEntity: "Album",
+                                    coverTypes: "cover",
+                                    outputPath: coverPath,
+                                });
+                            }
                         }
                         if (syncResult === "written") {
                             result.downloaded++;
@@ -519,7 +527,7 @@ class LibraryMetadataBackfillService {
                         result.failed++;
                     }
 
-                    const resolvedVideoCover = album.id ? await resolveAlbumVideoCoverForLibrary({
+                    const resolvedVideoCover = repairMissingOnly ? album.video_cover : album.id ? await resolveAlbumVideoCoverForLibrary({
                         storedVideoCover: album.video_cover,
                         provider: album.provider,
                         providerAlbumId: String(album.id),
@@ -588,7 +596,7 @@ class LibraryMetadataBackfillService {
                 if (metadataConfig.save_nfo) {
                     const nfoPath = path.join(albumDir, "album.nfo");
                     try {
-                        const updated = await saveAlbumNfoFile(canonicalReleaseGroupMbid, nfoPath, {
+                        const updated = repairMissingOnly && fs.existsSync(nfoPath) ? false : await saveAlbumNfoFile(canonicalReleaseGroupMbid, nfoPath, {
                             releaseGroupMbid: canonicalReleaseGroupMbid,
                             releaseMbid: canonicalReleaseMbid,
                             librarySlot,
@@ -635,7 +643,7 @@ class LibraryMetadataBackfillService {
     ) {
         if (!metadataConfig.save_lyrics) return;
 
-        const tracks = db.prepare(`
+        const tracks = db.prepare(fetchMissingLyrics ? `
       WITH track_candidates AS (
         SELECT
           lf.id AS track_file_id,
@@ -692,6 +700,15 @@ class LibraryMetadataBackfillService {
       FROM track_candidates track
       WHERE track.provider_id IS NOT NULL
       GROUP BY track.track_file_id
+    ` : `
+      SELECT lf.id AS track_file_id, lf.file_path, lf.provider_id AS media_id,
+             lf.library_root, lf.library_slot, lf.canonical_artist_mbid,
+             lf.canonical_release_group_mbid, lf.canonical_release_mbid,
+             lf.canonical_track_mbid, lf.canonical_recording_mbid,
+             lf.provider, 'track' AS provider_entity_type, lf.provider_id,
+             NULL AS album_id
+      FROM TrackFiles lf
+      WHERE lf.artist_metadata_id = ? AND lf.file_type = 'track'
     `).all(artistId) as Array<{
             track_file_id: number;
             file_path: string;
@@ -705,7 +722,7 @@ class LibraryMetadataBackfillService {
             canonical_recording_mbid: string | null;
             provider: string | null;
             provider_entity_type: string | null;
-            provider_id: string;
+            provider_id: string | null;
             album_id: string | null;
         }>;
 
@@ -716,7 +733,7 @@ class LibraryMetadataBackfillService {
                 await this.upsertLibraryFile({
                     artistId,
                     albumId: track.album_id ? String(track.album_id) : null,
-                    mediaId: String(track.provider_id),
+                    mediaId: track.provider_id == null ? null : String(track.provider_id),
                     filePath: existingSidecar.filePath,
                     libraryRoot: String(track.library_root || "").trim() || Config.getMusicPath(),
                     fileType: "lyrics",
@@ -725,7 +742,7 @@ class LibraryMetadataBackfillService {
                     trackFileId: track.track_file_id,
                     provider: track.provider,
                     providerEntityType: "track",
-                    providerId: String(track.provider_id),
+                    providerId: track.provider_id == null ? null : String(track.provider_id),
                     canonicalArtistMbid: track.canonical_artist_mbid,
                     canonicalReleaseGroupMbid: track.canonical_release_group_mbid,
                     canonicalReleaseMbid: track.canonical_release_mbid,
@@ -780,6 +797,7 @@ class LibraryMetadataBackfillService {
         result: MetadataFillResult,
         writeEmbeddedMediaMetadata: boolean,
         onProgress?: (message: string) => void,
+        repairMissingOnly = false,
     ) {
         const videoRoot = Config.getVideoPath();
 
@@ -852,7 +870,8 @@ class LibraryMetadataBackfillService {
                         && !alreadyEmbedded;
                     let downloadedThumbnail = false;
 
-                    if (metadataConfig.save_video_thumbnail || needsEmbedding) {
+                    if ((metadataConfig.save_video_thumbnail || needsEmbedding)
+                        && (!repairMissingOnly || !fs.existsSync(thumbPath))) {
                         const syncResult = await downloadVideoThumbnail("", resolution as any, thumbPath, {
                             provider: video.provider,
                             providerId: video.provider_id,
@@ -985,7 +1004,8 @@ class LibraryMetadataBackfillService {
                 onProgress?.(`checking video sidecars (${index + 1}/${videos.length})`);
                 const nfoPath = path.join(path.dirname(video.file_path), `${path.parse(video.file_path).name}.nfo`);
                 try {
-                    await saveVideoNfoFile(String(video.provider_id), nfoPath, video.provider);
+                    const needsWrite = !repairMissingOnly || !fs.existsSync(nfoPath);
+                    if (needsWrite) await saveVideoNfoFile(String(video.provider_id), nfoPath, video.provider);
                     await this.upsertLibraryFile({
                         artistId,
                         albumId: video.album_id ? String(video.album_id) : null,
@@ -1005,7 +1025,8 @@ class LibraryMetadataBackfillService {
                         canonicalReleaseMbid: video.canonical_release_mbid,
                         canonicalReleaseGroupMbid: video.canonical_release_group_mbid,
                     });
-                    result.downloaded++;
+                    if (needsWrite) result.downloaded++;
+                    else result.skipped++;
                 } catch {
                     result.failed++;
                 }
@@ -1202,6 +1223,8 @@ class LibraryMetadataBackfillService {
         canonicalTrackMbid?: string | null;
         canonicalRecordingMbid?: string | null;
     }) {
+        const existingId = LibraryFilesService.findUnchangedTrackedAssetId(params);
+        if (existingId != null) return Promise.resolve(existingId);
         return withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
             ...params,
             removeFromUnmapped: false,

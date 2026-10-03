@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.19.4] - 2026-10-03
+
+### Fixed
+
+- Ordinary folder scans repair missing sidecars and index existing files without regenerating existing artwork or NFO content. Explicit metadata refresh still updates those files.
+- Skip database writer admission for unchanged sidecar records while preserving canonical facts and repairing missing library ownership associations.
+- Discover local lyrics directly from physical TrackFiles, including files without provider matches. Ordinary scans no longer perform provider matching or animated-artwork lookups for this repair pass.
+- Describe the scan phase as checking sidecar files rather than always backfilling metadata.
+
+### Validation
+
+- Active-schema regressions cover unchanged filesystem contents and timestamps, zero repeated sidecar writes, missing-NFO repair, explicit metadata refresh, provider-free lyrics and ownership-link repair.
+- Repeated scans in the local production container reported no file changes for two artists with 29 staged media files. The final warm scan took 204 ms; existing indexed sidecars retained identical contents, timestamps and database rows.
+- Full local CI passed with 1,947 API tests and 186 frontend tests, with no failures.
+
 ## [2.19.3] - 2026-10-03
 
 ### Fixed
