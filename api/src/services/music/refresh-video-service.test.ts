@@ -1245,6 +1245,25 @@ test("album counterpart persistence rejects live-to-studio links without repairi
   assert.ok(relation.get(unrelatedId), "unrelated video belongs to the separate artist-wide repair");
 });
 
+test("planned video repair removes a stale studio link and commits its live replacement together", async () => {
+  const studioId = seedStudioAudio({ recordingMbid: "planned-studio", title: "Pompeii", lengthMs: 232000 });
+  const liveId = seedStudioAudio({ recordingMbid: "planned-live", title: "Pompeii (Live)", lengthMs: 232000,
+    albumMbid: "planned-live-album", editionMbid: "planned-live-edition" });
+  seedAcceptedProviderRecordingTrack(dbModule.db, { provider: "tidal", providerEditionId: "planned-live-offer",
+    providerTrackId: "planned-live-track", recordingId: liveId, title: "Pompeii (Live)", durationMs: 232000 });
+  const videoId = insertCanonicalVideo({ mbid: "planned-video", title: "Pompeii (Live)", variant: "live", lengthMs: 232000 });
+  seedAcceptedProviderVideoMatch(dbModule.db, { provider: "tidal", providerVideoId: "planned-live-video",
+    providerEditionId: "planned-live-offer", recordingId: videoId, title: "Pompeii (Live)", durationMs: 232000 });
+  dbModule.db.prepare(`INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, source, confidence, data)
+    VALUES (?, ?, 'provider_video_for', 'tidal', 0.98, '{}')`).run(videoId, studioId);
+
+  await refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
+  const links = () => dbModule.db.prepare("SELECT target_recording_id FROM RecordingRelations WHERE source_recording_id = ? AND relation_type = 'provider_video_for'").all(videoId);
+  assert.deepEqual(links(), [{ target_recording_id: liveId }]);
+  await refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
+  assert.deepEqual(links(), [{ target_recording_id: liveId }]);
+});
+
 test("provider refresh preserves previously probed video quality", () => {
   insertCanonicalVideo({ mbid: "mb-video-quality", title: "Pompeii", lengthMs: 232000 });
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("artist-mbid", [{

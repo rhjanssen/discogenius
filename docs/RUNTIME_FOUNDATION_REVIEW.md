@@ -1,7 +1,7 @@
 # Runtime foundation review
 
-Status: 2.19.2 deployed and verified on the NAS, 2026-10-03. Bounded catalogue
-hydration follow-up is in validation.
+Status: 2.20.0 deployed and verified on the NAS, 2026-10-03. Video relation
+decision planning outside writer admission is validated locally, not deployed.
 Working branch: `codex/runtime-foundation`.
 
 ## Production evidence
@@ -551,3 +551,63 @@ after 50 tracks failed visibly with no completion marker. Retry restored all
 68 exact identities, the unchanged pass made no writes, and removing one child
 triggered repair. The source library clone and mirror were mounted/read as
 read-only; this validation did not mutate live catalogue or media files.
+
+## Separate video decisions from database writes
+
+2.20.0 startup logs still showed video relation batches holding writer admission
+for 3.4–3.9 seconds. Batching alone does not solve this: candidate reads and
+title matching were inside the immediate transaction, even when no link changed.
+
+The batched relation repair now computes a mutation plan before writer admission.
+The database records the actual SELECT results used by that decision, including
+queries in matching helpers and statements prepared earlier. After admission,
+an immediate transaction verifies those inputs before applying the planned
+deletions and insertions together. Changed inputs discard the plan and trigger
+a bounded retry. Unrelated file or command updates do not invalidate matching
+facts. This is optimistic validation of a read set, rather than a global cache
+or a second matcher.
+
+`data_version` and this connection's `total_changes()` provide a fast path when
+no writes happened during or after planning. A changed revision falls back to
+replaying the captured SELECTs. Both counters are required: `data_version` alone
+does not see writes through the same connection. Planning rejects writes,
+transactions, PRAGMAs and lazy iterators. The API is for synchronous decisions
+whose database reads use the managed connection's `get` and `all` methods.
+
+An alternating comparison on the large local clone checked the same first ten
+matched videos for each of three artists. All old/new passes agreed on zero
+mutations. Warm writer holds for the two slower artists fell from 95–145 ms to
+0.09–0.16 ms when the revision was unchanged. Without the fast path, read-set
+validation took 61–92 ms. These are scoped local results, not production or
+whole-library throughput measurements; preparation still costs CPU and reads.
+
+The subsequent comparison covered all 1,735 accepted video identities for those
+three artists in 175 batches. Every resulting relation row matched the previous
+implementation exactly, including two required mutations. Each comparison was
+rolled back. Total writer time was about 10.4 seconds before and 19 milliseconds
+after; this includes verification queries in the test transactions. The native
+container also served the artist page and real-file rename/tag previews, which
+reported no pending changes for the staged Bakermat files.
+
+Active-schema regressions cover external-connection edits, same-connection edits,
+unrelated writes, added candidates, deleted and missing identities, mutable
+returned arrays, blobs, and forbidden planning writes. A batched video regression
+also replaces a stale studio link with the live recording and confirms a repeat
+repair retains exactly that link. Assignment repair and orphan cleanup remain
+bounded transactions and need their own profiling before applying this pattern.
+
+The local Lidarr reference uses a similar separation of work from persistence:
+`TrackImport/ImportApprovedTracks.cs` processes file operations before its
+`MediaFileService.AddMany` call, then updates exact file identities and publishes
+events. Discogenius's read-set guard is specific to its concurrent SQLite workers;
+it is not a direct port of Lidarr's transaction implementation.
+
+Full `yarn ci` passed with 1,956 backend and 186 frontend tests. The later live-link
+replacement regression also passed in the focused 43-test run. The native image
+was built and tested locally; production remains on the published 2.20.0 image.
+
+The live TIDAL reauthentication was verified separately by a successful provider
+track-list request and a six-second isolated native-container download of
+Bakermat's "I Love Life". ffmpeg decoded the resulting FLAC without errors. The
+production backlog stayed paused. This single successful download does not
+establish sustained throughput or availability for older failed acquisitions.

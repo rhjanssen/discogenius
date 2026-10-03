@@ -1,5 +1,6 @@
 import { ensureEditionBarcodeIndex } from "./database/schema/edition-barcode-index.js";
 import Database from "better-sqlite3";
+import { assertOutsideSqliteReadPlan, recordSqlitePlanRead } from "./database/sqlite-read-plan.js";
 import { BASE_SCHEMA_VERSION } from "./database/schema/version.js";
 import { isMainThread } from "node:worker_threads";
 import { DB_PATH } from "./services/config/bootstrap.js";
@@ -164,11 +165,18 @@ export const db = new Proxy({} as any, {
       return (source: string) => {
         const stmt = instance.prepare(source);
         const originalRun = stmt.run.bind(stmt);
-        stmt.run = ((...args: unknown[]) => withSqliteWriteMutexSync(
-          () => originalRun(...args), source,
-        )) as typeof stmt.run;
+        stmt.run = ((...args: unknown[]) => {
+          assertOutsideSqliteReadPlan();
+          return withSqliteWriteMutexSync(() => originalRun(...args), source);
+        }) as typeof stmt.run;
         const originalGet = stmt.get.bind(stmt);
         const originalAll = stmt.all.bind(stmt);
+        const originalIterate = stmt.iterate.bind(stmt);
+        stmt.iterate = ((...args: unknown[]) => {
+          // A lazy iterator cannot produce a complete dependency snapshot.
+          assertOutsideSqliteReadPlan();
+          return originalIterate(...args);
+        }) as typeof stmt.iterate;
         if (!stmt.readonly) {
           // `INSERT/UPDATE/DELETE ... RETURNING` execute through `.get()` or
           // `.all()`, not `.run()`. Leaving those methods unwrapped let metadata
@@ -176,40 +184,46 @@ export const db = new Proxy({} as any, {
           // worker connection, which repeatedly failed RescanFolders with
           // SQLITE_BUSY. The statement's SQLite-provided `readonly` flag is the
           // authoritative distinction; parsing SQL text would miss CTEs.
-          stmt.get = ((...args: unknown[]) => withSqliteWriteMutexSync(
-            () => originalGet(...args), source,
-          )) as typeof stmt.get;
-          stmt.all = ((...args: unknown[]) => withSqliteWriteMutexSync(
-            () => originalAll(...args), source,
-          )) as typeof stmt.all;
-        } else if (READ_PROFILE_MS && isMainThread) {
-          // Only wrap reads when profiling is on AND we're on the event loop;
-          // otherwise leave them untouched for zero hot-path overhead.
-          stmt.get = ((...args: unknown[]) => profileRead(source, () => originalGet(...args))) as typeof stmt.get;
-          stmt.all = ((...args: unknown[]) => profileRead(source, () => originalAll(...args))) as typeof stmt.all;
+          stmt.get = ((...args: unknown[]) => {
+            assertOutsideSqliteReadPlan();
+            return withSqliteWriteMutexSync(() => originalGet(...args), source);
+          }) as typeof stmt.get;
+          stmt.all = ((...args: unknown[]) => {
+            assertOutsideSqliteReadPlan();
+            return withSqliteWriteMutexSync(() => originalAll(...args), source);
+          }) as typeof stmt.all;
+        } else {
+          const read = <T>(operation: () => T) => recordSqlitePlanRead(() =>
+            READ_PROFILE_MS && isMainThread ? profileRead(source, operation) : operation());
+          stmt.get = ((...args: unknown[]) => read(() => originalGet(...args))) as typeof stmt.get;
+          stmt.all = ((...args: unknown[]) => read(() => originalAll(...args))) as typeof stmt.all;
         }
         return stmt;
       };
     }
     if (prop === "exec") {
-      return (source: string) => withSqliteWriteMutexSync(
-        () => instance.exec(source), source,
-      );
+      return (source: string) => {
+        assertOutsideSqliteReadPlan();
+        return withSqliteWriteMutexSync(() => instance.exec(source), source);
+      };
     }
     if (prop === "transaction") {
       return (fn: any) => {
         const txn = instance.transaction(fn) as any;
-        const runImmediate = (...args: any[]) => withSqliteWriteMutexSync(
-          () => profileWrite(() => txn.immediate(...args)), "database:transaction",
-        );
+        const runImmediate = (...args: any[]) => {
+          assertOutsideSqliteReadPlan();
+          return withSqliteWriteMutexSync(
+            () => profileWrite(() => txn.immediate(...args)), "database:transaction",
+          );
+        };
         const runDeferred = (...args: any[]) => withSqliteWriteMutexSync(
-          () => profileWrite(() => txn.deferred(...args)), "database:transaction",
+          () => { assertOutsideSqliteReadPlan(); return profileWrite(() => txn.deferred(...args)); }, "database:transaction",
         );
         const runDefault = (...args: any[]) => withSqliteWriteMutexSync(
-          () => profileWrite(() => txn.default(...args)), "database:transaction",
+          () => { assertOutsideSqliteReadPlan(); return profileWrite(() => txn.default(...args)); }, "database:transaction",
         );
         const runExclusive = (...args: any[]) => withSqliteWriteMutexSync(
-          () => profileWrite(() => txn.exclusive(...args)), "database:transaction",
+          () => { assertOutsideSqliteReadPlan(); return profileWrite(() => txn.exclusive(...args)); }, "database:transaction",
         );
         const immediateTxn = (...args: any[]) => runImmediate(...args);
         Object.defineProperties(immediateTxn, {
@@ -220,6 +234,12 @@ export const db = new Proxy({} as any, {
           database: { value: txn.database },
         });
         return immediateTxn;
+      };
+    }
+    if (prop === "pragma") {
+      return (...args: Parameters<Database.Database["pragma"]>) => {
+        assertOutsideSqliteReadPlan();
+        return instance.pragma(...args);
       };
     }
     const value = Reflect.get(instance, prop, receiver);
@@ -233,6 +253,17 @@ export const db = new Proxy({} as any, {
     return Reflect.set(instance, prop, value, receiver);
   },
 }) as unknown as Database.Database;
+
+/** data_version observes other connections; total_changes observes this one.
+ * Use both, on this same connection, to bypass read-set replay only when no
+ * writes occurred during or after planning. Unrelated changes replay normally. */
+export function sqliteDataRevision(): string {
+  assertOutsideSqliteReadPlan();
+  const instance = getDbInstance();
+  const external = instance.pragma("data_version", { simple: true });
+  const local = instance.prepare("SELECT total_changes() AS n").get() as { n: number };
+  return `${external}:${local.n}`;
+}
 
 export function flushDatabase(checkpointMode: "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE" = "TRUNCATE") {
   try {

@@ -1,4 +1,5 @@
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db, sqliteDataRevision, withSqliteWriteGate } from "../../database.js";
+import { prepareSqliteReadPlan } from "../../database/sqlite-read-plan.js";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { streamingProviderManager } from "../providers/index.js";
 import type { RefreshOptions } from "./scan-types.js";
@@ -1880,7 +1881,7 @@ function repairProviderVideoRecordingAssignments(artistMbid: string, recordingId
  * veto can land after the first write, so a refresh replays the decision on
  * rows already in the database.
  */
-function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: number[]): number {
+function planProviderVideoAudioRelations(artistMbid: string, recordingIds?: number[]): Array<() => void> {
     // This pass changes video relations, never the audio catalog. Keep candidate
     // reads local to the pass so each artist is loaded once, with no stale cache
     // surviving a subsequent catalog refresh.
@@ -2008,7 +2009,7 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
         LIMIT 1
     `);
 
-    let changed = 0;
+    const operations: Array<() => void> = [];
     const rowsByVideo = new Map<number, typeof rows>();
     for (const row of rows) {
         const grouped = rowsByVideo.get(row.recording_id) ?? [];
@@ -2025,6 +2026,12 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
         if (!videoTitle) continue;
         const videoVariant = parseVideoVariant(videoTitle);
         const existing = relationsByVideo.get(row.recording_id) ?? [];
+        const removed = new Set<number>();
+        const removeRelation = (audioId: number) => {
+            if (removed.has(audioId)) return;
+            removed.add(audioId);
+            operations.push(() => { deleteRelation.run(row.recording_id, audioId); });
+        };
 
         for (const relation of existing) {
             let relationMethod = "";
@@ -2076,8 +2083,7 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
             ) {
                 continue;
             }
-            deleteRelation.run(row.recording_id, relation.audio_id);
-            changed += 1;
+            removeRelation(relation.audio_id);
         }
 
         const providerMatches = providerRows.flatMap((candidate) => {
@@ -2108,24 +2114,23 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
             FROM RecordingRelations
             WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
         `).all(row.recording_id) as Array<{ audio_id: number; source: string | null }>;
+        const survivors = surviving.filter(relation => !removed.has(relation.audio_id));
         if (targetIds.size > 1) {
             // Conflicting positive provider evidence is ambiguity, not a
             // provider-order tie-break. Preserve canonical relations only.
-            for (const relation of surviving) {
+            for (const relation of survivors) {
                 if (relation.source === "musicbrainz") continue;
-                deleteRelation.run(row.recording_id, relation.audio_id);
-                changed += 1;
+                removeRelation(relation.audio_id);
             }
             continue;
         }
         if (targetIds.size === 0) continue;
         const targetId = targetIds.values().next().value as number;
-        for (const relation of surviving) {
+        for (const relation of survivors) {
             if (relation.audio_id === targetId || relation.source === "musicbrainz") continue;
-            deleteRelation.run(row.recording_id, relation.audio_id);
-            changed += 1;
+            removeRelation(relation.audio_id);
         }
-        const hasTarget = surviving.some((relation) => relation.audio_id === targetId);
+        const hasTarget = survivors.some((relation) => relation.audio_id === targetId);
         if (hasTarget) continue;
         // Prefer explicit album context, then the strongest confidence; input
         // order is only the final deterministic tie-breaker.
@@ -2133,17 +2138,22 @@ function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: nu
             Number(Boolean(right.row.provider_album_id)) - Number(Boolean(left.row.provider_album_id))
             || right.audioMatch.confidence - left.audioMatch.confidence);
         const selected = providerMatches[0];
-        upsertProviderVideoAudioRelation({
+        operations.push(() => upsertProviderVideoAudioRelation({
             videoRecordingId: row.recording_id,
             videoRecordingMbid: row.recording_mbid,
             audioMatch: selected.audioMatch,
             provider: selected.row.provider,
             videoTitle,
             videoVariant,
-        });
-        changed += 1;
+        }));
     }
-    return changed;
+    return operations;
+}
+
+function repairProviderVideoAudioRelations(artistMbid: string, recordingIds?: number[]): number {
+    const operations = planProviderVideoAudioRelations(artistMbid, recordingIds);
+    for (const apply of operations) apply();
+    return operations.length;
 }
 
 function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string, recordingIds?: number[]): number {
@@ -2226,8 +2236,17 @@ export class RefreshVideoService {
             const ids = loadIds();
             for (let offset = 0; offset < ids.length; offset += batchSize) {
                 const batch = ids.slice(offset, offset + batchSize);
-                await withSqliteWriteGate(() => db.transaction(() =>
-                    repairProviderVideoAudioRelations(artist, batch))(), "videos:relation-batch");
+                let committed = false;
+                for (let attempt = 0; attempt < 8 && !committed; attempt++) {
+                    const plan = prepareSqliteReadPlan(() => planProviderVideoAudioRelations(artist, batch), sqliteDataRevision);
+                    committed = await withSqliteWriteGate(() => db.transaction(() => {
+                        if (!plan.isCurrent()) return false;
+                        for (const apply of plan.value) apply();
+                        return true;
+                    })(), "videos:relation-batch");
+                    await yieldToEventLoop();
+                }
+                if (!committed) throw new Error("Video relation inputs kept changing; retry the artist refresh");
                 await yieldToEventLoop();
             }
             const cleanupIds = loadIds();
