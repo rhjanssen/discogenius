@@ -683,3 +683,20 @@ RescanFolders 15214 resumed after rename released disk admission. Recent logs
 show artist scans and new/updated file indexing; its old start timestamp alone
 does not establish a hang. The next deployment should preserve this durable
 scan continuation, then verify completion and targeted rename previews.
+
+## October 4 decoded-audio conflict audit
+
+Read-only native ffprobe/ffmpeg inspection of the eight audio conflicts from
+rename 14723 succeeded for all sixteen source/destination files. Every pair had
+identical decoded PCM SHA-256 and duration. Six pairs also had the same embedded
+release MBID. The two Seal pairs (TrackFiles 20484/20485) differed in embedded
+release MBID: the tracked source identified a03c95fc-0946-430a-a4d5-d1196b1a4f6a,
+while its occupied destination carried 2177d985-9d1d-473f-98b0-5411ad5744db.
+
+This proves identical decoded audio for those pairs, not interchangeable edition
+ownership or identical files. Reconcile track/release identity and destination
+tracking before consolidating. Do not resolve a collision by deleting the
+untracked destination merely because strict cleanup will eventually exist.
+No live files were changed. Downloads remained paused and the file-mutation
+journal was empty. Rename/retag completion results were unchanged; folder scan
+15214 was still on artist 54/518 in the latest API observation.
