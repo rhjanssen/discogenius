@@ -655,3 +655,31 @@ stayed unchanged. No live media files were rewritten in this test.
 The candidate also retained title, track and disc tags in all four containers.
 Full local CI passed with 1,959 backend and 186 frontend tests, lint, type checks
 and both builds. This artwork change is not yet deployed to the NAS.
+
+## October 4 maintenance completion follow-up
+
+Live command 14723 completed at 10:01 UTC. Its durable generation settled all
+64,047 work rows and recorded 3,684 renames, 15 conflicts and 33 errors. All 33
+errors were catalogue-identity changes detected after the rename plan was made,
+not failed filesystem writes. They affected 22 lyric rows and 11 cover rows;
+all 33 currently tracked paths exist. Several cover identities were filled or
+changed during reconciliation. Keep the identity guard: a fresh scoped preview
+must use current identity before retrying, rather than replaying stale intent.
+
+The 15 conflicts include eight audio files whose current source paths still
+exist. Three conflicting cover rows no longer exist in MetadataFiles; this is
+not evidence that their physical cover files were lost. Inspect current
+ownership and destination content before resolving any collision. Do not
+overwrite or discard either audio file based on the old result alone.
+
+Retag command 14724 has three durable generations: 34,919 initial rows with
+73 errors, a 73-row retry with five verification notices, and a five-row final
+pass with no errors. Older error rows remain historical evidence; querying all
+generations incorrectly reports them as current failures. FileMutationJournal
+was empty and the download pause control remained true.
+
+The live container is still 2.20.0, healthy, started October 3 at 07:22 UTC.
+RescanFolders 15214 resumed after rename released disk admission. Recent logs
+show artist scans and new/updated file indexing; its old start timestamp alone
+does not establish a hang. The next deployment should preserve this durable
+scan continuation, then verify completion and targeted rename previews.
