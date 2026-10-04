@@ -55,6 +55,31 @@ test("new-file scan awaits a competing writer and excludes abandoned rewrite aud
   }
 });
 
+test("routine artist scan records unknown music in a plain-name sibling for review", async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number };
+  const root = fs.mkdtempSync(path.join(tempDir, "plain-artist-scan-"));
+  const folder = path.join(root, "Canonical Artist", "Unidentified Album");
+  fs.mkdirSync(folder, { recursive: true });
+  const audio = path.join(folder, "Unknown Song.wav");
+  writePcmWav(audio);
+  const musicPath = Config.getMusicPath;
+  const filtering = Config.getFilteringConfig;
+  Config.getMusicPath = () => root;
+  Config.getFilteringConfig = () => ({ ...filtering(), include_videos: false, include_spatial: false });
+  try {
+    await (DiskScanService as any).indexNewFiles(String(artist.id), { promoteOnMatch: false });
+    const row = db.prepare("SELECT file_path FROM UnmappedFiles WHERE file_path = ?").get(audio);
+    assert.ok(row, "unidentified media in the old artist folder must be registered for review");
+    assert.equal(fs.existsSync(audio), true, "unmapped music must remain on disk");
+  } finally {
+    Config.getMusicPath = musicPath;
+    Config.getFilteringConfig = filtering;
+    db.prepare("DELETE FROM UnmappedFiles WHERE file_path LIKE ?").run(root + "%");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();

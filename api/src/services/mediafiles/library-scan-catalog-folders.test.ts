@@ -44,6 +44,18 @@ test("resolveCatalogArtistFromFolderName returns null for an unknown folder", ()
   assert.equal(resolveCatalogArtistFromFolderName("Some Random Folder"), null);
 });
 
+test("plain artist folders resolve only a unique catalogue name", () => {
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('plain-one', 'Bastille')").run();
+  assert.equal(resolveCatalogArtistFromFolderName("bastille")?.mbid, "plain-one");
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('plain-two', 'Bastille')").run();
+  assert.equal(resolveCatalogArtistFromFolderName("Bastille"), null);
+});
+
+test("an unknown explicit folder MBID cannot fall back to its artist name", () => {
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('plain-one', 'Bastille')").run();
+  assert.equal(resolveCatalogArtistFromFolderName("Bastille {mbid-301b45a4-b8b9-410e-8344-4b4eaf96691a}"), null);
+});
+
 test("root review persistence skips files already imported as TrackFiles", async () => {
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Bastille");

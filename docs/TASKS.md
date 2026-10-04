@@ -168,3 +168,10 @@ The measured ownership problems and remaining acceptance gates are in
 - pending: make Check Upgrades clearly mean media quality acquisition. Scan
   Folders reconciles disk inventory and sidecars; it does not rewrite all tags
   or replace audio with a higher-quality provider download.
+
+## Managed-library cleanup clarification
+
+- in progress: implement the inventory-before-deletion contract in MANAGED_LIBRARY_CLEANUP.md. Keep delete-untracked, delete-empty and remove-unmonitored policies separate.
+- locally validated: routine scans include unambiguously identified plain-name artist siblings and register unmatched media for review.
+- pending: whole-root discovery, grouped unmapped album review, exact sidecar ownership and bounded journaled strict cleanup before enabling that policy.
+- pending: after Discogenius reconciliation, snapshot Lidarr and test read-only rescans on Bastille/Bakermat before library-wide edition reassignment.

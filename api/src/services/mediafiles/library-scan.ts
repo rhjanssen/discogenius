@@ -109,7 +109,14 @@ export function resolveCatalogArtistFromFolderName(folderName: string): {
             LIMIT 1
         `).get(namingMbid) as { id: number; name: string; mbid: string } | undefined;
         if (byMbid) return byMbid;
+        // An explicit but unknown MBID must never fall back to a name match.
+        return null;
     }
+
+    const named = db.prepare(`SELECT id, name, mbid FROM ArtistMetadata
+        WHERE name = ? COLLATE NOCASE LIMIT 2`).all(trimmed) as Array<{ id: number; name: string; mbid: string }>;
+    if (named.length === 1) return named[0];
+    if (named.length > 1) return null;
 
     const artists = db.prepare(`
         SELECT
@@ -127,6 +134,7 @@ export function resolveCatalogArtistFromFolderName(folderName: string): {
             LIMIT 1
           ) AS path
         FROM ArtistMetadata metadata
+        WHERE metadata.id IN (SELECT artist_metadata_id FROM LibraryArtists)
     `).all() as Array<{ id: number; name: string; mbid: string; path?: string | null }>;
     const expected = trimmed.toLowerCase();
     for (const artist of artists) {
@@ -1036,6 +1044,20 @@ export class DiskScanService {
             roots.push({ key: "spatial", dir: path.join(spatialPath, artistFolder) });
         }
 
+        // Manually copied music can still live beside the managed MBID folder.
+        // Only add a plain-name sibling when its name resolves unambiguously to
+        // this artist. The normal matcher still decides every file's identity.
+        const plainName = artist.name;
+        if (plainName && path.basename(plainName) === plainName && plainName !== "." && plainName !== ".."
+            && resolveCatalogArtistFromFolderName(plainName)?.id === artist.id) {
+            for (const { key, dir } of [...roots]) {
+                const root = key === "music" ? Config.getMusicPath()
+                    : key === "spatial" ? Config.getSpatialPath() : Config.getVideoPath();
+                const sibling = path.join(root, plainName);
+                if (sibling !== dir) roots.push({ key, dir: sibling });
+            }
+        }
+
         const scanTargetsByDir = new Map<string, {
             key: LibraryRootKey;
             dir: string;
@@ -1061,7 +1083,7 @@ export class DiskScanService {
             }
 
             // Use pre-built index if available, otherwise walk directory on demand
-            const folderKey = artistFolder.toLowerCase();
+            const folderKey = path.basename(dir).toLowerCase();
             const prebuiltForRoot = prebuiltIndex?.get(rootPath);
             const cachedFiles = prebuiltForRoot?.get(folderKey);
             const allFiles = cachedFiles ?? await this.getMediaFiles(dir);
