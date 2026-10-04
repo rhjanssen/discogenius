@@ -142,3 +142,29 @@ The measured ownership problems and remaining acceptance gates are in
 - pending: update persisted file size/mtime after standalone tag stripping, as retagging already does.
 - pending: profile cold statistics reads and video-update transactions during concurrent catalogue refresh; the scale run still recorded 2.3 s and 6.5 s respectively.
 - pending: reproduce artwork-cache temporary-file loss during concurrent metadata refresh.
+
+## Live library readiness and conflict review
+
+- pending: add a conflict-review workflow showing source and destination,
+  canonical edition/track identities, current tracking ownership and technical
+  quality. Preview a safe association correction or an explicit keep/replace
+  choice; never hide an identity collision with an arbitrary suffix.
+- pending: inspect the eight audio rename conflicts from command 14723. Their
+  destinations exist but no TrackFiles row owns the exact container or host
+  path at audit time. Verify normalized ownership and both media contents before
+  any replacement or deduplication. Edition-MBID folders do not solve two files
+  targeting the same track within the same edition.
+- pending: reconcile the nonempty plain Bastille directory, whose music and
+  artwork are not tracked under either its container or host path. Preserve
+  unknown media until it has been matched or explicitly reviewed.
+- pending: retry the 33 sidecars refused by the old rename plan through a fresh
+  scoped preview; verify album/edition/recording/track ownership first.
+- pending: report actual empty-parent cleanup counts. Rename currently removes
+  empty parents but its cleanedDirectories result remains zero. October 4's
+  read-only audit found no empty subdirectories in stereo or spatial roots.
+- pending: after the artwork release, run an idempotent tag/artwork verification
+  and update only mismatches. Keep Plex presentation acceptance separate from
+  command completion and from folder naming.
+- pending: make Check Upgrades clearly mean media quality acquisition. Scan
+  Folders reconciles disk inventory and sidecars; it does not rewrite all tags
+  or replace audio with a higher-quality provider download.
