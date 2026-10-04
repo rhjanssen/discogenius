@@ -173,5 +173,6 @@ The measured ownership problems and remaining acceptance gates are in
 
 - in progress: implement the inventory-before-deletion contract in MANAGED_LIBRARY_CLEANUP.md. Keep delete-untracked, delete-empty and remove-unmonitored policies separate.
 - locally validated: routine scans include unambiguously identified plain-name artist siblings and register unmatched media for review.
-- pending: whole-root discovery, grouped unmapped album review, exact sidecar ownership and bounded journaled strict cleanup before enabling that policy.
+- locally validated: resumable whole-root inventory registers loose and unknown-folder media, preserves ignored review entries, and uses indexed ownership checks. Orphan pruning preserves records when their root is unavailable. Not deployed.
+- pending: automatic canonical identification of media in unknown folders, grouped unmapped album review, exact sidecar ownership and bounded journaled strict cleanup before enabling that policy. An empty mount point must not count as a healthy root.
 - pending: after Discogenius reconciliation, snapshot Lidarr and test read-only rescans on Bastille/Bakermat before library-wide edition reassignment.

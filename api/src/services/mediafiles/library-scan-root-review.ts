@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db } from "../../database.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import type { ImportCandidate } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import {
@@ -8,20 +8,6 @@ import {
     probeAudioStreamMetrics,
     shouldProbeAudioMetrics,
 } from "./audioUtils.js";
-
-export function clearRootFolderReviewEntries(roots: Iterable<string>, folderNames: string[]) {
-    const deleteByPrefix = db.prepare(`
-        DELETE FROM UnmappedFiles
-        WHERE file_path = ? OR file_path LIKE ?
-    `);
-
-    for (const root of roots) {
-        for (const folderName of folderNames) {
-            const folderPath = path.join(root, folderName);
-            deleteByPrefix.run(folderPath, `${folderPath}${path.sep}%`);
-        }
-    }
-}
 
 export async function persistRootReviewCandidates(candidates: ImportCandidate[]) {
     if (candidates.length === 0) {
@@ -51,17 +37,19 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
             detected_track = COALESCE(excluded.detected_track, detected_track),
             audio_quality = COALESCE(excluded.audio_quality, audio_quality),
             reason = excluded.reason,
-            ignored = 0,
             updated_at = CURRENT_TIMESTAMP
     `);
 
-    const alreadyImported = db.prepare(`
-        SELECT 1 FROM TrackFiles WHERE file_path = ? LIMIT 1
-    `);
+    const alreadyOwned = db.prepare(`SELECT 1 FROM TrackFiles WHERE file_path = ?
+        UNION ALL SELECT 1 FROM MetadataFiles WHERE file_path = ?
+        UNION ALL SELECT 1 FROM LyricFiles WHERE file_path = ?
+        UNION ALL SELECT 1 FROM ExtraFiles WHERE file_path = ? LIMIT 1`);
+    const owned = (file: string) => alreadyOwned.get(file, file, file, file)
+        || alreadyOwned.get(path.resolve(file), path.resolve(file), path.resolve(file), path.resolve(file));
 
     for (const candidate of candidates) {
         for (const file of candidate.group.files) {
-            if (alreadyImported.get(file.path) || alreadyImported.get(path.resolve(file.path))) {
+            if (owned(file.path)) {
                 continue;
             }
             let stats: fs.Stats | null = null;
@@ -91,6 +79,11 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
                 }, file.extension);
             }
 
+            // Native probes and filesystem reads happen before admission. Check
+            // ownership again under the gate: an import may have finished while
+            // those reads were in flight. Preserve an existing ignore decision.
+            await withSqliteWriteGate(() => {
+            if (owned(file.path)) return;
             upsertUnmappedFile.run(
                 file.path,
                 path.relative(candidate.group.rootPath, file.path),
@@ -110,6 +103,7 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
                 metrics.audioQuality,
                 candidate.matches[0]?.rejections?.join("; ") || "Manual review required after root folder scan",
             );
+            }, "scan:root-review-file");
         }
     }
 }

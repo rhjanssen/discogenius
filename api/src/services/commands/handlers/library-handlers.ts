@@ -16,6 +16,7 @@ import type { CommandHandler } from "./handler-context.js";
 import { runRetagWorkUnit } from "../retag-work.js";
 import { runRenameWorkUnit } from "../rename-work.js";
 import { runScanWorkUnit } from "../scan-work.js";
+import { runRootInventoryWorkUnit } from "../root-inventory-work.js";
 
 /**
  * Report what the scan actually reconciled in the file table, so "Completed"
@@ -91,12 +92,17 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
                 ctx.updateCommandDescription(job, { progress: progress(1), description: `${baseLabel} - processed ${cursor + 1}/${total} artists` });
                 return result;
             },
-            perArtist ? null : () => DiskScanService.pruneUnmappedFiles(),
+            perArtist ? null : async () => {
+                if (job.payload.trackUnmappedFiles !== false) await runRootInventoryWorkUnit(job, ctx);
+                return DiskScanService.pruneUnmappedFiles();
+            },
         );
 
         ctx.updateCommandDescription(job, {
             progress: 100,
-            description: formatReconcileSummary(baseLabel, scanResult),
+            description: formatReconcileSummary(baseLabel, scanResult)
+                + (CommandQueueManager.get(job.id)?.payload.rootInventory?.reviewFiles
+                    ? `; ${CommandQueueManager.get(job.id)!.payload.rootInventory!.reviewFiles} files added for review` : ""),
         });
 
         if (job.worker_id && (!CommandQueueManager.isExecutionOwner(job.id, job.worker_id)

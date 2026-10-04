@@ -53,10 +53,31 @@ MBIDs never fall back to an artist-name match. Custom configured folder matching
 falls back only to artists represented in LibraryArtists, avoiding a full
 ArtistMetadata read for every unrelated directory.
 
-The native-container probe scanned a generated FLAC under the plain Bastille
-folder, registered it for review and preserved its source. The app's Unmapped
-row and Manual Import dialog were inspected. This does not establish complete
-root discovery, album-group presentation or strict cleanup; those remain gates.
+Whole-library scans now finish artist reconciliation with a resumable inventory
+of all configured roots. Each dispatch checks at most 100 entries or 15 seconds
+before yielding. Directory/file cursors survive a command continuation or DB
+reopen. Ownership lookups use indexed paths in TrackFiles, MetadataFiles,
+LyricFiles and ExtraFiles. Existing review entries, including ignored files, are
+preserved and do not need another metadata probe. New unowned media is registered
+for review; this stage does not automatically identify unknown artists or albums.
+
+The traversal skips symlinks and reserved system directories. Read failures stop
+the command; missing roots are recorded in its checkpoint. Orphan-record pruning
+now requires the file's library root to be accessible before treating an absent
+file as deleted. This guards unavailable roots, but does not detect an empty
+directory left behind by a failed mount; strict deletion still needs a separate
+root-availability and inventory-completeness gate.
+
+Native-container validation used real generated FLACs directly in a root and
+under an unknown artist/album. The actual RescanFolders handler registered both,
+preserved an ignored file and an unsupported JSON file, and added nothing on a
+repeat scan. The app displayed both review rows and opened the correct album
+directory in Manual Import. Active-schema tests also cover restart recovery,
+concurrent import, inaccessible directories, unavailable roots and symlinks.
+Full CI passed 1,970 backend and 186 frontend tests. These changes are locally
+validated and have not been deployed. Album-group presentation, automatic
+identification of unknown folders, complete sidecar ownership and strict cleanup
+remain release gates.
 
 ## Lidarr as a secondary index
 

@@ -7,7 +7,7 @@ import { resolveArtistFolderFromRecord } from "../config/naming.js";
 import { ensureEmptyArtistFoldersIfEnabled } from "../music/artist-paths.js";
 import { ImportService } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
-import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
+import { persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
 import { matchAudioFileByMetadata, matchVideoFileByMetadata, resolveCatalogTrackFromEmbeddedMbids, videoStemComparableTitle } from "./library-scan-metadata-match.js";
 import { extractNamingMbid } from "./import-discovery.js";
@@ -28,7 +28,7 @@ type ProviderItemIdentity = {
     entityType: string;
     providerId: string;
 };
-import { resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
+import { isMissingLibraryFile, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
     updateAlbumDownloadStatus,
     updateArtistDownloadStatusFromMedia,
@@ -443,12 +443,14 @@ export class DiskScanService {
     static async pruneUnmappedFiles(): Promise<number> {
         let unmappedOrphans = 0;
         let cursor = 0;
-        const read = db.prepare("SELECT id, file_path FROM UnmappedFiles WHERE id > ? ORDER BY id LIMIT 100");
+        const read = db.prepare("SELECT id, file_path, relative_path, library_root FROM UnmappedFiles WHERE id > ? ORDER BY id LIMIT 100");
         const remove = db.prepare("DELETE FROM UnmappedFiles WHERE id = ? AND file_path = ?");
         while (true) {
-            const rows = read.all(cursor) as Array<{ id: number; file_path: string }>;
+            const rows = read.all(cursor) as Array<{ id: number; file_path: string; relative_path: string | null; library_root: string }>;
             if (!rows.length) break;
-            const missing = rows.filter(row => !fs.existsSync(row.file_path));
+            const missing = rows.filter(row => isMissingLibraryFile({
+                filePath: row.file_path, relativePath: row.relative_path, libraryRoot: row.library_root,
+            }));
             for (let start = 0; start < missing.length; start += 25) {
                 const batch = missing.slice(start, start + 25);
                 unmappedOrphans += await withSqliteWriteGate(() => db.transaction(() => {
@@ -873,7 +875,7 @@ export class DiskScanService {
                 libraryRoot: row.library_root,
                 relativePath: row.relative_path,
             });
-            if (fs.existsSync(resolvedPath)) continue;
+            if (!isMissingLibraryFile({ filePath: row.file_path, libraryRoot: row.library_root, relativePath: row.relative_path })) continue;
 
             // File is gone — remove DB record
             const changed = await withSqliteWriteGate(() => db.prepare(`
@@ -1784,7 +1786,6 @@ export class DiskScanService {
         });
 
         const importer = new ImportService();
-        clearRootFolderReviewEntries(roots, unknownFolders);
         const reviewCandidates = await importer.scanRootFolders({
             monitorImported: shouldMonitor,
             targetFolders: new Set(unknownFolders.map((folderName) => folderName.toLowerCase())),

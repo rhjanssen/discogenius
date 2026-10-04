@@ -176,9 +176,9 @@ function insertMissingTrackFile(
     providerId ? "track" : null,
     providerId,
     "stereo",
-    `C:/Nonexistent/${filename}`,
+    path.join(tempDir, filename),
     filename,
-    "C:/Nonexistent",
+    tempDir,
     filename,
     "flac",
     "track",
@@ -205,6 +205,23 @@ function writePcmWav(filePath: string): void {
   wav.writeUInt32LE(dataSize, 40);
   fs.writeFileSync(filePath, wav);
 }
+
+test("an unavailable root preserves tracked and unmapped inventory", async () => {
+  seedCanonicalArtistGraph();
+  insertMissingTrackFile("track-1", "recording-1", "offline.flac", null);
+  const offline = path.join(tempDir, "disconnected-root");
+  db.prepare("UPDATE TrackFiles SET library_root=?, file_path=? WHERE filename='offline.flac'")
+    .run(offline, path.join(offline, "offline.flac"));
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid='artist-mbid'").get() as { id: number };
+  await assert.rejects(DiskScanService.scan({ artistIds: [String(artist.id)] }), /Library root unavailable/);
+  assert.equal((db.prepare("SELECT count(*) n FROM TrackFiles").get() as { n: number }).n, 1);
+  db.prepare(`INSERT INTO UnmappedFiles (file_path,relative_path,library_root,filename,extension,file_size)
+      VALUES (?, 'review.flac', ?, 'review.flac', 'flac', 1)`).run(path.join(offline, "review.flac"), offline);
+  try {
+    await assert.rejects(DiskScanService.pruneUnmappedFiles(), /Library root unavailable/);
+    assert.ok(db.prepare("SELECT 1 FROM UnmappedFiles WHERE library_root=?").get(offline));
+  } finally { db.prepare("DELETE FROM UnmappedFiles WHERE library_root=?").run(offline); }
+});
 
 test("scan waits for an active database writer before updating changed and verified file facts", async () => {
   seedCanonicalArtistGraph();

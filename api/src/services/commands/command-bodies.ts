@@ -110,11 +110,24 @@ export interface ScanWorkCheckpoint {
   cleanupDone: boolean;
 }
 
+export interface RootInventoryCheckpoint {
+  version: 1;
+  roots: Array<{ key: "music" | "spatial" | "videos"; path: string }>;
+  pending: Array<{ root: number; directory: string }>;
+  current: { root: number; directory: string; files: string[]; cursor: number } | null;
+  directories: number;
+  files: number;
+  reviewFiles: number;
+  missingRoots: string[];
+  complete: boolean;
+}
+
 export interface CommandBodyCommon {
   cancelRequested?: boolean;
   retagWork?: RetagWorkCheckpoint;
   renameWork?: { version: 1 };
   scanWork?: ScanWorkCheckpoint;
+  rootInventory?: RootInventoryCheckpoint;
   id?: string;
   ids?: number[];
   providerId?: string;

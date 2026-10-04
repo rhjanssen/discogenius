@@ -123,6 +123,21 @@ export function resolveLibraryRootPath(
   return trimmed && isAbsolutePathLike(trimmed) ? trimmed : null;
 }
 
+/** A missing file is an orphan only while its library root is available.
+ * Permission/I/O failures and disconnected roots must never erase inventory. */
+export function isMissingLibraryFile(options: {
+  filePath: string; libraryRoot: string; relativePath?: string | null;
+}): boolean {
+  const file = resolveStoredLibraryPath(options);
+  try { fs.lstatSync(file); return false; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const root = resolveLibraryRootPath(options.libraryRoot, file);
+  try {
+    if (root && fs.statSync(root).isDirectory()) return true;
+  } catch { /* Report the root, rather than treating every child as deleted. */ }
+  throw new Error(`Library root unavailable; inventory was preserved: ${root || options.libraryRoot}`);
+}
+
 export function resolveStoredLibraryPath(options: {
   filePath: string;
   libraryRoot?: string | null;

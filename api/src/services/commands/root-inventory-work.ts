@@ -1,0 +1,144 @@
+import fs from "node:fs";
+import path from "node:path";
+import { performance } from "node:perf_hooks";
+import * as mm from "music-metadata";
+import { db, withSqliteWriteGate } from "../../database.js";
+import { Config } from "../config/config.js";
+import { SUPPORTED_IMPORT_EXTENSIONS } from "../mediafiles/import-discovery.js";
+import { isMediaRewriteTemporaryName } from "../mediafiles/media-file-rewrite.js";
+import { persistRootReviewCandidates } from "../mediafiles/library-scan-root-review.js";
+import { CommandQueueManager } from "./command-queue-manager.js";
+import { CommandContinuation } from "./command-continuation.js";
+import type { RootInventoryCheckpoint } from "./command-bodies.js";
+import type { CommandModelOf } from "./command-model.js";
+import type { CommandHandlerContext } from "./handlers/handler-context.js";
+
+const excludedDirectories = new Set([".zfs", ".git", ".vs", ".appledouble", "$recycle.bin", "system volume information", "@eadir"]);
+
+function within(directory: string, root: string): boolean {
+    const relative = path.relative(root, directory);
+    return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+/** Complete filesystem coverage after artist reconciliation. Only previously
+ * unowned media is parsed; unchanged library/review files need no native probe.
+ * This is an inventory, never authorization to delete unsupported files. */
+export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolders">,
+    ctx: CommandHandlerContext): Promise<RootInventoryCheckpoint> {
+    const owner = job.worker_id;
+    if (!owner) throw new Error("Root inventory execution ownership changed");
+    const assertOwner = () => {
+        if (!CommandQueueManager.isExecutionOwner(job.id, owner)) throw new Error("Root inventory execution ownership changed");
+        if (CommandQueueManager.get(job.id)?.payload.cancelRequested) throw new Error("Root inventory cancellation requested");
+    };
+    assertOwner();
+    const roots = [
+        { key: "music" as const, path: Config.getMusicPath() },
+        { key: "spatial" as const, path: Config.getSpatialPath() },
+        { key: "videos" as const, path: Config.getVideoPath() },
+    ].filter(root => Boolean(root.path)).map(root => ({ ...root, path: path.resolve(root.path) }));
+    if (new Set(roots.map(root => root.path)).size !== roots.length) throw new Error("Library inventory roots must have distinct paths");
+    let state = job.payload.rootInventory;
+    const persist = async () => withSqliteWriteGate(() => {
+        assertOwner();
+        if (!CommandQueueManager.updateState(job.id, { workerId: owner, payloadPatch: { rootInventory: state } })) {
+            throw new Error("Root inventory execution ownership changed");
+        }
+    }, "scan:root-inventory-checkpoint");
+    if (!state) {
+        state = { version: 1, roots, pending: roots.map((_, root) => ({ root, directory: roots[root].path })),
+            current: null, directories: 0, files: 0, reviewFiles: 0, missingRoots: [], complete: false };
+        await persist();
+    }
+    if (state.version !== 1 || JSON.stringify(state.roots) !== JSON.stringify(roots)
+        || !Array.isArray(state.pending) || !Array.isArray(state.missingRoots) || typeof state.complete !== "boolean"
+        || (state.complete && (state.pending.length > 0 || state.current !== null))
+        || [state.directories, state.files, state.reviewFiles].some(n => !Number.isSafeInteger(n) || n < 0)) {
+        throw new Error("Invalid or changed root inventory checkpoint");
+    }
+    const validateDirectory = (entry: { root: number; directory: string }) => {
+        if (!Number.isSafeInteger(entry.root) || !roots[entry.root] || !within(entry.directory, roots[entry.root].path)) {
+            throw new Error("Root inventory directory is outside its library root");
+        }
+    };
+    state.pending.forEach(validateDirectory);
+    if (state.current) {
+        validateDirectory(state.current);
+        if (!Array.isArray(state.current.files) || state.current.files.some(name => typeof name !== "string"
+            || name === "." || name === ".." || path.basename(name) !== name)
+            || !Number.isSafeInteger(state.current.cursor) || state.current.cursor < 0 || state.current.cursor > state.current.files.length) {
+            throw new Error("Invalid root inventory file cursor");
+        }
+    }
+    if (state.complete) return state;
+    const owned = db.prepare(`SELECT 1 FROM TrackFiles WHERE file_path = ?
+        UNION ALL SELECT 1 FROM MetadataFiles WHERE file_path = ?
+        UNION ALL SELECT 1 FROM LyricFiles WHERE file_path = ?
+        UNION ALL SELECT 1 FROM ExtraFiles WHERE file_path = ? LIMIT 1`);
+    const reviewed = db.prepare("SELECT 1 FROM UnmappedFiles WHERE file_path = ?");
+    const started = performance.now();
+    let processed = 0;
+    while (processed < 100 && performance.now() - started < 15_000) {
+        assertOwner();
+        if (!state.current) {
+            const next = state.pending.pop();
+            if (!next) { state.complete = true; break; }
+            const root = roots[next.root];
+            let stats: fs.Stats;
+            try { stats = fs.lstatSync(next.directory); }
+            catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+                if (next.directory === root.path) state.missingRoots.push(root.path);
+                processed++;
+                continue;
+            }
+            if (stats.isSymbolicLink() || !stats.isDirectory()) throw new Error(`Inventory directory changed: ${next.directory}`);
+            const entries = fs.readdirSync(next.directory, { withFileTypes: true });
+            const files: string[] = [];
+            for (const entry of entries) {
+                if (entry.isDirectory() && !excludedDirectories.has(entry.name.toLowerCase())) {
+                    const directory = path.join(next.directory, entry.name);
+                    if (!roots.some(other => other.path === directory)) state.pending.push({ root: next.root, directory });
+                } else if (entry.isFile()) files.push(entry.name);
+            }
+            state.current = { ...next, files, cursor: 0 };
+            state.directories++;
+            processed++;
+        }
+        const current = state.current;
+        if (current.cursor === current.files.length) { state.current = null; continue; }
+        const name = current.files[current.cursor];
+        const file = path.join(current.directory, name);
+        const root = roots[current.root];
+        if (!within(fs.realpathSync(current.directory), fs.realpathSync(root.path))) {
+            throw new Error(`Inventory directory escaped its library root: ${current.directory}`);
+        }
+        const ext = path.extname(name).toLowerCase();
+        if (SUPPORTED_IMPORT_EXTENSIONS.has(ext) && !isMediaRewriteTemporaryName(name)
+            && !owned.get(file, file, file, file) && !reviewed.get(file)) {
+            const before = fs.lstatSync(file);
+            if (!before.isFile() || before.isSymbolicLink()) throw new Error(`Inventory file changed: ${file}`);
+            let metadata: mm.IAudioMetadata | undefined;
+            try { metadata = await mm.parseFile(file, { skipCovers: true }); } catch { /* Invalid media remains reviewable. */ }
+            const after = fs.lstatSync(file);
+            if (!after.isFile() || after.isSymbolicLink() || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+                throw new Error(`Inventory file changed during inspection: ${file}`);
+            }
+            await persistRootReviewCandidates([{ group: {
+                id: Buffer.from(current.directory).toString("base64"), path: current.directory, rootPath: root.path,
+                libraryRoot: root.key, files: [{ path: file, name, size: after.size, extension: ext, metadata }],
+                sidecars: [], commonTags: {}, status: "manual_required",
+            }, matches: [] }]);
+            if (reviewed.get(file)) state.reviewFiles++;
+        }
+        state.files++;
+        current.cursor++;
+        processed++;
+        await ctx.yieldToEventLoop();
+    }
+    await persist();
+    ctx.updateCommandDescription(job, { progress: state.complete ? 95 : 90,
+        description: `Checking library inventory - ${state.files} files checked, ${state.reviewFiles} added for review` });
+    if (!state.complete) throw new CommandContinuation({});
+    return state;
+}

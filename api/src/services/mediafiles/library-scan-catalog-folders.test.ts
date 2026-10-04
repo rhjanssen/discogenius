@@ -110,3 +110,44 @@ test("root review persistence skips files already imported as TrackFiles", async
   }>;
   assert.deepEqual(rows.map((row) => row.file_path), [reviewPath]);
 });
+
+test("root review refresh preserves the user's ignore decision", async () => {
+  const file = path.join(tempDir, "ignored.wav");
+  fs.writeFileSync(file, "unreadable media remains reviewable");
+  db.prepare(`INSERT INTO UnmappedFiles (file_path,relative_path,library_root,filename,extension,file_size,ignored)
+    VALUES (?, 'ignored.wav', 'music', 'ignored.wav', 'wav', 1, 1)`).run(file);
+  await persistRootReviewCandidates([{ group: {
+    id: "ignored-group", path: tempDir, rootPath: tempDir, libraryRoot: "music", status: "manual_required",
+    files: [{ path: file, name: "ignored.wav", size: fs.statSync(file).size, extension: ".wav" }],
+    sidecars: [], commonTags: {},
+  }, matches: [] }]);
+  assert.equal((db.prepare("SELECT ignored FROM UnmappedFiles WHERE file_path=?").get(file) as { ignored: number }).ignored, 1);
+});
+
+test("root review waits for a competing importer and rechecks ownership before inserting", async () => {
+  const file = path.join(tempDir, "imported-during-review.flac");
+  fs.writeFileSync(file, "native probe may fail but ownership still wins");
+  db.prepare("INSERT INTO ArtistMetadata (mbid,name) VALUES ('review-race', 'Bastille')").run();
+  const artist = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid='review-race'").get() as { id: number }).id;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  let timerFired = false;
+  const importer = dbModule.withSqliteWriteGate(() => new Promise<void>(resolve => {
+    acquired();
+    setTimeout(() => {
+      db.prepare(`INSERT INTO TrackFiles (artist_metadata_id,library_slot,file_path,relative_path,library_root,filename,extension,file_type)
+        VALUES (?, 'stereo', ?, 'imported-during-review.flac', ?, 'imported-during-review.flac', 'flac', 'track')`).run(artist, file, tempDir);
+      timerFired = true;
+      resolve();
+    }, 30);
+  }), "test:review-import-race");
+  await ready;
+  await persistRootReviewCandidates([{ group: {
+    id: "race-group", path: tempDir, rootPath: tempDir, libraryRoot: "music", status: "manual_required",
+    files: [{ path: file, name: "imported-during-review.flac", size: fs.statSync(file).size, extension: ".flac" }],
+    sidecars: [], commonTags: {},
+  }, matches: [] }]);
+  await importer;
+  assert.equal(timerFired, true);
+  assert.equal(db.prepare("SELECT 1 FROM UnmappedFiles WHERE file_path=?").get(file), undefined);
+});
