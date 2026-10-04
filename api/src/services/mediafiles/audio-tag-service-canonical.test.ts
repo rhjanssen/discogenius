@@ -274,8 +274,8 @@ test("artist retag scope resolves both public MBIDs and internal metadata ids", 
 });
 
 test("embedded cover resolution reads the exact edition cache", async () => {
-  const firstCover = Buffer.from("edition-one-cover");
-  const secondCover = Buffer.from("edition-two-cover");
+  const firstCover = Buffer.from(jpeg.encode({ width: 5, height: 5, data: Buffer.alloc(100, 100) }, 90).data);
+  const secondCover = Buffer.from(jpeg.encode({ width: 5, height: 5, data: Buffer.alloc(100, 180) }, 90).data);
   const firstCache = path.join(tempDir, "media-cover", "AlbumEditions", "release-mbid-1");
   const secondCache = path.join(tempDir, "media-cover", "AlbumEditions", "release-mbid-2");
   fs.mkdirSync(firstCache, { recursive: true });
@@ -293,12 +293,19 @@ test("embedded cover resolution reads the exact edition cache", async () => {
   );
 });
 
-test("embedded cover resolution preserves the full-resolution original above 1200 pixels", async () => {
+test("embedded cover respects 1200 pixels while preserving the full-resolution original", {
+  skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+}, async () => {
   const bytes = Buffer.from(jpeg.encode({ width: 1500, height: 1500, data: Buffer.alloc(1500 * 1500 * 4, 160) }, 95).data);
   const folder = path.join(tempDir, "media-cover", "AlbumEditions", "full-res-edition");
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(path.join(folder, "cover.jpg"), bytes);
-  assert.deepEqual(await audioTagServiceModule.AudioTagService.readPreferredEmbeddedCoverForTest("full-res-edition"), bytes);
+  const embedded = await audioTagServiceModule.AudioTagService.readPreferredEmbeddedCoverForTest("full-res-edition");
+  assert.ok(embedded);
+  const decoded = jpeg.decode(embedded);
+  assert.equal(decoded.width, 1200);
+  assert.equal(decoded.height, 1200);
+  assert.deepEqual(fs.readFileSync(path.join(folder, "cover.jpg")), bytes);
 });
 
 test("bulk artist retag waits for a catalog writer, verifies tags and cover, and is idempotent", {

@@ -611,3 +611,47 @@ track-list request and a six-second isolated native-container download of
 Bakermat's "I Love Life". ffmpeg decoded the resulting FLAC without errors. The
 production backlog stayed paused. This single successful download does not
 establish sustained throughput or availability for older failed acquisitions.
+
+## Artwork storage and embedded derivative policy
+
+The October 4 read-only storage audit found about 103 GiB in config, including
+92 GiB of MediaCover, 5.1 GiB of backups and 13 MiB of logs. Original album
+artwork accounted for about 69.8 GiB; video originals added about 9.8 GiB.
+Imported album identities still had 420 cached originals totalling 755 MiB;
+imported editions had eight originals totalling 4.2 MiB. Most artwork storage
+therefore belongs to unimported catalogue entries, not duplicate library covers.
+No archival artwork was deleted during this audit. Proxy-only browsing with
+original fetching at acquisition needs a retention-policy decision; the earlier
+instruction retains fetched originals until import.
+
+The embedding path had stopped consuming `metadata.album_cover_resolution`.
+Only a nearly 16 MiB FLAC image triggered JPEG conversion, at its original pixel
+dimensions. That contradicted the setting and left other containers unbounded.
+The new path respects the configured longest-edge limit and uses a separate
+2 MiB maximum for embedded JPEGs in every supported audio container. Existing
+JPEGs within both limits pass through unchanged. PNGs and oversized JPEGs are
+converted with Lanczos resizing and high-quality 4:4:4 JPEG. Moderate compression
+is tried before reducing dimensions further to meet the byte budget. `origin`
+keeps source dimensions when possible but still obeys that safety budget.
+
+The original sidecar remains byte-identical. Encoding uses one native process at
+a time per worker, one encoder thread, and a 30-second subprocess timeout. Node
+reads at most 1 MiB of the source header to determine dimensions rather than
+retaining a full original for each queued conversion. Rendering and validation
+use the same deterministic derivative, including in tag previews.
+
+The local Lidarr reference does not apply a separate embedded-image compression
+policy: `AudioTagService.cs` selects the original with a null height, and
+`AudioTag.cs` creates a `Picture` from that file. Its resized cache images are
+UI derivatives. The 2 MiB budget is a Discogenius operational choice, not a
+Lidarr default or a file-format maximum.
+
+A real cached CAA PNG was 72,854,182 bytes at 6492 by 5567 pixels. The native
+candidate encoded it to a 741,406-byte JPEG at 1200 by 1029 pixels. FLAC, ALAC
+M4A, MP3 and Opus embedded and verified it, with unchanged decoded-audio hashes
+and repeat cover comparisons. The source was mounted read-only and its SHA-256
+stayed unchanged. No live media files were rewritten in this test.
+
+The candidate also retained title, track and disc tags in all four containers.
+Full local CI passed with 1,959 backend and 186 frontend tests, lint, type checks
+and both builds. This artwork change is not yet deployed to the NAS.

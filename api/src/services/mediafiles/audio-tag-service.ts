@@ -300,7 +300,7 @@ function yieldRetagToEventLoop(): Promise<void> {
 
 async function resolvePreferredEmbeddedCover(
   row: RetagTrackRow,
-  _config: MetadataConfig,
+  config: MetadataConfig,
   _resolvedMediaPath: string,
   context: EmbeddedCoverContext,
 ): Promise<string | null> {
@@ -311,7 +311,7 @@ async function resolvePreferredEmbeddedCover(
   const albumMbid = String(row.canonical_release_group_mbid || row.album_mb_release_group_id || "").trim();
   if (!releaseMbid && !albumMbid) return null;
 
-  const key = `cover:${row.library_root}:${releaseMbid || albumMbid}:${path.extname(_resolvedMediaPath).toLowerCase()}`;
+  const key = `cover:${row.library_root}:${releaseMbid || albumMbid}:${config.album_cover_resolution}:${path.extname(_resolvedMediaPath).toLowerCase()}`;
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
@@ -322,7 +322,7 @@ async function resolvePreferredEmbeddedCover(
         libraryRoot: row.library_root,
       });
       return cover && fs.existsSync(cover)
-        ? prepareEmbeddedAudioCover(_resolvedMediaPath, cover, context.temporaryDirectories) : null;
+        ? prepareEmbeddedAudioCover(_resolvedMediaPath, cover, context.temporaryDirectories, config.album_cover_resolution) : null;
     })();
     context.byAlbum.set(key, pending);
   }

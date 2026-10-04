@@ -79,6 +79,44 @@ The measured ownership problems and remaining acceptance gates are in
 - pending: compare a typed dedicated writer with the bounded fair-mutex design
   on measured workloads before changing runtimes or database engines.
 
+## UI and terminology pass after runtime stability
+
+- pending: distinguish Running, Waiting, and Waiting to continue. Maintenance
+  work can yield its slot without losing progress; a waiting row must not say
+  it is currently processing. Remove the appended queue-position text.
+- pending: use one status contract across Activity and Queue. Show durable
+  completed/total counts, the current artist/album/file, and a percentage only
+  when the total is known. Keep these updated through events plus reconciliation;
+  show the last confirmed state when no fresh progress is available.
+- pending: compare Jellyfin's scheduled-task progress and current-item display.
+  Exercise rename, retag, scan, metadata refresh, download and import in both
+  desktop and mobile layouts, including yielded work and restart recovery.
+- pending: use Streaming services for media sources and provider-specific
+  download tools. Explain artwork supplementation separately from canonical
+  metadata, rather than describing everything as one provider.
+- pending: name the two metadata modes clearly: MusicBrainz metadata through
+  Servarr, and the local MusicBrainz database. Show the selected mode and mirror
+  freshness. Detailed transport, matching and edition explanations belong in
+  help popovers, while useful edition distinctions remain visible.
+- pending: audit labels, icons, empty/error states, spacing and overflow menus
+  throughout the app. Prefer concise actions and descriptions; keep operational
+  detail available without putting implementation terminology in routine flows.
+
+## Artwork storage and embedding acceptance
+
+- in progress: restore the configured embedded-art resolution and impose a
+  separate byte budget for JPEG derivatives across FLAC, MP3, M4A and Xiph.
+  Preserve original sidecars. Verify decoded audio, tags and repeat comparisons.
+- pending: reconcile remaining imported-cache masters with tracked library
+  sidecars after rename, verifying exact content and ownership before removing
+  duplicate originals. Ordinary scans must remain no-ops for unchanged files.
+- pending: decide whether catalog browsing retains full originals or only
+  250/500 proxies. Full-quality acquisition artwork must become the library
+  sidecar after import. Validate source switching across sidecar and embeds.
+- pending: expose cache usage by originals, proxies, database and backups, and
+  define retention for unimported artwork. Do not treat archival library covers
+  as disposable cache files.
+
 ## Decisions worth keeping
 
 - TypeScript stack. Do not port to .NET.

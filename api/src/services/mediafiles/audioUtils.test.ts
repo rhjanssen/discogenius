@@ -15,6 +15,8 @@ import {
     embedAudioCover,
     embedVideoThumbnail,
     compareEmbeddedAudioCover,
+    prepareEmbeddedAudioCover,
+    EMBEDDED_AUDIO_COVER_MAX_BYTES,
     readImageDimensionsFromBuffer,
     getMetadataRewriteContainerArgs,
     getVideoThumbnailProbeArgs,
@@ -273,7 +275,7 @@ test("an unclassifiable container is not reported as lossless", () => {
   assert.equal(deriveQuality("", {}), "UNKNOWN");
 });
 
-test("oversized FLAC artwork keeps the full original sidecar and embeds a same-resolution compatible copy", {
+test("oversized FLAC artwork keeps the original sidecar and embeds a bounded compatible copy", {
   skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-flac-cover-limit-"));
@@ -297,8 +299,8 @@ test("oversized FLAC artwork keeps the full original sidecar and embeds a same-r
     assert.equal(await embedAudioCover(file, cover), true);
     const compared = await compareEmbeddedAudioCover(file, cover);
     assert.equal(compared.matches, true);
-    assert.deepEqual({ width: compared.target?.width, height: compared.target?.height }, readImageDimensionsFromBuffer(original));
-    assert.ok(compared.target!.bytes < 0xffffff);
+    assert.deepEqual({ width: compared.target?.width, height: compared.target?.height }, { width: 1200, height: 1200 });
+    assert.ok(compared.target!.bytes <= EMBEDDED_AUDIO_COVER_MAX_BYTES);
     assert.ok(fs.readFileSync(cover).equals(original));
     assert.equal(audioHash(), before);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -308,6 +310,56 @@ test("24-bit lossless is MAX class, including 24/48", () => {
   assert.equal(deriveQuality(".flac", { bitDepth: 16, sampleRate: 44100 }), "LOSSLESS");
   assert.equal(deriveQuality(".m4a", { codec: "alac", bitDepth: 24, sampleRate: 48000 }), "HIRES_LOSSLESS");
   assert.equal(deriveQuality(".flac", { bitDepth: 24, sampleRate: 96000 }), "HIRES_LOSSLESS");
+});
+
+test("a noisy 1200-pixel PNG is converted to a byte-bounded JPEG for MP3 and origin stays bounded", {
+  skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+}, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-cover-byte-budget-"));
+  const directories: string[] = [];
+  try {
+    const png = new PNG({ width: 1200, height: 1200 });
+    randomFillSync(png.data);
+    for (let i = 3; i < png.data.length; i += 4) png.data[i] = 255;
+    const original = PNG.sync.write(png, { deflateLevel: 0 });
+    const cover = path.join(root, "cover.png");
+    fs.writeFileSync(cover, original);
+    assert.ok(original.length > EMBEDDED_AUDIO_COVER_MAX_BYTES);
+    for (const resolution of [1200, "origin"] as const) {
+      const prepared = await prepareEmbeddedAudioCover("track.mp3", cover, directories, resolution);
+      const bytes = fs.readFileSync(prepared);
+      assert.equal(bytes[0], 0xff);
+      assert.equal(bytes[1], 0xd8);
+      assert.ok(bytes.length <= EMBEDDED_AUDIO_COVER_MAX_BYTES);
+      assert.deepEqual(readImageDimensionsFromBuffer(bytes), { width: 1200, height: 1200 });
+      const repeated = await prepareEmbeddedAudioCover("track.mp3", prepared, directories, resolution);
+      assert.equal(repeated, prepared, "prepared art must not be recompressed during verification");
+    }
+    assert.deepEqual(fs.readFileSync(cover), original);
+  } finally {
+    for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("embedded artwork caps the longest edge and keeps aspect ratio", {
+  skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+}, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-cover-landscape-"));
+  const directories: string[] = [];
+  try {
+    const png = new PNG({ width: 2400, height: 600 });
+    png.data.fill(200);
+    const cover = path.join(root, "landscape.png");
+    fs.writeFileSync(cover, PNG.sync.write(png));
+    const prepared = await prepareEmbeddedAudioCover("track.m4a", cover, directories, 1200);
+    assert.deepEqual(readImageDimensionsFromBuffer(fs.readFileSync(prepared)), { width: 1200, height: 300 });
+    const origin = await prepareEmbeddedAudioCover("track.m4a", cover, directories, "origin");
+    assert.deepEqual(readImageDimensionsFromBuffer(fs.readFileSync(origin)), { width: 2400, height: 600 });
+  } finally {
+    for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Opus 96 is LOW and Opus 160 is HIGH", () => {

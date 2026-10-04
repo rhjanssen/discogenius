@@ -7,6 +7,7 @@ import { type Readable } from 'stream';
 import { Config } from '../config/config.js';
 import { execFile, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
+import pLimit from 'p-limit';
 import { withMediaFileLock } from './media-file-lock.js';
 import { mediaRewritePath, rewriteMediaCopy, runMediaRewrite } from './media-file-rewrite.js';
 import { generateFingerprint } from './fingerprint.js';
@@ -656,28 +657,54 @@ async function writeMp4MetadataWithMutagen(
  * Mutagen is used because ffmpeg's MP4 `use_metadata_tags` mode cannot retain
  * both MusicBrainz mdta atoms and a `covr` attached-picture atom.
  */
-// FLAC metadata blocks have a 24-bit length. Keep the original sidecar, and
-// encode only an oversized embedded copy at its original pixel dimensions.
+// Embedded copies are disposable derivatives; the original sidecar is archival.
+// Stay well below FLAC's 24-bit block limit and avoid oversized ID3/covr/Xiph art.
+export const EMBEDDED_AUDIO_COVER_MAX_BYTES = 2 * 1024 * 1024;
+const embeddedCoverEncoder = pLimit(1);
 export async function prepareEmbeddedAudioCover(filePath: string, coverPath: string,
-    temporaryDirectories: string[]): Promise<string> {
-    if (path.extname(filePath).toLowerCase() !== '.flac' || fs.statSync(coverPath).size < 0xffffff - 1024) return coverPath;
-    const dimensions = readImageDimensionsFromBuffer(fs.readFileSync(coverPath));
-    if (!dimensions) throw new Error('Oversized FLAC cover must be a readable JPEG or PNG');
+    temporaryDirectories: string[],
+    maxResolution: 'origin' | number = Config.getMetadataConfig().album_cover_resolution,
+): Promise<string> {
+    // Dimensions live in the image header. Do not retain a 70 MB original in
+    // Node for every album awaiting its turn in the native encoder.
+    const bytes = fs.statSync(coverPath).size;
+    const header = Buffer.alloc(Math.min(bytes, 1024 * 1024));
+    const fd = fs.openSync(coverPath, 'r');
+    try { fs.readSync(fd, header, 0, header.length, 0); }
+    finally { fs.closeSync(fd); }
+    const dimensions = readImageDimensionsFromBuffer(header);
+    if (!dimensions) throw new Error('Embedded cover must be a readable JPEG or PNG');
+    if (maxResolution !== 'origin' && (!Number.isFinite(maxResolution) || maxResolution <= 0)) {
+        throw new Error('Embedded cover resolution must be a positive number or origin');
+    }
+    const longest = Math.max(dimensions.width, dimensions.height);
+    let scale = maxResolution === 'origin' ? 1 : Math.min(1, maxResolution / longest);
+    const isJpeg = header[0] === 0xff && header[1] === 0xd8;
+    if (isJpeg && scale === 1 && bytes <= EMBEDDED_AUDIO_COVER_MAX_BYTES) return coverPath;
+    return embeddedCoverEncoder(async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-embedded-cover-'));
     temporaryDirectories.push(directory);
     const output = path.join(directory, 'cover.jpg');
-    for (const quality of [2, 4, 6, 8]) {
+    // Prefer high JPEG quality. Reduce dimensions only if moderate compression
+    // cannot meet the byte budget, including when the user selected origin.
+    for (let attempt = 0; attempt < 8; attempt++, scale *= 0.75) {
+      const width = Math.max(1, Math.floor(dimensions.width * scale));
+      const height = Math.max(1, Math.floor(dimensions.height * scale));
+      for (const quality of [2, 4, 6]) {
         await new Promise<void>((resolve, reject) => execFile(resolveFfmpegBinary(),
-            ['-v', 'error', '-y', '-i', coverPath, '-frames:v', '1', '-c:v', 'mjpeg',
+            ['-v', 'error', '-y', '-i', coverPath, '-vf', `scale=${width}:${height}:flags=lanczos`,
+                '-frames:v', '1', '-c:v', 'mjpeg', '-map_metadata', '-1',
                 '-q:v', String(quality), '-pix_fmt', 'yuvj444p', '-threads', '1', output],
             { windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024 },
             error => error ? reject(error) : resolve()));
         const encoded = fs.readFileSync(output);
         const actual = readImageDimensionsFromBuffer(encoded);
-        if (actual?.width !== dimensions.width || actual?.height !== dimensions.height) throw new Error('Embedded cover encoding changed image dimensions');
-        if (encoded.length < 0xffffff - 1024) return output;
+        if (actual?.width !== width || actual?.height !== height) throw new Error('Embedded cover encoding produced unexpected dimensions');
+        if (encoded.length <= EMBEDDED_AUDIO_COVER_MAX_BYTES) return output;
+      }
     }
-    throw new Error('Cover cannot fit a FLAC picture block at its original resolution');
+    throw new Error(`Embedded cover exceeds the ${EMBEDDED_AUDIO_COVER_MAX_BYTES}-byte safety limit`);
+    });
 }
 
 export async function embedAudioCover(filePath: string, coverPath: string): Promise<boolean> {
