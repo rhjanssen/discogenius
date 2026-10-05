@@ -159,9 +159,9 @@ The measured ownership problems and remaining acceptance gates are in
   unknown media until it has been matched or explicitly reviewed.
 - pending: retry the 33 sidecars refused by the old rename plan through a fresh
   scoped preview; verify album/edition/recording/track ownership first.
-- pending: report actual empty-parent cleanup counts. Rename currently removes
-  empty parents but its cleanedDirectories result remains zero. October 4's
-  read-only audit found no empty subdirectories in stereo or spatial roots.
+- locally validated, October 6: rename and artist moves count actual removed
+  empty parents. Pruning retains the root, refuses directory symlinks/junctions,
+  recognizes Windows path casing and stops at nonempty parents. Not deployed.
 - pending: after the artwork release, run an idempotent tag/artwork verification
   and update only mismatches. Keep Plex presentation acceptance separate from
   command completion and from folder naming.
@@ -170,6 +170,29 @@ The measured ownership problems and remaining acceptance gates are in
   or replace audio with a higher-quality provider download.
 
 ## Managed-library cleanup clarification
+
+- requested, October 6: after inventory, identity, duplicate and sidecar handling
+  are fixed and validated, run a fresh library-wide rename followed by retag,
+  then strict unowned/duplicate cleanup and empty-parent pruning. Verify outcomes
+  and no-change repeat previews. This is authorized follow-up work; incomplete
+  inventory or a conflicting edition must be resolved before deletion.
+- locally validated, October 6: sidecar deduplication checks scope and identical
+  bytes, fixes the destination artist-field alias, verifies the staged source
+  again and retains file witnesses through commit. Different lyrics/artwork and
+  concurrently changed destination files are preserved; rollback keeps ownership.
+  Native Linux tests passed 81 with one Windows-only case skipped. Final full CI
+  passed after the known provider-registry clone flake passed its isolated retry;
+  no new assertion failures. These fixes are on codex/managed-library-cleanup,
+  not live 2.21.0.
+- live validation, October 6: all eight failed catalog refreshes (15508-15515)
+  completed on 2.21.0. Root scan 15506 advanced to artist 277/518. A fresh audio
+  audit of the eight earlier rename conflicts found seven equal decoded PCM
+  pairs (32-bit decode hash; both sources 16-bit FLAC), two with differing
+  edition tags, and one absent destination. All seven destinations are now
+  TrackFiles rows 36044-36050 with the same canonical track, edition and stereo
+  quality as their sources. Implement journaled consolidation preserving linked
+  sidecars; retag must repair the two stale destination edition tags. Do not
+  discard an edition solely because its decoded audio matches another edition.
 
 - in progress: implement the inventory-before-deletion contract in MANAGED_LIBRARY_CLEANUP.md. Keep delete-untracked, delete-empty and remove-unmonitored policies separate.
 - locally validated: routine scans include unambiguously identified plain-name artist siblings and register unmatched media for review.

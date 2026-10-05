@@ -109,3 +109,52 @@ owning writes while Lidarr provides the secondary database.
 - Repeat scan, rename and retag previews show no changes for settled files.
 - Controlled Lidarr rescans account for standard/deluxe coexistence without
   renaming or retagging the shared files.
+
+## October 6 cleanup hardening
+
+The next full rename/retag and cleanup is explicitly authorized once its
+prerequisites pass. The current root inventory is still running; strict cleanup
+is not implemented and must not be substituted with remove-unmonitored cleanup.
+
+On `codex/managed-library-cleanup`, empty-parent pruning now returns the actual
+removal count, never removes the configured root, stops at retained files and
+refuses directory links anywhere in the traversed ancestor chain. A Windows
+case-insensitive root regression caught an infinite traversal in the candidate;
+the corrected check recognizes root aliases and bounds ancestor traversal.
+
+Rename deduplication now requires identical sidecar bytes as well as matching
+scope. The destination artist-field alias is corrected. A lyric collision with
+another tracked row must share its exact TrackFiles parent. A DB claim on an
+absent target does not justify deleting the source. Different artwork and lyrics
+remain conflicts. Hashing runs outside writer admission; the staged file is
+reverified and filesystem witnesses are checked inside the commit. Tests inject
+a changed retained lyric and a failing DB commit and verify source restoration,
+preserved ownership and a settled journal. Native Linux checks passed 81 tests,
+with the Windows-only casing test skipped there and passing on Windows.
+
+An interrupted full test runner could previously be mistaken for a recoverable
+clone flake when its partial output contained an earlier clone failure. The
+runner now requires a completed top-level TAP plan and refuses retries after a
+termination or spawn error. Fault-injection subprocess checks confirm interrupted
+and terminated runs fail while a completed clone-flake run can still retry.
+The earlier interrupted candidate CI is discarded as validation evidence.
+
+All eight live failed artist refresh retries completed successfully on 2.21.0.
+A fresh read-only audit decoded the earlier eight audio conflict pairs into
+32-bit PCM hashes: seven pairs agree, including two whose edition tags disagree;
+one target is now absent. Equal audio alone does not establish edition ownership.
+Do not consolidate these paths until current tracked/review ownership and the
+intended edition are reconciled. No live rename, retag or deletion was started
+during this hardening work.
+
+The subsequent ownership check found all seven existing destinations tracked as
+rows 36044-36050, with matching canonical track/edition IDs and stereo quality.
+They are same-slot duplicates; two still carry outdated embedded edition tags.
+Consolidation must preserve their sidecar associations and repair tags, using
+exact row IDs and the mutation journal. The absent target belongs to source row
+35761 and should be reconsidered through a fresh rename plan.
+
+The final full CI completed with no new assertion failures. A provider-registry
+clone-deserialization failure passed its isolated retry. All 186 frontend tests,
+lint, types and builds passed. These candidate fixes remain undeployed until the
+broader cleanup and duplicate-consolidation requirements are satisfied.

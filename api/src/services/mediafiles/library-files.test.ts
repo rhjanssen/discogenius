@@ -598,12 +598,13 @@ test("removeEmptyParents prunes nested empty download folders up to the stop dir
   fs.mkdirSync(jobDir, { recursive: true });
   fs.rmdirSync(jobDir);
 
-  libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot);
+  assert.equal(libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot), 3);
 
   assert.equal(fs.existsSync(path.join(downloadRoot, "tidal", "12345", "album")), false);
   assert.equal(fs.existsSync(path.join(downloadRoot, "tidal", "12345")), false);
   assert.equal(fs.existsSync(path.join(downloadRoot, "tidal")), false);
   assert.ok(fs.existsSync(downloadRoot));
+  assert.equal(libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot), 0);
 });
 
 test("removeEmptyParents prunes empty video job trees under downloads/videos", () => {
@@ -612,7 +613,7 @@ test("removeEmptyParents prunes empty video job trees under downloads/videos", (
   fs.mkdirSync(jobDir, { recursive: true });
   fs.rmdirSync(jobDir);
 
-  libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot);
+  assert.equal(libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot), 3);
 
   assert.equal(fs.existsSync(path.join(downloadRoot, "videos", "tidal", "99999")), false);
   assert.equal(fs.existsSync(path.join(downloadRoot, "videos", "tidal")), false);
@@ -631,6 +632,44 @@ test("removeEmptyParents never prunes a prefix-sibling outside the stop root", (
 
   assert.equal(fs.existsSync(outsideNested), true);
   assert.equal(fs.existsSync(outsideRoot), true);
+});
+
+test("removeEmptyParents preserves a nonempty ancestor and reports only removed folders", () => {
+  const root = path.join(tempDir, "prune-nonempty-root");
+  const parent = path.join(root, "artist");
+  const empty = path.join(parent, "old-album", "disc");
+  fs.mkdirSync(empty, { recursive: true });
+  fs.writeFileSync(path.join(parent, "artist.nfo"), "owned sidecar");
+
+  assert.equal(libraryFilesModule.removeEmptyParents(empty, root), 2);
+  assert.equal(fs.existsSync(empty), false);
+  assert.equal(fs.readFileSync(path.join(parent, "artist.nfo"), "utf8"), "owned sidecar");
+  assert.equal(fs.existsSync(root), true);
+});
+
+test("removeEmptyParents never traverses a directory link to delete outside the root", () => {
+  const root = path.join(tempDir, "prune-link-root");
+  const outside = path.join(tempDir, "prune-link-outside");
+  const outsideEmpty = path.join(outside, "album", "disc");
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(outsideEmpty, { recursive: true });
+  const alias = path.join(root, "artist");
+  fs.symlinkSync(outside, alias, process.platform === "win32" ? "junction" : "dir");
+
+  assert.equal(libraryFilesModule.removeEmptyParents(path.join(alias, "album", "disc"), root), 0);
+  assert.equal(fs.existsSync(outsideEmpty), true);
+  assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
+  assert.equal(fs.existsSync(root), true);
+});
+
+test("removeEmptyParents recognizes the same Windows root with different path casing", { skip: process.platform !== "win32" }, () => {
+  const root = path.join(tempDir, "prune-casing-root");
+  const empty = path.join(root, "artist", "album");
+  fs.mkdirSync(empty, { recursive: true });
+  assert.equal(libraryFilesModule.removeEmptyParents(empty, root.toLowerCase()), 2);
+  assert.equal(fs.existsSync(root), true);
+  assert.equal(libraryFilesModule.removeEmptyParents(root.toUpperCase(), root.toLowerCase()), 0);
+  assert.equal(fs.existsSync(root), true);
 });
 
 test("resolveArtistFolderForPersistence reuses the canonical folder for provider rows with the same MusicBrainz artist", () => {

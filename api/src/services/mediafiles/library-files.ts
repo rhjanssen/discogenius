@@ -154,20 +154,35 @@ export function hasMeaningfulLibraryFileChange(
   );
 }
 
-export function removeEmptyParents(startDir: string, stopDir: string) {
+export function removeEmptyParents(startDir: string, stopDir: string): number {
   const stop = path.resolve(stopDir);
+  const stopKey = normalizeResolvedPath(stop);
   let current = path.resolve(startDir);
+  let removed = 0;
 
-  while (resolvedPathIsInsideRoot(current, stop) && current !== stop) {
+  while (resolvedPathIsInsideRoot(current, stop) && normalizeResolvedPath(current) !== stopKey) {
     try {
+      // A lexically contained path can still traverse a directory symlink or
+      // Windows junction. Check the complete chain before touching the tree.
+      let ancestor = current;
+      while (true) {
+        const stat = fs.lstatSync(ancestor);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) return removed;
+        if (normalizeResolvedPath(ancestor) === stopKey) break;
+        const parent = path.dirname(ancestor);
+        if (parent === ancestor) return removed;
+        ancestor = parent;
+      }
       const entries = fs.readdirSync(current);
       if (entries.length > 0) break;
       fs.rmdirSync(current);
+      removed++;
     } catch {
       break;
     }
     current = path.dirname(current);
   }
+  return removed;
 }
 
 export function normalizeInlineVideoTitle(value: string | null | undefined): string {

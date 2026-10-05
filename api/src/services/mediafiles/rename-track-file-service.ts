@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { createHash } from "node:crypto";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { Config } from "../config/config.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
@@ -53,10 +54,12 @@ async function commitRenameRecords(
   dbUpdates: Array<{ sql: string; args: unknown[] }>,
   historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]>,
   intentId?: string | null,
+  assertFilesUnchanged?: () => void,
 ): Promise<void> {
   if (dbUpdates.length === 0 && historyEvents.length === 0) return;
   await withSqliteWriteGate(() => db.transaction(() => {
     if (intentId) FileMutationJournal.assertBeforeCommit(intentId);
+    assertFilesUnchanged?.();
     for (const update of dbUpdates) {
       db.prepare(update.sql).run(...update.args);
     }
@@ -73,6 +76,28 @@ async function commitRenameRecords(
 
 function yieldRenameLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function sidecarContentsMatch(source: string, destination: string): Promise<boolean> {
+  const sourceStat = fs.lstatSync(source);
+  const destinationStat = fs.lstatSync(destination);
+  if (!sourceStat.isFile() || !destinationStat.isFile() || sourceStat.size !== destinationStat.size) return false;
+  const sourceIdentity = sidecarFileIdentity(source);
+  const destinationIdentity = sidecarFileIdentity(destination);
+  const digest = async (file: string): Promise<string> => {
+    const hash = createHash("sha256");
+    for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+    return hash.digest("hex");
+  };
+  const [sourceHash, destinationHash] = await Promise.all([digest(source), digest(destination)]);
+  return sourceHash === destinationHash && sourceIdentity === sidecarFileIdentity(source)
+    && destinationIdentity === sidecarFileIdentity(destination);
+}
+
+function sidecarFileIdentity(file: string): string {
+  const stat = fs.lstatSync(file, { bigint: true });
+  if (!stat.isFile()) throw new Error(`Sidecar changed to a non-file: ${file}`);
+  return [stat.dev, stat.ino, stat.size, stat.mtimeNs].join(":");
 }
 
 // Files the rename *preview* lists. Extras (cover/nfo/lyrics/thumbnails) are not
@@ -287,7 +312,7 @@ export class RenameTrackFileService {
       const needsRename = Boolean(expectedPath && normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath));
 
       let conflict = false;
-      let dropDuplicate = false;
+      const dropDuplicate = false;
       let conflictMessage: string | undefined;
       if (expectedPath && needsRename) {
         const decoded = decodeSyntheticId(row.id);
@@ -301,15 +326,8 @@ export class RenameTrackFileService {
 
         const hasCollision = pageConflict || dbConflict;
         if (hasCollision) {
-          if (row.file_type === "lyrics" && tableName === "LyricFiles") {
-            // Same audio stem claimed by two lyric rows — Apply keeps the
-            // destination and deletes this source (not a hard Conflict).
-            dropDuplicate = true;
-            conflictMessage = `Duplicate lyric for the same track stem. Apply keeps ${expectedPath} and removes this file.`;
-          } else {
-            conflict = true;
-            conflictMessage = `Another library file already uses or targets ${expectedPath} (often a disc/track renumber collision). Apply skips this row until the destination is free.`;
-          }
+          conflict = true;
+          conflictMessage = `Another library file already uses or targets ${expectedPath}. Apply preserves different files and removes a sidecar duplicate only after verifying identical contents.`;
         }
       }
 
@@ -583,7 +601,7 @@ export class RenameTrackFileService {
           if (isScopedSidecar(row)) {
             if (dbConflict) {
               const occupant = db.prepare(`
-                SELECT artist_id,
+                SELECT artist_id AS artist_metadata_id,
                        COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
                        COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
                        file_type
@@ -597,19 +615,33 @@ export class RenameTrackFileService {
               } | undefined;
               duplicateOfSameScope = isSameScopeSidecarOccupant(row, occupant);
             } else {
-              // Target exists on disk at this scope's canonical sidecar path.
+              // The canonical sidecar path identifies the scope. Contents must
+              // still agree below; an alternate cover/NFO is not disposable.
               duplicateOfSameScope = true;
             }
           } else if (row.file_type === "lyrics" && tableName === "LyricFiles") {
-            // Lidarr-style lyric move: when two .lrc rows claim the same audio
-            // stem, keep the destination occupant and drop the duplicate source
-            // instead of a permanent Rename Conflict.
-            duplicateOfSameScope = true;
+            // A shared stem is only a potential duplicate, not proof of equal lyrics.
+            if (dbConflict) {
+              const source = db.prepare("SELECT track_file_id FROM LyricFiles WHERE id = ?")
+                .get(decoded.id) as { track_file_id: number | null };
+              const occupant = db.prepare("SELECT track_file_id FROM LyricFiles WHERE id = ?")
+                .get(dbConflict.id) as { track_file_id: number | null } | undefined;
+              duplicateOfSameScope = source.track_file_id != null && source.track_file_id === occupant?.track_file_id;
+            } else {
+              duplicateOfSameScope = true;
+            }
           }
 
-          if (duplicateOfSameScope) {
+          if (duplicateOfSameScope && fsConflict && await sidecarContentsMatch(resolvedFilePath, expectedPath)) {
             pendingIntent = await FileMutationJournal.prepare(tableName, decoded.id, row.file_path, resolvedFilePath, null);
             const stagedPath = await FileMutationJournal.move(pendingIntent);
+            // Admission may have yielded since the first comparison. Verify the
+            // actual staged bytes and retain witnesses through the DB commit.
+            if (!await sidecarContentsMatch(stagedPath, expectedPath)) {
+              throw new Error("Duplicate sidecar changed before deletion; preserving the source");
+            }
+            const stagedIdentity = sidecarFileIdentity(stagedPath);
+            const destinationIdentity = sidecarFileIdentity(expectedPath);
             pendingDeletion = {
               originalPath: resolvedFilePath,
               stagedPath,
@@ -635,7 +667,12 @@ export class RenameTrackFileService {
                   : "merged-root-sidecar-duplicate",
               },
             });
-            await commitRenameRecords(dbUpdates, historyEvents, pendingIntent);
+            await commitRenameRecords(dbUpdates, historyEvents, pendingIntent, () => {
+              if (sidecarFileIdentity(stagedPath) !== stagedIdentity
+                || sidecarFileIdentity(expectedPath) !== destinationIdentity) {
+                throw new Error("Duplicate sidecar changed before commit; preserving the source");
+              }
+            });
             stagedDeletions.push(pendingDeletion);
             pendingDeletion = null;
             result.renamed++;
@@ -752,7 +789,7 @@ export class RenameTrackFileService {
     for (const deletion of stagedDeletions) {
       try {
         if (deletion.sourceRoot) {
-          removeEmptyParents(path.dirname(deletion.originalPath), deletion.sourceRoot);
+          result.cleanedDirectories += removeEmptyParents(path.dirname(deletion.originalPath), deletion.sourceRoot);
         }
       } catch (error) {
         result.errors.push({
@@ -764,7 +801,7 @@ export class RenameTrackFileService {
     }
     for (const move of physicalMoves) {
       if (move.sourceRoot) {
-        removeEmptyParents(path.dirname(move.sourcePath), move.sourceRoot);
+        result.cleanedDirectories += removeEmptyParents(path.dirname(move.sourcePath), move.sourceRoot);
       }
     }
 
