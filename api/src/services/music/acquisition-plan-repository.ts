@@ -426,6 +426,38 @@ export class AcquisitionPlanRepository {
     `).run(libraryId, editionId).changes;
   }
 
+  /** Removed catalog tracks may release unused derived candidates, never a
+   * selected offer or a plan held by a queued/active download or import.
+   * The caller must reconcile the catalog in the same admitted transaction. */
+  discardUnusedPlansForTrack(trackId: number): number {
+    if (!this.db.inTransaction) throw new Error("Catalog plan invalidation requires an active transaction");
+    const plans = this.db.prepare(`
+      SELECT DISTINCT plan.id, plan.library_id, plan.edition_id, plan.plan_key
+      FROM AcquisitionPlanTracks assignment
+      JOIN AcquisitionPlans plan ON plan.id = assignment.plan_id
+      WHERE assignment.track_id = ?
+    `).all(trackId) as Array<{ id: number; library_id: number; edition_id: number; plan_key: string }>;
+    const selected = this.db.prepare(`
+      SELECT 1 FROM LibraryEditions
+      WHERE library_id = ? AND edition_id = ? AND preferred_plan_key = ?
+    `);
+    const waiting = this.db.prepare("SELECT 1 FROM DownloadQueue WHERE plan_id = ? LIMIT 1");
+    const executing = this.db.prepare(`
+      SELECT 1 FROM commands
+      WHERE status IN ('queued', 'started')
+        AND CAST(json_extract(payload, '$.acquisitionPlanId') AS INTEGER) = ?
+      LIMIT 1
+    `);
+    const remove = this.db.prepare("DELETE FROM AcquisitionPlans WHERE id = ?");
+    let removed = 0;
+    for (const plan of plans) {
+      if (selected.get(plan.library_id, plan.edition_id, plan.plan_key)
+        || waiting.get(plan.id) || executing.get(plan.id)) continue;
+      removed += remove.run(plan.id).changes;
+    }
+    return removed;
+  }
+
   clear(libraryId: number, editionId: number): number {
     return this.db.transaction(() => {
       this.db.prepare(`

@@ -535,6 +535,11 @@ function ensureLibraryLookupIndexes(): void {
       ON AcquisitionPlanTracks(provider_audio_variant_id);
     CREATE INDEX IF NOT EXISTS idx_acquisition_tracks_track
       ON AcquisitionPlanTracks(track_id);
+    CREATE INDEX IF NOT EXISTS idx_download_queue_plan
+      ON DownloadQueue(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_commands_live_acquisition_plan
+      ON commands(CAST(json_extract(payload, '$.acquisitionPlanId') AS INTEGER))
+      WHERE status IN ('queued', 'started');
     CREATE INDEX IF NOT EXISTS idx_track_files_source_variant
       ON TrackFiles(source_audio_variant_id);
     CREATE INDEX IF NOT EXISTS idx_track_files_normalized_path

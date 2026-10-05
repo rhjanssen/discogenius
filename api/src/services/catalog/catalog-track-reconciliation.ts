@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { LidarrTrack } from "../metadata/servarr-metadata.js";
+import { AcquisitionPlanRepository } from "../music/acquisition-plan-repository.js";
 
 /** A catalog position is a mutable fact, never a track identity. */
 export function normalizeEditionTracks(releaseMbid: string, tracks: readonly LidarrTrack[]): LidarrTrack[] {
@@ -62,10 +63,15 @@ export function prepareEditionTrackPositions(db: Database.Database, releaseMbid:
     UNION ALL SELECT 'ExtraFiles' FROM ExtraFiles WHERE canonical_track_mbid=@mbid
     LIMIT 1
   `);
-  // Check every conflict before making any changes. Credits and the download
-  // projection are derived catalog rows and can cascade with an obsolete track.
+  // Validate held identities before mutating track rows. Unused candidate
+  // deletion participates in the same rollback as the edition reconciliation.
+  // Credits and the download projection may cascade with an obsolete track.
   for (const [id, mbid] of obsolete) {
-    const reference = protectedReference.get({ id, mbid }) as { source: string } | undefined;
+    let reference = protectedReference.get({ id, mbid }) as { source: string } | undefined;
+    if (reference?.source === "AcquisitionPlanTracks") {
+      new AcquisitionPlanRepository(db).discardUnusedPlansForTrack(id);
+      reference = protectedReference.get({ id, mbid }) as { source: string } | undefined;
+    }
     if (reference) throw new Error(`Catalog track conflict in edition ${releaseMbid}: obsolete track ${mbid} is still referenced by ${reference.source}`);
   }
   const remove = db.prepare("DELETE FROM Tracks WHERE id=?");

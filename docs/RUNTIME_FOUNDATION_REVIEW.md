@@ -742,3 +742,43 @@ identity replacements can collide with the other unique key. Resolve both keys
 without discarding referenced track IDs or changing edition ownership silently.
 Until that and the outstanding library acceptance work pass, keep downloads
 paused and do not call the library or release ready.
+
+## October 5 catalog identity and acquisition-plan validation
+
+The branch now reconciles catalog tracks by stable MBID, preserving integer
+identity through position changes and moves between editions. Editions
+exchanging identities form one atomic write unit; unrelated editions release
+writer admission separately. Exact membership/position checks prevent a stored
+completion hash from hiding incomplete or stale children. Owned obsolete
+identities fail explicitly rather than being replaced or discarded.
+
+The wider read-only capture identified 37 identity/position conflicts among
+1,808 incoming tracks across the eight failed refresh groups. Four surplus Yes
+tracks were still referenced by three acquisition candidates with 14 assigned
+tracks. There was no selected LibraryEdition for those candidates, no queue
+holder found through their source resources, and no active command referring
+to them. These were derived candidates, not imported media ownership.
+
+Reconciliation can now discard an unused candidate in its edition transaction.
+It checks the exact plan's library selection, DownloadQueue plan reference and
+queued/started command reference first. Selected or held plans block removal;
+their tracks and assignments remain intact. Additive indexes support both
+queue and command checks. A later reconciliation failure rolls plan deletion
+back with the catalog changes. This does not define automatic substitution for
+a user's chosen offer; that still needs an explicit review workflow.
+
+A disposable native container replayed the captured catalog rows and actual
+candidate/provider/match graph for all eight groups. Reconciliation took
+187 ms in this small database, preserved surviving track IDs and a real test
+FLAC's decoded PCM, removed the three unused plans, left no foreign-key
+violations or staged negative positions, and made zero writes on repetition.
+This is correctness evidence, not a production-scale latency benchmark.
+
+Through the local UI, all eight artists were selected for curation. With
+scheduled work and downloads disabled, the test harness started the command
+executor for those queued actions. All eight completed; Activity showed their
+completed history and no active jobs. The candidate passed 39 focused tests
+on Windows and native Linux, and full CI passed 2,000 backend plus 186 frontend
+tests without failures. No candidate deployment or live file mutation occurred;
+downloads remain paused. Library acceptance and broader contention/performance
+validation remain required before declaring the foundation release ready.
