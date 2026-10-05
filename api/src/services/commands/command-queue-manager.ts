@@ -1,6 +1,7 @@
 import { CommandPriority, CommandTrigger } from "./command-trigger.js";
 import { CommandManager } from "./command.js";
 import { db, withDbWrite } from "../../database.js";
+import { recordRootScanCompletion } from "./root-scan-schedule.js";
 import type {
     CommandBodyCommon,
     ImportDownloadCommand,
@@ -1203,7 +1204,8 @@ ${orderBy}
             : "status NOT IN ('completed', 'failed', 'cancelled')";
         const params: unknown[] = [id];
         if (workerId) params.push(workerId);
-        const result = db.prepare(`
+        const result = db.transaction(() => {
+        const completed = db.prepare(`
             UPDATE commands
             SET
                 status = 'completed',
@@ -1218,6 +1220,12 @@ ${orderBy}
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND ${ownershipClause}
         `).run(...params);
+        if (completed.changes > 0) {
+            const job = this.get(id);
+            if (job) recordRootScanCompletion({ ...job, status: "completed" });
+        }
+        return completed;
+        })();
         if (result.changes === 0) return false;
         clearCommandOverlay(id);
         clearCommandUpdateThrottle(id);

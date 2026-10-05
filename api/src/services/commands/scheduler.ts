@@ -1,4 +1,5 @@
 import { CommandTrigger } from "./command-trigger.js";
+import { rootScanScheduleAnchor } from "./root-scan-schedule.js";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { DownloadMissingService } from "../music/download-missing-service.js";
@@ -678,6 +679,9 @@ function getEffectiveScheduledTaskDefinition(definition: ScheduledTaskDefinition
         intervalMinutes: task?.interval_minutes ?? definition.intervalMinutes,
         enabled: task ? Boolean(task.enabled) : definition.enabled,
         lastQueuedAt: task?.last_queued_at ?? null,
+        scheduleAnchor: definition.key === "root-scan"
+            ? rootScanScheduleAnchor(task?.last_queued_at ?? null)
+            : task?.last_queued_at ?? null,
     };
 }
 
@@ -727,7 +731,7 @@ export function updateScheduledTask(taskKey: ScheduledTaskKey, updates: { enable
         enabled: Boolean(updated.enabled),
         lastQueuedAt: updated.last_queued_at ?? null,
         nextRunAt: effective.enabled
-            ? new Date((parseScheduledTaskTime(updated.last_queued_at ?? null) ?? Date.now()) + updated.interval_minutes * 60_000).toISOString()
+            ? new Date((parseScheduledTaskTime(effective.scheduleAnchor) ?? Date.now()) + updated.interval_minutes * 60_000).toISOString()
             : null,
         active: getScheduledTaskActiveState(definition),
     };
@@ -745,7 +749,7 @@ export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
         const effective = getEffectiveScheduledTaskDefinition(definition);
         const task = getScheduledTask(definition.key);
         const lastQueuedAt = effective.lastQueuedAt;
-        const parsedLastQueued = parseScheduledTaskTime(lastQueuedAt);
+        const parsedLastQueued = parseScheduledTaskTime(effective.scheduleAnchor);
         const nextDueAt = parsedLastQueued !== null
             ? parsedLastQueued + effective.intervalMinutes * 60_000
             : Date.now();
@@ -782,7 +786,7 @@ export function pollScheduledTasks() {
             continue;
         }
 
-        if (!isScheduledTaskDue(effective.intervalMinutes, effective.lastQueuedAt ?? null)) {
+        if (!isScheduledTaskDue(effective.intervalMinutes, effective.scheduleAnchor)) {
             continue;
         }
 
