@@ -58,8 +58,18 @@ test("full async statistics yields writer admission between bounded projection b
   for (let index=0; index<205; index+=1) artist(`artist-${index}`);
   const work = ArtistStatisticsService.refreshAsync();
   const observed = await withSqliteWriteGate(() => (db.prepare("SELECT count(*) AS n FROM ArtistStatistics").get() as { n: number }).n, "test:statistics-fair-writer");
-  assert.equal(observed, 200, "another admitted task must run before the final projection batch");
+  assert.ok(observed > 0 && observed < 205, "another admitted task must run between projection batches");
   const rows = await work;
   assert.equal(rows.length, 205);
   assert.equal((db.prepare("SELECT count(*) AS n FROM ArtistStatistics").get() as { n: number }).n, 205);
+});
+
+test("async statistics scopes exact integer and MBID identities together without changing numeric identity semantics", async () => {
+  const first = artist("first");
+  const second = artist("second");
+  artist("unrequested");
+  const rows = await ArtistStatisticsService.refreshAsync([first, "second", `0${second}`, `${second}.0`]);
+  assert.deepEqual(rows.map(row => row.artist_mbid).sort(), ["first", "second"]);
+  const empty = await ArtistStatisticsService.refreshAsync([`0${first}`, `${first}.0`, "absent"]);
+  assert.deepEqual(empty, [], "alternate numeric spellings must not acquire a different artist identity");
 });

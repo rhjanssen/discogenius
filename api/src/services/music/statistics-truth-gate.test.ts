@@ -681,14 +681,17 @@ test("release statistics stay equal across service, API, cache, projection, and 
   artistStatsModule.ArtistStatisticsService.refresh([fixture.artistId]);
 
   // A fresh process has no in-memory snapshot. Its first read must reconstruct
-  // exactly the same truth from the persisted schema-43 database.
+  // exactly the same truth from the persisted active database. Compiled native
+  // validation uses JavaScript directly, without adding tsx to the runtime image.
+  const extension = path.extname(fileURLToPath(import.meta.url));
+  const serviceUrl = new URL(`./library-stats-query-service${extension}`, import.meta.url).href;
   const childCode = `
-    import { LibraryStatsQueryService } from "./src/services/music/library-stats-query-service.ts";
+    import { LibraryStatsQueryService } from ${JSON.stringify(serviceUrl)};
     console.log("STAT_RESTART=" + JSON.stringify(await LibraryStatsQueryService.getSnapshot()));
   `;
   const child = spawnSync(
     process.execPath,
-    ["--import", "tsx", "--input-type=module", "--eval", childCode],
+    [...(extension === ".ts" ? ["--import", "tsx"] : []), "--input-type=module", "--eval", childCode],
     {
       cwd: apiRoot,
       env: {

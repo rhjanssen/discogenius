@@ -48,6 +48,9 @@ type ScopedArtist = {
 // parameter ceiling (SQLITE_MAX_VARIABLE_NUMBER). A full-library refresh
 // enumerates all artists and processes them in chunks of this size.
 const ARTIST_STATISTICS_CHUNK_SIZE = 200;
+// SQL parameter bounds are not a latency budget. Commands release the event
+// loop between smaller artist groups even when their parameter list would fit.
+const ASYNC_ARTIST_STATISTICS_BATCH_SIZE = 20;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -144,10 +147,11 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
   if (normalizedArtistIds.length === 0) {
     return [];
   }
-  const artistFilter = ` WHERE (
-    CAST(a.id AS TEXT) IN (${normalizedArtistIds.map(() => "?").join(",")})
-    OR a.mbid IN (${normalizedArtistIds.map(() => "?").join(",")})
-  )`;
+  const numericIds = normalizedArtistIds
+    .filter(value => Number.isSafeInteger(Number(value)) && String(Number(value)) === value)
+    .map(Number);
+  const artistFilter = ` WHERE (a.mbid IN (${normalizedArtistIds.map(() => "?").join(",")})${numericIds.length > 0
+    ? ` OR a.id IN (${numericIds.map(() => "?").join(",")})` : ""})`;
 
   const scopedArtists = (db.prepare(`
     SELECT
@@ -156,7 +160,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
            a.id AS artist_metadata_id
     FROM ArtistMetadata a
     ${artistFilter}
-  `).all(...normalizedArtistIds, ...normalizedArtistIds) as Array<{
+  `).all(...normalizedArtistIds, ...numericIds) as Array<{
     artist_id: string;
     artist_mbid: string | null;
     artist_metadata_id: number | null;
@@ -380,7 +384,7 @@ export class ArtistStatisticsService {
    * Changed inputs trigger a fresh plan instead of writing stale counters. */
   static async refreshAsync(artistIds?: Array<string | number | null | undefined>): Promise<ArtistStatisticsRow[]> {
     const rows: ArtistStatisticsRow[] = [];
-    for (const ids of chunk(this.targetIds(artistIds), ARTIST_STATISTICS_CHUNK_SIZE)) {
+    for (const ids of chunk(this.targetIds(artistIds), ASYNC_ARTIST_STATISTICS_BATCH_SIZE)) {
       let committed = false;
       for (let attempt = 0; attempt < 8 && !committed; attempt += 1) {
         const plan = prepareSqliteReadPlan(() => calculateArtistStatisticsChunk(ids), sqliteDataRevision);

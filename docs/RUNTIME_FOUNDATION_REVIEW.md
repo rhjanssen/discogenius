@@ -782,3 +782,33 @@ on Windows and native Linux, and full CI passed 2,000 backend plus 186 frontend
 tests without failures. No candidate deployment or live file mutation occurred;
 downloads remain paused. Library acceptance and broader contention/performance
 validation remain required before declaring the foundation release ready.
+
+## October 6 statistics batching and live-validation decision
+
+The production-size local clone exposed a remaining event-loop problem. A full
+518-artist statistics refresh took 6.8 s and delayed timers by up to 3.1 s on
+the initial run. Writer admission was short, but 200-artist synchronous read
+batches could still stall the hosting process. SQL parameter limits had been
+used as a batching limit without a separate responsiveness budget.
+
+Async statistics now yield between groups of 20 artists. Artist scopes use
+indexed integer IDs and MBIDs directly, preserving exact numeric-ID spelling
+semantics instead of casting the indexed ID column to text. In a warm test
+with a competing admitted writer, maximum event-loop delay fell from 412 ms to
+55 ms and the initial rival wait from 30 ms to 5 ms. All 518 result rows had an
+identical digest before and after. These warm measurements do not establish
+cold NAS latency or responsiveness for an unusually large individual artist.
+
+During 17 repeated full refreshes and rival writes on that clone, 850 mixed
+ping, queue-status and artist-list requests succeeded, with p95 responses of
+47-52 ms. Bastille's page and no-change rename preview were inspected through
+the app. The fixture contains only selected physical media, so it does not
+establish readiness of the entire live library. The Linux restart-truth test
+now launches compiled JavaScript directly; tsx remains a development tool.
+All 24 focused statistics/query/curation tests pass on Windows and native Linux.
+
+The next step is a controlled 2.21.0 deployment for live foundation validation,
+keeping downloads paused. Retry the failed catalog refreshes, monitor writer
+contention and repeat scans, and retain the unresolved rename/sidecar conflict
+work. Deployment is not a claim that the library is ready for Plex refresh,
+that strict untracked cleanup may be enabled, or that acquisition may resume.
