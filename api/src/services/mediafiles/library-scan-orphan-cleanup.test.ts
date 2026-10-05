@@ -81,6 +81,8 @@ test("routine artist scan records unknown music in a plain-name sibling for revi
 });
 
 function resetRows() {
+  db.prepare("DELETE FROM UnmappedFiles").run();
+  db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -205,6 +207,80 @@ function writePcmWav(filePath: string): void {
   wav.writeUInt32LE(dataSize, 40);
   fs.writeFileSync(filePath, wav);
 }
+
+test("audio-fact backfill waits for the writer gate and does not count unchanged unknown quality", async () => {
+  seedCanonicalArtistGraph();
+  const file = path.join(tempDir, "backfill.xyz");
+  writePcmWav(file);
+  insertMissingTrackFile("track-1", "recording-1", "backfill.xyz", null);
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid='artist-mbid'").get() as { id: number };
+  const scan = DiskScanService as unknown as { backfillMissingAudioFacts(id: string): Promise<{ updated: number }> };
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:backfill-competing-writer");
+  await ready;
+  let settled = false;
+  const work = scan.backfillMissingAudioFacts(String(artist.id)).then(result => { settled = true; return result; });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(settled, false);
+    release(); await blocker;
+    assert.equal((await work).updated, 1);
+    db.prepare("UPDATE TrackFiles SET verified_at='2000-01-01' WHERE file_path=?").run(file);
+    assert.equal((await scan.backfillMissingAudioFacts(String(artist.id))).updated, 0);
+    assert.equal((db.prepare("SELECT verified_at FROM TrackFiles WHERE file_path=?").get(file) as { verified_at: string }).verified_at, "2000-01-01");
+  } finally { release(); await blocker; fs.rmSync(file, { force: true }); }
+});
+
+test("repeat duplicate discovery preserves ownership without reporting another addition", async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid='artist-mbid'").get() as { id: number };
+  const root = fs.mkdtempSync(path.join(tempDir, "duplicate-repeat-"));
+  const naming = await import("../config/naming.js");
+  const folder = path.join(root, naming.resolveArtistFolderFromRecord({ name: "Canonical Artist", mbid: "artist-mbid", path: null }), "Canonical Album");
+  fs.mkdirSync(folder, { recursive: true });
+  const original = path.join(folder, "01 - Track One.wav");
+  const duplicate = path.join(folder, "Track One.wav");
+  writePcmWav(original); writePcmWav(duplicate);
+  const info = Object.entries({ INAM: "Track One", IART: "Canonical Artist", IPRD: "Canonical Album" }).map(([key, value]) => {
+    const bytes = Buffer.from(value + "\0");
+    const chunk = Buffer.alloc(8 + bytes.length + bytes.length % 2);
+    chunk.write(key); chunk.writeUInt32LE(bytes.length, 4); bytes.copy(chunk, 8);
+    return chunk;
+  });
+  const list = Buffer.concat([Buffer.from("INFO"), ...info]);
+  const header = Buffer.alloc(8); header.write("LIST"); header.writeUInt32LE(list.length, 4);
+  const tagged = Buffer.concat([fs.readFileSync(duplicate), header, list]);
+  tagged.writeUInt32LE(tagged.length - 8, 4); fs.writeFileSync(duplicate, tagged);
+  insertMissingTrackFile("track-1", "recording-1", "existing.wav", "duplicate-offer");
+  const trackItem = Number(db.prepare("INSERT INTO ProviderItems(provider,entity_type,provider_id,title,duration_ms) VALUES('tidal','track','duplicate-offer','Track One',1000)").run().lastInsertRowid);
+  const editionItem = Number(db.prepare("INSERT INTO ProviderItems(provider,entity_type,provider_id,title) VALUES('tidal','release','duplicate-edition','Canonical Album')").run().lastInsertRowid);
+  const artistItem = Number(db.prepare("INSERT INTO ProviderItems(provider,entity_type,provider_id,title) VALUES('tidal','artist','duplicate-artist','Canonical Artist')").run().lastInsertRowid);
+  db.prepare("INSERT INTO ProviderEditionMembers(provider_edition_item_id,member_item_id,medium_position,position) VALUES(?,?,1,1)").run(editionItem,trackItem);
+  db.prepare("INSERT INTO ProviderArtistMatches(provider_artist_item_id,artist_id,match_state,decision_source,confidence,method,matcher_version) VALUES(?,?,'accepted','automatic',1,'test',1)").run(artistItem,artist.id);
+  db.prepare("INSERT INTO ProviderItemCredits(item_id,artist_item_id,ordinal,credited_name) VALUES(?,?,0,'Canonical Artist')").run(trackItem,artistItem);
+  db.prepare("INSERT INTO ProviderItemCredits(item_id,artist_item_id,ordinal,credited_name) VALUES(?,?,0,'Canonical Artist')").run(editionItem,artistItem);
+  db.prepare("UPDATE TrackFiles SET file_path=?,library_root=?,extension='wav' WHERE filename='existing.wav'").run(original, root);
+  const music = Config.getMusicPath, filtering = Config.getFilteringConfig;
+  Config.getMusicPath = () => root;
+  Config.getFilteringConfig = () => ({ ...filtering(), include_videos: false, include_spatial: false });
+  const scan = DiskScanService as unknown as { indexNewFiles(id: string): Promise<{ indexed: number }> };
+  try {
+    assert.equal((await scan.indexNewFiles(String(artist.id))).indexed, 1);
+    const owned = db.prepare("SELECT id FROM ExtraFiles WHERE file_path=?").get(duplicate) as { id: number };
+    assert.ok(owned);
+    assert.equal((await scan.indexNewFiles(String(artist.id))).indexed, 0);
+    assert.equal((db.prepare("SELECT id FROM ExtraFiles WHERE file_path=?").get(duplicate) as { id: number }).id, owned.id);
+    const replacement = DiskScanService as unknown as { upsertLibraryFile(params: { artistId: string; filePath: string; libraryRoot: string; fileType: string }): Promise<void> };
+    await assert.rejects(replacement.upsertLibraryFile({ artistId: "missing-artist", filePath: duplicate, libraryRoot: root, fileType: "track" }));
+    assert.equal((db.prepare("SELECT id FROM ExtraFiles WHERE file_path=?").get(duplicate) as { id: number }).id, owned.id, "failed promotion must roll back the old ownership row");
+    assert.ok(fs.existsSync(original)); assert.ok(fs.existsSync(duplicate));
+  } finally { Config.getMusicPath = music; Config.getFilteringConfig = filtering; fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test("an unavailable root preserves tracked and unmapped inventory", async () => {
   seedCanonicalArtistGraph();

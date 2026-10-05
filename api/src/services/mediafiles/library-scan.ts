@@ -11,7 +11,7 @@ import { persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
 import { matchAudioFileByMetadata, matchVideoFileByMetadata, resolveCatalogTrackFromEmbeddedMbids, videoStemComparableTitle } from "./library-scan-metadata-match.js";
 import { extractNamingMbid } from "./import-discovery.js";
-import { DUPLICATE_EXTRA_FILE_TYPE, ExtraFileService } from "../extras/files/extra-file-service.js";
+import { DUPLICATE_EXTRA_FILE_TYPE } from "../extras/files/extra-file-service.js";
 import {
     PROVIDER_RESOLVED_ALBUM_ID_SQL,
     LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL,
@@ -614,7 +614,16 @@ export class DiskScanService {
                 channels = COALESCE(@channels, channels),
                 duration = COALESCE(@duration, duration),
                 verified_at = CURRENT_TIMESTAMP
-            WHERE id = @id
+            WHERE id = @id AND (
+                quality IS NOT COALESCE(NULLIF(TRIM(quality), ''), @quality)
+                OR imported_quality IS NOT COALESCE(NULLIF(TRIM(imported_quality), ''), @quality)
+                OR bit_depth IS NOT COALESCE(@bitDepth, bit_depth)
+                OR sample_rate IS NOT COALESCE(@sampleRate, sample_rate)
+                OR bitrate IS NOT COALESCE(@bitrate, bitrate)
+                OR codec IS NOT COALESCE(NULLIF(TRIM(@codec), ''), codec)
+                OR channels IS NOT COALESCE(@channels, channels)
+                OR duration IS NOT COALESCE(@duration, duration)
+            )
         `);
 
         let updated = 0;
@@ -631,7 +640,7 @@ export class DiskScanService {
             const metrics = await parseAudioFile(filePath);
             const derived = deriveQuality(path.extname(filePath), metrics);
             const quality = derived === "UNKNOWN" ? null : derived;
-            const result = update.run({
+            const result = await withSqliteWriteGate(() => update.run({
                 id: row.id,
                 quality,
                 bitDepth: metrics.bitDepth ?? null,
@@ -640,7 +649,7 @@ export class DiskScanService {
                 codec: metrics.codec ?? null,
                 channels: metrics.channels ?? null,
                 duration: metrics.duration ?? null,
-            });
+            }), "scan:backfill-audio-facts");
             if (result.changes > 0) updated += 1;
             if ((index + 1) % 10 === 0) await yieldToEventLoop();
         }
@@ -1154,7 +1163,6 @@ export class DiskScanService {
 
                 const resolved = path.resolve(filePath);
                 if (existingPaths.has(resolved)) continue;
-                await ExtraFileService.releaseDuplicateForRescan(resolved);
 
                 // New file on disk — attempt to match and index
                 let match = this.matchFileToMedia(filePath, artistId, key);
@@ -1293,7 +1301,9 @@ export class DiskScanService {
                                                 canonical_release_group_mbid: string | null;
                                             } | undefined
                                             : undefined;
-                                        await withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
+                                        const wasRegistered = await withSqliteWriteGate(() => {
+                                            const registered = Boolean(db.prepare("SELECT 1 FROM ExtraFiles WHERE file_path = ?").get(resolved));
+                                            LibraryFilesService.upsertLibraryFile({
                                             artistId,
                                             albumId: metadataMatch.albumId,
                                             mediaId: metadataMatch.mediaId,
@@ -1318,9 +1328,11 @@ export class DiskScanService {
                                                 ?? null,
                                             librarySlot: metadataMatch.librarySlot,
                                             removeFromUnmapped: true,
-                                        }), "scan:index-duplicate");
+                                            });
+                                            return registered;
+                                        }, "scan:index-duplicate");
                                         unmappedReason = null;
-                                        indexed++;
+                                        if (!wasRegistered) indexed++;
                                         existingPaths.add(resolved);
                                     }
                                 } else if (metadataMatch) {
@@ -2452,9 +2464,15 @@ export class DiskScanService {
         duration?: number | null;
         importedQuality?: string | null;
     }) {
-        await withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
-            ...params,
-            removeFromUnmapped: false,
-        }), "scan:index-file");
+        await withSqliteWriteGate(() => db.transaction(() => {
+            // Inspection must not release ownership. Replace a duplicate row
+            // atomically with its confirmed classification; failed writes roll back.
+            db.prepare("DELETE FROM ExtraFiles WHERE file_path = ? AND file_type = ?")
+                .run(params.filePath, DUPLICATE_EXTRA_FILE_TYPE);
+            return LibraryFilesService.upsertLibraryFile({
+                ...params,
+                removeFromUnmapped: false,
+            });
+        })(), "scan:index-file");
     }
 }
