@@ -812,3 +812,39 @@ keeping downloads paused. Retry the failed catalog refreshes, monitor writer
 contention and repeat scans, and retain the unresolved rename/sidecar conflict
 work. Deployment is not a claim that the library is ready for Plex refresh,
 that strict untracked cleanup may be enabled, or that acquisition may resume.
+
+### October 6: 2.21.0 deployed for live validation
+
+Release `v2.21.0` (`f4e46cbe83cccf5423336da6b68a94f8d6de2eb9`) passed
+full local CI: 2,001 API and 186 frontend tests, lint, types and builds.
+GitHub run 37383932958 independently validated and published it. TrueNAS now
+both configures and runs `rhjanssen/discogenius:2.21.0`, with healthy container
+status and matching API/app versions. The deployed manifest digest is
+`sha256:712021385df41d97505e345c0ba0564b5227d436be93d5a92ee6cd60821189ed`.
+
+The app was stopped through TrueNAS before taking
+`SSD/Applications/discogenius/config@discogenius-pre-2210-20261006`.
+Its original compose settings and 90-second shutdown grace remain in place.
+Downloads remain paused, with zero active downloads/imports. Restart recovery
+requeued the existing root scan 15506, preserving its checkpoint; it reached
+artist 264/518 after startup. No additional library-wide scan was launched.
+
+Ray Charles retry 15508 completed without the former `Tracks.mbid` constraint
+failure. The other seven previously failed artists were queued through the
+artist refresh/scan API with `forceUpdate:false`; their completion still needs
+verification. Bastille's live artist page and rename preview were exercised;
+the preview reported zero changes. No rename was applied.
+
+A short 60-request ping/queue-status sample had p95 2.55/4.97 ms, but startup
+logs also recorded a 2.58-second dashboard statistics request and a provider
+release ingestion transaction holding the writer for 1.834 seconds. Parallel
+provider phases changed Ray Charles's progress from 54% back to 42%, confirming
+the remaining progress-reporting problem. Root scan 15506 retained the same
+222/472-file progress for several minutes while other commands completed;
+inspect its worker activity before declaring it stuck or starting more scans.
+These observations are open acceptance issues, not a clean-runtime claim.
+
+Config usage was 108 GB, including 93 GB media-cover, 11 GB backups and 13 MB
+logs; available space was approximately 15 GB. The snapshot avoided a second
+11 GB physical DB backup. Cache-original eviction and embedded artwork need
+bounded live validation before cache cleanup or a further library-wide retag.
