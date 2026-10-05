@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.21.0] - 2026-10-06
+
+### Fixed
+
+- Preserve stable catalog track identities through position changes and moves between editions. Connected editions reconcile atomically, incomplete track lists fail explicitly, and unchanged hashes cannot hide missing or surplus children.
+- Release unused acquisition candidates when their catalog tracks disappear. Selected plans, queued downloads and active download/import commands protect their references; failed reconciliation rolls back candidate removal.
+- Route command and pipeline statistics writes through shared writer admission. Smaller read batches yield between artist groups, indexed artist scopes avoid casting identity columns, and changed inputs are checked before persisting counters.
+- Persist per-artist curation failures and fail the command when any artist fails, instead of displaying a successful command with errors.
+- Plan video-recording relationships before taking writer admission and validate their inputs before applying changes.
+- Admit canonical file-link backfill and preserve a competing rename or track assignment. Repeated scans preserve duplicate ownership and report actual additions and changes.
+- Inventory loose media and unknown folders through resumable root scans, and include unambiguously identified plain-name artist siblings. Preserve unknown media and unavailable-root records for review.
+- Schedule the next routine root scan from successful whole-library completion, rather than its original queue time. Scoped scans, failures and stale claims do not satisfy that interval.
+- Bound embedded artwork to a 1200-pixel JPEG and 2 MiB, while retaining full-resolution originals and library cover sidecars.
+
+### Validation
+
+- Replay of eight captured failed refresh groups reconciled 1,808 incoming tracks and 37 identity/position conflicts, discarded three unused candidates and preserved surviving row identities, file references and decoded test audio. The repeat made zero writes.
+- On the local 11 GB, 518-artist clone, warm statistics refreshes with a competing writer preserved identical results and reduced maximum event-loop delay from approximately 412 ms to 55 ms. During 17 refreshes, 850 mixed API requests succeeded with p95 responses of 47-52 ms. These are local warm-cache measurements, not NAS throughput guarantees.
+- Native Linux and Windows tests cover held-plan protection, rollback, writer fairness, concurrent identity changes and persisted statistics truth. The test app completed curation for all eight captured artists; real-file scan and rename previews were also inspected.
+- Deploy with acquisition paused for live validation. Existing rename/sidecar conflicts, complete-library presentation and strict cleanup remain separate acceptance work.
+
 ## [2.20.0] - 2026-10-03
 
 ### Fixed
