@@ -117,7 +117,7 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         RefreshArtistService.markArtistRefreshComplete(job.payload.artistId);
     }
 
-    ArtistStatisticsService.refresh([job.payload.artistId]);
+    await ArtistStatisticsService.refreshAsync([job.payload.artistId]);
     ctx.updateCommandDescription(job, {
         progress: 95,
         description: ctx.formatArtistPhaseDescription(job, "provider matching complete"),

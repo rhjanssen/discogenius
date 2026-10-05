@@ -1270,7 +1270,7 @@ export class DownloadedTracksImportService {
             ).get(String(affectedArtistId)) as { count: number }).count;
 
             console.log(`[ImportDownload] Artist ${affectedArtistId}: ${trackedCount} library files tracked after import (skipped full disk scan)`);
-            await withSqliteWriteGate(() => ArtistStatisticsService.refresh([affectedArtistId]), "import:statistics");
+            await ArtistStatisticsService.refreshAsync([affectedArtistId]);
             cancellationCheckpoint("after refreshing artist statistics");
         }
 

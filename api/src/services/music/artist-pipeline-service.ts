@@ -79,7 +79,7 @@ export class ArtistPipelineService {
             },
         });
 
-        await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
+        await ArtistStatisticsService.refreshAsync([artistId]);
 
         if (isCancelled()) {
             return {
@@ -191,7 +191,7 @@ export class ArtistPipelineService {
             await withSqliteWriteGate(() => RefreshArtistService.markArtistRefreshComplete(artistId), "artist-pipeline:refresh-complete");
         }
 
-        await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
+        await ArtistStatisticsService.refreshAsync([artistId]);
 
         if (isCancelled()) {
             return {
@@ -251,7 +251,7 @@ export class ArtistPipelineService {
                 }
             }
 
-            await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
+            await ArtistStatisticsService.refreshAsync([artistId]);
 
             if (isCancelled()) {
                 return {
@@ -285,7 +285,7 @@ export class ArtistPipelineService {
             options.onProgress?.(75, "applying release monitoring rules");
 
             await CurationService.processAll(artistId);
-            await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
+            await ArtistStatisticsService.refreshAsync([artistId]);
 
             if (isCancelled()) {
                 return {
@@ -318,7 +318,7 @@ export class ArtistPipelineService {
             options.onProgress?.(90, "checking and queueing missing downloads");
             try {
                 downloadsQueued = await DownloadMissingService.queueMonitoredItems(artistId);
-                await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "artist-pipeline:statistics");
+                await ArtistStatisticsService.refreshAsync([artistId]);
                 const total = (downloadsQueued?.albums ?? 0) + (downloadsQueued?.tracks ?? 0) + (downloadsQueued?.videos ?? 0);
                 options.onProgress?.(
                     100,

@@ -10,6 +10,7 @@ import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
+import { groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions } from "../catalog/catalog-track-reconciliation.js";
 import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
@@ -817,6 +818,15 @@ export class ServarrMetadataService {
    */
   private async reconcileReleaseGroupDetail(releaseGroupMbid: string, artistMbid: string, detail: LidarrReleaseGroupDetail): Promise<void> {
     const ownerArtistMbid = String(detail.artistid || detail.artistId || artistMbid).trim();
+    const releases = (detail.Releases || []).map(release => ({
+      ...release, Tracks: normalizeEditionTracks(release.Id, release.Tracks),
+    }));
+    const trackEditions = new Map<string, string>();
+    for (const release of releases) for (const track of release.Tracks) {
+      const previous = trackEditions.get(track.Id);
+      if (previous && previous !== release.Id) throw new Error(`Catalog track ${track.Id} occurs on both editions ${previous} and ${release.Id}`);
+      trackEditions.set(track.Id, release.Id);
+    }
 
     // Diff-reconcile: skip rewriting an unchanged release group's entire
     // tracklist (a popular RG is many editions × many tracks → the dominant
@@ -836,12 +846,15 @@ export class ServarrMetadataService {
       // exact catalogue track identities, using the indexed edition boundary,
       // so a matching hash cannot suppress repair of absent/pruned children.
       const editionExists = db.prepare("SELECT 1 FROM AlbumEditions WHERE mbid = ?");
-      const storedTracks = db.prepare("SELECT mbid FROM Tracks WHERE release_mbid = ?");
-      const complete = (detail.Releases || []).every(release => {
+      const storedTracks = db.prepare("SELECT mbid, recording_mbid, medium_position, position FROM Tracks WHERE release_mbid = ?");
+      const complete = releases.every(release => {
         if (!editionExists.get(release.Id)) return false;
-        const stored = new Set((storedTracks.all(release.Id) as Array<{ mbid: string }>)
-          .map(row => row.mbid));
-        return (release.Tracks || []).every(track => stored.has(track.Id));
+        const stored = new Map((storedTracks.all(release.Id) as Array<{ mbid: string; recording_mbid: string; medium_position: number; position: number }>)
+          .map(row => [row.mbid, row]));
+        return stored.size === release.Tracks.length && release.Tracks.every(track => {
+          const row = stored.get(track.Id);
+          return row?.recording_mbid === track.RecordingId && row.medium_position === track.MediumNumber && row.position === track.TrackPosition;
+        });
       });
       if (complete) return;
     }
@@ -911,16 +924,16 @@ export class ServarrMetadataService {
     const insertTrack = db.prepare(`
       INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(release_mbid, medium_position, position) DO UPDATE SET
-        mbid = excluded.mbid,
+      ON CONFLICT(mbid) DO UPDATE SET
+        release_mbid = excluded.release_mbid,
+        medium_position = excluded.medium_position,
+        position = excluded.position,
         recording_mbid = excluded.recording_mbid,
         number = excluded.number,
         title = excluded.title,
         length_ms = excluded.length_ms,
         updated_at = CURRENT_TIMESTAMP
     `);
-
-    const releases = detail.Releases || [];
 
     const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
     const rawDetail = detail as Record<string, any>;
@@ -983,52 +996,47 @@ export class ServarrMetadataService {
       })();
     }, "servarr:release-group-header");
 
-    // Tracks/recordings scale with the whole release group (a popular RG can have
-    // dozens of editions × many tracks). Chunk them so the write lock isn't held
-    // for the entire tracklist while concurrent workers wait — and take the gate
-    // per chunk, not around the loop. Reconciling one prolific release group
-    // under a single acquisition was measured at 51.9s on the live library, with
-    // peers waiting 45.2s behind a queue eight deep: the chunking bounded
-    // SQLite's own lock but the gate serialised the whole tracklist anyway.
-    // Each chunk is idempotent upserts, so committing between them is safe.
-    const trackRows: Array<{ release: typeof releases[number]; track: any }> = [];
-    for (const release of releases) {
-      for (const track of release.Tracks || []) {
-        trackRows.push({ release, track });
+    // Cross-edition moves connect their source and destination into one atomic
+    // unit. Unrelated editions still yield admission separately. Stage every
+    // connected edition before writing, so exchanges never expose temporary slots.
+    const retainedTrackIds = new Set(trackEditions.keys());
+    const editionGroups = groupConnectedEditions(db, releases);
+    await runGatedChunkedWrite(editionGroups, editions => {
+      for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
+      for (const release of editions) for (const track of release.Tracks) {
+        const isrcs = Array.isArray(track.Isrcs)
+          ? track.Isrcs
+          : Array.isArray(track.isrcs)
+            ? track.isrcs
+            : [];
+        const isrcJson = isrcs.length > 0 ? JSON.stringify(isrcs.map(String).filter(Boolean)) : null;
+        const rawTrack = track as LidarrTrack & { isVideo?: boolean; video?: boolean };
+        const isVideo = rawTrack.IsVideo === true || rawTrack.isVideo === true || rawTrack.video === true ? 1 : 0;
+        const disambiguation = typeof track.RecordingDisambiguation === "string"
+          && track.RecordingDisambiguation.trim() !== ""
+          ? track.RecordingDisambiguation.trim()
+          : null;
+        insertRecording.run(
+          track.RecordingId,
+          track.TrackName,
+          track.DurationMs,
+          disambiguation,
+          isrcJson,
+          isVideo,
+          ownerArtistMbid || null,
+        );
+        insertTrack.run(
+          track.Id,
+          release.Id,
+          track.RecordingId,
+          track.MediumNumber,
+          track.TrackPosition,
+          track.TrackNumber,
+          track.TrackName,
+          track.DurationMs,
+        );
       }
-    }
-    await runGatedChunkedWrite(trackRows, ({ release, track }) => {
-      const isrcs = Array.isArray(track.Isrcs)
-        ? track.Isrcs
-        : Array.isArray(track.isrcs)
-          ? track.isrcs
-          : [];
-      const isrcJson = isrcs.length > 0 ? JSON.stringify(isrcs.map(String).filter(Boolean)) : null;
-      const isVideo = track.IsVideo === true || track.isVideo === true || track.video === true ? 1 : 0;
-      const disambiguation = typeof track.RecordingDisambiguation === "string"
-        && track.RecordingDisambiguation.trim() !== ""
-        ? track.RecordingDisambiguation.trim()
-        : null;
-      insertRecording.run(
-        track.RecordingId,
-        track.TrackName,
-        track.DurationMs,
-        disambiguation,
-        isrcJson,
-        isVideo,
-        ownerArtistMbid || null,
-      );
-      insertTrack.run(
-        track.Id,
-        release.Id,
-        track.RecordingId,
-        track.MediumNumber,
-        track.TrackPosition,
-        track.TrackNumber,
-        track.TrackName,
-        track.DurationMs,
-      );
-    }, 50, "servarr:release-group-tracks");
+    }, 1, "servarr:edition-tracks");
     await withSqliteWriteGate(() => {
       db.transaction(() => {
         MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);

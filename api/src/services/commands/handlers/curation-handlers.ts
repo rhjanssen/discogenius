@@ -1,3 +1,5 @@
+import { withSqliteWriteGate } from "../../../database.js";
+import type { ApplyCurationCommand } from "../command-bodies.js";
 import { CurationService } from "../../music/curation-service.js";
 import { UpgraderService } from "../../mediafiles/upgrader.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
@@ -21,7 +23,7 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
     const artists = getManagedArtists({ orderByLastScanned: true, artistIds: selectedCurationArtistIds });
 
     let curated = 0;
-    let errors = 0;
+    const failures: NonNullable<ApplyCurationCommand["curationFailures"]> = [];
 
     for (let i = 0; i < artists.length; i++) {
         const artist = artists[i];
@@ -36,11 +38,11 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
 
         try {
             await CurationService.processAll(artistId);
-            ArtistStatisticsService.refresh([artistId]);
+            await ArtistStatisticsService.refreshAsync([artistId]);
             curated++;
             await ctx.yieldToEventLoop();
         } catch (error: any) {
-            errors++;
+            failures.push({ artistId, artistName, error: String(error?.message || error).slice(0, 1000) });
             console.error(`[CommandExecutor] ApplyCuration: failed to curate ${artistName} (${artistId}):`, error?.message);
         }
     }
@@ -48,14 +50,17 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
     // A scoped curation only rebuilt part of the library, so it must not clear
     // the global provider-priority revision. The next scheduled global pass
     // will still bring every other monitored edition up to date.
-    if (errors === 0 && !selectedCurationArtistIds && job.payload.providerPriorityRevision) {
-        clearAcquisitionPlanningRevision(job.payload.providerPriorityRevision);
+    if (failures.length === 0 && !selectedCurationArtistIds && job.payload.providerPriorityRevision) {
+        await withSqliteWriteGate(() => clearAcquisitionPlanningRevision(job.payload.providerPriorityRevision!), "curation:planning-revision");
     }
 
-    ctx.updateCommandDescription(job, {
-        progress: 100,
-        description: `Curated ${curated} artist(s)${errors > 0 ? `, ${errors} error(s)` : ''} (${artists.length} total)`,
-    });
+    const summary = `Curated ${curated} artist(s)${failures.length > 0 ? `, ${failures.length} error(s)` : ''} (${artists.length} total)`;
+    const payloadPatch: Partial<ApplyCurationCommand> = { description: summary, curationFailures: failures };
+    await withSqliteWriteGate(() => CommandQueueManager.updateState(job.id, {
+        workerId: job.worker_id ?? undefined, payloadPatch,
+    }), "curation:outcome");
+    ctx.updateCommandDescription(job, { progress: 100, description: summary });
+    if (failures.length > 0) throw new Error(`Curation failed for ${failures.length} of ${artists.length} artists: ${failures[0].artistName || failures[0].artistId}: ${failures[0].error}`);
 };
 
 export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, ctx) => {
@@ -82,7 +87,7 @@ export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job, ct
         progress: 90,
         description: ctx.formatArtistPhaseDescription(job, "updating artist statistics"),
     });
-    ArtistStatisticsService.refresh([job.payload.artistId]);
+    await ArtistStatisticsService.refreshAsync([job.payload.artistId]);
 
     if (job.worker_id && !CommandQueueManager.isExecutionOwner(job.id, job.worker_id)) {
         return;

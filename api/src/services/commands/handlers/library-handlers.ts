@@ -88,7 +88,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
                 ctx.updateCommandDescription(job, {
                     progress: progress(0.95), description: `${baseLabel} - updating artist statistics (${cursor + 1}/${total})`,
                 });
-                await withSqliteWriteGate(() => ArtistStatisticsService.refresh([artistId]), "scan:artist-statistics");
+                await ArtistStatisticsService.refreshAsync([artistId]);
                 ctx.updateCommandDescription(job, { progress: progress(1), description: `${baseLabel} - processed ${cursor + 1}/${total} artists` });
                 return result;
             },
@@ -157,7 +157,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         progress: 95,
         description: "Scanning library root folders - updating artist statistics",
     });
-    ArtistStatisticsService.refresh(artistIds.length > 0 ? artistIds : undefined);
+    await ArtistStatisticsService.refreshAsync(artistIds.length > 0 ? artistIds : undefined);
 
     ctx.updateCommandDescription(job, {
         progress: 100,
@@ -181,7 +181,7 @@ export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) =
         sourcePath: job.payload.sourcePath,
         destinationPath: job.payload.destinationPath,
     });
-    ArtistStatisticsService.refresh([job.payload.artistId]);
+    await ArtistStatisticsService.refreshAsync([job.payload.artistId]);
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Moved artist folders in ${result.movedRoots} root(s), updated ${result.updatedFiles} tracked file(s), cleaned ${result.cleanedDirectories} empty folder(s)`,
@@ -264,7 +264,7 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
         ...AudioTagService.getTrackFileIds({ artistIds }),
         ...VideoTagService.getFileIdsForArtists(artistIds),
     ]);
-    if (result.retagged > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(artistIds), "retag:statistics");
+    if (result.retagged > 0) await ArtistStatisticsService.refreshAsync(artistIds);
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
@@ -294,7 +294,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
                     editionId: job.payload.editionId,
                     releaseMbid: job.payload.releaseMbid,
                 }), true);
-        if (result.retagged > 0 && affectedArtists.length > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(affectedArtists), "retag:statistics");
+        if (result.retagged > 0 && affectedArtists.length > 0) await ArtistStatisticsService.refreshAsync(affectedArtists);
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: `Stripped tags on ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
@@ -317,7 +317,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
                 releaseMbid: job.payload.releaseMbid,
             }),
     );
-    if (result.retagged > 0 && affectedArtists.length > 0) await withSqliteWriteGate(() => ArtistStatisticsService.refresh(affectedArtists), "retag:statistics");
+    if (result.retagged > 0 && affectedArtists.length > 0) await ArtistStatisticsService.refreshAsync(affectedArtists);
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,

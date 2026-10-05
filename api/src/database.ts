@@ -555,6 +555,8 @@ function ensureLibraryLookupIndexes(): void {
       ON ArtistTopTracks(recording_id);
     CREATE INDEX IF NOT EXISTS idx_artist_top_tracks_track
       ON ArtistTopTracks(track_id);
+    CREATE INDEX IF NOT EXISTS idx_lyric_files_canonical_track
+      ON LyricFiles(canonical_track_mbid);
     CREATE INDEX IF NOT EXISTS idx_library_videos_inline_track_fk
       ON LibraryVideos(inline_track_id);
   `);

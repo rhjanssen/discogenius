@@ -186,7 +186,7 @@ export async function runRuntimeMaintenance(): Promise<RuntimeMaintenanceSummary
     WHERE ${buildLibraryArtistMonitoredExistsSql("a")}
   `).all() as Array<{ id: string }>).map((row) => row.id);
   if (monitoredArtistIds.length > 0) {
-    await withSqliteWriteGate(() => ArtistStatisticsService.refresh(monitoredArtistIds), "housekeeping:statistics");
+    await ArtistStatisticsService.refreshAsync(monitoredArtistIds);
   }
 
   // Known-fixed video retag error from schema 46 (`file.artist_id`). Keeping

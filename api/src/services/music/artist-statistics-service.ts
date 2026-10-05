@@ -1,4 +1,5 @@
-import { db } from "../../database.js";
+import { db, sqliteDataRevision, withSqliteWriteGate } from "../../database.js";
+import { prepareSqliteReadPlan } from "../../database/sqlite-read-plan.js";
 import { audioLibraryPredicate } from "./library-album-monitoring.js";
 
 export interface ArtistStatisticsRow {
@@ -350,7 +351,7 @@ export class ArtistStatisticsService {
     return map;
   }
 
-  static refresh(artistIds?: Array<string | number | null | undefined>): ArtistStatisticsRow[] {
+  private static targetIds(artistIds?: Array<string | number | null | undefined>): string[] {
     const explicitIds = normalizeArtistIds(artistIds);
     const isFullRefresh = artistIds === undefined || (Array.isArray(artistIds) && artistIds.length === 0);
 
@@ -364,9 +365,42 @@ export class ArtistStatisticsService {
           .map((row) => String(row.artist_id))
       : explicitIds;
 
-    const rows = chunk(targetIds, ARTIST_STATISTICS_CHUNK_SIZE)
-      .flatMap((idsChunk) => calculateArtistStatisticsChunk(idsChunk));
+    return targetIds;
+  }
 
+  /** Synchronous writes for callers already inside a synchronous admitted unit. */
+  static refresh(artistIds?: Array<string | number | null | undefined>): ArtistStatisticsRow[] {
+    const rows = chunk(this.targetIds(artistIds), ARTIST_STATISTICS_CHUNK_SIZE)
+      .flatMap(ids => calculateArtistStatisticsChunk(ids));
+    this.persistRows(rows, artistIds === undefined || artistIds.length === 0);
+    return rows;
+  }
+
+  /** Commands plan outside the write gate, then admit a bounded, current projection.
+   * Changed inputs trigger a fresh plan instead of writing stale counters. */
+  static async refreshAsync(artistIds?: Array<string | number | null | undefined>): Promise<ArtistStatisticsRow[]> {
+    const rows: ArtistStatisticsRow[] = [];
+    for (const ids of chunk(this.targetIds(artistIds), ARTIST_STATISTICS_CHUNK_SIZE)) {
+      let committed = false;
+      for (let attempt = 0; attempt < 8 && !committed; attempt += 1) {
+        const plan = prepareSqliteReadPlan(() => calculateArtistStatisticsChunk(ids), sqliteDataRevision);
+        committed = await withSqliteWriteGate(() => db.transaction(() => {
+          if (!plan.isCurrent()) return false;
+          this.persistRows(plan.value, false);
+          return true;
+        })(), "statistics:projection-batch");
+        if (committed) rows.push(...plan.value);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      if (!committed) throw new Error("Artist statistics inputs kept changing; retry the task");
+    }
+    if (artistIds === undefined || artistIds.length === 0) {
+      await withSqliteWriteGate(() => this.persistRows([], true), "statistics:orphan-cleanup");
+    }
+    return rows;
+  }
+
+  private static persistRows(rows: ArtistStatisticsRow[], isFullRefresh: boolean): void {
     const upsert = db.prepare(`
       INSERT INTO ArtistStatistics (
         library_id, artist_metadata_id, artist_mbid, album_count, monitored_album_count, downloaded_album_count,
@@ -422,7 +456,6 @@ export class ArtistStatisticsService {
       }
     })();
 
-    return rows;
   }
 
   /**

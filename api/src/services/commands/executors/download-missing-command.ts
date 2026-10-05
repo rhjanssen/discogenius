@@ -39,7 +39,7 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
                 });
 
                 const queued = await DownloadMissingService.queueMonitoredItems(String(artist.id));
-                ArtistStatisticsService.refresh([String(artist.id)]);
+                await ArtistStatisticsService.refreshAsync([String(artist.id)]);
                 total.albums += queued.albums;
                 total.tracks += queued.tracks;
                 total.videos += queued.videos;

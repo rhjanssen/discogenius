@@ -237,6 +237,7 @@ export interface RefreshMetadataCommand extends CommandBodyCommon {
 }
 
 export interface ApplyCurationCommand extends CommandBodyCommon {
+  curationFailures?: Array<{ artistId: string; artistName: string; error: string }>;
   monitoringCycle?: MonitoringPassWorkflowValue;
   providerPriorityRevision?: string;
 }

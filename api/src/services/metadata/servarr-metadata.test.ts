@@ -254,11 +254,13 @@ test("interrupted catalogue track chunks remain incomplete and the same payload 
   const original = catalogProviderRegistry.getActive;
   const payload = {
     ...DOOM_DAYS_PAYLOAD,
-    Releases: [{ ...DOOM_DAYS_PAYLOAD.Releases[0], TrackCount: 51,
-      Tracks: Array.from({ length: 51 }, (_, index) => ({
+    Releases: [{ ...DOOM_DAYS_PAYLOAD.Releases[0], TrackCount: 50,
+      Tracks: Array.from({ length: 50 }, (_, index) => ({
         ...DOOM_DAYS_PAYLOAD.Releases[0].Tracks[0], Id: `interrupted-track-${index}`,
         RecordingId: `interrupted-recording-${index}`, TrackPosition: index + 1, TrackNumber: String(index + 1),
       })),
+    }, { ...DOOM_DAYS_PAYLOAD.Releases[0], Id: "rel-interrupted", TrackCount: 1,
+      Tracks: [{ ...DOOM_DAYS_PAYLOAD.Releases[0].Tracks[0], Id: "interrupted-track-50", RecordingId: "interrupted-recording-50" }],
     }],
   };
   catalogProviderRegistry.getActive = () => ({
@@ -641,4 +643,157 @@ test("syncReleaseGroup keeps an existing overview when MusicBrainz sends none", 
     .get("rg-skip") as { title: string; overview: string | null };
   assert.equal(row.title, "Doom Days (Deluxe)");
   assert.equal(row.overview, "A review of Doom Days.");
+});
+
+function twoTrackPayload() {
+  const first = DOOM_DAYS_PAYLOAD.Releases[0].Tracks[0];
+  return { ...DOOM_DAYS_PAYLOAD, Releases: [{ ...DOOM_DAYS_PAYLOAD.Releases[0], TrackCount: 2,
+    Tracks: [{ ...first }, { ...first, Id: "trk-2", RecordingId: "rec-2", TrackPosition: 2, TrackNumber: "2" }],
+  }] };
+}
+
+function addOwnedTrack(trackMbid: string): number {
+  const { db } = dbModule;
+  return Number(db.prepare(`INSERT INTO TrackFiles(artist_metadata_id, track_id, canonical_track_mbid, file_path, relative_path, filename, extension, library_root, file_type)
+    SELECT (SELECT id FROM ArtistMetadata WHERE mbid='artist-mbid'), id, mbid, '/library/owned.flac', 'owned.flac', 'owned.flac', 'flac', '/library', 'track'
+    FROM Tracks WHERE mbid=?`).run(trackMbid).lastInsertRowid);
+}
+
+test("catalog track position swaps preserve integer identity and owned file references", async () => {
+  resetCatalog(); const { db } = dbModule;
+  const payload = twoTrackPayload(); fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const before = db.prepare("SELECT id,mbid FROM Tracks ORDER BY mbid").all();
+  addOwnedTrack("trk-1");
+  try {
+    payload.Releases[0].Tracks[0].TrackPosition = 2;
+    payload.Releases[0].Tracks[1].TrackPosition = 1;
+    fetchReturning(payload);
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+    assert.deepEqual(db.prepare("SELECT id,mbid FROM Tracks ORDER BY mbid").all(), before);
+    assert.deepEqual(db.prepare("SELECT mbid,position FROM Tracks ORDER BY position").all(), [{ mbid: "trk-2", position: 1 }, { mbid: "trk-1", position: 2 }]);
+    assert.equal((db.prepare("SELECT mbid FROM Tracks WHERE id=(SELECT track_id FROM TrackFiles WHERE file_path='/library/owned.flac')").get() as { mbid: string }).mbid, "trk-1");
+    const changes = db.prepare("SELECT total_changes() AS n").get();
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+    assert.deepEqual(db.prepare("SELECT total_changes() AS n").get(), changes);
+  } finally { db.prepare("DELETE FROM TrackFiles WHERE file_path='/library/owned.flac'").run(); }
+});
+
+test("identical duplicate catalog occurrences normalize once and retain a no-write repeat", async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload();
+  payload.Releases[0].Tracks.push({ ...payload.Releases[0].Tracks[0] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal((db.prepare("SELECT count(*) AS n FROM Tracks WHERE release_mbid='rel-1'").get() as { n: number }).n, 2);
+  const changes = db.prepare("SELECT total_changes() AS n").get();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(db.prepare("SELECT total_changes() AS n").get(), changes);
+});
+
+test("catalog track moves between editions preserve integer identity", async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload(); fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const before = db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get();
+  const moved = { ...payload, Releases: [{ ...payload.Releases[0], Id: "rel-moved", Tracks: [payload.Releases[0].Tracks[0]] }] };
+  fetchReturning(moved);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get(), before);
+  const row = db.prepare("SELECT release_mbid, album_edition_id FROM Tracks WHERE mbid='trk-1'").get() as { release_mbid: string; album_edition_id: number };
+  assert.equal(row.release_mbid, "rel-moved");
+  assert.equal(row.album_edition_id, (db.prepare("SELECT id FROM AlbumEditions WHERE mbid='rel-moved'").get() as { id: number }).id);
+});
+
+for (const reverse of [false, true]) test(`catalog cross-edition exchanges preserve owned identities with ${reverse ? "reversed" : "original"} source order`, async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload();
+  payload.Releases = [
+    { ...payload.Releases[0], Tracks: [payload.Releases[0].Tracks[0]] },
+    { ...payload.Releases[0], Id: "rel-2", Tracks: [{ ...payload.Releases[0].Tracks[1], TrackPosition: 1 }] },
+  ];
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const before = db.prepare("SELECT id,mbid FROM Tracks ORDER BY mbid").all();
+  addOwnedTrack("trk-1");
+  try {
+    const first = payload.Releases[0].Tracks;
+    payload.Releases[0].Tracks = payload.Releases[1].Tracks;
+    payload.Releases[1].Tracks = first;
+    if (reverse) payload.Releases.reverse();
+    fetchReturning(payload);
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+    assert.deepEqual(db.prepare("SELECT id,mbid FROM Tracks ORDER BY mbid").all(), before);
+    assert.deepEqual(db.prepare("SELECT mbid,release_mbid,position FROM Tracks ORDER BY mbid").all(), [
+      { mbid: "trk-1", release_mbid: "rel-2", position: 1 },
+      { mbid: "trk-2", release_mbid: "rel-1", position: 1 },
+    ]);
+    assert.equal((db.prepare("SELECT mbid FROM Tracks WHERE id=(SELECT track_id FROM TrackFiles WHERE file_path='/library/owned.flac')").get() as { mbid: string }).mbid, "trk-1");
+    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+    const changes = db.prepare("SELECT total_changes() AS n").get();
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+    assert.deepEqual(db.prepare("SELECT total_changes() AS n").get(), changes);
+  } finally { db.prepare("DELETE FROM TrackFiles WHERE file_path='/library/owned.flac'").run(); }
+});
+
+for (const owned of [false, true]) test(`catalog position replacement ${owned ? "rejects owned obsolete identities" : "removes only unreferenced obsolete catalog rows"}`, async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload(); fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const before = db.prepare("SELECT id FROM Tracks WHERE mbid='trk-2'").get();
+  if (owned) addOwnedTrack("trk-1");
+  const corrected = { ...payload, Releases: [{ ...payload.Releases[0], TrackCount: 1, Tracks: [{ ...payload.Releases[0].Tracks[1], TrackPosition: 1 }] }] };
+  fetchReturning(corrected);
+  try {
+    if (owned) {
+      await assert.rejects(servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid"), /obsolete track trk-1 is still referenced by TrackFiles/);
+      assert.equal((db.prepare("SELECT count(*) AS n FROM Tracks WHERE medium_position<0 OR position<0").get() as { n: number }).n, 0);
+      assert.equal((db.prepare("SELECT position FROM Tracks WHERE mbid='trk-2'").get() as { position: number }).position, 2);
+      assert.ok(db.prepare("SELECT track_id FROM TrackFiles WHERE file_path='/library/owned.flac'").get());
+    } else {
+      await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+      assert.equal(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get(), undefined);
+      assert.deepEqual(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-2'").get(), before);
+      assert.equal((db.prepare("SELECT position FROM Tracks WHERE mbid='trk-2'").get() as { position: number }).position, 1);
+    }
+  } finally { db.prepare("DELETE FROM TrackFiles WHERE file_path='/library/owned.flac'").run(); }
+});
+
+test("catalog edition rewrite rolls back staged positions if a later track write fails", async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload(); fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const before = db.prepare("SELECT id,mbid,position FROM Tracks ORDER BY mbid").all();
+  payload.Releases[0].Tracks[0].TrackPosition = 2; payload.Releases[0].Tracks[1].TrackPosition = 1;
+  fetchReturning(payload);
+  db.exec("CREATE TEMP TRIGGER reject_catalog_track BEFORE UPDATE ON Tracks WHEN NEW.mbid='trk-2' AND NEW.position=1 BEGIN SELECT RAISE(ABORT,'test edition write failure'); END");
+  try {
+    await assert.rejects(servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid"), /test edition write failure/);
+    assert.deepEqual(db.prepare("SELECT id,mbid,position FROM Tracks ORDER BY mbid").all(), before);
+  } finally { db.exec("DROP TRIGGER reject_catalog_track"); }
+});
+
+test("unchanged catalog hash does not hide incorrect stored track positions", async () => {
+  resetCatalog(); const { db } = dbModule; fetchReturning(DOOM_DAYS_PAYLOAD);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  db.prepare("UPDATE Tracks SET position=9 WHERE mbid='trk-1'").run();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal((db.prepare("SELECT position FROM Tracks WHERE mbid='trk-1'").get() as { position: number }).position, 1);
+});
+
+test("catalog reconciliation prunes unreferenced removed tracks even without a position collision", async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload(); fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const corrected = { ...payload, Releases: [{ ...payload.Releases[0], TrackCount: 1, Tracks: [payload.Releases[0].Tracks[0]] }] };
+  fetchReturning(corrected);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-2'").get(), undefined);
+  // A stale completion hash must not hide surplus rows from an interrupted/old writer.
+  db.prepare("INSERT INTO Tracks(mbid,release_mbid,recording_mbid,medium_position,position,title) VALUES('surplus','rel-1','rec-2',1,9,'Surplus')").run();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE mbid='surplus'").get(), undefined);
+});
+
+test("an incomplete catalog edition response cannot clear stored track identities", async () => {
+  resetCatalog(); const { db } = dbModule; fetchReturning(DOOM_DAYS_PAYLOAD);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const before = db.prepare("SELECT id,mbid,position FROM Tracks").all();
+  fetchReturning({ ...DOOM_DAYS_PAYLOAD, Releases: [{ ...DOOM_DAYS_PAYLOAD.Releases[0], Tracks: undefined }] });
+  await assert.rejects(servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid"), /complete catalog edition identity and track list/);
+  assert.deepEqual(db.prepare("SELECT id,mbid,position FROM Tracks").all(), before);
 });
