@@ -700,3 +700,45 @@ untracked destination merely because strict cleanup will eventually exist.
 No live files were changed. Downloads remained paused and the file-mutation
 journal was empty. Rename/retag completion results were unchanged; folder scan
 15214 was still on artist 54/518 in the latest API observation.
+
+
+## October 5 follow-up at 15:08 UTC
+
+Read-only inspection inside the live container confirmed repeat scan 15496
+completed at 09:31:19 UTC after starting October 4 at 20:45:57 UTC. It processed
+518 artists and reported 579 additions, 362 updates and no orphan removals.
+Those counters come from deployed 2.20.0, which does not contain the branch's
+repeat-ownership/counter or completion-based scheduling fixes. The approximately
+13-hour repeat remains a performance failure, even though it completed.
+
+Downloads remained paused. The file-mutation journal had no entries or recovery
+failures. The latest persisted deep check, at 10:42:41 UTC, passed quick_check
+and foreign-key validation off the main thread. The current health endpoint
+reported a command-queue warning with eight recent failures and no active,
+expired or stalled commands. All eight stored failures were artist refreshes
+reporting UNIQUE constraint failed: Tracks.mbid. Activity visibly showed these
+failures for Ray Charles and Yes. Curation command 15502 completed with 13
+reported errors, not a clean success. Housekeeping 15504 reported removing 913
+unmonitored files; that policy is distinct from strict untracked-file cleanup.
+The fresh TrackFiles count was 34,600. No live file mutation was performed by
+this follow-up.
+
+The local candidate now gates canonical-link backfill, resolves its catalog
+anchor after admission, and conditionally updates the same unlinked row only.
+Competing path, track-identity or edition changes preserve the other writer's
+result. Real tagged-FLAC tests cover these races against the active schema.
+The unused releaseDuplicateForRescan method was removed; transactional duplicate
+promotion remains the production path. Windows full CI passed 1,977 backend
+and 186 frontend tests with zero failures; all 25 focused tests also passed
+against compiled code in the Linux image. The isolated container's full scan
+registered two unknown FLACs once, preserved an ignored file, and reported no
+changes on its repeat. Activity, Unmapped and the Manual Import dialog were
+used interactively. This candidate has not been deployed.
+
+The remaining catalog failure needs explicit identity reconciliation. Servarr's
+track upsert conflicts on release/disc/position and assigns the incoming MBID,
+while the separate canonical repository conflicts on MBID. Position changes or
+identity replacements can collide with the other unique key. Resolve both keys
+without discarding referenced track IDs or changing edition ownership silently.
+Until that and the outstanding library acceptance work pass, keep downloads
+paused and do not call the library or release ready.

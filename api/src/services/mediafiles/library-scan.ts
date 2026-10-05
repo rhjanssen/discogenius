@@ -627,7 +627,6 @@ export class DiskScanService {
         `);
 
         let updated = 0;
-        const verifiedIds: number[] = [];
         for (let index = 0; index < rows.length; index += 1) {
             const row = rows[index];
             const filePath = resolveStoredLibraryPath({
@@ -709,23 +708,36 @@ export class DiskScanService {
             }
             if (!musicbrainzRecordingId && !musicbrainzTrackId) continue;
 
-            const link = resolveCatalogTrackFromEmbeddedMbids(
-                { musicbrainzRecordingId, musicbrainzTrackId, musicbrainzAlbumId },
-                row.library_slot || "stereo",
-            );
-            if (!link) continue;
-
-            db.prepare(`
-                UPDATE TrackFiles
-                SET canonical_track_mbid = COALESCE(canonical_track_mbid, ?),
-                    canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?),
-                    canonical_release_mbid = COALESCE(canonical_release_mbid, ?),
-                    canonical_release_group_mbid = COALESCE(canonical_release_group_mbid, ?),
-                    verified_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            `).run(link.trackMbid, link.recordingMbid, link.releaseMbid, link.releaseGroupMbid, row.id);
-            healed++;
-            if (link.releaseGroupMbid) touchedReleaseGroups.add(link.releaseGroupMbid);
+            // Parsing can overlap a queued rename/import. Recheck row identity and
+            // resolve the current catalog only after admission to the writer gate.
+            const healedLink = await withSqliteWriteGate(() => {
+                const link = resolveCatalogTrackFromEmbeddedMbids(
+                    { musicbrainzRecordingId, musicbrainzTrackId, musicbrainzAlbumId },
+                    row.library_slot || "stereo",
+                );
+                if (!link) return null;
+                const result = db.prepare(`
+                    UPDATE TrackFiles
+                    SET canonical_track_mbid = ?,
+                        canonical_recording_mbid = ?,
+                        canonical_release_mbid = ?,
+                        canonical_release_group_mbid = ?,
+                        verified_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND file_path = ? AND artist_metadata_id = ?
+                      AND file_type = 'track' AND library_slot IS ?
+                      AND canonical_track_mbid IS NULL
+                      AND canonical_recording_mbid IS NULL
+                      AND (canonical_release_mbid IS NULL OR canonical_release_mbid = ?)
+                      AND (canonical_release_group_mbid IS NULL OR canonical_release_group_mbid = ?)
+                `).run(link.trackMbid, link.recordingMbid, link.releaseMbid, link.releaseGroupMbid,
+                    row.id, row.file_path, artistId, row.library_slot, link.releaseMbid, link.releaseGroupMbid);
+                return result.changes > 0 ? link : null;
+            }, "scan:backfill-canonical-links");
+            if (healedLink) {
+                healed += 1;
+                if (healedLink.releaseGroupMbid) touchedReleaseGroups.add(healedLink.releaseGroupMbid);
+            }
+            await yieldToEventLoop();
         }
 
         for (const releaseGroupMbid of touchedReleaseGroups) {

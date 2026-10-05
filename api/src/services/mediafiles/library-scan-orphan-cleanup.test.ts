@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-orphan-cleanup-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -235,6 +236,54 @@ test("audio-fact backfill waits for the writer gate and does not count unchanged
     assert.equal((db.prepare("SELECT verified_at FROM TrackFiles WHERE file_path=?").get(file) as { verified_at: string }).verified_at, "2000-01-01");
   } finally { release(); await blocker; fs.rmSync(file, { force: true }); }
 });
+
+const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
+
+for (const competingChange of ["none", "path", "canonical", "edition"] as const) {
+    test(`canonical backfill waits for the writer gate and respects competing ${competingChange} changes`, { skip: !hasFfmpeg }, async () => {
+        seedCanonicalArtistGraph();
+        const filename = `canonical-${competingChange}.flac`;
+        const file = path.join(tempDir, filename);
+        const generated = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", "0.1",
+            "-c:a", "flac", "-metadata", "MUSICBRAINZ_RELEASETRACKID=track-1",
+            "-metadata", "MUSICBRAINZ_TRACKID=recording-1", "-metadata", "MUSICBRAINZ_ALBUMID=release-1", file],
+            { encoding: "utf8", windowsHide: true });
+        assert.equal(generated.status, 0, generated.stderr);
+        insertMissingTrackFile("track-1", "recording-1", filename, null);
+        db.prepare("UPDATE TrackFiles SET canonical_track_mbid=NULL, canonical_recording_mbid=NULL, verified_at='2000-01-01' WHERE file_path=?").run(file);
+        const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid='artist-mbid'").get() as { id: number };
+        const scan = DiskScanService as unknown as { backfillCanonicalLinksFromTags(id: string): Promise<{ healed: number }> };
+        let release!: () => void;
+        let acquired!: () => void;
+        const ready = new Promise<void>(resolve => { acquired = resolve; });
+        const blocker = dbModule.withSqliteWriteGate(async () => {
+            acquired(); await new Promise<void>(resolve => { release = resolve; });
+            // These mutations model the writer that already owns admission.
+            if (competingChange === "path") db.prepare("UPDATE TrackFiles SET file_path=? WHERE file_path=?").run(file + ".moved", file);
+            if (competingChange === "canonical") db.prepare("UPDATE TrackFiles SET canonical_track_mbid='track-2', canonical_recording_mbid='recording-2' WHERE file_path=?").run(file);
+            if (competingChange === "edition") db.prepare("UPDATE TrackFiles SET canonical_release_mbid='another-release' WHERE file_path=?").run(file);
+        }, "test:canonical-competing-writer");
+        await ready;
+        let settled = false;
+        const work = scan.backfillCanonicalLinksFromTags(String(artist.id)).then(result => { settled = true; return result; });
+        try {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            assert.equal(settled, false, "backfill must not write through another owner's gate");
+            assert.equal((db.prepare("SELECT verified_at FROM TrackFiles WHERE file_path=?").get(file) as { verified_at: string }).verified_at, "2000-01-01");
+            release(); await blocker;
+            assert.equal((await work).healed, competingChange === "none" ? 1 : 0);
+            const row = db.prepare("SELECT canonical_track_mbid, canonical_recording_mbid, canonical_release_mbid, verified_at FROM TrackFiles WHERE filename=?").get(filename) as {
+                canonical_track_mbid: string | null; canonical_recording_mbid: string | null; canonical_release_mbid: string; verified_at: string;
+            };
+            assert.equal(row.canonical_track_mbid, competingChange === "none" ? "track-1" : competingChange === "canonical" ? "track-2" : null);
+            assert.equal(row.canonical_recording_mbid, competingChange === "none" ? "recording-1" : competingChange === "canonical" ? "recording-2" : null);
+            assert.equal(row.canonical_release_mbid, competingChange === "edition" ? "another-release" : "release-1");
+            if (competingChange !== "none") assert.equal(row.verified_at, "2000-01-01");
+            assert.equal((await scan.backfillCanonicalLinksFromTags(String(artist.id))).healed, 0);
+        } finally { release(); await blocker; await work; fs.rmSync(file, { force: true }); }
+    });
+}
 
 test("repeat duplicate discovery preserves ownership without reporting another addition", async () => {
   seedCanonicalArtistGraph();
