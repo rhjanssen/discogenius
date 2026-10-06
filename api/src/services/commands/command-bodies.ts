@@ -108,6 +108,7 @@ export interface ScanWorkCheckpoint {
   result: { artists: number; orphansRemoved: number; filesIndexed: number; filesUpdated: number;
     downloadFlagsReset: number; unmappedOrphans: number };
   cleanupDone: boolean;
+  discovery?: import("../mediafiles/library-scan.js").DiscoveryResult;
 }
 
 export interface RootInventoryCheckpoint {

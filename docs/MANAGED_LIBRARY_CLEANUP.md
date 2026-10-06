@@ -213,3 +213,39 @@ filesystem checks for every file. The rebuilt final app registered two real
 stereo FLACs, including a loose file directly in the root, then completed a repeat
 scan with no additions and stable review row IDs. These traversal fixes remain
 on the cleanup branch and are not deployed to the live 2.21.0 container.
+
+## October 6 Lidarr comparison and shared scan execution
+
+The following reference flows were checked directly in the local Lidarr checkout:
+
+| Concern | Lidarr behavior | Discogenius decision |
+| --- | --- | --- |
+| Scan entry points | `MediaFiles/DiskScanService.cs` routes RescanFolders through one Scan flow with AddNewArtists in its import-decision configuration. It skips empty folders and guards unavailable/empty roots before cleaning missing records. | Manual and scheduled commands now share artist reconciliation and all-root inventory. Optional discovery settles into the checkpoint once before inventory. Empty roots cannot establish that missing owned or review files were deleted. |
+| Ownership cleanup | `MediaFiles/MediaFileTableCleanupService.cs` compares scoped TrackFiles with disk paths and removes missing records. | Recheck file absence and root health after writer admission, before removing the exact ownership row. This closes the race where a file reappears during the wait. |
+| Sidecar ownership | `Extras/Files/ExtraFile.cs` and `ExtraFileService.cs` retain artist, album and exact TrackFileId relationships; deletion events remove linked extras. | Consolidating duplicates must rebind applicable sidecars to the retained exact row, rather than invoking deletion of their parent and losing its extras. |
+| Rename collisions | `MediaFiles/RenameTrackFileService.cs` skips existing destinations and same filenames; successful renames trigger empty-subfolder cleanup. It does not resolve collisions using random suffixes or decoded-audio hashes. | Preserve collisions unless exact ownership, edition, quality and media evidence permit journaled consolidation. Count actual empty directories removed and stay within configured roots. |
+| Upgrade replacement | `MediaFiles/TrackImport/ImportApprovedTracks.cs` can remove existing album files when upgrading. | Do not copy this policy wholesale: multiple editions, stereo and spatial files may coexist here. Equal decoded audio across different editions is not deletion authority. |
+| Retag input | `MediaFiles/AudioTagService.cs` derives tags from the stored track/release/album/artist graph and local artwork. | Keep retagging on persisted canonical data and local assets. Discogenius's current apply path follows this boundary; an unused private enrichment helper remains a code-cleanup item, not an active retag dependency. |
+
+The isolated app's manual Scan Library Files action registered three generated
+FLACs: one unknown album, one loose stereo root file and one loose file in the
+disabled spatial library. Activity reported three files added for review.
+Discovery registered one and the common root inventory registered two, with
+identities for all three roots and `complete=true`. A second manual run reported
+no changes, kept all review row IDs and persisted a complete inventory again.
+New-artist discovery remains one potentially long phase; this change removes the
+alternate command execution path, not every repeated filesystem enumeration.
+It also does not implement strict deletion or audio duplicate consolidation.
+
+Forty-one focused tests passed in the Linux image, including empty-root
+preservation, files reappearing while waiting for the writer, discovery restart
+and failure, review-count accuracy and root traversal witnesses. Downloads on
+the live 2.21.0 app remain paused. This candidate has not been deployed.
+
+Final `yarn ci` passed: all 2,019 API tests and 186 frontend tests, lint,
+typechecks and builds. There were no new failing test names against the previous
+candidate; this run had no clone-deserialization retry. The scheduled-policy
+RescanFolders test also completed with the same root witnesses and no additions.
+Evidence is in the operator audit directory: `oct06-lidarr-shared-ci.log`,
+`oct06-shared-native.log`, `oct06-shared-app-checkpoints.log` and
+`oct06-shared-scan-ui.png`.

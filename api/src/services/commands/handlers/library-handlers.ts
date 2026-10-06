@@ -24,9 +24,9 @@ import { runRootInventoryWorkUnit } from "../root-inventory-work.js";
  * "scanning finished" line. When nothing changed, say so explicitly instead of
  * leaving a stale in-progress message.
  */
-function formatReconcileSummary(prefix: string, result: ScanResult): string {
+function formatReconcileSummary(prefix: string, result: ScanResult, reviewFiles = 0): string {
     const changed = result.orphansRemoved + result.filesIndexed + result.filesUpdated;
-    if (changed === 0) {
+    if (changed === 0 && reviewFiles === 0 && !result.discovery?.artistsAdded.length) {
         return `${prefix} - up to date, no file changes`;
     }
     return (
@@ -63,106 +63,77 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds.map((id) => String(id)).filter(Boolean)
         : (job.payload.artistId ? [String(job.payload.artistId)] : []);
-    const perArtist = artistIds.length > 0 && !addNewArtists;
+    const perArtist = artistIds.length > 0;
     const filter = parseScanFileFilter(
         job.payload.filter,
         perArtist ? "matched" : "known",
     );
 
-    if (!addNewArtists) {
-        const baseLabel = perArtist ? ctx.formatWorkflowCommandLabel(job, "Rescan folders") : "Scanning library root folders";
-        const scanResult = await runScanWorkUnit(job,
-            () => perArtist ? artistIds : DiskScanService.getScanArtistIds(),
-            async (artistId, cursor, total) => {
-                const progress = (fraction: number) => Math.floor(5 + ((cursor + fraction) / Math.max(total, 1)) * 85);
-                const result = await DiskScanService.scan({
-                    artistIds: [artistId], filter,
-                    trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
-                    onProgress: event => ctx.updateCommandDescription(job, {
-                        progress: progress(Math.max(0, Math.min(1, event.progress / 100)) * 0.8),
-                        description: `${baseLabel} - ${event.message} (${cursor + 1}/${total})`,
-                    }),
-                });
-                await fillSidecarMetadata([artistId], job.payload.skipMetadataBackfill,
-                    description => ctx.updateCommandDescription(job, { progress: progress(0.85), description }), baseLabel);
-                ctx.updateCommandDescription(job, {
-                    progress: progress(0.95), description: `${baseLabel} - updating artist statistics (${cursor + 1}/${total})`,
-                });
-                await ArtistStatisticsService.refreshAsync([artistId]);
-                ctx.updateCommandDescription(job, { progress: progress(1), description: `${baseLabel} - processed ${cursor + 1}/${total} artists` });
-                return result;
-            },
-            perArtist ? null : async () => {
-                if (job.payload.trackUnmappedFiles !== false) await runRootInventoryWorkUnit(job, ctx);
-                return DiskScanService.pruneUnmappedFiles();
-            },
-        );
-
-        ctx.updateCommandDescription(job, {
-            progress: 100,
-            description: formatReconcileSummary(baseLabel, scanResult)
-                + (CommandQueueManager.get(job.id)?.payload.rootInventory?.reviewFiles
-                    ? `; ${CommandQueueManager.get(job.id)!.payload.rootInventory!.reviewFiles} files added for review` : ""),
-        });
-
-        if (job.worker_id && (!CommandQueueManager.isExecutionOwner(job.id, job.worker_id)
-            || CommandQueueManager.get(job.id)?.payload.cancelRequested)) {
-            return;
-        }
-
-        for (const artistId of perArtist ? artistIds : []) {
-            appEvents.emit(AppEvent.ARTIST_SCANNED, {
-                commandId: job.id,
-                workerId: job.worker_id ?? undefined,
-                artistId,
-                artistName: job.payload.artistName ?? "",
-                workflow: job.payload.workflow,
-                monitoringCycle: job.payload.monitoringCycle,
-                skipCuration: job.payload.skipCuration ?? false,
-                skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
-                trigger: job.trigger ?? CommandTrigger.Unspecified,
-                priority: job.priority,
+    const baseLabel = perArtist ? ctx.formatWorkflowCommandLabel(job, "Rescan folders") : "Scanning library root folders";
+    const scanResult = await runScanWorkUnit(job,
+        () => perArtist ? artistIds : DiskScanService.getScanArtistIds(),
+        async (artistId, cursor, total) => {
+            const progress = (fraction: number) => Math.floor(5 + ((cursor + fraction) / Math.max(total, 1)) * 85);
+            const result = await DiskScanService.scan({
+                artistIds: [artistId], filter,
+                trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
+                onProgress: event => ctx.updateCommandDescription(job, {
+                    progress: progress(Math.max(0, Math.min(1, event.progress / 100)) * 0.8),
+                    description: `${baseLabel} - ${event.message} (${cursor + 1}/${total})`,
+                }),
             });
-        }
+            await fillSidecarMetadata([artistId], job.payload.skipMetadataBackfill,
+                description => ctx.updateCommandDescription(job, { progress: progress(0.85), description }), baseLabel);
+            ctx.updateCommandDescription(job, {
+                progress: progress(0.95), description: `${baseLabel} - updating artist statistics (${cursor + 1}/${total})`,
+            });
+            await ArtistStatisticsService.refreshAsync([artistId]);
+            ctx.updateCommandDescription(job, { progress: progress(1), description: `${baseLabel} - processed ${cursor + 1}/${total} artists` });
+            return result;
+        },
+        perArtist ? null : async () => {
+            if (job.payload.trackUnmappedFiles !== false) await runRootInventoryWorkUnit(job, ctx);
+            return DiskScanService.pruneUnmappedFiles();
+        },
+        addNewArtists ? () => DiskScanService.discoverNewArtists(
+            event => ctx.updateCommandDescription(job, {
+                progress: 90, description: `${baseLabel} - ${event.message}`,
+            }), {
+                monitorArtist: job.payload.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
+                fullProcessing: job.payload.fullProcessing ?? false,
+                trigger: job.trigger ?? CommandTrigger.Unspecified,
+            },
+        ) : undefined,
+    );
+
+    const reviewFiles = (CommandQueueManager.get(job.id)?.payload.rootInventory?.reviewFiles ?? 0)
+        + (scanResult.discovery?.reviewFilesAdded ?? 0);
+    ctx.updateCommandDescription(job, {
+        progress: 100,
+        description: formatReconcileSummary(baseLabel, scanResult, reviewFiles)
+            + (reviewFiles ? `; ${reviewFiles} file${reviewFiles === 1 ? "" : "s"} added for review` : "")
+            + (scanResult.discovery?.artistsAdded.length ? `; ${scanResult.discovery.artistsAdded.length} new artists identified` : ""),
+    });
+
+    if (job.worker_id && (!CommandQueueManager.isExecutionOwner(job.id, job.worker_id)
+        || CommandQueueManager.get(job.id)?.payload.cancelRequested)) {
         return;
     }
 
-    ctx.updateCommandDescription(job, {
-        progress: 5,
-        description: "Scanning library root folders",
-    });
-    const scanResult = await DiskScanService.scan({
-        artistIds: artistIds.length > 0 ? artistIds : undefined,
-        filter,
-        addNewArtists: addNewArtists,
-        monitorNewArtists: job.payload.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
-        fullProcessing: job.payload.fullProcessing ?? false,
-        trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
-        trigger: job.trigger ?? CommandTrigger.Unspecified,
-        onProgress: (event) => {
-            ctx.updateCommandDescription(job, {
-                progress: event.progress ?? 50,
-                description: `Scanning library root folders - ${event.message}`,
-            });
-        },
-    });
-    await fillSidecarMetadata(
-        artistIds,
-        job.payload.skipMetadataBackfill,
-        (description) => ctx.updateCommandDescription(job, { progress: 90, description }),
-        "Scanning library root folders",
-    );
-
-    ctx.updateCommandDescription(job, {
-        progress: 95,
-        description: "Scanning library root folders - updating artist statistics",
-    });
-    await ArtistStatisticsService.refreshAsync(artistIds.length > 0 ? artistIds : undefined);
-
-    ctx.updateCommandDescription(job, {
-        progress: 100,
-        description: formatReconcileSummary("Scanning library root folders", scanResult),
-    });
+    for (const artistId of perArtist ? artistIds : []) {
+        appEvents.emit(AppEvent.ARTIST_SCANNED, {
+            commandId: job.id,
+            workerId: job.worker_id ?? undefined,
+            artistId,
+            artistName: job.payload.artistName ?? "",
+            workflow: job.payload.workflow,
+            monitoringCycle: job.payload.monitoringCycle,
+            skipCuration: job.payload.skipCuration ?? false,
+            skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
+            trigger: job.trigger ?? CommandTrigger.Unspecified,
+            priority: job.priority,
+        });
+    }
 };
 
 export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) => {

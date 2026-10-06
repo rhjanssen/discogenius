@@ -82,7 +82,7 @@ test("root review persistence skips files already imported as TrackFiles", async
     "track",
   );
 
-  await persistRootReviewCandidates([{
+  const added = await persistRootReviewCandidates([{
     group: {
       id: "group-1",
       path: tempDir,
@@ -104,6 +104,7 @@ test("root review persistence skips files already imported as TrackFiles", async
       rejections: ["Manual review required after root folder scan"],
     }],
   }]);
+  assert.equal(added, 1, "only newly registered review files count as additions");
 
   const rows = db.prepare("SELECT file_path FROM UnmappedFiles ORDER BY file_path").all() as Array<{
     file_path: string;
@@ -116,11 +117,12 @@ test("root review refresh preserves the user's ignore decision", async () => {
   fs.writeFileSync(file, "unreadable media remains reviewable");
   db.prepare(`INSERT INTO UnmappedFiles (file_path,relative_path,library_root,filename,extension,file_size,ignored)
     VALUES (?, 'ignored.wav', 'music', 'ignored.wav', 'wav', 1, 1)`).run(file);
-  await persistRootReviewCandidates([{ group: {
+  const added = await persistRootReviewCandidates([{ group: {
     id: "ignored-group", path: tempDir, rootPath: tempDir, libraryRoot: "music", status: "manual_required",
     files: [{ path: file, name: "ignored.wav", size: fs.statSync(file).size, extension: ".wav" }],
     sidecars: [], commonTags: {},
   }, matches: [] }]);
+  assert.equal(added, 0, "refreshing an ignored review row is not an addition");
   assert.equal((db.prepare("SELECT ignored FROM UnmappedFiles WHERE file_path=?").get(file) as { ignored: number }).ignored, 1);
 });
 

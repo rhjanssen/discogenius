@@ -71,6 +71,46 @@ test("scan refuses changed settings before mutating the next artist", async () =
     assert.equal(queue.CommandQueueManager.get(job.id)?.payload.scanWork?.cursor, 1);
 });
 
+test("new-artist discovery settles once before resumable inventory across database reopen", async () => {
+    const job = claim("discovery-first");
+    let discoveries = 0;
+    let inventories = 0;
+    const discovery = { knownFolders: 0, totalFolders: 1, artistsAdded: [], unmatchedFolders: ["Unknown"], reviewFilesAdded: 1 };
+    const discover = async () => { discoveries++; return discovery; };
+    const scan = async () => { throw new Error("No known artists should be scanned"); };
+    const cleanup = async () => {
+        inventories++;
+        if (inventories === 1) {
+            const { CommandContinuation } = await import("./command-continuation.js");
+            throw new CommandContinuation({});
+        }
+        return 0;
+    };
+    await checkpoint(job, () => work.runScanWorkUnit(job, () => [], scan, cleanup, discover));
+    assert.equal(inventories, 0, "discovery must release admission before inventory");
+    database.dbModule.closeDatabase(); database.dbModule.initDatabase();
+    const second = claimExisting(job.id, "discovery-second");
+    await checkpoint(second, () => work.runScanWorkUnit(second, () => [], scan, cleanup, discover));
+    const third = claimExisting(job.id, "inventory-last");
+    const result = await work.runScanWorkUnit(third, () => [], scan, cleanup, discover);
+    assert.deepEqual(result.discovery, discovery);
+    assert.equal(discoveries, 1, "continuations must not repeat artist discovery or imports");
+    assert.equal(inventories, 2);
+    assert.equal(queue.CommandQueueManager.get(job.id)!.payload.scanWork!.cleanupDone, true);
+});
+
+test("failed new-artist discovery cannot complete inventory or be marked settled", async () => {
+    const job = claim("discovery-failed");
+    let inventories = 0;
+    await assert.rejects(work.runScanWorkUnit(job, () => [], async () => result(), async () => {
+        inventories++; return 0;
+    }, async () => { throw new Error("Discovery unreadable"); }), /Discovery unreadable/);
+    const plan = queue.CommandQueueManager.get(job.id)!.payload.scanWork!;
+    assert.equal(plan.discovery, undefined);
+    assert.equal(plan.cleanupDone, false);
+    assert.equal(inventories, 0);
+});
+
 test("scan cannot settle an artist after its execution owner is retired", async () => {
     const job = claim("scan-retired");
     await assert.rejects(work.runScanWorkUnit(job, () => ["one"], async () => {

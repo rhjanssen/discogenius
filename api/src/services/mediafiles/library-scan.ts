@@ -181,6 +181,8 @@ export interface DiskScanResult {
 export type { MetadataFillResult } from "./library-metadata-backfill.js";
 
 export interface DiscoveryResult {
+    /** New review rows persisted during discovery, excluding existing entries. */
+    reviewFilesAdded?: number;
     /** Folder names that matched existing DB artists (already managed) */
     knownFolders: number;
     /** New artists discovered from scanned files or TIDAL search */
@@ -455,7 +457,12 @@ export class DiskScanService {
                 const batch = missing.slice(start, start + 25);
                 unmappedOrphans += await withSqliteWriteGate(() => db.transaction(() => {
                     let removed = 0;
-                    for (const row of batch) removed += remove.run(row.id, row.file_path).changes;
+                    for (const row of batch) {
+                        if (isMissingLibraryFile({ filePath: row.file_path,
+                            relativePath: row.relative_path, libraryRoot: row.library_root })) {
+                            removed += remove.run(row.id, row.file_path).changes;
+                        }
+                    }
                     return removed;
                 })(), "scan:unmapped-cleanup");
             }
@@ -899,9 +906,13 @@ export class DiskScanService {
             if (!isMissingLibraryFile({ filePath: row.file_path, libraryRoot: row.library_root, relativePath: row.relative_path })) continue;
 
             // File is gone — remove DB record
-            const changed = await withSqliteWriteGate(() => db.prepare(`
-                DELETE FROM TrackFiles WHERE id = ? AND artist_metadata_id = ? AND file_path = ?
-            `).run(row.id, artistId, row.file_path).changes, "scan:orphaned-file");
+            const changed = await withSqliteWriteGate(() => {
+                if (!isMissingLibraryFile({ filePath: row.file_path, libraryRoot: row.library_root,
+                    relativePath: row.relative_path })) return 0;
+                return db.prepare(`
+                    DELETE FROM TrackFiles WHERE id = ? AND artist_metadata_id = ? AND file_path = ?
+                `).run(row.id, artistId, row.file_path).changes;
+            }, "scan:orphaned-file");
             if (!changed) continue;
             LibraryFilesService.emitFileDeleted({
                 libraryFileId: row.id,
@@ -1693,7 +1704,7 @@ export class DiskScanService {
      *
      * @param onProgress Optional callback for progress reporting (SSE etc.)
      */
-    private static async discoverNewArtists(
+    static async discoverNewArtists(
         onProgress?: (event: DiscoveryProgress) => void,
         options?: { monitorArtist?: boolean; fullProcessing?: boolean; trigger?: number },
     ): Promise<DiscoveryResult> {
@@ -1825,7 +1836,7 @@ export class DiskScanService {
                 });
             },
         });
-        await persistRootReviewCandidates(reviewCandidates);
+        result.reviewFilesAdded = await persistRootReviewCandidates(reviewCandidates);
         const autoImported = importer.getAutoImported();
         onProgress?.({
             phase: "import",
