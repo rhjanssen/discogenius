@@ -393,6 +393,8 @@ export type RenamePreviewItem = {
   expected_path: string | null;
   needs_rename: boolean;
   conflict: boolean;
+  /** Selectable candidate; Apply must prove exact edition/quality/audio equality. */
+  verify_duplicate?: boolean;
   /** When set, Apply will drop this file as a same-stem duplicate instead of renaming. */
   drop_duplicate?: boolean;
   missing: boolean;

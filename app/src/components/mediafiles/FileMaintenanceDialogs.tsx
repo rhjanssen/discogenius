@@ -45,6 +45,7 @@ export interface RenamePreviewItem {
   needs_rename: boolean;
   missing: boolean;
   conflict: boolean;
+  verify_duplicate?: boolean;
   drop_duplicate?: boolean;
   conflict_message?: string;
 }
@@ -348,7 +349,7 @@ function usePreviewSelection<T extends { id: number }>(
 }
 
 const selectableRename = (item: RenamePreviewItem) =>
-  !item.missing && !item.conflict && (item.needs_rename || Boolean(item.drop_duplicate));
+  !item.missing && (!item.conflict || Boolean(item.verify_duplicate)) && (item.needs_rename || Boolean(item.drop_duplicate));
 const selectableRetag = (item: RetagPreviewItem) => !item.missing && !item.error && item.changes.length > 0;
 
 export function RenamePreviewDialog({
@@ -370,6 +371,7 @@ export function RenamePreviewDialog({
 }) {
   const styles = useStyles();
   const selection = usePreviewSelection(open, items, selectableRename);
+  const hasDuplicateChecks = items.some(item => item.verify_duplicate && selection.selectedIds.has(item.id));
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)}>
@@ -483,7 +485,7 @@ export function RenamePreviewDialog({
               disabled={applying || selection.selectedIds.size === 0}
               onClick={() => onApply(Array.from(selection.selectedIds))}
             >
-              {applyLabel} ({selection.selectedIds.size})
+              {hasDuplicateChecks ? "Rename / verify selected files" : applyLabel} ({selection.selectedIds.size})
             </Button>
           </DialogActions>
         </DialogBody>

@@ -249,3 +249,62 @@ RescanFolders test also completed with the same root witnesses and no additions.
 Evidence is in the operator audit directory: `oct06-lidarr-shared-ci.log`,
 `oct06-shared-native.log`, `oct06-shared-app-checkpoints.log` and
 `oct06-shared-scan-ui.png`.
+
+## October 6 verified audio consolidation candidate
+
+Rename apply now distinguishes a verifiable same-edition stereo duplicate from
+an ordinary collision. The candidate must have matching exact canonical track,
+edition, recording, artist and library identities; those identities must agree
+with the current catalogue graph. Local quality facts must agree. Both files
+must probe as one lossless FLAC/ALAC stereo stream with matching codec, sample
+rate and bit depth, and their complete decoded 32-bit PCM hashes must match.
+Providers are not identity evidence. Different editions or spatial files are
+not consolidated. Unsupported or ambiguous candidates remain conflicts.
+
+Decoding happens outside database writer admission under both media-file locks.
+The source is staged through FileMutationJournal. Exact source/destination row
+snapshots and filesystem witnesses are checked again inside the transaction.
+MetadataFiles, LyricFiles and ExtraFiles references transfer to the retained
+TrackFiles ID before deleting the source row. Sidecar row IDs and library links
+are preserved; the expanded rename selection then handles their physical moves.
+The journal settles the staged deletion and empty-parent pruning counts actual
+directories removed. A failed transaction restores the source and associations.
+
+The rename preview now lets users select matching ownership candidates for
+verification. Its message says the destination is kept only after equal audio
+is proved; it does not label a candidate as an already proved duplicate. Ordinary
+conflicts remain disabled. A frontend interaction test verifies selection and
+the submitted ID, alongside active-schema tests for different editions, spatial
+slots, missing identity, incompatible sample/bit-depth facts, different samples,
+destination changes, transaction rollback and repeat behavior.
+
+The rebuilt Linux image passed 50 rename/journal tests. Actual-app testing used
+generated FLACs with equal audio and different comments plus a linked lyric. An
+initial fixture ownership error refused hard links and preserved both files;
+after correcting ownership to the app user, the UI queued and completed rename.
+The destination retained TrackFiles ID 2, the lyric retained its row ID and moved
+with track_file_id=2, the Imports folder disappeared, and the journal was empty.
+A repeat rename preview had no changes. The app then retagged that retained file,
+writing the fixture canonical identifiers and lyrics; ffprobe confirmed the
+tags and a repeat preview had no changes. Its decoded PCM SHA-256 matched a
+reproduced original fixture. Evidence: `oct06-audio-app-proof.log`,
+`oct06-audio-retag-ui.png`, `oct06-audio-duplicate-final-native.log`.
+
+These changes remain a candidate, not a live cleanup result. The seven verified
+live duplicate pairs still require controlled deployment, fresh ownership
+proof and consolidation; the two stale retained edition tags require retagging.
+Strict unowned-file cleanup and full-library artwork acceptance remain open.
+
+Robert's current goal additionally authorizes removing unresolved Unmapped media
+at the final managed-library reconciliation, after identification has been
+attempted and the complete inventory is validated. Treat this as an explicit
+one-time disposition, separate from the ordinary strict setting that protects
+Unmapped review media. Record exact paths and outcomes rather than silently
+changing the default policy for future scans. The download queue may be cleared
+and resumed only after cleanup, library-wide rename/retag and their acceptance
+checks establish the requested clean live library.
+
+Final full `yarn ci` passed with all 2,029 API tests and 187 frontend tests,
+lint, typechecks and builds. No clone retries or failing test names occurred.
+`oct06-audio-duplicate-final-ci.log` records this final source version; the
+earlier CI log predates the preview action and is not its acceptance evidence.

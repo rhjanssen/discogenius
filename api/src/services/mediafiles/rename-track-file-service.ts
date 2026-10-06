@@ -23,6 +23,7 @@ import { normalizeResolvedPath } from "./path-utils.js";
 import { providerUnambiguousAlbumIdSql } from "../providers/provider-item-artist-scope.js";
 import { resolveArtistMbid } from "../music/managed-artists.js";
 import { FileMutationJournal } from "./file-mutation-journal.js";
+import { audioDuplicateCandidate, proveAudioDuplicate } from "./audio-duplicate-proof.js";
 import {
   buildRenameFilters,
   buildRenameStatusSummary,
@@ -312,6 +313,7 @@ export class RenameTrackFileService {
       const needsRename = Boolean(expectedPath && normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath));
 
       let conflict = false;
+      let verifyDuplicate = false;
       const dropDuplicate = false;
       let conflictMessage: string | undefined;
       if (expectedPath && needsRename) {
@@ -328,6 +330,11 @@ export class RenameTrackFileService {
         if (hasCollision) {
           conflict = true;
           conflictMessage = `Another library file already uses or targets ${expectedPath}. Apply preserves different files and removes a sidecar duplicate only after verifying identical contents.`;
+          if (tableName === "TrackFiles") {
+            const occupant = db.prepare("SELECT id FROM TrackFiles WHERE file_path=?").get(expectedPath) as { id: number } | undefined;
+            verifyDuplicate = Boolean(occupant && audioDuplicateCandidate(decoded.id, occupant.id, resolvedFilePath, expectedPath));
+            if (verifyDuplicate) conflictMessage = `Possible duplicate of ${expectedPath}. Apply verifies the audio and keeps the destination only if both files are identical audio from the same edition. Otherwise both files are preserved.`;
+          }
         }
       }
 
@@ -360,6 +367,7 @@ export class RenameTrackFileService {
         expected_path: expectedPath,
         needs_rename: needsRename && !dropDuplicate,
         conflict,
+        verify_duplicate: verifyDuplicate || undefined,
         drop_duplicate: dropDuplicate || undefined,
         missing,
         reason,
@@ -632,12 +640,15 @@ export class RenameTrackFileService {
             }
           }
 
-          if (duplicateOfSameScope && fsConflict && await sidecarContentsMatch(resolvedFilePath, expectedPath)) {
+          const audioProof = tableName === "TrackFiles" && dbConflict && fsConflict
+            ? await proveAudioDuplicate(decoded.id, dbConflict.id, resolvedFilePath, expectedPath) : null;
+          if (audioProof || (duplicateOfSameScope && fsConflict && await sidecarContentsMatch(resolvedFilePath, expectedPath))) {
             pendingIntent = await FileMutationJournal.prepare(tableName, decoded.id, row.file_path, resolvedFilePath, null);
             const stagedPath = await FileMutationJournal.move(pendingIntent);
             // Admission may have yielded since the first comparison. Verify the
             // actual staged bytes and retain witnesses through the DB commit.
-            if (!await sidecarContentsMatch(stagedPath, expectedPath)) {
+            if (audioProof) audioProof.assertUnchanged(stagedPath);
+            else if (!await sidecarContentsMatch(stagedPath, expectedPath)) {
               throw new Error("Duplicate sidecar changed before deletion; preserving the source");
             }
             const stagedIdentity = sidecarFileIdentity(stagedPath);
@@ -648,6 +659,16 @@ export class RenameTrackFileService {
               sourceRoot: resolveLibraryRootPath(row.library_root, resolvedFilePath),
               id,
             };
+            if (audioProof) {
+              // Preserve exact extra-file identities and all their library links.
+              // The expanded rename selection will move these sidecars afterward.
+              for (const extraTable of ["MetadataFiles", "LyricFiles", "ExtraFiles"]) {
+                dbUpdates.push({ sql: `UPDATE ${extraTable} SET track_file_id = ? WHERE track_file_id = ?`,
+                  args: [audioProof.retainedId, decoded.id] });
+              }
+              dbUpdates.push({ sql: "UPDATE TrackFiles SET expected_path = ?, needs_rename = 0 WHERE id = ?",
+                args: [expectedPath, audioProof.retainedId] });
+            }
             dbUpdates.push({
               sql: `DELETE FROM ${tableName} WHERE ${idCol} = ?`,
               args: [decoded.id],
@@ -662,12 +683,14 @@ export class RenameTrackFileService {
                 deletedPath: resolvedFilePath,
                 replacementPath: expectedPath,
                 fileType: row.file_type,
-                reason: row.file_type === "lyrics"
+                retainedFileId: audioProof?.retainedId,
+                reason: audioProof ? "verified-same-edition-audio-duplicate" : row.file_type === "lyrics"
                   ? "lyric-sidecar-duplicate"
                   : "merged-root-sidecar-duplicate",
               },
             });
             await commitRenameRecords(dbUpdates, historyEvents, pendingIntent, () => {
+              audioProof?.assertUnchanged(stagedPath);
               if (sidecarFileIdentity(stagedPath) !== stagedIdentity
                 || sidecarFileIdentity(expectedPath) !== destinationIdentity) {
                 throw new Error("Duplicate sidecar changed before commit; preserving the source");

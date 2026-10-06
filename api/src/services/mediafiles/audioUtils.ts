@@ -55,7 +55,7 @@ function resolveFfmpegBinary(): string {
     return override;
 }
 
-export { resolveFfmpegBinary };
+export { resolveFfmpegBinary, resolveFfprobeBinary };
 
 function resolveFfprobeBinary(): string {
     const override = process.env.FFMPEG_PATH;
