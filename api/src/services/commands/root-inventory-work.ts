@@ -20,6 +20,37 @@ function within(directory: string, root: string): boolean {
     return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
 }
 
+function directoryIdentity(directory: string): { dev: string; ino: string } {
+    const stats = fs.lstatSync(directory, { bigint: true });
+    if (stats.isSymbolicLink() || !stats.isDirectory()) throw new Error(`Inventory directory changed: ${directory}`);
+    return { dev: String(stats.dev), ino: String(stats.ino) };
+}
+
+function assertDirectory(directory: string, root: string, expected?: { dev: string; ino: string },
+    expectedRoot?: { dev: string; ino: string } | null) {
+    // Check before reading, including empty directories. realpath alone allows
+    // a replacement link to another directory inside the same library root.
+    let ancestor = directory;
+    const identity = directoryIdentity(directory);
+    let rootIdentity = identity;
+    while (path.relative(root, ancestor) !== "") {
+        const parent = path.dirname(ancestor);
+        if (parent === ancestor || !within(parent, root)) throw new Error(`Inventory directory escaped its library root: ${directory}`);
+        rootIdentity = directoryIdentity(parent);
+        ancestor = parent;
+    }
+    if (expectedRoot && (rootIdentity.dev !== expectedRoot.dev || rootIdentity.ino !== expectedRoot.ino)) {
+        throw new Error(`Inventory directory replaced during scan: ${root}`);
+    }
+    if (!within(fs.realpathSync(directory), fs.realpathSync(root))) {
+        throw new Error(`Inventory directory escaped its library root: ${directory}`);
+    }
+    if (expected && (identity.dev !== expected.dev || identity.ino !== expected.ino)) {
+        throw new Error(`Inventory directory replaced during scan: ${directory}`);
+    }
+    return identity;
+}
+
 /** Complete filesystem coverage after artist reconciliation. Only previously
  * unowned media is parsed; unchanged library/review files need no native probe.
  * This is an inventory, never authorization to delete unsupported files. */
@@ -46,8 +77,16 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
         }
     }, "scan:root-inventory-checkpoint");
     if (!state) {
-        state = { version: 1, roots, pending: roots.map((_, root) => ({ root, directory: roots[root].path })),
-            current: null, directories: 0, files: 0, reviewFiles: 0, missingRoots: [], complete: false };
+        const rootIdentities = roots.map(root => {
+            try { return directoryIdentity(root.path); }
+            catch (error) {
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+                throw error;
+            }
+        });
+        state = { version: 1, roots, rootIdentities, pending: roots.map((_, root) => ({ root, directory: roots[root].path })),
+            current: null, directories: 0, files: 0, reviewFiles: 0,
+            missingRoots: roots.filter((_, index) => !rootIdentities[index]).map(root => root.path), complete: false };
         await persist();
     }
     if (state.version !== 1 || JSON.stringify(state.roots) !== JSON.stringify(roots)
@@ -70,6 +109,14 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
             throw new Error("Invalid root inventory file cursor");
         }
     }
+    const assertRoot = (index: number) => {
+        const identity = state.rootIdentities?.[index];
+        if (identity) assertDirectory(roots[index].path, roots[index].path, identity);
+    };
+    if (state.rootIdentities) {
+        if (state.rootIdentities.length !== roots.length) throw new Error("Invalid root inventory identities");
+        roots.forEach((_, index) => assertRoot(index));
+    }
     if (state.complete) return state;
     const owned = db.prepare(`SELECT 1 FROM TrackFiles WHERE file_path = ?
         UNION ALL SELECT 1 FROM MetadataFiles WHERE file_path = ?
@@ -84,16 +131,17 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
             const next = state.pending.pop();
             if (!next) { state.complete = true; break; }
             const root = roots[next.root];
-            let stats: fs.Stats;
-            try { stats = fs.lstatSync(next.directory); }
+            let identity: { dev: string; ino: string };
+            try { identity = assertDirectory(next.directory, root.path, undefined, state.rootIdentities?.[next.root]); }
             catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-                if (next.directory === root.path) state.missingRoots.push(root.path);
+                if (next.directory !== root.path) throw new Error(`Inventory directory disappeared during scan: ${next.directory}`, { cause: error });
+                if (!state.missingRoots.includes(root.path)) state.missingRoots.push(root.path);
                 processed++;
                 continue;
             }
-            if (stats.isSymbolicLink() || !stats.isDirectory()) throw new Error(`Inventory directory changed: ${next.directory}`);
             const entries = fs.readdirSync(next.directory, { withFileTypes: true });
+            assertDirectory(next.directory, root.path, identity, state.rootIdentities?.[next.root]);
             const files: string[] = [];
             for (const entry of entries) {
                 if (entry.isDirectory() && !excludedDirectories.has(entry.name.toLowerCase())) {
@@ -101,18 +149,16 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
                     if (!roots.some(other => other.path === directory)) state.pending.push({ root: next.root, directory });
                 } else if (entry.isFile()) files.push(entry.name);
             }
-            state.current = { ...next, files, cursor: 0 };
+            state.current = { ...next, files, cursor: 0, identity };
             state.directories++;
             processed++;
         }
         const current = state.current;
+        const root = roots[current.root];
+        assertDirectory(current.directory, root.path, current.identity, state.rootIdentities?.[current.root]);
         if (current.cursor === current.files.length) { state.current = null; continue; }
         const name = current.files[current.cursor];
         const file = path.join(current.directory, name);
-        const root = roots[current.root];
-        if (!within(fs.realpathSync(current.directory), fs.realpathSync(root.path))) {
-            throw new Error(`Inventory directory escaped its library root: ${current.directory}`);
-        }
         const ext = path.extname(name).toLowerCase();
         if (SUPPORTED_IMPORT_EXTENSIONS.has(ext) && !isMediaRewriteTemporaryName(name)
             && !owned.get(file, file, file, file) && !reviewed.get(file)) {

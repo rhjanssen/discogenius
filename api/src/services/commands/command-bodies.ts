@@ -113,8 +113,10 @@ export interface ScanWorkCheckpoint {
 export interface RootInventoryCheckpoint {
   version: 1;
   roots: Array<{ key: "music" | "spatial" | "videos"; path: string }>;
+  rootIdentities?: Array<{ dev: string; ino: string } | null>;
   pending: Array<{ root: number; directory: string }>;
-  current: { root: number; directory: string; files: string[]; cursor: number } | null;
+  current: { root: number; directory: string; files: string[]; cursor: number;
+    identity?: { dev: string; ino: string } } | null;
   directories: number;
   files: number;
   reviewFiles: number;

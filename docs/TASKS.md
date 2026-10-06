@@ -185,7 +185,11 @@ The measured ownership problems and remaining acceptance gates are in
   no new assertion failures. These fixes are on codex/managed-library-cleanup,
   not live 2.21.0.
 - live validation, October 6: all eight failed catalog refreshes (15508-15515)
-  completed on 2.21.0. Root scan 15506 advanced to artist 277/518. A fresh audio
+  completed on 2.21.0. Root scan 15506 completed with 187 additions, 61 updates,
+  no removals and 26 new review files. Its root inventory checked 63,445 files
+  across 3,802 directories with no missing roots. Activity shows completion and
+  no active jobs; Unmapped shows 79 files, including grouped Bastille mixtapes.
+  Downloads remain paused. A fresh audio
   audit of the eight earlier rename conflicts found seven equal decoded PCM
   pairs (32-bit decode hash; both sources 16-bit FLAC), two with differing
   edition tags, and one absent destination. All seven destinations are now
@@ -196,7 +200,9 @@ The measured ownership problems and remaining acceptance gates are in
 
 - in progress: implement the inventory-before-deletion contract in MANAGED_LIBRARY_CLEANUP.md. Keep delete-untracked, delete-empty and remove-unmonitored policies separate.
 - locally validated: routine scans include unambiguously identified plain-name artist siblings and register unmatched media for review.
-- locally validated: resumable whole-root inventory registers loose and unknown-folder media, preserves ignored review entries, and uses indexed ownership checks. Orphan pruning preserves records when their root is unavailable. Not deployed.
+- live 2.21.0: resumable whole-root inventory registers loose and unknown-folder media, preserves ignored review entries, and uses indexed ownership checks. Orphan pruning preserves records when their root is unavailable.
+- locally validated, October 6: root inventory rejects disappeared subdirectories and replacement roots/current directories, persists filesystem identity across continuations, and checks containment and ancestor links before reading empty directories. Roots absent at scan start remain marked missing if they reappear. Ten active-schema checks passed on Windows and native Linux; final full CI passed with no new failing names and the known provider-registry clone failure passing its isolated retry. The rebuilt app registered real stereo FLACs and a repeat preserved review row IDs with no additions. Legacy checkpoints lack this new identity evidence; an empty failed mount still needs a separate health gate. Candidate is not deployed.
+- confirmed in actual app, October 6: the dashboard Scan Library Files action queues addNewArtists=true through mediaFile/scan-roots and uses the legacy discovery handler. The RescanFolders system task queues addNewArtists=false and uses the resumable inventory. Consolidate filesystem coverage and completion evidence while preserving the explicit new-artist discovery policy. The legacy scan can report no file changes after adding Unmapped rows; fix that summary too. A legacy command's completed status is not sufficient evidence for strict deletion.
 - pending: automatic canonical identification of media in unknown folders, grouped unmapped album review, exact sidecar ownership and bounded journaled strict cleanup before enabling that policy. An empty mount point must not count as a healthy root.
 - pending: after Discogenius reconciliation, snapshot Lidarr and test read-only rescans on Bastille/Bakermat before library-wide edition reassignment.
 - pending: audit scan counter accuracy and repeat work. Live command 15214 completed all 518 artists on October 4 at 20:45 UTC (592 indexed, 21,048 updated, none removed). Scheduled follow-up 15496 already reports 9 indexed and 35 updated after 3 artists. Duplicate-extra re-evaluation increments indexed even when an existing row is upserted; distinguish new owned files from reclassification, and verify why file facts change on the repeat before declaring the scan idempotent. The mutation journal is empty and downloads remain paused.

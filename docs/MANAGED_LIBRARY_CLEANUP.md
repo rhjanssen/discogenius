@@ -74,10 +74,9 @@ preserved an ignored file and an unsupported JSON file, and added nothing on a
 repeat scan. The app displayed both review rows and opened the correct album
 directory in Manual Import. Active-schema tests also cover restart recovery,
 concurrent import, inaccessible directories, unavailable roots and symlinks.
-Full CI passed 1,970 backend and 186 frontend tests. These changes are locally
-validated and have not been deployed. Album-group presentation, automatic
-identification of unknown folders, complete sidecar ownership and strict cleanup
-remain release gates.
+Full CI passed 1,970 backend and 186 frontend tests before these inventory changes
+shipped in 2.21.0. Automatic identification of unknown folders, complete sidecar
+ownership and strict cleanup remain release gates.
 
 ## Lidarr as a secondary index
 
@@ -113,8 +112,8 @@ owning writes while Lidarr provides the secondary database.
 ## October 6 cleanup hardening
 
 The next full rename/retag and cleanup is explicitly authorized once its
-prerequisites pass. The current root inventory is still running; strict cleanup
-is not implemented and must not be substituted with remove-unmonitored cleanup.
+prerequisites pass. Strict cleanup is not implemented and must not be substituted
+with remove-unmonitored cleanup.
 
 On `codex/managed-library-cleanup`, empty-parent pruning now returns the actual
 removal count, never removes the configured root, stops at retained files and
@@ -158,3 +157,59 @@ The final full CI completed with no new assertion failures. A provider-registry
 clone-deserialization failure passed its isolated retry. All 186 frontend tests,
 lint, types and builds passed. These candidate fixes remain undeployed until the
 broader cleanup and duplicate-consolidation requirements are satisfied.
+
+## October 6 completed live inventory and traversal checks
+
+Live root scan 15506 completed on 2.21.0. Its persisted inventory reports 63,445
+files, 3,802 directories, 26 new review files and no missing roots. Artist
+reconciliation reported 187 additions, 61 updates and no removals. The actual
+Activity view shows completion and no active jobs. Unmapped shows 79 files,
+including grouped Bastille mixtape folders. The latest 26 review rows span ten
+directories; a read-only audit found no JPG/PNG/WebP/NFO/LRC/SRT/TXT sidecars in
+those directories. This bounded check is not a whole-library sidecar audit.
+Downloads remain paused, with no active downloads or imports. The last 45
+minutes of container logs showed no new scan or writer errors.
+
+The cleanup candidate now rejects a discovered directory disappearing rather
+than silently finishing without its contents. It checks ancestor links and
+containment before listing directories, including empty ones. Root device/inode
+identities and the current directory identity survive continuations; replacing
+either invalidates the stored cursor. A root missing when inventory starts stays
+recorded as missing even if it reappears later. Existing checkpoints without
+these witnesses remain readable, but cannot supply the new identity evidence
+for a future deletion gate. Detecting an empty failed mount and rechecking the
+full inventory before deletion still require further work.
+
+Actual-app testing also confirmed a remaining scan split. The dashboard Scan
+Library Files action uses mediaFile/scan-roots with addNewArtists=true, entering
+the older discovery handler. The RescanFolders system task uses the resumable
+inventory with addNewArtists=false. The former registered an unknown album FLAC
+but reported no file changes, and produced no rootInventory checkpoint. The
+latter registered a FLAC directly in the root, persisted witnesses for all three
+roots and reported its new review entry. Its repeat added nothing, kept the
+ignored review decision, retained the unsupported JSON file and preserved the
+album FLAC's SHA-256. Activity and Unmapped showed the actual results. Shared
+coverage/completion evidence and truthful discovery counts remain required;
+legacy completion must not be treated as deletion authorization.
+
+The reference Lidarr DiskScanService routes RescanFolders through one Scan
+method with AddNewArtists passed into the shared import decision configuration.
+It checks the configured root before cleaning a missing artist folder, and skips
+an empty scan folder before cleaning its media records. See
+`.ref_lidarr/src/NzbDrone.Core/MediaFiles/DiskScanService.cs`, Scan and Execute.
+Use that common execution structure here: persist new-artist discovery as a
+phase, reconcile artists with the existing bounded scan work, then complete the
+same all-root inventory. Preserve AddNewArtists as an identification policy,
+not a switch to a separate uncheckpointed traversal. An empty root with existing
+ownership needs to block orphan-record pruning as well as strict file deletion;
+genuinely unused empty roots need not prevent reviewing other healthy roots.
+
+Ten active-schema inventory tests passed on Windows and in the final native
+Linux image. The final full CI passed with no newly failing test names against
+the previous candidate; the same provider-registry clone-deserialization failure
+passed its isolated retry. Lint, types, builds and all 186 frontend tests passed.
+The root witness is verified using the ancestor checks, avoiding separate root
+filesystem checks for every file. The rebuilt final app registered two real
+stereo FLACs, including a loose file directly in the root, then completed a repeat
+scan with no additions and stable review row IDs. These traversal fixes remain
+on the cleanup branch and are not deployed to the live 2.21.0 container.
