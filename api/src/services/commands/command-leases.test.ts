@@ -679,6 +679,13 @@ test("planned shutdown drains a running work unit and refuses new admission", as
     const fixtureUrl = new URL(`./worker/command-worker-liveness.fixture${fixtureExt}`, import.meta.url);
     poolModule.CommandWorkerPool.configureTestWorkerEntry(fixtureUrl.href);
     poolModule.CommandWorkerPool.start();
+    // Cold tsx/module startup can exceed the short drain deadline on Windows.
+    // Complete one unit first so this checks an executing worker's drain,
+    // rather than timing the loader against a production-independent 3s limit.
+    const warmId = queueCommand("complete", 0);
+    const warmJob = claim(warmId, "drain-warmup", new Date(), 10_000);
+    await poolModule.CommandWorkerPool.run(warmJob, { leaseMs: 10_000, heartbeatMs: 50 });
+    assert.equal(queueModule.CommandQueueManager.complete(warmId, "drain-warmup"), true);
     const id = queueCommand("complete", 80);
     const job = claim(id, "drain-owner", new Date(), 2_000);
     const running = poolModule.CommandWorkerPool.run(job, { leaseMs: 2_000, heartbeatMs: 50 });

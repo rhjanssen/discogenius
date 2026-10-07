@@ -812,3 +812,38 @@ Catalogue warmers still retain originals; global proxy-only behavior, complete
 legacy-state migration and Jellyfin role ownership are pending.
 
 Full candidate CI passes 2,088 API and 187 frontend tests, lint, typechecks and both builds, without failing names or clone retries.
+## October 7 Jellyfin artwork ownership follow-up
+
+Jellyfin ImageSaver.cs uses backdrop, backdrop1, backdrop2 and subsequent indexes
+for backgrounds, cdart for music-album discs, and role basenames such as logo and
+landscape. Inventory now recognizes those assets. Shared role names resolve first
+against an exact artist-directory identity, otherwise against unambiguous physical
+edition siblings. They retain their basename and exact MetadataFiles identity
+through rename; unknown or conflicting scopes remain unresolved and Unmapped
+companions remain protected. This recognizes existing files, not a policy to fetch
+unlimited background variants. Generation/fetch limits and durable role selection
+still require implementation.
+
+The 83 inventory/cleanup checks pass on Windows; native Linux passes 82 with one
+Windows-only skip and no failures. The candidate Docker image builds. The regression
+covers artist/edition separation, numbered basenames through relocation, repeated
+inventory, conflicting editions, and review companions.
+
+Read-only live recheck confirms healthy 2.21.0, downloads paused, zero active
+downloads/imports, and scheduled artist refreshes active. Recent failed refreshes
+15767 (a-ha) and 15768 (Dirty Honey) reproduce known obsolete-track references in
+ProviderTrackMatches/AcquisitionPlanTracks. Refresh 15766 (Cliff Richard) has the
+same provider-match conflict for edition 5b198534-a6de-434a-a7ce-e5195311e45a and
+track 098eebc2-4c39-435c-af68-91781fb35486. Add this to the reconciliation cases;
+these are not fixed by deleting history or abandoning acquisition plans. No live
+file mutations or deployment in this validation round.
+
+Actual-app scan 8 linked seven Jellyfin-role fixtures with exact artist/edition ownership and unchanged image bytes, retaining the review album background. Repeat scan 9 kept row IDs and all image hashes, with zero foreign-key violations; Activity reported up to date, no file changes. The fixture's unrelated scheduled artist refresh fails because its deliberately non-UUID artist ID is not a MusicBrainz ID. Both disposable containers and their anonymous volumes were removed.
+
+The first whole-suite role validation failed only planned shutdown drains a running work unit and refuses new admission. It reproduced alone: cold Windows tsx worker startup exceeded the test-only three-second drain deadline. The regression now completes a warm-up unit before testing active drain and rejected new admission. The isolated command lease suite passes after that change; production drain behavior/timeouts are unchanged. Final full CI is being rerun; the earlier failed run must not be reported as green.
+
+An attempt to run the worker fixture suite in the production image fails because the test override always loads its tsx bootstrap and production intentionally omits that dev dependency. This is a test-environment mismatch, not proof of a production worker failure; use the builder stage with dev dependencies for that suite. The artwork/inventory native checks do run successfully in the production image.
+
+The Linux builder-stage worker lease suite passes all 26 checks, including active drain, refused new admission, death recovery and capacity restoration. Windows isolated lease validation also passes all 26 after separating cold loader startup from the short active-drain assertion.
+
+Final full CI after the worker test correction passes 2,089 API and 187 frontend tests, lint, typechecks and both builds with no failing names or clone retries. This supersedes the failed preliminary run; it is not live deployment acceptance.

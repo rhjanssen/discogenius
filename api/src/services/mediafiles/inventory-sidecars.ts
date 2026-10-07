@@ -85,12 +85,16 @@ export function inspectInventorySidecar(file: string, root: string, siblings: st
         UNION ALL SELECT 1 FROM UnmappedFiles WHERE file_path=? LIMIT 1`).get(file,file,file)) {
         return { status: "owned" };
     }
-    const secondaryArtistImage=image && /^(banner|fanart|logo|landscape|clearart|clearlogo)\.(png|jpe?g|webp)$/.test(name);
-    const secondaryAlbumImage=image && /^(cover|disc|discart|back|spine)\.(png|jpe?g|webp)$/.test(name) && !folderCover;
+    // Jellyfin saves music backgrounds as backdrop, backdrop1, backdrop2,
+    // etc. These roles can belong to either an artist or an edition: prefer
+    // an exact artist directory, otherwise require unambiguous media siblings.
+    const sharedArtwork=image && /^(banner|fanart|backdrop\d*|logo|landscape|clearart|clearlogo)\.(png|jpe?g|webp)$/.test(name);
+    const secondaryArtistImage=sharedArtwork;
+    const secondaryAlbumImage=image && (sharedArtwork || /^(cover|disc|discart|cdart|back|spine)\.(png|jpe?g|webp)$/.test(name)) && !folderCover;
     const artistAsset = name === "artist.nfo" || secondaryArtistImage || (image && name === (metadata.artist_picture_name || "folder.jpg").toLowerCase());
     const artistScope = artistAsset ? artistFolderScope(file,root) : undefined;
     if (artistScope && artistScope.status !== "identified") return artistScope;
-    if ((name === "artist.nfo" || secondaryArtistImage) && !artistScope) return { status: "unresolved" };
+    if (name === "artist.nfo" && !artistScope) return { status: "unresolved" };
     const candidates = siblings.map(value => path.resolve(value)).filter(value => value !== file
         && path.dirname(value) === path.dirname(file) && SUPPORTED_IMPORT_EXTENSIONS.has(path.extname(value).toLowerCase())
         && (folderCover || folderNfo || secondaryAlbumImage || path.parse(value).name === stem));

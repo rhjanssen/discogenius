@@ -98,6 +98,41 @@ test("unresolved secondary artwork is retained for ownership review rather than 
     assert.equal(inspect(file("Unknown/discart.png"),[]).status,"unresolved");
     assert.equal(inspect(file("Unknown/holiday.jpg"),[]).status,"not_sidecar");
 });
+
+test("Jellyfin artwork roles follow exact artist or edition ownership and preserve numbered basenames",async()=>{
+    await artistPath("Artist");
+    const owner=track("Artist/Edition/01 Song.flac");
+    for (const name of ["backdrop.jpg","backdrop1.png","logo.webp","landscape.jpg"]) {
+        const artistArt=file(`Artist/${name}`),albumArt=file(`Artist/Edition/${name}`);
+        assert.equal(await reconcile(artistArt,[]),true);
+        assert.equal(await reconcile(albumArt,[owner.path]),true);
+        const rows=database.db.prepare("SELECT file_path,file_type,canonical_release_mbid,track_file_id FROM MetadataFiles WHERE file_path IN (?,?) ORDER BY file_path")
+            .all(artistArt,albumArt) as Array<{file_path:string;file_type:string;canonical_release_mbid:string|null;track_file_id:number|null}>;
+        assert.equal(rows.length,2);
+        for(const row of rows) {
+            assert.equal(row.file_type,"artwork");assert.equal(row.track_file_id,null);
+            assert.equal(row.canonical_release_mbid,row.file_path===artistArt ? null : "edition-1");
+        }
+        assert.equal(await reconcile(artistArt,[]),false);assert.equal(await reconcile(albumArt,[owner.path]),false);
+        assert.equal(inspect(file(`Unknown/${name}`),[]).status,"unresolved");
+    }
+    assert.equal(await reconcile(file("Artist/Edition/cdart.png"),[owner.path]),true);
+    assert.equal(inspect(file("Unknown/cdart.png"),[]).status,"unresolved");
+    const conflicting=track("Artist/Edition/02 Other.flac",2);
+    assert.equal(inspect(file("Artist/Edition/backdrop2.jpg"),[owner.path,conflicting.path]).status,"unresolved");
+    const review=file("Review/Unknown.flac"),reviewArt=file("Review/backdrop1.jpg");
+    database.db.prepare("INSERT INTO UnmappedFiles(file_path,relative_path,filename,extension,library_root,ignored) VALUES (?,'Review/Unknown.flac','Unknown.flac','flac','music',0)").run(review);
+    assert.equal(inspect(reviewArt,[review]).status,"review_sidecar");
+    const before=database.db.prepare("SELECT id,file_path FROM MetadataFiles ORDER BY id").all() as Array<{id:number;file_path:string}>;
+    const {RenameTrackFileService}=await import("./rename-track-file-service.js");
+    const result=await RenameTrackFileService.executeRenameFiles(before.map(row=>10000000+row.id));
+    assert.equal(result.errors.length,0);
+    for (const row of before) {
+        const moved=database.db.prepare("SELECT file_path FROM MetadataFiles WHERE id=?").get(row.id) as {file_path:string};
+        assert.equal(path.basename(moved.file_path),path.basename(row.file_path));
+        assert.ok(fs.existsSync(moved.file_path));
+    }
+});
 test("artist basename, library-root assets and album-level folder images do not invent artist ownership",async()=>{
     await artistPath("Custom/Artist");
     assert.equal(inspect(file("Artist/artist.nfo"),[]).status,"unresolved");
