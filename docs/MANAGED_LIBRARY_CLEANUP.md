@@ -752,3 +752,29 @@ Validation evidence in the temporary release audit directory:
 The live container was rechecked as healthy 2.21.0 at revision f4e46cbe83cc;
 the candidate was not released or deployed, and no live cache/library mutation
 was performed during this validation.
+
+## Local Jellyfin and Lidarr artwork comparison
+
+Rechecked both read-only references after Robert's reminder. Jellyfin's
+MediaBrowser.Providers/Manager/ItemImageProvider.cs skips provider work when
+enabled roles and limits are satisfied, fills missing singular roles, and treats
+replacement as an explicit refresh operation. Multi-image roles have configured
+limits and minimum widths. Adopt those decisions for bounded role fetching rather
+than repeatedly downloading all remote artwork during ordinary scans.
+
+Jellyfin's ImageSaver.cs chooses media-side or internal storage, retains role and
+index, and uses folder for music primary art, cdart for album disc art, backdrop
+for backgrounds, clearart/back/landscape and type-derived names for other roles.
+It saves bytes before changing the item's image path and retiring the prior
+asset, and reports its own filesystem changes to the library monitor. Adopt the
+role/path association and own-mutation coordination principles. Keep our staged
+atomic replacements; Jellyfin's direct FileMode.Create write is not a reason to
+discard that protection. Its retry into internal storage on local write failure
+must not silently recreate a full-resolution cache master under our proxy-only
+policy. Report failed library artwork materialization explicitly.
+
+Lidarr's MediaCoverService.cs checks remote headers against local presence,
+length or modified date, fetches missing/changed album covers and derives display
+sizes. Use its missing/stale refresh behavior, while preserving Discogenius's
+selected source and verified library-original authority. The reference behavior
+is source inspection, not proof that our pending import-time path already works.
