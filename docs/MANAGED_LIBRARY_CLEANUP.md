@@ -669,3 +669,43 @@ resolve to rgb(9,69,9) in the light theme. Evidence: oct07-green-completion-ui.p
 These changes are local candidates; the live app is still 2.21.0.
 Final full CI passes all 2,084 API and 187 frontend tests, lint, typechecks and
 builds with no failing names or clone retries (oct07-secondary-art-green-ci.log).
+
+## October 7 revised artwork storage direction
+
+Robert proposes making MediaCover exclusively a disposable proxy cache. Adopt
+that direction for the next artwork redesign: no persistent full-resolution
+master in MediaCover, including before an album has been acquired. Catalogue
+refresh may fetch image bytes to derive the 250/500 display proxies, then discard
+the full-resolution buffer. Download/import fetches the selected full-resolution
+asset into its tracked library sidecar. Retag remains local-only and reads the
+library asset to derive bounded embedded JPEG artwork. The selected source switch
+still queues chunked library artwork replacement and embedded-art updates.
+
+Artwork source identity, role, selected source revision/hash and exact library
+MetadataFiles associations must be durable database state, independent of the
+proxy directory. Existing source/sidecar marker files currently live inside
+MediaCover; deleting that directory loses them even though library sidecars stay
+on disk. Rebuild proxies from verified tracked library assets when possible,
+otherwise from the configured source. Cache loss must never change the selected
+source, substitute a low-resolution proxy as the library master or erase physical
+sidecar ownership. Unsupported image containers need a tested conversion path
+before the last cache master can be discarded.
+
+Support Jellyfin-compatible role-specific library assets where sources provide
+them, with an explicit bounded role policy and stable names. These are different
+artwork roles, not retained canonical/provider alternatives for one primary
+cover. Jellyfin's music documentation includes album backdrop/logo assets and
+numbered backdrops; its ImageSaver uses cdart for music-album disc art. Extend
+ownership/rename handling for those names and both album/artist roles before
+generating them. Preserve recognized existing extras; automatic production of
+multiple backgrounds is not an implicit requirement to fetch every available
+image. See https://jellyfin.org/docs/general/server/media/music/.
+
+The current implementation is not proxy-only. Its artwork refresh/match warmers
+re-fetch missing cache entries and write originals plus derivatives. Browsing
+uses local URLs and does not initiate a whole-cache rebuild. Recovery depends on
+which entities are refreshed and whether their source is reachable; the entire
+live 94 GB cache has not been wiped or subjected to a recovery acceptance test.
+Before retiring old originals, verify a complete durable source/sidecar inventory,
+proxy-only catalogue refresh, import materialization, cache-wipe recovery with
+unchanged library hashes, source switching, rename and embedded-art regeneration.
