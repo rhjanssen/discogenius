@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { AsyncResource } from "node:async_hooks";
+import { withSqliteWriteMutexAsync } from "../../database/sqlite-write-mutex.js";
 import { after, before, beforeEach, test } from "node:test";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-command-busy-"));
@@ -68,4 +70,45 @@ test("SQLITE_BUSY still fails rename/retag so a partial filesystem mutation is n
     const outcome = await contextModule.persistCommandOutcome(job, sqliteBusy());
     assert.equal(outcome, "failed");
     assert.equal(queueModule.CommandQueueManager.get(id)?.status, "failed");
+});
+
+test("completed monitoring jobs await a competing writer before queuing their terminal pass", async () => {
+    const scheduler = await import("./scheduler.js");
+    const { commandExecutors } = await import("./executors/registry.js");
+    dbModule.db.prepare("DELETE FROM monitoring_runtime_state").run();
+    dbModule.db.prepare("DELETE FROM runtime_controls").run();
+    const id = scheduler.queueMonitoringCyclePass({ trigger: 2 });
+    const job = queueModule.CommandQueueManager.claimForExecution(id, "chain-test", 60_000);
+    assert.ok(job);
+    const executor = commandExecutors[job.name];
+    const complete = queueModule.CommandQueueManager.complete;
+    const unrelatedContext = new AsyncResource("competing-chain-writer");
+    let competing: Promise<void> | undefined;
+    let writerEntered = false;
+    let timerRan = false;
+    commandExecutors[job.name] = { execute: async () => {} };
+    queueModule.CommandQueueManager.complete = (...args) => {
+        const result = complete.apply(queueModule.CommandQueueManager, args);
+        // Queue an unrelated writer immediately after outcome persistence.
+        // FIFO admission grants it before the command's follow-up can write.
+        competing = unrelatedContext.runInAsyncScope(() => withSqliteWriteMutexAsync(async () => {
+            writerEntered = true;
+            await new Promise<void>(resolve => setTimeout(() => { timerRan = true; resolve(); }, 20));
+        }));
+        return result;
+    };
+    try {
+        await contextModule.executeCommand(job);
+        await competing;
+        assert.equal(writerEntered, true);
+        assert.equal(timerRan, true);
+        assert.equal(queueModule.CommandQueueManager.get(id)?.status, "completed");
+        assert.equal(queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+            [queueModule.CommandNames.DownloadMissing], 10).length, 1);
+    } finally {
+        commandExecutors[job.name] = executor;
+        queueModule.CommandQueueManager.complete = complete;
+        await competing;
+        unrelatedContext.emitDestroy();
+    }
 });

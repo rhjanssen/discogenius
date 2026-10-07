@@ -308,3 +308,92 @@ Final full `yarn ci` passed with all 2,029 API tests and 187 frontend tests,
 lint, typechecks and builds. No clone retries or failing test names occurred.
 `oct06-audio-duplicate-final-ci.log` records this final source version; the
 earlier CI log predates the preview action and is not its acceptance evidence.
+
+## October 7 unowned-file recovery and current live evidence
+
+The local candidate adds LibraryCleanupJournal for files that have no managed
+ownership row. It records an operational intent without inventing a TrackFiles
+claim. Preparation and commit require a completed whole-library scan, finished
+artist reconciliation and discovery when requested, unchanged scan configuration,
+all configured roots present, and unchanged filesystem identities for every
+root. A legacy inventory without these witnesses is insufficient.
+
+Each intent records the exact file witness and stages the file through a
+non-overwriting hard link in its original directory. A transaction rechecks
+ownership and inventory before committing removal. Recovery restores an
+uncommitted file or finishes a committed removal, even after command history
+is pruned. A recreated source is preserved and leaves an actionable pending
+intent. Pending cleanup shares startup/watchdog recovery, disk-command admission
+and recovery health reporting with tracked-file mutations. Scan discovery skips
+cleanup temporary files; reserved system directories cannot be selected.
+
+Default preparation protects all Unmapped rows, including ignored ones, and
+rejects supported media that has not been identified or registered for review.
+An explicit exact review disposition exists for the separately authorized final
+reconciliation, but this maintenance run preserves review media. The bounded
+cleanup planner and applicable sidecar ownership reconciliation are still open.
+There is no public cleanup action and no production caller of this journal yet.
+Do not enable strict deletion from these recovery tests alone.
+
+Ten active-schema cleanup tests pass on Windows, including a separate Node
+process that exits after staging. Recovery restores the original bytes after
+reopening the database. The rebuilt Linux image passes 34 cleanup, tracked-file
+journal and scan tests. These checks cover process interruption, ownership
+races, root replacement, changed configuration, transaction rollback and
+recreated files; they do not establish power-loss durability. Evidence is in
+`oct07-cleanup-journal-source.log`, `oct07-cleanup-journal-process.log` and
+`oct07-cleanup-journal-final-native.log`.
+
+The Lidarr reference still confirms the relevant boundaries: DiskScanService
+checks root availability, reconciles known files and persists unmatched media;
+RenameTrackFileService skips occupied destinations and prunes empty subfolders
+after successful moves; MediaFileDeletionService removes bytes through its
+recycle-bin provider before removing the ownership row. Discogenius's optional
+strict unsupported-file cleanup goes beyond those flows, and needs its own
+complete ownership and recovery checks.
+
+Live inspection on October 7 confirms healthy 2.21.0 at revision
+f4e46cbe83cccf5423336da6b68a94f8d6de2eb9, with downloads paused and no active
+downloads, imports or commands. Scan 15506 has aged out of history. The latest
+whole-library scan, 15759, completed with 62,973 files, 3,792 directories, zero
+new review files and no missing roots. It lacks the candidate's root identity
+witnesses and cannot authorize strict deletion. Its different file count does
+not establish which files changed or why.
+
+New refresh failures 15602 for a-ha and 15628 for Dirty Honey concern obsolete
+catalogue tracks referenced by accepted provider matches and acquisition plans,
+not imported files. Both have a selected automatic TIDAL plan held by a waiting
+DownloadQueue row. Preserve that acquisition intent during reconciliation;
+blindly deleting bindings or treating these plans as unused would bypass the
+existing safety checks. The earlier eight refresh retries remain successful.
+The local cleanup candidate has not been deployed, and no live files were
+deleted or retagged during this inspection.
+
+The fresh local production container exposed a separate monitoring handoff
+failure: RefreshMetadata and CheckHealth completed, but their follow-up queue
+writes logged SQLITE_BUSY in acquireSqliteWriteMutexSync. Command outcome
+persistence already used async admission; queueNextMonitoringPass did not.
+The candidate now awaits the same async writer admission for that follow-up.
+A contention test queues an unrelated writer after completion and verifies
+that its timer runs and exactly one terminal DownloadMissing pass is queued.
+With the former synchronous handoff restored, that same test fails with the
+observed SQLITE_BUSY and no terminal pass; it passes with async admission.
+The rebuilt fresh container completed all six startup/scan commands without
+the earlier error. This is a local empty-library startup check, not evidence
+that every live contention source is resolved. Fifty-one native cleanup,
+scan and monitoring tests passed. Runtime evidence is in
+`oct07-cleanup-runtime.log` and `oct07-cleanup-chain-runtime.log`.
+
+An existing write-gate test failed once during full validation because it
+assumed cold dynamic imports would reach admission in invocation order. Both
+writes were serialized in the opposite order and the isolated rerun passed.
+The test now explicitly waits for the first writer to enter, holds it until
+the competing writer has yielded, and checks that their work cannot overlap.
+This removes the timing assumption without weakening the serialization check.
+
+Final `yarn ci` passed all 2,040 API tests and 187 frontend tests, lint,
+typechecks and both builds. The main TAP run has no failing names or clone
+retries. `oct07-cleanup-chain-final-pass-ci.log` records the accepted source;
+earlier failed/preliminary logs are retained as diagnostic evidence. The final
+native run passed all 51 scoped tests in
+`oct07-cleanup-chain-accepted-native.log`. This candidate remains undeployed.

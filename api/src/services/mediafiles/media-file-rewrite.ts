@@ -10,7 +10,7 @@ export function mediaRewritePath(originalPath: string, kind: "tags" | "rewrite" 
 
 /** Only exclude files owned by our rewrite protocol, not arbitrary hidden music. */
 export function isMediaRewriteTemporaryName(name: string): boolean {
-  return /^\.discogenius-(?:tags|rewrite)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[^/\\]+$/i.test(name);
+  return /^\.discogenius-(?:tags|rewrite|cleanup)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[^/\\]+$/i.test(name);
 }
 
 export async function rewriteMediaCopy(

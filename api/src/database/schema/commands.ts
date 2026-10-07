@@ -39,6 +39,20 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (table_name, row_id)
     );
+    CREATE TABLE ${guard} LibraryCleanupJournal (
+      id TEXT PRIMARY KEY,
+      inventory_command_id INTEGER NOT NULL,
+      source_path TEXT NOT NULL UNIQUE,
+      staged_path TEXT NOT NULL UNIQUE,
+      root_path TEXT NOT NULL,
+      root_identity TEXT NOT NULL,
+      source_identity TEXT NOT NULL,
+      review_id INTEGER,
+      review_snapshot TEXT,
+      phase TEXT NOT NULL DEFAULT 'prepared' CHECK (phase IN ('prepared','committed')),
+      recovery_error TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE ${guard} CommandFileWorkPlans (
       command_id INTEGER PRIMARY KEY REFERENCES commands(id) ON DELETE CASCADE,
       operation TEXT NOT NULL CHECK (operation IN ('retag', 'strip')),

@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
 import { withSqliteWriteGate } from "../../database.js";
-import { getConfigSection } from "../config/config.js";
+import { scanConfigRevision } from "./scan-config-revision.js";
 import type { DiscoveryResult, ScanResult } from "../mediafiles/library-scan.js";
 import type { CommandModelOf } from "./command-model.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
@@ -20,9 +19,7 @@ export async function runScanWorkUnit(
 ): Promise<ScanResult> {
     const owner = job.worker_id;
     if (!owner || !CommandQueueManager.isExecutionOwner(job.id, owner)) throw new Error("Scan execution ownership changed");
-    const configRevision = createHash("sha256").update(JSON.stringify({
-        path: getConfigSection("path"), metadata: getConfigSection("metadata"), filtering: getConfigSection("filtering"),
-    })).digest("hex");
+    const configRevision = scanConfigRevision();
     let plan = job.payload.scanWork;
     const persist = async () => withSqliteWriteGate(() => {
         if (!CommandQueueManager.updateState(job.id, { workerId: owner, payloadPatch: { scanWork: plan } })) {

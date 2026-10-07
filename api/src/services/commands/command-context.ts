@@ -219,7 +219,7 @@ export async function executeCommand(job: CommandModel): Promise<void> {
 
     if (outcome === "completed" || outcome === "failed") {
         try {
-            queueNextMonitoringPass(job);
+            await withDbWrite(() => queueNextMonitoringPass(job));
         } catch (chainError) {
             console.error(`[Queue] Failed to queue next monitoring pass after command #${job.id}:`, chainError);
         }
