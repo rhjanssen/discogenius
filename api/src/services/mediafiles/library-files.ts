@@ -2570,9 +2570,9 @@ export class LibraryFilesService {
       return { removed };
     }
 
-    // Each monitored edition has its own album folder. Cover.jpg / album.nfo in
-    // "All This Bad Blood (2012)" and "Bad Blood X (2023)" are not duplicates.
-    // A leftover sidecar in a folder with no audio (rename debris) still is.
+    // Absence of adjacent audio is not proof that a sidecar is debris: artist
+    // artwork, empty monitored folders and incomplete edition ownership are
+    // valid cases. Distinct paths require verified journaled cleanup.
     const byDirectory = new Map<string, TrackedAssetRow[]>();
     for (const row of rows) {
       const directory = path.dirname(normalizeResolvedPath(resolveStoredLibraryPath({
@@ -2585,23 +2585,9 @@ export class LibraryFilesService {
       byDirectory.set(directory, group);
     }
 
-    const live: TrackedAssetRow[][] = [];
-    const stale: TrackedAssetRow[] = [];
-    for (const [directory, group] of byDirectory) {
-      if (this.directoryHasTrackedAudio(directory)) live.push(group);
-      else stale.push(...group);
-    }
-
-    if (live.length === 0) {
-      return { removed: this.removeDuplicateTrackedAssetRows(tableName, rows) };
-    }
-
     let removed = 0;
-    for (const group of live) {
+    for (const group of byDirectory.values()) {
       removed += this.removeDuplicateTrackedAssetRows(tableName, group);
-    }
-    if (stale.length > 0) {
-      removed += this.deleteTrackedAssetRows(tableName, stale);
     }
     if (removed > 0) {
       console.log(`[${tableName}] Removed ${removed} duplicate tracked ${params.fileType} file(s) for artist ${params.artistId}.`);
@@ -2627,25 +2613,16 @@ export class LibraryFilesService {
     let removed = 0;
     const idsToDelete: number[] = [];
     for (const row of remove) {
+      const resolvedPath = resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+        relativePath: row.relative_path,
+      });
+
+      // Only redundant database aliases of the same resolved path can be
+      // merged here. Never remove a distinct physical sidecar during upsert.
+      if (normalizeResolvedPath(resolvedPath) !== keepResolvedPath) continue;
       ExtraFileService.mergeLibraryAssociations(tableName, row.id, keep.id);
-      const resolvedPath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
-
-      try {
-        if (normalizeResolvedPath(resolvedPath) !== keepResolvedPath && fs.existsSync(resolvedPath)) {
-          fs.rmSync(resolvedPath, { force: true });
-          const root = resolveLibraryRootPath(row.library_root, row.file_path);
-          if (root) {
-            removeEmptyParents(path.dirname(resolvedPath), root);
-          }
-        }
-      } catch (error) {
-        console.warn(`[${tableName}] Failed removing duplicate ${row.file_type} file ${resolvedPath}:`, error);
-      }
-
       idsToDelete.push(row.id);
       this.emitFileDeleted({
         libraryFileId: row.id,
@@ -2665,50 +2642,6 @@ export class LibraryFilesService {
       batchDelete(tableName, idsToDelete);
     }
 
-    return removed;
-  }
-
-  private static deleteTrackedAssetRows(
-    tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles",
-    rows: TrackedAssetRow[],
-  ): number {
-    if (rows.length === 0) return 0;
-    let removed = 0;
-    const idsToDelete: number[] = [];
-    for (const row of rows) {
-      const resolvedPath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
-      try {
-        if (fs.existsSync(resolvedPath)) {
-          fs.rmSync(resolvedPath, { force: true });
-          const root = resolveLibraryRootPath(row.library_root, row.file_path);
-          if (root) {
-            removeEmptyParents(path.dirname(resolvedPath), root);
-          }
-        }
-      } catch (error) {
-        console.warn(`[${tableName}] Failed removing stale ${row.file_type} file ${resolvedPath}:`, error);
-      }
-      idsToDelete.push(row.id);
-      this.emitFileDeleted({
-        libraryFileId: row.id,
-        artistId: row.artist_metadata_id,
-        albumId: row.album_id,
-        mediaId: row.media_id,
-        fileType: row.file_type,
-        filePath: resolvedPath,
-        libraryRoot: row.library_root,
-        reason: "duplicate-tracked-asset",
-        missing: !fs.existsSync(resolvedPath),
-      });
-      removed += 1;
-    }
-    if (idsToDelete.length > 0) {
-      batchDelete(tableName, idsToDelete);
-    }
     return removed;
   }
 
@@ -3274,19 +3207,6 @@ export class LibraryFilesService {
     ".flac", ".alac", ".wav", ".aiff", ".mp3", ".m4a", ".aac", ".ogg", ".opus",
     ".wma", ".ape", ".mp2", ".mp4", ".m4v", ".mkv", ".mov", ".webm",
   ]);
-
-  private static directoryHasTrackedAudio(directory: string): boolean {
-    const normalized = normalizeComparablePath(directory);
-    if (!normalized) return false;
-    const rows = db.prepare(`
-      SELECT file_path
-      FROM TrackFiles
-      WHERE file_type IN ('track', 'video')
-        AND ${comparablePathColumnSql("file_path")} >= ?
-        AND ${comparablePathColumnSql("file_path")} < ?
-    `).all(`${normalized}/`, `${normalized}0`) as Array<{ file_path: string }>;
-    return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
-  }
 
   private static directoryHasMonitoredAudio(directory: string): boolean {
     const normalizedDir = normalizeComparablePath(directory);

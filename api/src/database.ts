@@ -527,6 +527,10 @@ export function initDatabase() {
  */
 function ensureLibraryLookupIndexes(): void {
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_library_artists_path
+      ON LibraryArtists(path, library_id);
+    CREATE INDEX IF NOT EXISTS idx_library_artists_path_folded
+      ON LibraryArtists(path COLLATE NOCASE, library_id);
     CREATE INDEX IF NOT EXISTS idx_library_albums_release_group
       ON LibraryAlbums(release_group_id);
     CREATE INDEX IF NOT EXISTS idx_acquisition_sources_match

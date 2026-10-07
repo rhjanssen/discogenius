@@ -6,10 +6,6 @@ import { after, before, beforeEach, test } from "node:test";
 import { seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
-import {
-  resolveArtistMetadataId,
-  stampArtistLibraryPath,
-} from "../music/managed-artists.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-files-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -25,6 +21,7 @@ let libraryScanModule: typeof import("./library-scan.js");
 let audioLibraryPathModule: typeof import("./audio-library-path.js");
 let artistStatisticsModule: typeof import("../music/artist-statistics-service.js");
 let extraFileServiceModule: typeof import("../extras/files/extra-file-service.js");
+let managedArtistsModule: typeof import("../music/managed-artists.js");
 
 
 function seedCatalogArtist(options: {
@@ -42,13 +39,13 @@ function seedCatalogArtist(options: {
     monitored: options.monitored !== false,
   });
   if (options.path) {
-    stampArtistLibraryPath(artistMetadataId, options.path, true);
+    managedArtistsModule.stampArtistLibraryPath(artistMetadataId, options.path, true);
   }
   return { metadataId: artistMetadataId, mbid: options.mbid };
 }
 
 function requireCatalogArtistId(mbidOrKey: string): number {
-  const id = resolveArtistMetadataId(mbidOrKey);
+  const id = managedArtistsModule.resolveArtistMetadataId(mbidOrKey);
   if (id == null) throw new Error(`missing ArtistMetadata for ${mbidOrKey}`);
   return id;
 }
@@ -167,6 +164,7 @@ before(async () => {
 
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  managedArtistsModule = await import("../music/managed-artists.js");
 
   configModule = await import("../config/config.js");
   libraryFilesModule = await import("./library-files.js");
@@ -1369,7 +1367,7 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
   assert.equal(snapshot.files?.total, 2);
 });
 
-test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {
+test("upsertLibraryFile updates exact path identity while preserving distinct sidecars for verified cleanup", () => {
   seedCatalogArtist({ mbid: "1", name: "Queen", path: "Queen" });
 const root = configModule.Config.getMusicPath();
   const targetPath = path.join(root, "Queen", "A Night at the Opera", "cover.jpg");
@@ -1404,11 +1402,12 @@ const root = configModule.Config.getMusicPath();
     ORDER BY id
   `).all() as Array<{ id: number; releaseGroupMbid: string; file_type: string; file_path: string }>;
 
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0]?.id, id);
-  assert.equal(rows[0]?.releaseGroupMbid, "10");
-  assert.equal(rows[0]?.file_type, "cover");
-  assert.equal(rows[0]?.file_path, targetPath);
+  assert.equal(rows.length, 2);
+  const target = rows.find(row => row.file_path === targetPath);
+  assert.equal(target?.id, id);
+  assert.equal(target?.releaseGroupMbid, "10");
+  assert.equal(target?.file_type, "cover");
+  assert.equal(fs.readFileSync(stalePath,"utf8"),"cover");
 
   const metadataFile = dbModule.db.prepare(`
     SELECT artist_id, canonical_release_group_mbid AS releaseGroupMbid, file_path, file_type, type
@@ -1426,7 +1425,7 @@ const root = configModule.Config.getMusicPath();
     FROM MetadataFiles
     WHERE file_path = ?
   `).get(stalePath);
-  assert.equal(staleMetadataFile, undefined);
+  assert.ok(staleMetadataFile);
 });
 
 test("tracked sidecars do not collide when providers reuse the same external ID", () => {

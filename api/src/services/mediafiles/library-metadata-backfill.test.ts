@@ -833,7 +833,14 @@ test("a stale tracked lyric row does not block adjacent-sidecar recovery", async
         WHERE canonical_recording_mbid = ?
         ORDER BY id
     `).all("recording-mbid-300") as Array<{ file_path: string }>;
-    assert.deepEqual(rows, [{ file_path: recoveredPath }]);
+    // Recovery claims the adjacent physical lyric without treating the old
+    // identity as permission to delete another path. Missing-row pruning is a
+    // separate, root-availability-checked maintenance phase.
+    assert.deepEqual(rows, [{ file_path: stalePath }, { file_path: recoveredPath }]);
+    await libraryFilesModule.LibraryFilesService.pruneStaleTrackedAssets();
+    assert.deepEqual(dbModule.db.prepare(`SELECT file_path FROM LyricFiles
+        WHERE canonical_recording_mbid = ? ORDER BY id`).all("recording-mbid-300"),[{file_path:recoveredPath}]);
+    assert.equal(fs.readFileSync(recoveredPath,"utf8"),"[00:01.00]Recovered lyric");
     assert.equal(fs.existsSync(stalePath), false);
 });
 

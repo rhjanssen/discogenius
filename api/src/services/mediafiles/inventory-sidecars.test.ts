@@ -39,6 +39,96 @@ function track(name="01 Song.flac",edition=1): {path:string;id:number} {
 function inspect(target:string,peers:string[]) { return service.inspectInventorySidecar(target,root,[target,...peers]); }
 function reconcile(target:string,peers:string[]) { return service.reconcileInventorySidecar(target,root,[target,...peers]); }
 
+async function artistPath(folder:string,libraryId=library,artistId=1): Promise<void> {
+    const config = await import("../config/config.js");
+    const value=config.readConfig();value.path.music_path=root;value.path.spatial_path=path.join(root,"spatial");
+    value.path.video_path=path.join(root,"videos");config.writeConfig(value);
+    database.db.prepare("INSERT INTO LibraryArtists(library_id,artist_metadata_id,path) VALUES(?,?,?)")
+        .run(libraryId,artistId,folder);
+}
+
+test("artist artwork and NFO follow a persisted custom directory without playable siblings",async()=>{
+    await artistPath("Custom/Artist");
+    const cover=file("Custom/Artist/folder.jpg"),nfo=file("Custom/Artist/artist.nfo");
+    assert.equal(await reconcile(cover,[]),true);assert.equal(await reconcile(nfo,[]),true);
+    assert.deepEqual(database.db.prepare(`SELECT type,track_file_id,canonical_artist_mbid,canonical_release_mbid
+        FROM MetadataFiles ORDER BY type`).all(),[
+        {type:"ArtistImage",track_file_id:null,canonical_artist_mbid:"artist",canonical_release_mbid:null},
+        {type:"ArtistMetadata",track_file_id:null,canonical_artist_mbid:"artist",canonical_release_mbid:null}]);
+    assert.equal(await reconcile(cover,[]),false);assert.equal(await reconcile(nfo,[]),false);
+});
+test("artist basename, library-root assets and album-level folder images do not invent artist ownership",async()=>{
+    await artistPath("Custom/Artist");
+    assert.equal(inspect(file("Artist/artist.nfo"),[]).status,"unresolved");
+    assert.equal(inspect(file("artist.nfo"),[]).status,"unresolved");
+    const owner=track("Custom/Artist/Edition/01 Song.flac"),cover=file("Custom/Artist/Edition/folder.jpg");
+    assert.equal(await reconcile(cover,[owner.path]),true);
+    assert.deepEqual(database.db.prepare("SELECT type,canonical_release_mbid FROM MetadataFiles").get(),
+        {type:"AlbumImage",canonical_release_mbid:"edition-1"});
+});
+test("shared artist directory associates only confirmed libraries and conflicting artists remain unresolved",async()=>{
+    await artistPath("Custom/Artist");
+    const shared=seedTestLibrary(database.db,{name:"Shared",rootPath:root});
+    const unrelated=seedTestLibrary(database.db,{name:"Unrelated",rootPath:root});
+    await artistPath("Custom/Artist",shared);
+    await artistPath("Other/Artist",unrelated);
+    const cover=file("Custom/Artist/folder.jpg");
+    assert.equal(await reconcile(cover,[]),true);
+    assert.deepEqual(database.db.prepare("SELECT library_id FROM MetadataFileLibraries ORDER BY library_id").all(),
+        [{library_id:library},{library_id:shared}]);
+    database.db.prepare("INSERT INTO ArtistMetadata(id,mbid,name) VALUES(2,'different','Artist')").run();
+    database.db.prepare("UPDATE LibraryArtists SET artist_metadata_id=2 WHERE library_id=?").run(shared);
+    assert.equal(inspect(cover,[]).status,"unresolved");
+    assert.equal(await reconcile(cover,[]),false);
+});
+test("artist paths from a different root cannot claim local artwork",async()=>{
+    const elsewhere=seedTestLibrary(database.db,{name:"Elsewhere",rootPath:path.join(root,"other")});
+    await artistPath("Custom/Artist",elsewhere);
+    assert.equal(inspect(file("Custom/Artist/artist.nfo"),[]).status,"unresolved");
+});
+test("artist ownership is rechecked when its directory changes while awaiting writer admission",async()=>{
+    await artistPath("Custom/Artist");const cover=file("Custom/Artist/folder.jpg");
+    let entered!:()=>void,release!:()=>void;
+    const admitted=new Promise<void>(resolve=>entered=resolve),barrier=new Promise<void>(resolve=>release=resolve);
+    const holder=withSqliteWriteMutexAsync(async()=>{entered();await barrier;
+        database.db.prepare("UPDATE LibraryArtists SET path='Moved/Artist'").run();});
+    await admitted;
+    const pending=reconcile(cover,[]);release();await holder;
+    await assert.rejects(pending,/Sidecar ownership changed/);
+    assert.equal(database.db.prepare("SELECT 1 FROM MetadataFiles").get(),undefined);
+    assert.equal(fs.readFileSync(cover,"utf8"),"Custom/Artist/folder.jpg");
+});
+test("artist path ownership uses its index instead of scanning all membership rows",()=>{
+    const plan=database.db.prepare("EXPLAIN QUERY PLAN SELECT library_id FROM LibraryArtists WHERE path IN (?)")
+        .all("Custom/Artist") as Array<{detail:string}>;
+    assert.ok(plan.some(row=>row.detail.includes("idx_library_artists_path")));
+});
+
+test("scan deduplication preserves artist artwork and incomplete edition covers at distinct paths",async()=>{
+    const owner=track("Artist/Edition/01 Song.flac");
+    const artistImage=file("Artist/folder.jpg"),albumImage=file("Artist/Edition/cover.jpg");
+    const rows=[artistImage,albumImage].map(target=>Number(database.db.prepare(`INSERT INTO MetadataFiles
+        (artist_id,file_path,relative_path,library_root,extension,type,file_type,canonical_artist_mbid)
+        VALUES('artist',?,?,?,'jpg','ArtistImage','cover','artist')`).run(target,path.relative(root,target),root).lastInsertRowid));
+    const libraryFiles=await import("./library-files.js");
+    assert.equal(libraryFiles.LibraryFilesService.enforceTrackedAssetIdentity({artistId:"artist",fileType:"cover",libraryRoot:root}).removed,0);
+    assert.equal(libraryFiles.LibraryFilesService.pruneDuplicateTrackedAssets("artist").removed,0);
+    assert.deepEqual(database.db.prepare("SELECT id FROM MetadataFiles ORDER BY id").all(),rows.map(id=>({id})));
+    assert.equal(fs.readFileSync(artistImage,"utf8"),"Artist/folder.jpg");
+    assert.equal(fs.readFileSync(albumImage,"utf8"),"Artist/Edition/cover.jpg");
+    assert.ok(fs.existsSync(owner.path));
+});
+test("distinct artwork contents in one folder remain tracked until verified cleanup",async()=>{
+    const targets=[file("Edition/cover.jpg"),file("Edition/alternate.jpg")];
+    for (const target of targets) database.db.prepare(`INSERT INTO MetadataFiles
+        (artist_id,file_path,relative_path,library_root,extension,type,file_type,canonical_release_group_mbid,canonical_release_mbid)
+        VALUES('artist',?,?,?,'jpg','AlbumImage','cover','album','edition-1')`).run(target,path.relative(root,target),root);
+    const libraryFiles=await import("./library-files.js");
+    assert.equal(libraryFiles.LibraryFilesService.enforceTrackedAssetIdentity({artistId:"artist",albumId:"album",fileType:"cover",libraryRoot:root}).removed,0);
+    assert.equal((database.db.prepare("SELECT COUNT(*) AS n FROM MetadataFiles").get() as {n:number}).n,2);
+    for (const target of targets) assert.equal(fs.readFileSync(target,"utf8"),path.relative(root,target).replace(/\\/g,"/"));
+});
+
 test("inventory links lyrics to the exact physical file and repeats without new writes",async()=>{
     const owner=track(),lyric=file("01 Song.lrc");
     assert.equal(await reconcile(lyric,[owner.path]),true);

@@ -22,6 +22,30 @@ function identity(file: string): string {
     return [stat.dev, stat.ino, stat.size, stat.mtimeNs].join(":");
 }
 
+function artistFolderScope(file: string, root: string): SidecarDecision | undefined {
+    const directory = path.dirname(file), relative = path.relative(root,directory);
+    // The library root itself is not an artist folder. Persisted paths, rather
+    // than a basename or naming-template guess, establish artist ownership.
+    if (!relative) return undefined;
+    const paths = [...new Set([relative,relative.replace(/\\/g,"/"),relative.replace(/\//g,"\\"),directory])];
+    const rows = db.prepare(`SELECT library.id AS library_id,library.root_path,artist.mbid AS artist
+        FROM LibraryArtists membership JOIN Libraries library ON library.id=membership.library_id
+        JOIN ArtistMetadata artist ON artist.id=membership.artist_metadata_id
+        WHERE membership.path ${process.platform === "win32" ? "COLLATE NOCASE" : ""}
+          IN (${paths.map(() => "?").join(",")}) ORDER BY library.id,membership.id`).all(...paths) as Array<{library_id:number;root_path:string;artist:string}>;
+    const matching = rows.filter(row => path.relative(path.resolve(row.root_path),root) === "");
+    if (!matching.length) return undefined;
+    if (matching.some(row => !row.artist) || new Set(matching.map(row => row.artist)).size !== 1) return {status:"unresolved"};
+    const config = getConfigSection("path");
+    const slots = new Set(([ [config.music_path,"stereo"], [config.spatial_path,"spatial"], [config.video_path,"video"] ] as const)
+        .filter(([configured]) => configured && path.relative(path.resolve(configured),root) === "").map(([,slot]) => slot));
+    if (slots.size !== 1) return {status:"unresolved"};
+    const libraryIds = [...new Set(matching.map(row => row.library_id))].sort((a,b) => a-b);
+    return {status:"identified",libraryIds,input:{artistId:matching[0].artist,canonicalArtistMbid:matching[0].artist,
+        libraryId:libraryIds[0],libraryRoot:root,filePath:file,librarySlot:[...slots][0],
+        fileType:path.extname(file).toLowerCase() === ".nfo" ? "nfo" : "cover",trackFileId:null}};
+}
+
 /** Resolve from exact physical siblings, never a provider ID or an arbitrary
  * occurrence. Unmapped companions and ambiguous editions remain protected. */
 export function inspectInventorySidecar(file: string, root: string, siblings: string[]): SidecarDecision {
@@ -50,13 +74,15 @@ export function inspectInventorySidecar(file: string, root: string, siblings: st
         UNION ALL SELECT 1 FROM UnmappedFiles WHERE file_path=? LIMIT 1`).get(file,file,file)) {
         return { status: "owned" };
     }
-    // Artist-level ownership needs the artist directory, not an album sibling.
-    if (name === "artist.nfo") return { status: "unresolved" };
+    const artistAsset = name === "artist.nfo" || (image && name === (metadata.artist_picture_name || "folder.jpg").toLowerCase());
+    const artistScope = artistAsset ? artistFolderScope(file,root) : undefined;
+    if (artistScope && artistScope.status !== "identified") return artistScope;
+    if (name === "artist.nfo" && !artistScope) return { status: "unresolved" };
     const candidates = siblings.map(value => path.resolve(value)).filter(value => value !== file
         && path.dirname(value) === path.dirname(file) && SUPPORTED_IMPORT_EXTENSIONS.has(path.extname(value).toLowerCase())
         && (folderCover || folderNfo || path.parse(value).name === stem));
     const review = db.prepare("SELECT 1 FROM UnmappedFiles WHERE file_path=?");
-    if (candidates.some(candidate => review.get(candidate))) return { status: "review_sidecar" };
+    if (!artistScope && candidates.some(candidate => review.get(candidate))) return { status: "review_sidecar" };
     const lookup = db.prepare(`SELECT f.id,f.library_id,f.library_slot,f.file_path,f.file_type,library.root_path,
         artist.mbid AS artist,album.mbid AS album,edition.mbid AS edition,
         track.mbid AS track,recording.mbid AS recording
@@ -75,23 +101,23 @@ export function inspectInventorySidecar(file: string, root: string, siblings: st
             AND (edition.id IS NULL OR (f.release_group_id=album.id AND album.artist_mbid=artist.mbid)))
         )`);
     const owners: Owner[] = [];
-    for (const candidate of candidates) {
+    for (const candidate of artistScope ? [] : candidates) {
         const owner = lookup.get(candidate) as Owner | undefined;
         if (!owner || path.relative(path.resolve(owner.root_path),root) !== "") return { status: "unresolved" };
         identity(candidate);
         owners.push(owner);
     }
-    if (!owners.length) return { status: image && !folderCover ? "not_sidecar" : "unresolved" };
+    if (!artistScope && !owners.length) return { status: image && !folderCover ? "not_sidecar" : "unresolved" };
     const folderScoped = folderCover || folderNfo;
     if (folderScoped && owners.some(owner => !owner.album || !owner.edition)) return { status: "unresolved" };
     const keys = new Set(owners.map(owner => folderScoped
         ? JSON.stringify([owner.artist,owner.album,owner.edition,owner.library_slot]) : String(owner.id)));
-    if (keys.size !== 1 || (!folderScoped && (lyric ? owners[0].file_type !== "track" : owners[0].file_type !== "video"))) {
+    if (!artistScope && (keys.size !== 1 || (!folderScoped && (lyric ? owners[0].file_type !== "track" : owners[0].file_type !== "video")))) {
         return { status: "unresolved" };
     }
     const owner = owners[0];
-    const libraryIds = [...new Set(owners.map(value => value.library_id))].sort((a,b) => a-b);
-    const input: ExtraFileUpsertInput = {
+    const libraryIds = artistScope?.libraryIds ?? [...new Set(owners.map(value => value.library_id))].sort((a,b) => a-b);
+    const input: ExtraFileUpsertInput = artistScope?.input ?? {
         artistId: owner.artist, libraryId: owner.library_id, libraryRoot: root, filePath: file,
         fileType: lyric ? "lyrics" : folderNfo ? "nfo" : folderCover ? "cover" : "video_thumbnail",
         librarySlot: owner.library_slot, canonicalArtistMbid: owner.artist,

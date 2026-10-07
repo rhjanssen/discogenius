@@ -460,3 +460,68 @@ in `oct07-sidecar-final-app-repeat.log` and `oct07-sidecar-final-bytes.log`.
 These local checks do not establish live artwork
 storage or whole-library cleanup acceptance. The live server remains 2.21.0,
 with downloads paused; these sidecar changes have not been deployed.
+
+## October 7 artist ownership and scan-time asset deletion
+
+Artist pictures and artist.nfo now resolve from an exact persisted LibraryArtists
+path in the current library root. Nested/custom and absolute paths are supported;
+root-level files, same-name guesses, conflicting artists and paths belonging to
+another root remain unresolved. Shared directories retain only the libraries
+whose artist membership actually names that directory. The lookup has exact and
+Windows case-insensitive path indexes; admission rechecks the current mapping.
+Artist assets remain artist-scoped, without a fabricated edition or track link.
+
+Actual app testing found a separate destructive flaw before deployment: the old
+scan-time deduplication grouped an artist picture with an incompletely identified
+album cover and deleted the picture because its folder had no adjacent audio.
+Absence of adjacent audio is not evidence that an artist asset is rename debris.
+The synchronous deduplication now merges only database aliases of the same
+resolved path. Distinct physical paths and their ownership remain intact for
+verified journaled cleanup; the unverified stale-sidecar deletion helper and
+its audio-presence heuristic were removed. This deliberately leaves genuine
+physical duplicates until the verified planner/rename workflow resolves them.
+
+Twenty-four active-schema inventory tests cover the previous edition/track
+cases plus custom artist directories, shared-root ownership, conflicting artists,
+wrong roots, indexed access, writer races and physical asset preservation.
+The combined focused Windows runs pass 62 tests. Rebuilt native Linux passes
+92 of 94 inventory/cleanup/root/extra-ownership/library-file checks, with two
+Windows-only casing tests skipped and no failures.
+
+The earlier direct library-files test invocation exposed an import-order issue:
+managed-artists loaded database configuration before the file set its fixture
+environment, so it opened the local developer database. No running container
+mounted that directory and the NAS was not touched. That import is now deferred
+until after fixture setup; focused reruns used explicit isolated configuration.
+The full runner already supplies isolated configuration before imports.
+
+Final full CI passes 2,066 API and 187 frontend tests, lint, typechecks and builds, with no failing names or clone retries (oct07-artist-asset-accepted-ci.log). Its earlier one failing name was the stale-lyric recovery test, which expected immediate cross-path row deletion. The updated test verifies recovery first, then guarded missing-row pruning without changing recovered bytes; all nine backfill tests pass on Windows and rebuilt native Linux (oct07-artist-asset-backfill-focus.log and oct07-artist-asset-accepted-backfill-native.log).
+Artist ownership without a persisted membership path, review-sidecar persistence,
+actionable conflict diagnostics and bounded strict cleanup planning remain open.
+Do not deploy strict deletion or clear/resume the live queue on these checks alone.
+
+On the final rebuilt local app, UI scan 9 retained the restored real JPEG as
+MetadataFiles ID 4 (ArtistImage), kept artist.nfo ID 3 artist-scoped and retained
+album cover ID 2 with its edition. UI repeat 10 completed with no indexed or
+updated files and a complete five-file inventory. All three metadata IDs and
+the exact lyric link survived; the artist JPEG/NFO SHA-256 values matched their
+pre-scan values. The old deletion was reproduced only in this disposable local
+fixture. Its scheduled RefreshArtist failure is expected because the offline
+fixture deliberately uses the invalid MBID `artist`; it is not a live failure.
+Evidence: `oct07-artist-asset-final-app-first.log`,
+`oct07-artist-asset-final-app-repeat.log`, `oct07-artist-sidecar-bytes-before.log`,
+`oct07-artist-asset-final-bytes-repeat.log`, `oct07-artist-asset-repeat-ui.png`
+and `oct07-artist-asset-final-native.log` in the existing release-audit directory.
+The live deployment was reverified as healthy 2.21.0; downloads remain paused
+with no active download/import workers. These fixes have not been deployed.
+
+Live storage audit on the same healthy 2.21.0 deployment reports 94 GB under
+/config/media-cover, 11 GB under /config/Backups and 13 MB under /config/logs.
+A bounded filesystem-order sample of 2,000 cache files across 276 directories
+contains 499 original images (161,019,945 logical bytes), 1,000 250/500 proxies
+(43,966,926 bytes) and 501 small other files (134,054 bytes). One inspected
+sample directory contains poster/fanart originals, their two proxies and source
+manifests; this is not evidence of two different provider/canonical masters.
+This biased sample is not a whole-cache breakdown or a cleanup authorization.
+Audit original ownership/relocation, secondary artwork and backup retention
+separately before removing anything. Evidence: oct07-live-mediacover-sample.log.
