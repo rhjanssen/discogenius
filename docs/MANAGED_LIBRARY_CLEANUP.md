@@ -13,9 +13,9 @@ retag remains local and never promotes a proxy to an original.
 
 Legacy originals and JSON manifests are deliberately retained until a complete
 witnessed migration. This candidate changes fresh writes, not the existing live
-94 GB cache. Do not manually wipe it. Process-death recovery of library image
-replacement and the embed-without-sidecar configuration still need acceptance
-before release. The latter currently relies on a locally available master and
+94 GB cache. Do not manually wipe it. Library image replacement now has the
+tested recovery candidate described below. The embed-without-sidecar
+configuration still needs acceptance before release. It currently relies on a locally available master and
 must acquire an original explicitly without changing local-only retag behavior.
 
 Jellyfin's ItemImageProvider skips provider work when configured image roles and
@@ -40,6 +40,46 @@ clone-flake retries, plus lint, typechecks and production builds.
 Read-only live verification still reports healthy 2.21.0, unchanged image digest,
 downloads paused, and no active downloads/imports. No live deployment, cache
 pruning or library mutation was performed for this candidate.
+
+## October 8 artwork replacement recovery candidate
+
+Both fetched/converted image materialization and local-only master copying now
+persist replacement intent before publishing bytes. ArtworkMutationJournal owns
+the stage and short-lived previous-image hardlink; its acknowledgement commits
+with the exact library link and selected-source hash. Recovery is part of the
+existing startup/watchdog FileMutationJournal gate, and unresolved artwork
+recovery errors appear in Health and block further disk commands. No permanent
+image archive or hidden alternate-original directory is introduced.
+
+Prepared replacements roll back to the original inode and bytes. Committed
+replacements retain the new image and remove only their verified previous copy.
+Stage, backup, destination, ownership and exact MetadataFiles linkage are
+validated. An external replacement, even with identical image bytes, is preserved
+and leaves recovery evidence. A newer catalogue source does not block rollback
+or get reverted by it; changes to the file's library ownership do block recovery.
+
+Validation covers real child-process exits before publication, after the backup,
+before the provenance transaction commits and after commit, plus failed local
+provenance writes, new-file rollback, external replacements and ownership changes.
+Full CI passes 2,109 API and 187 frontend tests, with no failing names or clone
+retries. The final production image passes 110 focused journal/artwork/health
+tests. Lint, typechecks, builds and image packaging pass.
+
+The actual test-container server boot restored sidecar SHA-256 dd818e65... from
+an interrupted replacement before serving requests. A retry then completed the
+new sidecar, preserved MetadataFiles ID 1 and settled its intent. App-driven
+RetagFiles 1 completed with canonical identifiers, lyrics and the replacement
+1200x1200 JPEG, unchanged decoded audio and zero foreign-key violations. Repeat
+preview reports no files need retagging. Evidence in the temporary release audit
+directory: oct08-art-journal-final-ci.log, oct08-art-journal-native-final.log,
+oct08-art-journal-startup-proof.log, oct08-art-journal-retag-proof.log and
+oct08-art-journal-ui.png.
+
+Live reads confirm scan 15759 remains completed on 2.21.0 without candidate
+filesystem witnesses. Dirty Honey refresh 15768 is still held by obsolete track
+523b86af-c7d2-4375-be7d-17748471aafe in an acquisition plan. This journal does not
+resolve that separate catalogue/planning failure. No live artwork change,
+deployment, queue clearing or cleanup has been performed. Downloads stay paused.
 
 ## Intended behavior
 

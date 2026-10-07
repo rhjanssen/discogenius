@@ -1,5 +1,6 @@
 import { CONTENT_TYPES_BY_EXTENSION, decodeImage, decodeArtworkImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
 import { commitArtworkProxies, hasCurrentArtworkProxies } from "./media-cover-proxy-storage.js";
+import { ArtworkMutationJournal, artworkFileIdentity } from "./artwork-mutation-journal.js";
 import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSidecar } from "./media-cover-library-storage.js";
 import { readArtworkSource, storeArtworkSource, type ArtworkSource } from "./media-cover-state.js";
 import { withSqliteWriteMutexSync } from "../../database/sqlite-write-mutex.js";
@@ -538,42 +539,52 @@ export function syncCachedMediaCoverToFile(options: MediaCoverSidecarOptions): M
   // another pair of full-file hashes nor a provenance write on every refresh.
   if (path.resolve(sourcePath) === path.resolve(options.outputPath)) return "unchanged";
   const unchanged = mediaCoverFilesMatch(sourcePath, options.outputPath);
-
-  if (!unchanged) {
-    fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
-    const temporaryPath = `${options.outputPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    try {
-      // Stage alongside the destination so rename is an atomic replacement on the
-      // same filesystem. A failed copy/rename therefore leaves the prior sidecar
-      // intact instead of exposing a partial image to library consumers.
-      fs.copyFileSync(sourcePath, temporaryPath);
-      fs.renameSync(temporaryPath, options.outputPath);
-    } finally {
-      try {
-        fs.unlinkSync(temporaryPath);
-      } catch {
-        // Rename consumed the temporary file, or staging never created it.
-      }
-    }
-  }
-  {
+  const sourceWitness = artworkFileIdentity(sourcePath);
+  const destinationWitness = artworkFileIdentity(options.outputPath);
+  fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
+  const temporaryPath = `${options.outputPath}.${crypto.randomUUID()}.tmp`;
+  let intentId: string | null = null;
+  try {
+    if (!unchanged) fs.copyFileSync(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
     const entityId = normalizeMediaCoverEntityId(options.entityId)!;
     const coverType = coverTypes.find(type => getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, type) === sourcePath)!;
     const folder = getMediaCoverFolder(entityId, options.coverEntity);
-    const hash = mediaCoverFileSha256(options.outputPath);
+    const hash = mediaCoverFileSha256(sourcePath);
     let metadataFileId: number | undefined;
     try { metadataFileId = (db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')").get(options.outputPath) as { id: number } | undefined)?.id; } catch { /* Import has not registered its sidecar yet. */ }
     const identity = { entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(coverType) };
     const marker = getSelectedArtworkSource(entityId, options.coverEntity, coverType);
-    withSqliteWriteMutexSync(() => db.transaction(() => {
-      rememberLibraryCoverSidecar(identity, folder, options.outputPath, hash, metadataFileId);
-      if (marker) storeArtworkSource(identity, { ...marker, contentHash: hash });
-    })(), "artwork sidecar provenance");
+    withSqliteWriteMutexSync(() => {
+      if (artworkFileIdentity(sourcePath) !== sourceWitness || artworkFileIdentity(options.outputPath) !== destinationWitness
+        || JSON.stringify(getSelectedArtworkSource(entityId,options.coverEntity,coverType)) !== JSON.stringify(marker)) {
+        throw new Error("Artwork source or destination changed before local publication");
+      }
+      try {
+        if (!unchanged) {
+          intentId = ArtworkMutationJournal.prepare(identity,options.outputPath,temporaryPath);
+          ArtworkMutationJournal.publish(intentId);
+        }
+        db.transaction(() => {
+          rememberLibraryCoverSidecar(identity, folder, options.outputPath, hash, metadataFileId);
+          if (marker) storeArtworkSource(identity, { ...marker, contentHash: hash });
+          if (intentId) ArtworkMutationJournal.markCommitted(intentId);
+        })();
+        if (intentId) ArtworkMutationJournal.recoverOneSync(intentId);
+      } catch (error) {
+        if (intentId && ArtworkMutationJournal.hasPending()) {
+          try { ArtworkMutationJournal.recoverOneSync(intentId); }
+          catch (recoveryError) { throw new AggregateError([error,recoveryError],`Artwork replacement needs recovery; intent ${intentId} retained`); }
+        }
+        throw error;
+      }
+    }, "artwork sidecar provenance");
     // Verify the sidecar before discarding the cache's full-resolution bytes.
     // Unsupported image containers retain their original until proxies exist.
     const heights = options.coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS;
     if (marker && path.dirname(sourcePath) === folder && heights.every(height => fs.existsSync(getMediaCoverPath(entityId, options.coverEntity, coverType, ".jpg", height)))
       && mediaCoverFilesMatch(sourcePath, options.outputPath)) fs.unlinkSync(sourcePath);
+  } finally {
+    if (!intentId) fs.rmSync(temporaryPath,{force:true});
   }
   return unchanged ? "unchanged" : "written";
 }

@@ -37,5 +37,20 @@ export function createArtworkStateSchema(db: Database.Database): void {
       FOREIGN KEY (cover_entity,entity_id,cover_type)
         REFERENCES ArtworkSources(cover_entity,entity_id,cover_type) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS ArtworkMutationJournal (
+      id TEXT PRIMARY KEY,
+      cover_entity TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      cover_type TEXT NOT NULL,
+      destination_path TEXT NOT NULL UNIQUE,
+      staged_path TEXT NOT NULL,
+      backup_path TEXT NOT NULL,
+      original_identity TEXT,
+      replacement_identity TEXT NOT NULL,
+      database_snapshot TEXT NOT NULL,
+      phase TEXT NOT NULL DEFAULT 'prepared' CHECK (phase IN ('prepared','committed')),
+      recovery_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }

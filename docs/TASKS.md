@@ -2,6 +2,16 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- locally validated, October 8: fetched/converted and local-only artwork writes
+  use persisted replacement intent and atomic provenance acknowledgement.
+  Startup/watchdog recovery rolls back uncommitted images, keeps committed ones,
+  preserves external changes and blocks disk jobs with a visible Health error
+  when ownership or bytes conflict. Real process-exit tests, 110 production-image
+  checks and actual-app recovery/retag/repeat pass; full CI passes 2,109 API and
+  187 frontend tests. Not deployed. Legacy cache migration/retirement,
+  embed-without-sidecar acquisition and held obsolete catalogue-track
+  reconciliation remain release prerequisites.
+
 - locally validated, October 8: fresh artwork cache publications contain only
   250/500 JPEG proxies, or 250 for video. Durable derivative hashes detect missing
   and same-size corrupt files; intact refreshes do no work and late fetches cannot
@@ -9,8 +19,8 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
   production-image focused tests pass 118. Actual-app full-resolution sidecar
   import, cache-wipe repair and FLAC retag preserve audio and repeat without
   changes. Not deployed. Legacy source/link migration and witnessed retirement,
-  process-death library-artwork replacement recovery, and embed-without-sidecar
-  acquisition still block release. Keep live downloads paused and do not wipe
+  and embed-without-sidecar acquisition still block release. Replacement recovery
+  is covered by the later candidate above. Keep live downloads paused and do not wipe
   the live cache. See `MANAGED_LIBRARY_CLEANUP.md` for evidence and boundaries.
 
 Status: pending | in progress | decided | revisit

@@ -118,7 +118,8 @@ export class LibraryCleanupJournal {
             options.assertOwner?.();
             this.assertRoot(intent); this.assertClaims(intent);
             this.inventoryWitness(intent.inventory_command_id,root);
-            if (this.hasPending() || db.prepare("SELECT 1 FROM FileMutationJournal LIMIT 1").get()) throw new Error("Recover pending file mutations before cleanup");
+            if (this.hasPending() || db.prepare("SELECT 1 FROM FileMutationJournal LIMIT 1").get()
+                || db.prepare("SELECT 1 FROM ArtworkMutationJournal LIMIT 1").get()) throw new Error("Recover pending file mutations before cleanup");
             if (cleanupFileIdentity(source,root) !== intent.source_identity) throw new Error("Cleanup file changed before intent");
             db.prepare(`INSERT INTO LibraryCleanupJournal
                 (id,inventory_command_id,source_path,staged_path,root_path,root_identity,source_identity,review_id,review_snapshot)

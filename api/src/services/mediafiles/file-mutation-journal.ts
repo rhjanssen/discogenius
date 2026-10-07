@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { tableIdColumn, type RenameTableName } from "./rename-track-file-paths.js";
 import { LibraryCleanupJournal } from "./library-cleanup-journal.js";
+import { ArtworkMutationJournal } from "../metadata/artwork-mutation-journal.js";
 
 type Intent = {
     id: string; table_name: RenameTableName; row_id: number;
@@ -40,7 +41,7 @@ export class FileMutationJournal {
             .get(intent.row_id) as Record<string, unknown> | undefined;
     }
     static hasPending(): boolean {
-        return Boolean(db.prepare("SELECT 1 FROM FileMutationJournal LIMIT 1").get()) || LibraryCleanupJournal.hasPending();
+        return Boolean(db.prepare("SELECT 1 FROM FileMutationJournal LIMIT 1").get()) || LibraryCleanupJournal.hasPending() || ArtworkMutationJournal.hasPending();
     }
     static async prepare(table: RenameTableName, rowId: number, storedPath: string, source: string,
         destination: string | null): Promise<string> {
@@ -167,7 +168,8 @@ export class FileMutationJournal {
     }
     static async recoverPending(): Promise<string[]> {
         const ids = db.prepare("SELECT id FROM FileMutationJournal ORDER BY created_at, id").all() as Array<{ id: string }>;
-        const errors: string[] = await LibraryCleanupJournal.recoverPending();
+        const errors: string[] = await ArtworkMutationJournal.recoverPending();
+        errors.push(...await LibraryCleanupJournal.recoverPending());
         for (const { id } of ids) {
             try { await this.recoverOne(id); }
             catch (error) { errors.push(`${id}: ${error instanceof Error ? error.message : String(error)}`); }
