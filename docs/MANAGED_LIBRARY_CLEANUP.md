@@ -525,3 +525,53 @@ manifests; this is not evidence of two different provider/canonical masters.
 This biased sample is not a whole-cache breakdown or a cleanup authorization.
 Audit original ownership/relocation, secondary artwork and backup retention
 separately before removing anything. Evidence: oct07-live-mediacover-sample.log.
+
+## October 7 witnessed cleanup candidate preview
+
+Root inventory now records remaining unsupported/unowned paths during its
+existing bounded traversal. There is no second filesystem scan just to build
+the plan. LibraryCleanupCandidates is an operational table tied to its inventory
+command; file-path paging uses its composite primary key. Each candidate retains
+its root, exact filesystem witness and classification. Missing ownership for
+supported media stops candidate collection rather than making that media junk.
+Recognized unresolved metadata and sidecars of review media receive refused
+classifications. Owned/review files and rewrite temporary names are excluded.
+
+Only new checkpoints have cleanupPlanVersion 1. The public read-only endpoint
+GET /api/v1/mediaFile/cleanup/preview requires a completed, configuration-current
+whole-library inventory with unchanged root identities. It returns at most 100
+entries using a stable path cursor. It checks current ownership/review claims
+and file identity; changed, missing or out-of-root candidates are not eligible.
+Legacy scans and incomplete scans cannot produce an apparently empty valid plan.
+Restarting a fresh inventory clears its old candidates atomically with the first
+checkpoint; command-history pruning cascades candidate rows, while independent
+cleanup intents still survive as already designed.
+
+The planner is a read-only preview, not a public deletion endpoint or an enabled
+strict setting. A queued apply workflow still needs to consume the exact recorded
+file witnesses, recheck applicability through the journal, persist per-path
+outcomes, prune empty parents and expose refusals in the app. Explicit disposal
+of remaining review media remains separate from default review protection.
+Finish missing artist/secondary-art ownership and review-sidecar persistence
+before enabling broad strict cleanup. Do not treat preview eligibility as a
+blanket authorization to remove a later replacement at the same path.
+
+Eight new active-schema checks cover the actual scan-created plan, legacy and
+incomplete scans, current review/ownership and file witnesses, configuration
+changes, protected review companions, stable cursor pages, command-history
+cascade, wrong roots and HTTP selector validation. The focused journal/preview
+file passes 20 tests. Rebuilt native Linux passes 53 of 54 journal/preview,
+inventory and sidecar checks with one Windows-only casing test skipped.
+
+Actual-app UI scans 6 and 7 completed on the rebuilt test container. The public
+preview marked only /library/music/loose.json eligible, protected the unknown
+FLAC's lyric and cover, and refused Loose/artist.nfo as unresolved. Known album
+cover/lyric ownership and the unknown audio review row remained intact. The
+repeat returned the identical four preview entries and eligibility decisions,
+with identical SHA-256 values for every fixture file. Activity reported an
+unchanged repeat. Evidence: oct07-cleanup-plan-app-preview.log,
+oct07-cleanup-plan-app-repeat.log, oct07-cleanup-plan-bytes-before-repeat.log,
+oct07-cleanup-plan-bytes-after-repeat.log, oct07-cleanup-plan-repeat-ui.png and
+oct07-cleanup-plan-native.log in the release-audit directory.
+Final full CI passed all 2,074 API and 187 frontend tests, lint, typechecks and builds, with no failing names or clone retries (oct07-cleanup-plan-ci.log). The live server was reverified as healthy 2.21.0;
+this candidate has not been deployed and no live cleanup has run.

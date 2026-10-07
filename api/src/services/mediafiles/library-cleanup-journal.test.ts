@@ -150,3 +150,78 @@ test("an interrupted cleanup cannot overwrite a recreated source",async()=>{
     assert.equal(fs.readFileSync(file,"utf8"),"external replacement");assert.equal(fs.readFileSync(staged,"utf8"),"original leftover");
     assert.equal(journal.hasPending(),true);
 });
+
+test("cleanup preview uses candidates captured by the completed root inventory",async()=>{
+    const {previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    const preview=previewLibraryCleanup(inventoryId);
+    assert.deepEqual(preview.entries,[{path:file,rootPath:root,reason:"unowned",eligible:true}]);
+    assert.equal(preview.nextCursor,null);
+    assert.equal(fs.readFileSync(file,"utf8"),"original leftover");
+});
+test("cleanup preview refuses incomplete or legacy candidate inventories",async()=>{
+    const {previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    database.db.prepare("UPDATE commands SET status='started' WHERE id=?").run(inventoryId);
+    assert.throws(()=>previewLibraryCleanup(inventoryId),/complete current library inventory/);
+    database.db.prepare("UPDATE commands SET status='completed' WHERE id=?").run(inventoryId);
+    const command=queue.CommandQueueManager.get(inventoryId)!;
+    delete (command.payload as any).rootInventory.cleanupPlanVersion;
+    database.db.prepare("UPDATE commands SET payload=? WHERE id=?").run(JSON.stringify(command.payload),inventoryId);
+    assert.throws(()=>previewLibraryCleanup(inventoryId),/fresh witnessed candidate inventory/);
+});
+test("cleanup preview rechecks newly claimed review paths and changed physical files",async()=>{
+    const {previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    fs.writeFileSync(file,"changed size and bytes after inventory");
+    assert.equal(previewLibraryCleanup(inventoryId).entries[0].reason,"file_changed");
+    review();
+    assert.equal(previewLibraryCleanup(inventoryId).entries[0].reason,"now_owned_or_reviewed");
+    assert.equal(previewLibraryCleanup(inventoryId).entries[0].eligible,false);
+});
+test("cleanup preview invalidates when the scan configuration changes",async()=>{
+    const {previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    const cfg=config.readConfig();cfg.metadata.album_cover_name="different.jpg";config.writeConfig(cfg);
+    assert.throws(()=>previewLibraryCleanup(inventoryId),/complete current library inventory/);
+});
+test("candidate collection protects review companions and reports unresolved metadata",async()=>{
+    const {recordCleanupCandidate}=await import("./library-cleanup-plan.js");
+    const media=path.join(root,"Unknown.flac"),lyric=path.join(root,"Unknown.lrc"),cover=path.join(root,config.readConfig().metadata.album_cover_name || "cover.jpg");
+    fs.writeFileSync(media,"unidentified audio");fs.writeFileSync(lyric,"lyrics");fs.writeFileSync(cover,"image");
+    database.db.prepare("INSERT INTO UnmappedFiles(file_path,relative_path,library_root,filename,extension,ignored) VALUES (?,'Unknown.flac',?,'Unknown.flac','flac',1)").run(media,root);
+    const siblings=[media,lyric,cover];
+    await recordCleanupCandidate(inventoryId,media,root,siblings,()=>{});
+    await recordCleanupCandidate(inventoryId,lyric,root,siblings,()=>{});
+    await recordCleanupCandidate(inventoryId,cover,root,[cover],()=>{});
+    assert.deepEqual(database.db.prepare("SELECT file_path,reason FROM LibraryCleanupCandidates WHERE file_path<>? ORDER BY file_path").all(file),
+        [{file_path:lyric,reason:"review_sidecar"},{file_path:cover,reason:"unresolved_sidecar"}]);
+    assert.equal(fs.readFileSync(media,"utf8"),"unidentified audio");
+});
+test("cleanup preview is bounded by a stable path cursor and cascades with inventory history",async()=>{
+    const {recordCleanupCandidate,previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    const extra=path.join(root,"another.json");fs.writeFileSync(extra,"extra");
+    await recordCleanupCandidate(inventoryId,extra,root,[extra],()=>{});
+    const first=previewLibraryCleanup(inventoryId,{limit:1}),second=previewLibraryCleanup(inventoryId,{limit:1,afterPath:first.nextCursor!});
+    assert.equal(first.entries.length,1);assert.equal(second.entries.length,1);
+    assert.notEqual(first.entries[0].path,second.entries[0].path);assert.equal(second.nextCursor,null);
+    assert.throws(()=>previewLibraryCleanup(inventoryId,{limit:101}),/Invalid cleanup preview/);
+    database.db.prepare("DELETE FROM commands WHERE id=?").run(inventoryId);
+    assert.equal((database.db.prepare("SELECT COUNT(*) AS n FROM LibraryCleanupCandidates").get() as {n:number}).n,0);
+});
+test("cleanup preview rejects candidates from a root outside the current witnessed inventory",async()=>{
+    const {previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    database.db.prepare("UPDATE LibraryCleanupCandidates SET root_path=? WHERE inventory_command_id=?").run(path.dirname(root),inventoryId);
+    assert.equal(previewLibraryCleanup(inventoryId).entries[0].reason,"outside_current_roots");
+    assert.equal(previewLibraryCleanup(inventoryId).entries[0].eligible,false);
+});
+test("cleanup preview HTTP validates selectors and exposes only witnessed read-only plans",async()=>{
+    const express=(await import("express")).default,router=(await import("../../routes/library-files.js")).default;
+    const app=express();app.use("/files",router);
+    const server=app.listen(0,"127.0.0.1");await new Promise<void>(resolve=>server.once("listening",resolve));
+    try {
+        const address=server.address() as {port:number},base=`http://127.0.0.1:${address.port}/files/cleanup/preview`;
+        assert.equal((await fetch(base)).status,400);
+        assert.equal((await fetch(base+`?inventoryCommandId=${inventoryId}&limit=101`)).status,400);
+        assert.equal((await fetch(base+`?inventoryCommandId=${inventoryId+1}`)).status,409);
+        const response=await fetch(base+`?inventoryCommandId=${inventoryId}&limit=1`);
+        assert.equal(response.status,200);assert.equal((await response.json() as {entries:unknown[]}).entries.length,1);
+        assert.equal(fs.readFileSync(file,"utf8"),"original leftover");
+    } finally {await new Promise<void>((resolve,reject)=>server.close(error=>error ? reject(error) : resolve()));}
+});

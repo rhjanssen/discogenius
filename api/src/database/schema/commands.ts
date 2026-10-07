@@ -53,6 +53,14 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       recovery_error TEXT,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE ${guard} LibraryCleanupCandidates (
+      inventory_command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
+      file_path TEXT NOT NULL,
+      root_path TEXT NOT NULL,
+      source_identity TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('unowned', 'unresolved_sidecar', 'review_sidecar')),
+      PRIMARY KEY (inventory_command_id, file_path)
+    );
     CREATE TABLE ${guard} CommandFileWorkPlans (
       command_id INTEGER PRIMARY KEY REFERENCES commands(id) ON DELETE CASCADE,
       operation TEXT NOT NULL CHECK (operation IN ('retag', 'strip')),

@@ -19,7 +19,7 @@ function rootIdentity(root: string): RootIdentity {
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Cleanup root is unavailable or linked");
     return { dev: String(stat.dev), ino: String(stat.ino) };
 }
-function fileIdentity(file: string, root: string): string {
+export function cleanupFileIdentity(file: string, root: string): string {
     const relative = path.relative(root, file);
     if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
         throw new Error("Cleanup path escaped its library root");
@@ -70,7 +70,7 @@ export class LibraryCleanupJournal {
             throw new Error("Settle applicable sidecar ownership before cleanup");
         }
     }
-    private static inventoryWitness(inventoryCommandId: number, root: string): string {
+    static inventoryWitness(inventoryCommandId: number, root: string): string {
         const command = db.prepare("SELECT name,status,payload FROM commands WHERE id=?").get(inventoryCommandId) as
             {name:string;status:string;payload:string} | undefined;
         const body = command ? JSON.parse(command.payload) as RescanFoldersCommand &
@@ -108,13 +108,13 @@ export class LibraryCleanupJournal {
         const id = randomUUID();
         const intent: Intent = {id,inventory_command_id:options.inventoryCommandId,source_path:source,
             staged_path:path.join(path.dirname(source),`.discogenius-cleanup-${id}${path.extname(source)}`),root_path:root,
-            root_identity:rootWitness,source_identity:fileIdentity(source,root),
+            root_identity:rootWitness,source_identity:cleanupFileIdentity(source,root),
             review_id:options.discardReviewId ?? null,review_snapshot:options.discardReviewId ? JSON.stringify(reviewed) : null,phase:"prepared"};
         await withSqliteWriteGate(() => {
             this.assertRoot(intent); this.assertClaims(intent);
             this.inventoryWitness(intent.inventory_command_id,root);
             if (this.hasPending() || db.prepare("SELECT 1 FROM FileMutationJournal LIMIT 1").get()) throw new Error("Recover pending file mutations before cleanup");
-            if (fileIdentity(source,root) !== intent.source_identity) throw new Error("Cleanup file changed before intent");
+            if (cleanupFileIdentity(source,root) !== intent.source_identity) throw new Error("Cleanup file changed before intent");
             db.prepare(`INSERT INTO LibraryCleanupJournal
                 (id,inventory_command_id,source_path,staged_path,root_path,root_identity,source_identity,review_id,review_snapshot)
                 VALUES (?,?,?,?,?,?,?,?,?)`).run(id,intent.inventory_command_id,source,intent.staged_path,root,
@@ -125,7 +125,7 @@ export class LibraryCleanupJournal {
     static stage(id: string): string {
         const intent = this.get(id); this.assertRoot(intent); this.assertClaims(intent);
         this.inventoryWitness(intent.inventory_command_id,intent.root_path);
-        if (intent.phase !== "prepared" || fileIdentity(intent.source_path,intent.root_path) !== intent.source_identity
+        if (intent.phase !== "prepared" || cleanupFileIdentity(intent.source_path,intent.root_path) !== intent.source_identity
             || fs.existsSync(intent.staged_path)) throw new Error("Cleanup file changed before staging");
         // Same directory/device; publish without ever replacing an external file.
         fs.linkSync(intent.source_path,intent.staged_path);
@@ -137,7 +137,7 @@ export class LibraryCleanupJournal {
             const intent=this.get(id); this.assertRoot(intent); this.assertClaims(intent);
             this.inventoryWitness(intent.inventory_command_id,intent.root_path);
             if (intent.phase !== "prepared" || fs.existsSync(intent.source_path)
-                || fileIdentity(intent.staged_path,intent.root_path) !== intent.source_identity) throw new Error("Cleanup staged file changed before commit");
+                || cleanupFileIdentity(intent.staged_path,intent.root_path) !== intent.source_identity) throw new Error("Cleanup staged file changed before commit");
             if (intent.review_id !== null) db.prepare("DELETE FROM UnmappedFiles WHERE id=? AND file_path=?").run(intent.review_id,intent.source_path);
             db.prepare("UPDATE LibraryCleanupJournal SET phase='committed' WHERE id=?").run(id);
         })(),"cleanup:commit");
@@ -146,9 +146,9 @@ export class LibraryCleanupJournal {
         try {
             const intent=this.get(id); this.assertRoot(intent);
             const sourceExists=fs.existsSync(intent.source_path), stagedExists=fs.existsSync(intent.staged_path);
-            if (stagedExists && fileIdentity(intent.staged_path,intent.root_path) !== intent.source_identity) throw new Error("Cleanup staged bytes changed");
+            if (stagedExists && cleanupFileIdentity(intent.staged_path,intent.root_path) !== intent.source_identity) throw new Error("Cleanup staged bytes changed");
             if (intent.phase === "prepared") {
-                if (sourceExists && fileIdentity(intent.source_path,intent.root_path) !== intent.source_identity) throw new Error("Cleanup source was replaced; cannot restore");
+                if (sourceExists && cleanupFileIdentity(intent.source_path,intent.root_path) !== intent.source_identity) throw new Error("Cleanup source was replaced; cannot restore");
                 if (!sourceExists && !stagedExists) throw new Error("Both cleanup paths are missing");
                 if (stagedExists) {
                     if (!sourceExists) fs.linkSync(intent.staged_path,intent.source_path);

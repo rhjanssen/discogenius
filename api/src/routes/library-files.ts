@@ -13,7 +13,8 @@ import {CommandQueueManager} from "../services/commands/command-queue-manager.js
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
-import { isRequestValidationError, parseBoundedQueryInteger } from "../utils/request-validation.js";
+import { isRequestValidationError, parseBoundedQueryInteger, RequestValidationError } from "../utils/request-validation.js";
+import { previewLibraryCleanup } from "../services/mediafiles/library-cleanup-plan.js";
 import { parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
 
 import { parseFileSelectionIds } from "../services/mediafiles/file-selection.js";
@@ -49,6 +50,27 @@ router.get("/", (req, res) => {
     res.json(response);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
+  }
+});
+
+router.get("/cleanup/preview", (req,res) => {
+  try {
+    if (req.query.inventoryCommandId === undefined) throw new RequestValidationError("inventoryCommandId is required");
+    const exactInteger=(value:unknown,fallback:number):number=>{
+      if (value === undefined) return fallback;
+      if (typeof value !== "string" || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value)<1) {
+        throw new RequestValidationError("Cleanup selectors must be positive integers");
+      }
+      return Number(value);
+    };
+    const inventoryId=exactInteger(req.query.inventoryCommandId,0),limit=exactInteger(req.query.limit,50);
+    if (limit>100) throw new RequestValidationError("Cleanup preview limit must be at most 100");
+    if (req.query.afterPath !== undefined && (typeof req.query.afterPath !== "string" || req.query.afterPath.length>4096)) {
+      throw new RequestValidationError("Invalid cleanup cursor");
+    }
+    res.json(previewLibraryCleanup(inventoryId,{limit,afterPath:req.query.afterPath as string | undefined}));
+  } catch(error) {
+    res.status(isRequestValidationError(error) ? 400 : 409).json({detail:error instanceof Error ? error.message : String(error)});
   }
 });
 

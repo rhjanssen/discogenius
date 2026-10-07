@@ -122,6 +122,7 @@ export interface RootInventoryCheckpoint {
   files: number;
   reviewFiles: number;
   sidecarFiles?: number;
+  cleanupPlanVersion?: 1;
   missingRoots: string[];
   complete: boolean;
 }

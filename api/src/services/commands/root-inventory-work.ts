@@ -8,6 +8,7 @@ import { SUPPORTED_IMPORT_EXTENSIONS } from "../mediafiles/import-discovery.js";
 import { isMediaRewriteTemporaryName } from "../mediafiles/media-file-rewrite.js";
 import { persistRootReviewCandidates } from "../mediafiles/library-scan-root-review.js";
 import { reconcileInventorySidecar } from "../mediafiles/inventory-sidecars.js";
+import { recordCleanupCandidate } from "../mediafiles/library-cleanup-plan.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
 import { CommandContinuation } from "./command-continuation.js";
 import type { RootInventoryCheckpoint } from "./command-bodies.js";
@@ -71,12 +72,13 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
     ].filter(root => Boolean(root.path)).map(root => ({ ...root, path: path.resolve(root.path) }));
     if (new Set(roots.map(root => root.path)).size !== roots.length) throw new Error("Library inventory roots must have distinct paths");
     let state = job.payload.rootInventory;
-    const persist = async () => withSqliteWriteGate(() => {
+    const persist = async (resetCandidates=false) => withSqliteWriteGate(() => db.transaction(() => {
         assertOwner();
+        if (resetCandidates) db.prepare("DELETE FROM LibraryCleanupCandidates WHERE inventory_command_id=?").run(job.id);
         if (!CommandQueueManager.updateState(job.id, { workerId: owner, payloadPatch: { rootInventory: state } })) {
             throw new Error("Root inventory execution ownership changed");
         }
-    }, "scan:root-inventory-checkpoint");
+    })(), "scan:root-inventory-checkpoint");
     if (!state) {
         const rootIdentities = roots.map(root => {
             try { return directoryIdentity(root.path); }
@@ -85,10 +87,10 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
                 throw error;
             }
         });
-        state = { version: 1, roots, rootIdentities, pending: roots.map((_, root) => ({ root, directory: roots[root].path })),
+        state = { version: 1, cleanupPlanVersion: 1, roots, rootIdentities, pending: roots.map((_, root) => ({ root, directory: roots[root].path })),
             current: null, directories: 0, files: 0, reviewFiles: 0,
             missingRoots: roots.filter((_, index) => !rootIdentities[index]).map(root => root.path), complete: false };
-        await persist();
+        await persist(true);
     }
     if (state.version !== 1 || JSON.stringify(state.roots) !== JSON.stringify(roots)
         || !Array.isArray(state.pending) || !Array.isArray(state.missingRoots) || typeof state.complete !== "boolean"
@@ -182,6 +184,9 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
             if (await reconcileInventorySidecar(file,root.path,current.files.map(sibling => path.join(current.directory,sibling)))) {
                 state.sidecarFiles = (state.sidecarFiles ?? 0) + 1;
             }
+        }
+        if (state.cleanupPlanVersion === 1) {
+            await recordCleanupCandidate(job.id,file,root.path,current.files.map(sibling => path.join(current.directory,sibling)),assertOwner);
         }
         state.files++;
         current.cursor++;
