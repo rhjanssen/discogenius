@@ -709,3 +709,46 @@ live 94 GB cache has not been wiped or subjected to a recovery acceptance test.
 Before retiring old originals, verify a complete durable source/sidecar inventory,
 proxy-only catalogue refresh, import materialization, cache-wipe recovery with
 unchanged library hashes, source switching, rename and embedded-art regeneration.
+
+## October 7 durable artwork state candidate
+
+ArtworkSources now stores selected URL, preference, fulfillment kind and content
+hash independently of MediaCover. ArtworkLibraryLinks stores album/edition master
+associations by exact MetadataFiles ID, with provisional paths only during sidecar
+registration. A file-row deletion cascades its link; renames resolve the row's
+current path. The content hash is checked before accepting or rebuilding from
+that original. Scope keys distinguish artists, albums, editions and videos.
+Source writes use async writer admission after image fetch/processing; synchronous
+sidecar registration uses the existing write mutex and short transactions. New
+source and link records no longer write JSON manifests into the proxy directory.
+
+An entity whose selected source is unchanged can regenerate missing 250/500 JPEG
+proxies from its verified library master, without fetching or copying a master
+back into MediaCover. Recovery preserves source preference and fulfillment kind.
+Old JSON records remain bounded per-entity recovery inputs until a complete
+legacy inventory/migration is implemented and validated. This is not yet a
+permission to erase the old live cache. The fresh-download cache path still writes
+originals; switching all import/backfill call sites to import-time full-resolution
+fetching, artist/video/secondary master links and WebP/GIF conversion remains open.
+Also validate competing artwork-source switches before broad live replacement.
+
+Validation evidence in the temporary release audit directory:
+
+- oct07-durable-art-ci.log: full CI passed, 2,084 API and 187 frontend tests,
+  lint/typechecks/builds, no failing test names or clone retries.
+- oct07-durable-art-final-focus.log and oct07-durable-art-final-native.log:
+  all 62 focused artwork checks passed on Windows and Linux, including renamed
+  masters, cache deletion/offline recovery, hash mismatch, source switches and
+  deleted-row/cross-scope protection.
+- oct07-durable-art-app-proof.log: existing schema-46 fixture accepted additive
+  state tables; whole fixture MediaCover deletion recovered only two proxies.
+- oct07-durable-art-runtime-proof.log: after actual-app retag command 6 completed,
+  original cover SHA256 ffb61a110a3f6aca4103057afaf13a4f76bf1594c71153bb361bf2ba0a28dbfc
+  remained unchanged, decoded FLAC audio matched its untouched control copy,
+  canonical MusicBrainz tags/lyrics and a 1200x1200 embedded JPEG were present,
+  and foreign-key violations were zero.
+- oct07-durable-art-retag-ui.png: repeat tag preview says no files need retagging.
+
+The live container was rechecked as healthy 2.21.0 at revision f4e46cbe83cc;
+the candidate was not released or deployed, and no live cache/library mutation
+was performed during this validation.

@@ -1,4 +1,6 @@
 import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSidecar } from "./media-cover-library-storage.js";
+import { readArtworkSource, storeArtworkSource, type ArtworkSource } from "./media-cover-state.js";
+import { withSqliteWriteMutexSync } from "../../database/sqlite-write-mutex.js";
 import { CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import { db, withSqliteWriteGate } from "../../database.js";
@@ -177,8 +179,8 @@ function filenameForCover(coverType: string, extension: string, height?: number 
   return `${normalizedCoverType(coverType)}${suffix}${safeExtension}`;
 }
 
-function sourceMarkerPath(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string): string {
-  return path.join(mediaCoverFolder(entityId, coverEntity), `.${normalizedCoverType(coverType)}.source.json`);
+function sourceMarker(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string): ArtworkSource | null {
+  return readArtworkSource({ entityId, coverEntity, coverType: normalizedCoverType(coverType) }, mediaCoverFolder(entityId, coverEntity));
 }
 
 function cachedSourceMatches(
@@ -188,7 +190,7 @@ function cachedSourceMatches(
   sourceUrl: string,
 ): boolean {
   try {
-    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(entityId, coverEntity, coverType), "utf-8"));
+    const marker = sourceMarker(entityId, coverEntity, coverType);
     return marker?.url === sourceUrl && marker?.preference === configuredArtworkPreference();
   } catch {
     return false;
@@ -218,9 +220,11 @@ function commitCachedCoverVariant(options: {
   extension: string;
   originalBuffer: Buffer;
   derivatives: PreparedMediaCoverDerivative[];
+  /** Recovery from a verified library master only needs display proxies. */
+  retainOriginal?: boolean;
 }): void {
   const writes = [
-    {
+    ...(options.retainOriginal === false ? [] : [{
       target: getMediaCoverPath(
         options.entityId,
         options.coverEntity,
@@ -228,7 +232,7 @@ function commitCachedCoverVariant(options: {
         options.extension,
       ),
       buffer: options.originalBuffer,
-    },
+    }]),
     ...options.derivatives.map((derivative) => ({
       target: getMediaCoverPath(
         options.entityId,
@@ -263,34 +267,19 @@ function commitCachedCoverVariant(options: {
   }
 }
 
-function writeSourceMarker(
+async function writeSourceMarker(
   entityId: string | number,
   coverEntity: MediaCoverEntity,
   coverType: string,
   sourceUrl: string,
   fulfilledBy: MediaCoverSourceKind,
   contentHash?: string | null,
-): void {
-  const markerPath = sourceMarkerPath(entityId, coverEntity, coverType);
-  const tempPath = `${markerPath}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(
-      tempPath,
-      JSON.stringify({
-        url: sourceUrl,
-        preference: configuredArtworkPreference(),
-        fulfilledBy,
-        sourceKind: fulfilledBy,
-        contentHash: contentHash ?? null,
-      }),
-      "utf-8",
-    );
-    fs.renameSync(tempPath, markerPath);
-  } catch {
-    // The image remains usable; the next request may refresh it once more.
-  } finally {
-    try { fs.rmSync(tempPath, { force: true }); } catch { /* already committed */ }
-  }
+  preference: "canonical" | "provider" = configuredArtworkPreference(),
+): Promise<void> {
+  await withSqliteWriteGate(() => storeArtworkSource(
+    { entityId, coverEntity, coverType: normalizedCoverType(coverType) },
+    { url: sourceUrl, preference, fulfilledBy, contentHash: contentHash ?? null },
+  ), "artwork source provenance");
 }
 
 function looksLikeProviderArtworkUrl(url: unknown): boolean {
@@ -411,7 +400,7 @@ export function isArtworkPreferenceCacheCurrent(
   coverType: string,
 ): boolean {
   try {
-    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(entityId, coverEntity, coverType), "utf-8"));
+    const marker = sourceMarker(entityId, coverEntity, coverType);
     const preference = configuredArtworkPreference();
     if (marker?.preference !== preference) return false;
 
@@ -560,9 +549,9 @@ function existingOriginalMediaCover(
     }
   }
   try {
-    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(normalizedEntityId, coverEntity, coverType), "utf8"));
-    if (typeof marker.contentHash === "string") {
-      const master = findLibraryCoverMaster(mediaCoverFolder(normalizedEntityId, coverEntity), normalizedCoverType(coverType), marker.contentHash);
+    const marker = sourceMarker(normalizedEntityId, coverEntity, coverType);
+    if (typeof marker?.contentHash === "string") {
+      const master = findLibraryCoverMaster({ entityId: normalizedEntityId, coverEntity, coverType: normalizedCoverType(coverType) }, mediaCoverFolder(normalizedEntityId, coverEntity), marker.contentHash);
       if (master) return { path: master, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
     }
   } catch { /* No relocated original. */ }
@@ -586,7 +575,7 @@ export function linkCachedAlbumCoverSidecar(options: {
   const entityId = normalizeMediaCoverEntityId(options.entityId);
   if (!entityId || !["Album", "Edition"].includes(options.coverEntity)) return;
   const folder = mediaCoverFolder(entityId, options.coverEntity);
-  if (fs.existsSync(folder)) linkLibraryCoverSidecar(folder, "cover", options.outputPath, options.metadataFileId);
+  linkLibraryCoverSidecar({ entityId, coverEntity: options.coverEntity, coverType: "cover" }, folder, options.outputPath, options.metadataFileId);
 }
 
 function fileSha256(filePath: string): string {
@@ -657,14 +646,12 @@ export function syncCachedMediaCoverToFile(options: {
     const hash = fileSha256(options.outputPath);
     let metadataFileId: number | undefined;
     try { metadataFileId = (db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ? AND file_type = 'cover'").get(options.outputPath) as { id: number } | undefined)?.id; } catch { /* Import has not registered its sidecar yet. */ }
-    rememberLibraryCoverSidecar(folder, normalizedCoverType(coverType), options.outputPath, hash, metadataFileId);
-    const markerPath = sourceMarkerPath(entityId, options.coverEntity, coverType);
-    let marker: Record<string, unknown> = {};
-    try { marker = JSON.parse(fs.readFileSync(markerPath, "utf8")); } catch { /* Legacy cache. */ }
-    marker.contentHash = hash;
-    const tempMarker = `${markerPath}.${crypto.randomUUID()}.tmp`;
-    try { fs.writeFileSync(tempMarker, JSON.stringify(marker)); fs.renameSync(tempMarker, markerPath); }
-    finally { if (fs.existsSync(tempMarker)) fs.unlinkSync(tempMarker); }
+    const identity = { entityId, coverEntity: options.coverEntity, coverType: normalizedCoverType(coverType) };
+    const marker = sourceMarker(entityId, options.coverEntity, coverType);
+    withSqliteWriteMutexSync(() => db.transaction(() => {
+      rememberLibraryCoverSidecar(identity, folder, options.outputPath, hash, metadataFileId);
+      if (marker) storeArtworkSource(identity, { ...marker, contentHash: hash });
+    })(), "artwork sidecar provenance");
     // Verify the sidecar before discarding the cache's full-resolution bytes.
     // Unsupported image containers retain their original until proxies exist.
     if (path.dirname(sourcePath) === folder && MEDIA_COVER_DEFAULT_HEIGHTS.every(height => fs.existsSync(getMediaCoverPath(entityId, options.coverEntity, coverType, ".jpg", height)))
@@ -879,6 +866,7 @@ export async function ensureCachedMediaCover(options: {
 
   const fulfilledBy = options.fulfilledBy
     ?? (looksLikeProviderArtworkUrl(sourceUrl) ? "provider" : "canonical");
+  const sourcePreference = configuredArtworkPreference();
 
   const existing = existingMediaCover(entityId, options.coverEntity, options.coverType);
   // Albums/artists refresh when the preference/source marker changes. Videos
@@ -893,13 +881,7 @@ export async function ensureCachedMediaCover(options: {
       return existing.url;
     }
     if (options.coverEntity === "Video") {
-      let hasMarker = false;
-      try {
-        fs.accessSync(sourceMarkerPath(entityId, options.coverEntity, options.coverType));
-        hasMarker = true;
-      } catch {
-        hasMarker = false;
-      }
+      const hasMarker = Boolean(sourceMarker(entityId, options.coverEntity, options.coverType));
       if (!hasMarker && !isUpgradedProviderThumbnailUrl(sourceUrl)) {
         return existing.url;
       }
@@ -907,7 +889,30 @@ export async function ensureCachedMediaCover(options: {
     // Album/artist (and video upgrades / mismatched markers): fall through and refresh.
   }
 
+  // Cache loss is not source loss. Rebuild from an exact tracked sidecar with
+  // the selected content hash, without a network call or duplicating its master.
   try {
+    if (cachedSourceMatches(entityId, options.coverEntity, options.coverType, sourceUrl)) {
+      const marker = sourceMarker(entityId, options.coverEntity, options.coverType);
+      const master = marker?.contentHash ? findLibraryCoverMaster(
+        { entityId, coverEntity: options.coverEntity, coverType: normalizedCoverType(options.coverType) },
+        mediaCoverFolder(entityId, options.coverEntity), marker.contentHash,
+      ) : null;
+      if (master) {
+        const heights = options.coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS;
+        const buffer = fs.readFileSync(master);
+        const hash = crypto.createHash("sha256").update(buffer).digest("hex");
+        const derivatives = hash === marker!.contentHash ? prepareResizedMediaCovers(buffer, path.extname(master), heights) : [];
+        if (derivatives.length === heights.length) {
+          fs.mkdirSync(mediaCoverFolder(entityId, options.coverEntity), { recursive: true });
+          commitCachedCoverVariant({ entityId, coverEntity: options.coverEntity, coverType: options.coverType,
+            extension: path.extname(master), originalBuffer: buffer, derivatives, retainOriginal: false });
+          await writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, marker!.fulfilledBy ?? fulfilledBy, marker!.contentHash, sourcePreference);
+          return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, ".jpg");
+        }
+      }
+    }
+
     const fetched = await fetchArtworkWithFallbacks(sourceUrl);
 
     if (!fetched) {
@@ -940,7 +945,7 @@ export async function ensureCachedMediaCover(options: {
         derivatives,
       });
       const contentHash = crypto.createHash("sha256").update(originalBuffer).digest("hex");
-      writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash);
+      await writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash, sourcePreference);
       return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
     }
 
@@ -962,7 +967,7 @@ export async function ensureCachedMediaCover(options: {
       derivatives,
     });
     const contentHash = crypto.createHash("sha256").update(originalBuffer).digest("hex");
-    writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash);
+    await writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash, sourcePreference);
     return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
   } catch (error) {
     console.warn("[MediaCoverService] Failed to cache artwork:", (error as Error).message);
@@ -1015,7 +1020,7 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
 }
 
 /**
- * Remote origin URL that populated a MediaCover cache entry (from `.cover.source.json`).
+ * Durable remote origin URL that populated a MediaCover cache entry.
  * Kept for diagnostics/source revision checks; sidecar writers copy the cached
  * full-resolution master and never fetch this URL.
  */
@@ -1069,7 +1074,8 @@ export function getCachedMediaCoverSourceUrlFromLocalUrl(value: unknown): string
   }
 
   try {
-    const marker = JSON.parse(fs.readFileSync(path.join(folder, `.${coverType}.source.json`), "utf-8"));
+    const coverEntity = ({ Albums: "Album", AlbumEditions: "Edition", Videos: "Video" } as const)[parts[2] as "Albums" | "AlbumEditions" | "Videos"] ?? "Artist";
+    const marker = readArtworkSource({ coverEntity, entityId: path.basename(folder), coverType }, folder);
     return normalizeArtworkUrl(marker?.url) || null;
   } catch {
     return null;
@@ -1413,9 +1419,7 @@ export function isMediaCoverRevisionCacheCurrent(
     return false;
   }
   try {
-    const marker = JSON.parse(
-      fs.readFileSync(sourceMarkerPath(normalizedEntityId, coverEntity, coverType), "utf-8"),
-    );
+    const marker = sourceMarker(normalizedEntityId, coverEntity, coverType);
     return artworkSourceRevision(marker?.url) === revision;
   } catch {
     return false;

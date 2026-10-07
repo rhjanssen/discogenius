@@ -708,12 +708,8 @@ test("provenance-updates-atomically-with-selected-bytes", async () => {
   });
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const cacheFolder = path.join(tempDir, "media-cover", "Albums", mbid);
-  const provPath = path.join(cacheFolder, ".cover.source.json");
-
-  // In A1, provenance must be persisted atomically
-  assert.ok(fs.existsSync(provPath), "Expected atomic provenance sidecar file in cache folder");
-  const prov = JSON.parse(fs.readFileSync(provPath, "utf-8"));
+  const prov = db.prepare("SELECT content_hash AS contentHash, fulfilled_by AS sourceKind FROM ArtworkSources WHERE cover_entity = 'Album' AND entity_id = ? AND cover_type = 'cover'").get(mbid) as { contentHash: string; sourceKind: string };
+  assert.ok(prov, "Expected durable provenance outside the disposable cache");
   assert.equal(prov.contentHash, HASH_A, "Provenance content hash must match written artwork bytes");
   assert.ok(prov.sourceKind, "Expected sourceKind in provenance");
 });

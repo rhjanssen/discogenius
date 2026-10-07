@@ -63,9 +63,25 @@ test("library artwork moves the original into its sidecar and refetches when swi
       .run(renamedPath, path.relative(root, renamedPath), metadataId);
     assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album"), renamedPath);
     assert.deepEqual(fs.readFileSync(renamedPath), masterA);
+    fs.rmSync(cache, { recursive: true });
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album"), renamedPath,
+      "Cache removal preserves the exact tracked library master");
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverSourceUrlFromLocalUrl(`/media-cover/Albums/${mbid}/cover.jpg`), sourceA);
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId: mbid, coverEntity: "Album", coverType: "cover", sourceUrl: sourceA });
+    assert.equal(fetchCount, 3, "Rebuild uses verified library bytes even when the source is offline");
+    assert.deepEqual(fs.readdirSync(cache).sort(), ["cover-250.jpg", "cover-500.jpg"]);
+    assert.deepEqual(fs.readFileSync(renamedPath), masterA);
+    assert.equal(mediaCoverServiceModule.isMediaCoverRevisionCacheCurrent(mbid, "Album", "cover", sourceRevision(sourceA)), true);
     fs.writeFileSync(renamedPath, masterB);
     assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album"), null,
       "A different edition's sidecar cannot masquerade as this selected original");
+    fs.writeFileSync(renamedPath, masterA);
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album"), renamedPath);
+    dbModule.db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(metadataId);
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album"), null,
+      "Removing its tracked row cannot leave a path-only link to the physical image");
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverSourceUrlFromLocalUrl(`/media-cover/AlbumEditions/${mbid}/cover.jpg`), null,
+      "An edition cannot inherit the source of an album with the same URL identifier");
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -813,7 +829,7 @@ test("ensureCachedMediaCover falls back to a lower-res YouTube thumbnail when hq
     assert.ok(fs.existsSync(path.join(folder, "cover.jpg")), "cover bytes are written via the fallback");
 
     // The source marker records the logical hq720 URL so a later request short-circuits.
-    const marker = JSON.parse(fs.readFileSync(path.join(folder, ".cover.source.json"), "utf-8"));
+    const marker = dbModule.db.prepare("SELECT source_url AS url FROM ArtworkSources WHERE cover_entity = 'Video' AND entity_id = ? AND cover_type = 'cover'").get(videoId) as { url: string };
     assert.equal(marker.url, sourceUrl);
   } finally {
     globalThis.fetch = originalFetch;
@@ -854,14 +870,7 @@ test("video artwork replaces a related-video cache with the recording's YouTube 
     assert.equal(cached, `/media-cover/Videos/${recording.id}/cover.jpg`);
     assert.equal(requests[0], `https://i.ytimg.com/vi/${watchId}/maxresdefault.jpg`);
 
-    const markerPath = path.join(
-      tempDir,
-      "media-cover",
-      "Videos",
-      String(recording.id),
-      ".cover.source.json",
-    );
-    const marker = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
+    const marker = dbModule.db.prepare("SELECT source_url AS url FROM ArtworkSources WHERE cover_entity = 'Video' AND entity_id = ? AND cover_type = 'cover'").get(String(recording.id)) as { url: string };
     assert.equal(marker.url, `https://i.ytimg.com/vi/${watchId}/maxresdefault.jpg`);
     assert.deepEqual(
       dbModule.db.prepare("SELECT cover_image_url FROM Recordings WHERE id = ?").get(recording.id),
@@ -1594,7 +1603,7 @@ test("ensureCachedMediaCover keeps prior files when a canonical upgrade fetch fa
     assert.equal(failedUpgrade, null);
     assert.equal(fs.existsSync(path.join(folder, "cover-500.jpg")), true);
     assert.equal(fs.existsSync(path.join(folder, "cover-250.jpg")), true);
-    const marker = JSON.parse(fs.readFileSync(path.join(folder, ".cover.source.json"), "utf-8"));
+    const marker = dbModule.db.prepare("SELECT source_url AS url, fulfilled_by AS fulfilledBy FROM ArtworkSources WHERE cover_entity = 'Album' AND entity_id = ? AND cover_type = 'cover'").get(albumMbid) as { url: string; fulfilledBy: string };
     assert.equal(marker.url, providerUrl);
     assert.equal(marker.fulfilledBy, "provider");
   } finally {

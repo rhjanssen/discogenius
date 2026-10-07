@@ -1,5 +1,6 @@
 import { ensureEditionBarcodeIndex } from "./database/schema/edition-barcode-index.js";
 import Database from "better-sqlite3";
+import { createArtworkStateSchema } from "./database/schema/artwork-state.js";
 import { assertOutsideSqliteReadPlan, recordSqlitePlanRead } from "./database/sqlite-read-plan.js";
 import { BASE_SCHEMA_VERSION } from "./database/schema/version.js";
 import { isMainThread } from "node:worker_threads";
@@ -508,6 +509,7 @@ export function initDatabase() {
   // Durable runtime work records are additive command-queue objects, not a
   // second catalogue schema or a compatibility writer.
   createCommandFileWorkSchema(db, { ifNotExists: true });
+  createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
@@ -787,6 +789,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
   createTrackLibraryProjectionSchema(schemaDb);
   createExtraFileSchema(schemaDb);
   createMediaCoverProxyCacheSchema(schemaDb);
+  createArtworkStateSchema(schemaDb);
   createTrackFileForeignKeyTriggers(schemaDb);
 
   // ====================================================================
