@@ -1094,9 +1094,9 @@ ${orderBy}
         scheduleCommandOverlay(id, overlay);
     }
 
-    static updateState(id: number, options: {
+    static updateState<K extends CommandName = CommandName>(id: number, options: {
         progress?: number | null;
-        payloadPatch?: Partial<CommandBodyCommon>;
+        payloadPatch?: Partial<CommandBodyMap[K]>;
         workerId?: string;
         progressPhase?: string | null;
         progressCurrent?: number | null;

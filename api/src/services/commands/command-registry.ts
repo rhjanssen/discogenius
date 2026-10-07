@@ -180,6 +180,14 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: false,
   },
+  [CommandNames.CleanupLibrary]: {
+    type: CommandNames.CleanupLibrary,
+    name: "Clean Library",
+    requiresDiskAccess: true,
+    isTypeExclusive: true,
+    isExclusive: true,
+    isLongRunning: true,
+  },
   [CommandNames.UpdateLibraryMetadata]: {
     type: CommandNames.UpdateLibraryMetadata,
     name: "Update Library Metadata",

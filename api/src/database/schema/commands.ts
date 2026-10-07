@@ -61,6 +61,21 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       reason TEXT NOT NULL CHECK (reason IN ('unowned', 'unresolved_sidecar', 'review_sidecar')),
       PRIMARY KEY (inventory_command_id, file_path)
     );
+    CREATE TABLE ${guard} LibraryCleanupResults (
+      inventory_command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
+      file_path TEXT NOT NULL,
+      cleanup_command_id INTEGER REFERENCES commands(id) ON DELETE SET NULL,
+      status TEXT NOT NULL CHECK (status IN ('deleted','protected','refused')),
+      reason TEXT NOT NULL,
+      directory_witnesses TEXT NOT NULL DEFAULT '[]',
+      prune_done INTEGER NOT NULL DEFAULT 1,
+      pruned INTEGER NOT NULL DEFAULT 0,
+      prune_error TEXT,
+      PRIMARY KEY (inventory_command_id,file_path),
+      FOREIGN KEY (inventory_command_id,file_path) REFERENCES LibraryCleanupCandidates(inventory_command_id,file_path) ON DELETE CASCADE
+    );
+    CREATE INDEX ${guard} idx_cleanup_results_pending_prune
+      ON LibraryCleanupResults(cleanup_command_id,prune_done,file_path);
     CREATE TABLE ${guard} CommandFileWorkPlans (
       command_id INTEGER PRIMARY KEY REFERENCES commands(id) ON DELETE CASCADE,
       operation TEXT NOT NULL CHECK (operation IN ('retag', 'strip')),

@@ -93,7 +93,8 @@ export class LibraryCleanupJournal {
         });
         return JSON.stringify(rootIdentity(root));
     }
-    static async prepare(options: { inventoryCommandId: number; filePath: string; rootPath: string; discardReviewId?: number }): Promise<string> {
+    static async prepare(options: { inventoryCommandId: number; filePath: string; rootPath: string; discardReviewId?: number;
+        expectedSourceIdentity?:string;assertOwner?:()=>void }): Promise<string> {
         const source = path.resolve(options.filePath), root = path.resolve(options.rootPath);
         const reserved = new Set([".zfs",".git",".vs",".appledouble","$recycle.bin","system volume information","@eadir"]);
         if (isMediaRewriteTemporaryName(path.basename(source)) || path.relative(root,source).split(path.sep)
@@ -110,7 +111,11 @@ export class LibraryCleanupJournal {
             staged_path:path.join(path.dirname(source),`.discogenius-cleanup-${id}${path.extname(source)}`),root_path:root,
             root_identity:rootWitness,source_identity:cleanupFileIdentity(source,root),
             review_id:options.discardReviewId ?? null,review_snapshot:options.discardReviewId ? JSON.stringify(reviewed) : null,phase:"prepared"};
+        if (options.expectedSourceIdentity !== undefined && intent.source_identity !== options.expectedSourceIdentity) {
+            throw new Error("Cleanup file changed after inventory");
+        }
         await withSqliteWriteGate(() => {
+            options.assertOwner?.();
             this.assertRoot(intent); this.assertClaims(intent);
             this.inventoryWitness(intent.inventory_command_id,root);
             if (this.hasPending() || db.prepare("SELECT 1 FROM FileMutationJournal LIMIT 1").get()) throw new Error("Recover pending file mutations before cleanup");
@@ -132,7 +137,7 @@ export class LibraryCleanupJournal {
         fs.unlinkSync(intent.source_path);
         return intent.staged_path;
     }
-    static async commit(id: string): Promise<void> {
+    static async commit(id: string, onCommitted?:()=>void): Promise<void> {
         await withSqliteWriteGate(() => db.transaction(() => {
             const intent=this.get(id); this.assertRoot(intent); this.assertClaims(intent);
             this.inventoryWitness(intent.inventory_command_id,intent.root_path);
@@ -140,6 +145,7 @@ export class LibraryCleanupJournal {
                 || cleanupFileIdentity(intent.staged_path,intent.root_path) !== intent.source_identity) throw new Error("Cleanup staged file changed before commit");
             if (intent.review_id !== null) db.prepare("DELETE FROM UnmappedFiles WHERE id=? AND file_path=?").run(intent.review_id,intent.source_path);
             db.prepare("UPDATE LibraryCleanupJournal SET phase='committed' WHERE id=?").run(id);
+            onCommitted?.();
         })(),"cleanup:commit");
     }
     static async recoverOne(id: string): Promise<void> {

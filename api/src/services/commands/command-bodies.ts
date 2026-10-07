@@ -363,6 +363,12 @@ export type CompactDatabaseCommand = CommandBodyCommon;
 export type BackupDatabaseCommand = CommandBodyCommon;
 
 export type CleanupTempFilesCommand = CommandBodyCommon;
+export interface CleanupLibraryCommand extends CommandBodyCommon {
+  inventoryCommandId: number;
+  pruneEmptyFolders?: boolean;
+  cleanupCursor?: string;
+  cleanupStats?: { deleted:number;protected:number;refused:number;alreadyRemoved:number;pruned:number };
+}
 
 export type UpdateLibraryMetadataCommand = CommandBodyCommon;
 

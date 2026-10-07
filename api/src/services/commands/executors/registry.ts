@@ -1,4 +1,5 @@
 import {CommandNames} from "../command-names.js";
+import { CleanupLibraryCommand } from "./cleanup-library-command.js";
 import type { IExecuteCommand } from "./i-execute-command.js";
 import {
     RefreshArtistCommand,
@@ -53,6 +54,7 @@ export const commandExecutors: Record<string, IExecuteCommand<any>> = {
     [CommandNames.CompactDatabase]: new MaintenanceCommand(),
     [CommandNames.BackupDatabase]: new MaintenanceCommand(),
     [CommandNames.CleanupTempFiles]: new MaintenanceCommand(),
+    [CommandNames.CleanupLibrary]: new CleanupLibraryCommand(),
     [CommandNames.UpdateLibraryMetadata]: new MaintenanceCommand(),
     [CommandNames.ConfigPrune]: new MaintenanceCommand(),
     [CommandNames.ImportProviderArtists]: new ImportProviderArtistsCommand(),

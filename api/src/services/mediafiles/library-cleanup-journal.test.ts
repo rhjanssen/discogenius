@@ -225,3 +225,114 @@ test("cleanup preview HTTP validates selectors and exposes only witnessed read-o
         assert.equal(fs.readFileSync(file,"utf8"),"original leftover");
     } finally {await new Promise<void>((resolve,reject)=>server.close(error=>error ? reject(error) : resolve()));}
 });
+
+async function cleanupJob(pruneEmptyFolders=false) {
+    const id=queue.CommandQueueManager.push(queue.CommandNames.CleanupLibrary,{inventoryCommandId:inventoryId,pruneEmptyFolders});
+    return queue.CommandQueueManager.claimForExecution(id,"cleanup-test",60_000)! as CommandModelOf<"CleanupLibrary">;
+}
+
+test("queued cleanup commits its exact outcome and cursor and never removes a replacement on retry",async()=>{
+    const {runCleanupWorkUnit}=await import("../commands/cleanup-work.js");
+    const {previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    const job=await cleanupJob();await runCleanupWorkUnit(job,ctx);
+    assert.equal(fs.existsSync(file),false);assert.equal(journal.hasPending(),false);
+    const persisted=queue.CommandQueueManager.get(job.id)! as CommandModelOf<"CleanupLibrary">;
+    assert.equal(persisted.payload.cleanupCursor,file);assert.equal(persisted.payload.cleanupStats?.deleted,1);
+    assert.equal((database.db.prepare("SELECT status FROM LibraryCleanupResults WHERE file_path=?").get(file) as {status:string}).status,"deleted");
+    assert.equal(previewLibraryCleanup(inventoryId).entries[0].reason,"already_removed");
+    await runCleanupWorkUnit(persisted,ctx);
+    assert.equal((queue.CommandQueueManager.get(job.id)! as CommandModelOf<"CleanupLibrary">).payload.cleanupStats?.deleted,1);
+    fs.writeFileSync(file,"replacement must survive");
+    assert.equal(previewLibraryCleanup(inventoryId).entries[0].reason,"file_changed");
+    queue.CommandQueueManager.complete(job.id,job.worker_id!);
+    await assert.rejects(runCleanupWorkUnit(await cleanupJob(),ctx),/unresolved or changed paths/);
+    assert.equal(fs.readFileSync(file,"utf8"),"replacement must survive");
+});
+
+test("queued cleanup restores original bytes when its atomic outcome transaction fails",async()=>{
+    const {runCleanupWorkUnit}=await import("../commands/cleanup-work.js");
+    const job=await cleanupJob();
+    database.db.exec("CREATE TRIGGER fail_cleanup_outcome BEFORE INSERT ON LibraryCleanupResults WHEN NEW.status='deleted' BEGIN SELECT RAISE(ABORT,'outcome fault'); END;");
+    try {await assert.rejects(runCleanupWorkUnit(job,ctx),/unresolved or changed paths/);}
+    finally {database.db.exec("DROP TRIGGER fail_cleanup_outcome");}
+    assert.equal(fs.readFileSync(file,"utf8"),"original leftover");assert.equal(journal.hasPending(),false);
+    const stats=(queue.CommandQueueManager.get(job.id)! as CommandModelOf<"CleanupLibrary">).payload.cleanupStats!;
+    assert.equal(stats.deleted,0);assert.equal(stats.refused,1);
+    const {previewLibraryCleanup}=await import("./library-cleanup-plan.js");
+    assert.match(previewLibraryCleanup(inventoryId).entries[0].outcome!.reason,/outcome fault/);
+});
+
+test("queued cleanup prunes only witnessed empty parents and preserves the library root and review media",async()=>{
+    const {runCleanupWorkUnit}=await import("../commands/cleanup-work.js");
+    const {recordCleanupCandidate}=await import("./library-cleanup-plan.js");
+    const nested=path.join(root,"Loose","Album","leftover.json");
+    fs.mkdirSync(path.dirname(nested),{recursive:true});fs.writeFileSync(nested,"junk");
+    await recordCleanupCandidate(inventoryId,nested,root,[nested],()=>{});
+    review();
+    const job=await cleanupJob(true);await runCleanupWorkUnit(job,ctx);
+    assert.equal(fs.existsSync(path.join(root,"Loose")),false);assert.equal(fs.existsSync(root),true);
+    assert.equal(fs.readFileSync(file,"utf8"),"original leftover");
+    const stats=(queue.CommandQueueManager.get(job.id)! as CommandModelOf<"CleanupLibrary">).payload.cleanupStats!;
+    assert.equal(stats.deleted,1);assert.equal(stats.protected,1);assert.equal(stats.pruned,2);
+});
+
+test("queued cleanup refuses changed files and cancellation before touching disk",async()=>{
+    const {runCleanupWorkUnit}=await import("../commands/cleanup-work.js");
+    fs.writeFileSync(file,"changed after inventory");
+    const job=await cleanupJob();await assert.rejects(runCleanupWorkUnit(job,ctx),/unresolved or changed paths/);
+    assert.equal(fs.readFileSync(file,"utf8"),"changed after inventory");
+    queue.CommandQueueManager.updateState<"CleanupLibrary">(job.id,{workerId:job.worker_id!,payloadPatch:{cancelRequested:true}});
+    await assert.rejects(runCleanupWorkUnit(queue.CommandQueueManager.get(job.id)! as CommandModelOf<"CleanupLibrary">,ctx),/cancellation requested/);
+    assert.equal(journal.hasPending(),false);
+});
+
+test("cleanup apply HTTP validates policy and only queues work without removing files inline",async()=>{
+    const express=(await import("express")).default,router=(await import("../../routes/library-files.js")).default;
+    const app=express();app.use(express.json());app.use("/files",router);
+    const server=app.listen(0,"127.0.0.1");await new Promise<void>(resolve=>server.once("listening",resolve));
+    try {
+        const base=`http://127.0.0.1:${(server.address() as {port:number}).port}/files/cleanup/apply`;
+        const post=(body:unknown)=>fetch(base,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+        for (const body of [{},{inventoryCommandId:0},{inventoryCommandId:inventoryId,pruneEmptyFolders:"true"},
+            {inventoryCommandId:inventoryId,filePath:file}]) assert.equal((await post(body)).status,400);
+        assert.equal((await post({inventoryCommandId:inventoryId+100})).status,409);
+        const response=await post({inventoryCommandId:inventoryId,pruneEmptyFolders:true});assert.equal(response.status,202);
+        const {commandId}=await response.json() as {commandId:number};
+        const command=queue.CommandQueueManager.get(commandId)! as CommandModelOf<"CleanupLibrary">;
+        assert.equal(command.name,"CleanupLibrary");assert.equal(command.status,"queued");assert.equal(command.payload.pruneEmptyFolders,true);
+        assert.equal(fs.readFileSync(file,"utf8"),"original leftover");assert.equal(journal.hasPending(),false);
+    } finally {await new Promise<void>((resolve,reject)=>server.close(error=>error ? reject(error) : resolve()));}
+});
+
+test("cleanup yields after bounded work and resumes from its committed cursor without recounting",async()=>{
+    const {runCleanupWorkUnit}=await import("../commands/cleanup-work.js");
+    const {recordCleanupCandidate}=await import("./library-cleanup-plan.js");
+    const {persistCommandOutcome}=await import("../commands/command-context.js");
+    for(let i=0;i<30;i++) {
+        const extra=path.join(root,`junk-${String(i).padStart(2,"0")}.json`);fs.writeFileSync(extra,"junk");
+        await recordCleanupCandidate(inventoryId,extra,root,[extra],()=>{});
+    }
+    let job=await cleanupJob();
+    try {await runCleanupWorkUnit(job,ctx);assert.fail("Expected bounded continuation");}
+    catch(error) {assert.equal(await persistCommandOutcome(job,error),"requeued");}
+    assert.equal((queue.CommandQueueManager.get(job.id)! as CommandModelOf<"CleanupLibrary">).payload.cleanupStats?.deleted,25);
+    job=queue.CommandQueueManager.claimForExecution(job.id,"cleanup-next-worker",60_000)! as CommandModelOf<"CleanupLibrary">;
+    await runCleanupWorkUnit(job,ctx);
+    assert.equal((queue.CommandQueueManager.get(job.id)! as CommandModelOf<"CleanupLibrary">).payload.cleanupStats?.deleted,31);
+    assert.equal((database.db.prepare("SELECT COUNT(*) AS n FROM LibraryCleanupResults WHERE status='deleted'").get() as {n:number}).n,31);
+});
+
+test("pending parent pruning refuses a replaced directory after a committed removal",async()=>{
+    const {runCleanupWorkUnit}=await import("../commands/cleanup-work.js");
+    const {recordCleanupCandidate}=await import("./library-cleanup-plan.js");
+    const directory=path.join(root,"replaced"),nested=path.join(directory,"junk.json");
+    fs.mkdirSync(directory);fs.writeFileSync(nested,"junk");
+    await recordCleanupCandidate(inventoryId,nested,root,[nested],()=>{});
+    const witness=fs.lstatSync(directory,{bigint:true}),job=await cleanupJob(true);
+    database.db.prepare(`INSERT INTO LibraryCleanupResults(inventory_command_id,file_path,cleanup_command_id,status,reason,directory_witnesses,prune_done)
+        VALUES(?,?,?,'deleted','removed',?,0)`).run(inventoryId,nested,job.id,JSON.stringify([{path:directory,dev:String(witness.dev),ino:String(witness.ino)}]));
+    fs.unlinkSync(nested);fs.renameSync(directory,directory+"-original");fs.mkdirSync(directory);
+    await assert.rejects(runCleanupWorkUnit(job,ctx),/unresolved or changed paths/);
+    assert.equal(fs.existsSync(directory),true);assert.equal(fs.existsSync(directory+"-original"),true);
+    assert.match((database.db.prepare("SELECT prune_error FROM LibraryCleanupResults WHERE file_path=?").get(nested) as {prune_error:string}).prune_error,/directory changed/);
+});

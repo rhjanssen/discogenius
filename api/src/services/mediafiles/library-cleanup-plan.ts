@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { SUPPORTED_IMPORT_EXTENSIONS } from "./import-discovery.js";
 import { isMediaRewriteTemporaryName } from "./media-file-rewrite.js";
@@ -7,7 +8,7 @@ import { cleanupFileIdentity, LibraryCleanupJournal } from "./library-cleanup-jo
 import type { RescanFoldersCommand } from "../commands/command-bodies.js";
 
 type Reason = "unowned" | "unresolved_sidecar" | "review_sidecar";
-type Candidate = {file_path:string;root_path:string;source_identity:string;reason:Reason};
+export type CleanupCandidate = {file_path:string;root_path:string;source_identity:string;reason:Reason};
 function protectedPath(file:string): boolean {
     return Boolean(db.prepare(`SELECT 1 FROM TrackFiles WHERE file_path=?
         UNION ALL SELECT 1 FROM MetadataFiles WHERE file_path=?
@@ -54,16 +55,20 @@ export function previewLibraryCleanup(inventoryId:number,options:{limit?:number;
     for (const root of body.rootInventory.roots) LibraryCleanupJournal.inventoryWitness(inventoryId,root.path);
     const roots=new Set(body.rootInventory.roots.map(root=>root.path));
     const rows=db.prepare(`SELECT file_path,root_path,source_identity,reason FROM LibraryCleanupCandidates
-        WHERE inventory_command_id=? AND file_path>? ORDER BY file_path LIMIT ?`).all(inventoryId,afterPath,limit+1) as Candidate[];
+        WHERE inventory_command_id=? AND file_path>? ORDER BY file_path LIMIT ?`).all(inventoryId,afterPath,limit+1) as CleanupCandidate[];
     const entries=rows.slice(0,limit).map(row=>{
         let reason:string=row.reason;
+        const outcome=db.prepare("SELECT status,reason,prune_error FROM LibraryCleanupResults WHERE inventory_command_id=? AND file_path=?")
+            .get(inventoryId,row.file_path) as {status:string;reason:string;prune_error:string|null} | undefined;
         if (!roots.has(row.root_path)) reason="outside_current_roots";
         else if (protectedPath(row.file_path)) reason="now_owned_or_reviewed";
+        else if (outcome?.status === "deleted") reason=fs.existsSync(row.file_path) ? "file_changed" : "already_removed";
         else {
             try { if (cleanupFileIdentity(row.file_path,row.root_path)!==row.source_identity) reason="file_changed"; }
             catch { reason="file_unavailable"; }
         }
-        return {path:row.file_path,rootPath:row.root_path,reason,eligible:reason === "unowned"};
+        return {path:row.file_path,rootPath:row.root_path,reason,eligible:reason === "unowned",
+            ...(outcome ? {outcome:{status:outcome.status,reason:outcome.reason,pruneError:outcome.prune_error}} : {})};
     });
     return {inventoryCommandId:inventoryId,entries,nextCursor:rows.length>limit ? entries.at(-1)!.path : null};
 }

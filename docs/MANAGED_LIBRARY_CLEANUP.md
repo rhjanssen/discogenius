@@ -575,3 +575,59 @@ oct07-cleanup-plan-bytes-after-repeat.log, oct07-cleanup-plan-repeat-ui.png and
 oct07-cleanup-plan-native.log in the release-audit directory.
 Final full CI passed all 2,074 API and 187 frontend tests, lint, typechecks and builds, with no failing names or clone retries (oct07-cleanup-plan-ci.log). The live server was reverified as healthy 2.21.0;
 this candidate has not been deployed and no live cleanup has run.
+
+## October 7 queued cleanup application
+
+The candidate now accepts POST /api/v1/mediaFile/cleanup/apply with a positive
+inventoryCommandId and optional pruneEmptyFolders boolean, defaulting to false.
+The route only queues CleanupLibrary; it does not remove files inline. The
+exclusive disk command processes at most 25 candidates or five seconds before
+continuing from its persisted path cursor. It consumes the exact file witness
+recorded during inventory and checks the current worker lease, cancellation,
+ownership, applicability, configuration and all library roots before mutation.
+
+The cleanup journal commits the removal result and command cursor in the same
+transaction. Failed commits restore the original bytes. A committed result
+prevents a later replacement at that path from being deleted on retry. The
+preview includes per-path outcomes and refusal errors, independently of current
+eligibility. Applicable review media and review sidecars remain protected;
+unresolved metadata is refused and makes the command fail visibly rather than
+claiming a clean result. Explicit review disposal is still a separate workflow.
+
+Optional empty-parent pruning uses recorded directory identities and checks the
+remaining ancestor chain before each non-recursive rmdir. It stops at nonempty
+directories, never removes a root, and records replacement/permission errors.
+Pending pruning is retained with the committed file outcome for the same
+command. A crash after rmdir but before its outcome transaction can undercount
+folders already removed; retry treats missing parents as already absent. This
+does not establish power-loss durability or protect against external processes
+changing directories between the final identity check and rmdir.
+
+Seven additional active-schema tests cover transactional rollback, replacement
+protection, cancellation, root/review preservation, bounded continuation,
+changed-directory refusal and the HTTP queue boundary. The final focused file
+passes all 27 tests on Windows and native Linux. Final full CI passed all 2,081
+API and 187 frontend tests, lint, typechecks and builds without failing names or
+clone retries. Evidence: oct07-cleanup-apply-final-ci.log. The final native run
+mounts only the rebuilt command, planner and test modules into the disposable
+image to include the final checkpoint ordering and refusal diagnostics.
+
+The isolated rebuilt app completed scan 6 and cleanup 7, removing two JSON files
+and two empty parents while preserving unknown FLAC/lyric/cover bytes and the
+known album's media/sidecars. It correctly failed on an unresolved artist NFO.
+A second fixture scan 8 and cleanup 9 exposed a root-owned test folder as a
+permission refusal, with zero removals. After correcting that disposable fixture
+folder's permissions, cleanup 10 completed with one removal, two protected
+sidecars and two empty parents removed. Both success and refusal appeared in
+Activity. The NFO was moved to /tmp only to isolate this second test case; no
+live files were touched. Evidence: oct07-cleanup-apply-refusal-ui.png,
+oct07-cleanup-apply-success-ui.png, oct07-cleanup-apply-bytes-after.log,
+oct07-cleanup-apply-final-focus.log and oct07-cleanup-apply-final-native.log in
+the release-audit directory.
+
+The live server remains healthy 2.21.0 with downloads paused and no active
+commands. Its latest deep health check reports zero foreign-key violations.
+The two previously identified catalogue/acquisition conflicts remain open.
+This queued apply candidate is not deployed. Artist ownership without a
+persisted membership path, secondary artwork, review-sidecar persistence and
+app review controls remain gates before broad live cleanup, rename and retag.

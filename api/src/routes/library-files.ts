@@ -13,7 +13,7 @@ import {CommandQueueManager} from "../services/commands/command-queue-manager.js
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
-import { isRequestValidationError, parseBoundedQueryInteger, RequestValidationError } from "../utils/request-validation.js";
+import { isRequestValidationError, parseBoundedQueryInteger, RequestValidationError, getObjectBody, getRequiredInteger, getOptionalBoolean, rejectUnknownKeys } from "../utils/request-validation.js";
 import { previewLibraryCleanup } from "../services/mediafiles/library-cleanup-plan.js";
 import { parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
 
@@ -69,6 +69,23 @@ router.get("/cleanup/preview", (req,res) => {
       throw new RequestValidationError("Invalid cleanup cursor");
     }
     res.json(previewLibraryCleanup(inventoryId,{limit,afterPath:req.query.afterPath as string | undefined}));
+  } catch(error) {
+    res.status(isRequestValidationError(error) ? 400 : 409).json({detail:error instanceof Error ? error.message : String(error)});
+  }
+});
+
+router.post("/cleanup/apply",async(req,res)=>{
+  try {
+    const body=getObjectBody(req.body);rejectUnknownKeys(body,["inventoryCommandId","pruneEmptyFolders"]);
+    const inventoryCommandId=getRequiredInteger(body,"inventoryCommandId");
+    if (inventoryCommandId<1) throw new RequestValidationError("inventoryCommandId must be positive");
+    const pruneEmptyFolders=getOptionalBoolean(body,"pruneEmptyFolders") ?? false;
+    previewLibraryCleanup(inventoryCommandId,{limit:1});
+    const commandId=await withDbWrite(()=>{
+      previewLibraryCleanup(inventoryCommandId,{limit:1});
+      return CommandQueueManager.push(CommandNames.CleanupLibrary,{inventoryCommandId,pruneEmptyFolders});
+    });
+    res.status(202).json({commandId});
   } catch(error) {
     res.status(isRequestValidationError(error) ? 400 : 409).json({detail:error instanceof Error ? error.message : String(error)});
   }
