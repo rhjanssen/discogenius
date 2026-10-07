@@ -81,6 +81,40 @@ filesystem witnesses. Dirty Honey refresh 15768 is still held by obsolete track
 resolve that separate catalogue/planning failure. No live artwork change,
 deployment, queue clearing or cleanup has been performed. Downloads stay paused.
 
+### Held catalogue tracks: October 8 read-only comparison
+
+The live configured authority is local MusicBrainz, not Servarr. Read-only
+better-sqlite3 inside the running container and read-only PostgreSQL queries to
+that mirror show two different reconciliation cases:
+
+- Dirty Honey edition f73393b5-29d7-4347-a70d-3bec9dadbbf1 has 14 stored target
+  tracks in its current composite plans, but the mirror now returns 8. The old
+  first track, When I'm Gone, recording f009ec3e-9952-4c3b-b4ab-6c0fa678cdce,
+  is absent from the current edition and has no recording redirect. Current
+  track 1 is California Dreamin', a different recording. Never rebind by position
+  or relabel this held track as the new first track.
+- Cliff Richard edition 5b198534-a6de-434a-a7ce-e5195311e45a has a real recording
+  redirect from Shout, 51495e16-4c34-4bcf-9b0e-eddec1d7e311, to
+  3fff979b-60bb-47b5-ae76-677ac457bf2f, Intro (Congratulations) / Shout. Its new
+  occurrence is track 774c2f1d-91c6-4967-9f4b-2af60cf30971 at position 1.
+  This needs canonical merge handling and fresh duration/coverage validation,
+  not an automatic assertion that the old provider resource covers the medley.
+
+Neither sampled obsolete track has a TrackFiles row. Dirty Honey has four
+current plan bindings; Cliff Richard also has an accepted ProviderTrackMatches
+row and a current Deezer plan. This bounded sample does not prove all old tracks
+or plans are unowned. Before changing anything, preserve library selection and
+queued acquisition intent, distinguish removed edition slots from canonical
+recording redirects, handle all owned dependants transactionally, and replan
+against the refreshed canonical edition. Lidarr's RefreshTrackService merge
+path transfers file ownership and retags updates; it is useful guidance, not a
+license to discard Discogenius's extra plan/provider references.
+
+Evidence: oct08-held-tracks-live.log, oct08-held-tracks-catalog-live.log and
+oct08-held-tracks-redirects-live.log in the temporary release audit directory.
+These probes only read container SQLite and mirror PostgreSQL; no live rows or
+files were changed. This finding is a remaining release prerequisite.
+
 ## Intended behavior
 
 Robert's October 4 clarification defines three separate policies:

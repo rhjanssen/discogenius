@@ -2,6 +2,16 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- pending, October 8 live evidence: reconcile held catalogue tracks by explicit
+  canonical changes, not slot substitution. Local MusicBrainz now lists 8 tracks
+  for Dirty Honey's stored 14-track edition, with no redirect for the obsolete
+  When I'm Gone recording. Cliff Richard's obsolete Shout recording redirects
+  to Intro (Congratulations) / Shout; revalidate provider duration and medley
+  coverage. Both sampled obsolete tracks have no TrackFiles, but held plans and
+  accepted provider matches remain. Preserve selected/queued acquisition intent,
+  update all proven owned dependants, and replan against refreshed metadata.
+  Do not infer that every obsolete row is unowned from this bounded sample.
+
 - locally validated, October 8: fetched/converted and local-only artwork writes
   use persisted replacement intent and atomic provenance acknowledgement.
   Startup/watchdog recovery rolls back uncommitted images, keeps committed ones,
