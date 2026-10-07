@@ -778,3 +778,37 @@ length or modified date, fetches missing/changed album covers and derives displa
 sizes. Use its missing/stale refresh behavior, while preserving Discogenius's
 selected source and verified library-original authority. The reference behavior
 is source inspection, not proof that our pending import-time path already works.
+## October 7 selected artwork materialization candidate
+
+Import/organizer and missing-sidecar repair now use an explicit asynchronous
+materializer. If the selected full-resolution asset is absent locally, it fetches
+that recorded source into the library sidecar. Display proxies cannot substitute
+for a master, including the local video-cover URL path. JPEG bytes are preserved;
+PNG converts to JPEG at original dimensions where the sidecar requires JPEG.
+Fetch bodies are bounded to 32 MiB and JPEG/PNG decoding to 48 megapixels.
+WebP/GIF conversion remains unsupported and reports failure rather than writing
+incorrectly named bytes.
+
+Artist and video artwork now participate in exact MetadataFiles link tracking.
+An unchanged verified local sidecar returns without rewriting artwork provenance;
+empty-artist-folder picture repair skips an already present picture. Shared image
+fetch/decode helpers live separately from the core cache service. Retag stays
+local-only; missing-sidecar repair may fetch its already selected source.
+
+Selected-source/configuration and destination witnesses are rechecked after fetch.
+Staged replacement restores the previous bytes on a normal DB failure and keeps
+its recovery copy if restoration fails. This is not a durable process-death
+replacement journal. Finish that recovery boundary before broad source-switch
+replacement or deployment of the new storage policy.
+
+Validation: 105 focused checks pass on Windows and native Linux. A disposable
+older-schema container materialized a 1200px JPEG after its cached master was
+removed, with only 250/500 proxies remaining. Cache removal then retained the
+selected source and exact library link. Actual-app retag completed with canonical
+tags, lyrics and a 1200px embedded JPEG; decoded FLAC audio and original sidecar
+hashes were unchanged, foreign-key violations were zero, and the second UI
+preview reported no retag changes. No live cache deletion or deployment occurred.
+Catalogue warmers still retain originals; global proxy-only behavior, complete
+legacy-state migration and Jellyfin role ownership are pending.
+
+Full candidate CI passes 2,088 API and 187 frontend tests, lint, typechecks and both builds, without failing names or clone retries.

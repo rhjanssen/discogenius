@@ -977,7 +977,7 @@ export class DiskScanService {
             const artistPicName = metadataConfig.artist_picture_name || "folder.jpg";
 
             for (const folder of folders) {
-                if (wantPicture) {
+                if (wantPicture && !fs.existsSync(path.join(folder, artistPicName))) {
                     const picPath = path.join(folder, artistPicName);
                     try {
                         syncCachedMediaCoverToFile({

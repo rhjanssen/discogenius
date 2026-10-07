@@ -24,8 +24,9 @@ import {
     releaseGroupHasMultipleMonitoredEditions,
     resolveAlbumArtwork,
     resolveEditionArtwork,
-    syncCachedMediaCoverToFile,
+    resolveArtistArtwork,
 } from "../metadata/media-cover-service.js";
+import { materializeMediaCoverToFile } from "../metadata/media-cover-materialization.js";
 import {
     findAdjacentLyricSidecar,
     lyricSidecarPath,
@@ -173,8 +174,9 @@ class LibraryMetadataBackfillService {
                 try {
                     const artistRow = db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
                     const artistMbid = artistRow?.mbid ? String(artistRow.mbid) : artistId;
-                    const syncResult = repairMissingOnly && fs.existsSync(picPath) ? "unchanged" : syncCachedMediaCoverToFile({
-                            libraryRoot: libraryRoot,
+                    if (!repairMissingOnly || !fs.existsSync(picPath)) await resolveArtistArtwork({ artistMbid });
+                    const syncResult = repairMissingOnly && fs.existsSync(picPath) ? "unchanged" : await materializeMediaCoverToFile({
+                        libraryRoot,
                         entityId: artistMbid,
                         coverEntity: "Artist",
                         coverTypes: ["poster", "headshot"],
@@ -461,7 +463,7 @@ class LibraryMetadataBackfillService {
                                 });
                                 discardEditionCoverIfDuplicateOfAlbum(canonicalReleaseMbid, albumMbid);
                             }
-                            syncResult = syncCachedMediaCoverToFile({
+                            syncResult = await materializeMediaCoverToFile({
                                 libraryRoot: libraryRoot,
                                 entityId: canonicalReleaseMbid,
                                 coverEntity: "Edition",
@@ -469,7 +471,7 @@ class LibraryMetadataBackfillService {
                                 outputPath: coverPath,
                             });
                             if (syncResult === "missing" && albumMbid) {
-                                syncResult = syncCachedMediaCoverToFile({
+                                syncResult = await materializeMediaCoverToFile({
                                     libraryRoot,
                                     entityId: albumMbid,
                                     coverEntity: "Album",

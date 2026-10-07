@@ -32,11 +32,11 @@ function writeSidecars(identity: ArtworkIdentity, sidecars: StoredSidecar[], cur
     const importLegacy = db.prepare(`${insertSql} ON CONFLICT DO NOTHING`);
     for (const sidecar of sidecars) {
       // A stale old manifest must not resurrect a deleted tracked file.
-      if (sidecar.metadataFileId && !db.prepare("SELECT 1 FROM MetadataFiles WHERE id = ? AND file_type = 'cover'").get(sidecar.metadataFileId)) continue;
+      if (sidecar.metadataFileId && !db.prepare("SELECT 1 FROM MetadataFiles WHERE id = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')").get(sidecar.metadataFileId)) continue;
       importLegacy.run(...artworkKey(identity), sidecar.path, sidecar.hash, sidecar.metadataFileId ?? null);
     }
     if (current.metadataFileId) {
-      const row = db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ? AND file_type = 'cover'").get(current.metadataFileId) as { file_path: string } | undefined;
+      const row = db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')").get(current.metadataFileId) as { file_path: string } | undefined;
       if (!row || row.file_path !== current.path) throw new Error("Artwork link does not match its exact MetadataFiles row");
       db.prepare(`DELETE FROM ArtworkLibraryLinks WHERE cover_entity = ? AND entity_id = ?
         AND cover_type = ? AND metadata_file_id = ? AND file_path <> ?`)
@@ -57,7 +57,7 @@ export function findLibraryCoverMaster(identity: ArtworkIdentity, folder: string
     let target = sidecar.path;
     if (sidecar.metadataFileId) {
       try {
-        const row = db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ? AND file_type = 'cover'")
+        const row = db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')")
           .get(sidecar.metadataFileId) as { file_path: string } | undefined;
         if (!row) continue;
         target = row.file_path;

@@ -13,8 +13,109 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let mediaCoverServiceModule: typeof import("./media-cover-service.js");
+let materializationModule: typeof import("./media-cover-materialization.js");
 let configModule: typeof import("../config/config.js");
 const originalFetch = globalThis.fetch;
+
+test("import materializes a selected original without recreating a cache master and repeats without writes", async () => {
+  const entityId = "import-selected-original", url = "https://example.com/import-master.jpg";
+  const bytes = Buffer.from(jpeg.encode({ width: 1200, height: 900, data: Buffer.alloc(1200 * 900 * 4, 150) }, 95).data);
+  const folder = path.join(tempDir, "media-cover", "Albums", entityId);
+  const outputPath = path.join(tempDir, "import-library", "cover.jpg");
+  let requests = 0;
+  globalThis.fetch = async () => { requests++; return new Response(bytes, { headers: { "content-type": "image/jpeg" } }); };
+  try {
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId, coverEntity: "Album", coverType: "cover", sourceUrl: url });
+    fs.unlinkSync(path.join(folder, "cover.jpg"));
+    assert.equal(mediaCoverServiceModule.syncCachedMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), "missing",
+      "Local-only retag/scan cannot promote a display proxy or fetch an original");
+    assert.equal(requests, 1);
+    assert.equal(await materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), "written");
+    assert.deepEqual(fs.readFileSync(outputPath), bytes);
+    assert.deepEqual(fs.readdirSync(folder).sort(), ["cover-250.jpg", "cover-500.jpg"]);
+    const before = dbModule.db.prepare("SELECT total_changes() AS count").get() as { count: number };
+    assert.equal(await materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), "unchanged");
+    assert.deepEqual(dbModule.db.prepare("SELECT total_changes() AS count").get(), before);
+    assert.equal(requests, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("import artwork converts PNG into a full-resolution JPEG rather than renaming its bytes", async () => {
+  const { PNG } = await import("pngjs");
+  const entityId = "import-png-original", url = "https://example.com/master.png";
+  const png = new PNG({ width: 800, height: 700 });
+  png.data.fill(255);
+  const bytes = PNG.sync.write(png);
+  const folder = path.join(tempDir, "media-cover", "Albums", entityId);
+  const outputPath = path.join(tempDir, "png-library", "cover.jpg");
+  globalThis.fetch = async () => new Response(bytes, { headers: { "content-type": "image/png" } });
+  try {
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId, coverEntity: "Album", coverType: "cover", sourceUrl: url });
+    fs.unlinkSync(path.join(folder, "cover.png"));
+    assert.equal(await materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), "written");
+    const image = jpeg.decode(fs.readFileSync(outputPath));
+    assert.equal(image.width, 800);
+    assert.equal(image.height, 700);
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(entityId, "Album"), outputPath);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("failed or superseded artwork materialization preserves the previous sidecar and cleans staging files", async () => {
+  const entityId = "import-artwork-failure", url = "https://example.com/selected.jpg";
+  const bytes = Buffer.from(jpeg.encode({ width: 600, height: 600, data: Buffer.alloc(600 * 600 * 4, 100) }, 95).data);
+  const folder = path.join(tempDir, "media-cover", "Albums", entityId);
+  const outputDir = path.join(tempDir, "failure-library"), outputPath = path.join(outputDir, "cover.jpg");
+  fs.mkdirSync(outputDir);
+  fs.writeFileSync(outputPath, "previous cover bytes");
+  globalThis.fetch = async () => new Response(bytes, { headers: { "content-type": "image/jpeg" } });
+  try {
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId, coverEntity: "Album", coverType: "cover", sourceUrl: url });
+    fs.unlinkSync(path.join(folder, "cover.jpg"));
+    dbModule.db.exec("CREATE TRIGGER reject_artwork_link BEFORE INSERT ON ArtworkLibraryLinks BEGIN SELECT RAISE(ABORT, 'fixture artwork link failure'); END");
+    await assert.rejects(materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), /fixture artwork link failure/);
+    assert.equal(fs.readFileSync(outputPath, "utf8"), "previous cover bytes");
+    dbModule.db.exec("DROP TRIGGER reject_artwork_link");
+    globalThis.fetch = async () => {
+      dbModule.db.prepare("UPDATE ArtworkSources SET source_url = ? WHERE entity_id = ?").run("https://example.com/new-selection.jpg", entityId);
+      return new Response(bytes, { headers: { "content-type": "image/jpeg" } });
+    };
+    await assert.rejects(materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), /source changed during materialization/);
+    assert.equal(fs.readFileSync(outputPath, "utf8"), "previous cover bytes");
+    assert.deepEqual(fs.readdirSync(outputDir), ["cover.jpg"]);
+    globalThis.fetch = async () => new Response(bytes, { headers: { "content-type": "image/jpeg", "content-length": String(33 * 1024 * 1024) } });
+    await assert.rejects(materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), /32 MiB/);
+    assert.equal(fs.readFileSync(outputPath, "utf8"), "previous cover bytes");
+  } finally {
+    dbModule.db.exec("DROP TRIGGER IF EXISTS reject_artwork_link");
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("artist and video masters retain exact row links after relocation and cache loss", async () => {
+  const bytes = Buffer.from(jpeg.encode({ width: 600, height: 600, data: Buffer.alloc(600 * 600 * 4, 120) }, 95).data);
+  globalThis.fetch = async () => new Response(bytes, { headers: { "content-type": "image/jpeg" } });
+  try {
+    for (const scope of [{ coverEntity: "Artist" as const, coverType: "poster", fileType: "cover" },
+      { coverEntity: "Video" as const, coverType: "cover", fileType: "video_thumbnail" }]) {
+      const entityId = `linked-${scope.coverEntity}`, sourceUrl = `https://example.com/${scope.coverEntity}.jpg`;
+      const outputPath = path.join(tempDir, entityId, "sidecar.jpg"), renamedPath = path.join(tempDir, entityId, "renamed.jpg");
+      await mediaCoverServiceModule.ensureCachedMediaCover({ entityId, ...scope, sourceUrl });
+      assert.equal(mediaCoverServiceModule.syncCachedMediaCoverToFile({ entityId, ...scope, outputPath }), "written");
+      const id = Number(dbModule.db.prepare(`INSERT INTO MetadataFiles
+        (artist_id,relative_path,file_path,library_root,extension,type,file_type) VALUES ('test-artist',?,?,?,'jpg',?,?)`)
+        .run("sidecar.jpg", outputPath, tempDir, scope.coverEntity === "Artist" ? "ArtistImage" : "TrackImage", scope.fileType).lastInsertRowid);
+      mediaCoverServiceModule.linkCachedMediaCoverSidecar({ entityId, ...scope, coverTypes: [scope.coverType], outputPath, metadataFileId: id });
+      fs.renameSync(outputPath, renamedPath);
+      dbModule.db.prepare("UPDATE MetadataFiles SET file_path = ? WHERE id = ?").run(renamedPath, id);
+      const cache = path.join(tempDir, "media-cover", ...(scope.coverEntity === "Video" ? ["Videos"] : []), entityId);
+      fs.rmSync(cache, { recursive: true });
+      assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(entityId, scope.coverEntity, scope.coverType), renamedPath);
+      await mediaCoverServiceModule.ensureCachedMediaCover({ entityId, ...scope, sourceUrl });
+      assert.equal(fs.existsSync(path.join(cache, `${scope.coverType}.jpg`)), false);
+      assert.deepEqual(fs.readFileSync(renamedPath), bytes);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test("library artwork moves the original into its sidecar and refetches when switching sources", async () => {
   const root = path.join(tempDir, "master-library");
@@ -55,7 +156,7 @@ test("library artwork moves the original into its sidecar and refetches when swi
       (artist_id, type, relative_path, file_path, library_root, extension, file_type)
       VALUES ('test-artist', 'album_cover', ?, ?, ?, 'jpg', 'cover')`)
       .run(path.relative(root, outputPath), outputPath, root).lastInsertRowid);
-    mediaCoverServiceModule.linkCachedAlbumCoverSidecar({ entityId: mbid, coverEntity: "Album", outputPath, metadataFileId: metadataId });
+    mediaCoverServiceModule.linkCachedMediaCoverSidecar({ entityId: mbid, coverEntity: "Album", outputPath, metadataFileId: metadataId });
     const renamedDir = path.join(root, "Artist", "Renamed Album");
     fs.renameSync(path.dirname(outputPath), renamedDir);
     const renamedPath = path.join(renamedDir, "cover.jpg");
@@ -261,6 +362,7 @@ before(async () => {
   dbModule.initDatabase();
   configModule = await import("../config/config.js");
   mediaCoverServiceModule = await import("./media-cover-service.js");
+  materializationModule = await import("./media-cover-materialization.js");
 });
 
 after(() => {

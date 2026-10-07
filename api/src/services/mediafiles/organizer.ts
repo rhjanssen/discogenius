@@ -26,7 +26,8 @@ import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata/canonical-album-metadata.js";
-import { albumCoverLocalUrl, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
+import { albumCoverLocalUrl, resolveArtistArtwork } from "../metadata/media-cover-service.js";
+import { materializeMediaCoverToFile } from "../metadata/media-cover-materialization.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import {
@@ -1103,8 +1104,8 @@ export class OrganizerService {
   }
 
   /**
-   * Reconcile a static video thumbnail from the canonical recording's cached
-   * MediaCover origin. Refresh/match owns provider access and network I/O.
+   * Reconcile a static video thumbnail from the canonical recording's selected
+   * artwork source. Source selection remains in refresh/match.
    */
   private static async ensureVideoThumbnailSidecar(params: {
     artistId: string;
@@ -2518,11 +2519,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture) {
-        // Materialize only the cached full-resolution master. Network artwork
-        // acquisition is centralized in refresh/match workflows, so a cache miss
-        // is harmless here and can be reconciled by a later metadata backfill.
+        // Import materializes the selected full-resolution source in the library.
         try {
-          syncCachedMediaCoverToFile({
+          await resolveArtistArtwork({ artistMbid: artistMbId || artistId });
+          await materializeMediaCoverToFile({
             libraryRoot: targetRoot,
             entityId: artistMbId || artistId,
             coverEntity: "Artist",
@@ -2544,7 +2544,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to materialize cached artist picture for ${artistId}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to materialize selected artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -2559,17 +2559,16 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover) {
-        // Materialize only the canonical album's cached full-resolution master.
-        // This path neither chooses a provider nor performs network I/O.
+        // Fetch only artwork already selected by the canonical refresh/match workflow.
         try {
-          const syncResult = syncCachedMediaCoverToFile({
+          const syncResult = await materializeMediaCoverToFile({
             libraryRoot: targetRoot,
             entityId: jobReleaseMbid || canonicalContext?.releaseMbid,
             coverEntity: "Edition",
             coverTypes: "cover",
             outputPath: albumCoverPath,
           });
-          if (syncResult === "missing") syncCachedMediaCoverToFile({
+          if (syncResult === "missing") await materializeMediaCoverToFile({
             entityId: canonicalContext?.releaseGroupMbid, coverEntity: "Album", outputPath: albumCoverPath,
           });
           if (fs.existsSync(albumCoverPath)) {
@@ -3149,11 +3148,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture) {
-        // Materialize only the cached full-resolution master. Network artwork
-        // acquisition is centralized in refresh/match workflows, so a cache miss
-        // is harmless here and can be reconciled by a later metadata backfill.
+        // Import materializes the selected full-resolution source in the library.
         try {
-          syncCachedMediaCoverToFile({
+          await resolveArtistArtwork({ artistMbid: artistMbId || artistId });
+          await materializeMediaCoverToFile({
             libraryRoot: targetRoot,
             entityId: artistMbId || artistId,
             coverEntity: "Artist",
@@ -3175,7 +3173,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to materialize cached artist picture for ${artistId}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to materialize selected artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -3194,16 +3192,15 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover) {
-        // Materialize only the canonical album's cached full-resolution master.
-        // This path neither chooses a provider nor performs network I/O.
-        const syncResult = syncCachedMediaCoverToFile({
+        // Fetch only artwork already selected by the canonical refresh/match workflow.
+        const syncResult = await materializeMediaCoverToFile({
           libraryRoot: targetRoot,
           entityId: trackIdentity.canonicalReleaseMbid,
           coverEntity: "Edition",
           coverTypes: "cover",
           outputPath: albumCoverPath,
         });
-        if (syncResult === "missing") syncCachedMediaCoverToFile({
+        if (syncResult === "missing") await materializeMediaCoverToFile({
           entityId: trackIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: albumCoverPath,
         });
         if (fs.existsSync(albumCoverPath)) {

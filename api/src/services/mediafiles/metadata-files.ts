@@ -11,13 +11,13 @@ import {
 } from "../extras/lyrics/lyric-sidecar.js";
 import { resolveFfmpegBinary } from "./audioUtils.js";
 import {
-    getMediaCoverFilePathFromUrl,
+    mediaCoverIdentityFromLocalUrl,
     normalizeArtworkUrl,
     parseJsonObject,
     resolveMediaCoverProxyUrl,
-    syncCachedMediaCoverToFile,
     type MediaCoverSidecarSyncResult,
 } from "../metadata/media-cover-service.js";
+import { materializeMediaCoverToFile } from "../metadata/media-cover-materialization.js";
 
 type AlbumProviderItemRow = {
     provider: string | null;
@@ -357,13 +357,12 @@ async function downloadProviderArtwork(
         return false;
     }
 
-    // Prefer local MediaCover cache if present (MediaCover origin file).
-    const localFilePath = getMediaCoverFilePathFromUrl(url);
-    if (localFilePath && fs.existsSync(localFilePath)) {
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.copyFileSync(localFilePath, outputPath);
-        console.log(`✅ [METADATA] ${label} copied from MediaCover cache: ${outputPath}`);
-        return true;
+    // Display URLs may resolve to 250/500 proxies. Resolve their selected master
+    // instead of copying whichever small display file happens to be cached.
+    const identity = mediaCoverIdentityFromLocalUrl(url);
+    if (identity) {
+        const result = await materializeMediaCoverToFile({ ...identity, outputPath });
+        return result !== "missing";
     }
 
     const fetchSource = String(url);
@@ -615,9 +614,8 @@ function resolveCanonicalVideoCoverId(context: {
 
 /**
  * Materialize a static music-video thumbnail from the canonical recording's
- * cached full-resolution MediaCover master. The image id and resolution remain
- * in the signature for call-site compatibility; refresh/match owns all source
- * selection, provider access, and network I/O.
+ * selected full-resolution source. Refresh/match owns source selection; this
+ * import/metadata-refresh helper may fetch those selected bytes, never a proxy.
  */
 export async function downloadVideoThumbnail(
     _imageId: string,
@@ -627,7 +625,7 @@ export async function downloadVideoThumbnail(
 ): Promise<MediaCoverSidecarSyncResult> {
     const videoId = resolveCanonicalVideoCoverId(context);
     if (!videoId) return "missing";
-    return syncCachedMediaCoverToFile({
+    return materializeMediaCoverToFile({
         entityId: videoId,
         coverEntity: "Video",
         coverTypes: "cover",

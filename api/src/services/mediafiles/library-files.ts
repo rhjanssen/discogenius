@@ -1,4 +1,4 @@
-import { linkCachedAlbumCoverSidecar } from "../metadata/media-cover-service.js";
+import { linkCachedMediaCoverSidecar } from "../metadata/media-cover-service.js";
 import fs from "fs";
 import path from "path";
 import { db, batchDelete, batchRun, withSqliteWriteGate } from "../../database.js";
@@ -2042,8 +2042,15 @@ export class LibraryFilesService {
       this.upsertExtraFileRecord(params, canonicalIdentity, libraryId);
       const insertedId = ExtraFileService.findIdByPath(tableName, params.filePath) || 0;
       if (params.fileType === "cover" && insertedId > 0) {
-        linkCachedAlbumCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: params.filePath, metadataFileId: insertedId });
-        linkCachedAlbumCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseMbid, coverEntity: "Edition", outputPath: params.filePath, metadataFileId: insertedId });
+        linkCachedMediaCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: params.filePath, metadataFileId: insertedId });
+        linkCachedMediaCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseMbid, coverEntity: "Edition", outputPath: params.filePath, metadataFileId: insertedId });
+        if (!canonicalIdentity.canonicalReleaseGroupMbid && !canonicalIdentity.canonicalReleaseMbid) {
+          linkCachedMediaCoverSidecar({ entityId: canonicalIdentity.canonicalArtistMbid, coverEntity: "Artist", coverTypes: ["poster", "headshot"], outputPath: params.filePath, metadataFileId: insertedId });
+        }
+      }
+      if (params.fileType === "video_thumbnail" && insertedId > 0 && canonicalIdentity.canonicalRecordingMbid) {
+        const video = db.prepare("SELECT id FROM Recordings WHERE mbid = ? AND is_video = 1").get(canonicalIdentity.canonicalRecordingMbid) as { id: number } | undefined;
+        if (video) linkCachedMediaCoverSidecar({ entityId: video.id, coverEntity: "Video", outputPath: params.filePath, metadataFileId: insertedId });
       }
 
       if (params.removeFromUnmapped !== false) {

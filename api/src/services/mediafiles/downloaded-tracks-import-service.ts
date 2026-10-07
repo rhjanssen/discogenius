@@ -120,8 +120,8 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
         releaseGroupHasMultipleMonitoredEditions,
         resolveAlbumArtwork,
         resolveEditionArtwork,
-        syncCachedMediaCoverToFile,
     } = await import("../metadata/media-cover-service.js");
+    const { materializeMediaCoverToFile } = await import("../metadata/media-cover-materialization.js");
     const { resolveStoredLibraryPath } = await import("./library-paths.js");
     const { getConfigSection } = await import("../config/config.js");
     const metadataConfig = getConfigSection("metadata");
@@ -170,7 +170,7 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
 
     for (const { releaseMbid, outputPath } of sidecars) {
         try {
-            let result = syncCachedMediaCoverToFile({
+            let result = await materializeMediaCoverToFile({
                 entityId: releaseMbid,
                 coverEntity: "Edition",
                 coverTypes: "cover",
@@ -179,7 +179,7 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
             if (result === "missing") {
                 const albumMbid = albumMbidForEdition(releaseMbid);
                 if (albumMbid) {
-                    result = syncCachedMediaCoverToFile({
+                    result = await materializeMediaCoverToFile({
                         entityId: albumMbid,
                         coverEntity: "Album",
                         coverTypes: "cover",
