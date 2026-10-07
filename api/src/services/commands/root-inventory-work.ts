@@ -7,6 +7,7 @@ import { Config } from "../config/config.js";
 import { SUPPORTED_IMPORT_EXTENSIONS } from "../mediafiles/import-discovery.js";
 import { isMediaRewriteTemporaryName } from "../mediafiles/media-file-rewrite.js";
 import { persistRootReviewCandidates } from "../mediafiles/library-scan-root-review.js";
+import { reconcileInventorySidecar } from "../mediafiles/inventory-sidecars.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
 import { CommandContinuation } from "./command-continuation.js";
 import type { RootInventoryCheckpoint } from "./command-bodies.js";
@@ -92,7 +93,7 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
     if (state.version !== 1 || JSON.stringify(state.roots) !== JSON.stringify(roots)
         || !Array.isArray(state.pending) || !Array.isArray(state.missingRoots) || typeof state.complete !== "boolean"
         || (state.complete && (state.pending.length > 0 || state.current !== null))
-        || [state.directories, state.files, state.reviewFiles].some(n => !Number.isSafeInteger(n) || n < 0)) {
+        || [state.directories, state.files, state.reviewFiles, state.sidecarFiles ?? 0].some(n => !Number.isSafeInteger(n) || n < 0)) {
         throw new Error("Invalid or changed root inventory checkpoint");
     }
     const validateDirectory = (entry: { root: number; directory: string }) => {
@@ -176,6 +177,11 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
                 sidecars: [], commonTags: {}, status: "manual_required",
             }, matches: [] }]);
             if (reviewed.get(file)) state.reviewFiles++;
+        } else if (!SUPPORTED_IMPORT_EXTENSIONS.has(ext) && !isMediaRewriteTemporaryName(name)
+            && !reviewed.get(file)) {
+            if (await reconcileInventorySidecar(file,root.path,current.files.map(sibling => path.join(current.directory,sibling)))) {
+                state.sidecarFiles = (state.sidecarFiles ?? 0) + 1;
+            }
         }
         state.files++;
         current.cursor++;
@@ -184,7 +190,7 @@ export async function runRootInventoryWorkUnit(job: CommandModelOf<"RescanFolder
     }
     await persist();
     ctx.updateCommandDescription(job, { progress: state.complete ? 95 : 90,
-        description: `Checking library inventory - ${state.files} files checked, ${state.reviewFiles} added for review` });
+        description: `Checking library inventory - ${state.files} files checked, ${state.reviewFiles} added for review, ${state.sidecarFiles ?? 0} sidecars linked` });
     if (!state.complete) throw new CommandContinuation({});
     return state;
 }

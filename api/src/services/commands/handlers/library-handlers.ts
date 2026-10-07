@@ -24,8 +24,8 @@ import { runRootInventoryWorkUnit } from "../root-inventory-work.js";
  * "scanning finished" line. When nothing changed, say so explicitly instead of
  * leaving a stale in-progress message.
  */
-function formatReconcileSummary(prefix: string, result: ScanResult, reviewFiles = 0): string {
-    const changed = result.orphansRemoved + result.filesIndexed + result.filesUpdated;
+function formatReconcileSummary(prefix: string, result: ScanResult, reviewFiles = 0, sidecarFiles = 0): string {
+    const changed = result.orphansRemoved + result.filesIndexed + result.filesUpdated + sidecarFiles;
     if (changed === 0 && reviewFiles === 0 && !result.discovery?.artistsAdded.length) {
         return `${prefix} - up to date, no file changes`;
     }
@@ -108,10 +108,12 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
 
     const reviewFiles = (CommandQueueManager.get(job.id)?.payload.rootInventory?.reviewFiles ?? 0)
         + (scanResult.discovery?.reviewFilesAdded ?? 0);
+    const sidecarFiles = CommandQueueManager.get(job.id)?.payload.rootInventory?.sidecarFiles ?? 0;
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: formatReconcileSummary(baseLabel, scanResult, reviewFiles)
+        description: formatReconcileSummary(baseLabel, scanResult, reviewFiles, sidecarFiles)
             + (reviewFiles ? `; ${reviewFiles} file${reviewFiles === 1 ? "" : "s"} added for review` : "")
+            + (sidecarFiles ? `; ${sidecarFiles} sidecar${sidecarFiles === 1 ? "" : "s"} linked` : "")
             + (scanResult.discovery?.artistsAdded.length ? `; ${scanResult.discovery.artistsAdded.length} new artists identified` : ""),
     });
 

@@ -113,6 +113,9 @@ export class ExtraFileService {
     const providerId = nullableText(input.providerId) ?? nullableText(input.mediaId);
     const canonicalTrackMbid = nullableText(input.canonicalTrackMbid);
     const canonicalRecordingMbid = nullableText(input.canonicalRecordingMbid);
+    // A library is a scope, not a physical-file identity. Otherwise a folder
+    // cover/NFO accidentally attaches to the sole playable file in that library.
+    if (!(provider && providerId) && !canonicalTrackMbid && !canonicalRecordingMbid) return null;
 
     const predicates: string[] = ["file_type IN ('track', 'video')"];
     const values: unknown[] = [];

@@ -8,7 +8,7 @@ import type { AutoImportedGroupSummary, ImportCandidate, LocalFile, LocalGroup }
 
 export const SUPPORTED_IMPORT_EXTENSIONS = new Set([
     ".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".alac", ".aiff",
-    ".mkv", ".mp4", ".m4v", ".mov", ".aif", ".wma",
+    ".mkv", ".mp4", ".m4v", ".mov", ".aif", ".wma", ".ape", ".mp2", ".webm", ".ts",
 ]);
 
 const IGNORED_IMPORT_FOLDERS = new Set([

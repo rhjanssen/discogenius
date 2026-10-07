@@ -85,6 +85,22 @@ test("cleanup protects existing review media unless its exact disposition is exp
     assert.deepEqual(await journal.recoverPending(),[]);assert.equal(fs.existsSync(staged),false);assert.equal(fs.existsSync(file),false);
 });
 
+test("cleanup cannot remove a cover or lyric awaiting sidecar reconciliation",async()=>{
+    for(const name of ["cover.jpg","Unknown.lrc"]){
+        const sidecar=path.join(root,name);fs.writeFileSync(sidecar,"original sidecar");
+        await assert.rejects(journal.prepare({inventoryCommandId:inventoryId,filePath:sidecar,rootPath:root}),/sidecar ownership/);
+        assert.equal(fs.readFileSync(sidecar,"utf8"),"original sidecar");
+    }
+    assert.equal(journal.hasPending(),false);
+});
+test("cleanup protects every media extension already recognized by artist scans",async()=>{
+    for(const extension of ["ape","mp2","webm","ts"]){
+        const media=path.join(root,`unidentified.${extension}`);fs.writeFileSync(media,"pending identification");
+        await assert.rejects(journal.prepare({inventoryCommandId:inventoryId,filePath:media,rootPath:root}),/Applicable media/);
+        assert.equal(fs.existsSync(media),true);
+    }
+});
+
 test("a failed review deletion commit restores bytes and the ignored review identity",async()=>{
     const id=review();const intent=await journal.prepare({inventoryCommandId:inventoryId,filePath:file,rootPath:root,discardReviewId:id});journal.stage(intent);
     database.db.exec("CREATE TRIGGER fail_cleanup_review BEFORE DELETE ON UnmappedFiles BEGIN SELECT RAISE(ABORT,'cleanup commit fault'); END;");

@@ -397,3 +397,66 @@ retries. `oct07-cleanup-chain-final-pass-ci.log` records the accepted source;
 earlier failed/preliminary logs are retained as diagnostic evidence. The final
 native run passed all 51 scoped tests in
 `oct07-cleanup-chain-accepted-native.log`. This candidate remains undeployed.
+
+## October 7 exact sidecar inventory
+
+The root inventory now reconciles lyrics, edition covers/NFO and video
+thumbnails from their physical playable siblings. It uses indexed exact paths
+and the active canonical FK graph, not a provider ID or a first matching
+provider occurrence. A lyric requires one physical audio file. Folder art/NFO
+requires agreement on artist, album, edition and library slot; a shared cover
+retains every confirmed library association. Different editions or two audio
+formats with the same stem remain unresolved. Unmapped companions, including
+ignored media, protect their applicable sidecars without fake catalogue rows.
+
+Testing found that ExtraFileService could infer a physical file from a library
+ID alone when that library contained only one playable file. A library now
+only scopes an actual identity predicate; it cannot attach folder metadata to
+an arbitrary track. Sidecar association and ownership writes commit together,
+after rechecking the physical witnesses and current ownership under admission.
+
+Actual-app testing exposed an additional hole: the artist scan could create
+sidecar rows with no edition identity, which the root inventory then skipped
+as already owned. The new pass repairs missing identity while keeping row IDs,
+provider facts, quality and rename information. A conflicting non-null canonical
+assignment remains unresolved. Confirmed folder metadata can shed an incorrect
+track link only when that link points to a confirmed sibling in the same folder.
+Activity includes the sidecar changes instead of describing such a run as
+having no changes.
+
+Cleanup preparation, staging and commit now refuse recognized sidecars whose
+ownership has not been settled. The shared media extension set also includes
+APE, MP2, WebM and TS, which artist scans already recognized; these files cannot
+be mistaken for unsupported cleanup debris. Artist-level artwork/NFO resolution,
+review-sidecar persistence/grouping, explicit conflict diagnostics and the
+bounded strict cleanup planner are still open. This is not permission to enable
+strict cleanup or clear the live queue.
+
+Sixteen active-schema sidecar tests cover physical identity, different edition
+folders, ambiguous stems, shared-library covers, videos, missing-identity repair,
+conflicting assignments, transaction rollback, writer races and unchanged repeat
+inventory. Standalone catalogue videos can retain exact physical thumbnail
+ownership without an album edition; YouTube-only catalogue identity does not
+require an invented MusicBrainz ID. Windows root casing is tested explicitly.
+The final focused Windows run passes 48 tests; rebuilt native Linux passes 47
+with the Windows-only casing check skipped. Full `yarn ci` passes all 2,058 API
+and 187 frontend tests, lint, typechecks and builds, with no failing names or
+clone retries. Evidence is in `oct07-sidecar-final-accepted-ci.log` and
+`oct07-sidecar-final-accepted-native.log`.
+
+In the running local app, Scan Library Files first exposed incomplete cover and
+lyric identity. After rebuilding and correcting permissions on the test-only
+seeded volume, a second UI-triggered scan repaired both rows, retaining ID 1 in
+each table and assigning their edition. The lyric kept TrackFiles ID 1 and the
+cover kept a null track link. Activity showed two sidecars linked. A third
+UI-triggered scan completed with no file changes and preserved those IDs. The
+full SHA-256 of the generated stereo FLAC, LRC and 1200px JPEG was identical
+before and after. Evidence: `oct07-sidecar-app-proof.log`,
+`oct07-sidecar-app-after.log`, `oct07-sidecar-app-repeat.log`,
+`oct07-sidecar-bytes-before.log`, `oct07-sidecar-bytes-after.log` and
+`oct07-sidecar-repeat-ui.png`. A fourth UI scan on the final rebuilt image
+completed as command 9, with unchanged ownership and file hashes; evidence is
+in `oct07-sidecar-final-app-repeat.log` and `oct07-sidecar-final-bytes.log`.
+These local checks do not establish live artwork
+storage or whole-library cleanup acceptance. The live server remains 2.21.0,
+with downloads paused; these sidecar changes have not been deployed.

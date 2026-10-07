@@ -7,6 +7,7 @@ import { scanConfigRevision } from "../commands/scan-config-revision.js";
 import type { RescanFoldersCommand, RootInventoryCheckpoint, ScanWorkCheckpoint } from "../commands/command-bodies.js";
 import { SUPPORTED_IMPORT_EXTENSIONS } from "./import-discovery.js";
 import { isMediaRewriteTemporaryName } from "./media-file-rewrite.js";
+import { inspectInventorySidecar } from "./inventory-sidecars.js";
 
 type RootIdentity = { dev: string; ino: string };
 type Intent = { id: string; inventory_command_id: number; source_path: string; staged_path: string;
@@ -63,6 +64,10 @@ export class LibraryCleanupJournal {
         if (owned(intent.source_path) || (intent.review_id === null ? Boolean(reviewed)
             : !reviewed || reviewed.id !== intent.review_id || JSON.stringify(reviewed) !== intent.review_snapshot)) {
             throw new Error("Cleanup ownership changed; preserving the file");
+        }
+        const siblings = fs.readdirSync(path.dirname(intent.source_path)).map(name => path.join(path.dirname(intent.source_path),name));
+        if (inspectInventorySidecar(intent.source_path,intent.root_path,siblings).status !== "not_sidecar") {
+            throw new Error("Settle applicable sidecar ownership before cleanup");
         }
     }
     private static inventoryWitness(inventoryCommandId: number, root: string): string {

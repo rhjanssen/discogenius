@@ -121,6 +121,7 @@ export interface RootInventoryCheckpoint {
   directories: number;
   files: number;
   reviewFiles: number;
+  sidecarFiles?: number;
   missingRoots: string[];
   complete: boolean;
 }
