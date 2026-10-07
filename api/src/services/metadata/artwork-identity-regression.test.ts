@@ -12,6 +12,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let mediaCoverServiceModule: typeof import("./media-cover-service.js");
+let materializationModule: typeof import("./media-cover-materialization.js");
 let configModule: typeof import("../config/config.js");
 let audioTagServiceModule: typeof import("../mediafiles/audio-tag-service.js");
 let providerModule: typeof import("../providers/index.js");
@@ -34,6 +35,13 @@ function sha256(buf: Buffer): string {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
+async function materializeAlbumMaster(mbid: string): Promise<string> {
+  const outputPath=path.join(tempDir,"library",mbid,"cover.jpg");
+  const result=await materializationModule.materializeMediaCoverToFile({entityId:mbid,coverEntity:"Album",outputPath});
+  assert.notEqual(result,"missing","Selected artwork must materialize as a library master");
+  return outputPath;
+}
+
 const ALBUM_ARTWORK_A = createTestJpeg(1200, 1200, 255, 0, 0); // Red (Primary Album Art A)
 const SINGLE_ARTWORK_B = createTestJpeg(1200, 1200, 0, 0, 255); // Blue (Supplemental Single Art B)
 const PROVIDER_ARTWORK_C = createTestJpeg(1200, 1200, 0, 255, 0); // Green (Provider Album Art C)
@@ -51,6 +59,7 @@ before(async () => {
   dbModule.initDatabase();
   configModule = await import("../config/config.js");
   mediaCoverServiceModule = await import("./media-cover-service.js");
+  materializationModule = await import("./media-cover-materialization.js");
   audioTagServiceModule = await import("../mediafiles/audio-tag-service.js");
   providerModule = await import("../providers/index.js");
   libraryBackfillModule = await import("../mediafiles/library-metadata-backfill.js");
@@ -277,7 +286,7 @@ test("supplemental-provider-artwork-cannot-own-primary-album", async () => {
   const resolvedUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
   assert.ok(resolvedUrl, "Expected resolved artwork URL");
 
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath), "Expected origin cover in cache");
 
   const cachedBytes = fs.readFileSync(originPath);
@@ -318,8 +327,8 @@ test("hybrid-source-order-is-artwork-invariant", async () => {
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid1 });
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid2 });
 
-  const originPath1 = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid1, "Album", "Cover");
-  const originPath2 = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid2, "Album", "Cover");
+  const originPath1 = await materializeAlbumMaster(mbid1);
+  const originPath2 = await materializeAlbumMaster(mbid2);
 
   assert.ok(originPath1 && fs.existsSync(originPath1), "Expected origin 1");
   assert.ok(originPath2 && fs.existsSync(originPath2), "Expected origin 2");
@@ -343,7 +352,7 @@ test("canonical-cache-survives-hybrid-import", async () => {
   fs.writeFileSync(path.join(cacheFolder, "origin.jpg"), ALBUM_ARTWORK_A);
   fs.writeFileSync(path.join(cacheFolder, "cover.jpg"), ALBUM_ARTWORK_A);
 
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_A, "Canonical cache must survive hybrid import without mutation");
 });
@@ -397,7 +406,7 @@ test("canonical-preference-preserves-canonical-cache", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "canonical", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_A, "Must preserve canonical artwork A when preference is canonical");
 });
@@ -416,7 +425,7 @@ test("canonical-missing-provider-fallback-populates-cache", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "canonical", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_C, "Must fallback to provider artwork C when canonical is missing");
 });
@@ -435,7 +444,7 @@ test("provider-preference-replaces-canonical-cache-at-refresh", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_C, "Must select provider artwork C when preference is provider");
 });
@@ -459,7 +468,7 @@ test("provider-preference-selects-owner-provider-at-refresh", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_C, "Must select owner album C over supplemental single B");
 });
@@ -475,7 +484,7 @@ test("preference-change-requires-artwork-refresh", async () => {
   // Changing config preference alone should NOT alter existing cached bytes without an explicit refresh call
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
   
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.equal(sha256(fs.readFileSync(originPath!)), HASH_A, "Cache must remain unchanged after config preference change until refresh occurs");
 });
 
@@ -578,6 +587,7 @@ test("ui-mediacover-route-does-not-lazily-fetch", async () => {
 
     // When mediaCoverFolder or route is evaluated for an uncached album, it must not call fetch
     const folder = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+    assert.equal(folder, null);
     assert.equal(networkCalled, false, "UI route helpers must not lazily fetch remote artwork");
   } finally {
     globalThis.fetch = tempFetch;
@@ -773,7 +783,7 @@ test("explicit manual override wins in either preference mode", async () => {
   const canonicalModeUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
   assert.match(canonicalModeUrl || "", /cover\.jpg$/);
   const cacheFolder = path.join(tempDir, "media-cover", "Albums", mbid);
-  assert.equal(sha256(fs.readFileSync(path.join(cacheFolder, "cover.jpg"))), HASH_D, "Manual artwork D must win under canonical preference");
+  assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(mbid))), HASH_D, "Manual artwork D must win under canonical preference");
   assert.deepEqual(
     db.prepare(`
       SELECT source_kind, content_hash, source_identity
@@ -796,7 +806,7 @@ test("explicit manual override wins in either preference mode", async () => {
     providerCandidates: [{ provider: "tidal", entityId: "p-manual", imageId: "img-manual", url: "http://test/album-C.jpg" }],
   });
   assert.match(providerModeUrl || "", /cover\.jpg$/);
-  assert.equal(sha256(fs.readFileSync(path.join(cacheFolder, "cover.jpg"))), HASH_D, "Manual artwork D must win under provider preference");
+  assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(mbid))), HASH_D, "Manual artwork D must win under provider preference");
   assert.equal(
     (db.prepare(`
       SELECT source_kind FROM MediaCoverSelections

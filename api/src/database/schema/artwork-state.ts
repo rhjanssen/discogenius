@@ -25,5 +25,17 @@ export function createArtworkStateSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_artwork_library_links_metadata
       ON ArtworkLibraryLinks(metadata_file_id);
+    CREATE TABLE IF NOT EXISTS ArtworkProxyVariants (
+      cover_entity TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      cover_type TEXT NOT NULL,
+      height INTEGER NOT NULL CHECK (height IN (250,500)),
+      source_hash TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      PRIMARY KEY (cover_entity,entity_id,cover_type,height),
+      FOREIGN KEY (cover_entity,entity_id,cover_type)
+        REFERENCES ArtworkSources(cover_entity,entity_id,cover_type) ON DELETE CASCADE
+    );
   `);
 }

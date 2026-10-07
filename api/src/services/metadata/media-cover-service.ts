@@ -1,4 +1,5 @@
 import { CONTENT_TYPES_BY_EXTENSION, decodeImage, decodeArtworkImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
+import { commitArtworkProxies, hasCurrentArtworkProxies } from "./media-cover-proxy-storage.js";
 import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSidecar } from "./media-cover-library-storage.js";
 import { readArtworkSource, storeArtworkSource, type ArtworkSource } from "./media-cover-state.js";
 import { withSqliteWriteMutexSync } from "../../database/sqlite-write-mutex.js";
@@ -178,91 +179,6 @@ function cachedSourceMatches(
   } catch {
     return false;
   }
-}
-
-function clearStaleCachedCoverFiles(
-  entityId: string | number,
-  coverEntity: MediaCoverEntity,
-  coverType: string,
-  keep: Set<string>,
-): void {
-  const folder = getMediaCoverFolder(entityId, coverEntity);
-  for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-    for (const height of [null, ...MEDIA_COVER_ALL_HEIGHTS]) {
-      const candidate = path.join(folder, filenameForCover(coverType, extension, height));
-      if (keep.has(path.resolve(candidate))) continue;
-      try { fs.rmSync(candidate, { force: true }); } catch { /* absent */ }
-    }
-  }
-}
-
-function commitCachedCoverVariant(options: {
-  entityId: string | number;
-  coverEntity: MediaCoverEntity;
-  coverType: string;
-  extension: string;
-  originalBuffer: Buffer;
-  derivatives: PreparedMediaCoverDerivative[];
-  /** Recovery from a verified library master only needs display proxies. */
-  retainOriginal?: boolean;
-}): void {
-  const writes = [
-    ...(options.retainOriginal === false ? [] : [{
-      target: getMediaCoverPath(
-        options.entityId,
-        options.coverEntity,
-        options.coverType,
-        options.extension,
-      ),
-      buffer: options.originalBuffer,
-    }]),
-    ...options.derivatives.map((derivative) => ({
-      target: getMediaCoverPath(
-        options.entityId,
-        options.coverEntity,
-        options.coverType,
-        ".jpg",
-        derivative.height,
-      ),
-      buffer: derivative.buffer,
-    })),
-  ];
-  const nonce = `${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-  const staged = writes.map((write) => ({
-    ...write,
-    temp: path.join(path.dirname(write.target), `.${path.basename(write.target)}.${nonce}.tmp`),
-  }));
-
-  try {
-    // Stage every file first. A failed write leaves the current variant intact.
-    for (const write of staged) fs.writeFileSync(write.temp, write.buffer);
-    for (const write of staged) fs.renameSync(write.temp, write.target);
-    clearStaleCachedCoverFiles(
-      options.entityId,
-      options.coverEntity,
-      options.coverType,
-      new Set(writes.map((write) => path.resolve(write.target))),
-    );
-  } finally {
-    for (const write of staged) {
-      try { fs.rmSync(write.temp, { force: true }); } catch { /* already committed */ }
-    }
-  }
-}
-
-async function writeSourceMarker(
-  entityId: string | number,
-  coverEntity: MediaCoverEntity,
-  coverType: string,
-  sourceUrl: string,
-  fulfilledBy: MediaCoverSourceKind,
-  contentHash?: string | null,
-  preference: "canonical" | "provider" = configuredArtworkPreference(),
-): Promise<void> {
-  await withSqliteWriteGate(() => storeArtworkSource(
-    { entityId, coverEntity, coverType: normalizeMediaCoverType(coverType) },
-    { url: sourceUrl, preference, fulfilledBy, contentHash: contentHash ?? null },
-  ), "artwork source provenance");
 }
 
 function looksLikeProviderArtworkUrl(url: unknown): boolean {
@@ -477,7 +393,13 @@ export function isMediaCoverSourceCacheCurrent(
   ) {
     return false;
   }
-  return cachedSourceMatches(entityId, coverEntity, coverType, normalizedSource);
+  const source = getSelectedArtworkSource(entityId, coverEntity, coverType);
+  if (!source || !cachedSourceMatches(entityId, coverEntity, coverType, normalizedSource)) return false;
+  return hasCurrentArtworkProxies(
+    { entityId: String(entityId), coverEntity, coverType: normalizeMediaCoverType(coverType) },
+    getMediaCoverFolder(entityId, coverEntity), source,
+    coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS,
+  );
 }
 
 function existingMediaCover(entityId: string | number | null | undefined, coverEntity: MediaCoverEntity, coverType: string): { path: string; url: string } | null {
@@ -486,12 +408,12 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
     return null;
   }
 
-  // Prefer full-res origin (height null), then resized proxies (500, 250).
+  // Display only: prefer proxies; legacy origins are a temporary recovery fallback.
   // Public URL identity is always bare `{coverType}.jpg` (Lidarr-style). Height is a
   // request-layer rewrite (`cover-250.jpg`) so list and detail share one cover id.
   const heights: Array<number | null> = coverEntity === "Video"
-    ? [null, ...MEDIA_COVER_VIDEO_HEIGHTS]
-    : [null, ...MEDIA_COVER_DEFAULT_HEIGHTS];
+    ? [...MEDIA_COVER_VIDEO_HEIGHTS, null]
+    : [...MEDIA_COVER_DEFAULT_HEIGHTS, null];
   for (const height of heights) {
     for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
       const filePath = getMediaCoverPath(normalizedEntityId, coverEntity, coverType, extension, height);
@@ -767,131 +689,59 @@ export async function ensureCachedMediaCover(options: {
   coverEntity: MediaCoverEntity;
   coverType: string;
   sourceUrl: string | null | undefined;
-  /** Which preference branch produced this URL (drives stale-fallback invalidation). */
   fulfilledBy?: MediaCoverSourceKind;
 }): Promise<string | null> {
   const sourceUrl = normalizeArtworkUrl(options.sourceUrl);
   const entityId = normalizeMediaCoverEntityId(options.entityId);
-  if (!sourceUrl || !entityId) {
-    return null;
-  }
-
-  const fulfilledBy = options.fulfilledBy
-    ?? (looksLikeProviderArtworkUrl(sourceUrl) ? "provider" : "canonical");
-  const sourcePreference = configuredArtworkPreference();
-
+  if (!sourceUrl || !entityId) return null;
+  const fulfilledBy = options.fulfilledBy ?? (looksLikeProviderArtworkUrl(sourceUrl) ? "provider" : "canonical");
+  const preference = configuredArtworkPreference();
+  const identity = { entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(options.coverType) };
+  const folder = getMediaCoverFolder(entityId, options.coverEntity);
+  const expectedSource = getSelectedArtworkSource(entityId, options.coverEntity, options.coverType);
+  const heights = options.coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS;
   const existing = existingMediaCover(entityId, options.coverEntity, options.coverType);
-  // Albums/artists refresh when the preference/source marker changes. Videos
-  // historically skipped markers and kept the first cached bytes forever —
-  // that froze cropped YouTube `sqp=` thumbs. Match on source when a marker
-  // exists; without one, only refresh when the new URL is a known upgrade
-  // (uncropped YT / landscape Apple mv) so we do not re-download every video
-  // cover on every request.
-  if (existing) {
-    if (cachedSourceMatches(entityId, options.coverEntity, options.coverType, sourceUrl)
-      && (!["Album", "Edition"].includes(options.coverEntity) || existingOriginalMediaCover(entityId, options.coverEntity, options.coverType))) {
-      return existing.url;
-    }
-    if (options.coverEntity === "Video") {
-      const hasMarker = Boolean(getSelectedArtworkSource(entityId, options.coverEntity, options.coverType));
-      if (!hasMarker && !isUpgradedProviderThumbnailUrl(sourceUrl)) {
-        return existing.url;
-      }
-    }
-    // Album/artist (and video upgrades / mismatched markers): fall through and refresh.
+  const matches = expectedSource?.url === sourceUrl && expectedSource.preference === preference;
+  if (matches && hasCurrentArtworkProxies(identity, folder, expectedSource, heights)) {
+    return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, ".jpg");
   }
-
-  // Cache loss is not source loss. Rebuild from an exact tracked sidecar with
-  // the selected content hash, without a network call or duplicating its master.
+  const publish = async (bytes: Buffer, extension: string, hash: string, sourceKind: MediaCoverSourceKind) => {
+    const decoded = await decodeArtworkImage(bytes, extension);
+    const derivatives = prepareResizedMediaCovers(bytes, extension, heights, decoded);
+    if (derivatives.length !== heights.length) return false;
+    return commitArtworkProxies({ identity, folder, derivatives, expectedSource,
+      source: { url: sourceUrl, preference, fulfilledBy: sourceKind, contentHash: hash },
+      preferenceIsCurrent: () => configuredArtworkPreference() === preference,
+    });
+  };
   try {
-    if (cachedSourceMatches(entityId, options.coverEntity, options.coverType, sourceUrl)) {
-      const marker = getSelectedArtworkSource(entityId, options.coverEntity, options.coverType);
-      const master = marker?.contentHash ? findLibraryCoverMaster(
-        { entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(options.coverType) },
-        getMediaCoverFolder(entityId, options.coverEntity), marker.contentHash,
-      ) : null;
+    // Prefer the exact selected library master when display files have vanished.
+    // This rebuilds only proxies, without creating another original or fetching.
+    if (matches && expectedSource.contentHash) {
+      const master = findLibraryCoverMaster(identity, folder, expectedSource.contentHash);
       if (master) {
-        const heights = options.coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS;
-        const buffer = fs.readFileSync(master);
-        const hash = crypto.createHash("sha256").update(buffer).digest("hex");
-        const derivatives = hash === marker!.contentHash ? prepareResizedMediaCovers(buffer, path.extname(master), heights, await decodeArtworkImage(buffer, path.extname(master))) : [];
-        if (derivatives.length === heights.length) {
-          fs.mkdirSync(getMediaCoverFolder(entityId, options.coverEntity), { recursive: true });
-          commitCachedCoverVariant({ entityId, coverEntity: options.coverEntity, coverType: options.coverType,
-            extension: path.extname(master), originalBuffer: buffer, derivatives, retainOriginal: false });
-          await writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, marker!.fulfilledBy ?? fulfilledBy, marker!.contentHash, sourcePreference);
+        const bytes = fs.readFileSync(master);
+        const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+        if (hash === expectedSource.contentHash && await publish(bytes, path.extname(master), hash, expectedSource.fulfilledBy ?? fulfilledBy)) {
           return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, ".jpg");
         }
+        return null;
       }
     }
-
     const fetched = await fetchArtworkWithFallbacks(sourceUrl);
-
-    if (!fetched) {
-      // Keep the previous cache file as a last-resort display fallback, but do
-      // not mark it as though it came from the source that just failed. The
-      // resolver must be able to continue to its next candidate (for example
-      // CAA after a dead metadata URL), and a later request should retry this
-      // source rather than treating stale artwork as current.
-      return null;
-    }
-
-    const { response, fetchedUrl } = fetched;
-    const contentType = response.headers.get("content-type");
-    const extension = extensionForImage(contentType, fetchedUrl);
-    const folder = getMediaCoverFolder(entityId, options.coverEntity);
-    fs.mkdirSync(folder, { recursive: true });
-
-    const originalBuffer = await readArtworkBuffer(response);
-    let decoded: Awaited<ReturnType<typeof decodeArtworkImage>>;
-    try { decoded = await decodeArtworkImage(originalBuffer, extension); }
-    catch (error) {
-      console.warn("[MediaCoverService] Rejected invalid artwork:", (error as Error).message);
-      return existing?.url ?? null;
-    }
-
-    if (options.coverEntity === "Video") {
-      // Full-aspect origin for detail/embed; a single 250px proxy for cards/lists.
-      // Video thumbs are typically ~720p already, so a 500px derivative is wasteful.
-      const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_VIDEO_HEIGHTS, decoded);
-      if (derivatives.length !== MEDIA_COVER_VIDEO_HEIGHTS.length) return null;
-      commitCachedCoverVariant({
-        entityId,
-        coverEntity: options.coverEntity,
-        coverType: options.coverType,
-        extension,
-        originalBuffer,
-        derivatives,
-      });
-      const contentHash = crypto.createHash("sha256").update(originalBuffer).digest("hex");
-      await writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash, sourcePreference);
-      return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
-    }
-
-    // Full-resolution album/artist origin for detail/embed (Lidarr-style) + 500/250 proxies.
-    // Every accepted image container must yield bounded JPEG display proxies.
-    const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_DEFAULT_HEIGHTS, decoded);
-    if (derivatives.length !== MEDIA_COVER_DEFAULT_HEIGHTS.length) {
-      return existing?.url ?? null;
-    }
-
-    commitCachedCoverVariant({
-      entityId,
-      coverEntity: options.coverEntity,
-      coverType: options.coverType,
-      extension,
-      originalBuffer,
-      derivatives,
-    });
-    const contentHash = crypto.createHash("sha256").update(originalBuffer).digest("hex");
-    await writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash, sourcePreference);
-    return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
+    if (!fetched) return null;
+    const extension = extensionForImage(fetched.response.headers.get("content-type"), fetched.fetchedUrl);
+    const bytes = await readArtworkBuffer(fetched.response);
+    const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (!await publish(bytes, extension, hash, fulfilledBy)) return null;
+    return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, ".jpg");
   } catch (error) {
     console.warn("[MediaCoverService] Failed to cache artwork:", (error as Error).message);
-    return null;
+    // A bad source cannot claim the previous display bytes. Its marker stays
+    // unchanged, so the resolver can choose a fallback or retry later.
+    return existing?.url ?? null;
   }
 }
-
 export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
   const text = String(value || "").trim();
   if (!text.startsWith("/media-cover/")) {
@@ -1990,21 +1840,12 @@ export async function resolveAlbumArtwork(options: {
     supplemental = false,
   ): Promise<void> => {
     if (releaseGroupId == null) return;
-    const cached = existingMediaCover(options.albumMbid, "Album", "Cover");
-    if (!cached) return;
-    let contentHash: string;
-    try {
-      contentHash = crypto.createHash("sha256").update(fs.readFileSync(cached.path)).digest("hex");
-    } catch {
-      return;
-    }
-    await withSqliteWriteGate(() => selectionRepository.select({
-      releaseGroupId,
-      sourceKind,
-      contentHash,
-      sourceIdentity: sourceUrl,
-      supplemental,
-    }), "media-cover:selection");
+    await withSqliteWriteGate(() => {
+      const source=getSelectedArtworkSource(options.albumMbid!,"Album","cover");
+      // Selection is the original's provenance, never the display proxy hash.
+      if (!source?.contentHash || source.url!==sourceUrl || source.preference!==configuredArtworkPreference()) return;
+      selectionRepository.select({releaseGroupId,sourceKind,contentHash:source.contentHash,sourceIdentity:sourceUrl,supplemental});
+    }, "media-cover:selection");
   };
 
   const cacheSource = async (

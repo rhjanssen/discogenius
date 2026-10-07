@@ -2,6 +2,17 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- locally validated, October 8: fresh artwork cache publications contain only
+  250/500 JPEG proxies, or 250 for video. Durable derivative hashes detect missing
+  and same-size corrupt files; intact refreshes do no work and late fetches cannot
+  overwrite newer selections. Full CI passes 2,094 API and 187 frontend tests;
+  production-image focused tests pass 118. Actual-app full-resolution sidecar
+  import, cache-wipe repair and FLAC retag preserve audio and repeat without
+  changes. Not deployed. Legacy source/link migration and witnessed retirement,
+  process-death library-artwork replacement recovery, and embed-without-sidecar
+  acquisition still block release. Keep live downloads paused and do not wipe
+  the live cache. See `MANAGED_LIBRARY_CLEANUP.md` for evidence and boundaries.
+
 Status: pending | in progress | decided | revisit
 
 **2.12.0** is the model-correct release: one artist identity, policy that is not unmonitor, albums still release groups in the UI, editions as coverage, catalog tables without `monitored` columns.

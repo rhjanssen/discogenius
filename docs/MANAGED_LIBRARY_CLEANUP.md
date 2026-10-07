@@ -1,5 +1,46 @@
 # Managed library inventory and strict cleanup
 
+## October 8 fresh proxy publication candidate
+
+Catalogue artwork warming now publishes only 250/500 JPEG display derivatives,
+or the 250 video derivative. It records source identity and derivative hashes in
+the active schema, stages bytes before writer admission, and rechecks the source
+and preference before publication. An intact repeat performs no fetch or writes.
+Missing or same-size corrupted proxies invalidate refresh eligibility; source
+markers alone no longer hide damaged display files. Late fetches cannot replace
+a newer source. Library imports fetch the selected original into the sidecar;
+retag remains local and never promotes a proxy to an original.
+
+Legacy originals and JSON manifests are deliberately retained until a complete
+witnessed migration. This candidate changes fresh writes, not the existing live
+94 GB cache. Do not manually wipe it. Process-death recovery of library image
+replacement and the embed-without-sidecar configuration still need acceptance
+before release. The latter currently relies on a locally available master and
+must acquire an original explicitly without changing local-only retag behavior.
+
+Jellyfin's ItemImageProvider skips provider work when configured image roles and
+limits are satisfied; ImageSaver uses stable media-local role names and indexed
+backdrops. Discogenius uses bounded role ownership and durable selected-source
+records, rather than copying Jellyfin's direct overwrite or unrestricted extra
+image generation. Existing user artwork and review companions remain protected.
+
+Production-image checks pass all 118 focused artwork, identity, route and
+sidecar tests. The actual app imported a WebP original as a full-size JPEG,
+survived complete deletion of its disposable test cache by rebuilding only two
+proxies from the tracked library master, and completed RetagFiles 1. The resulting
+FLAC embeds a 1200x1200 JPEG, canonical identifiers and lyrics, with unchanged
+decoded audio and sidecar hash, zero foreign-key violations, and a repeat UI
+preview reporting no files need retagging. Screenshot capture timed out twice;
+the visible accessibility state and container proof were retained instead.
+Evidence: oct08-proxy-native.log, oct08-proxy-app-before.log and
+oct08-proxy-app-after.log in the existing temporary release audit directory.
+Full CI passes all 2,094 API and 187 frontend tests with no failed names or
+clone-flake retries, plus lint, typechecks and production builds.
+
+Read-only live verification still reports healthy 2.21.0, unchanged image digest,
+downloads paused, and no active downloads/imports. No live deployment, cache
+pruning or library mutation was performed for this candidate.
+
 ## Intended behavior
 
 Robert's October 4 clarification defines three separate policies:
