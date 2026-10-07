@@ -509,7 +509,7 @@ test("a cold static video thumbnail sidecar performs no provider or network acce
     }
 });
 
-test("static video thumbnail sidecars copy the canonical recording's cached origin", async () => {
+test("static video thumbnail sidecars convert the canonical recording's PNG origin to a full-size JPEG", async () => {
     seedMusicBrainzMetadata();
     const recording = dbModule.db.prepare(`
       SELECT id FROM Recordings WHERE mbid = ?
@@ -522,7 +522,9 @@ test("static video thumbnail sidecars copy the canonical recording's cached orig
         "cover.png",
     );
     const outputPath = path.join(tempDir, "video-thumbnail-tests", "cached.jpg");
-    const expected = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const { PNG } = await import("pngjs");
+    const png = new PNG({ width: 720, height: 600 });png.data.fill(255);
+    const expected = PNG.sync.write(png);
     fs.mkdirSync(path.dirname(cachedOrigin), { recursive: true });
     fs.writeFileSync(cachedOrigin, expected);
 
@@ -535,7 +537,10 @@ test("static video thumbnail sidecars copy the canonical recording's cached orig
         ),
         "written",
     );
-    assert.deepEqual(fs.readFileSync(outputPath), expected);
+    const jpeg = await import("jpeg-js");
+    const decoded = jpeg.decode(fs.readFileSync(outputPath));
+    assert.equal(decoded.width,720);assert.equal(decoded.height,600);
+    assert.deepEqual(fs.readFileSync(cachedOrigin),expected);
     assert.equal(
         await metadataFilesModule.downloadVideoThumbnail(
             "remote-cover-id",

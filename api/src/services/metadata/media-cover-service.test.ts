@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import * as jpeg from "jpeg-js";
+import { execFileSync } from "node:child_process";
 import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-media-cover-"));
@@ -16,6 +17,55 @@ let mediaCoverServiceModule: typeof import("./media-cover-service.js");
 let materializationModule: typeof import("./media-cover-materialization.js");
 let configModule: typeof import("../config/config.js");
 const originalFetch = globalThis.fetch;
+
+test("legacy PNG masters convert locally into correctly named JPEG sidecars without repeated writes", async () => {
+  const { PNG } = await import("pngjs");
+  const entityId = "legacy-png-to-jpeg", sourceUrl = "https://example.com/legacy.png";
+  const png = new PNG({ width: 700, height: 600 });png.data.fill(255);
+  const bytes = PNG.sync.write(png);
+  globalThis.fetch = async () => new Response(bytes, { headers: { "content-type": "image/png" } });
+  try {
+    await mediaCoverServiceModule.ensureCachedMediaCover({ entityId, coverEntity: "Album", coverType: "cover", sourceUrl });
+    globalThis.fetch = async () => { throw new Error("Local conversion must not fetch"); };
+    const outputPath = path.join(tempDir, entityId, "cover.jpg");
+    assert.equal(mediaCoverServiceModule.syncCachedMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), "missing");
+    assert.equal(fs.existsSync(outputPath), false);
+    assert.equal(await materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), "written");
+    const decoded = jpeg.decode(fs.readFileSync(outputPath));assert.equal(decoded.width,700);assert.equal(decoded.height,600);
+    assert.equal(mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(entityId,"Album"),outputPath);
+    const before = dbModule.db.prepare("SELECT total_changes() AS count").get();
+    assert.equal(await materializationModule.materializeMediaCoverToFile({ entityId, coverEntity: "Album", outputPath }), "unchanged");
+    assert.deepEqual(dbModule.db.prepare("SELECT total_changes() AS count").get(),before);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("real WebP and GIF artwork materializes full-size JPEGs from local and remote selected origins", async () => {
+  const { resolveFfmpegBinary } = await import("../mediafiles/audioUtils.js");
+  const { PNG } = await import("pngjs");
+  const fixture = path.join(tempDir,"native-codec-fixture.png"),png = new PNG({width:720,height:640});png.data.fill(255);
+  fs.writeFileSync(fixture,PNG.sync.write(png));
+  try {
+    for (const extension of ["webp","gif"]) {
+      const native=path.join(tempDir,`native-codec-fixture.${extension}`);
+      execFileSync(resolveFfmpegBinary(),["-v","error","-i",fixture,"-frames:v","1","-threads","1",native],{windowsHide:true,timeout:30_000});
+      const bytes=fs.readFileSync(native),entityId=`native-${extension}`,sourceUrl=`https://example.com/master.${extension}`;
+      globalThis.fetch = async () => new Response(bytes,{headers:{"content-type":`image/${extension}`}});
+      await mediaCoverServiceModule.ensureCachedMediaCover({entityId,coverEntity:"Album",coverType:"cover",sourceUrl});
+      if (extension === "gif") fs.unlinkSync(path.join(tempDir,"media-cover","Albums",entityId,`cover.${extension}`));
+      else globalThis.fetch=async()=>{throw new Error("Legacy WebP conversion must not fetch");};
+      const outputPath=path.join(tempDir,entityId,"cover.jpg");
+      assert.equal(await materializationModule.materializeMediaCoverToFile({entityId,coverEntity:"Album",outputPath}),"written");
+      const decoded=jpeg.decode(fs.readFileSync(outputPath));assert.equal(decoded.width,720);assert.equal(decoded.height,640);
+      globalThis.fetch=async()=>{throw new Error("Repeat must not fetch");};
+      const before=dbModule.db.prepare("SELECT total_changes() AS count").get();
+      assert.equal(await materializationModule.materializeMediaCoverToFile({entityId,coverEntity:"Album",outputPath}),"unchanged");
+      assert.deepEqual(dbModule.db.prepare("SELECT total_changes() AS count").get(),before);
+    }
+    const {decodeArtworkImage}=await import("./media-cover-image.js");
+    await assert.rejects(decodeArtworkImage(Buffer.from("not webp"),".webp"),/do not match/);
+    await assert.rejects(decodeArtworkImage(Buffer.alloc(33*1024*1024),".gif"),/32 MiB/);
+  } finally { globalThis.fetch=originalFetch; }
+});
 
 test("import materializes a selected original without recreating a cache master and repeats without writes", async () => {
   const entityId = "import-selected-original", url = "https://example.com/import-master.jpg";
@@ -1765,7 +1815,7 @@ test("ensureCachedMediaCover keeps prior files when a successful fetch cannot be
   }
 });
 
-test("unsupported WebP masters are retained even when proxies cannot be decoded", async () => {
+test("corrupt WebP responses are rejected instead of persisting an unusable master", async () => {
   const albumMbid = "webp-master-retention-album";
   const sourceUrl = "https://example.test/master.webp";
   const bytes = Buffer.from("RIFF0000WEBPVP8 unsupported-fixture", "utf8");
@@ -1781,10 +1831,11 @@ test("unsupported WebP masters are retained even when proxies cannot be decoded"
       sourceUrl,
       fulfilledBy: "canonical",
     });
-    assert.equal(localUrl, `/media-cover/Albums/${albumMbid}/cover.webp`);
+    assert.equal(localUrl, null);
     const master = path.join(tempDir, "media-cover", "Albums", albumMbid, "cover.webp");
-    assert.deepEqual(fs.readFileSync(master), bytes);
+    assert.equal(fs.existsSync(master), false);
     assert.equal(fs.existsSync(path.join(path.dirname(master), "cover-500.jpg")), false);
+    assert.equal(mediaCoverServiceModule.getSelectedArtworkSource(albumMbid,"Album","cover"),null);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -1,5 +1,8 @@
 import * as jpeg from "jpeg-js";
 import path from "node:path";
+import fs from "node:fs/promises";
+import os from "node:os";
+import { execFile } from "node:child_process";
 import * as pngjs from "pngjs";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 const PNG = (pngjs as unknown as { PNG: any }).PNG as any;
@@ -53,6 +56,43 @@ export function decodeImage(buffer: Buffer, extension: string): { width: number;
   }
 
   return null;
+}
+
+/** Decode a bounded first frame for library JPEG materialization. Native
+ * conversion is asynchronous and uses a private temporary directory, never
+ * MediaCover or a library path. The selected source's dimensions are retained. */
+export async function decodeArtworkImage(buffer: Buffer, extension: string): Promise<{ width: number; height: number; data: Uint8Array } | null> {
+  if (extension !== ".webp" && extension !== ".gif") return decodeImage(buffer, extension);
+  if (buffer.length > 32 * 1024 * 1024) throw new Error("Artwork exceeds the 32 MiB conversion limit");
+  const isGif = ["GIF87a", "GIF89a"].includes(buffer.subarray(0, 6).toString("ascii"));
+  const isWebp = buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+  if (extension === ".gif" ? !isGif : !isWebp) throw new Error("Artwork bytes do not match their selected image container");
+  const { resolveFfmpegBinary, resolveFfprobeBinary } = await import("../mediafiles/audioUtils.js");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "discogenius-artwork-convert-"));
+  const input = path.join(directory, `source${extension}`);
+  const run = (binary: string, args: string[], maxBuffer: number, timeout: number) => new Promise<Buffer>((resolve, reject) => {
+    execFile(binary, args, { encoding: "buffer", windowsHide: true, maxBuffer, timeout }, (error, stdout) => {
+      if (error) reject(new Error(`Artwork conversion tool failed: ${error.message}`, { cause: error }));
+      else resolve(stdout);
+    });
+  });
+  try {
+    await fs.writeFile(input, buffer);
+    const probe = JSON.parse((await run(resolveFfprobeBinary(), ["-v", "error", "-max_alloc", "268435456", "-select_streams", "v:0",
+      "-show_entries", "stream=codec_name,width,height", "-of", "json", input], 1024 * 1024, 10_000)).toString("utf8"));
+    const stream = probe.streams?.[0];
+    if (!stream || stream.codec_name !== extension.slice(1) || !Number.isSafeInteger(stream.width) || !Number.isSafeInteger(stream.height)
+      || stream.width < 1 || stream.height < 1 || stream.width * stream.height > 48_000_000) {
+      throw new Error("Artwork has invalid dimensions or exceeds the 48 megapixel decoding limit");
+    }
+    const png = await run(resolveFfmpegBinary(), ["-v", "error", "-max_alloc", "268435456", "-threads", "1", "-i", input,
+      "-map", "0:v:0", "-frames:v", "1", "-threads", "1", "-c:v", "png", "-f", "image2pipe", "pipe:1"], 32 * 1024 * 1024, 30_000);
+    const decoded = decodeImage(png, ".png");
+    if (!decoded || decoded.width !== stream.width || decoded.height !== stream.height) throw new Error("Artwork dimensions changed during conversion");
+    return decoded;
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 }
 
 /**

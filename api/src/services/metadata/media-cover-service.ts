@@ -1,4 +1,4 @@
-import { CONTENT_TYPES_BY_EXTENSION, decodeImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
+import { CONTENT_TYPES_BY_EXTENSION, decodeImage, decodeArtworkImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
 import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSidecar } from "./media-cover-library-storage.js";
 import { readArtworkSource, storeArtworkSource, type ArtworkSource } from "./media-cover-state.js";
 import { withSqliteWriteMutexSync } from "../../database/sqlite-write-mutex.js";
@@ -517,11 +517,18 @@ function existingOriginalMediaCover(
   const normalizedEntityId = normalizeMediaCoverEntityId(entityId);
   if (!normalizedEntityId) return null;
 
+  const marker = getSelectedArtworkSource(normalizedEntityId, coverEntity, coverType);
+  try {
+    if (typeof marker?.contentHash === "string") {
+      const master = findLibraryCoverMaster({ entityId: normalizedEntityId, coverEntity, coverType: normalizeMediaCoverType(coverType) }, getMediaCoverFolder(normalizedEntityId, coverEntity), marker.contentHash);
+      if (master) return { path: master, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
+    }
+  } catch { /* No verified library original. */ }
   for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
     const filePath = getMediaCoverPath(normalizedEntityId, coverEntity, coverType, extension);
     try {
       const stats = fs.statSync(filePath);
-      if (stats.isFile() && stats.size > 0) {
+      if (stats.isFile() && stats.size > 0 && (!marker?.contentHash || mediaCoverFileSha256(filePath) === marker.contentHash)) {
         return {
           path: filePath,
           url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, extension),
@@ -531,13 +538,6 @@ function existingOriginalMediaCover(
       // Try the next supported container.
     }
   }
-  try {
-    const marker = getSelectedArtworkSource(normalizedEntityId, coverEntity, coverType);
-    if (typeof marker?.contentHash === "string") {
-      const master = findLibraryCoverMaster({ entityId: normalizedEntityId, coverEntity, coverType: normalizeMediaCoverType(coverType) }, getMediaCoverFolder(normalizedEntityId, coverEntity), marker.contentHash);
-      if (master) return { path: master, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
-    }
-  } catch { /* No relocated original. */ }
   return null;
 }
 
@@ -608,6 +608,10 @@ export function syncCachedMediaCoverToFile(options: MediaCoverSidecarOptions): M
     ))
     .find((candidate): candidate is string => Boolean(candidate && fs.existsSync(candidate)));
   if (!sourcePath) return "missing";
+  // This local-only helper copies bytes; conversion belongs to the async
+  // materializer. Never put PNG/WebP/GIF bytes under a JPEG sidecar filename.
+  const imageExtension = (file: string) => path.extname(file).toLowerCase().replace(/^\.jpeg$/, ".jpg");
+  if (imageExtension(sourcePath) !== imageExtension(options.outputPath)) return "missing";
   // A hash-verified library master already at its destination needs neither
   // another pair of full-file hashes nor a provenance write on every refresh.
   if (path.resolve(sourcePath) === path.resolve(options.outputPath)) return "unchanged";
@@ -692,10 +696,11 @@ function prepareResizedMediaCovers(
   originalBuffer: Buffer,
   extension: string,
   heights: readonly number[] = MEDIA_COVER_DEFAULT_HEIGHTS,
+  decodedImage?: { width: number; height: number; data: Uint8Array } | null,
 ): PreparedMediaCoverDerivative[] {
   let decoded: { width: number; height: number; data: Uint8Array } | null = null;
   try {
-    decoded = decodeImage(originalBuffer, extension);
+    decoded = decodedImage ?? decodeImage(originalBuffer, extension);
   } catch (error) {
     console.warn("[MediaCoverService] Failed to decode artwork for resizing:", (error as Error).message);
     return [];
@@ -809,7 +814,7 @@ export async function ensureCachedMediaCover(options: {
         const heights = options.coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS;
         const buffer = fs.readFileSync(master);
         const hash = crypto.createHash("sha256").update(buffer).digest("hex");
-        const derivatives = hash === marker!.contentHash ? prepareResizedMediaCovers(buffer, path.extname(master), heights) : [];
+        const derivatives = hash === marker!.contentHash ? prepareResizedMediaCovers(buffer, path.extname(master), heights, await decodeArtworkImage(buffer, path.extname(master))) : [];
         if (derivatives.length === heights.length) {
           fs.mkdirSync(getMediaCoverFolder(entityId, options.coverEntity), { recursive: true });
           commitCachedCoverVariant({ entityId, coverEntity: options.coverEntity, coverType: options.coverType,
@@ -838,11 +843,18 @@ export async function ensureCachedMediaCover(options: {
     fs.mkdirSync(folder, { recursive: true });
 
     const originalBuffer = await readArtworkBuffer(response);
+    let decoded: Awaited<ReturnType<typeof decodeArtworkImage>>;
+    try { decoded = await decodeArtworkImage(originalBuffer, extension); }
+    catch (error) {
+      console.warn("[MediaCoverService] Rejected invalid artwork:", (error as Error).message);
+      return existing?.url ?? null;
+    }
 
     if (options.coverEntity === "Video") {
       // Full-aspect origin for detail/embed; a single 250px proxy for cards/lists.
       // Video thumbs are typically ~720p already, so a 500px derivative is wasteful.
-      const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_VIDEO_HEIGHTS);
+      const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_VIDEO_HEIGHTS, decoded);
+      if (derivatives.length !== MEDIA_COVER_VIDEO_HEIGHTS.length) return null;
       commitCachedCoverVariant({
         entityId,
         coverEntity: options.coverEntity,
@@ -857,11 +869,9 @@ export async function ensureCachedMediaCover(options: {
     }
 
     // Full-resolution album/artist origin for detail/embed (Lidarr-style) + 500/250 proxies.
-    // Unsupported-but-valid source containers (currently WebP/GIF) still keep
-    // their master even when our pure-JS resizer cannot derive JPEG proxies.
-    const derivatives = prepareResizedMediaCovers(originalBuffer, extension);
-    const decoderSupportsContainer = [".jpg", ".jpeg", ".png"].includes(extension);
-    if (decoderSupportsContainer && derivatives.length === 0) {
+    // Every accepted image container must yield bounded JPEG display proxies.
+    const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_DEFAULT_HEIGHTS, decoded);
+    if (derivatives.length !== MEDIA_COVER_DEFAULT_HEIGHTS.length) {
       return existing?.url ?? null;
     }
 

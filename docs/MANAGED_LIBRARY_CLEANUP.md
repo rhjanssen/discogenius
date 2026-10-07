@@ -847,3 +847,40 @@ An attempt to run the worker fixture suite in the production image fails because
 The Linux builder-stage worker lease suite passes all 26 checks, including active drain, refused new admission, death recovery and capacity restoration. Windows isolated lease validation also passes all 26 after separating cold loader startup from the short active-drain assertion.
 
 Final full CI after the worker test correction passes 2,089 API and 187 frontend tests, lint, typechecks and both builds with no failing names or clone retries. This supersedes the failed preliminary run; it is not live deployment acceptance.
+## October 7 artwork container conversion candidate
+
+Selected WebP/GIF artwork now converts through the bundled ffprobe/ffmpeg tools
+into a full-dimension first frame for JPEG library materialization and display
+proxies. Conversion is asynchronous, private temporary files are removed, tools
+have timeouts/output limits and one decoding/encoding thread, input is capped at
+32 MiB, and accepted dimensions at 48 megapixels. JPEG/PNG retain their existing
+pure-JS path. A GIF library JPEG is intentionally a still first frame; this does
+not generate animated album artwork or extra background assets.
+
+Import now converts both remote origins and legacy local cached PNG/WebP/GIF when
+the configured sidecar extension differs. The synchronous local copy helper
+refuses container-extension mismatches; it no longer writes PNG bytes as cover.jpg.
+Verified linked library masters take precedence over retained legacy cache masters,
+and cached originals with a mismatched selected hash are rejected. Local source
+and destination witnesses plus source/preference are rechecked before conversion
+commit. Repeat verified JPEG materialization makes no provenance writes.
+
+Corrupt WebP responses are rejected instead of being archived as unusable masters.
+A prior test used only a PNG signature as its image and asserted those PNG bytes
+were copied to a .jpg path; replaced that fixture with a real PNG and explicit
+JPEG dimension verification. All 107 focused Windows/native-Linux checks pass,
+including real WebP/GIF and source selection/failure recovery. Candidate Docker
+build passes. Actual app retag of a real FLAC after local WebP conversion completed,
+with canonical tags/lyrics and a 1200px JPEG, unchanged decoded audio and converted
+sidecar SHA256, zero foreign-key violations, and no changes on repeat preview.
+Cache removal rebuilt 250/500 proxies without a fetch. Disposable containers and
+anonymous volumes were removed.
+
+This resolves the unsupported-container materialization prerequisite, not the
+whole cache lifecycle. Fresh catalogue warmers still persist originals. Complete
+legacy-state/asset migration and crash recovery for source replacement, then switch
+fresh cache writes to proxies-only and validate all callers before live storage
+cleanup. The 94 GB live cache was not pruned; live 2.21.0 remains healthy with
+downloads paused and no active download/import jobs.
+
+Final conversion-candidate full CI passes all 2,091 API and 187 frontend tests, lint/typechecks/builds with no failing names or clone retries. Retag UI evidence and readonly in-container ffprobe/PCM/hash checks are retained under the local release audit directory.

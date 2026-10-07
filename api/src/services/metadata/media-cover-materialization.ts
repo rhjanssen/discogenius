@@ -6,7 +6,7 @@ import * as pngjs from "pngjs";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { storeArtworkSource } from "./media-cover-state.js";
 import { rememberLibraryCoverSidecar } from "./media-cover-library-storage.js";
-import { decodeImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
+import { decodeArtworkImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
 import { getCachedMediaCoverOriginalFilePath, syncCachedMediaCoverToFile, normalizeMediaCoverEntityId,
   getSelectedArtworkSource, getMediaCoverFolder, normalizeMediaCoverType, mediaCoverFileSha256,
   normalizeArtworkUrl, configuredArtworkPreference, type MediaCoverSidecarOptions, type MediaCoverSidecarSyncResult } from "./media-cover-service.js";
@@ -21,24 +21,44 @@ export async function materializeMediaCoverToFile(options: MediaCoverSidecarOpti
   if (!entityId) return "missing";
   const types = Array.isArray(options.coverTypes) ? options.coverTypes
     : [options.coverTypes || (options.coverEntity === "Artist" ? "poster" : "cover")];
-  for (const coverType of types) {
-    if (!getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, coverType)) continue;
-    const marker = getSelectedArtworkSource(entityId, options.coverEntity, coverType);
-    if (marker && marker.preference !== configuredArtworkPreference()) throw new Error("Artwork preference changed; resolve artwork before materializing it");
-    return syncCachedMediaCoverToFile({ ...options, coverTypes: coverType });
-  }
-  const selected = types.map(normalizeMediaCoverType).map(coverType => ({
+  const preference = configuredArtworkPreference();
+  const candidates = types.map(normalizeMediaCoverType).map(coverType => ({
     identity: { entityId, coverEntity: options.coverEntity, coverType },
     source: getSelectedArtworkSource(entityId, options.coverEntity, coverType),
-  })).find(candidate => candidate.source && normalizeArtworkUrl(candidate.source.url));
-  if (!selected?.source) return "missing";
-  const { identity, source } = selected;
-  if (source.preference !== configuredArtworkPreference()) throw new Error("Artwork preference changed; resolve artwork before materializing it");
-  const fetched = await fetchArtworkWithFallbacks(source.url);
-  if (!fetched) throw new Error(`Could not fetch selected ${options.coverEntity} artwork`);
-  const extension = extensionForImage(fetched.response.headers.get("content-type"), fetched.fetchedUrl);
-  const origin = await readArtworkBuffer(fetched.response);
-  const decoded = decodeImage(origin, extension);
+    localPath: getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, coverType),
+  }));
+  const selected = candidates.find(candidate => candidate.localPath)
+    ?? candidates.find(candidate => candidate.source && normalizeArtworkUrl(candidate.source.url));
+  if (!selected) return "missing";
+  const { identity, source, localPath } = selected;
+  if (source && source.preference !== preference) throw new Error("Artwork preference changed; resolve artwork before materializing it");
+  const normalizedExtension = (file: string) => path.extname(file).toLowerCase().replace(/^\.jpeg$/, ".jpg");
+  if (localPath && normalizedExtension(localPath) === normalizedExtension(options.outputPath)) {
+    return syncCachedMediaCoverToFile({ ...options, coverTypes: identity.coverType });
+  }
+  const fileWitness = (file: string) => {
+    try {
+      const stat = fs.lstatSync(file, { bigint: true });
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Artwork path is not a regular file");
+      return [stat.dev, stat.ino, stat.size, stat.mtimeNs].join(":");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  };
+  const localWitness = localPath ? fileWitness(localPath) : null;
+  let extension: string, origin: Buffer;
+  if (localPath) {
+    if (fs.statSync(localPath).size > 32 * 1024 * 1024) throw new Error("Artwork exceeds the 32 MiB conversion limit");
+    origin = fs.readFileSync(localPath);
+    extension = normalizedExtension(localPath);
+  } else {
+    const fetched = await fetchArtworkWithFallbacks(source!.url);
+    if (!fetched) throw new Error(`Could not fetch selected ${options.coverEntity} artwork`);
+    extension = extensionForImage(fetched.response.headers.get("content-type"), fetched.fetchedUrl);
+    origin = await readArtworkBuffer(fetched.response);
+  }
+  const decoded = await decodeArtworkImage(origin, extension);
   if (!decoded) throw new Error(`Selected artwork container ${extension} cannot yet be materialized safely`);
   const destinationExtension = path.extname(options.outputPath).toLowerCase();
   let master: Buffer;
@@ -53,16 +73,7 @@ export async function materializeMediaCoverToFile(options: MediaCoverSidecarOpti
     throw new Error(`Unsupported library artwork extension ${destinationExtension}`);
   }
   const hash = crypto.createHash("sha256").update(master).digest("hex");
-  const witness = () => {
-    try {
-      const stat = fs.lstatSync(options.outputPath, { bigint: true });
-      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Artwork destination is not a regular file");
-      return [stat.dev, stat.ino, stat.size, stat.mtimeNs].join(":");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
-  };
+  const witness = () => fileWitness(options.outputPath);
   const destinationWitness = witness();
   const unchanged = fs.existsSync(options.outputPath) && mediaCoverFileSha256(options.outputPath) === hash;
   fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
@@ -74,9 +85,10 @@ export async function materializeMediaCoverToFile(options: MediaCoverSidecarOpti
     if (!unchanged) fs.writeFileSync(staged, master);
     await withSqliteWriteGate(() => {
       const current = getSelectedArtworkSource(entityId, options.coverEntity, identity.coverType);
-      if (JSON.stringify(current) !== JSON.stringify(source) || configuredArtworkPreference() !== source.preference) {
+      if (JSON.stringify(current) !== JSON.stringify(source) || configuredArtworkPreference() !== preference) {
         throw new Error("Artwork source changed during materialization; retry with the selected source");
       }
+      if (localPath && fileWitness(localPath) !== localWitness) throw new Error("Artwork master changed during conversion; retry after inventory");
       if (witness() !== destinationWitness) throw new Error("Artwork destination changed during materialization; retry after inventory");
       try {
         db.transaction(() => {
@@ -88,7 +100,7 @@ export async function materializeMediaCoverToFile(options: MediaCoverSidecarOpti
           const row = db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')")
             .get(options.outputPath) as { id: number } | undefined;
           rememberLibraryCoverSidecar(identity, getMediaCoverFolder(entityId, options.coverEntity), options.outputPath, hash, row?.id);
-          storeArtworkSource(identity, { ...source, contentHash: hash });
+          if (source) storeArtworkSource(identity, { ...source, contentHash: hash });
         })();
       } catch (error) {
         if (replaced) {
