@@ -78,7 +78,8 @@ export function SemanticStatusIcon({ status, size = 16, className, ...props }: S
             {filledStatusIcon(status, size, {
                 ...props,
                 fontSize: glyph,
-                style: { ...statusIconGlyphStyle("filled", size), color: tokens.colorNeutralForeground2 },
+                style: { ...statusIconGlyphStyle("filled", size),
+                    color: status === "success" ? tokens.colorPaletteGreenForeground2 : tokens.colorNeutralForeground2 },
             })}
         </StatusIconSlot>
     );

@@ -57,6 +57,47 @@ test("artist artwork and NFO follow a persisted custom directory without playabl
         {type:"ArtistMetadata",track_file_id:null,canonical_artist_mbid:"artist",canonical_release_mbid:null}]);
     assert.equal(await reconcile(cover,[]),false);assert.equal(await reconcile(nfo,[]),false);
 });
+
+test("explicit top-level artist MBID owns sidecars without creating monitoring membership",async()=>{
+    await artistPath("Unused");database.db.prepare("DELETE FROM LibraryArtists").run();
+    const mbid="12345678-1234-1234-1234-123456789abc";
+    database.db.prepare("INSERT INTO ArtistMetadata(id,mbid,name) VALUES(2,?,'Artist Without Membership')").run(mbid);
+    const folder=`Artist {mbid-${mbid}}`,picture=file(`${folder}/folder.jpg`),nfo=file(`${folder}/artist.nfo`);
+    assert.equal(await reconcile(picture,[]),true);assert.equal(await reconcile(nfo,[]),true);
+    assert.equal((database.db.prepare("SELECT COUNT(*) AS n FROM LibraryArtists").get() as {n:number}).n,0);
+    assert.deepEqual(database.db.prepare("SELECT canonical_artist_mbid,track_file_id FROM MetadataFiles ORDER BY id").all(),
+        [{canonical_artist_mbid:mbid,track_file_id:null},{canonical_artist_mbid:mbid,track_file_id:null}]);
+    const unknown=file("Artist {mbid-99999999-1234-1234-1234-123456789abc}/artist.nfo");
+    assert.equal(inspect(unknown,[]).status,"unresolved");
+    const nested=file(`Other/${folder}/artist.nfo`);assert.equal(inspect(nested,[]).status,"unresolved");
+    database.db.prepare("INSERT INTO LibraryArtists(library_id,artist_metadata_id,path) VALUES(?,1,?)").run(library,folder);
+    assert.equal(inspect(nfo,[]).status,"unresolved");
+});
+
+test("secondary artist and album artwork has exact scope and retains its filename through rename",async()=>{
+    await artistPath("Artist");
+    const owner=track("Artist/Edition/01 Song.flac");
+    const artistArt=file("Artist/fanart.jpg"),albumArt=file("Artist/Edition/disc.png");
+    assert.equal(await reconcile(artistArt,[]),true);assert.equal(await reconcile(albumArt,[owner.path]),true);
+    const rows=database.db.prepare("SELECT type,file_type,canonical_release_mbid,track_file_id FROM MetadataFiles ORDER BY id").all();
+    assert.deepEqual(rows,[{type:"ArtistImage",file_type:"artwork",canonical_release_mbid:null,track_file_id:null},
+        {type:"AlbumImage",file_type:"artwork",canonical_release_mbid:"edition-1",track_file_id:null}]);
+    const {RenameTrackFileService}=await import("./rename-track-file-service.js");
+    const result=await RenameTrackFileService.executeRenameFiles([10000001,10000002]);
+    assert.equal(result.errors.length,0);
+    const moved=database.db.prepare("SELECT id,file_path FROM MetadataFiles ORDER BY id").all() as Array<{id:number;file_path:string}>;
+    for(const artwork of [artistArt,albumArt]) {
+        assert.ok(moved.some(row=>path.basename(row.file_path)===path.basename(artwork) && fs.existsSync(row.file_path)));
+    }
+    const repeat=await RenameTrackFileService.executeRenameFiles([10000001,10000002]);
+    assert.equal(repeat.renamed,0);assert.equal(repeat.errors.length,0);
+});
+
+test("unresolved secondary artwork is retained for ownership review rather than classified as loose junk",async()=>{
+    assert.equal(inspect(file("Unknown/fanart.jpg"),[]).status,"unresolved");
+    assert.equal(inspect(file("Unknown/discart.png"),[]).status,"unresolved");
+    assert.equal(inspect(file("Unknown/holiday.jpg"),[]).status,"not_sidecar");
+});
 test("artist basename, library-root assets and album-level folder images do not invent artist ownership",async()=>{
     await artistPath("Custom/Artist");
     assert.equal(inspect(file("Artist/artist.nfo"),[]).status,"unresolved");

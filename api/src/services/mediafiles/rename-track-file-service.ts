@@ -1110,7 +1110,7 @@ export class RenameTrackFileService {
           AND canonical_release_mbid IS NULL
           AND canonical_track_mbid IS NULL
           AND canonical_recording_mbid IS NULL
-          AND file_type IN ('cover', 'nfo')
+          AND file_type IN ('cover', 'artwork', 'nfo')
       `).all(sidecarArtistId) as any[];
       for (const asset of artistAssets) {
         await copyTrackedAsset(asset, {
@@ -1138,7 +1138,7 @@ export class RenameTrackFileService {
           AND (mf.canonical_release_group_mbid IS NOT NULL OR mf.canonical_release_mbid IS NOT NULL OR mf.provider_id IS NOT NULL)
           AND mf.canonical_track_mbid IS NULL
           AND mf.canonical_recording_mbid IS NULL
-          AND mf.file_type IN ('cover', 'nfo')
+          AND mf.file_type IN ('cover', 'artwork', 'nfo')
           AND (
             (? IS NOT NULL AND (mf.canonical_release_group_mbid = ? OR album_group.mbid = ?))
             OR (? IS NOT NULL AND (mf.canonical_release_mbid = ? OR album_release.mbid = ?))

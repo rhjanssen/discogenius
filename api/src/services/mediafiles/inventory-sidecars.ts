@@ -6,7 +6,7 @@ import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
 import { MetadataFileService, getMetadataType } from "../extras/metadata/files/metadata-file-service.js";
 import { ExtraFileService, type ExtraFileUpsertInput } from "../extras/files/extra-file-service.js";
-import { SUPPORTED_IMPORT_EXTENSIONS } from "./import-discovery.js";
+import { SUPPORTED_IMPORT_EXTENSIONS, extractNamingMbid } from "./import-discovery.js";
 
 type Owner = {
     id: number; library_id: number; library_slot: string; file_path: string; file_type: string; root_path: string;
@@ -33,7 +33,18 @@ function artistFolderScope(file: string, root: string): SidecarDecision | undefi
         JOIN ArtistMetadata artist ON artist.id=membership.artist_metadata_id
         WHERE membership.path ${process.platform === "win32" ? "COLLATE NOCASE" : ""}
           IN (${paths.map(() => "?").join(",")}) ORDER BY library.id,membership.id`).all(...paths) as Array<{library_id:number;root_path:string;artist:string}>;
-    const matching = rows.filter(row => path.relative(path.resolve(row.root_path),root) === "");
+    let matching = rows.filter(row => path.relative(path.resolve(row.root_path),root) === "");
+    const folderMbid=path.dirname(directory) === root ? extractNamingMbid(path.basename(directory)) : null;
+    if (folderMbid && matching.some(row=>row.artist!==folderMbid)) return {status:"unresolved"};
+    // An explicit artist MBID in a top-level folder is canonical evidence even
+    // when that artist has files but no saved monitoring membership/path.
+    if (!matching.length && path.dirname(directory) === root) {
+        const mbid=folderMbid;
+        if (mbid) matching=db.prepare(`SELECT library.id AS library_id,library.root_path,artist.mbid AS artist
+            FROM Libraries library JOIN ArtistMetadata artist ON artist.mbid=?
+            WHERE library.root_path ${process.platform === "win32" ? "COLLATE NOCASE" : ""} = ? ORDER BY library.id`)
+            .all(mbid,root) as typeof matching;
+    }
     if (!matching.length) return undefined;
     if (matching.some(row => !row.artist) || new Set(matching.map(row => row.artist)).size !== 1) return {status:"unresolved"};
     const config = getConfigSection("path");
@@ -74,13 +85,15 @@ export function inspectInventorySidecar(file: string, root: string, siblings: st
         UNION ALL SELECT 1 FROM UnmappedFiles WHERE file_path=? LIMIT 1`).get(file,file,file)) {
         return { status: "owned" };
     }
-    const artistAsset = name === "artist.nfo" || (image && name === (metadata.artist_picture_name || "folder.jpg").toLowerCase());
+    const secondaryArtistImage=image && /^(banner|fanart|logo|landscape|clearart|clearlogo)\.(png|jpe?g|webp)$/.test(name);
+    const secondaryAlbumImage=image && /^(cover|disc|discart|back|spine)\.(png|jpe?g|webp)$/.test(name) && !folderCover;
+    const artistAsset = name === "artist.nfo" || secondaryArtistImage || (image && name === (metadata.artist_picture_name || "folder.jpg").toLowerCase());
     const artistScope = artistAsset ? artistFolderScope(file,root) : undefined;
     if (artistScope && artistScope.status !== "identified") return artistScope;
-    if (name === "artist.nfo" && !artistScope) return { status: "unresolved" };
+    if ((name === "artist.nfo" || secondaryArtistImage) && !artistScope) return { status: "unresolved" };
     const candidates = siblings.map(value => path.resolve(value)).filter(value => value !== file
         && path.dirname(value) === path.dirname(file) && SUPPORTED_IMPORT_EXTENSIONS.has(path.extname(value).toLowerCase())
-        && (folderCover || folderNfo || path.parse(value).name === stem));
+        && (folderCover || folderNfo || secondaryAlbumImage || path.parse(value).name === stem));
     const review = db.prepare("SELECT 1 FROM UnmappedFiles WHERE file_path=?");
     if (!artistScope && candidates.some(candidate => review.get(candidate))) return { status: "review_sidecar" };
     const lookup = db.prepare(`SELECT f.id,f.library_id,f.library_slot,f.file_path,f.file_type,library.root_path,
@@ -107,8 +120,8 @@ export function inspectInventorySidecar(file: string, root: string, siblings: st
         identity(candidate);
         owners.push(owner);
     }
-    if (!artistScope && !owners.length) return { status: image && !folderCover ? "not_sidecar" : "unresolved" };
-    const folderScoped = folderCover || folderNfo;
+    if (!artistScope && !owners.length) return { status: image && !folderCover && !secondaryAlbumImage ? "not_sidecar" : "unresolved" };
+    const folderScoped = folderCover || folderNfo || secondaryAlbumImage;
     if (folderScoped && owners.some(owner => !owner.album || !owner.edition)) return { status: "unresolved" };
     const keys = new Set(owners.map(owner => folderScoped
         ? JSON.stringify([owner.artist,owner.album,owner.edition,owner.library_slot]) : String(owner.id)));
@@ -117,9 +130,9 @@ export function inspectInventorySidecar(file: string, root: string, siblings: st
     }
     const owner = owners[0];
     const libraryIds = artistScope?.libraryIds ?? [...new Set(owners.map(value => value.library_id))].sort((a,b) => a-b);
-    const input: ExtraFileUpsertInput = artistScope?.input ?? {
+    const input: ExtraFileUpsertInput = artistScope ? {...artistScope.input,fileType:secondaryArtistImage ? "artwork" : artistScope.input.fileType} : {
         artistId: owner.artist, libraryId: owner.library_id, libraryRoot: root, filePath: file,
-        fileType: lyric ? "lyrics" : folderNfo ? "nfo" : folderCover ? "cover" : "video_thumbnail",
+        fileType: lyric ? "lyrics" : folderNfo ? "nfo" : secondaryAlbumImage ? "artwork" : folderCover ? "cover" : "video_thumbnail",
         librarySlot: owner.library_slot, canonicalArtistMbid: owner.artist,
         canonicalReleaseGroupMbid: owner.album, canonicalReleaseMbid: owner.edition,
         trackFileId: folderScoped ? null : owner.id,

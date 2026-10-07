@@ -631,3 +631,41 @@ The two previously identified catalogue/acquisition conflicts remain open.
 This queued apply candidate is not deployed. Artist ownership without a
 persisted membership path, secondary artwork, review-sidecar persistence and
 app review controls remain gates before broad live cleanup, rename and retag.
+
+## October 7 artwork roles and explicit artist folder identity
+
+The Lidarr reference's XbmcMetadata consumer identifies artist folder/banner/
+fanart/logo/landscape/clearart/clearlogo images and album cover/disc/discart/back/
+spine images as MetadataFiles. These are distinct display roles, not additional
+provider versions of the primary cover. The candidate recognizes those exact
+secondary basenames with JPEG/PNG/WebP extensions. It registers confirmed
+secondary images with file_type artwork and exact artist or edition ownership,
+and retains their basenames when relocating them. Primary file_type cover keeps
+its existing configured name and embedding/cache behavior. This does not create
+new secondary images or allow arbitrary pictures to claim catalogue ownership.
+
+An explicit known MusicBrainz artist ID in a top-level folder can establish
+artist sidecar ownership without a LibraryArtists monitoring membership or saved
+path. The library root and its configured media slot must still be unambiguous.
+Unknown IDs, conflicting persisted identities and nested MBID folder guesses
+remain unresolved. Plain-name artist directories without a saved path still
+need stronger identity evidence. Recognized secondary art with unresolved scope
+is refused by cleanup rather than treated as loose junk.
+
+Three new active-schema tests cover explicit artist ownership without monitoring,
+secondary-art registration and actual rename/repeat with stable basenames, and
+unresolved secondary-art protection. The rebuilt native container passes 53 of
+54 sidecar/cleanup tests with one Windows-only case skipped. Actual-app scans 6
+and 7 registered five sidecars then reported an unchanged repeat, retained their
+row IDs, created no monitoring memberships and preserved every fixture file's
+SHA-256. The unresolved plain-folder fanart stayed in the refused preview.
+Evidence: oct07-secondary-art-proof.log, oct07-secondary-art-before.log,
+oct07-secondary-art-after.log and oct07-secondary-art-green-native.log.
+
+Completed task, download-history and per-track download/import checks now share
+the green Fluent success icon. Queued/cancelled states keep neutral glyphs.
+The rebuilt Activity page visibly shows green checks; rendered completion icons
+resolve to rgb(9,69,9) in the light theme. Evidence: oct07-green-completion-ui.png.
+These changes are local candidates; the live app is still 2.21.0.
+Final full CI passes all 2,084 API and 187 frontend tests, lint, typechecks and
+builds with no failing names or clone retries (oct07-secondary-art-green-ci.log).

@@ -1400,6 +1400,10 @@ export class LibraryFilesService {
         return { expectedPath: path.join(libraryRootPath, artistFolder, name) };
       }
 
+      if (row.file_type === "artwork") {
+        return { expectedPath: path.join(libraryRootPath, artistFolder, path.basename(row.file_path)) };
+      }
+
       return { expectedPath: null, reason: "missing_album_id" };
     }
 
@@ -1523,6 +1527,10 @@ export class LibraryFilesService {
       return deriveAlbumDirRelativeFromTemplate(trackTemplateForAlbum);
     })();
     const albumDir = path.join(libraryRootPath, artistFolder, albumDirRelative);
+
+    if (row.file_type === "artwork") {
+      return { expectedPath: path.join(albumDir, path.basename(row.file_path)) };
+    }
 
     if (row.file_type === "cover") {
       const name = metadataConfig.album_cover_name || "cover.jpg";

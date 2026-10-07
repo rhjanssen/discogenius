@@ -20,7 +20,6 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import {
-  CheckmarkCircle16Filled,
   ArrowClockwise24Regular,
   Delete24Regular,
   MusicNote224Regular,
@@ -50,8 +49,7 @@ import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
-import { QueuedStatusIcon, SemanticStatusIcon, StatusIconSlot } from "@/components/ui/SemanticStatusIcon";
-import { statusIconGlyphPx, statusIconGlyphStyle } from "@/components/ui/statusIconMetrics";
+import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -291,17 +289,7 @@ function renderPendingIndicator(styles: ReturnType<typeof useDashboardStyles>) {
 }
 
 function renderDownloadedCheck(styles: ReturnType<typeof useDashboardStyles>) {
-    const glyph = statusIconGlyphPx("filled");
-    return (
-        <StatusIconSlot>
-            <CheckmarkCircle16Filled
-                className={styles.downloadStatusCompleteIcon}
-                fontSize={glyph}
-                style={statusIconGlyphStyle("filled")}
-                title="Downloaded"
-            />
-        </StatusIconSlot>
-    );
+    return <SemanticStatusIcon status="success" className={styles.downloadStatusCompleteIcon} title="Downloaded" />;
 }
 
 function renderTrackStatusIndicator(
