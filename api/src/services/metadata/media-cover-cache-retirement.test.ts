@@ -67,6 +67,16 @@ test("imported origin retires only while its exact tracked full-resolution maste
   assert.deepEqual(fs.readFileSync(f.master),bytes);
 });
 
+test("a row-preserving library rename remains a valid retirement master",async()=>{
+  const f=await fixture(true);
+  const renamed=`${f.master}.renamed.jpg`;
+  fs.renameSync(f.master,renamed);
+  database.db.prepare("UPDATE MetadataFiles SET file_path=? WHERE file_path=?").run(renamed,f.master);
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.equal(fs.existsSync(f.origin),false);
+  assert.deepEqual(fs.readFileSync(renamed),bytes);
+});
+
 test("same-byte canonical owner transfer protects the origin",async()=>{
   const f=await fixture(true);
   // Keep this album imported through a separate sidecar, while transferring
@@ -98,8 +108,29 @@ test("outcome failure after unlink preserves prepared evidence and recovery coun
     assert.equal(fs.existsSync(f.origin),false);
     assert.deepEqual(fs.readFileSync(f.master),bytes);
     assert.equal((database.db.prepare("SELECT phase FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {phase:string}).phase,"prepared");
+    assert.throws(()=>database.db.prepare("DELETE FROM commands WHERE id=?").run(f.commandId),/Recover prepared artwork/);
   } finally {database.db.exec("DROP TRIGGER reject_retirement_outcome");}
-  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  const cacheRoot=path.dirname(covers.getMediaCoverFolder("probe","Artist"));
+  assert.equal(await service.recoverPreparedArtworkRetirements(cacheRoot,async()=>{}),false);
   assert.deepEqual(database.db.prepare("SELECT retired,protected,bytes FROM ArtworkCacheRuns WHERE command_id=?").get(f.commandId),
     {retired:1,protected:0,bytes:bytes.length});
+  database.db.prepare("DELETE FROM commands WHERE id=?").run(f.commandId);
+  assert.equal(database.db.prepare("SELECT 1 FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId),undefined);
+});
+
+test("cross-command recovery rejects another cache root and preserves the old intent",async()=>{
+  const f=await fixture(true);
+  database.db.exec(`CREATE TRIGGER reject_retirement_outcome BEFORE UPDATE OF phase ON ArtworkCacheRetirement
+    WHEN NEW.phase='retired' BEGIN SELECT RAISE(ABORT,'injected outcome failure'); END;`);
+  try {await assert.rejects(service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg"),/injected/);}
+  finally {database.db.exec("DROP TRIGGER reject_retirement_outcome");}
+  await assert.rejects(service.recoverPreparedArtworkRetirements(path.join(root,"other-cache"),async()=>{}),/escaped/);
+  assert.equal((database.db.prepare("SELECT phase FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {phase:string}).phase,"prepared");
+  // A subsequent legitimate source switch must not keep the already-finished
+  // unlink unresolved, or cause recovery to overwrite the new selection.
+  const changedSource={url:"https://example.test/new-cover.jpg",preference:"provider" as const,fulfilledBy:"provider" as const,contentHash:"new-selected-hash"};
+  state.storeArtworkSource(f.identity,changedSource);
+  assert.equal(await service.recoverPreparedArtworkRetirements(path.dirname(covers.getMediaCoverFolder("probe","Artist")),async()=>{}),false);
+  assert.deepEqual(state.readArtworkSource(f.identity,f.folder),changedSource);
+  assert.deepEqual(fs.readFileSync(f.master),bytes);
 });

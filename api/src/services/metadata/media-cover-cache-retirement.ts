@@ -14,6 +14,26 @@ import { getMediaCoverFolder, getSelectedArtworkSource, normalizeArtworkUrl,
 type Witness = { stat: string; hash: string; size: number };
 type Intent = { file_identity: string; source_snapshot: string; byte_size: number; phase: string };
 
+/** Replay older failed attempts before a new sweep. The journal retains the old
+ * command's identity/counters; a new command cannot erase or adopt its evidence. */
+export async function recoverPreparedArtworkRetirements(root: string, checkpoint:()=>Promise<void>, limit=25):Promise<boolean> {
+  const pending=db.prepare(`SELECT command_id,source_path FROM ArtworkCacheRetirement
+    WHERE phase='prepared' ORDER BY command_id,source_path LIMIT ?`).all(limit) as Array<{command_id:number;source_path:string}>;
+  for (const item of pending) {
+    const relative=path.relative(root,item.source_path);
+    const parts=relative.split(path.sep);
+    const families:Record<string,ArtworkIdentity["coverEntity"]>={Albums:"Album",AlbumEditions:"Edition",Videos:"Video"};
+    const family=parts.length===3 ? families[parts[0]] : parts.length===2 ? "Artist" : undefined;
+    if (!family || path.isAbsolute(relative) || parts.some(part=>!part || part===".." || part===".")) throw new Error("Prepared artwork retirement escaped the current cache root");
+    const filename=parts.at(-1)!;
+    const identity:ArtworkIdentity={coverEntity:family,entityId:parts.at(-2)!,coverType:path.parse(filename).name};
+    if (path.join(getMediaCoverFolder(identity.entityId,family),filename)!==item.source_path) throw new Error("Prepared artwork retirement does not match its canonical cache path");
+    await checkpoint();
+    await retireLegacyArtworkOrigin(item.command_id,identity,filename);
+  }
+  return Boolean(db.prepare("SELECT 1 FROM ArtworkCacheRetirement WHERE phase='prepared' LIMIT 1").get());
+}
+
 /** Constant-time counters commit with each file outcome, not repeated SUM scans
  * over an ever-growing retirement history. Caller owns writer admission. */
 function outcome(commandId: number, origin: string, phase: "retired" | "protected", original: Witness|null, reason: string|null): void {
@@ -87,7 +107,7 @@ function ownership(identity: ArtworkIdentity): { exists: boolean; owned: boolean
 }
 
 function links(identity: ArtworkIdentity) {
-  return db.prepare(`SELECT link.file_path,link.content_hash,link.metadata_file_id,file.library_root
+  return db.prepare(`SELECT file.file_path,link.content_hash,link.metadata_file_id,file.library_root
     FROM ArtworkLibraryLinks link JOIN MetadataFiles file ON file.id=link.metadata_file_id
     WHERE link.cover_entity=? AND link.entity_id=? AND link.cover_type=?
     ORDER BY link.metadata_file_id LIMIT 50`).all(...artworkKey(identity)) as Array<{
@@ -109,12 +129,23 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
   const release = await acquireMediaFileLocks([origin,...proxyPaths,...candidates.map(row=>row.file_path)]);
   let original: Witness | null = null;
   try {
-    const directories = ancestors(origin,root);
     const previous = db.prepare("SELECT file_identity,source_snapshot,byte_size,phase FROM ArtworkCacheRetirement WHERE command_id=? AND source_path=?")
       .get(commandId,origin) as Intent | undefined;
     if (previous?.phase === "protected") return;
     original = await witness(origin);
+    // The unlink already happened. Settling its durable accounting must not
+    // rewrite a newer selected source or require yesterday's owner to persist.
+    // This branch performs no filesystem mutation; a replaced origin is handled
+    // below by the original physical witness and current ownership checks.
+    if (!original && previous?.phase === "prepared") {
+      await withSqliteWriteGate(()=>{
+        if (stat(origin)!==null) throw new Error("Prepared origin was replaced during recovery");
+        outcome(commandId,origin,"retired",null,null);
+      },"settle completed artwork cache unlink");
+      return;
+    }
     if (!original && previous?.phase !== "prepared") return;
+    const directories = ancestors(origin,root);
     if (previous?.phase === "retired" && original) throw new Error("Previously retired origin was externally replaced");
     if (previous?.phase === "prepared" && original && JSON.stringify(original)!==previous.file_identity) throw new Error("Prepared origin was externally replaced");
     let source = getSelectedArtworkSource(identity.entityId,identity.coverEntity,identity.coverType);

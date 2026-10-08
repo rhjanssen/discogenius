@@ -1,5 +1,34 @@
 # Managed library inventory and strict cleanup
 
+## October 9 cross-command recovery candidate
+
+The follow-up to 70472f29 replays prepared cache retirements globally
+before a new sweep. A partial index bounds that lookup; a history-delete trigger
+retains unresolved evidence. Recovery keeps the original command's counters and
+does not transfer its history to the new job. When the original is already missing,
+only accounting is committed: it performs no file mutation and does not overwrite
+a subsequent artwork source change. An existing/replaced original continues to
+require physical and ownership admission. Master resolution now reads the current
+MetadataFiles path through its exact linked row ID, preserving legitimate renames.
+
+All 17 focused tests pass without skips in the rebuilt production container,
+including history retention, wrong-root refusal, changed-source preservation and
+row-preserving rename. Actual isolated app job1 was forced to fail its outcome
+transaction after unlink; its prepared record survived an attempted history delete.
+After removing the injected trigger, new job2 recovered job1's exact 13,736-byte
+counter once and completed. No prepared rows remained; selected full-resolution
+JPEG hash, exact MetadataFiles owner and both proxies remained unchanged. Activity
+showed the historical injected failure honestly alongside the new completion.
+Temporary compose container/volume and tab17 were removed.
+
+Initial full CI passes all 2,227 API and 187 frontend tests in 540.94 seconds. Since
+the final source/rename correction landed during that run, unchanged-code full CI
+was rerun and passes all 2,227 API and 187 frontend tests, lint/types and both builds
+in 429.25 seconds, without first-TAP failing names or clone retries
+(oct09-cache-recovery-final-ci.log). This remains local; selected full-resolution adoption for
+differing imported covers, sidecar-only artists and secondary assets still needs
+completion before NAS migration, release/deployment and library cleanup.
+
 ## October 9 retirement work in progress
 
 The legacy retirement candidate validates selected source, durable

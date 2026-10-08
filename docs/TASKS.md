@@ -2,6 +2,25 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 recovery candidate (based on pushed 70472f29): a new
+  cache cleanup replays older prepared retirements in bounded indexed batches;
+  command-history deletion cannot cascade away unresolved evidence. Already
+  missing origins settle accounting without overwriting a newer source selection;
+  replaced physical origins still require fresh admission. Retirement follows
+  the current MetadataFiles path for row-preserving renames. All 17 focused native
+  checks pass in the rebuilt production image; Windows focused tests pass.
+  Actual isolated app: injected post-unlink outcome failure leaves job1 failed and
+  prepared evidence protected from history deletion. New job2 recovers job1's
+  exact 13,736-byte outcome once and completes, with unchanged full JPEG/hash/owner
+  and both proxies. Activity shows the honest historical failure and new success.
+  QA container/volume/tab17 removed. Initial full CI passes 2,227 API and 187 frontend
+  tests in 540.94 seconds. Final unchanged-code CI also passes all 2,227 API and 187
+  frontend tests, lint/types and both builds in 429.25 seconds, with no first-TAP
+  failing names or clone retries (oct09-cache-recovery-final-ci.log).
+  Remaining migration gate: actually adopt selected full-resolution artwork for
+  differing imported covers and sidecar-only/secondary assets; refusal is not
+  migration completion. No live deletion/deployment or download resumption.
+
 - October 9 work in progress: witnessed legacy-cache retirement now has durable
   prepared/outcome records, constant-time counters and bounded command units.
   Removed the old automatic origin unlink from local sidecar copying. Five new

@@ -3,7 +3,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { db } from "../../database.js";
 import { getMediaCoverFolder } from "../metadata/media-cover-service.js";
-import { artworkDirectoryIdentity, nextArtworkOrigins, retireLegacyArtworkOrigin } from "../metadata/media-cover-cache-retirement.js";
+import { artworkDirectoryIdentity, nextArtworkOrigins, retireLegacyArtworkOrigin, recoverPreparedArtworkRetirements } from "../metadata/media-cover-cache-retirement.js";
 import { ensureArtworkFolderInventory, nextInventoriedArtworkFolders, validateArtworkFolderInventory } from "./artwork-cache-inventory.js";
 import type { CommandModelOf } from "./command-model.js";
 import { CommandContinuation } from "./command-continuation.js";
@@ -13,7 +13,7 @@ import type { SchedulerMaintenanceHandlerContext } from "./scheduler-maintenance
 export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ctx: SchedulerMaintenanceHandlerContext): Promise<void> {
   const root = path.dirname(getMediaCoverFolder("__root_probe__","Artist"));
   if (!fs.existsSync(root)) {
-    if (job.payload.artworkCacheWork || db.prepare("SELECT 1 FROM ArtworkCacheRetirement WHERE command_id=? AND phase='prepared' LIMIT 1").get(job.id)) {
+    if (job.payload.artworkCacheWork || db.prepare("SELECT 1 FROM ArtworkCacheRetirement WHERE phase='prepared' LIMIT 1").get()) {
       throw new Error("Artwork cache disappeared during cleanup; recovery evidence was preserved");
     }
     ctx.updateCommandDescription({progress:100,description:"Artwork cache is empty"});return;
@@ -21,9 +21,15 @@ export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ct
   const state = {...(job.payload.artworkCacheWork ?? {version:1 as const,root,rootIdentity:artworkDirectoryIdentity(root),family:0,after:""})};
   if (state.version!==1 || state.root!==root || state.rootIdentity!==artworkDirectoryIdentity(root)
     || !Number.isInteger(state.family) || state.family<0 || state.family>4 || typeof state.after!=="string") throw new Error("Artwork cache checkpoint changed; start a fresh cleanup");
+  const started = performance.now();
+  if (await recoverPreparedArtworkRetirements(root,async()=>{
+    if (performance.now()-started>=25_000) throw new CommandContinuation({artworkCacheWork:state});
+    if (CommandQueueManager.get(job.id)?.payload.cancelRequested) throw new Error("Artwork cleanup cancelled during recovery");
+    ctx.updateCommandDescription({description:"Recovering interrupted artwork cache cleanup"});
+    await ctx.yieldToEventLoop?.();
+  })) throw new CommandContinuation({artworkCacheWork:state});
   const families = ["Album","Edition","Video","Artist"] as const;
   const directories = ["Albums","AlbumEditions","Videos",""];
-  const started = performance.now();
   let settled = 0;
   let folders: string[] = [];
   while (state.family<4 && settled<25 && performance.now()-started<25_000) {
@@ -83,7 +89,7 @@ export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ct
         await ctx.yieldToEventLoop?.();
       }});
   }
-  if (db.prepare("SELECT 1 FROM ArtworkCacheRetirement WHERE command_id=? AND phase='prepared' LIMIT 1").get(job.id)) {
+  if (db.prepare("SELECT 1 FROM ArtworkCacheRetirement WHERE phase='prepared' LIMIT 1").get()) {
     throw new Error("Artwork cleanup has unresolved retirement evidence; recovery is required");
   }
   // A sweep is not equivalent to a completely clean cache when owners/sources

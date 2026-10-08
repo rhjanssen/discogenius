@@ -68,6 +68,14 @@ export function createArtworkStateSchema(db: Database.Database): void {
       protected INTEGER NOT NULL DEFAULT 0,
       bytes INTEGER NOT NULL DEFAULT 0
     );
+    CREATE INDEX IF NOT EXISTS idx_artwork_cache_prepared
+      ON ArtworkCacheRetirement(command_id,source_path) WHERE phase='prepared';
+    CREATE TRIGGER IF NOT EXISTS preserve_prepared_artwork_cache_retirement
+      BEFORE DELETE ON commands
+      WHEN EXISTS (SELECT 1 FROM ArtworkCacheRetirement WHERE command_id=OLD.id AND phase='prepared')
+      BEGIN
+        SELECT RAISE(ABORT,'Recover prepared artwork cache retirement before deleting command history');
+      END;
     CREATE TABLE IF NOT EXISTS ArtworkCacheInventories (
       command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
       family INTEGER NOT NULL,
