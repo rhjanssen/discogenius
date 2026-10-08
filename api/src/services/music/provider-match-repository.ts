@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { assertAcquisitionPlansQuiescent } from "./acquisition-plan-ownership.js";
+import { invalidateAcquisitionPlans } from "./acquisition-plan-ownership.js";
 import {
   determineProviderReleaseRelation,
   type ProviderReleaseRelationResult,
@@ -330,57 +330,21 @@ export class ProviderMatchRepository {
             match_state: ProviderMatchState;
           }>
         : [];
-      /**
-       * Retire the acquisition plans built on the matches about to be replaced.
-       *
-       * `AcquisitionPlanTracks.provider_track_match_id` references these rows
-       * without ON DELETE CASCADE, so any release that already had a plan could
-       * not be re-matched at all: the delete below failed with FOREIGN KEY
-       * constraint failed and the whole replay was abandoned. Measured on the
-       * live library, that was 36 of Amy Winehouse's 102 provider releases —
-       * and it is precisely the albums with plans, the ones that matter, that
-       * were locked out. It is why an improved matcher never reached Frank.
-       *
-       * A plan is a cached computation over matches, not a peer of them: when
-       * the matches change the plan is stale by definition. Dropping the plan
-       * (rather than orphaning its track rows) keeps that relationship honest,
-       * and curation recomputes plans immediately after matching.
-       */
+      // Release derived coverage before changing matches. Retain plan/source
+      // identity so the selected offer survives a refresh with unchanged evidence.
       const stalePlanIds = (this.db.prepare(`
-        SELECT DISTINCT plan_track.plan_id
-        FROM AcquisitionPlanTracks plan_track
-        JOIN ProviderTrackMatches track_match
-          ON track_match.id = plan_track.provider_track_match_id
-        WHERE track_match.provider_edition_match_id = ?
-          ${input.decision.decisionSource === "automatic" ? "AND track_match.decision_source != 'manual'" : ""}
-      `).all(releaseMatch.id) as Array<{ plan_id: number }>).map(({ plan_id }) => plan_id);
-      if (stalePlanIds.length > 0) {
-        assertAcquisitionPlansQuiescent(this.db, stalePlanIds);
-        const placeholders = stalePlanIds.map(() => "?").join(",");
-        // Release the deferred plan reference before the plans go.
-        this.db.prepare(`
-          UPDATE LibraryEditions SET preferred_plan_key = NULL
-          WHERE preferred_plan_key IN (
-            SELECT plan_key FROM AcquisitionPlans WHERE id IN (${placeholders})
-          )
-        `).run(...stalePlanIds);
-        this.db.prepare(`DELETE FROM AcquisitionPlanTracks WHERE plan_id IN (${placeholders})`)
-          .run(...stalePlanIds);
-        this.db.prepare(`DELETE FROM AcquisitionPlanSources WHERE plan_id IN (${placeholders})`)
-          .run(...stalePlanIds);
-        this.db.prepare(`DELETE FROM AcquisitionPlans WHERE id IN (${placeholders})`)
-          .run(...stalePlanIds);
-      }
-
-      if (input.decision.decisionSource === "automatic") {
-        this.db.prepare(`
-          DELETE FROM ProviderTrackMatches
-          WHERE provider_edition_match_id = ? AND decision_source != 'manual'
-        `).run(releaseMatch.id);
-      } else {
-        this.db.prepare("DELETE FROM ProviderTrackMatches WHERE provider_edition_match_id = ?")
-          .run(releaseMatch.id);
-      }
+        SELECT plan_id FROM AcquisitionPlanSources WHERE provider_edition_match_id=?
+        UNION
+        SELECT assignment.plan_id FROM AcquisitionPlanTracks assignment
+        JOIN ProviderTrackMatches match ON match.id=assignment.provider_track_match_id
+        WHERE match.provider_edition_match_id=?
+      `).all(releaseMatch.id,releaseMatch.id) as Array<{plan_id:number}>).map(row=>row.plan_id);
+      invalidateAcquisitionPlans(this.db, stalePlanIds);
+      const previousIds = (this.db.prepare(`SELECT id FROM ProviderTrackMatches
+        WHERE provider_edition_match_id=?
+        ${input.decision.decisionSource === 'automatic' ? "AND decision_source != 'manual'" : ''}
+      `).all(releaseMatch.id) as Array<{id:number}>).map(row=>row.id);
+      const retainedIds = new Set<number>();
       const manualSourceIds = new Set(
         preservedManual.map((match) => match.provider_edition_member_id),
       );
@@ -404,6 +368,13 @@ export class ProviderMatchRepository {
           (SELECT member_item_id FROM ProviderEditionMembers WHERE id = ?),
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
         )
+        ON CONFLICT(provider_track_item_id, COALESCE(provider_edition_member_id,-1),
+          COALESCE(provider_edition_match_id,-1), COALESCE(track_id,-1), recording_id)
+        DO UPDATE SET match_state=excluded.match_state, decision_source=excluded.decision_source,
+          confidence=excluded.confidence, method=excluded.method, evidence=excluded.evidence,
+          matcher_version=excluded.matcher_version, duration_delta_ms=excluded.duration_delta_ms,
+          ambiguity_margin=excluded.ambiguity_margin, updated_at=CURRENT_TIMESTAMP
+        RETURNING id
       `);
       for (const match of input.trackMatches) {
         if (
@@ -416,7 +387,7 @@ export class ProviderMatchRepository {
         ) {
           continue;
         }
-        insertTrackMatch.run(
+        const written = insertTrackMatch.get(
           match.providerEditionMemberId,
           match.providerEditionMemberId,
           releaseMatch.id,
@@ -430,8 +401,11 @@ export class ProviderMatchRepository {
           match.matcherVersion,
           match.durationDeltaMs ?? null,
           match.ambiguityMargin ?? null,
-        );
+        ) as {id:number};
+        retainedIds.add(written.id);
       }
+      const remove = this.db.prepare("DELETE FROM ProviderTrackMatches WHERE id=?");
+      for (const id of previousIds) if (!retainedIds.has(id)) remove.run(id);
       return { releaseMatchId: releaseMatch.id, relation };
     })();
   }

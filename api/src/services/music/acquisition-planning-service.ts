@@ -10,6 +10,7 @@ import {
   type NormalizedAudioQuality,
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
+import { resourceAcquisitionPlanKey, persistedResourceAcquisitionPlanKey } from "./acquisition-plan-identity.js";
 import {
   editionMixFormatWithRecordings,
   editionRendition,
@@ -191,7 +192,6 @@ export class AcquisitionPlanningService {
         ON current_plan.library_id = monitored_edition.library_id
        AND current_plan.edition_id = monitored_edition.edition_id
        AND current_plan.plan_key = monitored_edition.preferred_plan_key
-       AND current_plan.state = 'current'
       LEFT JOIN AcquisitionPlanSources primary_source
         ON primary_source.plan_id = current_plan.id
        AND primary_source.role = 'primary'
@@ -201,6 +201,11 @@ export class AcquisitionPlanningService {
       throw new Error(
         `Library ${input.libraryId} or edition ${input.editionId} was not found`,
       );
+    }
+    if (context.preferred_plan_key) {
+      const current = this.db.prepare("SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=? AND plan_key=?")
+        .get(input.libraryId,input.editionId,context.preferred_plan_key) as {id:number}|undefined;
+      if (current) context.preferred_plan_key = persistedResourceAcquisitionPlanKey(this.db,current.id) ?? context.preferred_plan_key;
     }
 
     const orderedTrackIds = (this.db.prepare(`
@@ -498,7 +503,7 @@ export class AcquisitionPlanningService {
       continueUpgradesAfterCutoff: profile.continueUpgradesAfterCutoff,
       providerPriority: input.providerPriority,
       preferredProviderEditionMatchId: input.preferredProviderEditionMatchId ?? (
-        context.selection_mode === "manual" && context.locked
+        context.locked
           ? context.current_primary_provider_edition_match_id
           : null
       ),
@@ -526,7 +531,7 @@ export class AcquisitionPlanningService {
     }
 
     const explicitPreference = input.preferredProviderEditionMatchId;
-    const preservedManualPreference = context.selection_mode === "manual" && context.locked
+    const preservedManualPreference = context.locked
       ? context.current_primary_provider_edition_match_id
       : null;
     const preferredProviderEditionMatchId = explicitPreference ?? preservedManualPreference;
@@ -541,7 +546,7 @@ export class AcquisitionPlanningService {
     // The preferred offer is the primary source, not an exclusive lock: the
     // optimizer may still cover missing canonical tracks from another accepted
     // Provider Edition of the same provider unless exclusivity was requested.
-    const plans = planTimer.phase(`plan:enumerate[ed${input.editionId}]`, () => enumerateAcquisitionPlans({
+    const enumerated = planTimer.phase(`plan:enumerate[ed${input.editionId}]`, () => enumerateAcquisitionPlans({
       orderedTrackIds,
       profile,
       sources,
@@ -550,6 +555,10 @@ export class AcquisitionPlanningService {
       exclusive: input.exclusiveSource === true,
       preferExplicit: getConfigSection("filtering").prefer_explicit !== false,
     }));
+    const plans = [...new Map(enumerated.map(plan => {
+      const planKey = resourceAcquisitionPlanKey(this.db,plan);
+      return [planKey,{...plan,planKey}] as const;
+    })).values()];
     if (plans.length === 0) {
       this.repository.clear(input.libraryId, input.editionId);
       return null;
@@ -585,7 +594,7 @@ export class AcquisitionPlanningService {
       editionId: input.editionId,
       plans: rankedPlans,
       targetTrackCount: orderedTrackIds.length,
-      preferredPlanKey: context.plan_selection_mode === "manual"
+      preferredPlanKey: context.plan_selection_mode === "manual" || context.locked
         ? context.preferred_plan_key
         : null,
       // The album lock covers the monitored state, the edition choice and the

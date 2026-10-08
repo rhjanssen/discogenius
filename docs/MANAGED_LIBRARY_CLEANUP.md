@@ -1,5 +1,51 @@
 # Managed library inventory and strict cleanup
 
+## October 8 durable acquisition choice candidate
+
+Provider refresh previously deleted plan headers and cleared selection, while
+rematching recreated track-match IDs. An unchanged source could therefore become
+a different plan. Invalidation now removes derived assignments and marks coverage
+stale while retaining headers, sources and the selected reference. Exact typed
+track-match edges are upserted and unmatched automatic edges are removed. Retired
+edition matches become rejected rather than deleting selected source provenance.
+They cannot supply current plans. Removed an unused edition-match deletion helper.
+
+Production plan identity now hashes canonical track/recording MBIDs, scoped native
+provider release/track resources, physical edition occurrence and variant identity,
+quality, explicitness and primary source. Execution row IDs and album-versus-track
+download optimization are not user-choice identity. Primary ordering uses the same
+shared rule when constructing keys and persisting sources. Equivalent resource
+candidates collapse before persistence. Existing intact current plans are rebuilt
+from their bindings before coverage invalidation, without parsing old key strings
+or adding shadow catalog fields. Deferred selection references update in the same
+guarded transaction. Incomplete snapshots are not reconstructed by guessing.
+
+Pending requests acquire exact library, edition MBID and provider before any plan
+replacement or clearing. A missing manual offer retains its selected header as
+unavailable even when there are no alternatives. Album locks also protect an
+automatically selected offer. The same native resource can recover the saved key
+after its membership/match rows disappear and are recreated. Canonical or provider
+resource changes produce a different identity and cannot silently satisfy a lock.
+The app labels the retained choice as unavailable or needing refresh, with download
+disabled when there is no executable offer.
+
+All 62 focused compiled-service checks pass in the production Linux container.
+The actual app fixture starts with an old binding-based key, refreshes twice,
+retains the manual choice and album lock, persists waiting identity, refuses a
+missing source, then restores the exact key and resolves the waiting request after
+the source returns under match ID 4. Foreign-key checks stay empty. This tests
+provider snapshots and planning, not real provider downloads or media mutation.
+The broader Windows focused checks pass 43. Final full CI is running after these
+changes; preliminary failures are not acceptance evidence.
+
+Not deployed. Live remains 2.21.0 with downloads paused. Inspect incomplete or
+conflicting persisted snapshots and duplicate legacy shapes during live acceptance;
+do not discard intent to get past a failure. Explicit blocked/completed waiting
+outcomes and admission past blocked windows, canonical recording redirects/owned
+obsolete tracks, and legacy artwork migration still precede release and strict
+live cleanup. Fresh witnessed inventory and file/tag/audio verification remain
+mandatory before deleting files or resuming acquisition.
+
 ## October 8 acquisition ownership admission candidate
 
 Audited the other plan deletion paths after occurrence expiry. Plan replacement

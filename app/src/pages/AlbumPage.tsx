@@ -944,6 +944,11 @@ const AlbumPage = () => {
   const hasSpatialOffer = headerPlanOffers.some((offer) => offer.slot === "spatial")
     || Boolean(album?.spatial_provider_id);
   const hasAnyProviderOffer = headerPlanOffers.length > 0 || hasStereoOffer || hasSpatialOffer;
+  const pendingSelectedOffer = releaseAvailability?.libraries.flatMap((library) => library.selections)
+    .find((selection) => selection.monitored && selection.plan && selection.plan.state !== "current")?.plan;
+  const missingOfferDescription = pendingSelectedOffer
+    ? pendingSelectedOffer.state === "stale" ? "Selected offer needs refreshing" : "Selected offer is unavailable"
+    : "No provider offer selected";
   /**
    * Every monitored edition the download action will queue a plan for.
    *
@@ -1838,7 +1843,7 @@ const AlbumPage = () => {
                         </Menu>
                       </div>
                     ) : (
-                      <AppTooltip content={hasAnyProviderOffer ? downloadScopeDescription : "No provider offer selected"} relationship="label">
+                      <AppTooltip content={hasAnyProviderOffer ? downloadScopeDescription : missingOfferDescription} relationship="label">
                         <Button
                           icon={<ArrowDownload24 />}
                           appearance="subtle"

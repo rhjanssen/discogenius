@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { OptimizedAcquisitionPlan } from "./acquisition-plan-optimizer.js";
-import { assertAcquisitionPlansQuiescent } from "./acquisition-plan-ownership.js";
+import { prepareAcquisitionPlanMutation } from "./acquisition-plan-ownership.js";
+import { acquisitionPlanSourceOrder } from "./acquisition-plan-identity.js";
 
 export interface LibraryReleaseCompletion {
   trackCount: number;
@@ -107,7 +108,7 @@ export class AcquisitionPlanRepository {
       : null;
 
     return this.db.transaction(() => {
-      assertAcquisitionPlansQuiescent(this.db, (this.db.prepare(`
+      prepareAcquisitionPlanMutation(this.db, (this.db.prepare(`
         SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=?
       `).all(input.libraryId, input.editionId) as Array<{ id: number }>).map(row => row.id));
       // Release the deferred reference before deleting the rows it points at.
@@ -365,23 +366,7 @@ export class AcquisitionPlanRepository {
       input.computedAt || new Date().toISOString(),
     ) as { id: number };
 
-    const counts = new Map<number, number>();
-    for (const track of input.plan.tracks) {
-      counts.set(
-        track.providerEditionMatchId,
-        (counts.get(track.providerEditionMatchId) || 0) + 1,
-      );
-    }
-    // The user's preferred Provider Edition stays `primary` even when a
-    // secondary source contributes more tracks, so the next replan can still
-    // recover the preference from the plan.
-    const preferredSourceId = input.plan.preferredSourceId;
-    const preferredRank = (sourceId: number): number =>
-      preferredSourceId != null && sourceId === preferredSourceId ? 0 : 1;
-    const orderedSources = [...input.plan.sourceIds].sort((left, right) =>
-      preferredRank(left) - preferredRank(right)
-      || (counts.get(right) || 0) - (counts.get(left) || 0)
-      || left - right);
+    const orderedSources = acquisitionPlanSourceOrder(input.plan);
     const insertSource = this.db.prepare(`
       INSERT INTO AcquisitionPlanSources (
         plan_id, provider_edition_match_id, role, sort_order
@@ -474,24 +459,7 @@ export class AcquisitionPlanRepository {
       JOIN AlbumEditions edition ON edition.id = plan.edition_id
       WHERE assignment.track_id = ?
     `).all(trackId) as Array<{ id: number; library_id: number; provider: string; release_mbid: string }>;
-    assertAcquisitionPlansQuiescent(this.db, plans.map(plan => plan.id));
-    const waiting = this.db.prepare("SELECT id, command_id, provider, payload FROM DownloadQueue WHERE plan_id=?");
-    const updates: Array<{ id: number; payload: string }> = [];
-    for (const plan of plans) {
-      for (const row of waiting.all(plan.id) as Array<{ id: number; command_id: number | null; provider: string | null; payload: string }>) {
-        const payload = JSON.parse(row.payload) as Record<string, unknown>;
-        if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-          || (row.provider != null && row.provider !== plan.provider)
-          || (payload.libraryId != null && payload.libraryId !== plan.library_id)
-          || (payload.releaseMbid != null && payload.releaseMbid !== plan.release_mbid)
-          || (payload.provider != null && payload.provider !== plan.provider)) {
-          throw new Error(`Conflicting acquisition intent for waiting request ${row.id}`);
-        }
-        updates.push({ id: row.id, payload: JSON.stringify({ ...payload,
-          libraryId: plan.library_id, releaseMbid: plan.release_mbid, provider: plan.provider }) });
-      }
-    }
-    for (const row of updates) this.db.prepare("UPDATE DownloadQueue SET payload=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.payload, row.id);
+    prepareAcquisitionPlanMutation(this.db, plans.map(plan => plan.id));
     for (const plan of plans) {
       this.db.prepare("DELETE FROM AcquisitionPlanTracks WHERE plan_id=? AND track_id=?").run(plan.id, trackId);
       this.db.prepare(`UPDATE AcquisitionPlans SET state='stale',
@@ -502,9 +470,23 @@ export class AcquisitionPlanRepository {
 
   clear(libraryId: number, editionId: number): number {
     return this.db.transaction(() => {
-      assertAcquisitionPlansQuiescent(this.db, (this.db.prepare(`
+      prepareAcquisitionPlanMutation(this.db, (this.db.prepare(`
         SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=?
       `).all(libraryId, editionId) as Array<{ id: number }>).map(row => row.id));
+      const retained = this.db.prepare(`SELECT plan.id,plan.plan_key FROM LibraryEditions selected
+        JOIN AcquisitionPlans plan ON plan.library_id=selected.library_id
+          AND plan.edition_id=selected.edition_id AND plan.plan_key=selected.preferred_plan_key
+        JOIN AlbumEditions edition ON edition.id=selected.edition_id
+        LEFT JOIN LibraryAlbums album ON album.library_id=selected.library_id AND album.release_group_id=edition.release_group_id
+        WHERE selected.library_id=? AND selected.edition_id=?
+          AND (selected.plan_selection_mode='manual' OR album.locked=1)
+      `).get(libraryId,editionId) as {id:number;plan_key:string} | undefined;
+      if (retained) {
+        this.db.prepare("DELETE FROM AcquisitionPlanTracks WHERE plan_id=?").run(retained.id);
+        this.db.prepare("UPDATE AcquisitionPlans SET state='unavailable',coverage=0,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(retained.id);
+        return this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_id=? AND edition_id=? AND id != ?")
+          .run(libraryId,editionId,retained.id).changes;
+      }
       this.db.prepare(`
         UPDATE LibraryEditions
         SET preferred_plan_key = NULL, plan_selection_mode = 'auto',

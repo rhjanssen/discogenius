@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import Database from "better-sqlite3";
-import { prepareActiveSchemaEnv, createActiveSchema } from "../../test-support/active-schema-fixture.js";
-prepareActiveSchemaEnv("planning-active");
-import { buildAcquisitionDownloadCommand } from "./acquisition-plan-executor.js";
-import { resolveEnabledAudioLibraryTarget } from "./acquisition-download-command.js";
-import { AcquisitionPlanningService, listStrandedMonitoredEditions, replanMonitoredEditions } from "./acquisition-planning-service.js";
+import { prepareActiveSchemaEnv, createActiveSchema, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+const { tempDir: activeTempDir } = prepareActiveSchemaEnv("planning-active");
+const activeDbModule = await import("../../database.js");
+after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
+const { buildAcquisitionDownloadCommand } = await import("./acquisition-plan-executor.js");
+const { resolveEnabledAudioLibraryTarget } = await import("./acquisition-download-command.js");
+const { AcquisitionPlanningService, listStrandedMonitoredEditions, replanMonitoredEditions } = await import("./acquisition-planning-service.js");
 
 function seedStandardDeluxeFixture(db: Database.Database): number {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
@@ -599,7 +601,7 @@ test("planning one edition uses an indexed selected-plan lookup instead of mater
     }) as typeof db.prepare;
     new AcquisitionPlanningService(db).compute({ libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1 });
     assert.ok(queryPlan.length > 0);
-    assert.ok(queryPlan.some(detail => /SEARCH current_plan USING INDEX/.test(detail)), queryPlan.join("\n"));
+    assert.ok(queryPlan.some(detail => /SEARCH current_plan USING (?:COVERING )?INDEX/.test(detail)), queryPlan.join("\n"));
     assert.ok(queryPlan.every(detail => !/MATERIALIZE|SCAN current_plan/.test(detail)), queryPlan.join("\n"));
   } finally {
     db.close();

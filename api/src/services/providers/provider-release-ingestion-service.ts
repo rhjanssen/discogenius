@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { assertAcquisitionPlansQuiescent } from "../music/acquisition-plan-ownership.js";
+import { invalidateAcquisitionPlans } from "../music/acquisition-plan-ownership.js";
 import {
   ProviderCatalogRepository,
   type ProviderAudioVariantInput,
@@ -219,7 +219,7 @@ export class ProviderReleaseIngestionService {
     let droppedEditions: Array<{ libraryId: number; editionId: number }> = [];
     const result = this.db.transaction(() => {
       const providerEditionItemId = this.catalog.upsertItem(input.release);
-      droppedEditions = this.clearDependentAcquisitionPlans(providerEditionItemId);
+      droppedEditions = this.invalidateDependentAcquisitionPlans(providerEditionItemId);
       if (input.releaseAudioVariants) {
         this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants,
           { provider: input.release.provider });
@@ -345,19 +345,6 @@ export class ProviderReleaseIngestionService {
       SELECT release_group_id FROM AlbumEditions WHERE id = ?
     `).get(editionId) as { release_group_id: number } | undefined;
     return row?.release_group_id ?? null;
-  }
-
-  /**
-   * Drop a fan-out match that we decided after the fact should not exist.
-   * Track matches cascade from the edition match row.
-   */
-  private clearEditionMatch(providerEditionItemId: number, editionId: number): void {
-    this.db.prepare(`
-      DELETE FROM ProviderEditionMatches
-      WHERE provider_edition_item_id = ?
-        AND edition_id = ?
-        AND decision_source != 'manual'
-    `).run(providerEditionItemId, editionId);
   }
 
   private loadCanonicalTracks(editionId: number): CanonicalTrack[] {
@@ -609,25 +596,6 @@ export class ProviderReleaseIngestionService {
   }
 
   /**
-   * Drop the acquisition plans built on this provider release before its rows
-   * are rewritten.
- *
-   * Plan tracks point at both the track match and the exact audio variant they
-   * would download, and neither reference carries an ON DELETE clause. Re-
-   * ingesting replaces both, so a release that had ever been planned could not
-   * be re-ingested at all: it failed on a foreign-key error. That is what froze
-   * matching for an established catalog and kept a matcher fix from ever
-   * reaching it.
-   *
-   * This has to run before any replace, not alongside the match rewrite — the
-   * audio variants are replaced first.
-   *
-   * Plans are derived state, so the planner rebuilds them. The operator's
-   * choice survives because a selection is remembered by stable plan_key on
-   * LibraryEditions, not by plan row id. Composites are caught too: a composite
-   * that draws on this release records it as one of its sources.
-   */
-  /**
    * Retire automatic track matches for this provider release that the current
    * matcher did not reproduce.
    *
@@ -640,7 +608,8 @@ export class ProviderReleaseIngestionService {
    * test for them: anything the replay believed was rewritten at the current
    * version moments ago.
    *
-   * An Edition match with no surviving track matches goes too. It asserts a
+   * An Edition match with no surviving tracks is rejected, retaining its identity
+   * for selected source provenance. It must not continue asserting a
    * relationship that nothing supports and would otherwise keep offering an
    * Edition the provider cannot actually fill.
    */
@@ -659,12 +628,13 @@ export class ProviderReleaseIngestionService {
 
       // Same reference to release as the delete path above: a plan built on a
       // match being retired is stale, and the FK will not let it dangle.
-      this.clearDependentAcquisitionPlans(providerEditionItemId);
+      this.invalidateDependentAcquisitionPlans(providerEditionItemId);
 
       const placeholders = staleIds.map(() => "?").join(",");
       this.db.prepare(`DELETE FROM ProviderTrackMatches WHERE id IN (${placeholders})`).run(...staleIds);
       this.db.prepare(`
-        DELETE FROM ProviderEditionMatches
+        UPDATE ProviderEditionMatches SET match_state='rejected', matched_track_count=0,
+          source_coverage=0, target_coverage=0, updated_at=CURRENT_TIMESTAMP
         WHERE provider_edition_item_id = ?
           AND decision_source = 'automatic'
           AND NOT EXISTS (
@@ -676,7 +646,7 @@ export class ProviderReleaseIngestionService {
     })();
   }
 
-  private clearDependentAcquisitionPlans(providerEditionItemId: number): Array<{ libraryId: number; editionId: number }> {
+  private invalidateDependentAcquisitionPlans(providerEditionItemId: number): Array<{ libraryId: number; editionId: number }> {
     // Plans reference this release three ways, and none of the track-level
     // foreign keys cascade: sources point at the edition match, plan tracks
     // point at individual track matches, and plan tracks also pin the exact
@@ -718,7 +688,7 @@ export class ProviderReleaseIngestionService {
       providerEditionItemId,
     ];
 
-    assertAcquisitionPlansQuiescent(this.db, (this.db.prepare(`
+    invalidateAcquisitionPlans(this.db, (this.db.prepare(`
       SELECT id FROM AcquisitionPlans WHERE id IN (${dependentPlanIds})
     `).all(...args) as Array<{ id: number }>).map(row => row.id));
 
@@ -728,27 +698,6 @@ export class ProviderReleaseIngestionService {
       WHERE plan.id IN (${dependentPlanIds})
     `).all(...args) as Array<{ libraryId: number; editionId: number }>;
 
-    // A plan the operator picked is still pointed at by
-    // `LibraryEditions.preferred_plan_key`, and that reference is a real
-    // foreign key. Deleting the plan under it aborts the whole re-ingest with
-    // "FOREIGN KEY constraint failed" — measured on 36 of Amy Winehouse's 102
-    // provider releases, and always the ones that had plans, so a matcher fix
-    // could never reach the albums anyone had acted on. Release the reference
-    // first, exactly as AcquisitionPlanRepository.replacePlans does before its
-    // own delete; the planner re-points it when it rebuilds.
-    this.db.prepare(`
-      UPDATE LibraryEditions
-      SET preferred_plan_key = NULL, updated_at = CURRENT_TIMESTAMP
-      WHERE (library_id, edition_id, preferred_plan_key) IN (
-        SELECT plan.library_id, plan.edition_id, plan.plan_key
-        FROM AcquisitionPlans plan
-        WHERE plan.id IN (${dependentPlanIds})
-      )
-    `).run(...args);
-
-    this.db.prepare(`
-      DELETE FROM AcquisitionPlans WHERE id IN (${dependentPlanIds})
-    `).run(...args);
     return droppedEditions;
   }
 

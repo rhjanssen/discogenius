@@ -108,7 +108,7 @@ export interface OptimizedAcquisitionPlan {
   explicitContent: PlanExplicitContent;
   /** Diagnostic breakdown behind explicitContent. */
   explicitnessCounts: PlanExplicitnessCounts;
-  /** Stable shape identity; see acquisitionPlanKey. */
+  /** Candidate shape identity. Production planning assigns resource identity before persistence. */
   planKey: string;
   tracks: OptimizedAcquisitionTrack[];
 }
@@ -1276,11 +1276,9 @@ export function optimizeAcquisitionPlan(input: {
  * Edition sources it draws on, its composition, and the source qualities it
  * resolves to.
  *
- * Plan rows are deleted and rebuilt on every replan, so a user's chosen plan
- * cannot be remembered by row id. This key survives replanning as long as the
- * same alternative is still available, and stops existing when it genuinely is
- * not — which is exactly when the choice should be reported as unavailable
- * rather than silently swapped.
+ * This groups candidates within one set of match bindings. Production planning
+ * replaces it with resourceAcquisitionPlanKey, whose canonical/provider resource
+ * identity survives regenerated match and membership rows.
  */
 export function acquisitionPlanKey(plan: {
   provider: string;

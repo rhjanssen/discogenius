@@ -333,14 +333,16 @@ test("re-matching a planned release replaces its matches instead of failing", ()
 
     assert.equal(
       (db.prepare("SELECT COUNT(*) AS count FROM AcquisitionPlans").get() as { count: number }).count,
-      0,
-      "plans built on replaced matches are dropped for the planner to rebuild",
+      1,
+      "plan identity survives while derived coverage is invalidated",
     );
     assert.equal(
       (db.prepare("SELECT COUNT(*) AS count FROM AcquisitionPlanTracks").get() as { count: number }).count,
       0,
-      "plan tracks cascade with their plan",
+      "stale assignments are released before rematching",
     );
+    assert.equal((db.prepare("SELECT state FROM AcquisitionPlans WHERE id=1").get() as {state:string}).state, "stale");
+    assert.equal((db.prepare("SELECT id FROM ProviderTrackMatches WHERE match_state='accepted'").get() as {id:number}).id, trackMatchId);
   });
 });
 

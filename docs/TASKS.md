@@ -2,6 +2,22 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: provider refresh/rematch invalidates derived
+  coverage while retaining plan/source headers and selected intent. Exact track
+  match edges are upserted with stable IDs. Persisted plan keys now use canonical
+  track/recording and provider resource/occurrence/variant identity, including
+  the primary source, rather than replaceable match/member IDs. Intact existing
+  choices are reconstructed from bindings before invalidation; waiting requests
+  retain exact library, edition and provider before plan replacement. Missing
+  manual offers remain unavailable; the same returning resource recovers even
+  after member/match IDs change. Actual app verifies retained lock/selection,
+  unavailable wording/disabled download and returning offer. All 62 focused
+  production-container checks pass. Full CI passes 2,143 API and 187 frontend
+  tests, lint, typechecks and builds with no failing names. Not deployed.
+  Validate incomplete/conflicting persisted intent and larger live source graphs;
+  explicit waiting outcomes/admission, canonical redirects and legacy artwork
+  retirement still block release and queue resumption.
+
 - local candidate, October 8: plan replacement, clearing, provider rematching
   and provider re-ingestion now share transaction-scoped ownership admission.
   Queued/running media commands and claimed waiting rows preserve their exact
@@ -9,9 +25,9 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
   retries after one minute without consuming failure attempts. Activity explains
   the wait and no longer appends queue positions. All 74 focused production
   container checks pass; the actual app shows the deferred refresh and completed
-  history after owner release. Not deployed. Preserve selected/manual/locked
-  intent across quiescent rematching and re-ingestion before declaring the plan
-  lifecycle complete. Final full CI passes 2,140 API and 187 frontend tests,
+  history after owner release. Not deployed. The resource-identity candidate
+  handles quiescent choice preservation; broader live lifecycle acceptance is
+  still required. Final full CI passes 2,140 API and 187 frontend tests,
   lint, typechecks and builds with no failing names or clone retries. Final
   isolated fixture teardown checks also pass all 32 tests.
 

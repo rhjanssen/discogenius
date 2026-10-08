@@ -9,6 +9,8 @@ import { assertAcquisitionPlansQuiescent } from "./acquisition-plan-ownership.js
 
 const { tempDir } = prepareActiveSchemaEnv("plan-ownership");
 const { ProviderReleaseIngestionService } = await import("../providers/provider-release-ingestion-service.js");
+const { AcquisitionPlanningService } = await import("./acquisition-planning-service.js");
+const { resolveWaitingAcquisitionPlan } = await import("../download/waiting-acquisition-plan.js");
 const { db, dbModule } = await openActiveSchemaDb();
 const library = seedTestLibrary(db, { name: "Ownership", rootPath: tempDir });
 after(() => closeActiveSchemaDb(dbModule, tempDir));
@@ -74,3 +76,54 @@ for (const [name, mutate] of Object.entries(operations)) {
 test("acquisition plan ownership admission requires the writer transaction", () => {
   assert.throws(() => assertAcquisitionPlansQuiescent(db, [1]), /active transaction/);
 });
+
+for (const locked of [0, 1]) test(`provider refresh preserves the exact manual offer and waiting intent with album lock ${locked}`, () => fixture(() => {
+  const planner = new AcquisitionPlanningService(db);
+  const compute = () => planner.compute({ libraryId: library, editionId: 1, providerPriority: ['tidal'], plannerVersion: 1 });
+  compute();
+  const before = db.prepare("SELECT preferred_plan_key FROM LibraryEditions WHERE library_id=? AND edition_id=1").get(library) as {preferred_plan_key:string};
+  assert.ok(before.preferred_plan_key);
+  db.prepare("UPDATE LibraryEditions SET plan_selection_mode='manual' WHERE library_id=?").run(library);
+  db.prepare("INSERT INTO LibraryAlbums(library_id,release_group_id,selection_mode,locked,curation_version) VALUES(?,1,'manual',?,1)").run(library,locked);
+  const original = db.prepare("SELECT id FROM AcquisitionPlans WHERE plan_key=?").get(before.preferred_plan_key) as {id:number};
+  // Existing live plans have keys derived from replaceable match row IDs.
+  db.prepare("UPDATE AcquisitionPlans SET plan_key='old-row-binding-key' WHERE id=?").run(original.id);
+  db.prepare("UPDATE LibraryEditions SET preferred_plan_key='old-row-binding-key' WHERE library_id=?").run(library);
+  db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,provider,payload,queue_order) VALUES('intent','album','DownloadAlbum',?,'tidal','{}',1)").run(original.id);
+  for (let repeat=0; repeat<2; repeat++) {
+    const result = new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:repeat+2,
+      release:{provider:'tidal',entityType:'release',providerId:'source-release',title:'Refreshed source'},
+      members:[{item:{provider:'tidal',entityType:'track',providerId:'source-track',title:'Song'},mediumPosition:1,position:1}]});
+    assert.equal(result.acceptedTrackCount,1);
+    const selected = db.prepare("SELECT preferred_plan_key,plan_selection_mode FROM LibraryEditions WHERE library_id=?").get(library);
+    assert.deepEqual(selected,{preferred_plan_key:before.preferred_plan_key,plan_selection_mode:'manual'});
+    assert.equal((db.prepare("SELECT id FROM ProviderTrackMatches WHERE match_state='accepted'").get() as {id:number}).id,1);
+    const waiting = db.prepare("SELECT plan_id,payload FROM DownloadQueue WHERE ref_key='intent'").get() as {plan_id:number|null;payload:string};
+    const payload = JSON.parse(waiting.payload);
+    assert.deepEqual(payload,{libraryId:library,releaseMbid:'release',provider:'tidal'});
+    assert.ok(resolveWaitingAcquisitionPlan(db,waiting.plan_id ?? -1,payload,'tidal'));
+    assert.equal((db.prepare("SELECT locked FROM LibraryAlbums WHERE library_id=?").get(library) as {locked:number}).locked,locked);
+  }
+}));
+
+test("an unavailable manual offer retains its identity and refuses a waiting download", () => fixture(() => {
+  new AcquisitionPlanningService(db).compute({libraryId:library,editionId:1,providerPriority:['tidal'],plannerVersion:1});
+  db.prepare("UPDATE LibraryEditions SET plan_selection_mode='manual' WHERE library_id=?").run(library);
+  const before = db.prepare("SELECT preferred_plan_key FROM LibraryEditions WHERE library_id=?").get(library) as {preferred_plan_key:string};
+  new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:2,
+    release:{provider:'tidal',entityType:'release',providerId:'source-release',title:'Removed source'},members:[]});
+  const selected = db.prepare(`SELECT plan.state,plan.plan_key FROM AcquisitionPlans plan JOIN LibraryEditions selected
+    ON selected.library_id=plan.library_id AND selected.edition_id=plan.edition_id AND selected.preferred_plan_key=plan.plan_key
+    WHERE plan.library_id=?`).get(library);
+  assert.deepEqual(selected,{state:'unavailable',plan_key:before.preferred_plan_key});
+  assert.equal(resolveWaitingAcquisitionPlan(db,-1,{libraryId:library,releaseMbid:'release',provider:'tidal'},'tidal'),null);
+  new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:3,
+    release:{provider:'tidal',entityType:'release',providerId:'source-release',title:'Returned source'},
+    members:[{item:{provider:'tidal',entityType:'track',providerId:'source-track',title:'Song'},mediumPosition:1,position:1}]});
+  const recovered = db.prepare(`SELECT plan.state,plan.plan_key FROM AcquisitionPlans plan JOIN LibraryEditions selected
+    ON selected.library_id=plan.library_id AND selected.edition_id=plan.edition_id AND selected.preferred_plan_key=plan.plan_key
+    WHERE plan.library_id=?`).get(library);
+  assert.deepEqual(recovered,{state:'current',plan_key:before.preferred_plan_key});
+  assert.ok((db.prepare("SELECT id FROM ProviderTrackMatches WHERE match_state='accepted'").get() as {id:number}).id > 1,
+    'recovered resource identity must survive regenerated match/member rows');
+}));
