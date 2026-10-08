@@ -473,3 +473,12 @@ The measured ownership problems and remaining acceptance gates are in
   and 187 frontend tests, lint/types/both builds in 556 seconds without failing
   names or clone retries. Native history regression and actual app verify intent,
   title, details and green completion icons. No NAS deployment/cleanup performed.
+
+- validated, October 8: Debian Trixie runtime fixes the Atmos profile packaging
+  mismatch. The official Dolby JOC fixture fails positive admission on old
+  FFprobe 5.1 and passes exact ACTIVE-schema TrackFile admission on FFprobe7.1.5.
+  Actual tag/cover writes preserve the encoded JOC audio hash and acceptance.
+  All 117 native checks pass without skips; isolated compose build/start and
+  actual artwork source switch pass. Source CI from f53841e7 remains applicable
+  to unchanged TS. Still undeployed. Positive DD+ JOC recognition is now proven;
+  broader variants, cache retirement/plan reconciliation/live acceptance remain.

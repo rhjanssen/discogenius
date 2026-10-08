@@ -1689,3 +1689,35 @@ the projected payload now retains the intent flag. Native history checks pass
 out; DOM verification and physical FLAC/sidecar checks are the evidence. This
 candidate is still not deployed on the NAS. Legacy cache retirement and the
 FFmpeg packaging mismatch remain open, as do live library acceptance gates.
+
+October 8 Atmos runtime repair: base runtime now uses python:3.13-slim-trixie
+with Debian's maintained FFmpeg/FFprobe 7.1.5. The separate static GPAC/Bento4
+builder stages remain bookworm. Docker build and isolated docker compose
+up -d --build succeeded. The source tree is otherwise unchanged from f53841e7's
+full 2210 API/187 frontend CI; no NAS image deployment is inferred.
+
+Positive native acceptance now passes using Dolby's Online Delivery Kit v1.4.1
+reference MP4, ChID_voices_1280x720p_25fps_h264_6ch_640kbps_ddp_joc.mp4:
+https://ott.dolby.com/OnDelKits/DDP/Dolby_Digital_Plus_Online_Delivery_Kit_v1.4.1/Test_Signals/muxed_streams/MP4/Example/ChID_voices_1280x720p_25fps_h264_6ch_640kbps_ddp_joc.mp4
+Fixture SHA256 b055bc4cd0d65c87aab6c3f0f57d1fb44a7ede0dd0f69206bc184525b1371192,
+32,105,062 bytes. Reference description is the MP4_Muxed_Streams.html page in
+that directory. A 5.024-second stream-copy audio-only MP4 fixture was used in
+an isolated ACTIVE schema acquisition graph, not assigned to any live file.
+Old runtime: codec eac3, no profile, quality UNKNOWN and no accepted file IDs.
+New runtime: codec eac3, native profile Dolby Digital Plus + Dolby Atmos,
+quality DOLBY_ATMOS and exact accepted TrackFiles ID 1. After actual metadata
+writing and JPEG embedding, the profile and acquisition acceptance remain;
+SHA256 of extracted encoded E-AC-3 audio is unchanged, including object metadata,
+and embedded art matches. This closes positive native recognition for that
+DD+ JOC fixture; it does not claim every provider/container variant is tested.
+
+All 117 focused native tests pass with no skips, including ordinary E-AC-3
+surround rejection, AAC/ALAC/fidelity, metadata/artwork conversion and backfill.
+FPcalc produces a real fingerprint from decoded test audio; tiddl help loads,
+yt-dlp loads and GPAC version is 2.4. Apple/Bento binaries load but print missing
+fixture configuration/arguments; no authenticated provider download is claimed.
+The actual compose app Settings artwork switch completes command 3; full 800x600
+sidecar and embedded art match with unchanged PCM and exact MetadataFiles owner.
+Live scan 16039 advances to 346/518 without reported error, downloads paused and
+no active downloads/imports. Cache retirement, legacy plan consolidation and live
+library acceptance remain required before releasing/resuming acquisition.
