@@ -2,6 +2,18 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: full-resolution artwork master reads and tracked
+  links now validate canonical ownership as well as file ID/hash. Same-byte
+  transfers to another artist/album/edition/video cannot retain the old link;
+  proper renames still work and stale legacy markers cannot adopt wrong owners.
+  All 66 focused Windows/native checks pass without skips; actual app FLAC
+  source switch preserves PCM and exact sidecar owner. No live deletion or
+  deployment. Committed crash recovery now uses the same owner admission and
+  preserves both versions on canonical transfer. Final full CI passes 2,215 API
+  and 187 frontend tests, lint/types and both builds without failing names or
+  clone retries; all 82 focused native checks pass without skips. Finish witnessed legacy-cache migration/retirement and source
+  replacement for sidecar-only artists and secondary artwork roles.
+
 - local candidate, October 8: artwork source changes now reconcile imported
   library owners once, removing the redundant whole-catalogue prewarm pass.
   All 13 focused Windows/native tests pass, including real FLAC source switching

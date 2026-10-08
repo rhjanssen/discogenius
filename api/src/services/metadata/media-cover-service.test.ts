@@ -224,13 +224,19 @@ test("artist and video masters retain exact row links after relocation and cache
   try {
     for (const scope of [{ coverEntity: "Artist" as const, coverType: "poster", fileType: "cover" },
       { coverEntity: "Video" as const, coverType: "cover", fileType: "video_thumbnail" }]) {
-      const entityId = `linked-${scope.coverEntity}`, sourceUrl = `https://example.com/${scope.coverEntity}.jpg`;
+      const recordingMbid = "linked-video-recording";
+      const entityId = scope.coverEntity === "Video"
+        ? String(dbModule.db.prepare("INSERT INTO Recordings (mbid,title,is_video) VALUES (?, 'Video artwork fixture',1)").run(recordingMbid).lastInsertRowid)
+        : `linked-${scope.coverEntity}`;
+      const sourceUrl = `https://example.com/${scope.coverEntity}.jpg`;
       const outputPath = path.join(tempDir, entityId, "sidecar.jpg"), renamedPath = path.join(tempDir, entityId, "renamed.jpg");
       await mediaCoverServiceModule.ensureCachedMediaCover({ entityId, ...scope, sourceUrl });
       assert.equal(await materializationModule.materializeMediaCoverToFile({ entityId, ...scope, outputPath }), "written");
       const id = Number(dbModule.db.prepare(`INSERT INTO MetadataFiles
-        (artist_id,relative_path,file_path,library_root,extension,type,file_type) VALUES ('test-artist',?,?,?,'jpg',?,?)`)
-        .run("sidecar.jpg", outputPath, tempDir, scope.coverEntity === "Artist" ? "ArtistImage" : "TrackImage", scope.fileType).lastInsertRowid);
+        (artist_id,relative_path,file_path,library_root,extension,type,file_type,canonical_artist_mbid,canonical_recording_mbid)
+        VALUES ('test-artist',?,?,?,'jpg',?,?,?,?)`)
+        .run("sidecar.jpg", outputPath, tempDir, scope.coverEntity === "Artist" ? "ArtistImage" : "TrackImage", scope.fileType,
+          scope.coverEntity === "Artist" ? entityId : null, scope.coverEntity === "Video" ? recordingMbid : null).lastInsertRowid);
       mediaCoverServiceModule.linkCachedMediaCoverSidecar({ entityId, ...scope, coverTypes: [scope.coverType], outputPath, metadataFileId: id });
       fs.renameSync(outputPath, renamedPath);
       dbModule.db.prepare("UPDATE MetadataFiles SET file_path = ? WHERE id = ?").run(renamedPath, id);
@@ -280,9 +286,9 @@ test("library artwork moves the original into its sidecar and refetches when swi
     assert.equal(fetchCount, 6);
     assert.equal(fs.existsSync(path.join(cache, "cover.jpg")), false);
     const metadataId = Number(dbModule.db.prepare(`INSERT INTO MetadataFiles
-      (artist_id, type, relative_path, file_path, library_root, extension, file_type)
-      VALUES ('test-artist', 'album_cover', ?, ?, ?, 'jpg', 'cover')`)
-      .run(path.relative(root, outputPath), outputPath, root).lastInsertRowid);
+      (artist_id, type, relative_path, file_path, library_root, extension, file_type,canonical_release_group_mbid)
+      VALUES ('test-artist', 'album_cover', ?, ?, ?, 'jpg', 'cover',?)`)
+      .run(path.relative(root, outputPath), outputPath, root,mbid).lastInsertRowid);
     mediaCoverServiceModule.linkCachedMediaCoverSidecar({ entityId: mbid, coverEntity: "Album", outputPath, metadataFileId: metadataId });
     const renamedDir = path.join(root, "Artist", "Renamed Album");
     fs.renameSync(path.dirname(outputPath), renamedDir);

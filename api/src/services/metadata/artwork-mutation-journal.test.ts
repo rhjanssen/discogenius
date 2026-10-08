@@ -27,8 +27,8 @@ beforeEach(() => {
   fs.rmSync(folder,{recursive:true,force:true});fs.mkdirSync(folder);
   fs.writeFileSync(destination,previous);fs.writeFileSync(staged,replacement);
   fileId = Number(database.db.prepare(`INSERT INTO MetadataFiles
-    (artist_id,file_path,relative_path,library_root,extension,type,file_type)
-    VALUES ('artist',?,'cover.jpg',?,'jpg','AlbumImage','cover')`).run(destination,folder).lastInsertRowid);
+    (artist_id,file_path,relative_path,library_root,extension,type,file_type,canonical_release_group_mbid)
+    VALUES ('artist',?,'cover.jpg',?,'jpg','AlbumImage','cover','journal-album')`).run(destination,folder).lastInsertRowid);
   database.db.prepare(`INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url,preference,content_hash)
     VALUES ('Album','journal-album','cover','https://example.com/new.jpg','canonical',?)`).run(hash(replacement));
   database.db.prepare(`INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash,metadata_file_id)
@@ -66,6 +66,22 @@ test("a committed replacement retains the new image and removes its verified pre
   reopen();assert.deepEqual(await recover(),[]);
   assert.deepEqual(fs.readFileSync(destination),replacement);
   assert.deepEqual(fs.readdirSync(folder),["cover.jpg"]);
+});
+
+test("committed artwork recovery preserves both versions when canonical owner changes",async () => {
+  const id = await prepare();
+  journal.publish(id);
+  database.db.transaction(() => {
+    database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash=? WHERE file_path=?").run(hash(replacement),destination);
+    journal.markCommitted(id);
+  })();
+  database.db.prepare("UPDATE MetadataFiles SET canonical_release_group_mbid='another-album' WHERE id=?").run(fileId);
+  reopen();
+  assert.match((await recover())[0],/no matching library link/);
+  const intent = database.db.prepare("SELECT backup_path FROM ArtworkMutationJournal WHERE id=?").get(id) as {backup_path:string};
+  assert.deepEqual(fs.readFileSync(intent.backup_path),previous);
+  assert.deepEqual(fs.readFileSync(destination),replacement);
+  assert.equal(journal.hasPending(),true);
 });
 
 test("uncommitted newly created artwork disappears on recovery without removing a previous image",async () => {

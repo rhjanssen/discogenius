@@ -7,6 +7,51 @@ import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
 
 type StoredSidecar = { path: string; hash: string; metadataFileId?: number };
 
+type ArtworkFileRow = {
+  file_path: string; file_type: string;
+  canonical_artist_mbid: string | null; canonical_release_group_mbid: string | null;
+  canonical_release_mbid: string | null; canonical_recording_mbid: string | null;
+};
+
+/** A surviving row ID is not proof that its artwork still owns this scope.
+ * Canonical reconciliation can transfer owners without changing file bytes. */
+function ownsArtwork(row: ArtworkFileRow, identity: ArtworkIdentity): boolean {
+  if (!["cover", "artwork", "video_thumbnail", "video_cover"].includes(row.file_type)) return false;
+  const id = String(identity.entityId);
+  switch (identity.coverEntity) {
+    case "Artist": return row.canonical_artist_mbid === id
+      && !row.canonical_release_group_mbid && !row.canonical_release_mbid && !row.canonical_recording_mbid;
+    case "Album": return row.canonical_release_group_mbid === id && !row.canonical_recording_mbid;
+    case "Edition": return row.canonical_release_mbid === id && !row.canonical_recording_mbid;
+    case "Video": {
+      // Video cache IDs are canonical recording row IDs, not provider IDs.
+      const recording = db.prepare("SELECT mbid FROM Recordings WHERE id = ? AND is_video = 1")
+        .get(id) as { mbid: string | null } | undefined;
+      return Boolean(recording?.mbid && recording.mbid === row.canonical_recording_mbid);
+    }
+  }
+}
+
+function trackedArtwork(identity: ArtworkIdentity, id: number): ArtworkFileRow | null {
+  const row = db.prepare(`SELECT file_path,file_type,canonical_artist_mbid,
+    canonical_release_group_mbid,canonical_release_mbid,canonical_recording_mbid
+    FROM MetadataFiles WHERE id = ?`).get(id) as ArtworkFileRow | undefined;
+  return row && ownsArtwork(row, identity) ? row : null;
+}
+
+/** Shared publication/recovery admission. Import may have no tracked row yet;
+ * once there is one, provisional links must agree with its current owner. */
+export function artworkLinkOwnsTrackedPath(identity: ArtworkIdentity, filePath: string, metadataFileId?: number | null): boolean {
+  if (metadataFileId) {
+    const row = trackedArtwork(identity, metadataFileId);
+    return Boolean(row && row.file_path === filePath);
+  }
+  const row = db.prepare(`SELECT file_path,file_type,canonical_artist_mbid,
+    canonical_release_group_mbid,canonical_release_mbid,canonical_recording_mbid
+    FROM MetadataFiles WHERE file_path=?`).get(filePath) as ArtworkFileRow | undefined;
+  return !row || ownsArtwork(row, identity);
+}
+
 function manifestPath(folder: string, coverType: string): string {
   return path.join(folder, `.${coverType}.library.json`);
 }
@@ -32,12 +77,12 @@ function writeSidecars(identity: ArtworkIdentity, sidecars: StoredSidecar[], cur
     const importLegacy = db.prepare(`${insertSql} ON CONFLICT DO NOTHING`);
     for (const sidecar of sidecars) {
       // A stale old manifest must not resurrect a deleted tracked file.
-      if (sidecar.metadataFileId && !db.prepare("SELECT 1 FROM MetadataFiles WHERE id = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')").get(sidecar.metadataFileId)) continue;
+      if (sidecar.metadataFileId && !trackedArtwork(identity, sidecar.metadataFileId)) continue;
       importLegacy.run(...artworkKey(identity), sidecar.path, sidecar.hash, sidecar.metadataFileId ?? null);
     }
     if (current.metadataFileId) {
-      const row = db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')").get(current.metadataFileId) as { file_path: string } | undefined;
-      if (!row || row.file_path !== current.path) throw new Error("Artwork link does not match its exact MetadataFiles row");
+      const row = trackedArtwork(identity, current.metadataFileId);
+      if (!row || row.file_path !== current.path) throw new Error("Artwork link does not match its exact MetadataFiles owner and path");
       db.prepare(`DELETE FROM ArtworkLibraryLinks WHERE cover_entity = ? AND entity_id = ?
         AND cover_type = ? AND metadata_file_id = ? AND file_path <> ?`)
         .run(...artworkKey(identity), current.metadataFileId, current.path);
@@ -57,11 +102,14 @@ export function findLibraryCoverMaster(identity: ArtworkIdentity, folder: string
     let target = sidecar.path;
     if (sidecar.metadataFileId) {
       try {
-        const row = db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')")
-          .get(sidecar.metadataFileId) as { file_path: string } | undefined;
+        const row = trackedArtwork(identity, sidecar.metadataFileId);
         if (!row) continue;
         target = row.file_path;
       } catch { continue; }
+    } else {
+      // Import may publish before registering the sidecar. Once a tracked row
+      // exists, a provisional path-only link cannot bypass its canonical owner.
+      if (!artworkLinkOwnsTrackedPath(identity, target)) continue;
     }
     try {
       if (crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex") === hash) return target;
@@ -80,7 +128,10 @@ export function rememberLibraryCoverSidecar(identity: ArtworkIdentity, folder: s
 export function linkLibraryCoverSidecar(identity: ArtworkIdentity, folder: string, outputPath: string, metadataFileId: number): void {
   const sidecars = readSidecars(identity, folder);
   const current = sidecars.find(item => item.path === outputPath);
-  if (!current || current.metadataFileId === metadataFileId) return;
+  if (!current) return;
+  const row = trackedArtwork(identity, metadataFileId);
+  if (!row || row.file_path !== outputPath) throw new Error("Artwork link does not match its exact MetadataFiles owner and path");
+  if (current.metadataFileId === metadataFileId) return;
   current.metadataFileId = metadataFileId;
   writeSidecars(identity, sidecars, current);
 }

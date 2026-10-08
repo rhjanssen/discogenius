@@ -1,5 +1,53 @@
 # Managed library inventory and strict cleanup
 
+## October 8 artwork master ownership admission candidate
+
+Before legacy-cache retirement, artwork links must prove their current owner.
+The previous reader followed a MetadataFiles ID and checked its bytes and type,
+but did not check canonical ownership. A same-byte file transferred to another
+edition or artist could therefore still be used as the old owner's master.
+
+Library-master reads and link registration now check the exact canonical artist,
+release group, edition or video recording owner. Video cache identity is the
+canonical Recordings row ID, resolved through its primary key and video flag;
+it is never a provider ID. Artist assets cannot inherit album/recording-scoped
+ownership. Renames retain their row ID and remain resolvable. Owner conflicts
+return no master or reject registration without deleting physical artwork.
+Legacy manifest import skips links whose tracked owner no longer agrees.
+Provisional import links cannot bypass a conflicting tracked row at their path.
+Publication acknowledgement and committed crash recovery use this same owner
+admission. A canonical transfer after acknowledgement preserves both the current
+image and previous recovery copy, leaves the journal pending and reports the
+conflict instead of silently discarding recovery evidence.
+
+All 66 focused Windows and native-container checks pass without skips, including
+five new active-schema ownership tests. The tests keep image bytes unchanged
+while transferring each of four owners and verify refusal; a stale manifest
+cannot adopt another album's row. An actual isolated app source switch completes
+command 3, with the selected 800x600 sidecar and embedded cover, unchanged PCM
+and exact MetadataFiles owner. This does not migrate or retire the old cache.
+
+The first full API run found three new failures in process-exit/local-publication
+tests. Their shared active-schema fixture created an album image without its
+canonical release-group owner. The fixture now supplies journal-album explicitly;
+admission was not weakened. All 21 focused ownership/recovery tests then pass,
+including a new committed-recovery canonical-transfer refusal. Final full CI
+passes all 2,215 API tests and 187 frontend tests, lint, typechecks and both builds
+in 534.78 seconds. The first TAP segment has no failing names or clone retries,
+including the three previously failing recovery names. Log:
+oct08-art-owner-final-ci.log. The final production image builds and passes all
+82 focused native artwork/backfill/recovery checks without skips. Temporary
+compose containers, volume and agent-created browser tab were removed after
+verification. This is a tested local candidate, not live deployment or cache
+retirement; live remains 2.21.0 with downloads paused.
+
+Lidarr's Extras/Files/ExtraFileService.cs scopes file lookup and ownership to
+artist/track-file identity. Jellyfin's ImageSaver publishes the new item path
+before deleting an old local image. Our cross-edition/source cache needs these
+same ownership boundaries, in addition to byte hashes. Remaining retirement work
+must include library-root containment and fresh file/proxy witnesses outside
+writer admission; existing provisional or stale manifests cannot authorize it.
+
 ## October 8 single library artwork reconciliation candidate
 
 Changing the preferred artwork source previously ran two passes. The first

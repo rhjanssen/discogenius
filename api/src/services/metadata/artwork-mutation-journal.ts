@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
+import { artworkLinkOwnsTrackedPath } from "./media-cover-library-storage.js";
 
 type Intent = {
   id: string; cover_entity: ArtworkIdentity["coverEntity"]; entity_id: string; cover_type: string;
@@ -45,13 +46,11 @@ function databaseSnapshot(scope: ArtworkIdentity, destination: string): string {
 }
 
 function hasCommittedLibraryLink(intent: Intent): boolean {
-  return Boolean(db.prepare(`SELECT 1 FROM ArtworkLibraryLinks link
-    LEFT JOIN MetadataFiles file ON file.id=link.metadata_file_id
+  const link = db.prepare(`SELECT link.metadata_file_id FROM ArtworkLibraryLinks link
     WHERE link.cover_entity=? AND link.entity_id=? AND link.cover_type=?
-    AND link.file_path=? AND link.content_hash=?
-    AND (link.metadata_file_id IS NULL OR (file.file_path=link.file_path
-      AND file.file_type IN ('cover','artwork','video_thumbnail','video_cover')))`)
-    .get(...artworkKey(identity(intent)),intent.destination_path,JSON.parse(intent.replacement_identity).hash));
+    AND link.file_path=? AND link.content_hash=?`)
+    .get(...artworkKey(identity(intent)),intent.destination_path,JSON.parse(intent.replacement_identity).hash) as {metadata_file_id:number|null} | undefined;
+  return Boolean(link && artworkLinkOwnsTrackedPath(identity(intent),intent.destination_path,link.metadata_file_id));
 }
 
 function ownershipSnapshot(snapshot: string): string {
