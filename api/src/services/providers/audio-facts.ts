@@ -454,6 +454,9 @@ const CODEC_ALIASES: Record<string, AudioCodec> = {
   "flac": "flac", "alac": "alac", "pcm_s16le": "pcm", "pcm_s24le": "pcm",
   "eac3": "eac3", "ec-3": "eac3", "ac3": "ac3",
   "mpegh": "mpegh", "mhm1": "mpegh",
+  "pcm": "pcm", "apple lossless": "alac", "mpeg 1 layer 3": "mp3",
+  "mpeg 2 layer 3": "mp3", "vorbis i": "vorbis",
+  "mpeg-4/aac": "aac", "mpeg-4/alac": "alac",
 };
 
 const LOSSLESS_CODECS = new Set<AudioCodec>(["flac", "alac", "pcm"]);

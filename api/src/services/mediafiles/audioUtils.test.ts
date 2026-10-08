@@ -309,6 +309,9 @@ test("oversized FLAC artwork keeps the original sidecar and embeds a bounded com
 test("24-bit lossless is MAX class, including 24/48", () => {
   assert.equal(deriveQuality(".flac", { bitDepth: 16, sampleRate: 44100 }), "LOSSLESS");
   assert.equal(deriveQuality(".m4a", { codec: "alac", bitDepth: 24, sampleRate: 48000 }), "HIRES_LOSSLESS");
+  assert.equal(deriveQuality(".m4a", { codec: "MPEG-4/ALAC", bitDepth: 24, sampleRate: 48000 }), "HIRES_LOSSLESS");
+  assert.equal(deriveQuality(".flac", { codec: "MPEG-4/AAC", bitrate: 320000 }), "HIGH", "a suffix cannot turn AAC into lossless audio");
+  assert.equal(deriveQuality(".flac", { codec: "unsupported-codec" }), "UNKNOWN");
   assert.equal(deriveQuality(".flac", { bitDepth: 24, sampleRate: 96000 }), "HIRES_LOSSLESS");
 });
 

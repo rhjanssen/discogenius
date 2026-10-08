@@ -16,9 +16,16 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
   remain before the authorized live rename/retag/cleanup and queue resumption.
   Dashboard still calls its pending download section Active; include clearer
   queued/running wording in the remaining UI pass.
-  Before release, extend quality acceptance beyond normalized tiers to delivered
-  fidelity within a tier, including 24/48 versus 24/96 and codec-aware lossy
-  comparisons without misclassifying valid variable-bitrate output.
+  Delivered stereo fidelity is now compared within a tier using the planning
+  comparator and the same import conformity option. An unchanged measured
+  delivery of the exact native variant is not rejected for being below a provider
+  estimate. Source album variants now retain their member-track provenance.
+  Final full CI passes 2,172 API and 187 frontend tests; 83 focused native checks
+  and actual-app resume checks pass. Readonly reconstruction also passes 80 live
+  plans in a bounded sample. This does not establish whole-library acceptance.
+  Before release, validate declared spatial profiles/object audio, broader real
+  imports and whole-library source graphs. Plain E-AC-3 surround must not become
+  Atmos merely because of its codec; consult Jellyfin's probed Profile handling.
 
 - local candidate, October 8: waiting acquisition admission distinguishes stale
   offers, unavailable offers, conflicting identities, disabled libraries, missing

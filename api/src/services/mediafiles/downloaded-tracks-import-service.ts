@@ -635,6 +635,11 @@ export function persistDownloadedProviderProvenance(
         FROM ProviderItemAudioVariants
         WHERE id = ?
     `);
+    const hasSourceOccurrence = db.prepare(`
+        SELECT 1 FROM ProviderEditionMembers
+        WHERE provider_edition_item_id = ? AND member_item_id = ?
+        LIMIT 1
+    `);
     const update = db.prepare(`
         UPDATE TrackFiles
         SET
@@ -749,9 +754,18 @@ export function persistDownloadedProviderProvenance(
                     id: number;
                     provider_item_id: number;
                 } | undefined;
-                if (!variant || variant.provider_item_id !== providerItem.id) {
+                let belongsToSource = variant?.provider_item_id === providerItem.id;
+                if (variant && !belongsToSource && offer.providerEditionItemId === variant.provider_item_id) {
+                    const parent = loadProviderItem.get(variant.provider_item_id) as {
+                        id:number;provider:string;entity_type:string;provider_id:string;
+                    } | undefined;
+                    belongsToSource = parent?.provider === providerItem.provider && parent.entity_type === 'release'
+                        && parent.provider_id === offer.providerAlbumId
+                        && hasSourceOccurrence.get(parent.id,providerItem.id) != null;
+                }
+                if (!variant || !belongsToSource) {
                     throw new Error(
-                        `[ImportDownload] Audio variant ${offer.providerAudioVariantId} does not belong to provider item ${providerItem.id}`,
+                        `[ImportDownload] Audio variant ${offer.providerAudioVariantId} does not belong to provider item ${providerItem.id} or its exact source edition`,
                     );
                 }
                 sourceAudioVariantId = variant.id;

@@ -12,6 +12,7 @@ import { withMediaFileLock } from './media-file-lock.js';
 import { mediaRewritePath, rewriteMediaCopy, runMediaRewrite } from './media-file-rewrite.js';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
+import { observedFactsFromFile } from '../providers/audio-facts.js';
 import {
     clearMediaTagsWithTagLib,
     readMediaCoverWithTagLib,
@@ -352,8 +353,11 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
         return 'DOLBY_ATMOS';
     }
 
+    const measured = observedFactsFromFile({ codec });
+    if (codecName && measured.codec == null) return 'UNKNOWN';
+
     // Lossless formats
-    if (['flac', 'wav', 'alac', 'aif', 'aiff'].includes(extension) || (extension === 'm4a' && codecName === 'alac')) {
+    if (measured.lossless === true || (!codecName && ['flac', 'wav', 'alac', 'aif', 'aiff'].includes(extension))) {
         if ((sampleRate && sampleRate > 48000) || (bitDepth && bitDepth > 16)) {
             return 'HIRES_LOSSLESS';
         }
@@ -361,8 +365,8 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     }
 
     // Compressed formats
-    if (['mp3', 'aac', 'ogg', 'opus', 'omm', 'wma', 'mp2'].includes(extension) || (extension === 'm4a' && codecName !== 'alac')) {
-        const opus = codecName.includes('opus') || extension === 'opus';
+    if (measured.lossless === false || (!codecName && ['mp3', 'aac', 'ogg', 'opus', 'omm', 'wma', 'mp2', 'm4a'].includes(extension))) {
+        const opus = measured.codec === 'opus' || (!codecName && extension === 'opus');
         const lowBitrate = opus ? 128000 : 192000;
         if (bitrate && bitrate < lowBitrate) {
             return 'LOW';

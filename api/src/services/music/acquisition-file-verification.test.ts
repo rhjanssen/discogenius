@@ -6,11 +6,14 @@ import { prepareActiveSchemaEnv, openActiveSchemaDb, closeActiveSchemaDb } from 
 import { seedTestLibrary } from '../../test-support/library-fixtures.js';
 const { tempDir } = prepareActiveSchemaEnv('acquisition-file-verification');
 const { db, dbModule } = await openActiveSchemaDb();
-const { withVerifiedAcquisitionFiles, importedQualitySatisfies } = await import('./acquisition-file-verification.js');
+const { withVerifiedAcquisitionFiles, importedQualitySatisfies, importedFidelitySatisfies } = await import('./acquisition-file-verification.js');
+const { observedFactsFromFile } = await import('../providers/audio-facts.js');
 const { QualityProfileRepository } = await import('./quality-profile-policy.js');
 const { DownloadWaitQueue } = await import('../download/download-wait-queue.js');
 const { acquireMediaFileLocks } = await import('../mediafiles/media-file-lock.js');
 const { DownloadProcessor } = await import('../download/download-processor.js');
+const {persistDownloadedProviderProvenance} = await import('../mediafiles/downloaded-tracks-import-service.js');
+const {Config} = await import('../config/config.js');
 const root = path.join(tempDir, 'music');
 await fs.mkdir(root);
 const filePath = path.join(root, 'Pompeii.wav');
@@ -35,8 +38,8 @@ db.prepare("INSERT INTO LibraryEditions(library_id,edition_id,selection_mode,cur
 const profileId = (db.prepare('SELECT quality_profile_id AS id FROM Libraries WHERE id=?').get(library) as {
     id: number;
 }).id;
-function wav(seconds = 1, bitDepth = 16): Buffer {
-    const bytes = Math.round(44100 * seconds) * 2 * (bitDepth / 8);
+function wav(seconds = 1, bitDepth = 16, sampleRate = 44100): Buffer {
+    const bytes = Math.round(sampleRate * seconds) * 2 * (bitDepth / 8);
     const value = Buffer.alloc(44 + bytes);
     value.write('RIFF', 0);
     value.writeUInt32LE(36 + bytes, 4);
@@ -44,8 +47,8 @@ function wav(seconds = 1, bitDepth = 16): Buffer {
     value.writeUInt32LE(16, 16);
     value.writeUInt16LE(1, 20);
     value.writeUInt16LE(2, 22);
-    value.writeUInt32LE(44100, 24);
-    value.writeUInt32LE(44100 * 2 * (bitDepth / 8), 28);
+    value.writeUInt32LE(sampleRate, 24);
+    value.writeUInt32LE(sampleRate * 2 * (bitDepth / 8), 28);
     value.writeUInt16LE(2 * (bitDepth / 8), 32);
     value.writeUInt16LE(bitDepth, 34);
     value.write('data', 36);
@@ -53,7 +56,7 @@ function wav(seconds = 1, bitDepth = 16): Buffer {
     return value;
 }
 beforeEach(async () => {
-    db.exec('DELETE FROM DownloadQueue; DELETE FROM commands; DELETE FROM TrackFiles;');
+    db.exec('DELETE FROM DownloadQueue; DELETE FROM commands; DELETE FROM TrackFiles; UPDATE AcquisitionPlanTracks SET provider_audio_variant_id=1; DELETE FROM ProviderItemAudioVariants WHERE id>1; UPDATE ProviderEditionMembers SET provider_edition_item_id=1 WHERE id=1; DELETE FROM ProviderItems WHERE id>2;');
     db.prepare(`UPDATE quality_profiles SET allowed_source_formats='["hires-lossless","lossless","lossy"]',preference_order='["hires-lossless","lossless","lossy"]',cutoff='lossless',continue_upgrades=0,output_format='{"codec":"preserve","lossless":true}',transcode_policy='preserve' WHERE id=?`).run(profileId);
     db.exec("UPDATE AcquisitionPlans SET state='current',coverage=1,target_track_count=1; UPDATE Tracks SET length_ms=1000; UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"lossless\"}'; UPDATE ProviderItemAudioVariants SET bit_depth=16,sample_rate=44100;");
     db.prepare(`INSERT INTO TrackFiles(library_id,album_edition_id,track_id,recording_id,file_path,relative_path,filename,extension,file_class,library_root,file_type,quality)
@@ -174,3 +177,95 @@ for (const condition of ['pause', 'changed-request', 'import-backpressure'] as c
         }).n, 0);
     });
 }
+
+test('different hi-res delivery requires a real within-tier upgrade', async () => {
+    db.prepare("UPDATE quality_profiles SET cutoff='hires-lossless',continue_upgrades=1 WHERE id=?").run(profileId);
+    db.exec("UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"hires-lossless\"}'; UPDATE ProviderItemAudioVariants SET bit_depth=24,sample_rate=96000;");
+    await fs.writeFile(filePath,wav(1,24,48000));
+    assert.deepEqual(await proof(),[],'24/48 is below the distinct 24/96 offer');
+    await fs.writeFile(filePath,wav(1,24,96000));
+    assert.deepEqual(await proof(),[1]);
+});
+
+test('same native delivery below a representative estimate does not loop downloads', async () => {
+    db.prepare("UPDATE quality_profiles SET cutoff='hires-lossless',continue_upgrades=1 WHERE id=?").run(profileId);
+    db.exec("UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"hires-lossless\"}'; UPDATE ProviderItemAudioVariants SET bit_depth=24,sample_rate=96000;");
+    const audio = wav(1,24,48000); await fs.writeFile(filePath,audio);
+    db.prepare("UPDATE TrackFiles SET provider_item_id=2,source_audio_variant_id=1,provider='tidal',provider_entity_type='track',provider_id='source-track',codec='PCM',bit_depth=24,sample_rate=48000,channels=2,file_size=?").run(audio.length);
+    assert.deepEqual(await proof(),[1],'the unchanged measured delivery of this exact variant is valid');
+    db.exec("INSERT INTO ProviderItemAudioVariants(id,provider_item_id,variant_key,quality_class,bit_depth,sample_rate,codec) VALUES(2,2,'distinct-hires','hires-lossless',24,96000,'flac'); UPDATE AcquisitionPlanTracks SET provider_audio_variant_id=2;");
+    assert.deepEqual(await proof(),[],'another native variant does not inherit the first delivery proof');
+});
+
+test('stale probe or conflicting provider identity cannot grandfather a same-variant file',async () => {
+    db.prepare("UPDATE quality_profiles SET cutoff='hires-lossless',continue_upgrades=1 WHERE id=?").run(profileId);
+    db.exec("UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"hires-lossless\"}'; UPDATE ProviderItemAudioVariants SET bit_depth=24,sample_rate=96000;");
+    const audio=wav(1,24,48000); await fs.writeFile(filePath,audio);
+    db.prepare("UPDATE TrackFiles SET provider_item_id=2,source_audio_variant_id=1,provider='tidal',provider_entity_type='track',provider_id='source-track',codec='PCM',bit_depth=24,sample_rate=96000,channels=2,file_size=?").run(audio.length);
+    assert.deepEqual(await proof(),[],'stored 96kHz contradicts the current 48kHz file');
+    db.exec("UPDATE TrackFiles SET sample_rate=48000,provider_id='another-track'");
+    assert.deepEqual(await proof(),[],'provider identity is a full triple, not a shared variant id');
+});
+
+test('lossy upgrade comparison is codec aware and preserves measured same-source VBR',() => {
+    const profile = {...new QualityProfileRepository(db).get(profileId),continueUpgradesAfterCutoff:true};
+    const desired = {quality:'lossy',codec:'aac',bitrate:96000} as const;
+    assert.equal(importedFidelitySatisfies(profile,'lossy',observedFactsFromFile({codec:'opus',bitrate:96}),desired),true);
+    assert.equal(importedFidelitySatisfies(profile,'lossy',observedFactsFromFile({codec:'mp3',bitrate:96}),desired),false);
+    const high = {quality:'lossy',codec:'aac',bitrate:320000} as const;
+    const vbr = observedFactsFromFile({codec:'MPEG-4/AAC',bitrate:147});
+    assert.equal(vbr.codec,'aac','music-metadata codec names must use the shared codec vocabulary');
+    assert.equal(importedFidelitySatisfies(profile,'lossy',vbr,high),false);
+    assert.equal(importedFidelitySatisfies(profile,'lossy',vbr,high,true),true,
+        'actual average bitrate is not the declared encoder target');
+    const cutoff = {...profile,continueUpgradesAfterCutoff:false,cutoff:'lossy' as const};
+    assert.equal(importedFidelitySatisfies(cutoff,'lossy',vbr,high),true,'stopping at the lossy cutoff is respected');
+});
+
+test('verification uses the same explicit 24-bit conformity policy as import',()=>{
+    const profile = {...new QualityProfileRepository(db).get(profileId),continueUpgradesAfterCutoff:true};
+    const source = {quality:'hires-lossless',codec:'alac',bitDepth:24,sampleRate:96000} as const;
+    const cd = observedFactsFromFile({codec:'FLAC',bit_depth:16,sample_rate:44100,channel_count:2});
+    assert.equal(importedFidelitySatisfies(profile,'lossless',cd,source),false);
+    assert.equal(importedFidelitySatisfies(profile,'lossless',cd,source,false,{conformToTarget:true}),true,
+        'a permitted 16/44.1 output must not trigger perpetual 24-bit redownloads');
+});
+
+test('conformity setting is applied to real files and included in the admission snapshot',async context=>{
+    db.prepare("UPDATE quality_profiles SET cutoff='hires-lossless',continue_upgrades=1 WHERE id=?").run(profileId);
+    db.exec("UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"hires-lossless\"}'; UPDATE ProviderItemAudioVariants SET bit_depth=24,sample_rate=96000;");
+    const original = Config.getQualityConfig.bind(Config);
+    let conform = true;
+    context.mock.method(Config,'getQualityConfig',()=>({...original(),downconvert_existing_files:conform}));
+    await withVerifiedAcquisitionFiles(db,1,[],async(verified,current)=>{
+        assert.deepEqual([...verified],[1],'the actual 16-bit WAV is the configured converted output');
+        assert.equal(current(),true);
+        conform = false;
+        assert.equal(current(),false,'a changed output policy must reject the old proof');
+    });
+    assert.deepEqual(await proof(),[]);
+});
+
+test('release-level variant facts are valid only in the exact source occurrence',async () => {
+    db.exec("INSERT INTO ProviderItemAudioVariants(id,provider_item_id,variant_key,quality_class,bit_depth,sample_rate,codec) VALUES(2,1,'release-lossless','lossless',16,44100,'flac'); UPDATE AcquisitionPlanTracks SET provider_audio_variant_id=2;");
+    assert.deepEqual(await proof(),[1],'the source release may supply its member track capability');
+    db.exec("INSERT INTO ProviderItems(id,provider,entity_type,provider_id,title) VALUES(3,'tidal','release','unrelated-release','Unrelated'); UPDATE ProviderItemAudioVariants SET provider_item_id=3 WHERE id=2;");
+    assert.deepEqual(await proof(),[],'a different release is not the assignment source occurrence');
+});
+
+test('import provenance accepts a release variant through its explicit member occurrence',() => {
+    db.exec("INSERT INTO ProviderItemAudioVariants(id,provider_item_id,variant_key,quality_class,bit_depth,sample_rate,codec) VALUES(2,1,'release-lossless','lossless',16,44100,'flac');");
+    const file = db.prepare('SELECT id FROM TrackFiles WHERE track_id=1').get() as {id:number};
+    const organized = {processedTrackIds:['source-track'],importedTrackFileIds:{'source-track':file.id}} as any;
+    const offer = {provider:'tidal',providerTrackId:'source-track',providerTrackItemId:2,
+        providerAudioVariantId:2,providerEditionItemId:1,providerAlbumId:'source-release'};
+    persistDownloadedProviderProvenance(library,organized,[offer]);
+    assert.deepEqual(db.prepare('SELECT provider_item_id,source_audio_variant_id FROM TrackFiles WHERE id=?').get(file.id),
+        {provider_item_id:2,source_audio_variant_id:2});
+    assert.throws(()=>persistDownloadedProviderProvenance(library,organized,[{...offer,providerAlbumId:'another-release'}]),/exact source edition/);
+    assert.throws(()=>persistDownloadedProviderProvenance(library,organized,[{...offer,providerEditionItemId:undefined}]),/exact source edition/);
+    db.exec("INSERT INTO ProviderItems(id,provider,entity_type,provider_id,title) VALUES(3,'tidal','release','different-parent','Other'); UPDATE ProviderEditionMembers SET provider_edition_item_id=3 WHERE id=1;");
+    assert.throws(()=>persistDownloadedProviderProvenance(library,organized,[offer]),/exact source edition/);
+    assert.deepEqual(db.prepare('SELECT provider_item_id,source_audio_variant_id FROM TrackFiles WHERE id=?').get(file.id),
+        {provider_item_id:2,source_audio_variant_id:2},'failed admission rolls back rather than clearing provenance');
+});

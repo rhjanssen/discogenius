@@ -1,5 +1,73 @@
 # Managed library inventory and strict cleanup
 
+## October 8 delivered fidelity and source-variant consistency candidate
+
+Stereo acquisition verification now reuses the planning audio-facts comparator for
+depth/sample rate and codec-aware lossy fidelity. Actual codec names, including
+music-metadata's MPEG-4/AAC, use the shared vocabulary. The common legacy quality
+classifier also reads that codec before filename suffixes, so known AAC in a .flac
+path cannot acquire a lossless label and ALAC aliases remain lossless.
+
+The desired output comes from decideImportedQuality, including the same explicit
+downconvert_existing_files option as import. That option participates in the
+admission snapshot. Changing it during file verification invalidates the proof.
+Cutoff/continue-upgrade preferences remain authoritative. A distinct 24/96 offer
+does not silently match a 24/48 file while upgrades are enabled.
+
+Provider facts are expectations, not measurements. The exact same native variant
+may deliver 24/48 despite a representative 24/96 estimate, or a VBR stream whose
+average bitrate is lower than its encoder target. Avoiding repeated acquisition
+requires exact variant ID, full provider track identity, matching file size and
+stored probe facts agreeing with the fresh probe. This exception does not bypass
+the required imported tier. A different source variant, conflicting provider
+identity or stale probe cannot inherit it. Offer facts are never overwritten with
+one file's measurements.
+
+Planning already allows an audio variant attached to the source provider album.
+Import previously rejected it because it insisted the variant belong directly to
+the track. Provenance now also accepts the explicitly identified provider album
+when its provider/native ID agree and the actual track has a member occurrence in
+that album. It still records the track resource as owner of the file. Wrong or
+missing album context and absent membership fail transactionally without clearing
+previous provenance. Verification uses the same source occurrence boundary.
+
+Focused checks cover real 16/24-bit WAV files, distinct hi-res offers, unchanged
+deliveries below estimates, stale/conflicting facts, lossy codec ranking, explicit
+conformity and settings changing during verification, parent variants and provenance
+rollback. Native FFmpeg produced AAC targeting 320 kbps with a measured 207.08 kbps
+average; that exact measured delivery is accepted, deliberately stale bitrate data
+is rejected, and actual-app Resume completes only its explicit track request while
+the incomplete whole-edition request remains pending. Native ALAC at 16/48 is
+classified as LOSSLESS. Fixture artwork is absent and its scheduled executor is
+disabled; the disabled refresh label is not evidence of a production stall.
+
+A readonly live audit reconstructed 80 current plans, at most 20 each for Bastille,
+Bakermat, Dirty Honey and Cliff Richard, with no missing identities or duplicate
+resource keys in that sample. The bounded a-ha edition window had no current plans
+and does not validate its failing refresh. No parent variants were present in this
+sample, so the importer inconsistency is not a proven cause of those live failures.
+Live remains 2.21.0 paused. The latest checked writer has no holder or waiters;
+cumulative longest curation hold is still 48,516 ms, not evidence of a new stall.
+
+Final full CI passes all 2,172 API and 187 frontend tests, lint, typechecks and
+builds with no failing names or clone retries. Log:
+oct08-fidelity-codec-final-ci.log. Final native verification/audio-facts/provenance/
+import checks pass all 67 cases; the full shared audio-utility file passes all 16
+checks including native tagging/artwork tools. Logs:
+oct08-fidelity-codec-final-native.log and oct08-fidelity-shared-audio-native.log.
+The cancellation test's synthetic rename requires DOWNLOAD_PATH on the same
+filesystem as its temporary library; /tmp/fidelity-downloads avoids an EXDEV in
+that mock. Production file movement was not replaced with this mock.
+
+Remaining quality acceptance includes declared spatial/object-audio evidence.
+Consulted .ref_jellyfin/MediaBrowser.MediaEncoding/Probing/ProbeResultNormalizer.cs
+and .ref_jellyfin/MediaBrowser.Model/Entities/MediaStream.cs: Jellyfin carries the
+probed codec Profile and derives Atmos from its declared profile. Plain E-AC-3
+surround is insufficient. Our fresh probe/profile flow needs this validation before
+live already-imported spatial requests can be treated as accepted. Full PCM/tag/art
+acceptance, broader choice/redirect graphs, legacy artwork migration and witnessed
+inventory remain before the authorized live cleanup and download resumption.
+
 ## October 8 physical acquisition verification candidate
 
 TrackFiles row presence previously suppressed individual tracks without checking
@@ -52,11 +120,10 @@ verification/planning/queue cases and both bounded worker continuation cases.
 Logs: oct08-file-verification-final-ci.log, oct08-verification-native-final.log
 and oct08-verification-native-worker.log.
 
-This candidate compares normalized quality tiers. Source depth/sample rate affect
-the desired imported tier, but equal-tier delivered fidelity still needs a separate
-acceptance check before release: 24/48 versus 24/96, and codec-aware lossy output
-without interpreting variable average bitrate as a corrupt or inferior encode.
-Do not treat these tier checks as full acquisition-quality acceptance.
+This earlier candidate compared normalized quality tiers. Source depth/sample rate
+affected the desired imported tier; equal-tier fidelity was still outstanding.
+The delivered-fidelity candidate above addresses the stereo comparisons;
+do not treat these earlier tier checks as full acquisition-quality acceptance.
 
 ## October 8 explicit waiting-acquisition reasons candidate
 
