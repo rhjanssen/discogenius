@@ -1,5 +1,63 @@
 # Managed library inventory and strict cleanup
 
+## October 8 authoritative catalogue redirect evidence candidate
+
+Lidarr receives OldIds and OldRecordingIds from SkyHook and treats these as
+separate track and recording identity namespaces. Our local PostgreSQL mirror
+adapter omitted both. Its bounded edition hydration now reads track_gid_redirect
+and recording_gid_redirect through their indexed new_id columns, keeps ordered
+alias arrays, and carries them through the existing MusicBrainz DTO mapper as
+OldIds and OldRecordingIds. WS/2 reads do not invent aliases from names or slots.
+
+Before any release-group catalogue writes, reconciliation validates the complete
+incoming alias graph. Malformed arrays/entries, a source still present as a
+current ID, and one source redirecting to conflicting targets are rejected. One
+recording legitimately appearing on several editions may repeat the same agreed
+recording redirect. Track and recording namespaces remain distinct. Edition
+normalization applies the same validation for its own boundary.
+
+Readonly inspection against the configured MusicBrainz mirror confirms both
+redirect tables and indexes on new_id. None of the three failing obsolete track
+IDs has a track redirect. Cliff Richard's recording
+51495e16-4c34-4bcf-9b0e-eddec1d7e311 redirects to
+3fff979b-60bb-47b5-ae76-677ac457bf2f, Intro (Congratulations) / Shout. A-ha's old
+recording ae542cde-8a80-4580-922e-70a0df7c8d6c remains current; the edition now
+uses track fd37c81b-e5b4-4439-9f50-1bb2ddce95cc for that recording. Dirty Honey
+has neither a demonstrated track nor recording redirect in this bounded check.
+The actual production-container adapter also reads Dirty Honey's eight-track
+current edition, titled Drity Honey in the mirror, without the old recording,
+and a-ha's 33-track edition with the unchanged recording on its new track ID.
+These cases must not all be treated as one inferred merge.
+
+The updated actual adapter reads Cliff's 14-track edition and exposes its exact
+recording redirect to the validator in 62 ms. This is live catalogue-read
+validation, not a live database mutation or deployment. The proof script is
+saved outside the repository as oct08-real-redirect-proof.mjs. The production
+container independently confirms the same redirect in 51 ms. All 23 focused
+redirect/active-schema reconciliation checks pass in oct08-redirect-native.log,
+without skipped cases. Tests cover
+separate namespaces, agreed recording aliases across editions, conflicting
+cross-edition targets, contradictory current sources and malformed evidence.
+
+Final full CI passes lint, typechecks, API tests, all 187 frontend tests and
+both builds. Log: oct08-redirect-final-ci.log. The first TAP segment contains
+one newly failing file-level name, inventory-sidecars.test.ts, with the known
+Unable to deserialize cloned data transport error. Its built-in isolation=none
+retry passes all 28 cases. The failing-name comparison against the preceding
+spatial candidate therefore has no new behavioral regression after that retry.
+The 23 focused native checks have no failures or skips.
+
+This candidate supplies and validates evidence; it does not yet transfer file,
+sidecar, provider-match or acquisition owners to merge targets. Finish those
+admitted transactional transfers with rollback/collision checks and preserved
+waiting intent before retrying the live failures or claiming reconciliation is
+fixed. Preserve owned obsolete occurrences without authoritative reconciliation.
+
+Live remains 2.21.0 and downloads are paused. Latest completed root scan remains
+15759, with 0 removed, 0 added and 12 updated. It predates filesystem witnesses
+and cannot authorize strict deletion. The checked writer has no holder or
+waiters; cumulative longest hold remains 48,516 ms.
+
 ## October 8 spatial stream-evidence candidate
 
 Fresh FFprobe metrics now carry the audio stream profile. The shared quality

@@ -2,6 +2,32 @@ import type Database from "better-sqlite3";
 import type { LidarrTrack } from "../metadata/servarr-metadata.js";
 import { AcquisitionPlanRepository } from "../music/acquisition-plan-repository.js";
 
+/** Redirects are catalogue identity evidence, never inferred from slots or titles.
+ * Validate the full incoming graph before any admitted catalogue write. */
+export function collectCatalogRedirects(tracks: readonly LidarrTrack[]): { tracks: Map<string, string>; recordings: Map<string, string> } {
+  const result = { tracks: new Map<string, string>(), recordings: new Map<string, string>() };
+  const currentTracks = new Set(tracks.map(track => track.Id));
+  const currentRecordings = new Set(tracks.map(track => track.RecordingId));
+  for (const track of tracks) {
+    for (const [field, target, redirects, current] of [
+      ['OldIds', track.Id, result.tracks, currentTracks],
+      ['OldRecordingIds', track.RecordingId, result.recordings, currentRecordings],
+    ] as const) {
+      const aliases = track[field];
+      if (aliases == null) continue;
+      if (!Array.isArray(aliases)) throw new Error(`Invalid catalogue ${field} for ${target}`);
+      for (const alias of aliases) {
+        if (typeof alias !== 'string' || !alias.trim() || alias !== alias.trim() || current.has(alias))
+          throw new Error(`Invalid catalogue ${field} redirect for ${target}`);
+        const existing = redirects.get(alias);
+        if (existing && existing !== target) throw new Error(`Conflicting catalogue ${field} redirect ${alias}`);
+        redirects.set(alias, target);
+      }
+    }
+  }
+  return result;
+}
+
 /** A catalog position is a mutable fact, never a track identity. */
 export function normalizeEditionTracks(releaseMbid: string, tracks: readonly LidarrTrack[]): LidarrTrack[] {
   if (typeof releaseMbid !== "string" || !releaseMbid.trim() || !Array.isArray(tracks)) {
@@ -29,7 +55,9 @@ export function normalizeEditionTracks(releaseMbid: string, tracks: readonly Lid
     byPosition.set(slot, track.Id);
     byId.set(track.Id, track);
   }
-  return [...byId.values()];
+  const normalized = [...byId.values()];
+  collectCatalogRedirects(normalized);
+  return normalized;
 }
 
 /** Free changed positions only within the transaction that writes this edition.

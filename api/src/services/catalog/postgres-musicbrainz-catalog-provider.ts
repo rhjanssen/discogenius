@@ -351,6 +351,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       track_gid: string; track_pos: number; track_number: string | null; track_name: string; track_length: number | null;
       recording_gid: string; recording_name: string; recording_length: number | null; video: boolean;
       recording_comment: string | null; isrcs: string | null;
+      old_track_ids: string[]; old_recording_ids: string[];
     }>(
       `SELECT
           r.release_group AS rg_id,
@@ -360,6 +361,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           t.gid AS track_gid, t.position AS track_pos, t.number AS track_number, t.name AS track_name, t.length AS track_length,
           rec.gid AS recording_gid, rec.name AS recording_name, rec.length AS recording_length, rec.video,
           rec.comment AS recording_comment,
+          ARRAY(SELECT redirect.gid::text FROM track_gid_redirect redirect WHERE redirect.new_id=t.id ORDER BY redirect.gid) AS old_track_ids,
+          ARRAY(SELECT redirect.gid::text FROM recording_gid_redirect redirect WHERE redirect.new_id=rec.id ORDER BY redirect.gid) AS old_recording_ids,
           (SELECT string_agg(i.isrc::text, ',') FROM isrc i WHERE i.recording = rec.id) AS isrcs
        FROM release r
        LEFT JOIN release_status rst ON rst.id = r.status
@@ -476,12 +479,14 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       }
       const track: MbTrack = {
         id: row.track_gid,
+        oldIds: row.old_track_ids,
         number: row.track_number ?? String(row.track_pos),
         position: row.track_pos,
         title: row.track_name,
         length: row.track_length,
         recording: {
           id: row.recording_gid,
+          oldIds: row.old_recording_ids,
           title: row.recording_name,
           length: row.recording_length,
           video: row.video,

@@ -54,12 +54,15 @@ export interface MbArtist {
 
 export interface MbTrack {
   id?: string;
+  /** Local PostgreSQL mirror redirect evidence, not a WS/2 inferred identity. */
+  oldIds?: string[];
   number?: string;
   position?: number;
   title?: string;
   length?: number | null;
   recording?: {
     id?: string;
+    oldIds?: string[];
     title?: string;
     length?: number | null;
     video?: boolean;
@@ -173,6 +176,8 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
   return {
     Id: String(track.id ?? ""),
     RecordingId: String(recording?.id ?? ""),
+    ...(track.oldIds ? { OldIds: track.oldIds } : {}),
+    ...(recording?.oldIds ? { OldRecordingIds: recording.oldIds } : {}),
     TrackName: bestTitle,
     TrackNumber: String(track.number ?? track.position ?? ""),
     TrackPosition: Number(track.position ?? 0),

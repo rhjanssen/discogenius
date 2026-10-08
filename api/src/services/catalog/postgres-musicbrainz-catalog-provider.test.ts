@@ -49,6 +49,8 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
       }];
     }
     if (sql.includes("JOIN medium m")) {
+      assert.match(sql,/track_gid_redirect redirect WHERE redirect.new_id=t.id/);
+      assert.match(sql,/recording_gid_redirect redirect WHERE redirect.new_id=rec.id/);
       return [{
         rg_id: 101,
         edition_id: 201,
@@ -61,6 +63,8 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
         format: "Digital Media",
         medium_name: "",
         track_gid: "04f5b2f0-ec1f-4b81-9dd6-61a21b451f52",
+        old_track_ids: ["old-track-id"],
+        old_recording_ids: ["old-recording-id"],
         track_pos: 1,
         track_number: "1",
         track_name: "The Spirit",
@@ -123,6 +127,8 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
     assert.deepEqual(entry.detail.Releases[0].Label, ["Island"]);
     assert.deepEqual(entry.detail.Releases[0].ExternalUrls, ["https://tidal.com/album/123"]);
     assert.deepEqual(entry.detail.Releases[0].Tracks[0].Isrcs, ["GBUMTEST00001"]);
+    assert.deepEqual(entry.detail.Releases[0].Tracks[0].OldIds,["old-track-id"]);
+    assert.deepEqual(entry.detail.Releases[0].Tracks[0].OldRecordingIds,["old-recording-id"]);
     assert.deepEqual(entry.detail.genres, ["pop", "alternative"]);
     assert.deepEqual(entry.detail.aliases, ["Spirit"]);
     assert.deepEqual(entry.detail.links, [{ type: "official homepage", target: "https://example.com/spirit" }]);

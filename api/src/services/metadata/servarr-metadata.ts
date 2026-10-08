@@ -10,7 +10,7 @@ import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
-import { groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions } from "../catalog/catalog-track-reconciliation.js";
+import { collectCatalogRedirects, groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions } from "../catalog/catalog-track-reconciliation.js";
 import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
@@ -116,6 +116,9 @@ export interface LidarrRelease {
 export interface LidarrTrack {
   Id: string;
   RecordingId: string;
+  /** Authoritative catalogue redirects, distinct from occurrence replacement. */
+  OldIds?: string[];
+  OldRecordingIds?: string[];
   TrackName: string;
   TrackNumber: string;
   TrackPosition: number;
@@ -821,6 +824,7 @@ export class ServarrMetadataService {
     const releases = (detail.Releases || []).map(release => ({
       ...release, Tracks: normalizeEditionTracks(release.Id, release.Tracks),
     }));
+    collectCatalogRedirects(releases.flatMap(release => release.Tracks));
     const trackEditions = new Map<string, string>();
     for (const release of releases) for (const track of release.Tracks) {
       const previous = trackEditions.get(track.Id);

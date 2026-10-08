@@ -2,6 +2,18 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: the local MusicBrainz adapter now carries indexed
+  authoritative old track/recording IDs, and catalogue ingestion validates the
+  full redirect graph before writes. Full CI and all 187 frontend tests pass;
+  the known inventory-sidecars clone error passes all 28 cases on isolation retry.
+  All 23 focused native checks pass. The actual adapter exposes Cliff Richard's
+  Shout recording redirect from the configured mirror. None of the three known
+  failing track IDs has a track redirect; a-ha has a replaced occurrence of the
+  same recording. Finish transactional owner transfers/collision handling and
+  preserve waiting intent before live retries. Evidence plumbing alone does not
+  resolve owned obsolete occurrences. Latest live scan remains 15759 on 2.21.0,
+  downloads paused, no held/waiting writer.
+
 - local candidate, October 8: spatial classification now requires fresh stream
   profile evidence. Full CI passes 2,176 API and 187 frontend tests, lint,
   typechecks and builds; 66 focused native checks pass without skips.
