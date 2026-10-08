@@ -34,91 +34,54 @@ function configPruneJob(refreshArtworkPreference: boolean) {
   } as any;
 }
 
-test("ordinary ConfigPrune keeps its existing prune then reconciliation behavior", async () => {
+test("ordinary ConfigPrune keeps missing-only local repair", async () => {
   const events: string[] = [];
   const progress: string[] = [];
-
-  await maintenanceModule.runConfigPruneMaintenance(
-    configPruneJob(false),
-    {
-      updateCommandDescription: (update) => {
-        progress.push(String(update.description));
-      },
+  await maintenanceModule.runConfigPruneMaintenance(configPruneJob(false), {
+    updateCommandDescription: update => progress.push(String(update.description)),
+  }, {
+    pruneDisabledMetadata: async () => { events.push("prune"); },
+    reconcileLibraryMetadata: async options => {
+      events.push("reconcile");
+      assert.equal(options.repairMissingOnly,true);
+      assert.equal(options.writeEmbeddedMediaMetadata,false);
+      assert.equal(options.fetchMissingLyrics,false);
+      return {downloaded:0,failed:0,skipped:0};
     },
-    {
-      refreshArtworkPreferenceCache: async () => {
-        events.push("refresh");
-        return { total: 0, completed: 0, failed: 0, albums: 0, artists: 0 };
-      },
-      pruneDisabledMetadata: async () => {
-        events.push("prune");
-      },
-      reconcileLibraryMetadata: async () => {
-        events.push("reconcile");
-        return { downloaded: 0, failed: 0, skipped: 0 };
-      },
-    },
-  );
-
-  assert.deepEqual(events, ["prune", "reconcile"]);
-  assert.deepEqual(progress, []);
+  });
+  assert.deepEqual(events,["prune","reconcile"]);
+  assert.deepEqual(progress,[]);
 });
 
-test("artwork preference ConfigPrune refreshes globally before sidecars and embeds", async () => {
+test("artwork preference uses one library reconciliation with live detail and honest completion", async () => {
   const events: string[] = [];
-  const progress: Array<{ progress?: number; description?: string }> = [];
-  let suppliedYield: (() => Promise<void>) | undefined;
-  const yieldToEventLoop = async () => {
-    events.push("yield");
-  };
-
-  await maintenanceModule.runConfigPruneMaintenance(
-    configPruneJob(true),
-    {
-      updateCommandDescription: (update) => progress.push({ ...update }),
-      yieldToEventLoop,
+  const progress: Array<{progress?:number;description?:string}> = [];
+  await maintenanceModule.runConfigPruneMaintenance(configPruneJob(true), {
+    updateCommandDescription: update => progress.push({...update}),
+  }, {
+    pruneDisabledMetadata: async () => {events.push("prune");},
+    reconcileLibraryMetadata: async options => {
+      events.push("reconcile");
+      assert.equal(options.repairMissingOnly,false);
+      assert.equal(options.writeEmbeddedMediaMetadata,true);
+      assert.equal(options.fetchMissingLyrics,false);
+      options.onProgress?.("The Example Artist - checking album sidecars (1/2)");
+      return {downloaded:2,failed:0,skipped:4};
     },
-    {
-      refreshArtworkPreferenceCache: async (options) => {
-        events.push("refresh");
-        suppliedYield = options.yieldToEventLoop;
-        options.onProgress?.({
-          completed: 3,
-          total: 3,
-          albumsCompleted: 2,
-          artistsCompleted: 1,
-        });
-        return { total: 3, completed: 3, failed: 0, albums: 2, artists: 1 };
-      },
-      pruneDisabledMetadata: async () => {
-        events.push("prune");
-      },
-      reconcileLibraryMetadata: async () => {
-        events.push("reconcile");
-        return { downloaded: 2, failed: 0, skipped: 4 };
-      },
-    },
-  );
-
-  assert.deepEqual(events, ["refresh", "prune", "reconcile"]);
-  assert.equal(suppliedYield, yieldToEventLoop);
-  assert.equal(progress.at(-1)?.progress, 100);
-  assert.match(
-    String(progress.at(-1)?.description),
-    /reconciled 2 library metadata file\(s\), 0 failed/,
-  );
+  });
+  assert.deepEqual(events,["prune","reconcile"]);
+  assert.equal(progress.at(-1)?.progress,100);
+  assert.match(String(progress.at(-1)?.description),/reconciled 2 library metadata file\(s\), 0 failed/);
+  assert.ok(progress.some(update => update.description?.includes("The Example Artist")));
 });
 
-test("artwork preference failures cannot report a fully applied source switch", async () => {
-  for (const failure of ["source", "library"]) {
-    const progress: Array<{progress?:number}> = [];
-    await assert.rejects(maintenanceModule.runConfigPruneMaintenance(configPruneJob(true), {
-      updateCommandDescription: update => progress.push(update),
-    }, {
-      refreshArtworkPreferenceCache: async () => ({total:1,completed:1,failed:failure === "source" ? 1 : 0,albums:1,artists:0}),
-      pruneDisabledMetadata: async () => {},
-      reconcileLibraryMetadata: async () => ({downloaded:0,skipped:0,failed:failure === "library" ? 1 : 0}),
-    }), /Artwork preference update incomplete/);
-    assert.equal(progress.some(update => update.progress === 100), false);
-  }
+test("artwork preference library failures cannot report a fully applied source switch", async () => {
+  const progress: Array<{progress?:number}> = [];
+  await assert.rejects(maintenanceModule.runConfigPruneMaintenance(configPruneJob(true), {
+    updateCommandDescription: update => progress.push(update),
+  }, {
+    pruneDisabledMetadata: async () => {},
+    reconcileLibraryMetadata: async () => ({downloaded:0,skipped:0,failed:1}),
+  }), /Artwork preference update incomplete/);
+  assert.equal(progress.some(update => update.progress === 100),false);
 });

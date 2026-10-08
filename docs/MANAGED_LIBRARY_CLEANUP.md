@@ -1,5 +1,43 @@
 # Managed library inventory and strict cleanup
 
+## October 8 single library artwork reconciliation candidate
+
+Changing the preferred artwork source previously ran two passes. The first
+resolved every catalogue album and artist, including items with no imported
+files. The second already resolves artwork for the actual library edition and
+artist before publishing sidecars and embedded covers. The first pass was
+redundant and could fetch artwork for tens of thousands of unrelated albums.
+
+ConfigPrune now prunes disabled metadata and runs that existing library pass
+once. Explicit source changes replace existing sidecars and embedded covers;
+ordinary repair remains missing-only, without embedded-media mutation or online
+lyrics. A failed library operation still prevents successful completion. Removed
+the unused whole-catalogue prewarmer and its dependency rather than retaining a
+second implementation. The command no longer displays 95% throughout this pass.
+
+All 13 focused Windows and production-container tests pass without skips. The
+real FLAC regression includes an unrelated catalogue album and asserts its URL
+is never fetched. An actual isolated app source switch completes command 3;
+physical inspection confirms the selected full-resolution 800x600 sidecar,
+matching embedded art, unchanged decoded audio and unchanged MetadataFiles ID.
+This does not yet prove replacement of sidecar-only artist assets or secondary
+artwork roles. Those gaps preceded this change and remain release prerequisites.
+
+Final full CI passes all 2,209 API tests and 187 frontend tests, lint, typechecks
+and both builds in 550.88 seconds. The first TAP segment has no failing names
+and no clone retry. Log: oct08-art-single-pass-ci.log. The updated production
+image builds and its isolated compose app starts successfully. Activity reports
+Update Library Artwork with one reconciled file and zero failures; completion
+icons retain the green Fluent token. The disposable app volume/container and
+agent-created browser tab were removed after verification.
+
+Live remains healthy 2.21.0 with downloads paused. Scan 16039 advanced to
+354/518 artists with no current writer holder or waiters. This candidate is not
+deployed. No live cache original, library file or download request was deleted.
+Legacy-cache adoption and witnessed retirement remain required to reclaim the
+measured 91.94 GB of original artwork. Removing the redundant prewarmer avoids
+unnecessary acquisition; it does not itself reclaim those existing bytes.
+
 ## October 8 authoritative catalogue redirect evidence candidate
 
 Lidarr receives OldIds and OldRecordingIds from SkyHook and treats these as

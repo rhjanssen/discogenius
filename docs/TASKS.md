@@ -2,6 +2,17 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: artwork source changes now reconcile imported
+  library owners once, removing the redundant whole-catalogue prewarm pass.
+  All 13 focused Windows/native tests pass, including real FLAC source switching
+  that never fetches an unrelated catalogue album. Actual isolated app completes
+  command 3 with full-resolution selected sidecar/embedded cover, unchanged PCM
+  and exact owner. Full CI passes 2,209 API and 187 frontend tests, lint/types
+  and both builds without failing names or clone retries; production image and
+  isolated app validation pass. No live deployment or cache retirement. Finish sidecar-only
+  artist/secondary artwork source replacement and bounded legacy cache adoption
+  and retirement; the measured 91.94 GB of cache originals is still present.
+
 - local candidate, October 8: authoritative recording redirects now transfer
   all active-schema recording FK owners in a savepoint within the admitted
   edition write. Media/sidecar row identity and provider decisions survive;

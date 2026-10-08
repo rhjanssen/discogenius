@@ -870,11 +870,18 @@ test("explicit artwork preference job replaces existing full-resolution sidecar 
     await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
     const owner = dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(cover);
     assert.deepEqual(fs.readFileSync(cover),old);
+    dbModule.db.exec(`INSERT INTO ArtistMetadata(mbid,name) VALUES('unmanaged-art','Catalog Only');
+        INSERT INTO Albums(mbid,artist_mbid,title,images) VALUES('unmanaged-album','unmanaged-art','Catalog Only Album','[{"coverType":"Cover","url":"https://fixture.example/unmanaged.jpg"}]');`);
+    const requests: string[] = [];
     const previousFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(selected,{headers:{"content-type":"image/jpeg"}});
+    globalThis.fetch = async input => {
+        requests.push(String(input));
+        return new Response(selected,{headers:{"content-type":"image/jpeg"}});
+    };
     try {
         const { runConfigPruneMaintenance } = await import("../commands/scheduler-maintenance-handlers.js");
         await runConfigPruneMaintenance({id:1,name:"ConfigPrune",payload:{refreshArtworkPreference:true},status:"started",progress:0} as any,{updateCommandDescription:()=>{}});
+        assert.equal(requests.some(url => url.includes("unmanaged.jpg")),false,"library artwork changes must not fetch the unrelated catalog");
         assert.deepEqual(fs.readFileSync(cover),selected,"selected source must replace an existing cover, not only fill missing files");
         assert.deepEqual(dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(cover),owner);
         const { parseFile } = await import("music-metadata");
