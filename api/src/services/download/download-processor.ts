@@ -16,6 +16,8 @@ import { buildDurableQueueOrderClause } from "../commands/command-ordering.js";
 import { getConfigSection, Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
 import { DownloadWaitQueue, type QueueRankRow } from './download-wait-queue.js';
+import { withVerifiedAcquisitionFiles } from '../music/acquisition-file-verification.js';
+import { evaluateWaitingAcquisitionPlan } from './waiting-acquisition-plan.js';
 import {
     invalidateAlbumDownloadStatus,
     invalidateAllDownloadState,
@@ -603,6 +605,8 @@ export class DownloadProcessor {
     private admissionCursor: QueueRankRow | null = null;
     private schedulingQueued = false;
     private restartAdmissionQueued = false;
+    private admissionVerificationRunning = false;
+    private admissionEpoch = 0;
 
     /**
      * Active download slots keyed by command id. Up to MAX_CONCURRENT_DOWNLOADS
@@ -1577,7 +1581,7 @@ export class DownloadProcessor {
     async processQueue(restartAdmission = true): Promise<void> {
         if (this.suspended) return;
         return withSqliteWriteGate(() => {
-            if (restartAdmission) this.admissionCursor = null;
+            if (restartAdmission) { this.admissionCursor = null; this.admissionEpoch++; }
             this.scheduleQueueWithWriteLock();
             this.armRetryWake();
         }, 'download:schedule');
@@ -1626,15 +1630,8 @@ export class DownloadProcessor {
         // otherwise fast downloads can strand dozens of finished albums behind
         // slow file moves and retags. Count queued handoffs too, so a worker
         // restart cannot bypass the limit by emptying the in-memory list.
-        const pendingImportCount = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM commands INDEXED BY idx_commands_status_name_started
-            WHERE status IN ('queued', 'started')
-              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
-              AND json_valid(payload)
-              AND json_extract(payload, '$.downloadState.state') = 'importPending'
-        `).get(...DOWNLOAD_COMMAND_NAMES) as { count: number };
-        if (pendingImportCount.count >= MAX_PENDING_IMPORTS) return;
+        if (this.importBackpressureReached()) return;
+        if (this.admissionVerificationRunning) return;
 
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
         // most one per provider (same-provider downloads stay serialized). ──
@@ -1662,6 +1659,11 @@ export class DownloadProcessor {
                 const claimed = page.claimed;
                 if (claimed) {
                     job = CommandQueueManager.get(claimed.commandId) ?? undefined;
+                } else if (page.verificationWait) {
+                    this.admissionVerificationRunning = true;
+                    const wait = page.verificationWait;
+                    const epoch = this.admissionEpoch;
+                    setImmediate(() => { void this.verifyWaitingFiles(wait.id, epoch, page.nextCursor); });
                 } else if (page.nextCursor) {
                     this.scheduleNext(false);
                 }
@@ -1675,6 +1677,44 @@ export class DownloadProcessor {
             }
 
             void this.dispatchDownloadPhase(job);
+        }
+    }
+
+    private importBackpressureReached():boolean {
+        const pendingImportCount = db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM commands INDEXED BY idx_commands_status_name_started
+            WHERE status IN ('queued', 'started')
+              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
+              AND json_valid(payload)
+              AND json_extract(payload, '$.downloadState.state') = 'importPending'
+        `).get(...DOWNLOAD_COMMAND_NAMES) as { count: number };
+        return pendingImportCount.count >= MAX_PENDING_IMPORTS;
+    }
+
+    private async verifyWaitingFiles(waitId:number, epoch:number, cursor:QueueRankRow|null):Promise<void> {
+        try {
+            const wait = DownloadWaitQueue.get(waitId);
+            if (!wait || wait.command_id != null || wait.plan_id == null) return;
+            const plan = evaluateWaitingAcquisitionPlan(db,wait.plan_id,wait.payload,wait.provider);
+            if (plan.status !== 'ready') return;
+            await withVerifiedAcquisitionFiles(db,plan.planId,wait.track_ids,async (verified,snapshotCurrent) => {
+                await withSqliteWriteGate(() => {
+                    if (this.suspended || this.isPaused || this.importBackpressureReached() || !snapshotCurrent()) return;
+                    const current = DownloadWaitQueue.get(waitId);
+                    if (!current || current.command_id != null || JSON.stringify(current.payload) !== JSON.stringify(wait.payload)
+                        || JSON.stringify(current.track_ids) !== JSON.stringify(wait.track_ids)) return;
+                    const currentPlan = evaluateWaitingAcquisitionPlan(db,current.plan_id ?? -1,current.payload,current.provider);
+                    if (currentPlan.status !== 'ready' || currentPlan.planId !== plan.planId) return;
+                    DownloadWaitQueue.claim(waitId,verified);
+                },'download:verified-file-admission');
+            });
+        } catch (error) {
+            console.warn('[DOWNLOAD-PROCESSOR] Imported files could not be verified:', error);
+        } finally {
+            this.admissionVerificationRunning = false;
+            if (epoch === this.admissionEpoch) this.admissionCursor = cursor;
+            this.scheduleNext(epoch !== this.admissionEpoch);
         }
     }
 

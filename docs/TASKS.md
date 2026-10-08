@@ -2,6 +2,24 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: acquisition admission verifies existing audio outside
+  the SQLite write gate before skipping tracks or retiring a request. It checks
+  library containment, regular-file identity, probed codec/quality, canonical
+  duration and the import/upgrade policy. Shared file admission stays held through
+  the brief commit; the worker rechecks pause, import backpressure, exact request,
+  selected offer and catalogue/profile snapshot. Missing or insufficient-quality
+  files remain download candidates. Complete verified requests get completed
+  history; partial offers cannot retire a whole-edition request, including when
+  cached coverage is wrong. The ordinary command projection skips no unverified
+  rows. This candidate is not deployed. Broader persisted-choice acceptance,
+  recording redirects, legacy artwork migration and fresh witnessed inventory
+  remain before the authorized live rename/retag/cleanup and queue resumption.
+  Dashboard still calls its pending download section Active; include clearer
+  queued/running wording in the remaining UI pass.
+  Before release, extend quality acceptance beyond normalized tiers to delivered
+  fidelity within a tier, including 24/48 versus 24/96 and codec-aware lossy
+  comparisons without misclassifying valid variable-bitrate output.
+
 - local candidate, October 8: waiting acquisition admission distinguishes stale
   offers, unavailable offers, conflicting identities, disabled libraries, missing
   assignments/requested tracks and imported rows requiring file verification.

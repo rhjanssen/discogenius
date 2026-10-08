@@ -1,5 +1,63 @@
 # Managed library inventory and strict cleanup
 
+## October 8 physical acquisition verification candidate
+
+TrackFiles row presence previously suppressed individual tracks without checking
+whether the file still existed or met the requested quality. The command projection
+now includes every unverified assignment. Worker admission separates short database
+decisions from asynchronous filesystem work, then rechecks the exact request and
+selected plan under the write gate before claiming or retiring anything.
+
+Consulted .ref_lidarr/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs.
+Lidarr separates missing tracks from the quality/profile upgrade decision. Our
+verification applies the configured import conversion and cutoff policy to probed
+local audio. Provider variant facts describe the desired source/conversion only;
+they never prove a local file's quality. A filename's suffix and cached quality
+label also cannot substitute for its probed codec and technical facts.
+
+The verifier checks regular files within the real library root, readable audio
+metrics, positive duration, canonical duration tolerance, stereo/spatial separation
+and the requested quality policy. It compares device/inode/size/mtime/ctime around
+probing and checks successful witnesses again before admission. Shared file locks
+exclude our writers through the commit callback. Pause, durable import backpressure,
+changed request identity and changed catalogue/profile facts prevent stale admission.
+External writers cannot be made atomic with our locks; keep other managers from
+mutating the files during live acceptance. Metadata parsing is not a complete PCM
+decode or an identity fingerprint, so this is acquisition admission evidence, not
+proof that the whole library passed audio/tag/artwork acceptance.
+
+Verified explicit-track requests or complete whole-edition offers can retire their
+exact waiting row with completed history and Already imported; files verified.
+Whole-edition completion requires real assignment count, persisted target count
+and current canonical track count to agree. Cached coverage alone cannot authorize
+it. Partial offers remain queued for refreshed track information. Missing, unreadable
+or lower-quality files are eligible for download rather than inferred completion.
+This does not delete library files or bypass strict cleanup inventory witnesses.
+
+Focused checks use real 16-bit and 24-bit WAV files, corrupt/missing files,
+duration mismatch, out-of-root paths, file writer admission, changed catalogue facts,
+verified completion, incomplete coverage and worker pause/request/backpressure
+rechecks. Actual app testing resumes only an isolated fixture queue: the explicit
+track request completes, the incomplete whole-edition request remains pending, and
+the 390px view shows the green history check and the remaining dependency reason.
+The fixture intentionally has no cover source. Live remains healthy 2.21.0 with
+downloads paused; scan 15759 still lacks the candidate's filesystem witnesses.
+
+Full CI passes, reporting 2,164 API checks and 187 frontend tests plus lint,
+typechecks and builds. The final run encountered the known Node clone transport
+failure in edition-monitoring-contract.test.ts; its built-in isolated retry passed
+all 21 cases. No behavioural failure remained. The preceding full run passed all
+2,164 API checks without that transport failure. Final native checks pass 45
+verification/planning/queue cases and both bounded worker continuation cases.
+Logs: oct08-file-verification-final-ci.log, oct08-verification-native-final.log
+and oct08-verification-native-worker.log.
+
+This candidate compares normalized quality tiers. Source depth/sample rate affect
+the desired imported tier, but equal-tier delivered fidelity still needs a separate
+acceptance check before release: 24/48 versus 24/96, and codec-aware lossy output
+without interpreting variable average bitrate as a corrupt or inferior encode.
+Do not treat these tier checks as full acquisition-quality acceptance.
+
 ## October 8 explicit waiting-acquisition reasons candidate
 
 A nullable download-command result conflated unavailable sources, invalid request

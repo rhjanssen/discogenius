@@ -400,6 +400,7 @@ export class DownloadWaitQueue {
   static claimNextPage(excludeProviders: ReadonlySet<string> = new Set(), after: QueueRankRow | null = null): {
     claimed: { wait: DownloadWaitRow; commandId: number } | null;
     nextCursor: QueueRankRow | null;
+    verificationWait?: DownloadWaitRow;
   } {
     // Each scheduling turn admits one bounded page. The worker releases its
     // write gate before continuing, so blocked requests cannot stall the API.
@@ -423,6 +424,9 @@ export class DownloadWaitQueue {
       if (claimed) {
         return { claimed, nextCursor: null };
       }
+      if (this.get(wait.id)?.payload.acquisitionWaitReason === 'imported_files_need_verification') {
+        return { claimed:null, nextCursor:{id:wait.id,queue_order:wait.queue_order}, verificationWait:wait };
+      }
     }
 
     const last = candidates.at(-1);
@@ -430,7 +434,7 @@ export class DownloadWaitQueue {
       ? { id: Number(last.id), queue_order: Number(last.queue_order) } : null };
   }
 
-  static claim(waitId: number): { wait: DownloadWaitRow; commandId: number } | null {
+  static claim(waitId: number, verifiedTrackIds?: ReadonlySet<number>): { wait: DownloadWaitRow; commandId: number } | null {
     const wait = this.get(waitId);
     if (!wait || wait.command_id != null) {
       return wait?.command_id != null
@@ -444,7 +448,7 @@ export class DownloadWaitQueue {
 
     if (wait.plan_id != null) {
       const plan = evaluateWaitingAcquisitionPlan(db, wait.plan_id, wait.payload, wait.provider);
-      const result = plan.status === "blocked" ? plan : evaluateAcquisitionDownload(db, plan.planId, { trackIds: wait.track_ids });
+      const result = plan.status === "blocked" ? plan : evaluateAcquisitionDownload(db, plan.planId, { trackIds: wait.track_ids, verifiedTrackIds });
       // Unavailable, stale or ambiguous plans are not cancelled requests.
       // Keep their exact intent until replanning or an explicit user cancellation.
       if (result.status === "blocked") {
@@ -453,6 +457,18 @@ export class DownloadWaitQueue {
       }
       this.setAdmissionReason(wait, null);
       const command = result.command;
+      if (result.status === 'satisfied') {
+        db.transaction(() => {
+          const commandId = CommandQueueManager.push(command.name, {
+            ...command.body, downloadState: { ...command.body.downloadState, state:'completed',
+              progress:100,statusMessage:'Already imported; files verified' },
+          }, `verified-wait:${wait.id}`, wait.priority, wait.trigger);
+          if (!commandId || !CommandQueueManager.complete(commandId)) throw new Error('Could not record verified acquisition completion');
+          db.prepare('DELETE FROM DownloadQueue WHERE id=? AND command_id IS NULL').run(wait.id);
+        })();
+        notifyQueueChanged();
+        return null;
+      }
       commandName = command.name;
       body = command.body;
       refId = command.refId;

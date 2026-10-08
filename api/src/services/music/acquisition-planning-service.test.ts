@@ -272,9 +272,20 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
       "A partial-track request must not silently discard an obsolete requested identity");
     assert.deepEqual(
       partialCommand?.body.trackOffers?.map((offer) => offer.canonicalTrackMbid),
-      ["track-2", "track-3", "track-4"],
-      "Only incomplete assigned tracks should be queued",
+      ["track-1", "track-2", "track-3", "track-4"],
+      "Unverified imported rows must not suppress a download",
     );
+    const verified = evaluateAcquisitionDownload(db,maxPlanId!,{verifiedTrackIds:new Set([1])});
+    assert.equal(verified.status,'ready');
+    if (verified.status === 'ready') assert.deepEqual(verified.command.body.trackOffers?.map(offer => offer.canonicalTrackMbid),['track-2','track-3','track-4']);
+    assert.equal(evaluateAcquisitionDownload(db,maxPlanId!,{verifiedTrackIds:new Set([1,2,3,4])}).status,'satisfied');
+    assert.equal(evaluateAcquisitionDownload(db,maxPlanId!,{trackIds:[1],verifiedTrackIds:new Set([1])}).status,'satisfied');
+    db.prepare('UPDATE AcquisitionPlans SET target_track_count=5 WHERE id=?').run(maxPlanId);
+    assert.deepEqual(evaluateAcquisitionDownload(db,maxPlanId!,{verifiedTrackIds:new Set([1,2,3,4])}),{status:'blocked',reason:'missing_assignments'});
+    db.prepare('UPDATE AcquisitionPlans SET target_track_count=4,coverage=4 WHERE id=?').run(maxPlanId);
+    db.prepare('DELETE FROM AcquisitionPlanTracks WHERE plan_id=? AND track_id=4').run(maxPlanId);
+    assert.deepEqual(evaluateAcquisitionDownload(db,maxPlanId!,{verifiedTrackIds:new Set([1,2,3,4])}),{status:'blocked',reason:'missing_assignments'},
+      'cached coverage cannot conceal a missing assignment');
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });

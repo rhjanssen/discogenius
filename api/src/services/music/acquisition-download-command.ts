@@ -23,6 +23,9 @@ interface PlanHeader {
   release_group_mbid: string;
   album_title: string;
   artist_name: string;
+  coverage: number;
+  target_track_count: number;
+  canonical_track_count: number;
 }
 
 interface PlanSource {
@@ -79,6 +82,7 @@ export function acquisitionWaitMessage(reason: unknown): string | undefined {
 
 export type AcquisitionDownloadEvaluation =
   | { status: "ready"; command: AcquisitionDownloadCommand }
+  | { status: "satisfied"; command: AcquisitionDownloadCommand }
   | { status: "blocked"; reason: AcquisitionWaitReason };
 
 function sourceQuality(snapshot: string | null): string | null {
@@ -135,7 +139,7 @@ export function buildAcquisitionDownloadCommand(
   planId: number,
   options: { trackIds?: readonly number[] } = {},
 ): AcquisitionDownloadCommand | null {
-  const result = evaluateAcquisitionDownload(db, planId, options);
+  const result = evaluateAcquisitionDownload(db, planId, { ...options, allowUnverifiedProjection: true });
   return result.status === "ready" ? result.command : null;
 }
 
@@ -143,7 +147,7 @@ export function buildAcquisitionDownloadCommand(
 export function evaluateAcquisitionDownload(
   db: Database.Database,
   planId: number,
-  options: { trackIds?: readonly number[] } = {},
+  options: { trackIds?: readonly number[]; verifiedTrackIds?: ReadonlySet<number>; allowUnverifiedProjection?: boolean } = {},
 ): AcquisitionDownloadEvaluation {
   const header = db.prepare(`
     SELECT
@@ -151,11 +155,14 @@ export function evaluateAcquisitionDownload(
       plan.provider,
       plan.composition,
       plan.download_mode,
+      plan.coverage,
+      plan.target_track_count,
       library.id AS library_id,
       library.name AS library_name,
       library.root_path,
       quality_profile.allowed_source_formats,
       release.id AS edition_id,
+      (SELECT COUNT(*) FROM Tracks target WHERE target.album_edition_id=release.id) AS canonical_track_count,
       release.mbid AS release_mbid,
       release_group.mbid AS release_group_mbid,
       release_group.title AS album_title,
@@ -220,7 +227,7 @@ export function evaluateAcquisitionDownload(
           AND file.file_class = 'audio'
       ) THEN 1 ELSE 0 END AS complete
     FROM AcquisitionPlanTracks plan_track
-    JOIN Tracks track ON track.id = plan_track.track_id
+    JOIN Tracks track ON track.id = plan_track.track_id AND track.album_edition_id = ?
     JOIN Recordings recording ON recording.id = track.recording_id
     JOIN ProviderTrackMatches track_match
       ON track_match.id = plan_track.provider_track_match_id
@@ -234,7 +241,7 @@ export function evaluateAcquisitionDownload(
       ON release_item.id = release_match.provider_edition_item_id
     WHERE plan_track.plan_id = ?
     ORDER BY track.medium_position, track.position, track.id
-  `).all(header.library_id, header.edition_id, planId) as PlanTrack[];
+  `).all(header.library_id, header.edition_id, header.edition_id, planId) as PlanTrack[];
   const requestedTrackIds = new Set(options.trackIds || []);
   if (requestedTrackIds.size > 0) {
     const assigned = new Set(tracks.map(track => track.track_id));
@@ -242,7 +249,16 @@ export function evaluateAcquisitionDownload(
     tracks = tracks.filter((track) => requestedTrackIds.has(track.track_id));
   }
   if (tracks.length === 0) return { status: "blocked", reason: "missing_assignments" };
-  if (tracks.every((track) => Boolean(track.complete))) return { status: "blocked", reason: "imported_files_need_verification" };
+  if (options.verifiedTrackIds === undefined && !options.allowUnverifiedProjection && tracks.some(track => track.complete)) {
+    return { status: "blocked", reason: "imported_files_need_verification" };
+  }
+  // Only the filesystem verifier may authorize skipping imported rows.
+  for (const track of tracks) track.complete = Number(options.verifiedTrackIds?.has(track.track_id) ?? false);
+  const satisfied = tracks.every(track => track.complete);
+  if (satisfied && requestedTrackIds.size === 0 && (header.coverage < header.target_track_count
+      || tracks.length !== header.target_track_count || header.target_track_count !== header.canonical_track_count)) {
+    return { status: "blocked", reason: "missing_assignments" };
+  }
 
   const forceTracks = requestedTrackIds.size > 0
     || header.download_mode === "tracks"
@@ -279,7 +295,7 @@ export function evaluateAcquisitionDownload(
   const slot = acquisitionProfileSlot(header.allowed_source_formats);
   if (!slot) return { status: "blocked", reason: "invalid_library_profile" };
 
-  return { status: "ready", command: {
+  return { status: satisfied ? "satisfied" : "ready", command: {
     name: CommandNames.DownloadAlbum,
     refId: requestedTrackIds.size > 0
       ? `acquisition-plan:${planId}:tracks:${[...requestedTrackIds].sort((a, b) => a - b).join(",")}`
