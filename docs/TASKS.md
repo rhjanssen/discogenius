@@ -2,6 +2,22 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: authoritative recording redirects now transfer
+  all active-schema recording FK owners in a savepoint within the admitted
+  edition write. Media/sidecar row identity and provider decisions survive;
+  selected waiting plan keys follow canonical identity changes. Exact duplicate
+  credits consolidate, conflicting owners roll back. Claimed/executing snapshots,
+  standalone requests and artwork URL identities remain protected until their
+  own reconciliation is complete. Both MBID and integer-only standalone lookups
+  use verified partial indexes. All 49 focused Windows/native checks pass, including
+  real catalogue ingestion and unchanged repeat. Full CI passes 2198 API and
+  187 frontend tests; after the final symmetric file-identity check, the complete
+  API suite passes 2199 with no failures, and lint/native build also pass. This is not a fix for every owned obsolete track occurrence or a
+  deployed release. Finish those transfers and video-artwork relocation before
+  retrying the three known live refresh conflicts. Live 2.21.0 is healthy/paused
+  with no active jobs or held writer; cumulative maximum writer wait is 297265 ms,
+  not evidence of a current stall.
+
 - local candidate, October 8: the local MusicBrainz adapter now carries indexed
   authoritative old track/recording IDs, and catalogue ingestion validates the
   full redirect graph before writes. Full CI and all 187 frontend tests pass;

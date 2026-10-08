@@ -1485,3 +1485,68 @@ cleanup. The 94 GB live cache was not pruned; live 2.21.0 remains healthy with
 downloads paused and no active download/import jobs.
 
 Final conversion-candidate full CI passes all 2,091 API and 187 frontend tests, lint/typechecks/builds with no failing names or clone retries. Retag UI evidence and readonly in-container ffprobe/PCM/hash checks are retained under the local release audit directory.
+
+## October 8 recording identity transfer candidate
+
+Lidarr's RefreshTrackService transfers file associations for authoritative merges;
+its RefreshEntityServiceBase distinguishes updated, merged and deleted entities.
+Discogenius now applies authoritative recording redirects separately from mutable
+track slots. The admitted edition transaction seeds canonical recording targets,
+then transfers integer and MBID references before track position reconciliation.
+The active-schema FK audit covers every recording owner, including provider
+matches, credits, relations, video selections and file/library projections.
+
+Media IDs, physical paths, file facts and sidecar associations survive. Selected
+waiting acquisition plans retain their source assignments and get their canonical
+choice keys refreshed. Only byte-for-byte equivalent credit facts consolidate;
+conflicting credits, relations or selected owners roll back the savepoint.
+Executing/claimed snapshots remain immutable. Standalone requests using either
+recording MBIDs or integer IDs are protected through indexed checks, pending their
+durable request-key reconciliation. Video artwork sources/links/recovery journals
+also protect the old URL identity until a separate file relocation is implemented.
+
+These are database identity changes, not physical tag or artwork mutations.
+Affected file rows need subsequent rename/retag validation. The current service
+does not yet replace owned obsolete track occurrences and cannot by itself fix
+all three live refresh failures. Cliff has an authoritative recording redirect;
+a-ha has the same recording on a changed occurrence; Dirty Honey has no verified
+redirect. Do not infer all three as a merge or discard waiting acquisition intent.
+
+All 48 focused Windows checks pass, including actual syncReleaseGroup ingestion,
+unchanged repeat, active/claimed refusal, outer-transaction rollback, exact-credit
+consolidation, selected video placement and source identity preservation. Final
+whole-suite CI and current production-image tests remain pending. Preliminary
+Docker/CI builds exposed an inferred fixture type missing OldRecordingIds; fixed
+the fixture assignment and rebuilt successfully. This was a test compile error.
+
+Readonly live API, NAS deployment proof and the actual Activity page still show
+healthy 2.21.0, paused downloads, no active jobs and the same five failed history
+events. The writer is currently free with no waiters; its cumulative maximum wait
+has increased to 297265 ms, so contention is still an acceptance concern. No live
+file mutations, deployment, queue clearing or cache removal occurred.
+
+Current production-image checks pass all 48 focused cases without skips. The
+actual fresh app completed a manually requested root scan, showed no active jobs
+and rendered Completed with a green icon, verified as rgb(9,69,9) from the visible
+SVG. This is startup/command/UI acceptance on an empty disposable library, not
+whole-library recording or cleanup acceptance. The first fixture intentionally
+had DISCOGENIUS_DISABLE_SCHEDULER=1, which also disables command execution; its
+queued scan was discarded with that disposable container. Recreated with the
+executor enabled and kept downloading/monitoring disabled. Screenshot capture
+timed out; completion text and icon color were verified through the rendered DOM.
+
+Final validation: full CI completed in 544.03 seconds with 2198 API and 187
+frontend tests, lint, typechecks and both builds, with no failing names or clone
+retries. A final audit added symmetric file-identity validation and exact soft-ID
+to integer-FK transfer. After that change the entire API suite passes all 2199
+checks without failures or retries; lint passes and the current production image
+passes all 49 focused tests. The final CI build compiled the current source. No
+release was tagged or deployed. Both disposable app containers and their
+anonymous volumes were removed.
+
+Robert has reiterated the weekend priority: complete live library repair and
+strict cleanup, and materially reduce the config/MediaCover footprint before
+resuming downloads. Finish owned track-occurrence reconciliation and the
+proxy-only legacy artwork migration; preserve full-resolution library originals.
+Do not treat local test completion as live acceptance or promise a perfect
+library without checking its files, tags, artwork and repeat previews.

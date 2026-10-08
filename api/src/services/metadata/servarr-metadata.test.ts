@@ -652,6 +652,27 @@ function twoTrackPayload() {
   }] };
 }
 
+test('catalog refresh applies authoritative recording redirects without changing owned file identity', async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload();
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip', 'artist-mbid');
+  const fileId = addOwnedTrack('trk-1');
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  const before = db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId);
+  try {
+    Object.assign(payload.Releases[0].Tracks[0], { RecordingId: 'redirect-target', OldRecordingIds: [original] });
+    fetchReturning(payload);
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip', 'artist-mbid');
+    assert.deepEqual(db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId), before);
+    assert.equal(db.prepare('SELECT id FROM Recordings WHERE mbid=?').get(original), undefined);
+    assert.equal((db.prepare('SELECT recording_mbid FROM Tracks WHERE mbid=?').get('trk-1') as {recording_mbid:string}).recording_mbid, 'redirect-target');
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    const changes = db.prepare('SELECT total_changes() AS n').get();
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip', 'artist-mbid');
+    assert.deepEqual(db.prepare('SELECT total_changes() AS n').get(), changes);
+  } finally { db.prepare('DELETE FROM TrackFiles WHERE id=?').run(fileId); }
+});
+
 function addOwnedTrack(trackMbid: string): number {
   const { db } = dbModule;
   return Number(db.prepare(`INSERT INTO TrackFiles(artist_metadata_id, track_id, canonical_track_mbid, file_path, relative_path, filename, extension, library_root, file_type)

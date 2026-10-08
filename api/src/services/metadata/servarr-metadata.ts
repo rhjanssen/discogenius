@@ -10,6 +10,7 @@ import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
+import {reconcileRecordingRedirects} from "../catalog/catalog-recording-reconciliation.js";
 import { collectCatalogRedirects, groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions } from "../catalog/catalog-track-reconciliation.js";
 import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
@@ -1004,10 +1005,7 @@ export class ServarrMetadataService {
     // unit. Unrelated editions still yield admission separately. Stage every
     // connected edition before writing, so exchanges never expose temporary slots.
     const retainedTrackIds = new Set(trackEditions.keys());
-    const editionGroups = groupConnectedEditions(db, releases);
-    await runGatedChunkedWrite(editionGroups, editions => {
-      for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
-      for (const release of editions) for (const track of release.Tracks) {
+    const insertCanonicalRecording = (track: LidarrTrack) => {
         const isrcs = Array.isArray(track.Isrcs)
           ? track.Isrcs
           : Array.isArray(track.isrcs)
@@ -1029,6 +1027,14 @@ export class ServarrMetadataService {
           isVideo,
           ownerArtistMbid || null,
         );
+    };
+    const editionGroups = groupConnectedEditions(db, releases);
+    await runGatedChunkedWrite(editionGroups, editions => {
+      // Seed redirect targets before transferring owners in this admitted write.
+      for (const release of editions) for (const track of release.Tracks) insertCanonicalRecording(track);
+      reconcileRecordingRedirects(db,editions.flatMap(release => release.Tracks));
+      for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
+      for (const release of editions) for (const track of release.Tracks) {
         insertTrack.run(
           track.Id,
           release.Id,
