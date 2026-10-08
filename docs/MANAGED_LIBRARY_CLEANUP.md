@@ -1,5 +1,42 @@
 # Managed library inventory and strict cleanup
 
+## October 8 bounded waiting-queue admission candidate
+
+The admission query considered only the first 40 unclaimed rows. Unavailable
+plans or a busy provider could occupy that entire window, starving later runnable
+requests. The dedicated worker now walks indexed queue-order/id pages. Each turn
+reads at most 40 candidates, releases the SQLite write gate, then schedules the
+next page through setImmediate. An exhausted pass stops rather than spinning.
+A claim restarts from the head for the next free provider slot. External queue
+kicks also restart the pass so newly inserted or reordered front items are not
+missed. Coalescing preserves that restart even when a continuation is pending.
+Pause and durable import backpressure are rechecked on every turn.
+
+Consulted .ref_lidarr/src/NzbDrone.Core/Messaging/Commands/CommandQueueManager.cs
+for command ownership/status and queue admission boundaries. Discogenius's
+provider wait-table traversal is a separate mechanism. It retains exact blocked
+requests rather than pretending they completed or deleting them.
+
+Production-container tests pass all 24 queue cases plus the two worker cases for
+continuation, pause and front insertion. They cover 81 unresolved plans before a
+runnable request, busy providers, equal ranks, indexed lookup and exhausted passes.
+The actual app retains all 82 fixture requests and displays them across pages.
+This is admission/UI testing, not proof of real provider download or import.
+Final full CI passes all 2,148 API and 187 frontend tests, lint, typechecks and
+builds, with no failing names. Log oct08-bounded-admission-final-ci.log.
+Test-only compiled liveness invocation initially used
+paused/disabled container environment; rerunning with explicit enabled/unpaused
+flags passes both cases. Windows compiled liveness invocation hit the existing
+source-fixture path mismatch; source-mode validation passes those checks.
+
+Readonly live reconstruction of the five persisted plans for editions 43824 and
+32004 succeeds without duplicate resource hashes, incomplete snapshots or identity
+errors. The audit opens SQLite only inside the live container with readonly and
+fileMustExist. No live writes. This sample cannot certify every legacy plan shape.
+Live stays on healthy 2.21.0 with downloads paused. Explicit blocked/completed
+request outcomes, larger legacy-choice acceptance, canonical redirects and legacy
+artwork retirement remain release gates before fresh inventory and file cleanup.
+
 ## October 8 durable acquisition choice candidate
 
 Provider refresh previously deleted plan headers and cleared selection, while
@@ -35,8 +72,9 @@ retains the manual choice and album lock, persists waiting identity, refuses a
 missing source, then restores the exact key and resolves the waiting request after
 the source returns under match ID 4. Foreign-key checks stay empty. This tests
 provider snapshots and planning, not real provider downloads or media mutation.
-The broader Windows focused checks pass 43. Final full CI is running after these
-changes; preliminary failures are not acceptance evidence.
+The broader Windows focused checks pass 43. Final full CI passes 2,143 API
+and 187 frontend tests, lint, typechecks and builds, with no failing names.
+The final log is oct08-durable-resource-final-ci.log.
 
 Not deployed. Live remains 2.21.0 with downloads paused. Inspect incomplete or
 conflicting persisted snapshots and duplicate legacy shapes during live acceptance;

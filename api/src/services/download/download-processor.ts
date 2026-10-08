@@ -15,7 +15,7 @@ import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { buildDurableQueueOrderClause } from "../commands/command-ordering.js";
 import { getConfigSection, Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
-import { DownloadWaitQueue } from './download-wait-queue.js';
+import { DownloadWaitQueue, type QueueRankRow } from './download-wait-queue.js';
 import {
     invalidateAlbumDownloadStatus,
     invalidateAllDownloadState,
@@ -600,6 +600,9 @@ export class DownloadProcessor {
     private stopHeartbeat?: () => Promise<void>;
     private lastBusyLogAt: number = 0;
     private queueEventsSubscribed: boolean = false;
+    private admissionCursor: QueueRankRow | null = null;
+    private schedulingQueued = false;
+    private restartAdmissionQueued = false;
 
     /**
      * Active download slots keyed by command id. Up to MAX_CONCURRENT_DOWNLOADS
@@ -667,9 +670,15 @@ export class DownloadProcessor {
         this.retryWakeTimer.unref();
     }
 
-    private scheduleNext(): void {
+    private scheduleNext(restartAdmission = true): void {
+        this.restartAdmissionQueued ||= restartAdmission;
+        if (this.schedulingQueued) return;
+        this.schedulingQueued = true;
         setImmediate(() => {
-            this.processQueue().catch((error) => {
+            this.schedulingQueued = false;
+            const restart = this.restartAdmissionQueued;
+            this.restartAdmissionQueued = false;
+            this.processQueue(restart).catch((error) => {
                 console.error('[DOWNLOAD-PROCESSOR] Error scheduling next queue item:', error);
             });
         });
@@ -1565,9 +1574,10 @@ export class DownloadProcessor {
         await this.processQueue();
     }
 
-    async processQueue(): Promise<void> {
+    async processQueue(restartAdmission = true): Promise<void> {
         if (this.suspended) return;
         return withSqliteWriteGate(() => {
+            if (restartAdmission) this.admissionCursor = null;
             this.scheduleQueueWithWriteLock();
             this.armRetryWake();
         }, 'download:schedule');
@@ -1603,6 +1613,7 @@ export class DownloadProcessor {
         // finish. This keeps completed bytes from being stranded while the
         // provider-facing queue is paused.
         if (this.isPaused) {
+            this.admissionCursor = null;
             DownloadWaitQueue.releaseUnstartedClaims();
             return;
         }
@@ -1646,9 +1657,13 @@ export class DownloadProcessor {
             });
 
             if (!job) {
-                const claimed = DownloadWaitQueue.claimNext(activeProviders);
+                const page = DownloadWaitQueue.claimNextPage(activeProviders, this.admissionCursor);
+                this.admissionCursor = page.nextCursor;
+                const claimed = page.claimed;
                 if (claimed) {
                     job = CommandQueueManager.get(claimed.commandId) ?? undefined;
+                } else if (page.nextCursor) {
+                    this.scheduleNext(false);
                 }
             }
 

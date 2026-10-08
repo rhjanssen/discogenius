@@ -132,6 +132,75 @@ test('a full durable import backlog stops new download claims', () => {
     }
 });
 
+test('worker continues blocked admission after releasing its turn and rechecks pause before claiming', async () => {
+    for (let i = 0; i < 41; i++) DownloadWaitQueue.enqueue({
+        refKey: `blocked-page-${i}`, mediaKind: 'album', commandName: CommandNames.DownloadAlbum,
+        planId: 999999, provider: 'tidal', payload: { libraryId: 4, releaseMbid: 'missing' }, notify: false,
+    });
+    const ready = DownloadWaitQueue.enqueue({
+        refKey: 'ready-page', mediaKind: 'track', commandName: CommandNames.DownloadTrack,
+        provider: 'tidal', providerId: 'ready-page', payload: { provider: 'tidal', providerId: 'ready-page' }, notify: false,
+    });
+    const processor = new DownloadProcessor() as any;
+    let continuations = 0;
+    const dispatched: number[] = [];
+    processor.scheduleNext = () => { continuations++; };
+    processor.dispatchDownloadPhase = (job: {id:number}) => {
+        dispatched.push(job.id);
+        processor.activeDownloads.set(job.id, { provider: 'tidal' });
+    };
+    try {
+        await processor.processQueue();
+        assert.equal(continuations, 1);
+        assert.ok(processor.admissionCursor);
+        assert.equal(DownloadWaitQueue.get(ready.id)?.command_id, null);
+        processor.isPaused = true;
+        await processor.processQueue();
+        assert.equal(processor.admissionCursor, null);
+        assert.deepEqual(dispatched, []);
+        processor.isPaused = false;
+        await processor.processQueue();
+        await processor.processQueue(false);
+        assert.equal(dispatched.length, 1);
+        assert.equal(DownloadWaitQueue.get(ready.id)?.command_id, dispatched[0]);
+        assert.equal(DownloadWaitQueue.countUnclaimed(), 41);
+    } finally {
+        processor.suspended = true;
+        clearTimeout(processor.retryWakeTimer);
+        db.prepare('DELETE FROM DownloadQueue').run();
+    }
+});
+
+test('an external queue kick restarts admission for new work inserted before the cursor', async () => {
+    for (let i = 0; i < 41; i++) DownloadWaitQueue.enqueue({
+        refKey: `front-blocked-${i}`, mediaKind: 'album', commandName: CommandNames.DownloadAlbum,
+        planId: 999999, provider: 'tidal', payload: {}, notify: false,
+    });
+    const processor = new DownloadProcessor() as any;
+    processor.scheduleNext = () => {};
+    const dispatched: number[] = [];
+    processor.dispatchDownloadPhase = (job: {id:number}) => {
+        dispatched.push(job.id);
+        processor.activeDownloads.set(job.id, { provider: 'tidal' });
+    };
+    try {
+        await processor.processQueue();
+        assert.ok(processor.admissionCursor);
+        const front = DownloadWaitQueue.enqueue({
+            refKey: 'new-front', mediaKind: 'track', commandName: CommandNames.DownloadTrack,
+            provider: 'tidal', providerId: 'new-front', payload: { provider: 'tidal', providerId: 'new-front' },
+            position: 'front', notify: false,
+        });
+        await processor.processQueue();
+        assert.equal(dispatched.length, 1);
+        assert.equal(DownloadWaitQueue.get(front.id)?.command_id, dispatched[0]);
+    } finally {
+        processor.suspended = true;
+        clearTimeout(processor.retryWakeTimer);
+        db.prepare('DELETE FROM DownloadQueue').run();
+    }
+});
+
 test('buffered progress persists each exact disc occurrence and never infers completion from list position', () => {
     const id = pushTrack('disc-progress');
     const owner = 'disc-progress-owner';

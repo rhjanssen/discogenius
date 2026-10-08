@@ -2,6 +2,20 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: download admission no longer stops behind the first
+  40 waiting rows. Indexed keyset pages retain blocked requests and release the
+  write gate between worker turns. External queue changes restart from the head;
+  internal continuations keep the cursor. Pause and import backpressure are
+  checked before each continuation. Scheduling kicks coalesce. The production
+  container passes 24 queue checks and both worker continuation/pause/front-insert
+  checks. Actual app retains and displays all 82 fixture requests across pages.
+  Full CI passes 2,148 API and 187 frontend tests, lint, typechecks and builds.
+  Live remains 2.21.0, downloads paused. A readonly live
+  reconstruction audit passes all five plans for editions 43824 and 32004 without
+  duplicate resource keys or missing identities. This bounded sample does not
+  establish whole-library acquisition acceptance. Explicit blocked/completed
+  outcomes, broader legacy-choice acceptance, redirects and artwork remain.
+
 - local candidate, October 8: provider refresh/rematch invalidates derived
   coverage while retaining plan/source headers and selected intent. Exact track
   match edges are upserted with stable IDs. Persisted plan keys now use canonical

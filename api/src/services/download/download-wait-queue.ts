@@ -77,7 +77,7 @@ const QUEUE_RANK_STEP = 1024;
 const QUEUE_REBALANCE_WINDOW = 64;
 const CUTOVER_NOTIFY = true;
 
-type QueueRankRow = { id: number; queue_order: number };
+export type QueueRankRow = { id: number; queue_order: number };
 
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -396,17 +396,20 @@ export class DownloadWaitQueue {
     return waitId;
   }
 
-  static claimNext(excludeProviders: ReadonlySet<string> = new Set()): {
-    wait: DownloadWaitRow;
-    commandId: number;
-  } | null {
+  static claimNextPage(excludeProviders: ReadonlySet<string> = new Set(), after: QueueRankRow | null = null): {
+    claimed: { wait: DownloadWaitRow; commandId: number } | null;
+    nextCursor: QueueRankRow | null;
+  } {
+    // Each scheduling turn admits one bounded page. The worker releases its
+    // write gate before continuing, so blocked requests cannot stall the API.
     const candidates = db.prepare(`
       SELECT *
-      FROM DownloadQueue
+      FROM DownloadQueue INDEXED BY idx_download_queue_unclaimed_order
       WHERE command_id IS NULL
+        ${after ? "AND (queue_order, id) > (?, ?)" : ""}
       ORDER BY queue_order ASC, id ASC
       LIMIT 40
-    `).all() as Array<Record<string, unknown>>;
+    `).all(...(after ? [after.queue_order, after.id] : [])) as Array<Record<string, unknown>>;
 
     for (const raw of candidates) {
       const wait = hydrateWaitRow(raw);
@@ -417,11 +420,13 @@ export class DownloadWaitQueue {
 
       const claimed = this.claim(wait.id);
       if (claimed) {
-        return claimed;
+        return { claimed, nextCursor: null };
       }
     }
 
-    return null;
+    const last = candidates.at(-1);
+    return { claimed: null, nextCursor: candidates.length === 40 && last
+      ? { id: Number(last.id), queue_order: Number(last.queue_order) } : null };
   }
 
   static claim(waitId: number): { wait: DownloadWaitRow; commandId: number } | null {

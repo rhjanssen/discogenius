@@ -190,7 +190,7 @@ test("reorder moves a waiting item to the top like qBittorrent", () => {
 
 test("failed claimed wait rows stay off the live queue page", () => {
   enqueueTrack("fail-1", "Failed Album");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
   queueModule.CommandQueueManager.fail(claimed.commandId, "provider error");
   enqueueTrack("wait-1", "Waiting Album");
@@ -227,7 +227,7 @@ test("Download* commands without a wait row stay off the live queue", () => {
 test("claim creates a Download* command and leaves other wait rows unclaimed", () => {
   enqueueTrack("c-1", "First");
   enqueueTrack("c-2", "Second");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
   assert.ok(claimed.commandId > 0);
 
@@ -251,6 +251,53 @@ test("claim preserves an unresolved acquisition request instead of silently remo
   assert.equal(waitQueueModule.DownloadWaitQueue.claim(queued.id), null);
   assert.deepEqual(waitQueueModule.DownloadWaitQueue.get(queued.id), before);
   assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM commands").get() as { n: number }).n, 0);
+});
+
+test("bounded admission reaches runnable work beyond two blocked pages without deleting intent", () => {
+  for (let i = 0; i < 81; i++) {
+    waitQueueModule.DownloadWaitQueue.enqueue({
+      refKey: `blocked-${i}`, mediaKind: "album", commandName: queueModule.CommandNames.DownloadAlbum,
+      planId: 999999, provider: "tidal", payload: { libraryId: 4, releaseMbid: "missing" }, notify: false,
+    });
+  }
+  const ready = enqueueTrack("ready-after-blocked", "Pompeii");
+  const first = waitQueueModule.DownloadWaitQueue.claimNextPage();
+  assert.equal(first.claimed, null);
+  assert.ok(first.nextCursor);
+  const second = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(), first.nextCursor);
+  assert.equal(second.claimed, null);
+  assert.ok(second.nextCursor);
+  const third = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(), second.nextCursor);
+  assert.equal(third.claimed?.wait.id, ready.id);
+  assert.equal(third.nextCursor, null);
+  assert.equal(waitQueueModule.DownloadWaitQueue.countUnclaimed(), 81);
+});
+
+test("bounded admission skips busy providers and finishes an all-blocked pass", () => {
+  for (let i = 0; i < 40; i++) enqueueTrack(`busy-${i}`, `Busy ${i}`);
+  const busy = new Set(["tidal"]);
+  const first = waitQueueModule.DownloadWaitQueue.claimNextPage(busy);
+  assert.equal(first.claimed, null);
+  assert.ok(first.nextCursor);
+  const end = waitQueueModule.DownloadWaitQueue.claimNextPage(busy, first.nextCursor);
+  assert.deepEqual(end, { claimed: null, nextCursor: null });
+  const recovered = waitQueueModule.DownloadWaitQueue.claimNextPage();
+  assert.equal(recovered.claimed?.wait.provider_id, "busy-0");
+  assert.equal(waitQueueModule.DownloadWaitQueue.countUnclaimed(), 39);
+});
+
+test("admission cursor traverses equal ranks by exact row identity using the unclaimed index", () => {
+  for (let i = 0; i < 41; i++) enqueueTrack(`equal-${i}`, `Equal ${i}`);
+  dbModule.db.prepare("UPDATE DownloadQueue SET queue_order=0").run();
+  const first = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(["tidal"]));
+  assert.ok(first.nextCursor);
+  const last = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(), first.nextCursor);
+  assert.equal(last.claimed?.wait.provider_id, "equal-40");
+  const details = dbModule.db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM DownloadQueue INDEXED BY idx_download_queue_unclaimed_order
+    WHERE command_id IS NULL AND (queue_order,id)>(?,?) ORDER BY queue_order,id LIMIT 40`)
+    .all(0, first.nextCursor.id) as Array<{ detail: string }>;
+  assert.ok(details.some(row => row.detail.includes("idx_download_queue_unclaimed_order")));
+  assert.equal(details.some(row => row.detail.includes("TEMP B-TREE")), false);
 });
 
 test("removing a wait row does not require a command", () => {
@@ -311,7 +358,7 @@ test("releaseUnstartedClaims returns a claimed-but-never-started wait row to the
 
 test("dropUnclaimedDownloadCommands removes queued Download* with no wait claim", () => {
   enqueueTrack("claimed-ref", "Claimed");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
 
   const strayId = queueModule.CommandQueueManager.push(
@@ -346,7 +393,7 @@ test("history retry by command id re-enqueues a wait row after finishClaimed", a
 
 test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   enqueueTrack("fail-orphan", "Stuck Album");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
   queueModule.CommandQueueManager.fail(claimed.commandId, "import failed");
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
