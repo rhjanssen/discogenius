@@ -484,8 +484,10 @@ export const buildDescription = (job: CommandModel, context?: DescriptionLookupC
         return workflowLabel || "Rescan folders";
     }
 
-    if (jobType === "ConfigPrune") {
-        return "Library cleanup";
+    if (job.name === "ConfigPrune") {
+        return job.payload.refreshArtworkPreference === true
+            ? "Updating library artwork and embedded covers"
+            : "Applying library metadata settings";
     }
 
     if (jobType === "MoveArtist") {
@@ -622,6 +624,9 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
             reason: job.payload.reason,
             files: Array.isArray(job.payload.files) ? job.payload.files : undefined,
             originalJobId: job.payload.originalJobId,
+            refreshArtworkPreference: job.name === "ConfigPrune"
+                ? job.payload.refreshArtworkPreference === true
+                : undefined,
             outcome,
             warningMessage,
             downloadState: downloadState

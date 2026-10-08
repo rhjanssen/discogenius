@@ -449,3 +449,27 @@ The measured ownership problems and remaining acceptance gates are in
   completed with verified sidecar and embedded art after correcting test fixture
   permissions. Activity's artwork job label/description still needs correction.
   Candidate not deployed; legacy artwork migration/retirement remains open.
+
+- in validation, October 8: Activity preserves ConfigPrune's artwork intent in
+  the API projection, labels it Update Library Artwork and displays its actual
+  progress/result. The real app exposed the missing flag before the fix, then
+  showed the correct title with success/failure outcomes afterward. Completed
+  SVGs use Fluent's green success token. The new native history regression passes
+  2/2; standalone frontend tests pass all 187, typecheck/build and root lint pass.
+  Full CI is running. Screenshot capture timed out, so visual screenshot QA is
+  not claimed. The app-directory lint command separately lacks jsx-a11y plugin
+  rules already present in the root lint configuration; use required root CI.
+- live cache audit, October 8: logical origin files total about 91.94 GB versus
+  8.68 GB proxies, primarily 76.09 GB Album origins. No files were deleted. Finish
+  bounded legacy source adoption and witnessed retirement, including unimported
+  catalog cache origins, while preserving imported full-resolution sidecars.
+- packaging gate: actual ffprobe 5.1.9 lacks the Atmos profile declarations
+  present in FFmpeg 6.1. Validate a supported runtime upgrade and positive real
+  JOC probing; rejection-only tests cannot make this gate pass. Official old
+  Dolby test download links now return 404. Scan 16039 reached 340/518; transient
+  stale-worker health recovered without intervention, downloads remain paused.
+
+- validated, October 8: final artwork Activity candidate CI passes all 2210 API
+  and 187 frontend tests, lint/types/both builds in 556 seconds without failing
+  names or clone retries. Native history regression and actual app verify intent,
+  title, details and green completion icons. No NAS deployment/cleanup performed.

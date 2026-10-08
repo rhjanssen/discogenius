@@ -1647,3 +1647,45 @@ test files had the wrong ownership; matching the actual app UID 1000 fixed that
 fixture. Activity accurately reports those failures, but currently labels artwork
 jobs as library pruning and hides their detailed description. Correct that UX.
 Live remains 2.21.0; no candidate deployment, cache deletion or downloads resumed.
+
+October 8 cache size audit: a read-only filesystem metadata walk completed in
+28 seconds with no errors. Legacy origin bytes are 76.09 GB for Albums, 11.21 GB
+for Videos, 2.48 GB for Artists and 2.16 GB for AlbumEditions. Existing proxies
+consume 6.71 GB, 1.07 GB, 0.74 GB and 0.17 GB respectively. These are decimal
+logical byte totals, not physical/ZFS usage or verified duplicate bytes. The
+Album cache contains 69,885 origins, far more than the sampled imported covers.
+Prioritize bounded legacy-source adoption and witnessed origin retirement for
+both imported entities and unimported catalog entities under the proxy-only
+policy. Imported artwork must first resolve its full-resolution tracked sidecar;
+unimported origins need durable selected-source provenance and valid proxies.
+A different origin/sidecar hash is not permission to discard either image.
+Lidarr EnsureAlbumCovers checks remote LastModified/ContentLength; Jellyfin
+ImageSaver publishes the selected item path before deleting an obsolete owned
+image. Neither reference supplies our cross-library sidecar ownership proof.
+
+Live scan 16039 advanced to 327/518, with downloads paused and zero active
+imports/downloads. The health endpoint briefly reported a stale busy worker,
+with no held writer/waiters; its heartbeat recovered without intervention and
+the queue health returned to a recent-failure warning. This does not establish
+that the long scan or worker blocking is fixed by the undeployed candidate.
+
+Atmos packaging gate, October 8: the actual production image bundles ffprobe
+5.1.9 from Debian bookworm. The official FFmpeg 5.1 profiles source lacks
+ff_eac3_profiles; FFmpeg 6.1 declares Dolby Digital Plus + Dolby Atmos and
+Dolby TrueHD + Dolby Atmos profiles. This is a concrete packaging mismatch
+for acceptance that relies on native Atmos profiles, not proof that providers
+sent ordinary surround. Review a supported newer FFmpeg runtime before positive
+native Atmos acceptance. Two old official Dolby download sample URLs returned
+404; no sample was obtained and no positive recognition claim is made.
+Sources: https://www.ffmpeg.org/doxygen/5.1/profiles_8c_source.html and
+https://www.ffmpeg.org/doxygen/6.1/profiles_8c_source.html .
+
+Final artwork Activity validation, October 8: full CI passed 2210 API and 187
+frontend tests, root lint/typechecks and both builds in 556 seconds, without
+failing names or clone retries. The actual rebuilt app shows Update Library
+Artwork with the detailed completion result and exact earlier failure outcomes;
+the projected payload now retains the intent flag. Native history checks pass
+2/2 and Completed SVGs use the green success token. Screenshot capture timed
+out; DOM verification and physical FLAC/sidecar checks are the evidence. This
+candidate is still not deployed on the NAS. Legacy cache retirement and the
+FFmpeg packaging mismatch remain open, as do live library acceptance gates.
