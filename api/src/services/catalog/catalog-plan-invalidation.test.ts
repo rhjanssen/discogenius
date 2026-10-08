@@ -25,7 +25,7 @@ function fixture(run: (planId: number) => void): void {
       INSERT INTO ProviderEditionMatches(id,provider_edition_item_id,edition_id,relation,match_state,decision_source,confidence,method,matcher_version)
         VALUES(1,1,1,'exact','accepted','automatic',1,'test',1);
       INSERT INTO ProviderTrackMatches(id,provider_track_item_id,recording_id,match_state,decision_source,confidence,method,matcher_version)
-        VALUES(1,2,2,'accepted','automatic',1,'test',1);
+        VALUES(1,2,1,'accepted','automatic',1,'test',1);
       INSERT INTO ProviderItemAudioVariants(id,provider_item_id,variant_key,quality_class)
         VALUES(1,2,'lossless','lossless');
     `);
@@ -51,15 +51,76 @@ test("catalog reconciliation discards unused candidate plans and removes only ob
   assert.deepEqual(db.pragma("foreign_key_check"), []);
 }));
 
-for (const holder of ["selected", "queued", "started download", "queued import"] as const) test(`catalog reconciliation preserves removed tracks held by a ${holder} plan`, () => fixture(plan => {
-  if (holder === "selected") db.prepare("INSERT INTO LibraryEditions(library_id,edition_id,selection_mode,curation_version,preferred_plan_key,plan_selection_mode) VALUES(?,1,'auto',1,'candidate','manual')").run(library);
-  else if (holder === "queued") db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,'{}',1)").run(plan);
-  else db.prepare("INSERT INTO commands(name,payload,status) VALUES(?,?,?)").run(holder === "queued import" ? "ImportDownload" : "DownloadAlbum", JSON.stringify({ acquisitionPlanId: plan }), holder === "queued import" ? "queued" : "started");
-  assert.throws(() => db.transaction(reconcile)(), /still referenced by AcquisitionPlanTracks/);
+for (const holder of ["selected", "queued"] as const) test(`catalog reconciliation expires derived coverage but preserves a ${holder} request`, () => fixture(plan => {
+  db.prepare("INSERT INTO LibraryAlbums(library_id,release_group_id,selection_mode,locked,curation_version) VALUES(?,1,'manual',1,1)").run(library);
+  db.prepare("INSERT INTO LibraryEditions(library_id,edition_id,selection_mode,curation_version,preferred_plan_key,plan_selection_mode) VALUES(?,1,'manual',1,'candidate','manual')").run(library);
+  if (holder === "queued") db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,'{}',7)").run(plan);
+  db.prepare("UPDATE ProviderTrackMatches SET track_id=1 WHERE id=1").run();
+  reconcile();
+  assert.deepEqual(db.prepare("SELECT state,coverage FROM AcquisitionPlans WHERE id=?").get(plan), { state: 'stale', coverage: 0 });
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE id=1").get(), undefined);
+  assert.deepEqual(db.prepare("SELECT recording_id,track_id,match_state FROM ProviderTrackMatches WHERE id=1").get(), { recording_id: 1, track_id: null, match_state: 'accepted' });
+  assert.deepEqual(db.prepare("SELECT preferred_plan_key,plan_selection_mode FROM LibraryEditions WHERE library_id=?").get(library), { preferred_plan_key: 'candidate', plan_selection_mode: 'manual' });
+  assert.ok(db.prepare("SELECT id FROM AcquisitionPlanSources WHERE plan_id=?").get(plan));
+  assert.equal((db.prepare("SELECT locked FROM LibraryAlbums WHERE library_id=?").get(library) as { locked: number }).locked, 1);
+  if (holder === "queued") {
+    const row = db.prepare("SELECT payload,queue_order,command_id FROM DownloadQueue WHERE plan_id=?").get(plan) as { payload: string; queue_order: number; command_id: number | null };
+    assert.deepEqual(JSON.parse(row.payload), { libraryId: library, releaseMbid: 'release', provider: 'tidal' });
+    assert.equal(row.queue_order, 7); assert.equal(row.command_id, null);
+  }
+}));
+
+for (const holder of ["started download", "queued import"] as const) test(`catalog reconciliation preserves removed tracks held by a ${holder} plan`, () => fixture(plan => {
+  db.prepare("INSERT INTO commands(name,payload,status) VALUES(?,?,?)").run(holder === "queued import" ? "ImportDownload" : "DownloadAlbum", JSON.stringify({ acquisitionPlanId: plan }), holder === "queued import" ? "queued" : "started");
+  assert.throws(() => db.transaction(reconcile)(), /executing acquisition plan/);
   assert.ok(db.prepare("SELECT id FROM AcquisitionPlans WHERE id=?").get(plan));
   assert.equal((db.prepare("SELECT position FROM Tracks WHERE id=1").get() as { position: number }).position, 1);
   assert.equal((db.prepare("SELECT position FROM Tracks WHERE id=2").get() as { position: number }).position, 2);
   assert.deepEqual(db.pragma("foreign_key_check"), []);
+}));
+
+test("removed provider occurrence context cannot rewrite an active standalone media snapshot", () => fixture(() => {
+  db.prepare("UPDATE ProviderTrackMatches SET track_id=1 WHERE id=1").run();
+  db.prepare("INSERT INTO commands(name,payload,status) VALUES('DownloadTrack',?,'started')").run(JSON.stringify({ canonicalTrackMbid: 'track-1' }));
+  assert.throws(() => db.transaction(reconcile)(), /executing media snapshot/);
+  assert.equal((db.prepare("SELECT track_id FROM ProviderTrackMatches WHERE id=1").get() as { track_id: number }).track_id, 1);
+}));
+
+test("waiting standalone track intent blocks occurrence expiry until it can be reconciled", () => fixture(() => {
+  db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,payload,queue_order) VALUES('standalone','track','DownloadTrack',?,1)").run(JSON.stringify({ canonicalTrackMbid: 'track-1' }));
+  assert.throws(() => db.transaction(reconcile)(), /waiting standalone media request/);
+  assert.ok(db.prepare("SELECT id FROM Tracks WHERE id=1").get());
+}));
+
+test("a claimed waiting plan cannot be expired even after its command leaves live history", () => fixture(plan => {
+  db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,command_id,payload,queue_order) VALUES('claimed','album','DownloadAlbum',?,987,'{}',1)").run(plan);
+  assert.throws(() => db.transaction(reconcile)(), /claimed acquisition plan/);
+  assert.ok(db.prepare("SELECT id FROM AcquisitionPlanTracks WHERE plan_id=?").get(plan));
+}));
+
+test("contradictory waiting intent rolls back plan expiration", () => fixture(plan => {
+  db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,?,1)").run(plan, JSON.stringify({ releaseMbid: 'other-release' }));
+  assert.throws(() => db.transaction(reconcile)(), /Conflicting acquisition intent/);
+  assert.equal((db.prepare("SELECT state FROM AcquisitionPlans WHERE id=?").get(plan) as { state: string }).state, 'current');
+  assert.ok(db.prepare("SELECT id FROM Tracks WHERE id=1").get());
+}));
+
+test("owned obsolete audio blocks expiry before any plan or provider context changes", () => fixture(plan => {
+  db.prepare("UPDATE ProviderTrackMatches SET track_id=1 WHERE id=1").run();
+  db.prepare(`INSERT INTO TrackFiles(library_id,artist_metadata_id,file_path,relative_path,filename,extension,file_type,library_root,track_id,album_edition_id,recording_id)
+    VALUES(?,1,'/music/owned.flac','owned.flac','owned.flac','flac','track','music',1,1,1)`).run(library);
+  assert.throws(() => db.transaction(reconcile)(), /still referenced by TrackFiles/);
+  assert.equal((db.prepare("SELECT state FROM AcquisitionPlans WHERE id=?").get(plan) as { state: string }).state, 'current');
+  assert.equal((db.prepare("SELECT track_id FROM ProviderTrackMatches WHERE id=1").get() as { track_id: number }).track_id, 1);
+}));
+
+test("failed later catalogue writes restore selected assignments and original waiting payload", () => fixture(plan => {
+  db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,'{}',1)").run(plan);
+  db.prepare("UPDATE ProviderTrackMatches SET track_id=1 WHERE id=1").run();
+  assert.throws(() => db.transaction(() => { reconcile(); throw new Error('later write'); })(), /later write/);
+  assert.equal((db.prepare("SELECT payload FROM DownloadQueue WHERE plan_id=?").get(plan) as { payload: string }).payload, '{}');
+  assert.ok(db.prepare("SELECT id FROM AcquisitionPlanTracks WHERE plan_id=? AND track_id=1").get(plan));
+  assert.equal((db.prepare("SELECT track_id FROM ProviderTrackMatches WHERE id=1").get() as { track_id: number }).track_id, 1);
 }));
 
 test("failed catalog writes roll back candidate invalidation with the track reconciliation", () => fixture(plan => {

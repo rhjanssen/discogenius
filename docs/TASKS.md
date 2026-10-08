@@ -2,6 +2,18 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: unowned removed edition occurrences expire derived
+  acquisition coverage transactionally. Selected source keys, album locks,
+  recording match decisions and waiting request identity survive; active media,
+  claimed plans, standalone requests and file ownership fail closed. Production
+  container passes 47 focused checks and the actual app shows the surviving
+  track, retained lock and waiting request. Full CI passes 2,121 API and 187
+  frontend tests with no failed names. Not deployed. Canonical recording
+  redirects and owned occurrence reconciliation still need completion. Audit
+  live-plan ownership in AcquisitionPlanRepository.replacePlans/clear,
+  ProviderReleaseIngestionService.clearDependentAcquisitionPlans and
+  ProviderMatchRepository before declaring the plan lifecycle reliable.
+
 - local candidate, October 8: waiting acquisition requests resolve regenerated
   plans by exact library, edition and provider. Removed the album-wide first-plan
   fallback and silent removal of unresolved requests. Partial-track requests fail

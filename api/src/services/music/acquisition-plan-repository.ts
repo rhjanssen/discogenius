@@ -458,6 +458,49 @@ export class AcquisitionPlanRepository {
     return removed;
   }
 
+  /** Expire derived coverage while retaining selected offers and waiting intent.
+   * Claimed downloads/imports own immutable snapshots and cannot be rewritten. */
+  expireRemovedTrackAssignments(trackId: number): void {
+    if (!this.db.inTransaction) throw new Error("Catalog plan invalidation requires an active transaction");
+    this.discardUnusedPlansForTrack(trackId);
+    const plans = this.db.prepare(`
+      SELECT DISTINCT plan.id, plan.library_id, plan.provider, edition.mbid AS release_mbid
+      FROM AcquisitionPlanTracks assignment
+      JOIN AcquisitionPlans plan ON plan.id = assignment.plan_id
+      JOIN AlbumEditions edition ON edition.id = plan.edition_id
+      WHERE assignment.track_id = ?
+    `).all(trackId) as Array<{ id: number; library_id: number; provider: string; release_mbid: string }>;
+    const executing = this.db.prepare(`
+      SELECT 1 FROM commands WHERE status IN ('queued','started')
+      AND CAST(json_extract(payload,'$.acquisitionPlanId') AS INTEGER)=? LIMIT 1
+    `);
+    const waiting = this.db.prepare("SELECT id, command_id, provider, payload FROM DownloadQueue WHERE plan_id=?");
+    const updates: Array<{ id: number; payload: string }> = [];
+    for (const plan of plans) {
+      if (executing.get(plan.id)) throw new Error(`Removed catalog track ${trackId} has executing acquisition plan ${plan.id}`);
+      for (const row of waiting.all(plan.id) as Array<{ id: number; command_id: number | null; provider: string | null; payload: string }>) {
+        if (row.command_id != null) throw new Error(`Removed catalog track ${trackId} has claimed acquisition plan ${plan.id}`);
+        const payload = JSON.parse(row.payload) as Record<string, unknown>;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+          || (row.provider != null && row.provider !== plan.provider)
+          || (payload.libraryId != null && payload.libraryId !== plan.library_id)
+          || (payload.releaseMbid != null && payload.releaseMbid !== plan.release_mbid)
+          || (payload.provider != null && payload.provider !== plan.provider)) {
+          throw new Error(`Conflicting acquisition intent for waiting request ${row.id}`);
+        }
+        updates.push({ id: row.id, payload: JSON.stringify({ ...payload,
+          libraryId: plan.library_id, releaseMbid: plan.release_mbid, provider: plan.provider }) });
+      }
+    }
+    for (const row of updates) this.db.prepare("UPDATE DownloadQueue SET payload=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.payload, row.id);
+    for (const plan of plans) {
+      this.db.prepare("DELETE FROM AcquisitionPlanTracks WHERE plan_id=? AND track_id=?").run(plan.id, trackId);
+      this.db.prepare(`UPDATE AcquisitionPlans SET state='stale',
+        coverage=(SELECT COUNT(*) FROM AcquisitionPlanTracks WHERE plan_id=?), updated_at=CURRENT_TIMESTAMP WHERE id=?
+      `).run(plan.id, plan.id);
+    }
+  }
+
   clear(libraryId: number, editionId: number): number {
     return this.db.transaction(() => {
       this.db.prepare(`

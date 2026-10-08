@@ -1,5 +1,49 @@
 # Managed library inventory and strict cleanup
 
+## October 8 removed occurrence and held-plan candidate
+
+Catalogue refresh now separates a removed edition occurrence from a canonical
+recording identity. Before removing an unowned occurrence, it validates managed
+file and sidecar ownership, active media snapshots, standalone waiting requests
+and claimed or executing acquisition plans. Those references remain blockers.
+Missing track IDs in partial acquisition requests remain unresolved rather than
+being silently trimmed.
+
+For a quiescent selected or waiting plan, expiry retains the plan header and
+source rows, preferred source key and album lock, marks coverage stale and removes
+only the obsolete derived assignment. Exact library, edition MBID and provider
+are retained in the waiting payload before any occurrence disappears. Conflicting
+intent rolls back. Provider matches retain their recording decision and membership;
+only removed edition occurrence context becomes NULL. No substitution by position
+or change to the recording MBID is allowed. Later edition-write failure restores
+the occurrence, assignment, provider context and original waiting payload.
+
+The production container passes 47 focused active-schema tests. The application
+fixture removes an unowned occurrence with a selected, locked TIDAL plan and a
+waiting request. It retains the accepted recording match, lock and request, has
+zero foreign-key errors and refuses to execute the stale plan. The actual app
+shows one surviving track, the retained lock and waiting queue row. The edition
+UI still needs a clear stale-source explanation; its current generic source text
+does not adequately explain why the selected offer cannot execute.
+Final full CI passes all 2,121 API and 187 frontend tests, lint, typechecks and
+production builds. The first TAP run has no failed names or clone-flake retries.
+Evidence is oct08-catalog-expire-final-ci.log, oct08-catalog-expire-native-final.log
+and oct08-catalog-expire-app.mjs in the Windows temporary directory.
+
+This does not merge MusicBrainz recording redirects or repair owned obsolete
+tracks. Normal replanning, provider re-ingestion and rematching also remove plan
+rows through separate code paths. Verify live ownership and durable selected
+intent in those paths before downloads resume. Queue admission beyond blocked
+windows, explicit pending outcomes and verified completed-request retirement
+also remain open. No live catalogue rows or files changed for this candidate.
+
+A read-only container probe of the three failing obsolete occurrences, Dirty
+Honey, Cliff Richard and a-ha, found no additional files with ambiguous occurrence
+ownership and no collision with an existing recording-only match edge. This is
+a bounded sample. A conflicting unique edge still rolls the whole transaction
+back; it does not authorize arbitrary match-row consolidation. The probe is
+oct08-occurrence-protection-probe.cjs in the temporary directory and on the NAS.
+
 ## October 8 waiting acquisition intent candidate
 
 The previous queue claim fallback selected the first current plan for an album

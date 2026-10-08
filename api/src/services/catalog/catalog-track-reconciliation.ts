@@ -54,8 +54,9 @@ export function prepareEditionTrackPositions(db: Database.Database, releaseMbid:
   const protectedReference = db.prepare(`
     SELECT 'TrackFiles' AS source FROM TrackFiles WHERE track_id=@id
     UNION ALL SELECT 'TrackFiles' FROM TrackFiles WHERE canonical_track_mbid=@mbid
-    UNION ALL SELECT 'ProviderTrackMatches' FROM ProviderTrackMatches WHERE track_id=@id
-    UNION ALL SELECT 'AcquisitionPlanTracks' FROM AcquisitionPlanTracks WHERE track_id=@id
+    UNION ALL SELECT 'TrackFiles' FROM TrackFiles
+      WHERE track_id IS NULL AND album_edition_id=(SELECT album_edition_id FROM Tracks WHERE id=@id)
+        AND recording_id=(SELECT recording_id FROM Tracks WHERE id=@id)
     UNION ALL SELECT 'LibraryVideos' FROM LibraryVideos WHERE inline_track_id=@id
     UNION ALL SELECT 'ArtistTopTracks' FROM ArtistTopTracks WHERE track_id=@id
     UNION ALL SELECT 'MetadataFiles' FROM MetadataFiles WHERE canonical_track_mbid=@mbid
@@ -63,16 +64,34 @@ export function prepareEditionTrackPositions(db: Database.Database, releaseMbid:
     UNION ALL SELECT 'ExtraFiles' FROM ExtraFiles WHERE canonical_track_mbid=@mbid
     LIMIT 1
   `);
-  // Validate held identities before mutating track rows. Unused candidate
-  // deletion participates in the same rollback as the edition reconciliation.
+  // Validate file ownership before expiring any derived coverage. All changes
+  // participate in the same rollback as the edition reconciliation.
   // Credits and the download projection may cascade with an obsolete track.
   for (const [id, mbid] of obsolete) {
-    let reference = protectedReference.get({ id, mbid }) as { source: string } | undefined;
-    if (reference?.source === "AcquisitionPlanTracks") {
-      new AcquisitionPlanRepository(db).discardUnusedPlansForTrack(id);
-      reference = protectedReference.get({ id, mbid }) as { source: string } | undefined;
-    }
+    const reference = protectedReference.get({ id, mbid }) as { source: string } | undefined;
     if (reference) throw new Error(`Catalog track conflict in edition ${releaseMbid}: obsolete track ${mbid} is still referenced by ${reference.source}`);
+    const activeSnapshot = db.prepare(`SELECT id FROM commands
+      WHERE status IN ('queued','started')
+        AND name IN ('DownloadAlbum','DownloadTrack','DownloadVideo','ImportDownload')
+        AND (json_extract(payload,'$.releaseMbid')=? OR ? IN (
+          SELECT entry.value FROM json_tree(commands.payload) entry WHERE entry.type='text'
+        )) LIMIT 1`).get(releaseMbid, mbid);
+    if (activeSnapshot) throw new Error(`Catalog track ${mbid} has an executing media snapshot`);
+    const standaloneIntent = db.prepare(`SELECT id FROM DownloadQueue
+      WHERE plan_id IS NULL AND command_id IS NULL AND ? IN (
+        SELECT entry.value FROM json_tree(DownloadQueue.payload) entry WHERE entry.type='text'
+      ) LIMIT 1`).get(mbid);
+    if (standaloneIntent) throw new Error(`Catalog track ${mbid} has a waiting standalone media request`);
+  }
+  for (const id of obsolete.keys()) {
+    const contradictory = db.prepare(`SELECT match.id FROM ProviderTrackMatches match
+      JOIN Tracks track ON track.id=match.track_id
+      WHERE track.id=? AND match.recording_id!=track.recording_id LIMIT 1`).get(id);
+    if (contradictory) throw new Error(`Catalog track ${id} has conflicting provider recording identity`);
+    new AcquisitionPlanRepository(db).expireRemovedTrackAssignments(id);
+    // Edition occurrence context expires; the provider resource's recording
+    // decision and exact source membership remain intact for future matching.
+    db.prepare("UPDATE ProviderTrackMatches SET track_id=NULL, updated_at=CURRENT_TIMESTAMP WHERE track_id=?").run(id);
   }
   const remove = db.prepare("DELETE FROM Tracks WHERE id=?");
   for (const id of obsolete.keys()) remove.run(id);
