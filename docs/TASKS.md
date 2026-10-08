@@ -423,3 +423,20 @@ The measured ownership problems and remaining acceptance gates are in
   and legacy intent remain acceptance gates. Live stays 2.21.0 with downloads
   paused, scan 16039 progressing and no current writer holder/waiters. Finish
   proxy-only legacy cache migration and live library acceptance before resuming.
+
+- in validation, October 8: replace correlated artist-folder provider scope checks
+  with indexed ID sets. Exact readonly live results agree for Midnight Oil;
+  release selection falls from 331 ms to 4.7 ms and broad member selection from
+  5702 ms to 6.2 ms. Focused Windows/native checks pass 38/42; full CI pending.
+  Live root scan 16039 advanced to 318/518. Unchanged duplicate extras still need
+  file-fact filtering in Known scans. Current artwork warmers already publish
+  proxies only; finish legacy source/sidecar migration and witnessed retirement
+  instead of repeating proxy generation. No deployment or live cleanup performed.
+
+- validated, October 8: final scan-scope CI passes 2207 API/187 frontend checks,
+  lint, types and builds in 552 seconds without failing names or clone retries;
+  all 42 native focused tests pass. Legacy artwork sample has 18 cache originals
+  beside 20 tracked existing covers, with only four identical copies. Explicit
+  ConfigPrune artwork preference switches currently use missing-only scan repair,
+  leaving existing sidecars/embedded art unchanged; fix that workflow before
+  artwork migration and cache retirement. Do not erase differing origins blindly.

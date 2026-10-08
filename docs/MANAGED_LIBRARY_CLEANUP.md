@@ -1584,3 +1584,49 @@ displayed Completed in Activity with no active jobs. Its empty disposable librar
 does not validate live catalogue or physical file repair. Live remains healthy
 2.21.0; scan 16039 progressed to 309/518 artists and the writer had no holder or
 waiters. Downloads remain paused. No deployment or cache pruning yet.
+
+October 8 scan performance candidate: artist folder provider scopes now use
+indexed item-ID sets instead of correlated OR EXISTS checks per ProviderItems row.
+Accepted direct credits, parent release credits and canonical edition ownership
+retain the same authority and ambiguity boundaries. The active-schema regression
+covers unrelated artist/provider ID collisions and candidate/rejected matches;
+query plans must contain no correlated subquery and use the artist match index.
+All 38 focused Windows and 42 native production-image checks pass without skips.
+Full CI is still running; do not tag/deploy this change before it finishes.
+
+Readonly comparison on the live database for Midnight Oil returned identical
+sorted IDs before/after: 102 releases and 1038 track/video items. Broad release
+selection took 331 ms with the old query versus 4.7 ms with indexed sets; broad
+member selection took 5702 ms versus 6.2 ms. These timings concern those exact
+selectors, not a claim that the whole scan now finishes a thousand times faster.
+The sampled graph/files are unchanged by this audit. The existing live scan
+16039 advanced from 309 to 318 of 518 artists, still without a reported error.
+
+The current Midnight Oil folder contains 725 files, all present in the ownership
+projection: 378 TrackFiles, 24 metadata, 313 lyrics and 36 extras. The scanner
+intentionally excludes duplicate ExtraFiles from its known-path cache and can
+therefore rematch them each pass. Its Known contract should eventually use saved
+file facts to skip unchanged duplicates while still reevaluating changed files;
+Lidarr MediaFileService filters on size and modified time before reading tags.
+Do not skip unknown changes or treat this file audit as complete library inventory.
+
+Artwork status clarification: current ensureCachedMediaCover publishes only
+250/500 proxies and records their source/hashes. Earlier notes about warmers always
+writing masters describe older code. Legacy cache inventory/source migration,
+tracked sidecar adoption and witnessed retirement remain open. The local-only
+retirement helper still requires review before bulk use; no live master/cache
+files have been removed. Keep full-resolution library artwork and downloads paused.
+
+Final scan-scope validation completed: full CI passed 2207 API and 187 frontend
+checks, lint/typechecks and both builds in 552 seconds, without failing names or
+clone retries. Native production-image focused validation passes all 42 tests.
+
+Readonly legacy artwork sample: all 20 tracked album cover paths exist. Eighteen
+had a related cached original with a valid matching source hash and both proxies,
+but only four cache originals had identical bytes to that sampled library cover.
+This is a bounded sample, not a full cache audit. Different images/conversions
+must be reconciled against selected source and exact edition before retirement.
+Inspection also found ConfigPrune's explicit artwork-preference workflow calling
+DiskScanService's missing-only/local-sidecar reconciliation, which skips existing
+covers and embedded updates. Repair this explicit workflow separately from scans;
+keep ordinary scans missing-only and retag local-only.

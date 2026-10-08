@@ -40,19 +40,18 @@
  */
 export const LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL = `
     (
-      EXISTS (
-        SELECT 1
+      pi.id IN (
+        SELECT credit.item_id
         FROM ProviderItemCredits credit
         JOIN ProviderArtistMatches artist_match
           ON artist_match.provider_artist_item_id = credit.artist_item_id
          AND artist_match.match_state = 'accepted'
         JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
         JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist_meta.mbid
-        WHERE credit.item_id = pi.id
-          AND managed_artist.id = @artistId
+        WHERE managed_artist.id = @artistId
       )
-      OR EXISTS (
-        SELECT 1
+      OR pi.id IN (
+        SELECT member.member_item_id
         FROM ProviderEditionMembers member
         JOIN ProviderItemCredits credit ON credit.item_id = member.provider_edition_item_id
         JOIN ProviderArtistMatches artist_match
@@ -60,19 +59,17 @@ export const LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL = `
          AND artist_match.match_state = 'accepted'
         JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
         JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist_meta.mbid
-        WHERE member.member_item_id = pi.id
-          AND managed_artist.id = @artistId
+        WHERE managed_artist.id = @artistId
       )
-      OR EXISTS (
-        SELECT 1
+      OR pi.id IN (
+        SELECT member.member_item_id
         FROM ProviderEditionMembers member
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
         JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         JOIN ArtistMetadata managed_artist ON managed_artist.mbid = canonical_release.artist_mbid
-        WHERE member.member_item_id = pi.id
-          AND managed_artist.id = @artistId
+        WHERE managed_artist.id = @artistId
       )
     )
 `;
@@ -84,24 +81,22 @@ export const LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL = `
  */
 export const LEGACY_FOLDER_SCAN_RELEASE_ARTIST_SCOPE_SQL = `
     (
-      EXISTS (
-        SELECT 1
+      pi.id IN (
+        SELECT credit.item_id
         FROM ProviderItemCredits credit
         JOIN ProviderArtistMatches artist_match
           ON artist_match.provider_artist_item_id = credit.artist_item_id
          AND artist_match.match_state = 'accepted'
         JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
         JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist_meta.mbid
-        WHERE credit.item_id = pi.id
-          AND managed_artist.id = @artistId
+        WHERE managed_artist.id = @artistId
       )
-      OR EXISTS (
-        SELECT 1
+      OR pi.id IN (
+        SELECT release_match.provider_edition_item_id
         FROM ProviderEditionMatches release_match
         JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         JOIN ArtistMetadata managed_artist ON managed_artist.mbid = canonical_release.artist_mbid
-        WHERE release_match.provider_edition_item_id = pi.id
-          AND release_match.match_state = 'accepted'
+        WHERE release_match.match_state = 'accepted'
           AND managed_artist.id = @artistId
       )
     )
