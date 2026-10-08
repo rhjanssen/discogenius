@@ -57,6 +57,30 @@ export interface AcquisitionDownloadCommand {
   refId: string;
 }
 
+export type AcquisitionWaitReason = "offer_unavailable" | "missing_sources" | "missing_requested_tracks"
+  | "missing_assignments" | "imported_files_need_verification" | "invalid_library_profile"
+  | "request_identity_conflict" | "library_disabled" | "ambiguous_offer" | "offer_refresh_required";
+
+export function acquisitionWaitMessage(reason: unknown): string | undefined {
+  switch (reason) {
+    case "offer_unavailable": return "Waiting for an available offer";
+    case "missing_sources": return "Offer needs refreshed source information";
+    case "missing_requested_tracks": return "Requested tracks need a refreshed offer";
+    case "missing_assignments": return "Offer needs refreshed track information";
+    case "imported_files_need_verification": return "Imported files need verification";
+    case "invalid_library_profile": return "Library quality profile needs attention";
+    case "request_identity_conflict": return "Request identity needs attention";
+    case "library_disabled": return "Library is disabled";
+    case "ambiguous_offer": return "Offer selection needs attention";
+    case "offer_refresh_required": return "Waiting for the offer to refresh";
+    default: return undefined;
+  }
+}
+
+export type AcquisitionDownloadEvaluation =
+  | { status: "ready"; command: AcquisitionDownloadCommand }
+  | { status: "blocked"; reason: AcquisitionWaitReason };
+
 function sourceQuality(snapshot: string | null): string | null {
   try {
     const parsed = JSON.parse(String(snapshot || "{}")) as { quality?: unknown };
@@ -111,6 +135,16 @@ export function buildAcquisitionDownloadCommand(
   planId: number,
   options: { trackIds?: readonly number[] } = {},
 ): AcquisitionDownloadCommand | null {
+  const result = evaluateAcquisitionDownload(db, planId, options);
+  return result.status === "ready" ? result.command : null;
+}
+
+/** Distinguish admission failures without inferring filesystem completion. */
+export function evaluateAcquisitionDownload(
+  db: Database.Database,
+  planId: number,
+  options: { trackIds?: readonly number[] } = {},
+): AcquisitionDownloadEvaluation {
   const header = db.prepare(`
     SELECT
       plan.id AS plan_id,
@@ -140,7 +174,7 @@ export function buildAcquisitionDownloadCommand(
       AND plan.state = 'current'
       AND library.enabled = 1
   `).get(planId) as PlanHeader | undefined;
-  if (!header) return null;
+  if (!header) return { status: "blocked", reason: "offer_unavailable" };
 
   const sources = db.prepare(`
     SELECT
@@ -157,7 +191,7 @@ export function buildAcquisitionDownloadCommand(
     ORDER BY source.sort_order, source.id
   `).all(planId) as PlanSource[];
   const primarySource = sources[0];
-  if (!primarySource) return null;
+  if (!primarySource) return { status: "blocked", reason: "missing_sources" };
 
   let tracks = db.prepare(`
     SELECT
@@ -204,10 +238,11 @@ export function buildAcquisitionDownloadCommand(
   const requestedTrackIds = new Set(options.trackIds || []);
   if (requestedTrackIds.size > 0) {
     const assigned = new Set(tracks.map(track => track.track_id));
-    if ([...requestedTrackIds].some(id => !assigned.has(id))) return null;
+    if ([...requestedTrackIds].some(id => !assigned.has(id))) return { status: "blocked", reason: "missing_requested_tracks" };
     tracks = tracks.filter((track) => requestedTrackIds.has(track.track_id));
   }
-  if (tracks.length === 0 || tracks.every((track) => Boolean(track.complete))) return null;
+  if (tracks.length === 0) return { status: "blocked", reason: "missing_assignments" };
+  if (tracks.every((track) => Boolean(track.complete))) return { status: "blocked", reason: "imported_files_need_verification" };
 
   const forceTracks = requestedTrackIds.size > 0
     || header.download_mode === "tracks"
@@ -242,9 +277,9 @@ export function buildAcquisitionDownloadCommand(
   }));
   const done = tracks.length - missingTracks.length;
   const slot = acquisitionProfileSlot(header.allowed_source_formats);
-  if (!slot) return null;
+  if (!slot) return { status: "blocked", reason: "invalid_library_profile" };
 
-  return {
+  return { status: "ready", command: {
     name: CommandNames.DownloadAlbum,
     refId: requestedTrackIds.size > 0
       ? `acquisition-plan:${planId}:tracks:${[...requestedTrackIds].sort((a, b) => a - b).join(",")}`
@@ -280,5 +315,5 @@ export function buildAcquisitionDownloadCommand(
         tracks: trackStates,
       },
     },
-  };
+  } };
 }

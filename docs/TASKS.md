@@ -2,6 +2,20 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: waiting acquisition admission distinguishes stale
+  offers, unavailable offers, conflicting identities, disabled libraries, missing
+  assignments/requested tracks and imported rows requiring file verification.
+  Reasons persist without deleting intent or consuming a failure; unchanged
+  reasons do not rewrite rows or create a self-kicking loop. Exact offer recovery
+  clears the reason. Indexed library/edition/provider lookup also clears outdated
+  reasons after plan regeneration, including when downloads are paused. Queue
+  renders the explanation under the title; mobile 390px validation fits controls.
+  All 58 focused native checks pass. Full CI passes 2,150 API and 187 frontend
+  tests, lint, typechecks and builds with no failing names.
+  Imported-row presence is not verified terminal
+  completion; file existence, probed/imported quality and requested coverage must
+  be validated before retiring those requests. Not deployed.
+
 - local candidate, October 8: download admission no longer stops behind the first
   40 waiting rows. Indexed keyset pages retain blocked requests and release the
   write gate between worker turns. External queue changes restart from the head;

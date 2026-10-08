@@ -91,6 +91,13 @@ for (const locked of [0, 1]) test(`provider refresh preserves the exact manual o
   db.prepare("UPDATE LibraryEditions SET preferred_plan_key='old-row-binding-key' WHERE library_id=?").run(library);
   db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,provider,payload,queue_order) VALUES('intent','album','DownloadAlbum',?,'tidal','{}',1)").run(original.id);
   for (let repeat=0; repeat<2; repeat++) {
+    db.prepare("UPDATE DownloadQueue SET payload=json_set(payload,'$.acquisitionWaitReason','offer_unavailable') WHERE ref_key='intent'").run();
+    const lookup = db.prepare(`EXPLAIN QUERY PLAN SELECT id FROM DownloadQueue
+      WHERE command_id IS NULL AND json_valid(payload)
+        AND json_extract(payload,'$.libraryId')=? AND json_extract(payload,'$.releaseMbid')=?
+        AND COALESCE(provider,json_extract(payload,'$.provider'))=?`).all(library,'release','tidal') as Array<{detail:string}>;
+    assert.ok(lookup.some(row => row.detail.includes('SEARCH') && row.detail.includes('idx_download_queue_waiting_intent')));
+    assert.equal(lookup.some(row => row.detail.includes('SCAN')),false);
     const result = new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:repeat+2,
       release:{provider:'tidal',entityType:'release',providerId:'source-release',title:'Refreshed source'},
       members:[{item:{provider:'tidal',entityType:'track',providerId:'source-track',title:'Song'},mediumPosition:1,position:1}]});
@@ -127,3 +134,20 @@ test("an unavailable manual offer retains its identity and refuses a waiting dow
   assert.ok((db.prepare("SELECT id FROM ProviderTrackMatches WHERE match_state='accepted'").get() as {id:number}).id > 1,
     'recovered resource identity must survive regenerated match/member rows');
 }));
+
+test("waiting request exposes a dependency reason and clears it when the exact offer becomes executable", async () => {
+  const { DownloadWaitQueue } = await import("../download/download-wait-queue.js");
+  fixture(() => {
+    const wait = DownloadWaitQueue.enqueue({ refKey: "blocked-exact-offer", mediaKind: "album",
+      commandName: "DownloadAlbum", planId: 1, provider: "tidal", payload: {}, notify: false });
+    db.prepare("UPDATE AcquisitionPlans SET state='stale' WHERE id=1").run();
+    assert.equal(DownloadWaitQueue.claim(wait.id), null);
+    assert.equal(DownloadWaitQueue.get(wait.id)?.payload.acquisitionWaitReason, "offer_refresh_required");
+    db.prepare("UPDATE AcquisitionPlans SET state='current' WHERE id=1").run();
+    const claimed = DownloadWaitQueue.claim(wait.id);
+    assert.ok(claimed);
+    assert.equal(claimed.wait.payload.acquisitionWaitReason, undefined);
+    assert.equal(claimed.wait.plan_id, 1);
+    assert.equal(DownloadWaitQueue.get(wait.id)?.command_id, claimed.commandId);
+  });
+});

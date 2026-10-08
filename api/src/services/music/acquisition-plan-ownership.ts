@@ -31,11 +31,17 @@ export function prepareAcquisitionPlanMutation(db: Database.Database, planIds: r
   const intent = db.prepare(`SELECT plan.library_id, plan.provider, edition.mbid AS release_mbid
     FROM AcquisitionPlans plan JOIN AlbumEditions edition ON edition.id=plan.edition_id WHERE plan.id=?`);
   const waiting = db.prepare("SELECT id,provider,payload FROM DownloadQueue WHERE plan_id=?");
+  const sameIntent = db.prepare(`SELECT id,provider,payload FROM DownloadQueue
+    WHERE command_id IS NULL AND json_valid(payload)
+      AND json_extract(payload,'$.libraryId')=? AND json_extract(payload,'$.releaseMbid')=?
+      AND COALESCE(provider,json_extract(payload,'$.provider'))=?`);
   const update = db.prepare("UPDATE DownloadQueue SET payload=?,updated_at=CURRENT_TIMESTAMP WHERE id=?");
   for (const planId of new Set(planIds)) {
     const plan = intent.get(planId) as { library_id: number; provider: string; release_mbid: string } | undefined;
     if (!plan) throw new Error(`Missing acquisition plan ${planId}`);
-    for (const row of waiting.all(planId) as Array<{ id: number; provider: string | null; payload: string }>) {
+    const rows = [...waiting.all(planId), ...sameIntent.all(plan.library_id, plan.release_mbid, plan.provider)] as
+      Array<{ id: number; provider: string | null; payload: string }>;
+    for (const row of new Map(rows.map(row => [row.id, row])).values()) {
       const payload = JSON.parse(row.payload) as Record<string, unknown>;
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)
         || (row.provider != null && row.provider !== plan.provider)
@@ -44,8 +50,12 @@ export function prepareAcquisitionPlanMutation(db: Database.Database, planIds: r
         || (payload.provider != null && payload.provider !== plan.provider)) {
         throw new Error(`Conflicting acquisition intent for waiting request ${row.id}`);
       }
-      update.run(JSON.stringify({ ...payload, libraryId: plan.library_id,
-        releaseMbid: plan.release_mbid, provider: plan.provider }), row.id);
+      const refreshedIntent = { ...payload, libraryId: plan.library_id,
+        releaseMbid: plan.release_mbid, provider: plan.provider };
+      // A dependency reason describes the previous evaluation. Changed source
+      // facts require admission to evaluate it again, including while paused.
+      delete (refreshedIntent as Record<string, unknown>).acquisitionWaitReason;
+      update.run(JSON.stringify(refreshedIntent), row.id);
     }
     const key = persistedResourceAcquisitionPlanKey(db,planId);
     if (key) {

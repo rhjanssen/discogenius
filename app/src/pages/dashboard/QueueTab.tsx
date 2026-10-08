@@ -1322,6 +1322,11 @@ const QueueTab = () => {
                                                     </div>
                                                 </div>
 
+                                                {!isDownloading && !isFailed && !isImportPending && prog?.statusMessage && (
+                                                    <Text className={styles.downloadMeta} truncate title={prog.statusMessage}>
+                                                        {prog.statusMessage}
+                                                    </Text>
+                                                )}
                                                 {isDownloading && prog && (
                                                     <div className={styles.downloadProgress}>
                                                         <div className={styles.progressBarWrapper}>

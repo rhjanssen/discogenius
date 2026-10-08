@@ -249,7 +249,17 @@ test("claim preserves an unresolved acquisition request instead of silently remo
   });
   const before = waitQueueModule.DownloadWaitQueue.get(queued.id);
   assert.equal(waitQueueModule.DownloadWaitQueue.claim(queued.id), null);
-  assert.deepEqual(waitQueueModule.DownloadWaitQueue.get(queued.id), before);
+  const retained = waitQueueModule.DownloadWaitQueue.get(queued.id)!;
+  assert.equal(retained.plan_id, before!.plan_id);
+  assert.deepEqual(retained.payload, { ...before!.payload, acquisitionWaitReason: "request_identity_conflict" });
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+  const item = queryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 }).items.find(item => item.id === queued.id);
+  assert.equal(item?.status, "queued");
+  assert.equal(item?.error, null);
+  assert.equal(item?.statusMessage, "Request identity needs attention");
+  dbModule.db.prepare("UPDATE DownloadQueue SET updated_at='2020-01-01' WHERE id=?").run(queued.id);
+  assert.equal(waitQueueModule.DownloadWaitQueue.claim(queued.id), null);
+  assert.equal(waitQueueModule.DownloadWaitQueue.get(queued.id)?.updated_at, "2020-01-01", "unchanged reason must not cause repeated writes");
   assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM commands").get() as { n: number }).n, 0);
 });
 

@@ -7,9 +7,10 @@ import {
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { appEvents, AppEvent } from "../commands/app-events.js";
 import {
-  buildAcquisitionDownloadCommand,
+  evaluateAcquisitionDownload,
+  type AcquisitionWaitReason,
 } from "../music/acquisition-download-command.js";
-import { resolveWaitingAcquisitionPlan } from "./waiting-acquisition-plan.js";
+import { evaluateWaitingAcquisitionPlan } from "./waiting-acquisition-plan.js";
 import type { AnyCommandBody } from "../commands/command-model.js";
 
 export type DownloadWaitMediaKind = "album" | "track" | "video";
@@ -442,13 +443,16 @@ export class DownloadWaitQueue {
     let refId = wait.ref_key;
 
     if (wait.plan_id != null) {
-      const planId = resolveWaitingAcquisitionPlan(db, wait.plan_id, wait.payload, wait.provider);
-      const command = planId == null ? null : buildAcquisitionDownloadCommand(db, planId, {
-        trackIds: wait.track_ids,
-      });
+      const plan = evaluateWaitingAcquisitionPlan(db, wait.plan_id, wait.payload, wait.provider);
+      const result = plan.status === "blocked" ? plan : evaluateAcquisitionDownload(db, plan.planId, { trackIds: wait.track_ids });
       // Unavailable, stale or ambiguous plans are not cancelled requests.
       // Keep their exact intent until replanning or an explicit user cancellation.
-      if (!command) return null;
+      if (result.status === "blocked") {
+        this.setAdmissionReason(wait, result.reason);
+        return null;
+      }
+      this.setAdmissionReason(wait, null);
+      const command = result.command;
       commandName = command.name;
       body = command.body;
       refId = command.refId;
@@ -491,6 +495,17 @@ export class DownloadWaitQueue {
       return { wait: { ...wait, command_id: commandId }, commandId };
     }
     return { wait: claimed, commandId: claimed.command_id };
+  }
+
+  private static setAdmissionReason(wait: DownloadWaitRow, reason: AcquisitionWaitReason | null): void {
+    if ((wait.payload.acquisitionWaitReason ?? null) === reason) return;
+    const payload = { ...wait.payload };
+    if (reason) payload.acquisitionWaitReason = reason;
+    else delete payload.acquisitionWaitReason;
+    db.prepare("UPDATE DownloadQueue SET payload=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND command_id IS NULL")
+      .run(JSON.stringify(payload), wait.id);
+    // Do not emit a queue kick here. A blocked pass must finish, not restart
+    // itself indefinitely while reporting the same dependency.
   }
 
   static reorder(

@@ -162,6 +162,10 @@ export function createDownloadQueueSchema(
   // reading thousands of large payload rows on the HTTP event loop.
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_unclaimed_names
     ON DownloadQueue(command_name) WHERE command_id IS NULL`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_waiting_intent
+    ON DownloadQueue(json_extract(payload, '$.libraryId'), json_extract(payload, '$.releaseMbid'),
+      COALESCE(provider, json_extract(payload, '$.provider')))
+    WHERE command_id IS NULL AND json_valid(payload)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_album_id ON DownloadQueue(album_id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_artist_id ON DownloadQueue(artist_id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_provider_id ON DownloadQueue(provider_id)`);

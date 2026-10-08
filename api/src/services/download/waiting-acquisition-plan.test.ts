@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { prepareActiveSchemaEnv, openActiveSchemaDb, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
-import { resolveWaitingAcquisitionPlan } from "./waiting-acquisition-plan.js";
+import { resolveWaitingAcquisitionPlan, evaluateWaitingAcquisitionPlan } from "./waiting-acquisition-plan.js";
 
 const { tempDir } = prepareActiveSchemaEnv("waiting-plan-intent");
 const { db, dbModule } = await openActiveSchemaDb();
@@ -63,4 +63,15 @@ test("unavailable or disabled exact plan does not select another library or edit
   db.prepare("UPDATE AcquisitionPlans SET state='current' WHERE id=?").run(current);
   db.prepare("UPDATE Libraries SET enabled=0 WHERE id=?").run(library);
   assert.equal(resolveWaitingAcquisitionPlan(db, old, {}, "tidal"), null);
+}));
+
+test("waiting admission distinguishes stale offers, unavailable offers, disabled libraries and conflicting intent", () => fixture((old, current) => {
+  assert.deepEqual(evaluateWaitingAcquisitionPlan(db, old, {}, "tidal"), { status: "ready", planId: current });
+  db.prepare("UPDATE AcquisitionPlans SET state='stale' WHERE id=?").run(current);
+  assert.deepEqual(evaluateWaitingAcquisitionPlan(db, old, {}, "tidal"), { status: "blocked", reason: "offer_refresh_required" });
+  db.prepare("UPDATE AcquisitionPlans SET state='unavailable' WHERE id=?").run(current);
+  assert.deepEqual(evaluateWaitingAcquisitionPlan(db, old, {}, "tidal"), { status: "blocked", reason: "offer_unavailable" });
+  db.prepare("UPDATE Libraries SET enabled=0 WHERE id=?").run(library);
+  assert.deepEqual(evaluateWaitingAcquisitionPlan(db, old, {}, "tidal"), { status: "blocked", reason: "library_disabled" });
+  assert.deepEqual(evaluateWaitingAcquisitionPlan(db, old, { libraryId: otherLibrary }, "tidal"), { status: "blocked", reason: "request_identity_conflict" });
 }));

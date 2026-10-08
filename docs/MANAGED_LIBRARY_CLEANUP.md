@@ -1,5 +1,47 @@
 # Managed library inventory and strict cleanup
 
+## October 8 explicit waiting-acquisition reasons candidate
+
+A nullable download-command result conflated unavailable sources, invalid request
+identity, missing requested tracks and imported-file rows. Waiting-plan resolution
+and command evaluation now return typed ready/blocked results. The existing command
+projection delegates to that evaluator, so there is one command-building authority.
+DownloadQueue persists a validated reason in its operational payload; the API maps
+known reason codes to plain status text. The request remains queued with no error,
+no history completion and no silent cancellation. Unchanged reasons do not rewrite
+updated_at or trigger a queue kick that could restart admission indefinitely.
+
+A recovered executable exact offer clears its reason. Source changes also clear
+previous reasons before new admission. Plan regeneration can leave a waiting row
+referencing the old plan ID, so mutation looks up exact library/edition/provider
+intent through idx_download_queue_waiting_intent as well as exact plan references.
+The lookup excludes claimed requests, requires valid JSON and has an indexed
+query-plan regression check. No album-wide or cross-provider substitution.
+
+Consulted .ref_lidarr/src/NzbDrone.Core/Download/TrackedDownloads/TrackedDownload.cs.
+Lidarr distinguishes tracked lifecycle state from warning/status messages, including
+ImportBlocked and ImportPending. Discogenius uses the same separation here: a
+waiting dependency is a status explanation, not a failed download.
+
+Focused checks cover status projection, unchanged-reason write avoidance, repeated
+source refresh after plan-ID replacement and reason removal on executable recovery.
+Actual app at 390px shows the refresh reason beneath the title without expanding
+the controls. A TrackFiles fixture row pointing to an absent file remains queued
+with Imported files need verification and no inferred completion. This validates
+classification, not the future filesystem/quality verifier or real media download.
+All 58 updated production-container checks pass. The actual app also removes
+the old reason after source refresh while retaining the paused request and exact
+ready offer. Final full CI passes all 2,150 API and 187 frontend tests, lint,
+typechecks and builds with no failing names. The final log is
+oct08-admission-reasons-final-ci.log. Live stays paused on 2.21.0.
+
+Before automatic request retirement, validate filesystem identity, imported quality
+against the requested policy and complete requested coverage. The existing builder
+uses imported-row presence for its complete flag; this alone must not authorize
+queue retirement, suppress a needed quality upgrade or claim the library clean.
+Canonical recording redirects, legacy choice acceptance, artwork migration and
+fresh witnessed inventory/file validation remain before live cleanup and resumption.
+
 ## October 8 bounded waiting-queue admission candidate
 
 The admission query considered only the first 40 unclaimed rows. Unavailable

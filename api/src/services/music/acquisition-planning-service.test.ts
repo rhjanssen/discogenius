@@ -9,6 +9,7 @@ const { tempDir: activeTempDir } = prepareActiveSchemaEnv("planning-active");
 const activeDbModule = await import("../../database.js");
 after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
 const { buildAcquisitionDownloadCommand } = await import("./acquisition-plan-executor.js");
+const { evaluateAcquisitionDownload } = await import("./acquisition-download-command.js");
 const { resolveEnabledAudioLibraryTarget } = await import("./acquisition-download-command.js");
 const { AcquisitionPlanningService, listStrandedMonitoredEditions, replanMonitoredEditions } = await import("./acquisition-planning-service.js");
 
@@ -262,6 +263,11 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
       ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac', 'flac', 'audio', '/library/stereo', 'track')
     `).run();
     const partialCommand = buildAcquisitionDownloadCommand(db, maxPlanId!);
+    assert.deepEqual(evaluateAcquisitionDownload(db, maxPlanId!, { trackIds: [1] }),
+      { status: "blocked", reason: "imported_files_need_verification" },
+      "an imported row whose file has not been inspected cannot retire a request");
+    assert.deepEqual(evaluateAcquisitionDownload(db, maxPlanId!, { trackIds: [2, 999999] }),
+      { status: "blocked", reason: "missing_requested_tracks" });
     assert.equal(buildAcquisitionDownloadCommand(db, maxPlanId!, { trackIds: [2, 999999] }), null,
       "A partial-track request must not silently discard an obsolete requested identity");
     assert.deepEqual(
