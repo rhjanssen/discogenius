@@ -1550,3 +1550,10 @@ resuming downloads. Finish owned track-occurrence reconciliation and the
 proxy-only legacy artwork migration; preserve full-resolution library originals.
 Do not treat local test completion as live acceptance or promise a perfect
 library without checking its files, tags, artwork and repeat previews.
+
+A final live recheck found scheduled root scan 16039 running on 2.21.0, reporting
+50% and 277/518 artists with no reported error. The completed-scan API query now
+returns no rows; do not rely on old history 15759 as current scan evidence.
+Downloads/imports remain inactive and downloads paused; the writer has no
+holder/waiters. Inspect this scan's outcome and runtime before the next deployment.
+Its legacy inventory still cannot authorize candidate strict deletion.
