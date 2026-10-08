@@ -242,6 +242,17 @@ test("claim creates a Download* command and leaves other wait rows unclaimed", (
   assert.equal(live.items[1]?.status, "queued");
 });
 
+test("claim preserves an unresolved acquisition request instead of silently removing it", () => {
+  const queued = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "lost-plan", mediaKind: "album", commandName: queueModule.CommandNames.DownloadAlbum,
+    planId: 999999, provider: "tidal", albumId: "group", payload: { albumId: "group" },
+  });
+  const before = waitQueueModule.DownloadWaitQueue.get(queued.id);
+  assert.equal(waitQueueModule.DownloadWaitQueue.claim(queued.id), null);
+  assert.deepEqual(waitQueueModule.DownloadWaitQueue.get(queued.id), before);
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM commands").get() as { n: number }).n, 0);
+});
+
 test("removing a wait row does not require a command", () => {
   const queued = enqueueTrack("del-1", "Gone");
   const removed = waitQueueModule.DownloadWaitQueue.remove(queued.id);

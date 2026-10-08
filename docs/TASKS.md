@@ -2,6 +2,15 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: waiting acquisition requests resolve regenerated
+  plans by exact library, edition and provider. Removed the album-wide first-plan
+  fallback and silent removal of unresolved requests. Partial-track requests fail
+  closed if any requested track is missing. Production-container checks and app
+  reload preserve the pending request. Full CI passes 2,115 API and 187 frontend
+  tests with no failed names. Complete held-catalogue reconciliation,
+  explicit blocked/completed request outcomes and admission past blocked queue
+  windows remain necessary before downloads resume. This is not deployed.
+
 - pending, October 8 live evidence: reconcile held catalogue tracks by explicit
   canonical changes, not slot substitution. Local MusicBrainz now lists 8 tracks
   for Dirty Honey's stored 14-track edition, with no redirect for the obsolete

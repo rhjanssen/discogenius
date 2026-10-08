@@ -260,6 +260,8 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
       ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac', 'flac', 'audio', '/library/stereo', 'track')
     `).run();
     const partialCommand = buildAcquisitionDownloadCommand(db, maxPlanId!);
+    assert.equal(buildAcquisitionDownloadCommand(db, maxPlanId!, { trackIds: [2, 999999] }), null,
+      "A partial-track request must not silently discard an obsolete requested identity");
     assert.deepEqual(
       partialCommand?.body.trackOffers?.map((offer) => offer.canonicalTrackMbid),
       ["track-2", "track-3", "track-4"],

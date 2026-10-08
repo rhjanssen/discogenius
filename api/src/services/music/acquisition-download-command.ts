@@ -203,6 +203,8 @@ export function buildAcquisitionDownloadCommand(
   `).all(header.library_id, header.edition_id, planId) as PlanTrack[];
   const requestedTrackIds = new Set(options.trackIds || []);
   if (requestedTrackIds.size > 0) {
+    const assigned = new Set(tracks.map(track => track.track_id));
+    if ([...requestedTrackIds].some(id => !assigned.has(id))) return null;
     tracks = tracks.filter((track) => requestedTrackIds.has(track.track_id));
   }
   if (tracks.length === 0 || tracks.every((track) => Boolean(track.complete))) return null;

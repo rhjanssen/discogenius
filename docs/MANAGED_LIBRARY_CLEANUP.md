@@ -1,5 +1,36 @@
 # Managed library inventory and strict cleanup
 
+## October 8 waiting acquisition intent candidate
+
+The previous queue claim fallback selected the first current plan for an album
+and quality slot. This could change the edition, library or provider after
+replanning. If no command could be built, it deleted the waiting request.
+The candidate now resolves only a unique selected current plan for the exact
+library, release MBID and provider, taking identity from the durable request or
+the retained old plan. Contradictory or incomplete identity fails closed.
+Unavailable requests remain queued with their original ordering and payload.
+Partial-track requests reject a plan missing any requested track identity.
+
+Active-schema tests cover edition and library alternatives, deleted plan rows,
+provider changes, disabled libraries and inconsistent payloads. The production
+container passes 33 focused tests. Three repeated claims produce no command or
+request mutation, and the actual dashboard retains the pending row on reload.
+Full CI passes 2,115 API and 187 frontend tests, lint, typechecks and production
+builds. The first TAP run has no failed names or clone-flake retries. Logs are
+oct08-wait-intent-ci.log and oct08-wait-intent-native.log in the Windows temporary
+directory; the repeated-claim fixture is oct08-wait-intent-app.mjs there.
+The live deployment remains healthy 2.21.0 with downloads paused. Scan 15759 is
+still the latest completed whole-library scan returned by the live command API;
+it provides no candidate filesystem witnesses. No live files were changed.
+
+This prevents wrong acquisition and request loss. It does not yet unblock the
+held obsolete catalogue tracks. Waiting requests need explicit replan/blocked
+outcomes, verified completed-request retirement and admission beyond the first
+40 blocked rows before resuming downloads. Selected/manual preferences, claimed
+downloads and import handoffs must survive catalogue reconciliation. Lidarr's
+RefreshTrackService updates stable foreign track IDs and transfers known file
+ownership for merges; it does not provide Discogenius's provider-plan lifecycle.
+
 ## October 8 fresh proxy publication candidate
 
 Catalogue artwork warming now publishes only 250/500 JPEG display derivatives,
