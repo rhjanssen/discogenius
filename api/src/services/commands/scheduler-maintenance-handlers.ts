@@ -5,7 +5,7 @@ import {
     runDeepDatabaseHealthCheck,
     type HealthDiagnosticsSnapshot,
 } from "./health.js";
-import { DiskScanService } from "../mediafiles/library-scan.js";
+import { libraryMetadataBackfillService, type MetadataFillOptions } from "../mediafiles/library-metadata-backfill.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
 import { CommandModel, type CommandModelOf } from "./command-model.js";
 import { CommandNames } from "./command-names.js";
@@ -34,7 +34,7 @@ export interface ConfigPruneMaintenanceDependencies {
         options: ArtworkPreferenceRefreshOptions,
     ) => Promise<ArtworkPreferenceRefreshSummary>;
     pruneDisabledMetadata: () => Promise<void>;
-    reconcileLibraryMetadata: () => Promise<{
+    reconcileLibraryMetadata: (options: MetadataFillOptions) => Promise<{
         downloaded: number;
         failed: number;
         skipped: number;
@@ -44,7 +44,7 @@ export interface ConfigPruneMaintenanceDependencies {
 const CONFIG_PRUNE_DEPENDENCIES: ConfigPruneMaintenanceDependencies = {
     refreshArtworkPreferenceCache,
     pruneDisabledMetadata: () => OrganizerService.pruneDisabledMetadata(),
-    reconcileLibraryMetadata: () => DiskScanService.fillMissingMetadataFilesForLibrary(),
+    reconcileLibraryMetadata: options => libraryMetadataBackfillService.fillMissingMetadataFilesForLibrary(options),
 };
 
 /**
@@ -101,7 +101,18 @@ export async function runConfigPruneMaintenance(
             description: "Reconciling library artwork sidecars and embedded covers",
         });
     }
-    const reconciliation = await dependencies.reconcileLibraryMetadata();
+    const reconciliation = await dependencies.reconcileLibraryMetadata({
+        repairMissingOnly: !refreshArtworkPreference,
+        writeEmbeddedMediaMetadata: refreshArtworkPreference,
+        fetchMissingLyrics: false,
+        onProgress: refreshArtworkPreference ? description => context.updateCommandDescription({
+            progress: 95, description: `Applying selected artwork - ${description}`,
+        }) : undefined,
+    });
+
+    if (refreshArtworkPreference && (reconciliation.failed > 0 || (artworkSummary?.failed ?? 0) > 0)) {
+        throw new Error(`Artwork preference update incomplete: ${artworkSummary?.failed ?? 0} source refresh(es) and ${reconciliation.failed} library metadata operation(s) failed`);
+    }
 
     if (refreshArtworkPreference && artworkSummary) {
         context.updateCommandDescription({

@@ -1630,3 +1630,20 @@ Inspection also found ConfigPrune's explicit artwork-preference workflow calling
 DiskScanService's missing-only/local-sidecar reconciliation, which skips existing
 covers and embedded updates. Repair this explicit workflow separately from scans;
 keep ordinary scans missing-only and retag local-only.
+
+October 8 artwork-preference repair validated: explicit ConfigPrune preference
+changes now reconcile existing sidecars and embedded covers through the metadata
+backfill service; ordinary scans still repair missing files only and retag remains
+local-only. Source/library failures fail the command before successful completion.
+The real FLAC regression failed before the fix and now verifies the full 800x600
+selected JPEG sidecar, matching embedded art, preserved MetadataFiles identity and
+unchanged decoded audio; repeating the job leaves the audio container unchanged.
+All 13 focused Windows and 64 production-image checks pass without skips. Full CI
+passes 2209 API and 187 frontend tests, lint/typechecks and both builds in 552
+seconds, without failing names or clone retries. Through the actual isolated app,
+a Catalog artwork preference switch completed command 7 and produced the same
+sidecar/embedded/PCM/ownership proof. Earlier commands 3/5 failed because root-made
+test files had the wrong ownership; matching the actual app UID 1000 fixed that
+fixture. Activity accurately reports those failures, but currently labels artwork
+jobs as library pruning and hides their detailed description. Correct that UX.
+Live remains 2.21.0; no candidate deployment, cache deletion or downloads resumed.

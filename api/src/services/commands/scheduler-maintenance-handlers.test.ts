@@ -108,3 +108,17 @@ test("artwork preference ConfigPrune refreshes globally before sidecars and embe
     /reconciled 2 library metadata file\(s\), 0 failed/,
   );
 });
+
+test("artwork preference failures cannot report a fully applied source switch", async () => {
+  for (const failure of ["source", "library"]) {
+    const progress: Array<{progress?:number}> = [];
+    await assert.rejects(maintenanceModule.runConfigPruneMaintenance(configPruneJob(true), {
+      updateCommandDescription: update => progress.push(update),
+    }, {
+      refreshArtworkPreferenceCache: async () => ({total:1,completed:1,failed:failure === "source" ? 1 : 0,albums:1,artists:0}),
+      pruneDisabledMetadata: async () => {},
+      reconcileLibraryMetadata: async () => ({downloaded:0,skipped:0,failed:failure === "library" ? 1 : 0}),
+    }), /Artwork preference update incomplete/);
+    assert.equal(progress.some(update => update.progress === 100), false);
+  }
+});

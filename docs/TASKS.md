@@ -440,3 +440,12 @@ The measured ownership problems and remaining acceptance gates are in
   ConfigPrune artwork preference switches currently use missing-only scan repair,
   leaving existing sidecars/embedded art unchanged; fix that workflow before
   artwork migration and cache retirement. Do not erase differing origins blindly.
+
+- validated, October 8: explicit artwork preference jobs replace existing covers
+  and update embedded art; scan repair remains missing-only and retag local-only.
+  A real FLAC regression proves master dimensions, exact metadata ownership,
+  unchanged decoded audio and idempotent repeat. All 13 Windows/64 native focused
+  checks and full CI pass (2209 API, 187 frontend). Actual Settings source switch
+  completed with verified sidecar and embedded art after correcting test fixture
+  permissions. Activity's artwork job label/description still needs correction.
+  Candidate not deployed; legacy artwork migration/retirement remains open.
