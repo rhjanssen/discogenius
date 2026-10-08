@@ -114,8 +114,8 @@ function formatActivityDescription(job: ActivityJob, source: ActivitySource): st
         parts.push(description);
     }
 
-    if (source === "queued" && Number.isFinite(Number(job.queuePosition))) {
-        parts.push(`#${Number(job.queuePosition)} in queue`);
+    if (source === "queued" && job.statusMessage) {
+        parts.push(job.statusMessage);
     }
 
     const reason = humanizeActivityReason(payload?.reason);

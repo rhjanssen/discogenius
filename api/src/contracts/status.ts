@@ -166,6 +166,7 @@ export interface ActivityJobContract {
   startTime: number;
   endTime?: number;
   status?: string;
+  statusMessage?: string;
   error?: string;
   trigger?: number;
   payload?: unknown;
@@ -326,6 +327,7 @@ function parseActivityJobContract(value: unknown, index: number, label: string):
     startTime: expectNumber(record.startTime, `${itemLabel}.startTime`),
     endTime: expectOptionalNumber(record.endTime, `${itemLabel}.endTime`),
     status: expectOptionalString(record.status, `${itemLabel}.status`),
+    statusMessage: expectOptionalString(record.statusMessage, `${itemLabel}.statusMessage`),
     error: expectOptionalString(record.error, `${itemLabel}.error`),
     trigger: expectOptionalNumber(record.trigger, `${itemLabel}.trigger`),
     payload: record.payload,

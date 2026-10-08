@@ -1,11 +1,16 @@
+import { after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
-import { LibraryCurationService } from "./library-curation-service.js";
+import { prepareActiveSchemaEnv, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+const { tempDir: activeTempDir } = prepareActiveSchemaEnv("curation-active");
+const activeDbModule = await import("../../database.js");
+const { createBaselineSchemaV41 } = activeDbModule;
+after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
+const { LibraryCurationService } = await import("./library-curation-service.js");
 
 function seedProviderExactMatch(
   db: Database.Database,
@@ -69,22 +74,22 @@ test("library curation uses canonical scope and recording coverage without chang
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name)
         VALUES (1, 'bastille', 'Bastille'), (2, 'collaborator', 'Collaborator');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
-        VALUES
-          (1, 'bad-blood', 1, 'Bad Blood', 'Album'),
+      WITH fixture(id,mbid,artist_metadata_id,title,primary_type) AS (VALUES (1, 'bad-blood', 1, 'Bad Blood', 'Album'),
           (2, 'laura-palmer', 1, 'Laura Palmer EP', 'EP'),
           (3, 'collaboration', 2, 'Collaboration', 'Single'),
-          (4, 'unrelated', 2, 'Unrelated', 'Album');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count)
-        VALUES
-          (101, 'bad-blood-release', 1, 'Bad Blood', 'Official', 1),
+          (4, 'unrelated', 2, 'Unrelated', 'Album'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,primary_type,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,fixture.primary_type,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title,status,media_count) AS (VALUES (101, 'bad-blood-release', 1, 'Bad Blood', 'Official', 1),
           (201, 'laura-palmer-release', 2, 'Laura Palmer EP', 'Official', 1),
           (301, 'collaboration-release', 3, 'Collaboration', 'Official', 1),
-          (401, 'unrelated-release', 4, 'Unrelated', 'Official', 1);
+          (401, 'unrelated-release', 4, 'Unrelated', 'Official', 1))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,status,media_count,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.status,fixture.media_count,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title)
         VALUES
           (1, 'recording-1', 'Laura Palmer'),
@@ -93,16 +98,15 @@ test("library curation uses canonical scope and recording coverage without chang
           (4, 'recording-4', 'Bad Blood'),
           (5, 'recording-5', 'Collaboration'),
           (6, 'recording-6', 'Unrelated');
-      INSERT INTO Tracks (
-        id, mbid, album_edition_id, recording_id, medium_position, position, title
-      ) VALUES
-        (1, 'bb-track-1', 101, 1, 1, 1, 'Laura Palmer'),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title) AS (VALUES (1, 'bb-track-1', 101, 1, 1, 1, 'Laura Palmer'),
         (2, 'bb-track-2', 101, 2, 1, 2, 'Pompeii'),
         (3, 'bb-track-3', 101, 3, 1, 3, 'Flaws'),
         (4, 'bb-track-4', 101, 4, 1, 4, 'Bad Blood'),
         (5, 'lp-track-1', 201, 1, 1, 1, 'Laura Palmer'),
         (6, 'collab-track-1', 301, 5, 1, 1, 'Collaboration'),
-        (7, 'unrelated-track-1', 401, 6, 1, 1, 'Unrelated');
+        (7, 'unrelated-track-1', 401, 6, 1, 1, 'Unrelated'))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
       INSERT INTO ReleaseArtistCredits (
         edition_id, artist_id, ordinal, credited_name, join_phrase
       ) VALUES (301, 1, 1, 'Bastille', '');
@@ -193,22 +197,23 @@ test("library curation uses canonical scope and recording coverage without chang
 function seedCompositeOnlyEdition(db: Database.Database): void {
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-    INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
-      VALUES (1, 'group-a', 1, 'Unplugged Single', 'Single');
-    INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count)
-      VALUES
-        (101, 'one-track', 1, 'Unplugged Single', 'Official', 1),
-        (103, 'three-track', 1, 'Unplugged Single', 'Official', 1);
+    WITH fixture(id,mbid,artist_metadata_id,title,primary_type) AS (VALUES (1, 'group-a', 1, 'Unplugged Single', 'Single'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,primary_type,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,fixture.primary_type,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+    WITH fixture(id,mbid,release_group_id,title,status,media_count) AS (VALUES (101, 'one-track', 1, 'Unplugged Single', 'Official', 1),
+        (103, 'three-track', 1, 'Unplugged Single', 'Official', 1))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,status,media_count,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.status,fixture.media_count,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
     INSERT INTO Recordings (id, mbid, title) VALUES
       (1, 'recording-1', 'Killing Me Softly'),
       (2, 'recording-2', 'Second'),
       (3, 'recording-3', 'Third');
-    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
-      VALUES
-        (1, 'one-track-1', 101, 1, 1, 1, 'Killing Me Softly'),
+    WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title) AS (VALUES (1, 'one-track-1', 101, 1, 1, 1, 'Killing Me Softly'),
         (11, 'three-track-1', 103, 1, 1, 1, 'Killing Me Softly'),
         (12, 'three-track-2', 103, 2, 1, 2, 'Second'),
-        (13, 'three-track-3', 103, 3, 1, 3, 'Third');
+        (13, 'three-track-3', 103, 3, 1, 3, 'Third'))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     INSERT INTO MetadataProfiles (id, name, release_type_policy, redundancy_enabled)
       VALUES (1, 'Default', '{}', 0);
     INSERT INTO quality_profiles (
@@ -268,7 +273,7 @@ test("a composite-only edition is preferred over a sibling it strictly covers", 
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     seedCompositeOnlyEdition(db);
 
     const curated = new LibraryCurationService(db).curateLibrary({
@@ -311,20 +316,23 @@ function seedTwoArtistLibrary(db: Database.Database): { alpha: number; beta: num
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES
       (1, 'artist-alpha', 'Alpha'), (2, 'artist-beta', 'Beta');
-    INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type) VALUES
-      (1, 'alpha-album', 1, 'Alpha Album', 'Album'),
+    WITH fixture(id,mbid,artist_metadata_id,title,primary_type) AS (VALUES (1, 'alpha-album', 1, 'Alpha Album', 'Album'),
       (2, 'beta-album', 2, 'Beta Album', 'Album'),
-      (3, 'shared-single', 2, 'Shared Single', 'Single');
-    INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count) VALUES
-      (101, 'alpha-release', 1, 'Alpha Album', 'Official', 1),
+      (3, 'shared-single', 2, 'Shared Single', 'Single'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,primary_type,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,fixture.primary_type,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+    WITH fixture(id,mbid,release_group_id,title,status,media_count) AS (VALUES (101, 'alpha-release', 1, 'Alpha Album', 'Official', 1),
       (201, 'beta-release', 2, 'Beta Album', 'Official', 1),
-      (301, 'shared-release', 3, 'Shared Single', 'Official', 1);
+      (301, 'shared-release', 3, 'Shared Single', 'Official', 1))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,status,media_count,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.status,fixture.media_count,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
     INSERT INTO Recordings (id, mbid, title) VALUES
       (1, 'rec-1', 'Alpha One'), (2, 'rec-2', 'Beta One'), (3, 'rec-3', 'Shared One');
-    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title) VALUES
-      (1, 'alpha-track', 101, 1, 1, 1, 'Alpha One'),
+    WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title) AS (VALUES (1, 'alpha-track', 101, 1, 1, 1, 'Alpha One'),
       (2, 'beta-track', 201, 2, 1, 1, 'Beta One'),
-      (3, 'shared-track', 301, 3, 1, 1, 'Shared One');
+      (3, 'shared-track', 301, 3, 1, 1, 'Shared One'))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     -- The single is Beta's release group but Alpha is credited on it, so both
     -- artists legitimately claim the same Edition.
     INSERT INTO ReleaseArtistCredits (edition_id, artist_id, ordinal, credited_name, join_phrase)
@@ -355,7 +363,7 @@ test("a scoped pass leaves the other artists' selections alone", () => {
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     const { alpha, beta } = seedTwoArtistLibrary(db);
     const service = new LibraryCurationService(db);
     const base = { libraryId: 1, curationVersion: 1, acquisitionPlannerVersion: 1, providerPriority: ["tidal"] };
@@ -413,7 +421,7 @@ test("scoped and whole-library passes reach the same selection", () => {
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     seedTwoArtistLibrary(db);
     const service = new LibraryCurationService(db);
     const base = { libraryId: 1, curationVersion: 1, acquisitionPlannerVersion: 1, providerPriority: ["tidal"] };

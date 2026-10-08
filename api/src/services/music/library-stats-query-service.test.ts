@@ -456,11 +456,13 @@ test("mutation bursts keep a warm statistics response while one worker refreshes
 test("track totals exclude unresolved and video occurrences while counting each audio edition slot", async () => {
   const artist = seedArtist("counts");
   const album = seedAlbum("counts", artist, 4);
-  dbModule.db.prepare("UPDATE Tracks SET recording_id = NULL WHERE id = ?").run(album.tracks[0].id);
   dbModule.db.prepare("UPDATE Recordings SET is_video = 1 WHERE id = ?").run(album.tracks[1].recordingId);
   // Two edition slots may refer to the same recording and must both count.
   dbModule.db.prepare("UPDATE Tracks SET recording_mbid = ? WHERE id = ?")
     .run(album.tracks[2].recordingMbid, album.tracks[3].id);
+  // Catalogue projection triggers backfill recording_id on catalogue writes.
+  // Set the deliberately unresolved projection after those writes.
+  dbModule.db.prepare("UPDATE Tracks SET recording_id = NULL WHERE id = ?").run(album.tracks[0].id);
   const expected = dbModule.db.prepare(`SELECT COUNT(*) AS count FROM Tracks track
     JOIN Recordings recording ON recording.id = track.recording_id AND recording.is_video = 0`).get() as { count: number };
   assert.equal(expected.count, 2);

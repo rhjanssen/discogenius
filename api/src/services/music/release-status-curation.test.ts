@@ -1,3 +1,4 @@
+import { after } from "node:test";
 /**
  * Release status decides which *Editions* automatic curation may choose. It
  * never removes a Release Group from the discography.
@@ -18,9 +19,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
+import { prepareActiveSchemaEnv, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+const { tempDir: activeTempDir } = prepareActiveSchemaEnv("curation-active");
+const activeDbModule = await import("../../database.js");
+const { createBaselineSchemaV41 } = activeDbModule;
+after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
 import { releaseStatusPreferenceRank } from "../metadata/musicbrainz-release-group-filter.js";
-import { LibraryCurationService } from "./library-curation-service.js";
+const { LibraryCurationService } = await import("./library-curation-service.js");
+type LibraryCurationService = InstanceType<typeof LibraryCurationService>;
 
 /**
  * One accepted provider offer per canonical track, so every Edition has a
@@ -90,28 +96,29 @@ function seedProviderExactMatch(
  */
 function seedMixedStatusLibrary(db: Database.Database): void {
   db.pragma("foreign_keys = ON");
-  createCurrentDomainSchema(db);
+  createBaselineSchemaV41(db);
   db.exec(`
     INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'bastille', 'Bastille');
-    INSERT INTO Albums (id, mbid, artist_metadata_id, title, primary_type)
-      VALUES (1, 'bad-blood', 1, 'Bad Blood', 'Album'),
-             (2, 'translated-only', 1, 'Translated Only', 'Album');
-    INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count)
-      VALUES
-        (101, 'bb-official',  1, 'Bad Blood', 'Official', 1),
+    WITH fixture(id,mbid,artist_metadata_id,title,primary_type) AS (VALUES (1, 'bad-blood', 1, 'Bad Blood', 'Album'),
+             (2, 'translated-only', 1, 'Translated Only', 'Album'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,primary_type,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,fixture.primary_type,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+    WITH fixture(id,mbid,release_group_id,title,status,media_count) AS (VALUES (101, 'bb-official',  1, 'Bad Blood', 'Official', 1),
         (102, 'bb-bootleg',   1, 'Bad Blood', 'Bootleg', 1),
         (103, 'bb-promo',     1, 'Bad Blood', 'Promotion', 1),
         (104, 'bb-nostatus',  1, 'Bad Blood', NULL, 1),
-        (201, 'to-pseudo',    2, 'Translated Only', 'Pseudo-Release', 1);
+        (201, 'to-pseudo',    2, 'Translated Only', 'Pseudo-Release', 1))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,status,media_count,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.status,fixture.media_count,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
     INSERT INTO Recordings (id, mbid, title, length_ms)
       VALUES (1, 'rec-1', 'Pompeii', 214148), (2, 'rec-2', 'Things We Lost in the Fire', 210000);
-    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
-      VALUES
-        (1, 'bb-o-1', 101, 1, 1, 1, 'Pompeii'),
+    WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title) AS (VALUES (1, 'bb-o-1', 101, 1, 1, 1, 'Pompeii'),
         (2, 'bb-b-1', 102, 1, 1, 1, 'Pompeii'),
         (3, 'bb-p-1', 103, 1, 1, 1, 'Pompeii'),
         (4, 'bb-n-1', 104, 1, 1, 1, 'Pompeii'),
-        (5, 'to-p-1', 201, 2, 1, 1, 'Things We Lost in the Fire');
+        (5, 'to-p-1', 201, 2, 1, 1, 'Things We Lost in the Fire'))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     INSERT INTO MetadataProfiles (id, name, release_type_policy, redundancy_enabled)
       VALUES (1, 'Default', '{}', 0);
     INSERT INTO quality_profiles (

@@ -2,6 +2,19 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: plan replacement, clearing, provider rematching
+  and provider re-ingestion now share transaction-scoped ownership admission.
+  Queued/running media commands and claimed waiting rows preserve their exact
+  plan and source dependencies. Retry-safe metadata work yields its worker and
+  retries after one minute without consuming failure attempts. Activity explains
+  the wait and no longer appends queue positions. All 74 focused production
+  container checks pass; the actual app shows the deferred refresh and completed
+  history after owner release. Not deployed. Preserve selected/manual/locked
+  intent across quiescent rematching and re-ingestion before declaring the plan
+  lifecycle complete. Final full CI passes 2,140 API and 187 frontend tests,
+  lint, typechecks and builds with no failing names or clone retries. Final
+  isolated fixture teardown checks also pass all 32 tests.
+
 - local candidate, October 8: unowned removed edition occurrences expire derived
   acquisition coverage transactionally. Selected source keys, album locks,
   recording match decisions and waiting request identity survive; active media,
@@ -9,10 +22,9 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
   container passes 47 focused checks and the actual app shows the surviving
   track, retained lock and waiting request. Full CI passes 2,121 API and 187
   frontend tests with no failed names. Not deployed. Canonical recording
-  redirects and owned occurrence reconciliation still need completion. Audit
-  live-plan ownership in AcquisitionPlanRepository.replacePlans/clear,
-  ProviderReleaseIngestionService.clearDependentAcquisitionPlans and
-  ProviderMatchRepository before declaring the plan lifecycle reliable.
+  redirects and owned occurrence reconciliation still need completion. The
+  shared ownership guard covers the additional replacement paths, but durable
+  choice preservation during quiescent provider changes remains unfinished.
 
 - local candidate, October 8: waiting acquisition requests resolve regenerated
   plans by exact library, edition and provider. Removed the album-wide first-plan

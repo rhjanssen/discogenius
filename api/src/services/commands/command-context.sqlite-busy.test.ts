@@ -5,6 +5,7 @@ import path from "node:path";
 import { AsyncResource } from "node:async_hooks";
 import { withSqliteWriteMutexAsync } from "../../database/sqlite-write-mutex.js";
 import { after, before, beforeEach, test } from "node:test";
+import { AcquisitionPlanInUseError } from "../music/acquisition-plan-ownership.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-command-busy-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.command-busy.test.db");
@@ -35,6 +36,36 @@ function sqliteBusy(): Error {
     (error as Error & { code: string }).code = "SQLITE_BUSY";
     return error;
 }
+
+test("an owned acquisition plan defers metadata work without failing or spending retry attempts", async () => {
+    const { mapJob } = await import("./command-history.js");
+    const id = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { releaseGroupMbid: "album" } as never);
+    for (let turn = 0; turn < 4; turn++) {
+        const worker = `plan-owner-${turn}`;
+        const job = queueModule.CommandQueueManager.claimForExecution(id, worker, 60_000, new Date(Date.now() + turn * 61_000));
+        assert.ok(job);
+        assert.equal(await contextModule.persistCommandOutcome(job, new AcquisitionPlanInUseError(7)), "requeued");
+        const row = dbModule.db.prepare("SELECT status,attempt,error,blocked_reason,retry_after,worker_id FROM commands WHERE id=?").get(id) as {
+            status: string; attempt: number; error: string | null; blocked_reason: string; retry_after: string; worker_id: string | null;
+        };
+        assert.equal(row.status, "queued"); assert.equal(row.attempt, 0); assert.equal(row.error, null); assert.equal(row.worker_id, null);
+        assert.match(row.blocked_reason, /Acquisition plan 7/);
+        assert.ok(new Date(row.retry_after).getTime() > Date.now() + 50_000);
+        assert.equal(queueModule.CommandQueueManager.claimForExecution(id, 'too-early', 60_000), null);
+        assert.equal(mapJob(queueModule.CommandQueueManager.get(id)!).statusMessage, "Waiting for download or import to finish");
+    }
+    const job = queueModule.CommandQueueManager.claimForExecution(id, "ready", 60_000, new Date(Date.now() + 61_000));
+    assert.ok(job);
+    assert.equal(await contextModule.persistCommandOutcome(job, null), "completed");
+    assert.equal(mapJob(queueModule.CommandQueueManager.get(id)!).statusMessage, undefined);
+});
+
+test("owned-plan deferral preserves the no-replay rule for file mutations", async () => {
+    const id = queueModule.CommandQueueManager.push(queueModule.CommandNames.RenameArtist, { artistName: "Bastille" } as never);
+    const job = queueModule.CommandQueueManager.claimForExecution(id, "file-owner", 60_000);
+    assert.ok(job);
+    assert.equal(await contextModule.persistCommandOutcome(job, new AcquisitionPlanInUseError(7)), "failed");
+});
 
 test("SQLITE_BUSY requeues a retry-safe command instead of failing it", async () => {
     const id = queueModule.CommandQueueManager.push(

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { assertAcquisitionPlansQuiescent } from "../music/acquisition-plan-ownership.js";
 import {
   ProviderCatalogRepository,
   type ProviderAudioVariantInput,
@@ -716,6 +717,10 @@ export class ProviderReleaseIngestionService {
       providerEditionItemId,
       providerEditionItemId,
     ];
+
+    assertAcquisitionPlansQuiescent(this.db, (this.db.prepare(`
+      SELECT id FROM AcquisitionPlans WHERE id IN (${dependentPlanIds})
+    `).all(...args) as Array<{ id: number }>).map(row => row.id));
 
     const droppedEditions = this.db.prepare(`
       SELECT DISTINCT plan.library_id AS libraryId, plan.edition_id AS editionId

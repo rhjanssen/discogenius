@@ -993,7 +993,8 @@ ${orderBy}
 
     /** Release resources only after a handler has finished its current work
      * unit. Ownership fencing prevents a retired worker from requeueing work. */
-    static continueOwnedCommand(id: number, workerId: string, payloadPatch: Partial<CommandBodyCommon>): boolean {
+    static continueOwnedCommand(id: number, workerId: string, payloadPatch: Partial<CommandBodyCommon>,
+        options: { blockedReason?: string; retryDelayMs?: number } = {}): boolean {
         return db.transaction(() => {
             if (!this.isExecutionOwner(id, workerId)) return false;
             this.updateState(id, { payloadPatch, workerId });
@@ -1009,12 +1010,15 @@ ${orderBy}
             const result = db.prepare(`
                 UPDATE commands SET status = 'queued', worker_id = NULL,
                     heartbeat_at = NULL, lease_expires_at = NULL,
-                    attempt = MAX(attempt - 1, 0), blocked_reason = NULL,
-                    progress_phase = 'checkpoint ready', retry_after = NULL,
+                    attempt = MAX(attempt - 1, 0), blocked_reason = ?,
+                    progress_phase = ?, retry_after = ?,
                     queue_order = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status = 'started' AND worker_id = ?
-            `).run((tail.rank ?? 0) + QUEUE_RANK_STEP, id, workerId);
+            `).run(options.blockedReason ?? null,
+                options.blockedReason ? "waiting for download or import" : "checkpoint ready",
+                options.retryDelayMs ? leaseExpiry(new Date(), options.retryDelayMs) : null,
+                (tail.rank ?? 0) + QUEUE_RANK_STEP, id, workerId);
             if (result.changes !== 1) return false;
             clearCommandOverlay(id);
             clearCommandUpdateThrottle(id);

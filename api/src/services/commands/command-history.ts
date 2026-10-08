@@ -651,6 +651,9 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
         startTime: parseSqliteDate(job.started_at) ?? parseSqliteDate(job.created_at) ?? Date.now(),
         endTime: parseSqliteDate(job.completed_at),
         status: job.status,
+        statusMessage: job.status === "queued" && job.progress_phase === "waiting for download or import"
+            ? "Waiting for download or import to finish"
+            : undefined,
         error: job.error,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
         queuePosition: options.queuePosition,

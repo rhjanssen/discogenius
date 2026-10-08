@@ -1,10 +1,15 @@
+import { after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
+import { prepareActiveSchemaEnv, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+const { tempDir: activeTempDir } = prepareActiveSchemaEnv("acquisition-active");
+const activeDbModule = await import("../../database.js");
+const { createBaselineSchemaV41 } = activeDbModule;
+after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { ProviderMatchRepository } from "./provider-match-repository.js";
 
@@ -13,10 +18,14 @@ test("Laura Palmer provider release persists one safe assignment and no position
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Bastille')").run();
-    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Laura Palmer EP')").run();
-    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Laura Palmer EP')").run();
+    db.prepare(`WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group', 1, 'Laura Palmer EP'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture`).run();
+    db.prepare(`WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release', 1, 'Laura Palmer EP'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture`).run();
     const canonicalTitles = [
       "Laura Palmer",
       "Overjoyed",
@@ -28,8 +37,9 @@ test("Laura Palmer provider release persists one safe assignment and no position
       const id = index + 1;
       db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (?, ?, ?)").run(id, `recording-${id}`, title);
       db.prepare(`
-        INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
-        VALUES (?, ?, 1, ?, 1, ?, ?)
+        WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title) AS (VALUES (?, ?, 1, ?, 1, ?, ?))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture
       `).run(id, `track-${id}`, id, id, title);
     });
 
@@ -108,7 +118,7 @@ test("an accepted video match supersedes the provider video's previous accepted 
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.prepare("INSERT INTO Recordings (id, mbid, title, is_video) VALUES (1, 'video-1', 'Pompeii', 1)").run();
     db.prepare("INSERT INTO Recordings (id, mbid, title, is_video) VALUES (2, 'video-2', 'Pompeii', 1)").run();
     const itemId = new ProviderCatalogRepository(db).upsertItem({
@@ -147,7 +157,7 @@ test("automatic video matching cannot supersede a manual accepted identity", () 
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.prepare(`
       INSERT INTO Recordings (id, mbid, title, is_video)
       VALUES (1, 'video-1', 'Pompeii', 1), (2, 'video-2', 'Pompeii', 1)
@@ -211,7 +221,7 @@ test("video matches reject missing or non-video canonical targets", () => {
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.prepare(`
       INSERT INTO Recordings (id, mbid, title, is_video, metadata_status)
       VALUES (2, 'audio-recording', 'Audio recording', 0, 'musicbrainz')
@@ -262,7 +272,7 @@ test("video matches accept a YouTube-only catalog recording", () => {
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.prepare(`
       INSERT INTO Recordings (id, title, is_video, youtube_video_id, metadata_status)
       VALUES (3, 'YouTube-only video', 1, 'a1xFsoRYrds', 'youtube')

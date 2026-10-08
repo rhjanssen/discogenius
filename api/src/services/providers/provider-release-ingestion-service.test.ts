@@ -1,18 +1,26 @@
+import { after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
-import { ProviderReleaseIngestionService } from "./provider-release-ingestion-service.js";
+import { ensureEditionBarcodeIndex } from "../../database/schema/edition-barcode-index.js";
+import { prepareActiveSchemaEnv, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+const { tempDir: activeTempDir } = prepareActiveSchemaEnv("acquisition-active");
+const { ProviderReleaseIngestionService } = await import("./provider-release-ingestion-service.js");
+const activeDbModule = await import("../../database.js");
+const { createBaselineSchemaV41 } = activeDbModule;
+after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
+
 
 function withDb(run: (db: Database.Database) => void): void {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-provider-release-ingestion-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
+    ensureEditionBarcodeIndex(db);
     run(db);
   } finally {
     db.close();
@@ -59,22 +67,25 @@ test("provider edition member structure decides the Bastille reprise", () => {
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title)
-        VALUES (1, 'group-gmtf', 1, 'Give Me the Future + Dreams of the Past');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title)
-        VALUES (1, '18d7cf25-d2fa-448a-ae11-72aa6b474a42', 1, 'Give Me the Future + Dreams of the Past');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-gmtf', 1, 'Give Me the Future + Dreams of the Past'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, '18d7cf25-d2fa-448a-ae11-72aa6b474a42', 1, 'Give Me the Future + Dreams of the Past'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
         (1, 'rec-dlb',          'Distorted Light Beam',           177000),
         (2, 'rec-thelma',       'Thelma + Louise',                138000),
         (3, 'rec-family-ties',  'Family Ties',                    167000),
         (4, 'rec-dlb-reprise',  'Distorted Light Beam (reprise)',  204000),
         (5, 'rec-revolution',   'Revolution',                     183000);
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-dlb',         1, 1, 1, 1, 'Distorted Light Beam',           177000),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-dlb',         1, 1, 1, 1, 'Distorted Light Beam',           177000),
         (2, 't-thelma',      1, 2, 1, 2, 'Thelma + Louise',                138000),
         (3, 't-family',      1, 3, 2, 3, 'Family Ties',                    167000),
         (4, 't-dlb-reprise', 1, 4, 2, 4, 'Distorted Light Beam (reprise)', 204000),
-        (5, 't-revolution',  1, 5, 2, 5, 'Revolution',                     183000);
+        (5, 't-revolution',  1, 5, 2, 5, 'Revolution',                     183000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     const result = new ProviderReleaseIngestionService(db).ingest({
@@ -143,13 +154,18 @@ test("structure does not let a cross-slot studio track cover a live variant", ()
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-amy', 'Amy Winehouse');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-btb', 1, 'Back to Black');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-btb-de', 1, 'Back to Black (German edition)');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-btb', 1, 'Back to Black'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-btb-de', 1, 'Back to Black (German edition)'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
         (1, 'rec-rehab-live', 'Rehab (live at Kalkscheune, Berlin)', 213000);
       -- The live session is its own medium; the provider has no Kalkscheune cut.
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-rehab-live', 1, 1, 3, 1, 'Rehab (live at Kalkscheune, Berlin)', 213000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-rehab-live', 1, 1, 3, 1, 'Rehab (live at Kalkscheune, Berlin)', 213000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     const result = new ProviderReleaseIngestionService(db).ingest({
@@ -181,11 +197,16 @@ test("contextual member title and duration outrank the standalone item facts", (
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Group A'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-a', 1, 'Release A'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-edit', 'Nightcall (radio edit)', 190000);
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-edit', 1, 1, 1, 4, 'Nightcall (radio edit)', 190000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-edit', 1, 1, 1, 4, 'Nightcall (radio edit)', 190000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     const result = new ProviderReleaseIngestionService(db).ingest({
@@ -228,11 +249,16 @@ test("re-matching a planned release replaces its matches instead of failing", ()
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Group A'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-a', 1, 'Release A'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-a', 'Alpha', 200000);
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms)
-        VALUES (1, 't-a', 1, 1, 1, 1, 'Alpha', 200000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-a', 1, 1, 1, 1, 'Alpha', 200000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
       INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Standard', '{}');
       INSERT INTO quality_profiles (
         id, name, allowed_source_formats, preference_order, cutoff,
@@ -326,12 +352,17 @@ test("genuinely indistinguishable candidates stay ambiguous", () => {
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Group A'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-a', 1, 'Release A'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-interlude', 'Interlude', 60000);
       -- The canonical track sits at disc 1 position 5; neither provider track does.
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-interlude', 1, 1, 1, 5, 'Interlude', 60000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-interlude', 1, 1, 1, 5, 'Interlude', 60000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     const result = new ProviderReleaseIngestionService(db).ingest({
@@ -369,14 +400,19 @@ test("assignment maximises coverage before confidence", () => {
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Group A'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-a', 1, 'Release A'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
         (1, 'rec-one', 'Landslide',        200000, '["GBAAA0000001"]'),
         (2, 'rec-two', 'Landslide (edit)', 200000, NULL);
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-one', 1, 1, 1, 1, 'Landslide',        200000),
-        (2, 't-two', 1, 2, 1, 2, 'Landslide (edit)', 200000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-one', 1, 1, 1, 1, 'Landslide',        200000),
+        (2, 't-two', 1, 2, 1, 2, 'Landslide (edit)', 200000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     const result = new ProviderReleaseIngestionService(db).ingest({
@@ -425,16 +461,21 @@ test("assignment is deterministic when member order changes", () => {
     withDb((db) => {
       db.exec(`
         INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-        INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A');
-        INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A');
+        WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Group A'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+        WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-a', 1, 'Release A'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
         INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
           (1, 'rec-a', 'Alpha', 200000),
           (2, 'rec-b', 'Beta',  210000),
           (3, 'rec-c', 'Gamma', 220000);
-        INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-          (1, 't-a', 1, 1, 1, 1, 'Alpha', 200000),
+        WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-a', 1, 1, 1, 1, 'Alpha', 200000),
           (2, 't-b', 1, 2, 1, 2, 'Beta',  210000),
-          (3, 't-c', 1, 3, 1, 3, 'Gamma', 220000);
+          (3, 't-c', 1, 3, 1, 3, 'Gamma', 220000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
       `);
       const members = [
         trackMember({ providerId: "p-a", title: "Alpha", mediumPosition: 1, position: 1, durationMs: 200000 }),
@@ -478,25 +519,27 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
+    ensureEditionBarcodeIndex(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title)
-        VALUES (1, 'group-a', 1, 'Release Group A'), (2, 'group-b', 1, 'Release Group B');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title)
-        VALUES (1, 'release-a', 1, 'Release A'), (2, 'release-b', 2, 'Release B');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Release Group A'), (2, 'group-b', 1, 'Release Group B'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-a', 1, 'Release A'), (2, 'release-b', 2, 'Release B'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs)
         VALUES
           (1, 'recording-exact', 'Opening', 180000, '["USAAA2600001"]'),
           (2, 'recording-original', 'Theme', 200000, NULL),
           (3, 'recording-instrumental', 'Theme', 200000, NULL);
-      INSERT INTO Tracks (
-        id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms
-      ) VALUES
-        (1, 'track-exact', 1, 1, 1, 1, 'Opening', 180000),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 'track-exact', 1, 1, 1, 1, 'Opening', 180000),
         (2, 'track-original', 1, 2, 1, 2, 'Theme', 200000),
         (3, 'track-instrumental', 1, 3, 2, 2, 'Theme', 200000),
-        (4, 'track-reused', 2, 1, 1, 1, 'Opening', 180000);
+        (4, 'track-reused', 2, 1, 1, 1, 'Opening', 180000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
     const service = new ProviderReleaseIngestionService(db);
     const first = service.ingest({
@@ -689,22 +732,25 @@ test("a provider release matches the one Edition it is, not its siblings", () =>
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title)
-        VALUES (1, 'group-gmtf', 1, 'Give Me the Future + Dreams of the Past');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, barcode) VALUES
-        (1, '18d7cf25-d2fa-448a-ae11-72aa6b474a42', 1, 'GMTF AF', '00602445489176'),
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-gmtf', 1, 'Give Me the Future + Dreams of the Past'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title,barcode) AS (VALUES (1, '18d7cf25-d2fa-448a-ae11-72aa6b474a42', 1, 'GMTF AF', '00602445489176'),
         (2, '60d849a0-cd90-418f-8ff3-651d138c11de', 1, 'GMTF DZ', '602445489220'),
-        (3, '0a0bd5a8-6635-48df-980e-1f9b4d22c722', 1, 'GMTF CD', '0602445499946');
+        (3, '0a0bd5a8-6635-48df-980e-1f9b4d22c722', 1, 'GMTF CD', '0602445499946'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,barcode,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.barcode,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
         (1, 'rec-a', 'Distorted Light Beam', 177000, '["GBUM72103268"]'),
         (2, 'rec-b', 'Thelma + Louise', 138000, '["GBUM72104380"]');
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't1a', 1, 1, 1, 1, 'Distorted Light Beam', 177000),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't1a', 1, 1, 1, 1, 'Distorted Light Beam', 177000),
         (2, 't1b', 1, 2, 1, 2, 'Thelma + Louise', 138000),
         (3, 't2a', 2, 1, 1, 1, 'Distorted Light Beam', 177000),
         (4, 't2b', 2, 2, 1, 2, 'Thelma + Louise', 138000),
         (5, 't3a', 3, 1, 1, 1, 'Distorted Light Beam', 177000),
-        (6, 't3b', 3, 2, 1, 2, 'Thelma + Louise', 138000);
+        (6, 't3b', 3, 2, 1, 2, 'Thelma + Louise', 138000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     const result = new ProviderReleaseIngestionService(db).ingest({
@@ -768,19 +814,23 @@ test("UPC identity blocks soft fan-out to region orphans without shared recordin
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-amy', 'Amy');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-frank', 1, 'Frank');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, barcode) VALUES
-        (1, 'deluxe-mb', 1, 'Frank Deluxe', '602445489220'),
-        (2, 'japan-mb', 1, 'Frank Japan', '4988005541130');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-frank', 1, 'Frank'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title,barcode) AS (VALUES (1, 'deluxe-mb', 1, 'Frank Deluxe', '602445489220'),
+        (2, 'japan-mb', 1, 'Frank Japan', '4988005541130'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,barcode,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.barcode,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       -- Deluxe and Japan use distinct recording MBIDs (MB orphans).
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
         (1, 'rec-deluxe-kyn', 'Know You Now', 184000, '["GBAAN0300470"]'),
         (2, 'rec-japan-kyn', 'Know You Now', 183000, NULL),
         (3, 'rec-mylo', 'Fuck Me Pumps - Mylo Remix', 292000, NULL);
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-d1', 1, 1, 1, 1, 'Know You Now', 184000),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-d1', 1, 1, 1, 1, 'Know You Now', 184000),
         (2, 't-j1', 2, 2, 1, 1, 'Know You Now', 183000),
-        (3, 't-j2', 2, 3, 1, 2, 'Fuck Me Pumps - Mylo Remix', 292000);
+        (3, 't-j2', 2, 3, 1, 2, 'Fuck Me Pumps - Mylo Remix', 292000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     new ProviderReleaseIngestionService(db).ingest({
@@ -819,18 +869,22 @@ test("UPC identity keeps every edition that shares the provider barcode", () => 
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, barcode) VALUES
-        (1, 'rel-a', 1, 'Digital A', '602445489220'),
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Album'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title,barcode) AS (VALUES (1, 'rel-a', 1, 'Digital A', '602445489220'),
         (2, 'rel-b', 1, 'Digital B', '00602445489220'),
-        (3, 'rel-c', 1, 'CD', '9999999999999');
+        (3, 'rel-c', 1, 'CD', '9999999999999'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,barcode,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.barcode,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
         (1, 'rec-a', 'Song', 180000, '["ISRC00000001"]'),
         (2, 'rec-cd-only', 'Song', 181000, NULL);
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't1', 1, 1, 1, 1, 'Song', 180000),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't1', 1, 1, 1, 1, 'Song', 180000),
         (2, 't2', 2, 1, 1, 1, 'Song', 180000),
-        (3, 't3', 3, 2, 1, 1, 'Song', 181000);
+        (3, 't3', 3, 2, 1, 1, 'Song', 181000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     new ProviderReleaseIngestionService(db).ingest({
@@ -866,14 +920,19 @@ test("ISRC identity blocks soft title match to a different recording", () => {
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'rel-a', 1, 'Album');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-a', 1, 'Album'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'rel-a', 1, 'Album'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
         (1, 'rec-commentary', 'The Spirit (commentary)', 47000, '["ISRCCOMMENT01"]'),
         (2, 'rec-song', 'The Spirit', 136000, '["ISRCSONG00001"]');
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't1', 1, 1, 1, 1, 'The Spirit (commentary)', 47000),
-        (2, 't2', 1, 2, 1, 2, 'The Spirit', 136000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't1', 1, 1, 1, 1, 'The Spirit (commentary)', 47000),
+        (2, 't2', 1, 2, 1, 2, 'The Spirit', 136000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     new ProviderReleaseIngestionService(db).ingest({
@@ -917,24 +976,27 @@ test("a composite target is reachable through Recordings, not through edition ma
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES
-        (1, 'group-kms', 1, 'Killing Me Softly With His Song (MTV Unplugged)'),
-        (2, 'group-pompeii', 1, 'Pompeii / Come as You Are (MTV Unplugged)');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES
-        (1, '36f2b40f-b46d-4f37-8931-02c487a7ad3e', 1, 'KMS 1-track'),
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-kms', 1, 'Killing Me Softly With His Song (MTV Unplugged)'),
+        (2, 'group-pompeii', 1, 'Pompeii / Come as You Are (MTV Unplugged)'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, '36f2b40f-b46d-4f37-8931-02c487a7ad3e', 1, 'KMS 1-track'),
         (2, 'fab7ff68-52e8-45e4-9218-c4eb369c4bc2', 1, 'KMS 3-track'),
-        (3, '03358ffb-95aa-4b21-b506-fd79cb0c838b', 2, 'Pompeii 2-track');
+        (3, '03358ffb-95aa-4b21-b506-fd79cb0c838b', 2, 'Pompeii 2-track'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
         (1, 'rec-kms', 'Killing Me Softly With His Song (edit)', 298000, '["GBUM72302334"]'),
         (2, 'rec-pompeii', 'Pompeii (edit)', 268000, '["GBUM72302279"]'),
         (3, 'rec-cay', 'Come as You Are (edit)', 231000, '["GBUM72302277"]');
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-kms-1', 1, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-kms-1', 1, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000),
         (2, 't-kms-3a', 2, 1, 1, 1, 'Killing Me Softly With His Song (edit)', 298000),
         (3, 't-kms-3b', 2, 2, 1, 2, 'Pompeii (edit)', 268000),
         (4, 't-kms-3c', 2, 3, 1, 3, 'Come as You Are (edit)', 231000),
         (5, 't-pom-a', 3, 2, 1, 1, 'Pompeii (edit)', 268000),
-        (6, 't-pom-b', 3, 3, 1, 2, 'Come as You Are (edit)', 231000);
+        (6, 't-pom-b', 3, 3, 1, 2, 'Come as You Are (edit)', 231000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     // Ingest the KMS one-track single against its primary edition.
@@ -1024,19 +1086,22 @@ test("Bad Blood X Apple titles cover the canonical edition's renamed disc-2 trac
   withDb((db) => {
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title)
-        VALUES (1, 'bf37b1a0-d94f-4230-b2c7-09b17f9f8a68', 1, 'Bad Blood');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, disambiguation) VALUES
-        (1, '2ae85560-0c6b-48f2-8d37-4e717e97e73c', 1, 'Bad Blood X', '10th Anniversary Edition'),
-        (2, '20d01ccb-f796-4916-861c-49535a6d7b46', 1, 'Bad Blood X', '10th anniversary edition');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'bf37b1a0-d94f-4230-b2c7-09b17f9f8a68', 1, 'Bad Blood'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title,disambiguation) AS (VALUES (1, '2ae85560-0c6b-48f2-8d37-4e717e97e73c', 1, 'Bad Blood X', '10th Anniversary Edition'),
+        (2, '20d01ccb-f796-4916-861c-49535a6d7b46', 1, 'Bad Blood X', '10th anniversary edition'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,disambiguation,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,fixture.disambiguation,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
         (1, '08e28858-425c-4136-b8a8-2b203885105c', 'Pompeii (live at Studio Brussel) (acoustic)', 199800),
         (2, '4819e198-b732-4e16-adf9-96af5ed9d3d7', 'Laura Palmer (Dan’s Bedroom demo)', 179880);
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms) VALUES
-        (1, 't-pompeii-x', 1, 1, 2, 6, 'Pompeii (live from Studio Brussel)', 199800),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES (1, 't-pompeii-x', 1, 1, 2, 6, 'Pompeii (live from Studio Brussel)', 199800),
         (2, 't-laura-x', 1, 2, 2, 8, 'Laura Palmer (Dan’s Bedroom demo)', 179880),
         (3, 't-pompeii-sib', 2, 1, 2, 6, 'Pompeii (live at Studio Brussel / acoustic)', 199800),
-        (4, 't-laura-sib', 2, 2, 2, 8, 'Laura Palmer (Racing Heart demo)', 179880);
+        (4, 't-laura-sib', 2, 2, 2, 8, 'Laura Palmer (Racing Heart demo)', 179880))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
     `);
 
     const result = new ProviderReleaseIngestionService(db).ingest({

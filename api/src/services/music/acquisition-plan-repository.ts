@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { OptimizedAcquisitionPlan } from "./acquisition-plan-optimizer.js";
+import { assertAcquisitionPlansQuiescent } from "./acquisition-plan-ownership.js";
 
 export interface LibraryReleaseCompletion {
   trackCount: number;
@@ -106,6 +107,9 @@ export class AcquisitionPlanRepository {
       : null;
 
     return this.db.transaction(() => {
+      assertAcquisitionPlansQuiescent(this.db, (this.db.prepare(`
+        SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=?
+      `).all(input.libraryId, input.editionId) as Array<{ id: number }>).map(row => row.id));
       // Release the deferred reference before deleting the rows it points at.
       this.db.prepare(`
         UPDATE LibraryEditions
@@ -470,16 +474,11 @@ export class AcquisitionPlanRepository {
       JOIN AlbumEditions edition ON edition.id = plan.edition_id
       WHERE assignment.track_id = ?
     `).all(trackId) as Array<{ id: number; library_id: number; provider: string; release_mbid: string }>;
-    const executing = this.db.prepare(`
-      SELECT 1 FROM commands WHERE status IN ('queued','started')
-      AND CAST(json_extract(payload,'$.acquisitionPlanId') AS INTEGER)=? LIMIT 1
-    `);
+    assertAcquisitionPlansQuiescent(this.db, plans.map(plan => plan.id));
     const waiting = this.db.prepare("SELECT id, command_id, provider, payload FROM DownloadQueue WHERE plan_id=?");
     const updates: Array<{ id: number; payload: string }> = [];
     for (const plan of plans) {
-      if (executing.get(plan.id)) throw new Error(`Removed catalog track ${trackId} has executing acquisition plan ${plan.id}`);
       for (const row of waiting.all(plan.id) as Array<{ id: number; command_id: number | null; provider: string | null; payload: string }>) {
-        if (row.command_id != null) throw new Error(`Removed catalog track ${trackId} has claimed acquisition plan ${plan.id}`);
         const payload = JSON.parse(row.payload) as Record<string, unknown>;
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)
           || (row.provider != null && row.provider !== plan.provider)
@@ -503,6 +502,9 @@ export class AcquisitionPlanRepository {
 
   clear(libraryId: number, editionId: number): number {
     return this.db.transaction(() => {
+      assertAcquisitionPlansQuiescent(this.db, (this.db.prepare(`
+        SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=?
+      `).all(libraryId, editionId) as Array<{ id: number }>).map(row => row.id));
       this.db.prepare(`
         UPDATE LibraryEditions
         SET preferred_plan_key = NULL, plan_selection_mode = 'auto',

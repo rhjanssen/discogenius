@@ -72,7 +72,7 @@ for (const holder of ["selected", "queued"] as const) test(`catalog reconciliati
 
 for (const holder of ["started download", "queued import"] as const) test(`catalog reconciliation preserves removed tracks held by a ${holder} plan`, () => fixture(plan => {
   db.prepare("INSERT INTO commands(name,payload,status) VALUES(?,?,?)").run(holder === "queued import" ? "ImportDownload" : "DownloadAlbum", JSON.stringify({ acquisitionPlanId: plan }), holder === "queued import" ? "queued" : "started");
-  assert.throws(() => db.transaction(reconcile)(), /executing acquisition plan/);
+  assert.throws(() => db.transaction(reconcile)(), /owned by a download or import/);
   assert.ok(db.prepare("SELECT id FROM AcquisitionPlans WHERE id=?").get(plan));
   assert.equal((db.prepare("SELECT position FROM Tracks WHERE id=1").get() as { position: number }).position, 1);
   assert.equal((db.prepare("SELECT position FROM Tracks WHERE id=2").get() as { position: number }).position, 2);
@@ -94,7 +94,7 @@ test("waiting standalone track intent blocks occurrence expiry until it can be r
 
 test("a claimed waiting plan cannot be expired even after its command leaves live history", () => fixture(plan => {
   db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,command_id,payload,queue_order) VALUES('claimed','album','DownloadAlbum',?,987,'{}',1)").run(plan);
-  assert.throws(() => db.transaction(reconcile)(), /claimed acquisition plan/);
+  assert.throws(() => db.transaction(reconcile)(), /owned by a download or import/);
   assert.ok(db.prepare("SELECT id FROM AcquisitionPlanTracks WHERE plan_id=?").get(plan));
 }));
 

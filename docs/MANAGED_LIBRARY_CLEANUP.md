@@ -1,5 +1,49 @@
 # Managed library inventory and strict cleanup
 
+## October 8 acquisition ownership admission candidate
+
+Audited the other plan deletion paths after occurrence expiry. Plan replacement
+and clearing, provider rematching and provider re-ingestion could remove rows
+still held by an executing download/import. They now use one guard inside their
+write transaction. Exact acquisitionPlanId references on queued/running commands
+and claimed DownloadQueue rows prevent mutation; rejection rolls back upstream
+provider item and match writes as well as plan/source/selection writes. SQLite
+query plans confirm both ownership checks use their dedicated indexes.
+
+Retry-safe commands release their worker, retain command identity and wait one
+minute before another attempt. This dependency wait does not consume failure
+attempts. Cancellation and worker ownership fences still apply. Rename/retag and
+other non-replayable filesystem commands retain their existing failure policy.
+Activity now says Waiting for download or import to finish and omits queue
+position suffixes. Completed rows omit the waiting message.
+
+Seventeen new production-schema cases cover the four mutation paths under
+download, import and claimed-wait ownership, unchanged transactional snapshots,
+quiescent mutation and required writer admission. Metadata lifecycle tests cover
+repeated deferral, early-claim refusal, completion and non-replayable mutations.
+Dependent service fixtures now build the actual runtime schema and set their
+temporary environment before database-bearing imports. The statistics fixture
+sets its deliberate unresolved projection after catalogue writes, whose existing
+projection triggers otherwise restore it. These changes do not disable triggers.
+
+All 74 focused compiled-service tests pass in the production Linux container.
+The running app fixture verifies preserved assignment rows during deferral,
+queued waiting text, owner release, successful plan clearing and completed
+Activity/Queue history with green checks. This simulates ownership and release;
+it does not exercise a provider downloader or claim successful real media import.
+There are zero foreign-key violations. Final full CI passes 2,140 API and 187
+frontend tests, lint, typechecks and builds without failing names or clone retries.
+Final fixture teardown checks pass all 32 tests, with lint and API build also
+passing after that teardown change. Earlier failing runs are not acceptance
+evidence. Logs are oct08-owned-plan-final-ci.log, oct08-owned-plan-native-final.log
+and oct08-fixture-teardown-proof.log in the Windows temporary directory.
+
+The live server remains healthy 2.21.0 with downloads paused and no active media
+work. No deployment, live library mutation or cache pruning occurred. Quiescent
+provider changes still need stable selected/manual/locked choice handling;
+waiting request outcomes/admission and recording redirects remain release gates.
+The guard fixes active ownership, not every part of that lifecycle.
+
 ## October 8 removed occurrence and held-plan candidate
 
 Catalogue refresh now separates a removed edition occurrence from a canonical

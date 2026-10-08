@@ -1,10 +1,15 @@
+import { after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createCurrentDomainSchema } from "../../database/schema/domain-baseline.js";
+import { prepareActiveSchemaEnv, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+const { tempDir: activeTempDir } = prepareActiveSchemaEnv("acquisition-active");
+const activeDbModule = await import("../../database.js");
+const { createBaselineSchemaV41 } = activeDbModule;
+after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 
 test("plan replacement is atomic and partial completion counts only imported assigned tracks", () => {
@@ -12,14 +17,19 @@ test("plan replacement is atomic and partial completion counts only imported ass
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group', 1, 'Group'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release', 1, 'Release'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title) VALUES (1, 'recording-1', 'One'), (2, 'recording-2', 'Two');
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
-        VALUES (1, 'track-1', 1, 1, 1, 1, 'One'), (2, 'track-2', 1, 2, 1, 2, 'Two');
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title) AS (VALUES (1, 'track-1', 1, 1, 1, 1, 'One'), (2, 'track-2', 1, 2, 1, 2, 'Two'))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
       INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Default', '{}');
       INSERT INTO quality_profiles (
         id, name, allowed_source_formats, preference_order, cutoff,
@@ -100,9 +110,9 @@ test("plan replacement is atomic and partial completion counts only imported ass
     db.prepare(`
       INSERT INTO TrackFiles (
         library_id, album_edition_id, track_id, recording_id, file_path, relative_path,
-        filename, extension, file_class, source_quality, imported_quality
+        filename, extension, file_class, source_quality, imported_quality, library_root, file_type
       ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac',
-                'flac', 'audio', 'lossless', 'lossless')
+                'flac', 'audio', 'lossless', 'lossless', 'music', 'track')
     `).run();
     assert.deepEqual(repository.getCompletion(1, 1), {
       trackCount: 2,
@@ -121,17 +131,22 @@ test("a manual plan choice is compared by exact track set, not by count", () => 
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
-    createCurrentDomainSchema(db);
+    createBaselineSchemaV41(db);
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
-      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group');
-      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group', 1, 'Group'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release', 1, 'Release'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
       INSERT INTO Recordings (id, mbid, title)
         VALUES (1, 'rec-1', 'One'), (2, 'rec-2', 'Two'), (3, 'rec-3', 'Three');
-      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
-        VALUES (1, 'track-1', 1, 1, 1, 1, 'One'),
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title) AS (VALUES (1, 'track-1', 1, 1, 1, 1, 'One'),
                (2, 'track-2', 1, 2, 1, 2, 'Two'),
-               (3, 'track-3', 1, 3, 1, 3, 'Three');
+               (3, 'track-3', 1, 3, 1, 3, 'Three'))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
       INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Default', '{}');
       INSERT INTO quality_profiles (
         id, name, allowed_source_formats, preference_order, cutoff,

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { assertAcquisitionPlansQuiescent } from "./acquisition-plan-ownership.js";
 import {
   determineProviderReleaseRelation,
   type ProviderReleaseRelationResult,
@@ -354,6 +355,7 @@ export class ProviderMatchRepository {
           ${input.decision.decisionSource === "automatic" ? "AND track_match.decision_source != 'manual'" : ""}
       `).all(releaseMatch.id) as Array<{ plan_id: number }>).map(({ plan_id }) => plan_id);
       if (stalePlanIds.length > 0) {
+        assertAcquisitionPlansQuiescent(this.db, stalePlanIds);
         const placeholders = stalePlanIds.map(() => "?").join(",");
         // Release the deferred plan reference before the plans go.
         this.db.prepare(`

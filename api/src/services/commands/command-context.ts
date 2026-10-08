@@ -8,6 +8,7 @@ import {
 import { queueNextMonitoringPass } from "./scheduler.js";
 import { normalizeUnclassifiedRemoteError } from "../../utils/remote-operation-error.js";
 import { CommandContinuation } from "./command-continuation.js";
+import { AcquisitionPlanInUseError } from "../music/acquisition-plan-ownership.js";
 
 const COMMAND_MAX_ATTEMPTS = 3;
 const COMMAND_RETRY_BASE_MS = 1_000;
@@ -141,6 +142,13 @@ export async function persistCommandOutcome(
             job.id, job.worker_id!, handlerError.payloadPatch,
         ));
         return continued ? "requeued" : false;
+    }
+    if (handlerError instanceof AcquisitionPlanInUseError && job.worker_id
+        && resolveInfrastructureMaxAttempts(job.name, COMMAND_MAX_ATTEMPTS) > 1) {
+        const deferred = await withDbWrite(() => CommandQueueManager.continueOwnedCommand(
+            job.id, job.worker_id!, {}, { blockedReason: handlerError.message, retryDelayMs: 60_000 },
+        ));
+        return deferred ? "requeued" : false;
     }
     if (!handlerError) {
         const completed = await withDbWrite(
