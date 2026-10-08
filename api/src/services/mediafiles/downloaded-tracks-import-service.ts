@@ -407,9 +407,10 @@ async function prepareWorkspaceForLibraryProfile(
         const legacyQuality = deriveQuality(path.extname(filePath), metrics);
         const normalizedQuality = isSpatialAudioQuality(legacyQuality)
             ? "spatial"
-            : classifyNeutralAudio(legacyQuality)
-                || classifyNeutralAudio(metrics.codec)
-                || (path.extname(filePath).toLowerCase() === ".flac" ? "lossless" : "lossy");
+            : classifyNeutralAudio(legacyQuality);
+        if (!metrics.codec || !normalizedQuality) {
+            throw new Error(`Cannot verify audio quality for ${path.basename(filePath)} from its stream codec/profile`);
+        }
         assessed.push({
             filePath,
             decision: decideImportedQuality(profile, {

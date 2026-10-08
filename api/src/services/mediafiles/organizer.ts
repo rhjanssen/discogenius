@@ -2272,7 +2272,7 @@ export class OrganizerService {
         const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
         const metrics = await parseAudioFile(srcFile);
         const derivedQuality = deriveQuality(ext, metrics);
-        if (!metrics.codec || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
+        if (!metrics.codec || derivedQuality === "UNKNOWN" || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
           throw new Error("Probed audio does not match the requested library slot");
         }
 
@@ -2959,7 +2959,7 @@ export class OrganizerService {
       const trackNamingTemplate = path.join(artistFolder, trackTemplate);
       const metrics = await parseAudioFile(src);
       const derivedQuality = deriveQuality(ext, metrics);
-        if (!metrics.codec || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
+        if (!metrics.codec || derivedQuality === "UNKNOWN" || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
           throw new Error("Probed audio does not match the requested library slot");
         }
 

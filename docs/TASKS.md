@@ -2,6 +2,20 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- local candidate, October 8: spatial classification now requires fresh stream
+  profile evidence. Full CI passes 2,176 API and 187 frontend tests, lint,
+  typechecks and builds; 66 focused native checks pass without skips.
+  Plain E-AC-3 surround cannot be accepted as Atmos, including
+  when imported provenance names the exact variant. Native MP4/raw EC3 tests
+  exposed incomplete tag-parser facts; unknown codecs now trigger FFprobe and
+  outright parse failure falls back to stream probing. Scans retain the profile;
+  import/organizer paths reject UNKNOWN instead of guessing from suffixes.
+  Positive native Atmos recognition by the bundled probe remains unproven; no
+  DOLBY_ATMOS-labelled live files were returned by the indexed sample. Resolve
+  unidentifiable immersive delivery without a redownload loop before release.
+  Live remains 2.21.0 paused; the same five historical failed refresh events
+  remain, with no newer failed command in the bounded API inspection.
+
 - local candidate, October 8: acquisition admission verifies existing audio outside
   the SQLite write gate before skipping tracks or retiring a request. It checks
   library containment, regular-file identity, probed codec/quality, canonical

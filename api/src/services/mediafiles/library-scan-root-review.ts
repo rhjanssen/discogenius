@@ -78,6 +78,7 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
                     bitsPerSample: merged.bitDepth,
                     numberOfChannels: merged.channels,
                     codec: merged.codec,
+                    codecProfile: merged.codecProfile,
                 }, file.extension);
             }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import { after, beforeEach, test } from 'node:test';
 import { prepareActiveSchemaEnv, openActiveSchemaDb, closeActiveSchemaDb } from '../../test-support/active-schema-fixture.js';
 import { seedTestLibrary } from '../../test-support/library-fixtures.js';
@@ -268,4 +269,26 @@ test('import provenance accepts a release variant through its explicit member oc
     assert.throws(()=>persistDownloadedProviderProvenance(library,organized,[offer]),/exact source edition/);
     assert.deepEqual(db.prepare('SELECT provider_item_id,source_audio_variant_id FROM TrackFiles WHERE id=?').get(file.id),
         {provider_item_id:2,source_audio_variant_id:2},'failed admission rolls back rather than clearing provenance');
+});
+
+
+test('spatial admission requires observed Atmos even for the same measured native variant',() => {
+    const profile = {...new QualityProfileRepository(db).get(profileId),allowedQualities:new Set(['spatial'] as const)};
+    const desired = {quality:'spatial'} as const;
+    const surround = observedFactsFromFile({codec:'eac3',channel_count:6});
+    assert.equal(importedFidelitySatisfies(profile,'spatial',surround,desired,true),false);
+    const atmos = observedFactsFromFile({codec:'eac3',channel_count:6,codec_profile:'Dolby Digital Plus + Dolby Atmos'});
+    assert.equal(importedFidelitySatisfies(profile,'spatial',atmos,desired),true);
+    const other = observedFactsFromFile({codec:'mpegh',channel_count:6,spatial_format:'360ra'});
+    assert.equal(importedFidelitySatisfies(profile,'spatial',other,desired),false);
+});
+
+
+test('native surround cannot retire a spatial acquisition request',async (t) => {
+    if (spawnSync('ffmpeg',['-version']).status !== 0) {t.skip('ffmpeg not installed');return;}
+    db.prepare("UPDATE quality_profiles SET allowed_source_formats='[\"spatial\"]',preference_order='[\"spatial\"]',cutoff='spatial' WHERE id=?").run(profileId);
+    db.exec("UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"spatial\"}'; UPDATE ProviderItemAudioVariants SET quality_class='spatial',codec='eac3';");
+    const encoded = spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','anullsrc=r=48000:cl=5.1','-t','1','-c:a','eac3','-b:a','640k','-f','mp4',filePath]);
+    assert.equal(encoded.status,0,encoded.stderr.toString());
+    assert.deepEqual(await proof(),[],'a matching row and provider Atmos offer cannot replace object-audio evidence');
 });

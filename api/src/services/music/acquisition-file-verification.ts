@@ -73,7 +73,7 @@ export function importedQualitySatisfies(profile: QualityProfilePolicy, actual: 
 export function importedFidelitySatisfies(profile: QualityProfilePolicy, actualTier: NormalizedAudioQuality,
     actual: AudioFacts, desired: SourceAudioFacts, sameMeasuredDelivery = false, options: ImportQualityOptions = {}): boolean {
     if (!importedQualitySatisfies(profile, actualTier, desired, options)) return false;
-    if (actualTier === 'spatial') return true;
+    if (actualTier === 'spatial') return actual.immersiveFormat === 'dolby-atmos' && actual.objectAudio === true;
     const cutoff = decideImportedQuality(profile, { quality: profile.cutoff }, options).importedQuality;
     if (!profile.continueUpgradesAfterCutoff && cutoff
         && importedQualitySatisfies({ ...profile, continueUpgradesAfterCutoff: true }, actualTier, { quality: profile.cutoff }, options)) return true;
@@ -185,7 +185,7 @@ export async function withVerifiedAcquisitionFiles<T>(db: Database.Database, pla
                 const facts = JSON.parse(file.source_quality_snapshot || '{}') as {
                     quality: NormalizedAudioQuality;
                 };
-                const actual = observedFactsFromFile({ codec: metrics.codec, bit_depth: metrics.bitDepth,
+                const actual = observedFactsFromFile({ codec: metrics.codec, codec_profile: metrics.codecProfile, bit_depth: metrics.bitDepth,
                     sample_rate: metrics.sampleRate, bitrate: metrics.bitrate == null ? null : metrics.bitrate / 1000,
                     channel_count: metrics.channels });
                 if (!importedFidelitySatisfies(before.profile, quality, actual, { quality: facts.quality,

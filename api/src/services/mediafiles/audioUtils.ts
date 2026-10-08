@@ -162,6 +162,8 @@ export interface AudioMetrics {
     bitDepth?: number;
     /** Audio stream codec (AAC, Opus, FLAC, …). */
     codec?: string;
+    /** Codec profile declared by the probed audio stream, never provider metadata. */
+    codecProfile?: string;
     /**
      * Video stream codec when the file has a video track (h264, hevc, av1, …).
      * Kept separate from `codec` so audio tooltips/matching stay accurate.
@@ -183,6 +185,7 @@ export function shouldProbeAudioMetrics(
     const sampleRate = Number(metrics.sampleRate || 0);
     const channels = metrics.channels;
 
+    if (observedFactsFromFile({ codec: metrics.codec }).codec == null) return true;
     if (FFMPEG_AUDIO_CONTAINER_EXTENSIONS.has(extension)) {
         return true;
     }
@@ -210,6 +213,8 @@ export function mergeProbedAudioMetrics(metrics: AudioMetrics, probe: Partial<Au
         ...metrics,
         ...probe,
         codec: probe.codec || metrics.codec,
+        // A successful fresh stream probe replaces any older profile evidence.
+        codecProfile: probe.codec ? probe.codecProfile : metrics.codecProfile,
         sampleRate: probe.sampleRate || metrics.sampleRate,
         bitDepth: probe.bitDepth || metrics.bitDepth,
         bitrate: probe.bitrate || metrics.bitrate,
@@ -227,7 +232,7 @@ export async function probeAudioStreamMetrics(filePath: string): Promise<Partial
             [
                 '-v', 'error',
                 '-select_streams', 'a:0',
-                '-show_entries', 'stream=codec_name,sample_rate,channels,bits_per_sample,bits_per_raw_sample,bit_rate,duration',
+                '-show_entries', 'stream=codec_name,profile,sample_rate,channels,bits_per_sample,bits_per_raw_sample,bit_rate,duration:format=duration',
                 '-of', 'json',
                 filePath,
             ],
@@ -245,11 +250,13 @@ export async function probeAudioStreamMetrics(filePath: string): Promise<Partial
                     const sampleBitDepth = Number(stream?.bits_per_sample || 0);
                     resolve({
                         codec: stream?.codec_name || undefined,
+                        codecProfile: typeof stream?.profile === "string" ? stream.profile : undefined,
                         sampleRate: stream?.sample_rate == null ? undefined : Number(stream.sample_rate),
                         channels: stream?.channels == null ? undefined : Number(stream.channels),
                         bitDepth: rawBitDepth > 0 ? rawBitDepth : sampleBitDepth > 0 ? sampleBitDepth : undefined,
                         bitrate: stream?.bit_rate == null ? undefined : Number(stream.bit_rate),
-                        duration: stream?.duration == null ? undefined : Number(stream.duration),
+                        duration: Number(stream?.duration) > 0 ? Number(stream.duration)
+                            : Number(data?.format?.duration) > 0 ? Number(data.format.duration) : undefined,
                     });
                 } catch {
                     resolve({});
@@ -339,7 +346,8 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
         };
     } catch (error) {
         console.warn(`Failed to parse metadata for ${filePath}`, error);
-        return {};
+        // Raw Dolby streams can be unsupported by the tag parser yet probeable.
+        return probeAudioStreamMetrics(filePath);
     }
 }
 
@@ -348,12 +356,10 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     const { sampleRate, bitDepth, bitrate, codec } = metrics;
     const codecName = codec?.toLowerCase() || '';
 
-    // provider spatial formats currently arrive as Dolby container codecs.
-    if (isSpatialAudioCodec(codecName)) {
-        return 'DOLBY_ATMOS';
-    }
-
-    const measured = observedFactsFromFile({ codec });
+    const measured = observedFactsFromFile({ codec, codec_profile: metrics.codecProfile, channel_count: metrics.channels });
+    if (measured.immersiveFormat === 'dolby-atmos') return 'DOLBY_ATMOS';
+    // Ordinary surround cannot satisfy either the stereo or Atmos library.
+    if (metrics.channels != null && metrics.channels > 2) return 'UNKNOWN';
     if (codecName && measured.codec == null) return 'UNKNOWN';
 
     // Lossless formats

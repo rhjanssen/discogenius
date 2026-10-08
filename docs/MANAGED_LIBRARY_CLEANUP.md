@@ -1,5 +1,63 @@
 # Managed library inventory and strict cleanup
 
+## October 8 spatial stream-evidence candidate
+
+Fresh FFprobe metrics now carry the audio stream profile. The shared quality
+classifier uses observed audio facts: an explicit JOC or Dolby Atmos profile can
+establish Atmos; ordinary multichannel E-AC-3 alone cannot. Fresh stream results
+replace older profile evidence. Acquisition completion also requires observed
+Dolby Atmos/object-audio facts, including for the exact same native variant.
+Other immersive formats do not inherit Atmos acceptance.
+
+Native probing found a concrete parser failure: music-metadata reported an
+ordinary six-channel E-AC-3 MP4 as two channels with no codec. The old decision to
+skip FFprobe retained those incomplete facts. Missing/unrecognized codecs now
+require FFprobe, and outright tag-parser failure falls back to a fresh stream
+probe. Container duration supplies a fallback for raw Dolby streams. A scan's
+intermediate review metrics retain the profile instead of dropping it.
+
+Import preparation no longer guesses an unverifiable stream's quality from its
+suffix, and both organizer paths reject UNKNOWN quality before file mutation.
+This keeps ordinary surround out of both stereo and Atmos imports. Explicit
+stereo delivery remains stereo, without inferring a conversion from surround.
+
+The disposable production container generated real ordinary E-AC-3 in MP4 and
+raw EC3. Both yield six-channel metrics and remain unverified as Atmos. Active
+schema acquisition checks preserve a spatial request for that ordinary surround
+file. Profile-bearing positives currently use declared-profile test inputs;
+they are not a claim that the bundled FFprobe recognizes every real Atmos file.
+The live indexed query returned no DOLBY_ATMOS-labelled TrackFiles. Positive
+native Atmos acceptance and the handling of genuinely immersive files that the
+bundled probe cannot identify remain release gates. Do not deploy a false
+completion or redownload loop in their place.
+
+Live remains 2.21.0, downloads paused, no active downloads/imports. Bounded failed
+activity inspection still shows the known five historical events for a-ha,
+Dirty Honey and Cliff Richard; it found no newer failed command. Queue status
+reports 114,333 waiting album requests. Their retirement remains contingent on
+library acceptance, not this quality candidate. The health warning concerns the
+known recent refresh failures, not newly demonstrated writer contention.
+
+Final full CI passes all 2,176 API and 187 frontend tests, lint, typechecks and
+builds without failing test names or clone retries. Log:
+oct08-spatial-final-ci.log. Validation: all 66 focused production-container checks pass, with no skipped
+native cases, in oct08-spatial-native-validated.log. The explicit Windows
+acquisition verification file also passes all 24 cases. A direct fresh probe of
+the generated MP4 reports eac3, six channels, 48 kHz and 640 kbps, with UNKNOWN
+quality rather than Atmos. The live dashboard was inspected through the actual
+app: Resume queue confirms pause, and its pending section still reads Active.
+The writer has no holder or waiting writer; the known cumulative 48,516 ms hold
+remains historical evidence, not a new current lockup.
+
+Reference review for the next reconciliation work: Lidarr's SkyHookProxy maps
+OldIds and OldRecordingIds into track metadata. RefreshAlbumReleaseService uses
+OldForeignTrackIds to identify merges, and RefreshTrackService transfers file
+ownership to the explicit merge target before deleting the superseded track and
+syncing tags. Discogenius must carry equivalent authoritative redirect evidence
+through its catalogue boundary, retain active/waiting acquisition intent, and
+reconcile all file/sidecar owners transactionally. A title/position guess is not a
+substitute for that identity evidence.
+
 ## October 8 delivered fidelity and source-variant consistency candidate
 
 Stereo acquisition verification now reuses the planning audio-facts comparator for

@@ -22,6 +22,7 @@ import {
     getVideoThumbnailProbeArgs,
     hasEmbeddedVideoThumbnail,
     mergeProbedAudioMetrics,
+    parseAudioFile,
     requiresBrowserCompatibleAudioStream,
     shouldProbeAudioMetrics,
     writeMetadata,
@@ -34,6 +35,7 @@ test("MP4 audio metrics prefer ffprobe over implausible music-metadata values", 
     );
 
     assert.equal(shouldProbeAudioMetrics("album/track.m4a", { sampleRate: 1, channels: 2 }), true);
+    assert.equal(shouldProbeAudioMetrics("album/track.m4a", { sampleRate: 48000, channels: 2, duration: 1 }), true);
     assert.equal(merged.sampleRate, 96_000);
     assert.equal(merged.bitDepth, 24);
 });
@@ -382,4 +384,39 @@ test("unknown local quality never satisfies a quality cutoff", () => {
 
   assert.equal(UpgradableSpecification.qualityCutoffNotMet(profile, "UNKNOWN"), true);
   assert.equal(UpgradableSpecification.qualityCutoffNotMet(profile, "LOSSLESS"), false);
+});
+
+
+test("Atmos classification requires stream profile evidence and does not infer it from surround", () => {
+    for (const codec of ["eac3", "EC-3", "E-AC-3", "ac4"]) {
+        assert.equal(deriveQuality(".m4a", {codec, channels: 6, bitrate: 640000}), "UNKNOWN");
+    }
+    assert.equal(deriveQuality(".m4a", {codec: "eac3", channels: 6, codecProfile: "Dolby Digital Plus + Dolby Atmos"}), "DOLBY_ATMOS");
+    assert.equal(deriveQuality(".m4a", {codec: "eac3", channels: 6, codecProfile: "E-AC-3 JOC"}), "DOLBY_ATMOS");
+    assert.equal(deriveQuality(".m4a", {codec: "E-AC-3 JOC", channels: 6}), "DOLBY_ATMOS");
+    assert.equal(deriveQuality(".m4a", {codec: "eac3", channels: 2, bitrate: 256000}), "HIGH");
+    assert.equal(mergeProbedAudioMetrics({codec:"eac3",codecProfile:"JOC"},{codec:"eac3"}).codecProfile, undefined);
+    assert.equal(mergeProbedAudioMetrics({codec:"eac3",codecProfile:"JOC"},{}).codecProfile, "JOC");
+});
+
+test("native ordinary E-AC-3 surround is not verified as Atmos", async (t) => {
+    if (spawnSync("ffmpeg", ["-version"]).status !== 0) { t.skip("ffmpeg not installed"); return; }
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), "ordinary-surround-"));
+    try {
+        const file = path.join(folder,"surround.m4a");
+        const encoded = spawnSync("ffmpeg",["-v","error","-f","lavfi","-i","anullsrc=r=48000:cl=5.1","-t","1","-c:a","eac3","-b:a","640k","-f","mp4",file]);
+        assert.equal(encoded.status,0,encoded.stderr.toString());
+        const metrics = await parseAudioFile(file);
+        assert.equal(metrics.codec,"eac3");
+        assert.equal(metrics.channels,6);
+        assert.equal(deriveQuality(".m4a",metrics),"UNKNOWN");
+        const raw = path.join(folder,"surround.ec3");
+        const extracted = spawnSync("ffmpeg",["-v","error","-i",file,"-c:a","copy","-f","eac3",raw]);
+        assert.equal(extracted.status,0,extracted.stderr.toString());
+        const rawMetrics = await parseAudioFile(raw);
+        assert.equal(rawMetrics.codec,"eac3");
+        assert.equal(rawMetrics.channels,6);
+        assert.ok(rawMetrics.duration && rawMetrics.duration > 0);
+        assert.equal(deriveQuality(".ec3",rawMetrics),"UNKNOWN");
+    } finally { fs.rmSync(folder,{recursive:true,force:true}); }
 });

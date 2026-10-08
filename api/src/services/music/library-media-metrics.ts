@@ -5,6 +5,7 @@ export type UnmappedMediaFormat = {
     bitsPerSample?: number | null;
     numberOfChannels?: number | null;
     codec?: string | null;
+    codecProfile?: string | null;
 };
 
 export function getUnmappedMediaMetrics(format: UnmappedMediaFormat | null | undefined, extension: string) {
@@ -26,6 +27,7 @@ export function getUnmappedMediaMetrics(format: UnmappedMediaFormat | null | und
         bitDepth,
         channels,
         codec,
+        ...(format?.codecProfile ? { codecProfile: format.codecProfile } : {}),
         audioQuality,
     };
 }

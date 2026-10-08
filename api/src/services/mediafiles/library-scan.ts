@@ -1264,6 +1264,7 @@ export class DiskScanService {
                                         bitsPerSample: merged.bitDepth,
                                         numberOfChannels: merged.channels,
                                         codec: merged.codec,
+                                        codecProfile: merged.codecProfile,
                                     }, ext);
                                 }
                                 if (!metrics.duration) {
@@ -1369,6 +1370,7 @@ export class DiskScanService {
                                                 sampleRate: metrics.sampleRate ?? undefined,
                                                 bitrate: metrics.bitrate ?? undefined,
                                                 codec: metrics.codec ?? undefined,
+                                                codecProfile: metrics.codecProfile ?? undefined,
                                                 channels: metrics.channels ?? undefined,
                                                 duration: metrics.duration ?? undefined,
                                             });

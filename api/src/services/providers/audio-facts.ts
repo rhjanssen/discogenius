@@ -452,7 +452,7 @@ const CODEC_ALIASES: Record<string, AudioCodec> = {
   "mp3": "mp3", "mp3float": "mp3",
   "vorbis": "vorbis", "opus": "opus",
   "flac": "flac", "alac": "alac", "pcm_s16le": "pcm", "pcm_s24le": "pcm",
-  "eac3": "eac3", "ec-3": "eac3", "ac3": "ac3",
+  "eac3": "eac3", "ec-3": "eac3", "e-ac-3": "eac3", "e-ac-3 joc": "eac3", "ac3": "ac3",
   "mpegh": "mpegh", "mhm1": "mpegh",
   "pcm": "pcm", "apple lossless": "alac", "mpeg 1 layer 3": "mp3",
   "mpeg 2 layer 3": "mp3", "vorbis i": "vorbis",
@@ -504,7 +504,9 @@ function declaredImmersiveFormat(row: ProbedFileRow): ImmersiveFormat | null {
   const declared = String(row.spatial_format || "").trim().toLowerCase();
   if (declared.includes("atmos") || declared === "joc") return "dolby-atmos";
   if (declared.includes("360")) return "sony-360ra";
-  if (String(row.codec_profile || "").trim().toLowerCase().includes("joc")) {
+  const profile = String(row.codec_profile || "").trim().toLowerCase();
+  const codec = String(row.codec || "").trim().toLowerCase();
+  if (/\bjoc\b/.test(profile) || profile.includes("dolby atmos") || codec === "e-ac-3 joc") {
     return "dolby-atmos";
   }
   return null;
