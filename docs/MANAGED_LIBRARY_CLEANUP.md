@@ -1,5 +1,33 @@
 # Managed library inventory and strict cleanup
 
+## October 9 selected-origin adoption candidate
+
+An exact durable library link can now upgrade its older sidecar from the current
+hash-verified selected cache original before retirement. The old publication hash
+must still match the physical destination. The same MetadataFiles row remains the
+owner; publication reuses the existing mutation journal. A competing selected
+artwork asset or an external edit refuses replacement and preserves the cache
+original. No alternate master folder is created. Conversion retains the original
+dimensions and repairs proxy provenance against the newly published JPEG hash.
+
+All 12 focused Windows and native production-image checks pass without skips,
+including sidecar-only artist secondary art, competing roles, external edits and
+PNG conversion. Production compose builds and starts. Actual isolated app command1
+upgrades a 200x150 sidecar to the selected 800x600 JPEG, preserves exact owner1 and
+selected full-resolution bytes, retains both proxies, retires exactly 13,736 bytes
+and reports successful completion with a green Activity icon. The temporary app,
+volume and tab18 were removed. Final unchanged-code CI passes lint/types, API tests, all 187 frontend tests
+  and both builds in 344.62 seconds. Three known Node clone-transport file failures
+  pass all 28/7/21 cases on the built-in isolation=none retries; no behavioral
+  failures remain (oct09-cache-adoption-final-ci.log).
+
+This covers explicit durable links only. Legacy path manifests still need admitted
+registration; unused group artwork must not overwrite active edition artwork.
+Large destination fanout still needs durable paging, with more than 50 links
+currently refusing before mutation. Embedded artwork is refreshed through the
+subsequent authorized retag job, not this cache operation. No NAS cache bytes have
+been removed, and downloads remain paused on the deployed 2.21.0 app.
+
 ## October 9 cross-command recovery candidate
 
 The follow-up to 70472f29 replays prepared cache retirements globally

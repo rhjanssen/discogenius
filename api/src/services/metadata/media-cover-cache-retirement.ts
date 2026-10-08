@@ -8,6 +8,7 @@ import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
 import { artworkLinkOwnsTrackedPath } from "./media-cover-library-storage.js";
 import { commitArtworkProxies, hasCurrentArtworkProxies } from "./media-cover-proxy-storage.js";
 import { decodeArtworkImage } from "./media-cover-image.js";
+import { materializeMediaCoverToFile } from "./media-cover-materialization.js";
 import { getMediaCoverFolder, getSelectedArtworkSource, normalizeArtworkUrl,
   prepareResizedMediaCovers } from "./media-cover-service.js";
 
@@ -110,7 +111,7 @@ function links(identity: ArtworkIdentity) {
   return db.prepare(`SELECT file.file_path,link.content_hash,link.metadata_file_id,file.library_root
     FROM ArtworkLibraryLinks link JOIN MetadataFiles file ON file.id=link.metadata_file_id
     WHERE link.cover_entity=? AND link.entity_id=? AND link.cover_type=?
-    ORDER BY link.metadata_file_id LIMIT 50`).all(...artworkKey(identity)) as Array<{
+    ORDER BY link.metadata_file_id LIMIT 51`).all(...artworkKey(identity)) as Array<{
       file_path:string;content_hash:string;metadata_file_id:number;library_root:string;
     }>;
 }
@@ -125,7 +126,8 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
   const origin = path.join(folder,filename);
   const heights = identity.coverEntity === "Video" ? [250] : [250,500];
   const proxyPaths = heights.map(height=>path.join(folder,`${identity.coverType}-${height}.jpg`));
-  const candidates = links(identity);
+  let candidates = links(identity);
+  if (candidates.length > 50) throw new Error("Artwork has too many linked destinations for one retirement unit");
   const release = await acquireMediaFileLocks([origin,...proxyPaths,...candidates.map(row=>row.file_path)]);
   let original: Witness | null = null;
   try {
@@ -153,12 +155,49 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
       || !["canonical","provider"].includes(source.fulfilledBy ?? "")) throw new Error("No recoverable selected artwork source");
     const owners = ownership(identity);
     if (!owners.exists) throw new Error("No authoritative catalogue owner");
+    // Upgrade an explicitly linked legacy sidecar from the selected origin.
+    // Do not infer destinations from folder names or create alternate masters.
+    // The old link hash proves it has not been manually edited since publication.
+    if (owners.owned && original?.hash===source.contentHash) {
+      for (const row of candidates) {
+        if (row.content_hash===source.contentHash) continue;
+        if (!artworkLinkOwnsTrackedPath(identity,row.file_path,row.metadata_file_id)) continue;
+        ancestors(row.file_path,path.resolve(row.library_root));
+        const current=await witness(row.file_path);
+        if (!current || current.hash!==row.content_hash) throw new Error("Legacy sidecar was changed outside managed artwork publication");
+        const competing=db.prepare(`SELECT link.cover_entity,link.entity_id,link.cover_type FROM ArtworkLibraryLinks link
+          JOIN ArtworkSources selected ON selected.cover_entity=link.cover_entity AND selected.entity_id=link.entity_id
+            AND selected.cover_type=link.cover_type AND selected.content_hash=link.content_hash
+          WHERE link.metadata_file_id=? AND link.content_hash=?`).all(row.metadata_file_id,current.hash) as Array<{
+            cover_entity:ArtworkIdentity["coverEntity"];entity_id:string;cover_type:string;
+          }>;
+        if (competing.some(item=>item.cover_entity!==identity.coverEntity || item.entity_id!==String(identity.entityId) || item.cover_type!==identity.coverType)) {
+          throw new Error("Library sidecar belongs to another selected artwork asset");
+        }
+        const result=await materializeMediaCoverToFile({entityId:identity.entityId,coverEntity:identity.coverEntity,
+          coverTypes:identity.coverType,outputPath:row.file_path,libraryRoot:row.library_root});
+        if (result==="missing") throw new Error("Selected full-resolution origin could not be adopted");
+      }
+      candidates=links(identity);
+      source=getSelectedArtworkSource(identity.entityId,identity.coverEntity,identity.coverType)!;
+    }
     if (!hasCurrentArtworkProxies(identity,folder,source,heights)) {
-      if (!original || original.hash !== source.contentHash) throw new Error("Selected proxies need repair from a verified source");
-      const bytes = await fsp.readFile(origin);
-      if (stat(origin) !== original.stat || createHash("sha256").update(bytes).digest("hex") !== original.hash) throw new Error("Origin changed before proxy derivation");
-      const decoded = await decodeArtworkImage(bytes,path.extname(origin).toLowerCase().replace(/^\.jpeg$/,".jpg"));
-      const derivatives = prepareResizedMediaCovers(bytes,path.extname(origin),heights,decoded);
+      // Conversion can change the selected content hash. Rebuild proxies from
+      // the newly published exact library master, never from a display proxy.
+      let proxyMaster = original?.hash === source.contentHash ? {path:origin,file:original} : null;
+      if (!proxyMaster && owners.owned) {
+        for (const row of candidates) {
+          if (row.content_hash !== source.contentHash || !artworkLinkOwnsTrackedPath(identity,row.file_path,row.metadata_file_id)) continue;
+          ancestors(row.file_path,path.resolve(row.library_root));
+          const file = await witness(row.file_path);
+          if (file?.hash === source.contentHash) {proxyMaster={path:row.file_path,file};break;}
+        }
+      }
+      if (!proxyMaster) throw new Error("Selected proxies need repair from a verified source");
+      const bytes = await fsp.readFile(proxyMaster.path);
+      if (stat(proxyMaster.path) !== proxyMaster.file.stat || createHash("sha256").update(bytes).digest("hex") !== source.contentHash) throw new Error("Master changed before proxy derivation");
+      const decoded = await decodeArtworkImage(bytes,path.extname(proxyMaster.path).toLowerCase().replace(/^\.jpeg$/,".jpg"));
+      const derivatives = prepareResizedMediaCovers(bytes,path.extname(proxyMaster.path),heights,decoded);
       if (derivatives.length !== heights.length || !await commitArtworkProxies({identity,folder,source,expectedSource:source,
         derivatives,preferenceIsCurrent:()=>true})) throw new Error("Selected source changed during proxy publication");
       source = getSelectedArtworkSource(identity.entityId,identity.coverEntity,identity.coverType)!;

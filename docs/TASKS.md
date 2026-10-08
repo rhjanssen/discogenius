@@ -2,6 +2,25 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 selected-origin adoption candidate: cache cleanup now upgrades an
+  explicitly linked lower-resolution library sidecar before retiring the verified
+  selected original. It reuses the artwork mutation journal and exact tracked
+  owner admission. External edits and another selected asset at the same path
+  preserve both images. PNG-to-JPEG conversion keeps full dimensions and derives
+  proxies from the converted, tracked master. All 12 focused Windows and native
+  ACTIVE-schema checks pass; production compose builds and starts. Actual isolated
+  app command1 replaces a 200x150 sidecar with the selected 800x600 JPEG, preserves
+  MetadataFiles ID1/hash and both proxies, retires exactly 13,736 cache bytes and
+  completes with a green Activity icon. QA container/volume/tab18 removed.
+  Final unchanged-code CI passes lint/types, API tests, all 187 frontend tests
+  and both builds in 344.62 seconds. Three known Node clone-transport file failures
+  pass all 28/7/21 cases on the built-in isolation=none retries; no behavioral
+  failures remain (oct09-cache-adoption-final-ci.log). No deployment or live cache removal.
+  Remaining: safely adopt legacy manifest links, handle unused release-group art
+  without replacing active edition art, and checkpoint large destination fanout.
+  More than 50 destinations currently refuses before mutation. Secondary artist
+  assets with explicit tracked links are proven; unlinked assets are not covered.
+
 - October 9 recovery candidate (based on pushed 70472f29): a new
   cache cleanup replays older prepared retirements in bounded indexed batches;
   command-history deletion cannot cascade away unresolved evidence. Already
@@ -43,10 +62,9 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
   during that run; final unchanged-code CI also passes all 2,225 API and 187 frontend
   tests, lint/types and both builds in 533.23 seconds, with no first-TAP failing names
   or retries (oct09-cache-retirement-final-ci.log). Temporary QA container/volume/tab16
-  removed. Finish cross-command prepared-retirement recovery/history retention:
-  current recovery is scoped to the same command, and a new cleanup must not hide
-  an older unresolved intent. Imported covers with differing bytes still need
-  actual full-resolution adoption before retirement, rather than permanent refusal.
+  removed. Cross-command recovery/history retention is now covered by 10b3c99f
+  above. Complete the remaining selected-origin adoption and legacy-link gates
+  before live migration.
   Live is still 2.21.0, downloads paused. Root scan 16039 is at artist 470/518,
   file 1403/1468; repeated health probes return 503 for its stale busy worker,
   while the main SQLite writer has no holder or waiters. It then recovered to HTTP200
@@ -360,9 +378,9 @@ The measured ownership problems and remaining acceptance gates are in
 - pending: reconcile remaining imported-cache masters with tracked library
   sidecars after rename, verifying exact content and ownership before removing
   duplicate originals. Ordinary scans must remain no-ops for unchanged files.
-- pending: decide whether catalog browsing retains full originals or only
-  250/500 proxies. Full-quality acquisition artwork must become the library
-  sidecar after import. Validate source switching across sidecar and embeds.
+- decided: catalog browsing retains only 250/500 proxies. Selected full-quality
+  artwork is fetched or migrated into a tracked library sidecar. Finish legacy
+  source/link migration and validate source switching across all roles and embeds.
 - pending: expose cache usage by originals, proxies, database and backups, and
   define retention for unimported artwork. Do not treat archival library covers
   as disposable cache files.
@@ -399,11 +417,12 @@ The measured ownership problems and remaining acceptance gates are in
   canonical edition/track identities, current tracking ownership and technical
   quality. Preview a safe association correction or an explicit keep/replace
   choice; never hide an identity collision with an arbitrary suffix.
-- pending: inspect the eight audio rename conflicts from command 14723. Their
-  destinations exist but no TrackFiles row owns the exact container or host
-  path at audit time. Verify normalized ownership and both media contents before
-  any replacement or deduplication. Edition-MBID folders do not solve two files
-  targeting the same track within the same edition.
+- pending: reverify the earlier audio rename conflicts from command 14723.
+  Seven destinations are now owned by TrackFiles with matching track, edition
+  and stereo quality. Recheck current ownership and physical duplicate witnesses,
+  retain sidecar associations and repair the two stale edition tags through retag.
+  Edition-MBID folders do not solve two files targeting the same track within the
+  same edition. Historical unowned-destination observations are superseded.
 - pending: reconcile the nonempty plain Bastille directory, whose music and
   artwork are not tracked under either its container or host path. Preserve
   unknown media until it has been matched or explicitly reviewed.

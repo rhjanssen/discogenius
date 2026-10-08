@@ -5,6 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { before, after, test } from "node:test";
 import jpeg from "jpeg-js";
+import { PNG } from "pngjs";
 
 const root=fs.mkdtempSync(path.join(os.tmpdir(),"discogenius-cache-retirement-"));
 process.env.DB_PATH=path.join(root,"active.db");
@@ -26,13 +27,14 @@ after(()=>{database.closeDatabase();fs.rmSync(root,{recursive:true,force:true});
 const bytes=jpeg.encode({width:8,height:8,data:Buffer.alloc(8*8*4,255)},82).data;
 const hash=createHash("sha256").update(bytes).digest("hex");
 let sequence=0;
-async function fixture(imported=false) {
+async function fixture(imported=false, entity:"Album"|"Artist"="Album", coverType="cover") {
   const mbid=`retirement-${++sequence}`;
-  database.db.prepare("INSERT INTO Albums(mbid,artist_mbid,title) VALUES (?,'fixture','Test')").run(mbid);
+  if (entity === "Album") database.db.prepare("INSERT INTO Albums(mbid,artist_mbid,title) VALUES (?,'fixture','Test')").run(mbid);
+  else database.db.prepare("INSERT INTO ArtistMetadata(mbid,name) VALUES (?,'Test')").run(mbid);
   const commandId=Number(database.db.prepare("INSERT INTO commands(name,payload) VALUES ('ConfigPrune','{}')").run().lastInsertRowid);
-  const identity={coverEntity:"Album" as const,entityId:mbid,coverType:"cover"};
-  const folder=covers.getMediaCoverFolder(mbid,"Album");fs.mkdirSync(folder,{recursive:true});
-  const origin=path.join(folder,"cover.jpg");fs.writeFileSync(origin,bytes);
+  const identity={coverEntity:entity,entityId:mbid,coverType};
+  const folder=covers.getMediaCoverFolder(mbid,entity);fs.mkdirSync(folder,{recursive:true});
+  const origin=path.join(folder,`${coverType}.jpg`);fs.writeFileSync(origin,bytes);
   const source={url:"https://example.test/cover.jpg",preference:"canonical" as const,fulfilledBy:"canonical" as const,contentHash:hash};
   state.storeArtworkSource(identity,source);
   await proxies.commitArtworkProxies({identity,folder,source,expectedSource:source,preferenceIsCurrent:()=>true,
@@ -41,7 +43,7 @@ async function fixture(imported=false) {
   if(imported) {
     fs.writeFileSync(master,bytes);
     const metadataId=Number(database.db.prepare(`INSERT INTO MetadataFiles
-      (artist_id,file_path,relative_path,library_root,extension,type,file_type,canonical_release_group_mbid)
+      (artist_id,file_path,relative_path,library_root,extension,type,file_type,${entity === 'Album' ? 'canonical_release_group_mbid' : 'canonical_artist_mbid'})
       VALUES ('fixture',?,?,?,'jpg','artwork','cover',?)`).run(master,path.basename(master),root,mbid).lastInsertRowid);
     const storage=await import("./media-cover-library-storage.js");
     storage.rememberLibraryCoverSidecar(identity,folder,master,hash,metadataId);
@@ -75,6 +77,19 @@ test("a row-preserving library rename remains a valid retirement master",async()
   await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
   assert.equal(fs.existsSync(f.origin),false);
   assert.deepEqual(fs.readFileSync(renamed),bytes);
+});
+
+test("selected full-resolution origin upgrades a tracked lower-resolution sidecar before retirement",async()=>{
+  const f=await fixture(true);
+  const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
+  fs.writeFileSync(f.master,small);
+  const smallHash=createHash("sha256").update(small).digest("hex");
+  database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash=? WHERE metadata_file_id IS NOT NULL AND entity_id=?").run(smallHash,f.identity.entityId);
+  const owner=database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master);
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.equal(fs.existsSync(f.origin),false);
+  assert.deepEqual(fs.readFileSync(f.master),bytes);
+  assert.deepEqual(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master),owner);
 });
 
 test("same-byte canonical owner transfer protects the origin",async()=>{
@@ -133,4 +148,66 @@ test("cross-command recovery rejects another cache root and preserves the old in
   assert.equal(await service.recoverPreparedArtworkRetirements(path.dirname(covers.getMediaCoverFolder("probe","Artist")),async()=>{}),false);
   assert.deepEqual(state.readArtworkSource(f.identity,f.folder),changedSource);
   assert.deepEqual(fs.readFileSync(f.master),bytes);
+});
+
+
+test("externally edited legacy sidecar is preserved with its selected cache origin",async()=>{
+  const f=await fixture(true);
+  const edited=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,100)},70).data;
+  database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash='previous-publication' WHERE entity_id=?").run(f.identity.entityId);
+  fs.writeFileSync(f.master,edited);
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.deepEqual(fs.readFileSync(f.master),edited);
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/changed outside/);
+});
+
+test("release-group adoption cannot overwrite another selected artwork role at the same tracked path",async()=>{
+  const f=await fixture(true);
+  const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
+  const smallHash=createHash("sha256").update(small).digest("hex");
+  fs.writeFileSync(f.master,small);
+  database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash=? WHERE entity_id=?").run(smallHash,f.identity.entityId);
+  const competing={...f.identity,coverType:"alternate"};
+  state.storeArtworkSource(competing,{url:"https://example.test/alternate.jpg",preference:"canonical",fulfilledBy:"canonical",contentHash:smallHash});
+  const metadataId=(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master) as {id:number}).id;
+  const storage=await import("./media-cover-library-storage.js");
+  storage.rememberLibraryCoverSidecar(competing,f.folder,f.master,smallHash,metadataId);
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.deepEqual(fs.readFileSync(f.master),small);
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/another selected artwork asset/);
+});
+
+test("PNG origin adoption retains full dimensions and repairs proxies against the converted JPEG master",async()=>{
+  const f=await fixture(true);
+  const png=PNG.sync.write({width:16,height:12,data:Buffer.alloc(16*12*4,255)} as PNG);
+  const pngHash=createHash("sha256").update(png).digest("hex");
+  fs.unlinkSync(f.origin);
+  const origin=path.join(f.folder,"cover.png");fs.writeFileSync(origin,png);
+  state.storeArtworkSource(f.identity,{url:"https://example.test/cover.png",preference:"canonical",fulfilledBy:"canonical",contentHash:pngHash});
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.png");
+  assert.equal(fs.existsSync(origin),false);
+  const master=fs.readFileSync(f.master);
+  const decoded=jpeg.decode(master);
+  assert.deepEqual([decoded.width,decoded.height],[16,12]);
+  const selected=covers.getSelectedArtworkSource(f.identity.entityId,"Album","cover")!;
+  assert.equal(selected.contentHash,createHash("sha256").update(master).digest("hex"));
+  assert.equal(proxies.hasCurrentArtworkProxies(f.identity,f.folder,selected,[250,500]),true);
+});
+
+
+test("sidecar-only artist secondary artwork adopts the full master without creating extra images",async()=>{
+  const f=await fixture(true,"Artist","fanart");
+  const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
+  const smallHash=createHash("sha256").update(small).digest("hex");
+  fs.writeFileSync(f.master,small);
+  database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash=? WHERE entity_id=?").run(smallHash,f.identity.entityId);
+  const owner=database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master);
+  const before=fs.readdirSync(root).sort();
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"fanart.jpg");
+  assert.equal(fs.existsSync(f.origin),false);
+  assert.deepEqual(fs.readFileSync(f.master),bytes);
+  assert.deepEqual(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master),owner);
+  assert.deepEqual(fs.readdirSync(root).sort(),before);
 });
