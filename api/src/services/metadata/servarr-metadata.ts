@@ -11,7 +11,7 @@ import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-serv
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
 import {reconcileRecordingRedirects} from "../catalog/catalog-recording-reconciliation.js";
-import { collectCatalogRedirects, groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions } from "../catalog/catalog-track-reconciliation.js";
+import { collectCatalogRedirects, groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions, reconcileEditionTrackIdentities } from "../catalog/catalog-track-reconciliation.js";
 import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
@@ -1033,6 +1033,7 @@ export class ServarrMetadataService {
       // Seed redirect targets before transferring owners in this admitted write.
       for (const release of editions) for (const track of release.Tracks) insertCanonicalRecording(track);
       reconcileRecordingRedirects(db,editions.flatMap(release => release.Tracks));
+      for (const release of editions) reconcileEditionTrackIdentities(db,release.Id,release.Tracks,retainedTrackIds);
       for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
       for (const release of editions) for (const track of release.Tracks) {
         insertTrack.run(

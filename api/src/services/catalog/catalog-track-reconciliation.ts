@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { LidarrTrack } from "../metadata/servarr-metadata.js";
 import { AcquisitionPlanRepository } from "../music/acquisition-plan-repository.js";
+import { prepareAcquisitionPlanMutation } from "../music/acquisition-plan-ownership.js";
 
 /** Redirects are catalogue identity evidence, never inferred from slots or titles.
  * Validate the full incoming graph before any admitted catalogue write. */
@@ -58,6 +59,74 @@ export function normalizeEditionTracks(releaseMbid: string, tracks: readonly Lid
   const normalized = [...byId.values()];
   collectCatalogRedirects(normalized);
   return normalized;
+}
+
+/** A changed occurrence MBID may retain its local row only with authoritative
+ * aliases, or one unique occurrence of the same canonical recording in the SAME
+ * edition before and after. Titles, positions and durations are not identity.
+ * Existing target rows/ambiguous occurrences need separate owner consolidation. */
+export function reconcileEditionTrackIdentities(db: Database.Database, releaseMbid: string, tracks: readonly LidarrTrack[], retainedTrackIds: ReadonlySet<string>): number {
+  if (!db.inTransaction) throw new Error('Track identity reconciliation requires an active transaction');
+  return db.transaction(() => {
+    const existing = db.prepare(`SELECT track.id,track.mbid,track.recording_mbid,recording.id AS recording_id,
+      track.recording_id AS original_recording_id,track.album_edition_id FROM Tracks track
+      JOIN Recordings recording ON recording.mbid=track.recording_mbid WHERE track.release_mbid=?`).all(releaseMbid) as Array<{id:number;mbid:string;recording_mbid:string;recording_id:number;original_recording_id:number|null;album_edition_id:number}>;
+    const aliases = collectCatalogRedirects(tracks).tracks;
+    let changed = 0;
+    for (const old of existing) {
+      if (retainedTrackIds.has(old.mbid)) continue;
+      const explicit = aliases.get(old.mbid);
+      const sameRecording = tracks.filter(track => track.RecordingId === old.recording_mbid);
+      const target = explicit ? tracks.find(track => track.Id === explicit)
+        : sameRecording.length === 1 && existing.filter(track => track.recording_mbid === old.recording_mbid).length === 1 ? sameRecording[0] : undefined;
+      if (!target || db.prepare('SELECT id FROM Tracks WHERE mbid=?').get(target.Id)) continue;
+      if (target.RecordingId !== old.recording_mbid) throw new Error(`Track redirect ${old.mbid} has a different recording identity`);
+      if (old.original_recording_id != null && old.original_recording_id !== old.recording_id) throw new Error(`Track ${old.mbid} has conflicting canonical recording identity`);
+      const plans = (db.prepare(`SELECT DISTINCT plan_id AS id FROM AcquisitionPlanTracks WHERE track_id=?
+        OR provider_track_match_id IN (SELECT id FROM ProviderTrackMatches WHERE track_id=?)`).all(old.id,old.id) as {id:number}[]).map(row=>row.id);
+      prepareAcquisitionPlanMutation(db,plans);
+      const active = db.prepare(`SELECT id FROM commands WHERE status IN ('queued','started')
+        AND name IN ('DownloadAlbum','DownloadTrack','DownloadVideo','ImportDownload')
+        AND (json_extract(payload,'$.releaseMbid')=? OR ? IN (SELECT value FROM json_tree(commands.payload) WHERE type='text')
+          OR CAST(json_extract(payload,'$.canonicalTrackId') AS TEXT)=?
+          OR CAST(json_extract(payload,'$.resolved.canonicalTrackId') AS TEXT)=?) LIMIT 1`)
+        .get(releaseMbid,old.mbid,String(old.id),String(old.id));
+      if (active) throw new Error(`Track ${old.mbid} has an executing media snapshot`);
+      const waiting = db.prepare(`SELECT id FROM DownloadQueue WHERE plan_id IS NULL
+        AND (json_extract(payload,'$.canonicalTrackMbid')=? OR CAST(json_extract(payload,'$.canonicalTrackId') AS TEXT)=?) LIMIT 1`)
+        .get(old.mbid,String(old.id));
+      const legacyWaiting = db.prepare(`SELECT id FROM DownloadQueue WHERE plan_id IS NULL
+        AND ? IN (SELECT value FROM json_tree(DownloadQueue.payload) WHERE type='text') LIMIT 1`).get(old.mbid);
+      if (waiting || legacyWaiting) throw new Error(`Track ${old.mbid} has a standalone waiting request`);
+      const conflict = db.prepare(`SELECT id FROM TrackFiles WHERE
+        (track_id=? AND canonical_track_mbid IS NOT NULL AND canonical_track_mbid NOT IN (?,?))
+        OR (canonical_track_mbid=? AND track_id IS NOT NULL AND track_id!=?) LIMIT 1`)
+        .get(old.id,old.mbid,target.Id,old.mbid,old.id);
+      if (conflict) throw new Error(`Track ${old.mbid} has conflicting file identity`);
+      const wrongScope = db.prepare(`SELECT id FROM TrackFiles WHERE (track_id=? OR canonical_track_mbid=?) AND (
+        (recording_id IS NOT NULL AND recording_id!=?) OR (canonical_recording_mbid IS NOT NULL AND canonical_recording_mbid!=?)
+        OR (album_edition_id IS NOT NULL AND album_edition_id!=?)) LIMIT 1`)
+        .get(old.id,old.mbid,old.recording_id,old.recording_mbid,old.album_edition_id);
+      if (wrongScope) throw new Error(`Track ${old.mbid} has conflicting recording or edition file scope`);
+      for (const table of ['MetadataFiles','LyricFiles','ExtraFiles']) {
+        if (db.prepare(`SELECT id FROM "${table}" WHERE canonical_track_mbid=?
+          AND canonical_recording_mbid IS NOT NULL AND canonical_recording_mbid!=? LIMIT 1`).get(old.mbid,old.recording_mbid)) {
+          throw new Error(`Track ${old.mbid} has conflicting sidecar recording scope`);
+        }
+      }
+      db.prepare(`UPDATE Tracks SET mbid=?,recording_id=?,foreign_track_id=CASE WHEN foreign_track_id=? THEN ? ELSE foreign_track_id END,
+        updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(target.Id,old.recording_id,old.mbid,target.Id,old.id);
+      db.prepare('UPDATE TrackFiles SET canonical_track_mbid=?,needs_rename=1 WHERE track_id=?').run(target.Id,old.id);
+      db.prepare('UPDATE TrackFiles SET track_id=?,canonical_track_mbid=?,needs_rename=1 WHERE canonical_track_mbid=?').run(old.id,target.Id,old.mbid);
+      for (const table of ['MetadataFiles','LyricFiles','ExtraFiles']) {
+        db.prepare(`UPDATE "${table}" SET canonical_track_mbid=?,needs_rename=1 WHERE canonical_track_mbid=?`).run(target.Id,old.mbid);
+      }
+      prepareAcquisitionPlanMutation(db,plans);
+      for (const id of plans) db.prepare("UPDATE AcquisitionPlans SET state='stale',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+      changed++;
+    }
+    return changed;
+  })();
 }
 
 /** Free changed positions only within the transaction that writes this edition.

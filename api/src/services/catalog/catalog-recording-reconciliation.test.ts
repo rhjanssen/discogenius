@@ -3,6 +3,7 @@ import {after,test} from "node:test";
 import {prepareActiveSchemaEnv,openActiveSchemaDb,closeActiveSchemaDb} from "../../test-support/active-schema-fixture.js";
 import {seedTestLibrary} from "../../test-support/library-fixtures.js";
 import {reconcileRecordingRedirects,RECORDING_OWNERS} from "./catalog-recording-reconciliation.js";
+import {reconcileEditionTrackIdentities} from "./catalog-track-reconciliation.js";
 const {tempDir}=prepareActiveSchemaEnv('recording-reconciliation');
 const {db,dbModule}=await openActiveSchemaDb();
 const library=seedTestLibrary(db,{name:'Recording merge',rootPath:tempDir});
@@ -38,6 +39,50 @@ function plan(){const id=Number(db.prepare(`INSERT INTO AcquisitionPlans(library
     db.prepare("INSERT INTO LibraryEditions(library_id,edition_id,selection_mode,preferred_plan_key,curation_version) VALUES(?,1,'manual','chosen',1)").run(library);
     return id;}
 function snapshot(){return JSON.stringify(['Recordings','Tracks','TrackFiles','MetadataFiles','LyricFiles','ExtraFiles','ProviderTrackMatches','RecordingArtistCredits','RecordingRelations','ArtistTopTracks','TrackLibraryIndex','AcquisitionPlans','AcquisitionPlanTracks','LibraryEditions','DownloadQueue'].map(t=>db.prepare(`SELECT * FROM ${t}`).all()));}
+
+test('unique same-edition recording occurrence retains every integer track owner and waiting selection',()=>fixture(()=>{
+    const id=plan();db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,'{}',1)").run(id);
+    db.exec("UPDATE MetadataFiles SET canonical_track_mbid='track'; UPDATE LyricFiles SET canonical_track_mbid='track'; UPDATE ExtraFiles SET canonical_track_mbid='track'");
+    const replacement=[{...incoming[0],Id:'track-next',RecordingId:'old',OldRecordingIds:undefined,TrackPosition:9}];
+    assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),1);
+    assert.deepEqual(db.prepare('SELECT id,mbid FROM Tracks').get(),{id:1,mbid:'track-next'});
+    assert.deepEqual(db.prepare('SELECT id,track_id,canonical_track_mbid,file_path,codec,file_size FROM TrackFiles').get(),{id:1,track_id:1,canonical_track_mbid:'track-next',file_path:'/music/audio.flac',codec:'flac',file_size:123});
+    for(const table of ['MetadataFiles','LyricFiles','ExtraFiles']) assert.deepEqual(db.prepare(`SELECT track_file_id,canonical_track_mbid FROM ${table}`).get(),{track_file_id:1,canonical_track_mbid:'track-next'});
+    assert.equal((db.prepare('SELECT track_id FROM ProviderTrackMatches').get() as {track_id:number}).track_id,1);
+    const key=(db.prepare('SELECT plan_key FROM AcquisitionPlans WHERE id=?').get(id) as {plan_key:string}).plan_key;
+    assert.notEqual(key,'chosen');assert.equal((db.prepare('SELECT preferred_plan_key FROM LibraryEditions').get() as {preferred_plan_key:string}).preferred_plan_key,key);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+    assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),0);
+}));
+test('recording redirect then occurrence replacement recanonicalizes an intact stale choice',()=>fixture(()=>{
+    const id=plan();const replacement=[{...incoming[0],Id:'track-next'}];
+    reconcileRecordingRedirects(db,replacement);
+    const intermediate=(db.prepare('SELECT plan_key FROM AcquisitionPlans WHERE id=?').get(id) as {plan_key:string}).plan_key;
+    reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next']));
+    const key=(db.prepare('SELECT plan_key FROM AcquisitionPlans WHERE id=?').get(id) as {plan_key:string}).plan_key;
+    assert.notEqual(key,intermediate);assert.equal((db.prepare('SELECT preferred_plan_key FROM LibraryEditions').get() as {preferred_plan_key:string}).preferred_plan_key,key);
+}));
+test('repeated recording occurrences require explicit aliases instead of position or title guesses',()=>fixture(()=>{
+    db.exec("INSERT INTO Tracks(id,mbid,release_mbid,recording_mbid,medium_position,position,title) VALUES(2,'repeat','release','old',1,2,'Track')");
+    const replacement=[{...incoming[0],Id:'track-next',RecordingId:'old',OldRecordingIds:undefined}];
+    const before=snapshot();assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),0);assert.equal(snapshot(),before);
+    replacement[0]=Object.assign(replacement[0],{OldIds:['track']});
+    assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),1);
+    assert.equal((db.prepare('SELECT mbid FROM Tracks WHERE id=1').get() as {mbid:string}).mbid,'track-next');
+    assert.equal((db.prepare('SELECT mbid FROM Tracks WHERE id=2').get() as {mbid:string}).mbid,'repeat');
+}));
+test('track replacements protect active, standalone and contradictory file/sidecar ownership',()=>fixture(()=>{
+    const replacement=[{...incoming[0],Id:'track-next',RecordingId:'old',OldRecordingIds:undefined}];
+    const run=()=>reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next']));
+    db.exec("INSERT INTO commands(name,payload,status) VALUES('DownloadTrack','{\"canonicalTrackId\":1}','started')");
+    let before=snapshot();assert.throws(run,/executing media snapshot/);assert.equal(snapshot(),before);
+    db.exec("DELETE FROM commands; INSERT INTO DownloadQueue(ref_key,media_kind,command_name,payload,queue_order) VALUES('standalone','track','DownloadTrack','{\"canonicalTrackId\":\"1\"}',1)");
+    before=snapshot();assert.throws(run,/standalone waiting/);assert.equal(snapshot(),before);
+    db.exec('DELETE FROM DownloadQueue; UPDATE TrackFiles SET recording_id=3');
+    before=snapshot();assert.throws(run,/recording or edition file scope/);assert.equal(snapshot(),before);
+    db.exec("UPDATE TrackFiles SET recording_id=1; UPDATE MetadataFiles SET canonical_track_mbid='track',canonical_recording_mbid='other'");
+    before=snapshot();assert.throws(run,/sidecar recording scope/);assert.equal(snapshot(),before);
+}));
 
 test('standalone recording intent uses its partial expression index',()=>{
     const plan=db.prepare("EXPLAIN QUERY PLAN SELECT id FROM DownloadQueue WHERE plan_id IS NULL AND json_extract(payload,'$.canonicalRecordingMbid')=? LIMIT 1").all('old') as {detail:string}[];

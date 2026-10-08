@@ -547,6 +547,10 @@ function ensureLibraryLookupIndexes(): void {
       ON DownloadQueue(json_extract(payload, '$.canonicalRecordingMbid')) WHERE plan_id IS NULL;
     CREATE INDEX IF NOT EXISTS idx_download_queue_standalone_recording_id
       ON DownloadQueue(CAST(json_extract(payload, '$.canonicalRecordingId') AS TEXT)) WHERE plan_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_download_queue_standalone_track
+      ON DownloadQueue(json_extract(payload, '$.canonicalTrackMbid')) WHERE plan_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_download_queue_standalone_track_id
+      ON DownloadQueue(CAST(json_extract(payload, '$.canonicalTrackId') AS TEXT)) WHERE plan_id IS NULL;
     CREATE INDEX IF NOT EXISTS idx_commands_live_acquisition_plan
       ON commands(CAST(json_extract(payload, '$.acquisitionPlanId') AS INTEGER))
       WHERE status IN ('queued', 'started');

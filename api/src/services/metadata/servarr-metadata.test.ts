@@ -673,6 +673,27 @@ test('catalog refresh applies authoritative recording redirects without changing
   } finally { db.prepare('DELETE FROM TrackFiles WHERE id=?').run(fileId); }
 });
 
+for (const recordingRedirect of [false,true]) test(`catalog occurrence replacement retains owned media with ${recordingRedirect ? 'redirected' : 'unchanged'} recording identity`, async () => {
+  resetCatalog(); const {db}=dbModule; const payload=twoTrackPayload(); fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip','artist-mbid');
+  const fileId=addOwnedTrack('trk-1');
+  const before=db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId);
+  const original=payload.Releases[0].Tracks[0].RecordingId;
+  Object.assign(payload.Releases[0].Tracks[0],{Id:'trk-replaced',TrackPosition:7,
+    ...(recordingRedirect ? {RecordingId:'rec-replaced',OldRecordingIds:[original]} : {})});
+  try {
+    fetchReturning(payload); await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip','artist-mbid');
+    assert.deepEqual(db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId),before);
+    const owner=db.prepare('SELECT mbid,recording_mbid,position FROM Tracks WHERE id=(SELECT track_id FROM TrackFiles WHERE id=?)').get(fileId);
+    assert.deepEqual(owner,{mbid:'trk-replaced',recording_mbid:recordingRedirect?'rec-replaced':original,position:7});
+    assert.equal(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get(),undefined);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+    const changes=db.prepare('SELECT total_changes() AS n').get();
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip','artist-mbid');
+    assert.deepEqual(db.prepare('SELECT total_changes() AS n').get(),changes);
+  } finally {db.prepare('DELETE FROM TrackFiles WHERE id=?').run(fileId);}
+});
+
 function addOwnedTrack(trackMbid: string): number {
   const { db } = dbModule;
   return Number(db.prepare(`INSERT INTO TrackFiles(artist_metadata_id, track_id, canonical_track_mbid, file_path, relative_path, filename, extension, library_root, file_type)

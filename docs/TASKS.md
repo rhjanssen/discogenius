@@ -411,3 +411,15 @@ The measured ownership problems and remaining acceptance gates are in
 - validation, October 7: final Jellyfin-role full CI passes 2,089 API and 187 frontend tests plus lint/typechecks/builds. Actual-app scan and repeat preserve seven correctly owned Jellyfin-role files and their IDs/bytes; repeat reports no changes. Worker drain test now warms the TypeScript loader before its short deadline; all 26 lease checks pass Windows/Linux builder stage. Production shutdown behavior is unchanged. Still not deployed.
 - locally validated, October 7: real WebP/GIF selected origins now decode through bounded asynchronous native tools for full-dimension JPEG sidecars and display proxies. Legacy PNG-to-JPEG copying now converts actual bytes; sync copying refuses format mismatches. Verified library masters precede legacy cache originals and repeats avoid provenance writes. All 107 focused tests pass Windows/Linux; actual-app FLAC retag preserves decoded audio and converted master, embeds canonical tags/lyrics/1200px JPEG, and repeats without changes. Fresh cache writes, legacy migration and process-death source-replacement recovery still need completion; no deployment or live cache deletion.
 - validation, October 7: final artwork-container conversion CI passes all 2,091 API and 187 frontend tests, lint, typechecks and builds without failing names or clone retries. Focused native validation passes all 107. No release/deployment yet; continue full proxy-only lifecycle and live cleanup prerequisites.
+
+- locally validated, October 8: track occurrence replacements preserve exact local
+  owners for authoritative aliases or a unique unchanged recording within the same
+  edition. Recording redirects precede this step; waiting plan keys also survive
+  a preceding stale-state transition. Conflicting owners and active snapshots
+  roll back. All 55 focused Windows/native tests and full CI pass, including 2205
+  API and 187 frontend tests. The actual isolated dashboard scan completes. The
+  readonly live graph qualifies a-ha; Dirty Honey has no replacement recording,
+  and Cliff has an existing target with two old occurrences. Broader consolidation
+  and legacy intent remain acceptance gates. Live stays 2.21.0 with downloads
+  paused, scan 16039 progressing and no current writer holder/waiters. Finish
+  proxy-only legacy cache migration and live library acceptance before resuming.

@@ -1557,3 +1557,30 @@ returns no rows; do not rely on old history 15759 as current scan evidence.
 Downloads/imports remain inactive and downloads paused; the writer has no
 holder/waiters. Inspect this scan's outcome and runtime before the next deployment.
 Its legacy inventory still cannot authorize candidate strict deletion.
+
+October 8 track-occurrence follow-up: admitted edition reconciliation now retains
+the integer Track row when an explicit old-ID redirect identifies its replacement,
+or when the same edition has exactly one old and one incoming occurrence of the
+same canonical recording. Recording redirects run first. Positions/titles do not
+identify replacements. Existing target rows or repeated occurrences require
+separate consolidation. File and sidecar references follow the retained row;
+contradictory scope, executing snapshots and standalone requests refuse the change.
+Selected waiting plans retain assignments and recanonicalize their keys even when
+the preceding recording redirect already marked the plan stale.
+
+The readonly live projection and actual PostgreSQL adapter confirm a-ha qualifies
+for the unique-occurrence replacement. Dirty Honey's removed recording has no
+incoming occurrence. Cliff's recording redirect leaves two old occurrences and
+an already-existing target, so it does not qualify for inferred replacement.
+These three old Track rows own no TrackFiles; this is not a whole-library ownership
+audit. Broader legacy selections and existing-target collisions remain acceptance
+gates. No live refresh retries or filesystem mutations were performed.
+
+All 55 focused active-schema checks pass on Windows and in the current production
+image without skips. Full CI passes 2205 API and 187 frontend tests, lint,
+typechecks and both builds in 796 seconds, without failing names or clone retries.
+The actual isolated app completed a root scan requested through its dashboard and
+displayed Completed in Activity with no active jobs. Its empty disposable library
+does not validate live catalogue or physical file repair. Live remains healthy
+2.21.0; scan 16039 progressed to 309/518 artists and the writer had no holder or
+waiters. Downloads remain paused. No deployment or cache pruning yet.

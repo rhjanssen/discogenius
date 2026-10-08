@@ -48,7 +48,7 @@ export function resourceAcquisitionPlanKey(db: Database.Database, plan: Pick<Opt
 
 /** Reconstruct an intact persisted choice from facts, without parsing old keys. */
 export function persistedResourceAcquisitionPlanKey(db: Database.Database, planId: number): string | null {
-  const plan = db.prepare("SELECT provider,composition,quality_tier,explicit_content,coverage FROM AcquisitionPlans WHERE id=? AND state='current'")
+  const plan = db.prepare("SELECT provider,composition,quality_tier,explicit_content,coverage FROM AcquisitionPlans WHERE id=? AND state IN ('current','stale')")
     .get(planId) as {provider:string;composition:OptimizedAcquisitionPlan['composition'];quality_tier:OptimizedAcquisitionPlan['qualityTier'];explicit_content:OptimizedAcquisitionPlan['explicitContent'];coverage:number}|undefined;
   if (!plan) return null;
   const sources = db.prepare("SELECT provider_edition_match_id,role FROM AcquisitionPlanSources WHERE plan_id=? ORDER BY sort_order,id")
