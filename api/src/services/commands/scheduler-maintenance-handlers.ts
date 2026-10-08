@@ -45,6 +45,11 @@ export async function runConfigPruneMaintenance(
     context: SchedulerMaintenanceHandlerContext,
     dependencies: ConfigPruneMaintenanceDependencies = CONFIG_PRUNE_DEPENDENCIES,
 ): Promise<void> {
+    if (job.payload.cleanupArtworkCache === true) {
+        if (job.payload.refreshArtworkPreference === true) throw new Error("Complete library artwork replacement before starting cache cleanup");
+        const { runArtworkCacheWork } = await import("./artwork-cache-work.js");
+        return runArtworkCacheWork(job,context);
+    }
     const refreshArtworkPreference = job.payload.refreshArtworkPreference === true;
     if (refreshArtworkPreference) {
         context.updateCommandDescription({ progress: 1, description: "Applying library artwork settings" });

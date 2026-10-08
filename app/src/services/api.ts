@@ -643,6 +643,10 @@ class ApiClient {
     return this.request('/v1/config/metadata', {}, parseMetadataConfigContract);
   }
 
+  async cleanupArtworkCache() {
+    return this.request('/v1/config/artwork-cache/cleanup', {method:'POST'});
+  }
+
   async updateMetadataConfig(config: Partial<MetadataConfigContract>) {
     return this.request('/v1/config/metadata', {
       method: 'POST',

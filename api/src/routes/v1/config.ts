@@ -1,4 +1,6 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
+import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
+import { CommandNames } from "../../services/commands/command-names.js";
 import { Router } from "express";
 import { clearConfigCache, getConfigSection, updateConfig, Config } from "../../services/config/config.js";
 import { streamingProviderManager } from "../../services/providers/index.js";
@@ -58,6 +60,19 @@ function configMutationHttpStatus(error: unknown): number {
 }
 
 const router = Router();
+
+router.post("/artwork-cache/cleanup", async (req,res) => {
+  try {
+    if (req.body !== undefined && Object.keys(getObjectBody(req.body)).length) {
+      res.status(400).json({detail:"Artwork cleanup does not accept client checkpoints"});return;
+    }
+    const commandId=await runConfigUserWrite(()=>CommandQueueManager.push(CommandNames.ConfigPrune,
+      {cleanupArtworkCache:true},"artwork-cache-cleanup",0,CommandTrigger.Manual));
+    res.status(202).json({commandId});
+  } catch (error: unknown) {
+    res.status(configMutationHttpStatus(error)).json({detail:error instanceof Error ? error.message : String(error)});
+  }
+});
 
 async function syncDownloadBackends(): Promise<void> {
   await streamingProviderManager.syncProviderSettings();

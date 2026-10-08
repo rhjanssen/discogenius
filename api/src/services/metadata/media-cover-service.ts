@@ -578,11 +578,8 @@ export function syncCachedMediaCoverToFile(options: MediaCoverSidecarOptions): M
         throw error;
       }
     }, "artwork sidecar provenance");
-    // Verify the sidecar before discarding the cache's full-resolution bytes.
-    // Unsupported image containers retain their original until proxies exist.
-    const heights = options.coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS;
-    if (marker && path.dirname(sourcePath) === folder && heights.every(height => fs.existsSync(getMediaCoverPath(entityId, options.coverEntity, coverType, ".jpg", height)))
-      && mediaCoverFilesMatch(sourcePath, options.outputPath)) fs.unlinkSync(sourcePath);
+    // Legacy originals retire through witnessed cache maintenance. Provisional
+    // import links and existing proxy filenames cannot authorize deletion.
   } finally {
     if (!intentId) fs.rmSync(temporaryPath,{force:true});
   }
@@ -625,7 +622,7 @@ type PreparedMediaCoverDerivative = {
   buffer: Buffer;
 };
 
-function prepareResizedMediaCovers(
+export function prepareResizedMediaCovers(
   originalBuffer: Buffer,
   extension: string,
   heights: readonly number[] = MEDIA_COVER_DEFAULT_HEIGHTS,
@@ -647,14 +644,17 @@ function prepareResizedMediaCovers(
   for (const targetHeight of heights) {
     try {
       const resized = resizeRgbaNearest(decoded, targetHeight);
-      const candidates = [82, 70, 60, 50].map((quality) => jpeg.encode({
+      let encoded: Uint8Array | null = null;
+      for (const quality of [82, 70, 60, 50]) {
+        const candidate = jpeg.encode({
           width: resized.width,
           height: resized.height,
           data: resized.data,
-        }, quality).data);
-      const encoded = candidates.find((candidate) => candidate.length < originalBuffer.length)
-        ?? candidates.reduce((smallest, candidate) => candidate.length < smallest.length ? candidate : smallest);
-      derivatives.push({ height: targetHeight, buffer: Buffer.from(encoded) });
+        }, quality).data;
+        if (!encoded || candidate.length < encoded.length) encoded = candidate;
+        if (candidate.length < originalBuffer.length) { encoded = candidate; break; }
+      }
+      derivatives.push({ height: targetHeight, buffer: Buffer.from(encoded!) });
     } catch (error) {
       console.warn(`[MediaCoverService] Failed to prepare ${targetHeight}px artwork:`, (error as Error).message);
     }

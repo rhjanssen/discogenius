@@ -128,6 +128,8 @@ export interface RootInventoryCheckpoint {
 }
 
 export interface CommandBodyCommon {
+  artworkCacheWork?: { version: 1; root: string; rootIdentity: string; family: number; after: string;
+    current?: {name:string;after:string}; directories?:number };
   cancelRequested?: boolean;
   retagWork?: RetagWorkCheckpoint;
   renameWork?: { version: 1 };
@@ -319,10 +321,10 @@ export interface ImportDownloadCommand extends CommandBodyCommon {
 
 export interface ConfigPruneCommand extends CommandBodyCommon {
   /**
-   * Preference changes first refresh every canonical MediaCover cache entry,
-   * then run the same sidecar/embed reconciliation as an ordinary config prune.
+   * Explicit library artwork replacement; ordinary repair remains missing-only.
    */
   refreshArtworkPreference?: boolean;
+  cleanupArtworkCache?: boolean;
 }
 
 export interface MoveArtistCommand extends CommandBodyCommon {

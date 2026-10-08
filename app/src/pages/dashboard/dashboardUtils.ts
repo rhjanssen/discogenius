@@ -150,6 +150,7 @@ export function formatJobType(job: JobLike): string {
         case "CurateArtist":
             return "Curate Artist";
         case "ConfigPrune":
+            if (getJobPayload(job)?.cleanupArtworkCache === true) return "Clean Artwork Cache";
             return getJobPayload(job)?.refreshArtworkPreference === true
                 ? "Update Library Artwork"
                 : "Apply Metadata Settings";
@@ -249,6 +250,7 @@ export function formatJobDescription(job: JobLike): string {
         case "Housekeeping":
             return "Library maintenance and cleanup";
         case "ConfigPrune":
+            if (payload?.cleanupArtworkCache === true) return desc || "Cleaning artwork cache";
             return desc || (payload?.refreshArtworkPreference === true
                 ? "Updating library artwork and embedded covers"
                 : "Reconciling library metadata files");

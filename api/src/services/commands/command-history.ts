@@ -485,6 +485,7 @@ export const buildDescription = (job: CommandModel, context?: DescriptionLookupC
     }
 
     if (job.name === "ConfigPrune") {
+        if (job.payload.cleanupArtworkCache === true) return "Cleaning artwork cache";
         return job.payload.refreshArtworkPreference === true
             ? "Updating library artwork and embedded covers"
             : "Applying library metadata settings";
@@ -627,6 +628,7 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
             refreshArtworkPreference: job.name === "ConfigPrune"
                 ? job.payload.refreshArtworkPreference === true
                 : undefined,
+            cleanupArtworkCache: job.name === "ConfigPrune" ? job.payload.cleanupArtworkCache === true : undefined,
             outcome,
             warningMessage,
             downloadState: downloadState

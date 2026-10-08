@@ -1,11 +1,13 @@
 import {
+    Button,
     Select,
     Switch,
     Text,
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { api } from "@/services/api";
 import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import type { MetadataConfigContract } from "@contracts/config";
@@ -72,6 +74,17 @@ export const MetadataFilesSettingsSection = ({
     onEmbedCoverChange,
 }: MetadataFilesSettingsSectionProps) => {
     const styles = useStyles();
+    const [cacheBusy,setCacheBusy]=useState(false);
+    const [cacheMessage,setCacheMessage]=useState("");
+    const cleanCache=async()=>{
+        setCacheBusy(true);setCacheMessage("");
+        try {
+            await api.cleanupArtworkCache();
+            setCacheMessage("Cleanup queued. Follow its progress in Activity.");
+        } catch(error) {
+            setCacheMessage(error instanceof Error ? error.message : "Could not queue artwork cleanup.");
+        } finally {setCacheBusy(false);}
+    };
     // `sync` used to couple metadata refresh to a filesystem rewrite. Keep
     // accepting that stored value as the equivalent import policy, but do not
     // expose a command-domain promise the app no longer makes.
@@ -103,6 +116,16 @@ export const MetadataFilesSettingsSection = ({
             className={styles.section}
         >
             <SettingsCard>
+                <div className={styles.row}>
+                    <div className={styles.rowContent}>
+                        <Text weight="semibold">Artwork cache</Text>
+                        <Text size={200} className={styles.mutedText}>Keep small preview images. Remove cached originals after verifying their source and, for imported items, their full-resolution library copy.</Text>
+                        {cacheMessage && <Text size={200} role="status">{cacheMessage}</Text>}
+                    </div>
+                    <div className={styles.rowControl}>
+                        <Button disabled={cacheBusy} onClick={()=>void cleanCache()}>Clean artwork cache</Button>
+                    </div>
+                </div>
                 <div className={styles.row}>
                     <div className={styles.rowContent}>
                         <Text weight="semibold">Write media tags</Text>

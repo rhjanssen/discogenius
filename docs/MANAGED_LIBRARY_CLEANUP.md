@@ -1,5 +1,69 @@
 # Managed library inventory and strict cleanup
 
+## October 9 retirement work in progress
+
+The legacy retirement candidate validates selected source, durable
+proxy hashes, canonical ownership and fresh physical witnesses before unlinking
+one regular cache origin. Imported owners require an exact tracked full-resolution
+library master; catalogue-only owners require authoritative unimported status.
+Hashing and image decoding remain outside writer admission. A prepared retirement
+record survives unlink followed by an outcome transaction failure. Recovery keeps
+that record retryable and commits counters exactly once. Missing cache roots or
+unresolved prepared records cannot produce successful completion.
+
+Backend compilation passes. All ten focused tests pass on Windows and in the
+production image with current compiled code mounted read-only: five existing owner
+admission checks plus five retirement checks, including actual JPEG files,
+same-byte canonical owner transfer, changed proxy/origin refusal and an injected
+SQLite outcome failure after unlink. These do not prove full migration, real app
+acceptance, production packaging or release readiness. No NAS artwork was deleted.
+Repeated directory paging has been replaced by a streamed, durable family inventory
+with batches of 128 names and indexed pages of 25. Completed inventories do not
+repeat enumeration for each work unit. Interrupted inventory is incomplete and
+restarts idempotently. Completion verifies the actual folder membership once:
+Linux native testing exposed that directory timestamp witnesses can remain equal
+within the same filesystem clock tick. Relying on those timestamps alone missed
+a newly added folder. The membership check fixes that failure without quadratic
+re-enumeration; all 15 focused native checks now pass without skips, including
+continuation of the same command, missing-root refusal and changed membership.
+
+The public cleanup endpoint rejects client checkpoints and queues a durable
+ConfigPrune cleanup. Settings exposes Clean artwork cache; Activity carries the
+flag and shows that title, progress and honest outcomes. Actual isolated app job 1
+reported a protected origin due to the root-seeded fixture's cache directory
+permissions. After fixing fixture ownership to UID1000, new job 2 completed and
+removed exactly 13,736 bytes. Both proxies remained, and the 800x600 library JPEG's
+hash and exact MetadataFiles owner were unchanged. Activity showed completion
+with the green SVG token (computed rgb(9,69,9)). No live cache deletion was performed.
+Initial full CI completed successfully in 542.88 seconds, with 2,225 API and 187
+frontend tests, lint, types and both builds. The first TAP segment has no failing
+names or retries. Because the final Linux membership correction landed during
+that run, final CI on the unchanged source was rerun and passes all 2,225 API and
+187 frontend tests, lint/types and both builds in 533.23 seconds, with no first-TAP
+failing names or clone retries (oct09-cache-retirement-final-ci.log).
+Temporary QA compose container, volume and tab16 have been removed.
+Full-resolution
+adoption for differing imported covers, secondary assets and sidecar-only artists,
+broader recovery tests remain. Production compose was rebuilt for the
+current code and passed the focused native checks; wider release gates remain.
+
+Before live use, complete cross-command recovery and history retention: the
+current prepared-retirement replay checks the same command only. A fresh cleanup
+must recover or explicitly refuse older unresolved intents, and deleting command
+history must not cascade away prepared evidence. Imported differing-byte covers
+must undergo full-resolution adoption, rather than treating their refusal as a
+finished migration. The tested retirement mechanism is not a completed NAS cache
+migration or a released/deployed change.
+
+Live checks still show discogenius:2.21.0 with downloads paused and no active
+downloads/imports. Scan 16039 reports 470/518 artists and 1403/1468 files. Repeated
+health probes return 503 for a stale busy scan worker; main SQLite writer held=false
+and queueDepth=0. CheckHealth 16042 completed during the checks. This does not prove
+the scan is terminal or authorize restarting it, and this old deployment has no
+candidate filesystem witnesses to authorize strict library deletion. Later probes
+returned HTTP200 and scan progress advanced to artist476/518, file658/1272 without
+intervention; the transient liveness report was not evidence of a terminal scan.
+
 ## October 8 artwork master ownership admission candidate
 
 Before legacy-cache retirement, artwork links must prove their current owner.

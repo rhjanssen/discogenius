@@ -2,6 +2,39 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 work in progress: witnessed legacy-cache retirement now has durable
+  prepared/outcome records, constant-time counters and bounded command units.
+  Removed the old automatic origin unlink from local sidecar copying. Five new
+  active-schema retirement checks and five ownership regressions pass on Windows
+  and in the production image with the current compiled backend mounted read-only.
+  Injected outcome failure after unlink retains prepared evidence and recovers
+  accounting exactly once. Backend build passes. This candidate is not
+  deployable yet: finish full-resolution adoption and remaining release gates.
+  Repeated directory paging is now replaced by one streamed inventory per family
+  and indexed pages. Fifteen focused native checks pass; restart, work continuation
+  and changed membership are covered. A Linux test exposed identical timestamp
+  witnesses within one clock tick; completion now verifies actual folder membership
+  once as well. Thin endpoint and Settings button enqueue durable cleanup; Activity
+  uses the correct label. Actual app command 2 removes the 13,736-byte test original,
+  retaining both proxies and the exact full-resolution sidecar/hash/owner; completion
+  is green. Command 1 correctly reported root-seeded fixture permission failure;
+  fixing UID1000 ownership allowed the new job to complete. Initial full CI passed
+  all 2,225 API and 187 frontend tests, lint/types and both builds in 542.88 seconds
+  with no first-segment failing names. The final Linux membership correction landed
+  during that run; final unchanged-code CI also passes all 2,225 API and 187 frontend
+  tests, lint/types and both builds in 533.23 seconds, with no first-TAP failing names
+  or retries (oct09-cache-retirement-final-ci.log). Temporary QA container/volume/tab16
+  removed. Finish cross-command prepared-retirement recovery/history retention:
+  current recovery is scoped to the same command, and a new cleanup must not hide
+  an older unresolved intent. Imported covers with differing bytes still need
+  actual full-resolution adoption before retirement, rather than permanent refusal.
+  Live is still 2.21.0, downloads paused. Root scan 16039 is at artist 470/518,
+  file 1403/1468; repeated health probes return 503 for its stale busy worker,
+  while the main SQLite writer has no holder or waiters. It then recovered to HTTP200
+  and advanced to artist476/518, file658/1272 without intervention. CheckHealth16042 finished
+  during observation. Investigate worker-local work rather than assuming a main
+  writer lock or restarting the ongoing scan from an observation timeout.
+
 - local candidate, October 8: full-resolution artwork master reads and tracked
   links now validate canonical ownership as well as file ID/hash. Same-byte
   transfers to another artist/album/edition/video cannot retain the old link;

@@ -360,7 +360,7 @@ export const COMMAND_DEFINITIONS = {
     name: "Prune Configuration",
     requiresDiskAccess: true,
     isTypeExclusive: true,
-    isExclusive: false,
+    isExclusive: true,
     isLongRunning: true,
   },
   [CommandNames.MoveArtist]: {

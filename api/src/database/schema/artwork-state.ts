@@ -52,5 +52,40 @@ export function createArtworkStateSchema(db: Database.Database): void {
       recovery_error TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS ArtworkCacheRetirement (
+      command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
+      source_path TEXT NOT NULL,
+      file_identity TEXT NOT NULL,
+      source_snapshot TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      phase TEXT NOT NULL CHECK (phase IN ('prepared','retired','protected')),
+      reason TEXT,
+      PRIMARY KEY(command_id,source_path)
+    );
+    CREATE TABLE IF NOT EXISTS ArtworkCacheRuns (
+      command_id INTEGER PRIMARY KEY REFERENCES commands(id) ON DELETE CASCADE,
+      retired INTEGER NOT NULL DEFAULT 0,
+      protected INTEGER NOT NULL DEFAULT 0,
+      bytes INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS ArtworkCacheInventories (
+      command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
+      family INTEGER NOT NULL,
+      directory TEXT NOT NULL,
+      directory_identity TEXT NOT NULL,
+      complete INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(command_id,family)
+    );
+    CREATE TABLE IF NOT EXISTS ArtworkCacheFolders (
+      command_id INTEGER NOT NULL,
+      family INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      PRIMARY KEY(command_id,family,name),
+      FOREIGN KEY(command_id,family) REFERENCES ArtworkCacheInventories(command_id,family) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_canonical_artist
+      ON MetadataFiles(canonical_artist_mbid);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_canonical_edition
+      ON MetadataFiles(canonical_release_mbid);
   `);
 }
