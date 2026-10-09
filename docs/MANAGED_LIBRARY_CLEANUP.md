@@ -1,5 +1,42 @@
 # Managed library inventory and strict cleanup
 
+## October 9 legacy source and link admission candidate
+
+Cache cleanup now has an admission pass before its retirement pass. The same
+command and indexed family inventories bound both passes. Admission changes only
+provenance records, retaining all image bytes. A marker's explicit file ID follows
+legitimate renames; a path-only hint resolves only through the exact indexed
+MetadataFiles path and shared canonical owner admission. Physical publication
+hashes, containment, regular files and fresh file/marker/owner snapshots gate the
+write. Markers are capped at 512 KiB and 50 entries. Unknown paths cannot create
+owners. Existing durable links/sources win over stale markers; unchanged state
+does not rewrite provenance. No physical original is replaced during this pass.
+
+All families finish admission before retirement, so a later Edition selection
+cannot be hidden by an earlier Album sweep. Manual/non-fetchable source records
+must also be retained: their lack of a fetchable URL cannot let other art overwrite
+the selected library image. They still cannot authorize recoverable-origin removal.
+
+All 26 focused ACTIVE-schema Windows/native checks pass without skips. Actual
+rebuilt app upgrades a legacy-only 200x150 sidecar to the selected 800x600 JPEG,
+keeps owner1/hash and both proxies, retires exactly 13,736 bytes and displays green
+Activity completion. A separate later-family edition conflict preserves both
+images and exact owner2, with an honest failed/protected outcome. Repeating this
+case with a manual local-upload selection also preserves its durable source.
+Temporary app/volume and tabs19-20 were removed. Initial full CI passes 2,239 API
+and 187 frontend tests in 373.11 seconds. Final unchanged-code CI passes all
+2,239 API and 187 frontend tests, lint/types and both builds in 335.42 seconds,
+without first-TAP failing names or clone retries (oct09-cache-legacy-final-ci.log).
+Release/deployment acceptance remains incomplete.
+
+Read-only live samples of 20 folders per family find canonical owners for all
+sampled Album/Edition folders and 19 Video folders. Nineteen Album markers and all
+sampled Edition/Video markers contain source hashes. One missing Video owner does
+not authorize guessing a provider identity or removing its cache. This bounded
+sample does not prove migration readiness for the full 91.94 GB of originals.
+No live deletion or deployment has occurred. Unused-source retirement, larger
+fanout, missing-source policy and remaining catalogue/library gates remain open.
+
 ## October 9 selected-origin adoption candidate
 
 An exact durable library link can now upgrade its older sidecar from the current

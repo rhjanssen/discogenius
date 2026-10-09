@@ -56,6 +56,47 @@ function manifestPath(folder: string, coverType: string): string {
   return path.join(folder, `.${coverType}.library.json`);
 }
 
+export type LegacyArtworkLink = {file_path:string;content_hash:string;metadata_file_id:number;library_root:string};
+
+/** Legacy paths are hints only. Resolve an explicit row ID, or an exact indexed
+ * path, and apply the same canonical admission as normal publication. The
+ * maintenance caller must still verify bytes, containment and fresh witnesses. */
+export function readLegacyArtworkLinkCandidates(identity: ArtworkIdentity, folder: string): {
+  file:string; witness:string|null; links:LegacyArtworkLink[];
+} {
+  const file=manifestPath(folder,identity.coverType);
+  const witness=legacyArtworkManifestWitness(file);
+  if (!witness) return {file,witness,links:[]};
+  const value=JSON.parse(fs.readFileSync(file,"utf8"));
+  if (legacyArtworkManifestWitness(file)!==witness) throw new Error("Legacy artwork manifest changed during reading");
+  if (!Array.isArray(value.sidecars) || value.sidecars.length>50) throw new Error("Legacy artwork manifest requires bounded reconciliation");
+  const links:LegacyArtworkLink[]=[];
+  for (const item of value.sidecars) {
+    if (!item || typeof item.path!=="string" || typeof item.hash!=="string" || !/^[a-f0-9]{64}$/.test(item.hash))
+      throw new Error("Invalid legacy artwork link");
+    if (item.metadataFileId !== undefined && (!Number.isSafeInteger(item.metadataFileId) || item.metadataFileId<=0))
+      throw new Error("Invalid legacy artwork file identity");
+    const row=db.prepare(`SELECT id,file_path,library_root FROM MetadataFiles WHERE ${item.metadataFileId ? "id=?" : "file_path=?"}`)
+      .get(item.metadataFileId ?? item.path) as {id:number;file_path:string;library_root:string}|undefined;
+    if (!row || !artworkLinkOwnsTrackedPath(identity,row.file_path,row.id)) continue;
+    // Durable provenance wins over an old marker, including a proper rename.
+    if (db.prepare(`SELECT 1 FROM ArtworkLibraryLinks WHERE cover_entity=? AND entity_id=? AND cover_type=?
+      AND metadata_file_id=? LIMIT 1`).get(...artworkKey(identity),row.id)) continue;
+    const existing=links.find(link=>link.metadata_file_id===row.id);
+    if (existing && existing.content_hash!==item.hash) throw new Error("Conflicting legacy artwork hashes for one tracked file");
+    if (!existing) links.push({file_path:row.file_path,library_root:row.library_root,metadata_file_id:row.id,content_hash:item.hash});
+  }
+  return {file,witness,links};
+}
+
+export function legacyArtworkManifestWitness(file:string):string|null {
+  try {
+    const stat=fs.lstatSync(file,{bigint:true});
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size>512n*1024n) throw new Error("Legacy artwork marker is linked or exceeds 512 KiB");
+    return [stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs].join(":");
+  } catch(error) {if ((error as NodeJS.ErrnoException).code==="ENOENT") return null;throw error;}
+}
+
 function readSidecars(identity: ArtworkIdentity, folder: string): StoredSidecar[] {
   const stored = db.prepare(`SELECT file_path AS path, content_hash AS hash,
     metadata_file_id AS metadataFileId FROM ArtworkLibraryLinks

@@ -211,3 +211,99 @@ test("sidecar-only artist secondary artwork adopts the full master without creat
   assert.deepEqual(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master),owner);
   assert.deepEqual(fs.readdirSync(root).sort(),before);
 });
+
+
+test("legacy path-only links are admitted by exact tracked identity before full-resolution migration",async()=>{
+  const f=await fixture(true);
+  const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
+  const smallHash=createHash("sha256").update(small).digest("hex");
+  fs.writeFileSync(f.master,small);
+  const owner=database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master);
+  database.db.prepare("DELETE FROM ArtworkLibraryLinks WHERE entity_id=?").run(f.identity.entityId);
+  database.db.prepare("DELETE FROM ArtworkSources WHERE entity_id=?").run(f.identity.entityId);
+  fs.writeFileSync(path.join(f.folder,".cover.library.json"),JSON.stringify({sidecars:[{path:f.master,hash:smallHash}]}));
+  fs.writeFileSync(path.join(f.folder,".cover.source.json"),JSON.stringify({url:"https://example.test/cover.jpg",preference:"canonical",fulfilledBy:"canonical",contentHash:hash}));
+  await service.adoptLegacyArtworkState(f.identity);
+  assert.deepEqual(database.db.prepare("SELECT metadata_file_id,content_hash FROM ArtworkLibraryLinks WHERE entity_id=?").get(f.identity.entityId),
+    {metadata_file_id:(owner as {id:number}).id,content_hash:smallHash});
+  assert.equal(fs.existsSync(f.origin),true,"admission alone must not delete or replace artwork");
+  assert.deepEqual(fs.readFileSync(f.master),small);
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.equal(fs.existsSync(f.origin),false);
+  assert.deepEqual(fs.readFileSync(f.master),bytes);
+  assert.deepEqual(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master),owner);
+});
+
+test("legacy row-ID links follow legitimate renames without adopting the old path",async()=>{
+  const f=await fixture(true);
+  const owner=(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master) as {id:number}).id;
+  database.db.prepare("DELETE FROM ArtworkLibraryLinks WHERE entity_id=?").run(f.identity.entityId);
+  fs.writeFileSync(path.join(f.folder,".cover.library.json"),JSON.stringify({sidecars:[{path:f.master,hash,metadataFileId:owner}]}));
+  const renamed=`${f.master}.renamed.jpg`;fs.renameSync(f.master,renamed);
+  database.db.prepare("UPDATE MetadataFiles SET file_path=? WHERE id=?").run(renamed,owner);
+  await service.adoptLegacyArtworkState(f.identity);
+  assert.deepEqual(database.db.prepare("SELECT file_path,metadata_file_id FROM ArtworkLibraryLinks WHERE entity_id=?").get(f.identity.entityId),
+    {file_path:renamed,metadata_file_id:owner});
+  assert.equal(fs.existsSync(f.master),false);
+  assert.deepEqual(fs.readFileSync(renamed),bytes);
+});
+
+test("edited legacy publication refuses provenance adoption and preserves both images",async()=>{
+  const f=await fixture(true);
+  database.db.prepare("DELETE FROM ArtworkLibraryLinks WHERE entity_id=?").run(f.identity.entityId);
+  fs.writeFileSync(path.join(f.folder,".cover.library.json"),JSON.stringify({sidecars:[{path:f.master,hash}]}));
+  fs.writeFileSync(f.master,"external artwork edit");
+  await assert.rejects(service.adoptLegacyArtworkState(f.identity),/publication hash/);
+  assert.equal(database.db.prepare("SELECT 1 FROM ArtworkLibraryLinks WHERE entity_id=?").get(f.identity.entityId),undefined);
+  assert.equal(fs.readFileSync(f.master,"utf8"),"external artwork edit");
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+});
+
+test("stale markers cannot override current durable provenance",async()=>{
+  const f=await fixture(true);
+  fs.writeFileSync(path.join(f.folder,".cover.library.json"),JSON.stringify({sidecars:[{path:f.master,hash:"0".repeat(64)}]}));
+  fs.writeFileSync(path.join(f.folder,".cover.source.json"),JSON.stringify({url:"https://example.test/stale.jpg",preference:"provider",fulfilledBy:"provider",contentHash:"stale"}));
+  database.db.exec(`CREATE TRIGGER no_repeat_artwork_source_update BEFORE UPDATE ON ArtworkSources
+    BEGIN SELECT RAISE(ABORT,'unchanged provenance must not be rewritten'); END;`);
+  try {await service.adoptLegacyArtworkState(f.identity);}
+  finally {database.db.exec("DROP TRIGGER no_repeat_artwork_source_update");}
+  assert.equal(covers.getSelectedArtworkSource(f.identity.entityId,"Album","cover")!.contentHash,hash);
+  assert.equal((database.db.prepare("SELECT content_hash FROM ArtworkLibraryLinks WHERE entity_id=?").get(f.identity.entityId) as {content_hash:string}).content_hash,hash);
+  assert.deepEqual(fs.readFileSync(f.master),bytes);
+});
+
+
+test("legacy links cannot create owners from untracked paths or transfer another canonical file",async()=>{
+  const f=await fixture(true);
+  const owner=(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master) as {id:number}).id;
+  database.db.prepare("DELETE FROM ArtworkLibraryLinks WHERE entity_id=?").run(f.identity.entityId);
+  database.db.prepare("UPDATE MetadataFiles SET canonical_release_group_mbid='other-album' WHERE id=?").run(owner);
+  const untracked=path.join(root,"untracked-art.jpg");fs.writeFileSync(untracked,bytes);
+  fs.writeFileSync(path.join(f.folder,".cover.library.json"),JSON.stringify({sidecars:[
+    {path:f.master,hash,metadataFileId:owner},{path:untracked,hash}]}));
+  await service.adoptLegacyArtworkState(f.identity);
+  assert.equal(database.db.prepare("SELECT 1 FROM ArtworkLibraryLinks WHERE entity_id=?").get(f.identity.entityId),undefined);
+  assert.deepEqual(fs.readFileSync(f.master),bytes);
+  assert.deepEqual(fs.readFileSync(untracked),bytes);
+  assert.equal(fs.existsSync(f.origin),true);
+});
+
+
+test("a non-fetchable manual legacy selection still protects its library image from replacement",async()=>{
+  const f=await fixture(true);
+  const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
+  const smallHash=createHash("sha256").update(small).digest("hex");
+  fs.writeFileSync(f.master,small);
+  database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash=? WHERE entity_id=?").run(smallHash,f.identity.entityId);
+  const owner=(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master) as {id:number}).id;
+  const manual={...f.identity,coverType:"manual"};
+  fs.writeFileSync(path.join(f.folder,".manual.library.json"),JSON.stringify({sidecars:[{path:f.master,hash:smallHash,metadataFileId:owner}]}));
+  const source={url:"local-upload",preference:null,fulfilledBy:"manual",contentHash:smallHash};
+  fs.writeFileSync(path.join(f.folder,".manual.source.json"),JSON.stringify(source));
+  await service.adoptLegacyArtworkState(manual);
+  assert.deepEqual(state.readArtworkSource(manual,path.join(root,"no-marker")),source,"manual selection must survive removal of disposable markers");
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.deepEqual(fs.readFileSync(f.master),small);
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/another selected artwork asset/);
+});

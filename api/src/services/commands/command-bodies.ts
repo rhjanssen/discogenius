@@ -128,7 +128,7 @@ export interface RootInventoryCheckpoint {
 }
 
 export interface CommandBodyCommon {
-  artworkCacheWork?: { version: 1; root: string; rootIdentity: string; family: number; after: string;
+  artworkCacheWork?: { version: 1; stage?: "adopt" | "retire"; root: string; rootIdentity: string; family: number; after: string;
     current?: {name:string;after:string}; directories?:number };
   cancelRequested?: boolean;
   retagWork?: RetagWorkCheckpoint;

@@ -4,8 +4,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { acquireMediaFileLocks } from "../mediafiles/media-file-lock.js";
-import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
-import { artworkLinkOwnsTrackedPath } from "./media-cover-library-storage.js";
+import { artworkKey, storeArtworkSource, type ArtworkIdentity } from "./media-cover-state.js";
+import { artworkLinkOwnsTrackedPath, readLegacyArtworkLinkCandidates, legacyArtworkManifestWitness } from "./media-cover-library-storage.js";
 import { commitArtworkProxies, hasCurrentArtworkProxies } from "./media-cover-proxy-storage.js";
 import { decodeArtworkImage } from "./media-cover-image.js";
 import { materializeMediaCoverToFile } from "./media-cover-materialization.js";
@@ -114,6 +114,73 @@ function links(identity: ArtworkIdentity) {
     ORDER BY link.metadata_file_id LIMIT 51`).all(...artworkKey(identity)) as Array<{
       file_path:string;content_hash:string;metadata_file_id:number;library_root:string;
     }>;
+}
+
+/** Register all legacy source/link evidence in a separate first pass. No
+ * library image is replaced here: competing edition/role selections must be
+ * visible before the later pass considers replacing or retiring any original. */
+export async function adoptLegacyArtworkState(identity:ArtworkIdentity):Promise<void> {
+  if (!/^[a-z0-9_-]+$/i.test(identity.coverType)) throw new Error("Invalid legacy artwork role");
+  const folder=getMediaCoverFolder(identity.entityId,identity.coverEntity);
+  const root=path.dirname(getMediaCoverFolder("__root_probe__","Artist"));
+  const legacy=readLegacyArtworkLinkCandidates(identity,folder);
+  const sourceFile=path.join(folder,`.${identity.coverType}.source.json`);
+  const release=await acquireMediaFileLocks([legacy.file,sourceFile,...legacy.links.map(row=>row.file_path)]);
+  try {
+    const directoryEvidence=ancestors(sourceFile,root);
+    const sourceWitness=legacyArtworkManifestWitness(sourceFile);
+    const source=getSelectedArtworkSource(identity.entityId,identity.coverEntity,identity.coverType);
+    const owners=ownership(identity);
+    if (!owners.exists) return; // Never invent a catalogue identity from a marker.
+    const sourceExists=()=>Boolean(db.prepare("SELECT 1 FROM ArtworkSources WHERE cover_entity=? AND entity_id=? AND cover_type=?").get(...artworkKey(identity)));
+    if (!legacy.links.length && (!source || sourceExists())) return;
+    const admitted:Array<{row:typeof legacy.links[number];file:Witness;directory:string}>=[];
+    for (const row of legacy.links) {
+      const directory=ancestors(row.file_path,path.resolve(row.library_root));
+      const file=await witness(row.file_path);
+      if (!file || file.hash!==row.content_hash) throw new Error("Legacy artwork sidecar differs from its publication hash");
+      admitted.push({row,file,directory});
+    }
+    await withSqliteWriteGate(()=>{
+      if (ancestors(sourceFile,root)!==directoryEvidence || legacyArtworkManifestWitness(sourceFile)!==sourceWitness
+        || legacyArtworkManifestWitness(legacy.file)!==legacy.witness
+        || JSON.stringify(getSelectedArtworkSource(identity.entityId,identity.coverEntity,identity.coverType))!==JSON.stringify(source)
+        || JSON.stringify(ownership(identity))!==JSON.stringify(owners)) throw new Error("Legacy artwork evidence changed during admission");
+      db.transaction(()=>{
+        for (const {row,file,directory} of admitted) {
+          if (stat(row.file_path)!==file.stat || ancestors(row.file_path,path.resolve(row.library_root))!==directory
+            || !artworkLinkOwnsTrackedPath(identity,row.file_path,row.metadata_file_id)) throw new Error("Legacy artwork file ownership changed");
+          const current=db.prepare(`SELECT content_hash,metadata_file_id FROM ArtworkLibraryLinks
+            WHERE cover_entity=? AND entity_id=? AND cover_type=? AND file_path=?`).get(...artworkKey(identity),row.file_path) as {content_hash:string;metadata_file_id:number|null}|undefined;
+          if (current && (current.content_hash!==row.content_hash || (current.metadata_file_id!==null && current.metadata_file_id!==row.metadata_file_id)))
+            throw new Error("Legacy artwork cannot override current durable provenance");
+          db.prepare(`INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash,metadata_file_id)
+            VALUES (?,?,?,?,?,?) ON CONFLICT(cover_entity,entity_id,cover_type,file_path)
+            DO UPDATE SET metadata_file_id=excluded.metadata_file_id`).run(...artworkKey(identity),row.file_path,row.content_hash,row.metadata_file_id);
+        }
+        // Preserve manual/non-fetchable selections too. They cannot authorize
+        // origin retirement, but must prevent another asset replacing their art.
+        if (source && !sourceExists()) storeArtworkSource(identity,source);
+      })();
+    },"admit legacy artwork provenance");
+  } finally {release();}
+}
+
+/** Discover role names from explicit original/source/library files, including
+ * assets whose old cache origin has already been removed. */
+export async function nextLegacyArtworkRoles(directory:string,after:string,limit=10):Promise<string[]> {
+  const roles=new Set<string>();
+  const stream=await fsp.opendir(directory);
+  for await(const entry of stream) {
+    if (!entry.isFile() || entry.isSymbolicLink()) continue;
+    const match=entry.name.match(/^\.([a-z0-9_-]+)\.(?:source|library)\.json$/i)
+      ?? entry.name.match(/^([a-z0-9_-]+)\.(?:jpg|jpeg|png|webp|gif)$/i);
+    const role=match?.[1];
+    if (!role || /-\d+$/i.test(role) || role<=after) continue;
+    roles.add(role);
+    if (roles.size>limit) roles.delete([...roles].sort().at(-1)!);
+  }
+  return [...roles].sort();
 }
 
 /** One regular cache origin only. Heavy reads/decoding/hashing occur outside

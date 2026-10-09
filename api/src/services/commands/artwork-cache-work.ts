@@ -3,7 +3,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { db } from "../../database.js";
 import { getMediaCoverFolder } from "../metadata/media-cover-service.js";
-import { artworkDirectoryIdentity, nextArtworkOrigins, retireLegacyArtworkOrigin, recoverPreparedArtworkRetirements } from "../metadata/media-cover-cache-retirement.js";
+import { artworkDirectoryIdentity, nextArtworkOrigins, retireLegacyArtworkOrigin, recoverPreparedArtworkRetirements, adoptLegacyArtworkState, nextLegacyArtworkRoles } from "../metadata/media-cover-cache-retirement.js";
 import { ensureArtworkFolderInventory, nextInventoriedArtworkFolders, validateArtworkFolderInventory } from "./artwork-cache-inventory.js";
 import type { CommandModelOf } from "./command-model.js";
 import { CommandContinuation } from "./command-continuation.js";
@@ -21,6 +21,9 @@ export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ct
   const state = {...(job.payload.artworkCacheWork ?? {version:1 as const,root,rootIdentity:artworkDirectoryIdentity(root),family:0,after:""})};
   if (state.version!==1 || state.root!==root || state.rootIdentity!==artworkDirectoryIdentity(root)
     || !Number.isInteger(state.family) || state.family<0 || state.family>4 || typeof state.after!=="string") throw new Error("Artwork cache checkpoint changed; start a fresh cleanup");
+  // Older candidate checkpoints must perform the complete admission pass too.
+  if (!state.stage) {state.stage="adopt";state.family=0;state.after="";delete state.current;}
+  if (!["adopt","retire"].includes(state.stage)) throw new Error("Invalid artwork migration stage");
   const started = performance.now();
   if (await recoverPreparedArtworkRetirements(root,async()=>{
     if (performance.now()-started>=25_000) throw new CommandContinuation({artworkCacheWork:state});
@@ -32,7 +35,16 @@ export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ct
   const directories = ["Albums","AlbumEditions","Videos",""];
   let settled = 0;
   let folders: string[] = [];
-  while (state.family<4 && settled<25 && performance.now()-started<25_000) {
+  while ((state.family<4 || state.stage==="adopt") && settled<25 && performance.now()-started<25_000) {
+    if (state.family===4) {
+      for(let family=0;family<4;family++) await validateArtworkFolderInventory({commandId:job.id,family,
+        directory:path.join(root,directories[family]),excluded:family===3 ? directories.slice(0,3) : [],
+        checkpoint:async()=>{
+          if (CommandQueueManager.get(job.id)?.payload.cancelRequested) throw new Error("Artwork cleanup cancelled before migration");
+          await ctx.yieldToEventLoop?.();}});
+      state.stage="retire";state.family=0;state.after="";delete state.current;folders=[];
+      continue;
+    }
     if (CommandQueueManager.get(job.id)?.payload.cancelRequested) throw new Error("Artwork cleanup cancelled at a safe boundary");
     const directory = path.join(root,directories[state.family]);
     try {artworkDirectoryIdentity(directory);} catch (error) {
@@ -58,6 +70,18 @@ export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ct
     if (path.basename(current.name)!==current.name || path.basename(current.after)!==current.after) throw new Error("Invalid artwork folder checkpoint");
     const folder = path.join(directory,current.name);
     artworkDirectoryIdentity(folder);
+    if (state.stage==="adopt") {
+      const roles=await nextLegacyArtworkRoles(folder,current.after);
+      if (!roles.length) {state.after=current.name;delete state.current;settled++;continue;}
+      for (const role of roles) {
+        await adoptLegacyArtworkState({coverEntity:families[state.family],entityId:current.name,coverType:role});
+        current.after=role;settled++;
+        ctx.updateCommandDescription({description:`Registering artwork sources and library links - ${families[state.family]} ${current.name}`});
+        await ctx.yieldToEventLoop?.();
+        if (settled>=25 || performance.now()-started>=25_000) break;
+      }
+      continue;
+    }
     const prefix=`${folder}${path.sep}`;
     const pending=db.prepare(`SELECT source_path FROM ArtworkCacheRetirement WHERE command_id=? AND phase='prepared'
       AND source_path>=? AND source_path<? LIMIT 25`).all(job.id,prefix,`${prefix}\uffff`) as Array<{source_path:string}>;
@@ -81,7 +105,7 @@ export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ct
     }
   }
   const counts=summary(job.id);
-  if (state.family<4) throw new CommandContinuation({artworkCacheWork:state});
+  if (state.family<4 || state.stage==="adopt") throw new CommandContinuation({artworkCacheWork:state});
   for(let family=0;family<4;family++) {
     await validateArtworkFolderInventory({commandId:job.id,family,directory:path.join(root,directories[family]),
       excluded:family===3 ? directories.slice(0,3) : [],checkpoint:async()=>{

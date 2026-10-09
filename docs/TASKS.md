@@ -2,6 +2,32 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 legacy artwork admission candidate: cleanup now registers selected
+  sources and physically verified legacy links in a bounded first pass across all
+  families before replacing or retiring any originals. Exact row-ID renames and
+  path-only links resolve through current MetadataFiles ownership; unknown paths
+  cannot create owners. Old markers cannot overwrite current durable provenance,
+  and unchanged records avoid repeat writes. Manual/non-fetchable selections are
+  retained as provenance so competing art cannot replace them. All 26 focused
+  Windows/native checks pass without skips; rebuilt production compose passes.
+  Actual app: legacy-only 200x150 sidecar becomes selected 800x600 JPEG with exact
+  owner1/hash, both proxies and 13,736 retired bytes; Activity shows green success.
+  Another job admits a later-family edition selection before evaluating album
+  art, preserves its image/owner and honestly reports the protected original.
+  The manual local-upload variant likewise preserves the image and source record.
+  Temporary app/volume/tabs19-20 removed. Initial CI passes 2,239 API and 187
+  frontend tests in 373.11 seconds. Final unchanged-code CI passes all 2,239 API
+  and 187 frontend tests, lint/types and both builds in 335.42 seconds, without
+  first-TAP failing names or clone retries (oct09-cache-legacy-final-ci.log).
+  No deployment or live cache deletion. Live scan16039 reached512/518 artists;
+  a stale-worker HTTP503 remains intermittent, with main writer no holder/waiters.
+  Remaining: authoritative unused-source retirement, large-destination paging,
+  unmapped legacy source policy and remaining catalogue/library acceptance gates.
+  Bounded live audit: 20 Album and 20 Edition folders all have canonical owners;
+  19/20 sampled Video folders do. Source hashes exist in 19 Album and all sampled
+  Edition/Video markers. This sample does not prove whole-cache admission; do not
+  interpret the missing video owner as an inferred provider-to-recording mapping.
+
 - October 9 selected-origin adoption candidate: cache cleanup now upgrades an
   explicitly linked lower-resolution library sidecar before retiring the verified
   selected original. It reuses the artwork mutation journal and exact tracked
