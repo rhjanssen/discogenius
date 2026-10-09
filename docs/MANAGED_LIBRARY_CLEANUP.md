@@ -1,5 +1,30 @@
 # Managed library inventory and strict cleanup
 
+## October 9 live scan liveness and bounded selector profiling
+
+Production remains 2.21.0, downloads paused. At 08:14 UTC command16070,
+RefreshArtist/The Kinks, still reports scanning907/1532 with its last update at
+08:01:01. Health reports an expired lease/stale busy worker and returns503,
+while the main writer has no holder or waiters and other worker tasks advance.
+No restart or production mutation was performed. This does not establish the
+exact blocked statement or exclude a worker-local read problem.
+
+The full-copy candidate QA reproduces a separate repeated-read cost on ten real
+Kinks ExtraFiles. Initial filename/expected-path matching costs0.48-1.66ms.
+Tag reads cost1.3-2.2ms when warm, but complete metadata matching costs roughly
+0.6-0.8seconds/file. A native CPU profile attributes6.45seconds of the ten-file
+run to SQLite reads under folderAlbumIds. DISCOGENIUS_READ_PROFILE_MS confirms
+the same broad provider/canonical album-title selector runs twice per file,
+about0.35-0.40seconds/read. It sits inside albumTitleCandidates iteration and
+has no title predicate in SQL. Neither this cost nor the ten-file sample
+reproduces the live907-file stall. Next narrow the selector with authoritative
+artist identity and indexes, reuse its unchanged result across title candidates,
+and separately locate the live worker's blocked operation. Do not claim a
+query fix or whole-scan acceptance yet. Proof logs: oct09-kinks-full-matcher-proof,
+oct09-kinks-cpu-profile-run, oct09-kinks-sql-profile; profile oct09-kinks.cpuprofile.
+The original db.prepare monkey patch did not intercept the database Proxy getter;
+use the supported read profiler/native CPU profile for actual SQL evidence.
+
 ## October 9 native JPEG allocation fallback
 
 The protected 5333x3000 JPEG now decodes through bounded native RGBA when the

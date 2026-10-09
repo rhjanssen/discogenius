@@ -2,6 +2,15 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 live liveness follow-up: old production2.21.0 command16070/The Kinks
+  remains at907/1532, updated08:01:01; health503 reports stale busy worker while
+  main writer is free and other tasks advance. No restart performed. Separately,
+  ten real files on full-copy QA expose repeated folderAlbumIds title-selector
+  reads of350-400ms twice/file. Native CPU/read profiling proves that cost,
+  not the stalled live statement. Narrow indexed authoritative artist selection
+  and avoid repeating identical reads per title; locate actual blocked operation.
+  See MANAGED_LIBRARY_CLEANUP for evidence and limits.
+
 - October 9 large JPEG decoding repair: the real 5333x3000 source reproduces
   jpeg-js's 256 MiB budget failure. Async artwork handling now falls back only
   for that JPEG allocation failure to native codec/dimension validation and
