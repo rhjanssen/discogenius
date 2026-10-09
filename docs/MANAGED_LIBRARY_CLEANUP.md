@@ -1,5 +1,30 @@
 # Managed library inventory and strict cleanup
 
+## October 9 canonical YouTube video artwork admission
+
+Inventory sidecars can reference a canonical YouTube video through their exact
+TrackFiles row without a MusicBrainz recording MBID. Two ACTIVE-schema regressions
+reproduced the previous mistake: that video master was rejected, and its null MBID
+allowed the anchored artwork to masquerade as an artist or album asset.
+
+Shared artwork admission now reads track_file_id. For anchored video art it checks
+the exact video TrackFiles.recording_id against canonical Recordings.id/is_video
+and requires a canonical MBID or YouTube video ID. Present canonical artist,
+album, edition and recording fields must agree. Non-video scopes reject anchored
+media artwork and video thumbnail/cover roles. Existing unanchored MBID video
+links still resolve by exact canonical recording identity, never a provider ID.
+
+All31 focused Windows/native checks pass without skips, including owner transfer,
+wrong tags, audio anchors and missing anchors. The rebuilt actual app preserves
+full800x600 sidecar/hash and MetadataFiles owner1 for canonical video1 with null
+MBID, retires13736 cache bytes and retains250 proxy. Activity shows green success.
+This proves artwork admission/cleanup, not video decoding. QA tab22 and disposable
+container/volume removed. Final unchanged-code CI passes all 2,244 API and 187 frontend tests,
+  lint/types and both builds in 336.85 seconds, with no first-TAP failures or
+  clone retries (oct09-youtube-art-final-ci.log). No production deployment or deletion.
+A bounded read-only live sample of20 YouTube-only recordings has no imported video
+files; do not infer whole-library impact from that sample.
+
 ## October 9 prepared recovery publication ordering
 
 An old prepared retirement must validate its saved admission before changing

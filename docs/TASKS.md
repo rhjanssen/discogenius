@@ -2,6 +2,23 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 canonical video artwork ownership candidate: reproduced two ACTIVE
+  schema failures. Valid YouTube-only video art with a null recording MBID could
+  not resolve its full master, while the same anchored sidecar could pass as an
+  artist/album asset. Shared admission now uses exact MetadataFiles.track_file_id
+  and TrackFiles.recording_id for video ownership, checks canonical scope fields
+  and refuses audio/wrong anchors. Provider IDs never establish ownership. Legacy
+  unanchored MBID video links retain their canonical admission. All31 focused
+  Windows and production-image checks pass without skips. Actual isolated app
+  keeps full800x600 sidecar/owner1 linked to canonical video1 with null MBID,
+  retires13736 original bytes, keeps250 proxy and shows green completion. This
+  tests artwork ownership and cleanup, not video decoding or provider downloads.
+  QA tab22/container/volume removed. Final unchanged-code CI passes all 2,244 API and 187 frontend tests,
+  lint/types and both builds in 336.85 seconds, with no first-TAP failures or
+  clone retries (oct09-youtube-art-final-ci.log). Read-only live sample of
+  20 YouTube-only recordings has no imported video files; it establishes no live
+  affected-file count. Candidate remains undeployed and live cache untouched.
+
 - October 9 prepared artwork recovery follow-up: reproduced an ordering bug where
   an old prepared retirement could publish new sidecar/proxy bytes before checking
   its saved source snapshot. Recovery now refuses changed publication provenance

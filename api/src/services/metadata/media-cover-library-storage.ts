@@ -8,7 +8,7 @@ import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
 type StoredSidecar = { path: string; hash: string; metadataFileId?: number };
 
 type ArtworkFileRow = {
-  file_path: string; file_type: string;
+  file_path: string; file_type: string; track_file_id: number | null;
   canonical_artist_mbid: string | null; canonical_release_group_mbid: string | null;
   canonical_release_mbid: string | null; canonical_recording_mbid: string | null;
 };
@@ -18,6 +18,8 @@ type ArtworkFileRow = {
 function ownsArtwork(row: ArtworkFileRow, identity: ArtworkIdentity): boolean {
   if (!["cover", "artwork", "video_thumbnail", "video_cover"].includes(row.file_type)) return false;
   const id = String(identity.entityId);
+  if (identity.coverEntity !== "Video" && (row.track_file_id !== null
+    || ["video_thumbnail","video_cover"].includes(row.file_type))) return false;
   switch (identity.coverEntity) {
     case "Artist": return row.canonical_artist_mbid === id
       && !row.canonical_release_group_mbid && !row.canonical_release_mbid && !row.canonical_recording_mbid;
@@ -25,15 +27,30 @@ function ownsArtwork(row: ArtworkFileRow, identity: ArtworkIdentity): boolean {
     case "Edition": return row.canonical_release_mbid === id && !row.canonical_recording_mbid;
     case "Video": {
       // Video cache IDs are canonical recording row IDs, not provider IDs.
-      const recording = db.prepare("SELECT mbid FROM Recordings WHERE id = ? AND is_video = 1")
-        .get(id) as { mbid: string | null } | undefined;
-      return Boolean(recording?.mbid && recording.mbid === row.canonical_recording_mbid);
+      const recording = db.prepare("SELECT id,mbid,youtube_video_id FROM Recordings WHERE id = ? AND is_video = 1")
+        .get(id) as {id:number;mbid:string|null;youtube_video_id:string|null} | undefined;
+      if (!recording || (row.canonical_recording_mbid !== null && row.canonical_recording_mbid !== recording.mbid)) return false;
+      if (row.track_file_id !== null) {
+        // A YouTube-only canonical recording has no MBID. Inventory sidecars
+        // carry the exact media row instead; provider IDs never establish scope.
+        const media=db.prepare(`SELECT f.recording_id,artist.mbid AS artist,album.mbid AS album,edition.mbid AS edition
+          FROM TrackFiles f JOIN ArtistMetadata artist ON artist.id=f.artist_metadata_id
+          LEFT JOIN AlbumEditions edition ON edition.id=f.album_edition_id
+          LEFT JOIN Albums album ON album.id=f.release_group_id
+          WHERE f.id=? AND f.file_type='video'`).get(row.track_file_id) as
+          {recording_id:number|null;artist:string;album:string|null;edition:string|null}|undefined;
+        return Boolean(media && media.recording_id===recording.id && (recording.mbid || recording.youtube_video_id)
+          && (!row.canonical_artist_mbid || row.canonical_artist_mbid===media.artist)
+          && (!row.canonical_release_group_mbid || row.canonical_release_group_mbid===media.album)
+          && (!row.canonical_release_mbid || row.canonical_release_mbid===media.edition));
+      }
+      return Boolean(recording.mbid && recording.mbid === row.canonical_recording_mbid);
     }
   }
 }
 
 function trackedArtwork(identity: ArtworkIdentity, id: number): ArtworkFileRow | null {
-  const row = db.prepare(`SELECT file_path,file_type,canonical_artist_mbid,
+  const row = db.prepare(`SELECT file_path,file_type,track_file_id,canonical_artist_mbid,
     canonical_release_group_mbid,canonical_release_mbid,canonical_recording_mbid
     FROM MetadataFiles WHERE id = ?`).get(id) as ArtworkFileRow | undefined;
   return row && ownsArtwork(row, identity) ? row : null;
@@ -46,7 +63,7 @@ export function artworkLinkOwnsTrackedPath(identity: ArtworkIdentity, filePath: 
     const row = trackedArtwork(identity, metadataFileId);
     return Boolean(row && row.file_path === filePath);
   }
-  const row = db.prepare(`SELECT file_path,file_type,canonical_artist_mbid,
+  const row = db.prepare(`SELECT file_path,file_type,track_file_id,canonical_artist_mbid,
     canonical_release_group_mbid,canonical_release_mbid,canonical_recording_mbid
     FROM MetadataFiles WHERE file_path=?`).get(filePath) as ArtworkFileRow | undefined;
   return !row || ownsArtwork(row, identity);
