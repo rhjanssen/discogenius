@@ -1,5 +1,38 @@
 # Managed library inventory and strict cleanup
 
+## October 9 actual held-edition reconciliation replay
+
+A bounded export from readonly SQLite inside the live container captures the
+three failed editions, their relevant provider occurrences/decisions, nine plans,
+three waiting requests and complete compound foreign-key parents. The corrected
+export is540,057 bytes and caps rows at10,000. A first scratch exporter followed
+individual composite-key columns and expanded far beyond that scope, then failed
+serialization; no live database/library writes occurred. Parent closure must use
+whole key tuples. Temporary NAS JSON copies were removed after transfer.
+
+The production image loads this snapshot into its ACTIVE schema, reads the current
+local MusicBrainz mirror, and runs the actual ServarrMetadataService edition
+reconciliation method followed by AcquisitionPlanningService.compute. The replay
+uses one actual incoming edition per release-group write and an explicit provider
+priority for the disposable fixture, so it is not a whole-artist/configuration
+acceptance claim. All incoming track IDs, recordings and positions agree after
+writing; foreign_key_check is clean, and waiting request IDs/ref_keys/claims remain.
+
+Dirty Honey has8/8 planned assignments and preserves waiting103510 on TIDAL;
+a-ha has33/33 and preserves110009 on TIDAL. Cliff Richard preserves113752 on
+Deezer with13/14 available assignments. Waiting/download admission is ready for
+those available offers. This does not turn Cliff's partial offer into a complete
+edition or prove a successful provider download. Its remaining occurrence needs
+fresh source matching/acquisition. No files in this scope are imported, so owned
+file/sidecar collision acceptance remains separate.
+
+The three known obsolete-track failures no longer reproduce under this candidate
+in the exact captured scope. Earlier notes about their pending implementation are
+historical. Broader legacy request ambiguity, canonical owned collisions and live
+refresh validation still remain. Logs and script are outside the repo:
+oct09-live-scope-final.log and oct09-live-scope-reconcile.mjs. The running live
+image remains2.21.0; downloads stay paused, no live DB/library mutation performed.
+
 ## October 9 canonical YouTube video artwork admission
 
 Inventory sidecars can reference a canonical YouTube video through their exact

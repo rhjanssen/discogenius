@@ -2,6 +2,28 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 real catalogue replay: exported a bounded FK-complete scope from the
+  running live container through readonly better-sqlite3, then imported that
+  540,057-byte snapshot into a disposable production-image ACTIVE-schema database.
+  It contains the three failing editions, nine plans and three waiting requests.
+  Composite foreign keys must be followed as tuples; the first scratch exporter
+  incorrectly followed individual columns and failed serialization. It changed
+  no live database/library state. The corrected exporter caps its scope at10,000
+  rows and follows compound parent keys together.
+  Current local MusicBrainz editions pass the actual production reconciliation
+  method and acquisition planner: Dirty Honey8/8, a-ha33/33, Cliff Richard13/14
+  available assignments. Exact incoming track/recording IDs and positions agree,
+  foreign_key_check is clean, all three waiting request IDs/ref_keys/claims remain.
+  Waiting admission selects the same requested providers: TIDAL/TIDAL/Deezer.
+  Cliff's partial13-track offer must not be described as a complete14-track
+  download; the unmatched occurrence still needs provider matching/acquisition.
+  Logs: oct09-live-scope-final.log; replay script/snapshot remain outside the repo.
+  This is a scoped native production-code replay, not a live refresh, full artist
+  refresh, provider download or proof about owned-file collisions. The three known
+  obsolete-track failures no longer reproduce in this scope with the candidate.
+  Do not keep treating all three as unimplemented reconciliation. Broader legacy
+  request ambiguity and owned collision handling remain. No deployment/deletion.
+
 - October 9 canonical video artwork ownership candidate: reproduced two ACTIVE
   schema failures. Valid YouTube-only video art with a null recording MBID could
   not resolve its full master, while the same anchored sidecar could pass as an
