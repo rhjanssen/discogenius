@@ -1,5 +1,34 @@
 # Managed library inventory and strict cleanup
 
+## October 9 cache originals are a one-time delete
+
+Robert stopped the plan to keep a permanent retirement subsystem for
+full-resolution MediaCover files. The cache holds 250 and 500 proxies.
+`commitArtworkProxies` already publishes only those. Import and retag write
+the full-resolution sidecar next to the media through
+`materializeMediaCoverToFile`, fetching the selected source when the cache
+original is gone. Missing proxies are rebuilt from that library file or from
+the provider by `ensureCachedMediaCover`.
+
+Commit 833b207d let an album original retire when a selected edition or manual
+image covered the imported files. That decision machinery is reverted. The
+existing same-hash retirement command stays in the tree. The ~92 GB already
+on disk waits for the one-time script.
+
+After the library retag has created sidecars, run
+`node api/scripts/drop-media-cover-originals.mjs --cache <media-cover> --db <db>`.
+Add `--apply` to unlink. An original is eligible only when `ArtworkLibraryLinks`
+names a regular file that is still on disk. Proxies and originals without that
+sidecar stay. The script's `--self-test` covers that split. Do not point it at
+the host copy of the live database while the container is running, and do not
+apply it before the retag round.
+
+At 11:46 UTC, live 2.21.0 reported degraded. CheckHealth
+16281 had completed. The previously stale worker was idle. RefreshArtist
+16190 and 16198 were progressing, and 82 further artist refreshes were queued.
+Local MusicBrainz refresh concurrency is 2, so the third worker staying idle
+is the cap, not a deadlock. Downloads remained paused. No container restart.
+
 ## October 9 scan artist identity and indexed album selection
 
 The scan passes an artist MBID into metadata/path matchers whose TrackFiles and

@@ -2,6 +2,18 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 artwork course change: MediaCover stores 250/500 proxies. New cache
+  publication already does that. Full-resolution art is written beside the
+  media by import and retag, from the selected source when the cache has no
+  original. The edition-coverage retirement added in 833b207d is reverted.
+  The ~92 GB of existing originals is a one-time delete after those sidecars
+  exist: `api/scripts/drop-media-cover-originals.mjs`. It removes an original
+  only when ArtworkLibraryLinks already points at a regular library file, and
+  it leaves proxies alone. Do not run it on the live cache yet. Live is still
+  2.21.0, downloads paused. CheckHealth 16281 completed; the stale worker
+  cleared without a restart. Two RefreshArtist jobs run under the local
+  MusicBrainz cap of 2, with the rest queued. No host SQLite connection.
+
 - October9 scan candidate resolves artist MBIDs to integer ownership IDs in audio,
   video and path/sidecar matching. Reproduced duplicate/sidecar failures now pass;
   all56 Windows and55 native focused cases plus one OS-specific skip pass.
