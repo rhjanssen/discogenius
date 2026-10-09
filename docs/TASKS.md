@@ -24,6 +24,13 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
   NAS QA container discogenius-maintenance-qa and its disposable full database
   remain for this diagnosis; read-only library mount health warnings are expected.
   Production remains healthy 2.21.0, paused, with no active command backlog.
+  Follow-up profiling of the actual reader on the full NAS copy measures the
+  canonical aggregate at 3,505.9 ms cold / 1,570.49 ms repeated, file totals at
+  60.44 / 59.28 ms. Twelve concurrent HTTP probes show cached stats 34.3-94.04 ms
+  and health 30.04-96.87 ms. This confirms useful worker/cache isolation on this
+  dataset; do not describe the cold response as a main-thread SQL stall. Logs:
+  oct09-stats-profile.log and oct09-stats-http.log. Exact aggregate subquery
+  costs remain unprofiled; optimize only if a measured workload requires it.
 
 - October 9 real catalogue replay: exported a bounded FK-complete scope from the
   running live container through readonly better-sqlite3, then imported that
