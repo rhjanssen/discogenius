@@ -1,5 +1,6 @@
 import path from "path";
 import { db } from "../../database.js";
+import { resolveArtistMetadataId } from "../music/managed-artists.js";
 import {
     normalizeComparableText,
     sameRecordingTitle,
@@ -364,7 +365,8 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
     // edition title, AND release-group title. Edition names ("Bad Blood X")
     // often disagree with the group ("Bad Blood"); preferring the group used
     // to skip the provider album the file is actually tagged with.
-    for (const albumTitleCandidate of albumTitleCandidates(filePath, tags)) {
+    const titleCandidates = albumTitleCandidates(filePath, tags);
+    if (titleCandidates.length > 0) {
         const albumRows = db.prepare(`
             SELECT
               CAST(release_item.provider_id AS TEXT) AS provider_album_id,
@@ -378,22 +380,20 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
             LEFT JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
             LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
             WHERE release_item.entity_type = 'release'
-              AND (
-                release_item.id IN (
+              AND release_item.id IN (
                   SELECT credit.item_id
                   FROM ProviderItemCredits credit
                   JOIN ProviderArtistMatches artist_match
                     ON artist_match.provider_artist_item_id = credit.artist_item_id
                    AND artist_match.match_state = 'accepted'
-                  JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
-                  JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist_meta.mbid
-                  WHERE managed_artist.id = @artistId
-                )
-                OR canonical_release.artist_mbid IN (
-                  SELECT managed_artist.mbid
-                  FROM ArtistMetadata managed_artist
-                  WHERE managed_artist.id = @artistId
-                )
+                  WHERE artist_match.artist_id = @artistId
+                  UNION
+                  SELECT release_match.provider_edition_item_id
+                  FROM ProviderEditionMatches release_match
+                  JOIN AlbumEditions edition ON edition.id = release_match.edition_id
+                  JOIN ArtistMetadata artist ON artist.mbid = edition.artist_mbid
+                  WHERE release_match.match_state = 'accepted'
+                    AND artist.id = @artistId
               )
         `).all({ artistId }) as Array<{
             provider_album_id: string;
@@ -405,9 +405,10 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
         for (const row of albumRows) {
             if (!row.provider_album_id) continue;
             if (
-                albumTitleMatches(albumTitleCandidate, row.provider_title)
-                || albumTitleMatches(albumTitleCandidate, row.edition_title)
-                || albumTitleMatches(albumTitleCandidate, row.release_group_title)
+                titleCandidates.some((candidate) =>
+                    albumTitleMatches(candidate, row.provider_title)
+                    || albumTitleMatches(candidate, row.edition_title)
+                    || albumTitleMatches(candidate, row.release_group_title))
             ) {
                 albumIds.add(String(row.provider_album_id));
             }
@@ -965,6 +966,11 @@ export function matchAudioFileByMetadata(
     libraryRoot: LibraryRootKey,
     tags: ParsedAudioTags,
 ): MetadataMatchResult | null {
+    // Folder scans carry MBIDs; SQL ownership predicates carry ArtistMetadata.id.
+    // Resolve once before any sibling, provider or canonical ownership lookup.
+    const artistMetadataId = resolveArtistMetadataId(artistId);
+    if (artistMetadataId == null) return null;
+    artistId = String(artistMetadataId);
     const preferredSlot = librarySlotForRoot(libraryRoot);
 
     // Prefer same-folder title+duration siblings first. Wild World Complete vs
@@ -1166,6 +1172,11 @@ export function matchVideoFileByMetadata(
     libraryRoot: LibraryRootKey,
     tags: ParsedAudioTags,
 ): MetadataMatchResult | null {
+    // Folder scans carry MBIDs; SQL ownership predicates carry ArtistMetadata.id.
+    // Resolve once before any sibling, provider or canonical ownership lookup.
+    const artistMetadataId = resolveArtistMetadataId(artistId);
+    if (artistMetadataId == null) return null;
+    artistId = String(artistMetadataId);
     const preferredSlot = librarySlotForRoot(libraryRoot);
     const stem = path.parse(filePath).name;
     const comparable = videoStemComparableTitle(stem)

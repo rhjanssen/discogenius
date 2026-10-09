@@ -1027,7 +1027,7 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
   });
 
   const matchFileToMedia = (libraryScanModule.DiskScanService as any).matchFileToMedia.bind(libraryScanModule.DiskScanService);
-  const scanArtistId = String(requireCatalogArtistId("artist-mbid-1"));
+  const scanArtistId = "artist-mbid-1";
   assert.deepEqual(matchFileToMedia(coverPath, scanArtistId, "music"), {
     albumId: "provider-album-1",
     mediaId: null,

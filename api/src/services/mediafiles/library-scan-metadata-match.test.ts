@@ -415,6 +415,14 @@ test("metadata rematch marks rename leftovers as duplicates of an existing Track
   assert.equal(match!.mediaId, "2001");
   assert.equal(match!.duplicateOfExisting, true);
   assert.equal(match!.existingFilePath, `${folder}/101 - Good Grief.flac`);
+  const fromScanArtistMbid = matchModule.matchAudioFileByMetadata(
+    `${folder}/201 - Good Grief.flac`,
+    "artist-mbid",
+    "music",
+    { title: "Good Grief", durationSeconds: 206 },
+  );
+  assert.deepEqual(fromScanArtistMbid, match,
+    "folder scans pass the artist MBID; it must retain the same exact duplicate owner");
 });
 
 test("metadata rematch does not equate studio tracks with remix variants", () => {
@@ -535,6 +543,15 @@ test("tagged files match a catalog mixtape without a provider offer", () => {
   assert.ok(match, "ASCII-apostrophe tags should still hit the curly-apostrophe catalog album");
   assert.equal(match!.canonicalTrackMbid, "trk-dreams");
   assert.equal(match!.canonicalReleaseGroupMbid, "rg-oph2");
+  assert.deepEqual(matchModule.matchAudioFileByMetadata(
+    path.join(tempDir, "06 - Dreams.mp3"), "artist-mbid", "music",
+    { title: "Dreams [ft. Gabrielle Aplin]", album: "Other People's Heartache, Pt. 2",
+      artist: "Bastille", durationSeconds: 259 },
+  ), match, "catalog title matching accepts the scan's MBID artist key");
+  assert.equal(matchModule.matchAudioFileByMetadata(
+    path.join(tempDir, "06 - Dreams.mp3"), "missing-artist", "music",
+    { musicbrainzTrackId: "trk-dreams", title: "Dreams" },
+  ), null, "an unresolved artist cannot adopt another artist's catalog file");
   assert.equal(match!.provider, "");
   assert.equal(match!.duplicateOfExisting, false);
 });
@@ -970,6 +987,10 @@ test("inline video without a provider filename token matches the catalog recordi
   assert.ok(match, "Living-video.mp4 must match without a {TIDAL-id} token");
   assert.equal(match!.fileType, "video");
   assert.equal(match!.canonicalRecordingMbid, "rec-living-video");
+  assert.deepEqual(matchModule.matchVideoFileByMetadata(
+    "/library/stereo-music/Bakermat/Living (2016)/01 - Living-video.mp4",
+    "artist-mbid", "music", { title: "Living", album: "Living", durationSeconds: 188 },
+  ), match, "video scanning resolves the same MBID artist boundary");
   assert.equal(match!.mediaId, "");
   assert.equal(match!.duplicateOfExisting, false);
 });

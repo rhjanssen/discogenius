@@ -1,5 +1,42 @@
 # Managed library inventory and strict cleanup
 
+## October 9 scan artist identity and indexed album selection
+
+The scan passes an artist MBID into metadata/path matchers whose TrackFiles and
+catalog predicates use ArtistMetadata.id. ACTIVE-schema regression first fails
+for an MBID-keyed rename leftover, returning null instead of the existing exact
+owner. Audio/video metadata entry points and the path/sidecar matcher now resolve
+through the shared managed-artists resolver before SQL. Unknown artists return
+null. The sidecar regression also first fails for the actual MBID caller and
+passes after repair; original numeric-ID cases still pass.
+
+folderAlbumIds now derives indexed provider-release IDs from accepted provider
+artist credits UNION accepted canonical edition matches, then looks up those
+release rows by primary key. The artist's unchanged rows are read once for all
+folder/tag title candidates. Full-copy Kinks comparison returns the exact same
+311 rows before/after. Old warm reads308-361ms become1.8-1.9ms, cold802ms becomes
+5.3ms; query plan confirms indexed scoped IDs instead of the global release list.
+The ten real ExtraFiles now correctly return duplicate=true rather than false.
+Warm metadata matching costs14-18ms in this sample, separate from tag I/O.
+
+All56 focused Windows tests pass. Production container passes55 plus one
+Windows-only path-case skip. Actual isolated app Dashboard Scan Library Files
+completes command3, registers one duplicate ExtraFiles linked to exact TrackFiles
+owner1, retains one imported row and no Unmapped rows, unchanged SHA256 for both
+files, clean FK check. Activity shows green completion. Command1 failed when
+recreating the test container lost its anonymous library volume; restoring the
+exact fixture bytes fixes that setup problem, and the missing-root guard correctly
+preserved inventory. The scheduler-disabled setup initially left the command
+queued; scheduled rows were disabled before enabling execution in the isolated
+app. No production files were modified. Test app/container/volume/anonymous
+volumes/tab26 removed; full NAS QA retained. Screenshot oct09-scan-identity-app.png.
+
+Live command16070 completed100% without intervention at08:17:44UTC after the
+observed907-file pause; no longer describe it as currently stuck. Current live
+health still reports a stale worker for a different active task. The exact cause
+of those transient pauses is not proven by the selector repair. Keep downloads
+paused, continue worker liveness and remaining artwork/inventory/release gates.
+
 ## October 9 live scan liveness and bounded selector profiling
 
 Production remains 2.21.0, downloads paused. At 08:14 UTC command16070,
@@ -2130,4 +2167,12 @@ concurrent API latency and warm-cache behavior still need measurement. Startup
 FTS integrity validation holds the writer for 9.7 seconds before readiness; that
 is not evidence of a steady-state stall. Logical cache/database bytes and ZFS
 physical dataset use must be reported separately when measuring reclaimed space.
+
+
+October9 scan candidate final CI: lint/types/both builds and187 frontend tests
+pass in376.53seconds. First TAP2250 API cases has only album-command-service and
+edition-monitoring-contract whole-file clone failures; isolated retries pass7/7
+and21/21, no behavioral failure names. Production source froze through CI. Two
+test-file line endings normalized afterward; all18 matcher tests pass again.
+Log oct09-scan-identity-final-ci.log; native oct09-scan-identity-native.log.
 

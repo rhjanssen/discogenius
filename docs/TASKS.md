@@ -2,6 +2,17 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October9 scan candidate resolves artist MBIDs to integer ownership IDs in audio,
+  video and path/sidecar matching. Reproduced duplicate/sidecar failures now pass;
+  all56 Windows and55 native focused cases plus one OS-specific skip pass.
+  Indexed folder-album selector preserves all311 Kinks rows, warm308-361ms to
+  1.8-1.9ms, read once per title-candidate set. Actual app scan3 preserves both
+  hashes, one TrackFiles owner1, exact duplicate link and no Unmapped rows.
+  Final CI passes in376.53s:2250API, clone-file retries7/7 and21/21,187frontend,
+  lint/types/both builds. No behavioral failures, deployment or live cleanup. Kinks16070 recovered
+  and completed08:17:44 without intervention. Broader stale-worker cause remains.
+  See MANAGED_LIBRARY_CLEANUP for limits and fixture failures.
+
 - October 9 live liveness follow-up: old production2.21.0 command16070/The Kinks
   remains at907/1532, updated08:01:01; health503 reports stale busy worker while
   main writer is free and other tasks advance. No restart performed. Separately,

@@ -1961,6 +1961,9 @@ export class DiskScanService {
         artistId: string,
         libraryRoot: LibraryRootKey,
     ): { albumId: string | null; mediaId: string | null; fileType: string; quality: string | null } | null {
+        const artistMetadataId = resolveArtistMetadataId(artistId);
+        if (artistMetadataId == null) return null;
+        artistId = String(artistMetadataId);
         // The scanned root is the only trustworthy statement about which library
         // this file belongs to; provider audio variants describe source
         // capability, not what is on disk, so they never decide it.
