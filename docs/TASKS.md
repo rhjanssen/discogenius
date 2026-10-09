@@ -2,6 +2,34 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 large JPEG decoding repair: the real 5333x3000 source reproduces
+  jpeg-js's 256 MiB budget failure. Async artwork handling now falls back only
+  for that JPEG allocation failure to native codec/dimension validation and
+  bounded RGBA output. Existing 32 MiB input, 48 MP and native allocation limits
+  remain; corrupt inputs do not gain a generic fallback. The actual image uses
+  63,996,000 RGBA bytes, with 250/500 proxies of 37,281/108,894 bytes. Its source
+  SHA256 is 06bb516ab3e3fa34a4f53abcab2fb15437a92588835fb5c83accc3f547eab47b.
+  Two Windows regressions and all 75 focused production-image cases pass without
+  skips. Actual isolated Settings cleanup command2 retires 2,253,900 cache bytes,
+  preserving exact MetadataFiles owner1 and the full-resolution sidecar hash.
+  Command1 failed because the seed created root-owned directories; fixture
+  ownership was corrected to app UID1000. It is not a decoder regression.
+  Actual native FLAC embedding gives 1200x675 JPEG, 230,799 bytes, unchanged PCM
+  and unchanged full-resolution sidecar. No library-wide retag is claimed.
+  Updated NAS full-copy QA image discogenius:large-jpeg-validation repeats all
+  20 copied unimported origins: 20 retired, 0 protected, 26,021,596 logical bytes
+  (QA-only command16044). Production cache was untouched. Retain the full NAS QA
+  copy for further work; it is not production deployment. Final frozen-source
+  CI passes lint/types and both builds in 355.52 seconds: 2,250 API cases after
+  the known edition-monitoring-contract clone-file retry passes all 21 cases,
+  plus 187 frontend tests (oct09-large-jpeg-final-ci.log). No active CI remains.
+  Local app/container/volume and tab25 were removed. Remaining competing
+  edition/manual and >50-linked-origin retirement gates still apply.
+  Latest live check finds The Kinks RefreshArtist16070 stalled at scanning907/1532
+  with an expired lease/stale worker heartbeat, while the main writer is free
+  and another refresh completes. No exact blocking query is established yet;
+  inspect scan work rather than restarting or attributing it to writer ownership.
+
 - October 9 bounded legacy artwork admission: manifests larger than 50 tracked
   destinations previously aborted the entire first admission pass. The bounded
   512 KiB marker is now fully validated, with at most 50 destinations physically

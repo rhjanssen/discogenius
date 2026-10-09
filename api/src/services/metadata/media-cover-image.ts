@@ -62,11 +62,21 @@ export function decodeImage(buffer: Buffer, extension: string): { width: number;
  * conversion is asynchronous and uses a private temporary directory, never
  * MediaCover or a library path. The selected source's dimensions are retained. */
 export async function decodeArtworkImage(buffer: Buffer, extension: string): Promise<{ width: number; height: number; data: Uint8Array } | null> {
-  if (extension !== ".webp" && extension !== ".gif") return decodeImage(buffer, extension);
   if (buffer.length > 32 * 1024 * 1024) throw new Error("Artwork exceeds the 32 MiB conversion limit");
+  const isJpeg = extension === ".jpg" || extension === ".jpeg";
+  if (extension !== ".webp" && extension !== ".gif") {
+    try { return decodeImage(buffer, extension); }
+    catch (error) {
+      // JPEG coefficients can exceed the JS decoder's budget even for a valid
+      // 16 MP image. Keep that budget; native decoding needs only bounded RGBA.
+      if (!isJpeg || !(error instanceof Error) || !/^maxMemoryUsageInMB limit exceeded/.test(error.message)) throw error;
+    }
+  }
   const isGif = ["GIF87a", "GIF89a"].includes(buffer.subarray(0, 6).toString("ascii"));
   const isWebp = buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
-  if (extension === ".gif" ? !isGif : !isWebp) throw new Error("Artwork bytes do not match their selected image container");
+  const signatureMatches = isJpeg ? buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
+    : extension === ".gif" ? isGif : isWebp;
+  if (!signatureMatches) throw new Error("Artwork bytes do not match their selected image container");
   const { resolveFfmpegBinary, resolveFfprobeBinary } = await import("../mediafiles/audioUtils.js");
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "discogenius-artwork-convert-"));
   const input = path.join(directory, `source${extension}`);
@@ -81,9 +91,16 @@ export async function decodeArtworkImage(buffer: Buffer, extension: string): Pro
     const probe = JSON.parse((await run(resolveFfprobeBinary(), ["-v", "error", "-max_alloc", "268435456", "-select_streams", "v:0",
       "-show_entries", "stream=codec_name,width,height", "-of", "json", input], 1024 * 1024, 10_000)).toString("utf8"));
     const stream = probe.streams?.[0];
-    if (!stream || stream.codec_name !== extension.slice(1) || !Number.isSafeInteger(stream.width) || !Number.isSafeInteger(stream.height)
+    if (!stream || stream.codec_name !== (isJpeg ? "mjpeg" : extension.slice(1)) || !Number.isSafeInteger(stream.width) || !Number.isSafeInteger(stream.height)
       || stream.width < 1 || stream.height < 1 || stream.width * stream.height > 48_000_000) {
       throw new Error("Artwork has invalid dimensions or exceeds the 48 megapixel decoding limit");
+    }
+    if (isJpeg) {
+      const expectedBytes = stream.width * stream.height * 4;
+      const rgba = await run(resolveFfmpegBinary(), ["-v", "error", "-max_alloc", "268435456", "-threads", "1", "-i", input,
+        "-map", "0:v:0", "-frames:v", "1", "-threads", "1", "-pix_fmt", "rgba", "-f", "rawvideo", "pipe:1"], expectedBytes, 30_000);
+      if (rgba.length !== expectedBytes) throw new Error("Artwork dimensions changed during conversion");
+      return {width:stream.width,height:stream.height,data:rgba};
     }
     const png = await run(resolveFfmpegBinary(), ["-v", "error", "-max_alloc", "268435456", "-threads", "1", "-i", input,
       "-map", "0:v:0", "-frames:v", "1", "-threads", "1", "-c:v", "png", "-f", "image2pipe", "pipe:1"], 32 * 1024 * 1024, 30_000);

@@ -1,5 +1,24 @@
 # Managed library inventory and strict cleanup
 
+## October 9 native JPEG allocation fallback
+
+The protected 5333x3000 JPEG now decodes through bounded native RGBA when the
+pure-JS JPEG decoder exceeds its unchanged 256 MiB budget. Codec/dimension checks,
+32 MiB input limit and 48 MP limit remain. Only the allocation failure enables
+fallback; malformed JPEG errors remain errors. The actual source yields
+63,996,000 RGBA bytes and correct 250/500 previews without changing original bytes.
+Actual isolated Settings cleanup removes its cache original and keeps exact
+MetadataFiles owner1/full sidecar hash. Its first run hit a root-owned fixture
+directory; correcting ownership to UID1000 allows command2 to complete honestly.
+Native embedding of this exact image into a generated FLAC produces a 1200x675,
+230,799-byte JPEG with unchanged PCM and unchanged archival sidecar.
+
+The NAS full-copy QA now uses discogenius:large-jpeg-validation. Repeating the
+same 20 actual unimported cache copies retires all20, 0 protected, 26,021,596
+logical bytes in QA-only command16044. Live cache/library remain read-only for
+this test. This closes that sampled decoder failure, not the remaining competing
+edition/manual source, high-fanout retirement or complete live inventory gates.
+
 ## October 9 legacy admission paging and actual cache sample
 
 Legacy manifests remain bounded to 512 KiB and fully validated before admitting
