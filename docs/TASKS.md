@@ -2,6 +2,41 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 bounded legacy artwork admission: manifests larger than 50 tracked
+  destinations previously aborted the entire first admission pass. The bounded
+  512 KiB marker is now fully validated, with at most 50 destinations physically
+  checked and committed per page. Exact committed links provide restart progress;
+  the command keeps the same role until its remaining pages are admitted. Two
+  regressions fail against the preceding production image and pass on the new
+  candidate; all 22 focused Windows and 33 focused native cases pass. Actual
+  isolated Settings cleanup admits 121 exact tracked owners, preserves every
+  image hash, and completes command 1 with Activity reporting 0 originals removed.
+  This proves admission paging, not retirement of an origin with over 50 links;
+  that retirement guard remains and still needs durable bounded publication.
+  Temporary local app/container/volume and tab24 were removed. Final frozen-source
+  CI passes lint/types and both builds in 583.01 seconds: 2,248 API cases after
+  the known edition-monitoring-contract clone-file retry passes all 21 cases,
+  plus 187 frontend tests. No behavioral failures remain. Log:
+  oct09-art-pages-final-ci.log; no active CI remains.
+
+- October 9 real cache-policy sample: copied 20 unimported release-group origins
+  and their source/proxy files from read-only live artwork into a separate writable
+  directory in the NAS QA container. The actual retirement code and full copied
+  database retire 19 copied originals (23,767,696 logical bytes), preserving source
+  provenance and proxies. One valid 5333x3000 JPEG, only 2,253,900 compressed bytes,
+  is protected because jpeg-js exceeds its 256 MiB decoding budget by 35 MiB.
+  Fix this through bounded native image handling, not by raising memory limits or
+  discarding the original. The live cache was not changed or reclaimed. QA proof
+  is /config/cache-policy-proof with command16043 in the disposable copied DB;
+  logs oct09-cache-policy-proof.log and oct09-cache-policy-sample.log. These 20
+  filesystem-order samples do not establish whole-cache proportions or imported
+  artwork acceptance. Keep source switching and competing edition/manual assets
+  protected; do not claim all unused release-group retirement is solved.
+  New live refresh failures16050-16052 repeat the same known Cliff/a-ha/Dirty Honey
+  obsolete bindings on undeployed2.21.0. Monitoring has216 queued/2 running, fresh
+  worker heartbeats and no current held writer/waiters; downloads remain paused.
+  Do not mistake repeated old-version failures for regressions in the candidate.
+
 - October 9 full-database preflight and waiting-progress repair: made a consistent
   online backup of the live 12,876,648,448-byte database through a separate
   readonly container connection. The candidate boots that existing ACTIVE schema

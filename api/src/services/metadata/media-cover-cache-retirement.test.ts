@@ -248,6 +248,41 @@ test("legacy row-ID links follow legitimate renames without adopting the old pat
   assert.deepEqual(fs.readFileSync(renamed),bytes);
 });
 
+test("legacy artwork admission resumes durable pages beyond fifty destinations without publishing images",async()=>{
+  const f=await fixture();
+  const sidecars=[];
+  for(let index=0;index<121;index++) {
+    const file=path.join(root,`${f.identity.entityId}-${index}.jpg`);
+    fs.writeFileSync(file,bytes);
+    const id=Number(database.db.prepare(`INSERT INTO MetadataFiles
+      (artist_id,file_path,relative_path,library_root,extension,type,file_type,canonical_release_group_mbid)
+      VALUES ('fixture',?,?,?,'jpg','artwork','cover',?)`).run(file,path.basename(file),root,f.identity.entityId).lastInsertRowid);
+    sidecars.push({path:file,hash,metadataFileId:id});
+  }
+  fs.writeFileSync(path.join(f.folder,".cover.library.json"),JSON.stringify({sidecars}));
+  const count=()=>Number((database.db.prepare("SELECT COUNT(*) AS n FROM ArtworkLibraryLinks WHERE entity_id=?")
+    .get(f.identity.entityId) as {n:number}).n);
+  assert.equal(await service.adoptLegacyArtworkState(f.identity),true);
+  assert.equal(count(),50);
+  assert.equal(await service.adoptLegacyArtworkState(f.identity),true);
+  assert.equal(count(),100);
+  assert.equal(await service.adoptLegacyArtworkState(f.identity),false);
+  assert.equal(count(),121);
+  assert.equal(await service.adoptLegacyArtworkState(f.identity),false);
+  assert.equal(count(),121);
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+  for(const row of sidecars) assert.deepEqual(fs.readFileSync(row.path),bytes);
+});
+
+test("a malformed later legacy page prevents partial admission",async()=>{
+  const f=await fixture();
+  fs.writeFileSync(path.join(f.folder,".cover.library.json"),JSON.stringify({sidecars:[
+    ...Array.from({length:51},()=>({path:f.master,hash})),{path:f.master,hash:"invalid"}]}));
+  await assert.rejects(service.adoptLegacyArtworkState(f.identity),/Invalid legacy artwork link/);
+  assert.equal(database.db.prepare("SELECT 1 FROM ArtworkLibraryLinks WHERE entity_id=?").get(f.identity.entityId),undefined);
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+});
+
 test("edited legacy publication refuses provenance adoption and preserves both images",async()=>{
   const f=await fixture(true);
   database.db.prepare("DELETE FROM ArtworkLibraryLinks WHERE entity_id=?").run(f.identity.entityId);

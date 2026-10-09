@@ -119,7 +119,7 @@ function links(identity: ArtworkIdentity) {
 /** Register all legacy source/link evidence in a separate first pass. No
  * library image is replaced here: competing edition/role selections must be
  * visible before the later pass considers replacing or retiring any original. */
-export async function adoptLegacyArtworkState(identity:ArtworkIdentity):Promise<void> {
+export async function adoptLegacyArtworkState(identity:ArtworkIdentity):Promise<boolean> {
   if (!/^[a-z0-9_-]+$/i.test(identity.coverType)) throw new Error("Invalid legacy artwork role");
   const folder=getMediaCoverFolder(identity.entityId,identity.coverEntity);
   const root=path.dirname(getMediaCoverFolder("__root_probe__","Artist"));
@@ -131,9 +131,9 @@ export async function adoptLegacyArtworkState(identity:ArtworkIdentity):Promise<
     const sourceWitness=legacyArtworkManifestWitness(sourceFile);
     const source=getSelectedArtworkSource(identity.entityId,identity.coverEntity,identity.coverType);
     const owners=ownership(identity);
-    if (!owners.exists) return; // Never invent a catalogue identity from a marker.
+    if (!owners.exists) return false; // Never invent a catalogue identity from a marker.
     const sourceExists=()=>Boolean(db.prepare("SELECT 1 FROM ArtworkSources WHERE cover_entity=? AND entity_id=? AND cover_type=?").get(...artworkKey(identity)));
-    if (!legacy.links.length && (!source || sourceExists())) return;
+    if (!legacy.links.length && (!source || sourceExists())) return false;
     const admitted:Array<{row:typeof legacy.links[number];file:Witness;directory:string}>=[];
     for (const row of legacy.links) {
       const directory=ancestors(row.file_path,path.resolve(row.library_root));
@@ -163,6 +163,7 @@ export async function adoptLegacyArtworkState(identity:ArtworkIdentity):Promise<
         if (source && !sourceExists()) storeArtworkSource(identity,source);
       })();
     },"admit legacy artwork provenance");
+    return legacy.hasMore;
   } finally {release();}
 }
 

@@ -1,5 +1,25 @@
 # Managed library inventory and strict cleanup
 
+## October 9 legacy admission paging and actual cache sample
+
+Legacy manifests remain bounded to 512 KiB and fully validated before admitting
+any links. Admission now hashes/locks/commits at most 50 destinations per page;
+already committed exact links provide durable restart progress. The command does
+not advance its role until admission finishes. A 121-destination actual Settings
+cleanup completes with all exact MetadataFiles owners and image hashes preserved.
+It contains no cache origin, so its 0-byte completion proves admission only.
+Retirement with more than 50 linked destinations still refuses and remains work.
+
+Separately, 20 actual unimported album origins/source/proxy files were copied from
+read-only live cache into /config/cache-policy-proof in the disposable full-DB QA.
+Actual retirement removes 19 copied originals, 23,767,696 logical bytes. One valid
+5333x3000 JPEG (2,253,900 compressed bytes) exceeds jpeg-js's 256 MiB allocation
+budget by 35 MiB and is protected. This is a concrete native decoding follow-up;
+raising the allocation limit or deleting the original is not the repair. The
+live cache and library were untouched. This sample is not a whole-cache estimate
+or proof about imported masters/source switching. QA command16043 belongs only
+to the disposable database, not production. Keep that distinction in follow-ups.
+
 ## October 9 actual held-edition reconciliation replay
 
 A bounded export from readonly SQLite inside the live container captures the

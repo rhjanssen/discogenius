@@ -79,14 +79,14 @@ export type LegacyArtworkLink = {file_path:string;content_hash:string;metadata_f
  * path, and apply the same canonical admission as normal publication. The
  * maintenance caller must still verify bytes, containment and fresh witnesses. */
 export function readLegacyArtworkLinkCandidates(identity: ArtworkIdentity, folder: string): {
-  file:string; witness:string|null; links:LegacyArtworkLink[];
+  file:string; witness:string|null; links:LegacyArtworkLink[]; hasMore:boolean;
 } {
   const file=manifestPath(folder,identity.coverType);
   const witness=legacyArtworkManifestWitness(file);
-  if (!witness) return {file,witness,links:[]};
+  if (!witness) return {file,witness,links:[],hasMore:false};
   const value=JSON.parse(fs.readFileSync(file,"utf8"));
   if (legacyArtworkManifestWitness(file)!==witness) throw new Error("Legacy artwork manifest changed during reading");
-  if (!Array.isArray(value.sidecars) || value.sidecars.length>50) throw new Error("Legacy artwork manifest requires bounded reconciliation");
+  if (!Array.isArray(value.sidecars)) throw new Error("Invalid legacy artwork manifest");
   const links:LegacyArtworkLink[]=[];
   for (const item of value.sidecars) {
     if (!item || typeof item.path!=="string" || typeof item.hash!=="string" || !/^[a-f0-9]{64}$/.test(item.hash))
@@ -103,7 +103,10 @@ export function readLegacyArtworkLinkCandidates(identity: ArtworkIdentity, folde
     if (existing && existing.content_hash!==item.hash) throw new Error("Conflicting legacy artwork hashes for one tracked file");
     if (!existing) links.push({file_path:row.file_path,library_root:row.library_root,metadata_file_id:row.id,content_hash:item.hash});
   }
-  return {file,witness,links};
+  // The marker itself is capped at 512 KiB. Validate it completely before
+  // admitting a page, then hash/lock no more than 50 destinations. Committed
+  // exact links are the durable cursor, so a restart resumes the next page.
+  return {file,witness,links:links.slice(0,50),hasMore:links.length>50};
 }
 
 export function legacyArtworkManifestWitness(file:string):string|null {

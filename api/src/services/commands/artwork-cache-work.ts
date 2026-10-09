@@ -74,10 +74,12 @@ export async function runArtworkCacheWork(job: CommandModelOf<"ConfigPrune">, ct
       const roles=await nextLegacyArtworkRoles(folder,current.after);
       if (!roles.length) {state.after=current.name;delete state.current;settled++;continue;}
       for (const role of roles) {
-        await adoptLegacyArtworkState({coverEntity:families[state.family],entityId:current.name,coverType:role});
-        current.after=role;settled++;
+        const hasMore=await adoptLegacyArtworkState({coverEntity:families[state.family],entityId:current.name,coverType:role});
+        if (!hasMore) current.after=role;
+        settled++;
         ctx.updateCommandDescription({description:`Registering artwork sources and library links - ${families[state.family]} ${current.name}`});
         await ctx.yieldToEventLoop?.();
+        if (hasMore) break; // Resume this role from its committed links next page.
         if (settled>=25 || performance.now()-started>=25_000) break;
       }
       continue;
