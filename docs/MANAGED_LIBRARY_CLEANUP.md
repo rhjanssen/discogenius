@@ -2051,3 +2051,19 @@ sidecar and embedded art match with unchanged PCM and exact MetadataFiles owner.
 Live scan 16039 advances to 346/518 without reported error, downloads paused and
 no active downloads/imports. Cache retirement, legacy plan consolidation and live
 library acceptance remain required before releasing/resuming acquisition.
+October 9 full-database preflight: candidate boots a consistent online copy of
+the complete live 12,876,648,448-byte database on the NAS. Separate readonly
+backup connection completed in 65.7 seconds; host SQLite was never opened.
+QA uses disabled scheduler/downloads/monitoring and read-only live library/cache
+mounts, so its unwritable-root health warnings do not indicate production failure.
+Actual app verifies waiting progress repair without rewriting acquisition intent:
+an unclaimed Thompson Twins request no longer shows stale Downloading track 6/15;
+claimed attempts still retain their active progress. Final CI passes in 336.59
+seconds after the known provider-registry transport retry passes its three cases;
+187 frontend tests and both builds pass. No live cleanup or deployment occurred.
+Cold stats response took 3,132.7 ms, but the SQL runs in a dedicated worker;
+concurrent API latency and warm-cache behavior still need measurement. Startup
+FTS integrity validation holds the writer for 9.7 seconds before readiness; that
+is not evidence of a steady-state stall. Logical cache/database bytes and ZFS
+physical dataset use must be reported separately when measuring reclaimed space.
+

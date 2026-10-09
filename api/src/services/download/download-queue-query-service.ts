@@ -709,7 +709,7 @@ function parsePayloadValue(value: unknown): Record<string, unknown> {
 function waitRowToQueueJob(row: WaitQueueJoinedRow): QueueJobRow {
   const waitPayload = parsePayloadValue(row.wait_payload);
   const commandPayload = parsePayloadValue(row.command_payload);
-  const payload = {
+  const payload: Record<string,unknown> = {
     ...waitPayload,
     ...commandPayload,
     provider: row.provider ?? commandPayload.provider ?? waitPayload.provider,
@@ -724,6 +724,22 @@ function waitRowToQueueJob(row: WaitQueueJoinedRow): QueueJobRow {
     artist_id: row.artist_id ?? commandPayload.artist_id ?? waitPayload.artist_id,
     artistId: row.artist_id ?? commandPayload.artistId ?? waitPayload.artistId,
   };
+  if (row.command_id === null) {
+    // A waiting request has no running attempt. Keep persisted recovery evidence
+    // intact, but do not advertise its old active track, rate or status message.
+    const saved=parsePayloadValue(payload.downloadState);
+    if (Object.keys(saved).length) {
+      const display={...saved,state:"queued"} as Record<string,unknown>;
+      for (const key of ["statusMessage","currentTrack","currentProviderTrackId","currentTrackNum",
+        "currentVolumeNum","trackProgress","trackStatus","speed","eta"]) delete display[key];
+      if (Array.isArray(saved.tracks)) display.tracks=saved.tracks.map(value=>{
+        if (!value || typeof value!=="object" || Array.isArray(value)) return value;
+        const track=value as Record<string,unknown>;
+        return track.status==="downloading" || track.status==="importing" ? {...track,status:"queued"} : track;
+      });
+      payload.downloadState=display;
+    }
+  }
   const status = row.command_status === "started" || row.command_status === "failed"
     ? row.command_status
     : "queued";

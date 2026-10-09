@@ -437,3 +437,29 @@ test("history retry cannot target an unrelated queue row with the same numeric I
   assert.equal(waitQueueModule.DownloadWaitQueue.get(claimed.commandId)?.command_id, null);
   assert.equal(result.body.sourceJobId, claimed.commandId);
 });
+
+
+test("unclaimed waiting projection cannot advertise a previous attempt as downloading",()=>{
+  const result=enqueueTrack("stale-progress","Saved attempt");
+  const downloadState={state:"downloading",statusMessage:"Downloading track 6/15",currentTrack:"Old active track",currentProviderTrackId:"six",trackStatus:"downloading",trackProgress:42,speed:"1 MB/s",eta:"30s",currentFileNum:6,totalFiles:15,progress:40,
+    tracks:[{providerTrackId:"one",title:"Saved track",status:"completed"},{providerTrackId:"six",title:"Old active track",status:"downloading"}]};
+  dbModule.db.prepare("UPDATE DownloadQueue SET payload=? WHERE id=?").run(JSON.stringify({provider:"tidal",providerId:"stale-progress",downloadState}),result.id);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+  const item=queryModule.DownloadQueueQueryService.getQueue({limit:10,offset:0}).items[0];
+  assert.equal(item.status,"queued");assert.equal(item.state,"queued");assert.equal(item.statusMessage,undefined);
+  assert.equal(item.currentTrack,undefined);assert.equal(item.currentProviderTrackId,undefined);assert.equal(item.trackStatus,null);
+  assert.equal(item.speed,undefined);assert.equal(item.eta,undefined);
+  assert.equal(item.tracks?.[0]?.status,"completed");assert.equal(item.tracks?.[1]?.status,"queued");
+  const stored=JSON.parse((dbModule.db.prepare("SELECT payload FROM DownloadQueue WHERE id=?").get(result.id) as {payload:string}).payload);
+  assert.deepEqual(stored.downloadState,downloadState,"projection must not erase durable recovery evidence");
+});
+
+
+test("a claimed started attempt still projects its current live track and message",()=>{
+  const wait=enqueueTrack("live-progress","Live attempt");const claim=waitQueueModule.DownloadWaitQueue.claim(wait.id);assert.ok(claim);
+  const row=dbModule.db.prepare("SELECT payload FROM commands WHERE id=?").get(claim.commandId) as {payload:string};
+  const payload={...JSON.parse(row.payload),downloadState:{state:"downloading",statusMessage:"Downloading current track",currentTrack:"Live track",currentProviderTrackId:"live-progress",trackStatus:"downloading",speed:"1 MB/s"}};
+  dbModule.db.prepare("UPDATE commands SET status='started',payload=? WHERE id=?").run(JSON.stringify(payload),claim.commandId);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();const item=queryModule.DownloadQueueQueryService.getQueue({limit:10,offset:0}).items[0];
+  assert.equal(item.status,"started");assert.equal(item.state,"downloading");assert.equal(item.statusMessage,"Downloading current track");assert.equal(item.currentTrack,"Live track");assert.equal(item.speed,"1 MB/s");
+});

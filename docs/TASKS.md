@@ -2,6 +2,29 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 full-database preflight and waiting-progress repair: made a consistent
+  online backup of the live 12,876,648,448-byte database through a separate
+  readonly container connection. The candidate boots that existing ACTIVE schema
+  on the NAS with scheduler/downloads/monitoring disabled and all live media and
+  artwork mounts read-only. No production deployment or file mutation occurred.
+  Actual app exposed a waiting request showing stale "Downloading track 6/15".
+  Unclaimed queue projections now clear transient attempt text/rate/current-track
+  fields and reset downloading/importing icons to queued, while retaining saved
+  completion facts and the original durable payload. Claimed attempts retain live
+  progress. Queue section is now labelled Download queue. Both focused Windows
+  and native suites pass all 26 cases; actual full-copy app confirms the corrected
+  waiting row. Final unchanged-source CI passes lint/types and both builds in
+  336.59 seconds, 2,246 API cases after the known provider-registry clone-file
+  failure passes all 3 cases on retry, plus 187 frontend tests. No behavioral
+  failures remain (oct09-waiting-copy-final-ci.log).
+  The full-copy first statistics response takes 3,132.7 ms, including HTTP 304.
+  The reader already runs in a dedicated worker with stale-while-revalidate;
+  this timing alone does not prove main-event-loop blocking. Profile cold reads,
+  warm responses and concurrent health latency before changing architecture.
+  NAS QA container discogenius-maintenance-qa and its disposable full database
+  remain for this diagnosis; read-only library mount health warnings are expected.
+  Production remains healthy 2.21.0, paused, with no active command backlog.
+
 - October 9 real catalogue replay: exported a bounded FK-complete scope from the
   running live container through readonly better-sqlite3, then imported that
   540,057-byte snapshot into a disposable production-image ACTIVE-schema database.

@@ -1123,10 +1123,10 @@ const QueueTab = () => {
         return (
             <div className={styles.tabSection}>
                 <div className={styles.queueColumnsWrapper}>
-                    <section className={styles.queueSection} aria-label="Active">
+                    <section className={styles.queueSection} aria-label="Download queue">
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                                <Subtitle2 className={styles.queueSectionTitle}>Download queue</Subtitle2>
                             </div>
                         </div>
                         <QueueListSkeleton rows={4} />
@@ -1149,10 +1149,10 @@ const QueueTab = () => {
             {recoveryMessage && <MessageBar intent="warning"><MessageBarBody>{recoveryMessage}</MessageBarBody></MessageBar>}
             <div className={styles.queueColumnsWrapper}>
                 {hasQueueRows ? (
-                    <section className={styles.queueSection} aria-label="Active">
+                    <section className={styles.queueSection} aria-label="Download queue">
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                                <Subtitle2 className={styles.queueSectionTitle}>Download queue</Subtitle2>
                             </div>
                             {isSelectionMode && hasPendingReorderUi ? (
                                 <div className={styles.queueSectionActions}>
@@ -1633,10 +1633,10 @@ const QueueTab = () => {
                         </div>
                     </section>
                 ) : (
-                    <section className={styles.queueSection} aria-label="Active">
+                    <section className={styles.queueSection} aria-label="Download queue">
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                                <Subtitle2 className={styles.queueSectionTitle}>Download queue</Subtitle2>
                             </div>
                         </div>
                         {hasQueueRefreshError ? (
