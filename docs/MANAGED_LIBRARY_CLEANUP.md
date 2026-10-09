@@ -1,5 +1,22 @@
 # Managed library inventory and strict cleanup
 
+## October 9 unused album cache originals
+
+A release-group cover.jpg in MediaCover is unused when each imported file is
+covered by one selected edition, manual or other-role asset. Coverage uses the
+artwork file's folder and, when that file has a release MBID, the integer
+album_edition_id of the track. A TrackFiles row that only carries
+canonical_release_group_mbid stays uncovered, so the cache original remains.
+Changed replacement bytes, a source URL change after the prepared intent, and
+more than 50 artwork rows also keep the original. The retirement does not write
+a second master over the selected sidecar.
+
+Focused Windows tests pass all 28. ESLint on the two files is clean and
+`yarn --cwd api build` passes. This candidate is not deployed. Live is still
+2.21.0, downloads paused since 2026-09-29 10:28:54. At 10:35 UTC /api/health
+was unhealthy because command 16281's worker was stale, with 117 queued and 3
+started commands. Schema 46 matches. No host SQLite connection was opened.
+
 ## October 9 scan artist identity and indexed album selection
 
 The scan passes an artist MBID into metadata/path matchers whose TrackFiles and

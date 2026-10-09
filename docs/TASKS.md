@@ -2,6 +2,16 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 unused album-cache retirement: a release-group MediaCover original
+  retires when every imported file sits in a folder whose tracked artwork is one
+  selected edition, manual or other-role asset, and those bytes still decode.
+  An uncovered edition, a TrackFiles row with only canonical_release_group_mbid,
+  changed replacement bytes, or a source change after the prepared intent keeps
+  the original. More than 50 artwork rows still refuses the album. Focused
+  retirement tests pass 28/28 and the API build passes. No deployment or live
+  cache deletion. Live remains 2.21.0 with downloads paused. The same stale
+  command worker still makes /api/health unhealthy.
+
 - October9 scan candidate resolves artist MBIDs to integer ownership IDs in audio,
   video and path/sidecar matching. Reproduced duplicate/sidecar failures now pass;
   all56 Windows and55 native focused cases plus one OS-specific skip pass.
