@@ -116,79 +116,6 @@ function links(identity: ArtworkIdentity) {
     }>;
 }
 
-type ReplacementArtwork = {
-  file_path:string; metadata_file_id:number; library_root:string;
-  canonical_release_mbid:string|null; content_hash:string;
-  cover_entity:ArtworkIdentity["coverEntity"]; entity_id:string; cover_type:string;
-  selected_source_url:string; selected_preference:string|null; selected_fulfilled_by:string;
-};
-
-/** A release-group cache master is unused when every imported folder already
- * has an explicitly selected, independently owned artwork asset. No filename
- * guess, legacy marker or provider ID can establish that replacement. */
-function selectedReleaseGroupReplacements(identity: ArtworkIdentity): ReplacementArtwork[] | null {
-  if (identity.coverEntity!=="Album" || identity.coverType!=="cover") return null;
-  const files=db.prepare(`SELECT id,file_path,library_root,canonical_release_mbid
-    FROM MetadataFiles WHERE canonical_release_group_mbid=?
-      AND file_type IN ('cover','artwork') AND track_file_id IS NULL
-    ORDER BY id LIMIT 51`).all(String(identity.entityId)) as Array<{
-      id:number;file_path:string;library_root:string;canonical_release_mbid:string|null;
-    }>;
-  if (!files.length || files.length>50) return null;
-  const replacements:ReplacementArtwork[]=[];
-  for (const file of files) {
-    const selected=db.prepare(`SELECT link.cover_entity,link.entity_id,link.cover_type,link.content_hash,
-        source.source_url AS selected_source_url,source.preference AS selected_preference,
-        source.fulfilled_by AS selected_fulfilled_by
-      FROM ArtworkLibraryLinks link JOIN ArtworkSources source
-        ON source.cover_entity=link.cover_entity AND source.entity_id=link.entity_id
-          AND source.cover_type=link.cover_type AND source.content_hash=link.content_hash
-      WHERE link.metadata_file_id=? AND source.fulfilled_by IN ('canonical','provider','manual')
-        AND NOT (link.cover_entity=? AND link.entity_id=? AND link.cover_type=?)
-      ORDER BY link.cover_entity,link.entity_id,link.cover_type LIMIT 2`)
-      .all(file.id,...artworkKey(identity)) as Array<{
-        cover_entity:ArtworkIdentity["coverEntity"];entity_id:string;cover_type:string;content_hash:string;
-        selected_source_url:string;selected_preference:string|null;selected_fulfilled_by:string;
-      }>;
-    if (selected.length!==1) return null;
-    const asset=selected[0];
-    if (!artworkLinkOwnsTrackedPath({coverEntity:asset.cover_entity,entityId:asset.entity_id,
-      coverType:asset.cover_type},file.file_path,file.id)) return null;
-    if (asset.cover_entity==="Edition" && !db.prepare(`SELECT 1 FROM AlbumEditions edition
-      JOIN Albums album ON album.id=edition.release_group_id
-      WHERE edition.mbid=? AND album.mbid=?`).get(asset.entity_id,String(identity.entityId))) return null;
-    replacements.push({...asset,file_path:file.file_path,metadata_file_id:file.id,
-      library_root:file.library_root,canonical_release_mbid:file.canonical_release_mbid});
-  }
-  // Every imported file must be covered in its actual folder and edition.
-  // The indexed release-group predicate bounds this to this album's files.
-  const predicates:string[]=[];
-  const parameters:Array<string|number>=[];
-  for (const row of replacements) {
-    const prefix=path.dirname(row.file_path).replace(/\\/g,"/")+"/";
-    const edition=row.canonical_release_mbid!==null;
-    predicates.push(`(substr(replace(file.file_path,char(92),'/'),1,?)=?${edition
-      ? " AND file.album_edition_id IS NOT NULL AND file.album_edition_id IN (SELECT id FROM AlbumEditions WHERE mbid=?)"
-      : " AND instr(substr(replace(file.file_path,char(92),'/'),?),'/')=0"})`);
-    parameters.push(prefix.length,prefix);
-    if (edition) parameters.push(row.canonical_release_mbid!);
-    else parameters.push(prefix.length+1);
-  }
-  const uncovered=db.prepare(`WITH album AS (SELECT id,mbid FROM Albums WHERE mbid=?),
-    editions AS (
-      SELECT id,mbid FROM AlbumEditions WHERE release_group_id IN (SELECT id FROM album)
-      UNION SELECT id,mbid FROM AlbumEditions WHERE release_group_mbid IN (SELECT mbid FROM album)
-    )
-    SELECT 1 FROM TrackFiles file WHERE file.id IN (
-      SELECT id FROM TrackFiles WHERE release_group_id IN (SELECT id FROM album)
-      UNION SELECT id FROM TrackFiles WHERE canonical_release_group_mbid IN (SELECT mbid FROM album)
-      UNION SELECT id FROM TrackFiles WHERE album_edition_id IN (SELECT id FROM editions)
-      UNION SELECT id FROM TrackFiles WHERE canonical_release_mbid IN (SELECT mbid FROM editions)
-    )
-      AND NOT (${predicates.join(" OR ")}) LIMIT 1`).get(String(identity.entityId),...parameters);
-  return uncovered ? null : replacements;
-}
-
 /** Register all legacy source/link evidence in a separate first pass. No
  * library image is replaced here: competing edition/role selections must be
  * visible before the later pass considers replacing or retiring any original. */
@@ -269,9 +196,7 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
   const proxyPaths = heights.map(height=>path.join(folder,`${identity.coverType}-${height}.jpg`));
   let candidates = links(identity);
   if (candidates.length > 50) throw new Error("Artwork has too many linked destinations for one retirement unit");
-  const replacementRows=selectedReleaseGroupReplacements(identity);
-  const release = await acquireMediaFileLocks([origin,...proxyPaths,...candidates.map(row=>row.file_path),
-    ...(replacementRows??[]).map(row=>row.file_path)]);
+  const release = await acquireMediaFileLocks([origin,...proxyPaths,...candidates.map(row=>row.file_path)]);
   let original: Witness | null = null;
   try {
     const previous = db.prepare("SELECT file_identity,source_snapshot,byte_size,phase FROM ArtworkCacheRetirement WHERE command_id=? AND source_path=?")
@@ -298,21 +223,6 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
       || !["canonical","provider"].includes(source.fulfilledBy ?? "")) throw new Error("No recoverable selected artwork source");
     const owners = ownership(identity);
     if (!owners.exists) throw new Error("No authoritative catalogue owner");
-    if (JSON.stringify(selectedReleaseGroupReplacements(identity))!==JSON.stringify(replacementRows)) {
-      throw new Error("Selected replacement artwork changed during admission");
-    }
-    const replacements:Array<{row:ReplacementArtwork;file:Witness;ancestors:string}>=[];
-    for (const row of replacementRows??[]) {
-      const directoryEvidence=ancestors(row.file_path,path.resolve(row.library_root));
-      const file=await witness(row.file_path);
-      if (!file || file.hash!==row.content_hash) throw new Error("Selected replacement artwork bytes changed");
-      const data=await fsp.readFile(row.file_path);
-      if (stat(row.file_path)!==file.stat || createHash("sha256").update(data).digest("hex")!==file.hash) {
-        throw new Error("Selected replacement artwork changed before decoding");
-      }
-      await decodeArtworkImage(data,path.extname(row.file_path).toLowerCase().replace(/^\.jpeg$/,".jpg"));
-      replacements.push({row,file,ancestors:directoryEvidence});
-    }
     // Upgrade an explicitly linked legacy sidecar from the selected origin.
     // Do not infer destinations from folder names or create alternate masters.
     // The old link hash proves it has not been manually edited since publication.
@@ -321,7 +231,6 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
     if (previous?.phase!=="prepared" && owners.owned && original?.hash===source.contentHash) {
       for (const row of candidates) {
         if (row.content_hash===source.contentHash) continue;
-        if (replacements.some(item=>item.row.metadata_file_id===row.metadata_file_id)) continue;
         if (!artworkLinkOwnsTrackedPath(identity,row.file_path,row.metadata_file_id)) continue;
         ancestors(row.file_path,path.resolve(row.library_root));
         const current=await witness(row.file_path);
@@ -379,10 +288,9 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
           if (file?.hash === source.contentHash) {master={row,file,ancestors:directoryEvidence};break;}
         } catch { /* Never use an offline, linked or externally edited master. */ }
       }
-      if (!master && !replacements.length) throw new Error("Imported artwork has no exact tracked full-resolution master");
+      if (!master) throw new Error("Imported artwork has no exact tracked full-resolution master");
     }
-    const snapshot = JSON.stringify({source,owners,master:master?.row ?? null,proxies:proxySnapshot,
-      ...(replacements.length ? {replacements:replacementRows} : {})});
+    const snapshot = JSON.stringify({source,owners,master:master?.row ?? null,proxies:proxySnapshot});
     if (previous?.phase === "prepared" && previous.source_snapshot !== snapshot) throw new Error("Prepared retirement ownership or source changed");
     const check = () => {
       if (ancestors(origin,root)!==directories || (original ? stat(origin)!==original.stat : stat(origin)!==null)
@@ -394,11 +302,6 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
         || ancestors(master.row.file_path,path.resolve(master.row.library_root))!==master.ancestors
         || !artworkLinkOwnsTrackedPath(identity,master.row.file_path,master.row.metadata_file_id)
         || JSON.stringify(links(identity).find(row=>row.metadata_file_id===master!.row.metadata_file_id))!==JSON.stringify(master.row))) throw new Error("Library master ownership changed");
-      if (replacements.length && (JSON.stringify(selectedReleaseGroupReplacements(identity))!==JSON.stringify(replacementRows)
-        || replacements.some(item=>stat(item.row.file_path)!==item.file.stat
-          || ancestors(item.row.file_path,path.resolve(item.row.library_root))!==item.ancestors))) {
-        throw new Error("Selected replacement artwork ownership changed");
-      }
     };
     if (!previous) await withSqliteWriteGate(()=>{
       check();

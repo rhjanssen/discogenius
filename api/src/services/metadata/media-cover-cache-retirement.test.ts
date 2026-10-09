@@ -162,7 +162,7 @@ test("externally edited legacy sidecar is preserved with its selected cache orig
   assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/changed outside/);
 });
 
-test("unused release-group origin retires without overwriting another selected artwork role",async()=>{
+test("release-group adoption cannot overwrite another selected artwork role at the same tracked path",async()=>{
   const f=await fixture(true);
   const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
   const smallHash=createHash("sha256").update(small).digest("hex");
@@ -175,93 +175,8 @@ test("unused release-group origin retires without overwriting another selected a
   storage.rememberLibraryCoverSidecar(competing,f.folder,f.master,smallHash,metadataId);
   await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
   assert.deepEqual(fs.readFileSync(f.master),small);
-  assert.equal(fs.existsSync(f.origin),false);
-  assert.equal((database.db.prepare("SELECT phase FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {phase:string}).phase,"retired");
-});
-
-async function editionReplacementFixture() {
-  const f=await fixture(true);
-  const album=(database.db.prepare("SELECT id FROM Albums WHERE mbid=?").get(f.identity.entityId) as {id:number}).id;
-  const editionMbid=`edition-${f.identity.entityId}`;
-  const editionId=Number(database.db.prepare(`INSERT INTO AlbumEditions(mbid,release_group_mbid,release_group_id,artist_mbid,title)
-    VALUES (?,?,?,'fixture','Selected Edition')`).run(editionMbid,f.identity.entityId,album).lastInsertRowid);
-  const owner=(database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master) as {id:number}).id;
-  database.db.prepare("UPDATE MetadataFiles SET canonical_release_mbid=? WHERE id=?").run(editionMbid,owner);
-  const selected=jpeg.encode({width:12,height:10,data:Buffer.alloc(12*10*4,130)},90).data;
-  const selectedHash=createHash("sha256").update(selected).digest("hex");fs.writeFileSync(f.master,selected);
-  const identity={coverEntity:"Edition" as const,entityId:editionMbid,coverType:"cover"};
-  state.storeArtworkSource(identity,{url:"https://example.test/selected-edition.jpg",preference:"provider",fulfilledBy:"provider",contentHash:selectedHash});
-  const storage=await import("./media-cover-library-storage.js");
-  storage.rememberLibraryCoverSidecar(identity,covers.getMediaCoverFolder(editionMbid,"Edition"),f.master,selectedHash,owner);
-  const audio=path.join(root,`disc-${f.identity.entityId}`,"track.flac");
-  fs.mkdirSync(path.dirname(audio),{recursive:true});fs.writeFileSync(audio,"preserved media");
-  database.db.prepare(`INSERT INTO TrackFiles(release_group_id,album_edition_id,file_path,relative_path,library_root,filename,extension,file_type)
-    VALUES (?,?,?,?,?,'track.flac','flac','track')`).run(album,editionId,audio,path.relative(root,audio),root);
-  return {...f,album,editionId,editionMbid,owner,selected,selectedHash};
-}
-
-test("unused release-group original retires behind selected edition artwork without adding another master",async()=>{
-  const f=await editionReplacementFixture();
-  const source=covers.getSelectedArtworkSource(f.editionMbid,"Edition","cover");
-  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
-  assert.equal(fs.existsSync(f.origin),false);
-  assert.deepEqual(fs.readFileSync(f.master),f.selected);
-  assert.deepEqual(covers.getSelectedArtworkSource(f.editionMbid,"Edition","cover"),source);
-  assert.equal((database.db.prepare("SELECT COUNT(*) AS n FROM MetadataFiles WHERE canonical_release_group_mbid=?").get(f.identity.entityId) as {n:number}).n,1);
-  assert.equal((database.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(f.master) as {id:number}).id,f.owner);
-});
-
-test("an uncovered imported edition protects the release-group original and chosen sidecar",async()=>{
-  const f=await editionReplacementFixture();
-  const other=Number(database.db.prepare(`INSERT INTO AlbumEditions(mbid,release_group_mbid,release_group_id,artist_mbid,title)
-    VALUES (?,?,?,'fixture','Other Edition')`).run(`other-${f.editionMbid}`,f.identity.entityId,f.album).lastInsertRowid);
-  database.db.prepare(`INSERT INTO TrackFiles(release_group_id,album_edition_id,file_path,relative_path,library_root,filename,extension,file_type)
-    VALUES (?,?,?,?,?,'other.flac','flac','track')`).run(f.album,other,path.join(root,"other.flac"),"other.flac",root);
-  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
   assert.deepEqual(fs.readFileSync(f.origin),bytes);
-  assert.deepEqual(fs.readFileSync(f.master),f.selected);
-  assert.equal((database.db.prepare("SELECT phase FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {phase:string}).phase,"protected");
-});
-
-test("edited selected edition bytes cannot retire the release-group original",async()=>{
-  const f=await editionReplacementFixture();fs.writeFileSync(f.master,"outside edit");
-  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
-  assert.deepEqual(fs.readFileSync(f.origin),bytes);
-  assert.equal(fs.readFileSync(f.master,"utf8"),"outside edit");
-  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/replacement artwork bytes changed/);
-});
-
-test("an uncovered legacy canonical album binding also protects the cache original",async()=>{
-  const f=await editionReplacementFixture();
-  database.db.prepare(`INSERT INTO TrackFiles(canonical_release_group_mbid,file_path,relative_path,library_root,filename,extension,file_type)
-    VALUES (?,?,?,?, 'legacy.flac','flac','track')`).run(f.identity.entityId,path.join(root,"legacy.flac"),"legacy.flac",root);
-  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
-  assert.deepEqual(fs.readFileSync(f.origin),bytes);
-  assert.deepEqual(fs.readFileSync(f.master),f.selected);
-});
-
-test("a selected replacement with matching hashes must still decode as an image",async()=>{
-  const f=await editionReplacementFixture();const invalid=Buffer.from("not an image");
-  const invalidHash=createHash("sha256").update(invalid).digest("hex");fs.writeFileSync(f.master,invalid);
-  database.db.prepare("UPDATE ArtworkSources SET content_hash=? WHERE cover_entity='Edition' AND entity_id=?").run(invalidHash,f.editionMbid);
-  database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash=? WHERE cover_entity='Edition' AND entity_id=?").run(invalidHash,f.editionMbid);
-  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
-  assert.deepEqual(fs.readFileSync(f.origin),bytes);
-  assert.deepEqual(fs.readFileSync(f.master),invalid);
-  assert.equal((database.db.prepare("SELECT phase FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {phase:string}).phase,"protected");
-});
-
-test("a selected edition source change after retirement intent preserves both images",async()=>{
-  const f=await editionReplacementFixture();
-  database.db.exec(`CREATE TRIGGER change_selected_edition_after_intent AFTER INSERT ON ArtworkCacheRetirement
-    WHEN NEW.command_id=${f.commandId} AND NEW.phase='prepared'
-    BEGIN UPDATE ArtworkSources SET source_url='https://example.test/new-selection.jpg'
-      WHERE cover_entity='Edition' AND entity_id='${f.editionMbid}'; END;`);
-  try {await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");}
-  finally {database.db.exec("DROP TRIGGER change_selected_edition_after_intent");}
-  assert.deepEqual(fs.readFileSync(f.origin),bytes);
-  assert.deepEqual(fs.readFileSync(f.master),f.selected);
-  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/replacement artwork ownership changed/);
+  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/another selected artwork asset/);
 });
 
 test("PNG origin adoption retains full dimensions and repairs proxies against the converted JPEG master",async()=>{
@@ -409,7 +324,7 @@ test("legacy links cannot create owners from untracked paths or transfer another
 });
 
 
-test("unused release-group origin retires while a non-fetchable manual selection keeps its library image",async()=>{
+test("a non-fetchable manual legacy selection still protects its library image from replacement",async()=>{
   const f=await fixture(true);
   const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
   const smallHash=createHash("sha256").update(small).digest("hex");
@@ -424,8 +339,8 @@ test("unused release-group origin retires while a non-fetchable manual selection
   assert.deepEqual(state.readArtworkSource(manual,path.join(root,"no-marker")),source,"manual selection must survive removal of disposable markers");
   await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
   assert.deepEqual(fs.readFileSync(f.master),small);
-  assert.equal(fs.existsSync(f.origin),false);
-  assert.deepEqual(state.readArtworkSource(manual,path.join(root,"no-marker")),source);
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/another selected artwork asset/);
 });
 
 
