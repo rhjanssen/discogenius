@@ -2,6 +2,24 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 prepared artwork recovery follow-up: reproduced an ordering bug where
+  an old prepared retirement could publish new sidecar/proxy bytes before checking
+  its saved source snapshot. Recovery now refuses changed publication provenance
+  before any new image publication. All 28 focused Windows and production-image
+  checks pass without skips. Actual isolated app seeds an old prepared intent and
+  an unadmitted manual selection; a fresh cleanup preserves the exact small image,
+  full original and MetadataFiles owner1, admits the manual source, protects the
+  old intent and reports the competing asset honestly in Activity. This is a
+  seeded stale-intent regression, not a new process-crash claim. QA tab21 and the
+  disposable container/volume were removed. Final unchanged-code CI passes lint/types, both builds, 2,241 API
+  cases after the known edition-monitoring-contract clone-file retry passes all21,
+  and all187 frontend tests in340.37 seconds; no behavioral failure remains
+  (oct09-cache-prepared-final-ci.log).
+  Live scan16039 now completed at100%, no error: 0 removed, 0 added, 9 updated.
+  Live health200, main writer no holder/waiters, downloads paused with no active
+  downloads/imports, still image2.21.0. This old scan cannot authorize deletion
+  because it lacks candidate filesystem witnesses. No live deployment or cleanup.
+
 - October 9 legacy artwork admission candidate: cleanup now registers selected
   sources and physically verified legacy links in a bounded first pass across all
   families before replacing or retiring any originals. Exact row-ID renames and

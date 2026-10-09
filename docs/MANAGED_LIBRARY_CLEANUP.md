@@ -1,5 +1,33 @@
 # Managed library inventory and strict cleanup
 
+## October 9 prepared recovery publication ordering
+
+An old prepared retirement must validate its saved admission before changing
+images. A regression first failed because recovery upgraded a different library
+sidecar before discovering its stale source snapshot. Prepared replay now skips
+fresh sidecar publication and refuses changed proxy provenance. Its existing
+source/owner/proxy snapshot and physical rechecks still gate unlink. Missing
+origins still settle durable accounting without rewriting newer selections.
+
+All 28 focused Windows and rebuilt production-image checks pass without skips.
+Actual isolated app seeds a prepared intent with a stale snapshot alongside a
+manual selection still in legacy markers. Cleanup leaves the small selected
+image, full cache original and exact MetadataFiles owner1 unchanged, admits the
+manual source, protects the old intent and reports the competing selected asset
+in Activity. This tests a seeded stale intent; earlier actual crash-recovery proof
+remains separate. QA tab21, container and volume were removed. Final unchanged-code CI passes lint/types, both builds and all187 frontend
+tests in340.37 seconds. The first TAP run has one edition-monitoring-contract
+file failure from the known Node clone transport problem; its isolation=none
+retry passes all21 cases. All2,241 API cases pass after that retry, with no
+behavioral failure (oct09-cache-prepared-final-ci.log).
+No production deployment or image deletion occurred.
+
+Live scan16039 completed without error at100%, reporting 0 removed, 0 added and
+9 updated. The actual deployed image remains2.21.0. HTTP health200, no current
+main writer holder/waiters, downloads paused with no active downloads/imports.
+This scan still has no candidate filesystem identity witnesses and cannot authorize
+strict deletion or prove whole-library tagging/ownership acceptance.
+
 ## October 9 legacy source and link admission candidate
 
 Cache cleanup now has an admission pass before its retirement pass. The same

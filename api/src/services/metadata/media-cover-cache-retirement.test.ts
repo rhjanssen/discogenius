@@ -307,3 +307,34 @@ test("a non-fetchable manual legacy selection still protects its library image f
   assert.deepEqual(fs.readFileSync(f.origin),bytes);
   assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/another selected artwork asset/);
 });
+
+
+test("an existing prepared intent cannot replace library art before validating its old source snapshot",async()=>{
+  const f=await fixture(true);
+  const small=jpeg.encode({width:4,height:4,data:Buffer.alloc(4*4*4,255)},70).data;
+  const smallHash=createHash("sha256").update(small).digest("hex");
+  fs.writeFileSync(f.master,small);
+  database.db.prepare("UPDATE ArtworkLibraryLinks SET content_hash=? WHERE entity_id=?").run(smallHash,f.identity.entityId);
+  const stat=fs.lstatSync(f.origin,{bigint:true});
+  const file={stat:[stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs].join(":"),hash,size:bytes.length};
+  database.db.prepare(`INSERT INTO ArtworkCacheRetirement(command_id,source_path,file_identity,source_snapshot,byte_size,phase)
+    VALUES (?,?,?,'old-source-snapshot',?,'prepared')`).run(f.commandId,f.origin,JSON.stringify(file),bytes.length);
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.deepEqual(fs.readFileSync(f.master),small,"an old retirement intent cannot authorize fresh sidecar publication");
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+});
+
+
+test("prepared recovery leaves changed proxy bytes untouched instead of deriving new publication",async()=>{
+  const f=await fixture(true);
+  const stat=fs.lstatSync(f.origin,{bigint:true});
+  const file={stat:[stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs].join(":"),hash,size:bytes.length};
+  database.db.prepare(`INSERT INTO ArtworkCacheRetirement(command_id,source_path,file_identity,source_snapshot,byte_size,phase)
+    VALUES (?,?,?,'old-source-snapshot',?,'prepared')`).run(f.commandId,f.origin,JSON.stringify(file),bytes.length);
+  const proxy=path.join(f.folder,"cover-250.jpg");fs.writeFileSync(proxy,"external proxy change");
+  await service.retireLegacyArtworkOrigin(f.commandId,f.identity,"cover.jpg");
+  assert.equal(fs.readFileSync(proxy,"utf8"),"external proxy change");
+  assert.deepEqual(fs.readFileSync(f.origin),bytes);
+  assert.deepEqual(fs.readFileSync(f.master),bytes);
+  assert.match((database.db.prepare("SELECT reason FROM ArtworkCacheRetirement WHERE command_id=?").get(f.commandId) as {reason:string}).reason,/proxy provenance changed/);
+});

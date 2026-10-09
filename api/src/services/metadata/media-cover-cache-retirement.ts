@@ -225,7 +225,9 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
     // Upgrade an explicitly linked legacy sidecar from the selected origin.
     // Do not infer destinations from folder names or create alternate masters.
     // The old link hash proves it has not been manually edited since publication.
-    if (owners.owned && original?.hash===source.contentHash) {
+    // A prepared retirement already had admitted masters/proxies. Replaying
+    // it must not publish new art before its old snapshot has been validated.
+    if (previous?.phase!=="prepared" && owners.owned && original?.hash===source.contentHash) {
       for (const row of candidates) {
         if (row.content_hash===source.contentHash) continue;
         if (!artworkLinkOwnsTrackedPath(identity,row.file_path,row.metadata_file_id)) continue;
@@ -249,6 +251,7 @@ export async function retireLegacyArtworkOrigin(commandId: number, identity: Art
       source=getSelectedArtworkSource(identity.entityId,identity.coverEntity,identity.coverType)!;
     }
     if (!hasCurrentArtworkProxies(identity,folder,source,heights)) {
+      if (previous?.phase==="prepared") throw new Error("Prepared retirement proxy provenance changed");
       // Conversion can change the selected content hash. Rebuild proxies from
       // the newly published exact library master, never from a display proxy.
       let proxyMaster = original?.hash === source.contentHash ? {path:origin,file:original} : null;
