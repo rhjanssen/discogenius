@@ -1,5 +1,32 @@
 # Managed library inventory and strict cleanup
 
+## October 9 tested deploy
+
+Focused sidecar, cleanup-journal and catalog-plan tests passed, 69 of 69.
+Full `yarn ci` on `7cb91669` then passed in 326 seconds: 2250 API tests, 187
+frontend tests, lint, typechecks and both builds, with no failing names.
+
+The candidate image `discogenius:7cb91669` booted an empty config at schema 46,
+then replaced the live container. TrueNAS app config and the rendered compose
+file now name that image. Backups of both files are
+`user_config.yaml.bak-20261009-7cb91669` and
+`docker-compose.yaml.bak-20261009-7cb91669`. The published
+`rhjanssen/discogenius:2.21.0` image is still on the host. The Apple Music
+wrapper was left running.
+
+After the recreate, schema 46 opened the existing database and downloads were
+still paused. `GET /api/v1/mediaFile/cleanup/preview?inventoryCommandId=1`
+returned 409, `Cleanup preview requires a fresh witnessed candidate inventory`.
+Docker reports the container healthy. The health payload is degraded because
+the refresh backlog is old and four refreshes failed in the last day. No
+worker was stale. Aretha Franklin 16205 and Ava Max 16206 were running.
+Command rows: 436 completed, 7 failed, 75 queued, 2 started.
+
+Root scan 16282 is queued with `addNewArtists: true`, the same call the
+dashboard uses. A library-wide scan starts only when nothing else is running,
+so it waits behind the RefreshArtist jobs. Strict cleanup is not applied.
+The one-time cache script has not been run. The download queue is still paused.
+
 ## October 9 cache originals are a one-time delete
 
 Robert stopped the plan to keep a permanent retirement subsystem for

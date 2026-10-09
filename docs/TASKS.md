@@ -2,6 +2,20 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- October 9 tested deploy: `yarn ci` on `7cb91669` passed in 326 seconds with
+  2250 API tests, 187 frontend tests, lint, typechecks and both builds. No
+  failing names. Live container `discogenius` runs image `discogenius:7cb91669`.
+  Schema 46 opened the existing database. Downloads stayed paused. Cleanup
+  preview returns 409 until a fresh inventory exists. Root scan 16282 is queued
+  with `addNewArtists` and stays queued while any command is running. Two
+  RefreshArtist jobs are started (Aretha Franklin 16205, Ava Max 16206) and 75
+  commands are queued, including that scan. The recreate cleared the stale
+  Aretha worker. Health is degraded on the aging refresh backlog. Strict
+  cleanup, the cache-original script, queue clearing and download resume wait
+  for the scan. Rollback copies sit beside the TrueNAS app config:
+  `user_config.yaml.bak-20261009-7cb91669` and
+  `docker-compose.yaml.bak-20261009-7cb91669`.
+
 - October 9 artwork course change: MediaCover stores 250/500 proxies. New cache
   publication already does that. Full-resolution art is written beside the
   media by import and retag, from the selected source when the cache has no
@@ -9,10 +23,7 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
   The ~92 GB of existing originals is a one-time delete after those sidecars
   exist: `api/scripts/drop-media-cover-originals.mjs`. It removes an original
   only when ArtworkLibraryLinks already points at a regular library file, and
-  it leaves proxies alone. Do not run it on the live cache yet. Live is still
-  2.21.0, downloads paused. CheckHealth 16281 completed; the stale worker
-  cleared without a restart. Two RefreshArtist jobs run under the local
-  MusicBrainz cap of 2, with the rest queued. No host SQLite connection.
+  it leaves proxies alone. Do not run it on the live cache yet.
 
 - October9 scan candidate resolves artist MBIDs to integer ownership IDs in audio,
   video and path/sidecar matching. Reproduced duplicate/sidecar failures now pass;
