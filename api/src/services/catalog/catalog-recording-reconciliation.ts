@@ -13,6 +13,13 @@ export const RECORDING_OWNERS = [
     ['ArtistTopTracks','recording_id'], ['TrackLibraryIndex','recording_id'],
 ] as const;
 
+/** A merge that would pick a winner between two owners. The edition transaction
+ * rolls back. Callers may continue with the next edition and leave this one. */
+export function isPreservedCatalogIdentityConflict(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return /^(?:UNIQUE constraint failed: (?:RecordingArtistCredits|RecordingRelations|ProviderVideoMatches|ProviderTrackMatches|LibraryVideos|ArtistTopTracks|TrackLibraryIndex)\b|Conflicting recording presentation identity\b)/.test(message);
+}
+
 /** Target canonical facts must have been upserted in the SAME admitted write.
  * Uniqueness/decision collisions roll back, rather than choosing a losing owner.
  * This changes database identity only; physical tags remain a retag operation. */

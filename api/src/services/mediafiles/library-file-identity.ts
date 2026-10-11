@@ -860,8 +860,17 @@ export function resolveLibraryFileIdentities(
       const storedRelease = entry.prepared.input.editionContext === "stored-file"
         ? nullableText(entry.prepared.input.canonicalReleaseMbid) ?? entry.inputTrack?.releaseMbid
         : null;
+      const monitoredProviderRelease = [mediaMatch?.releaseMbid, albumMatch?.releaseMbid]
+        .find((releaseMbid) => Boolean(
+          releaseMbid
+          && selectedForResolvedGroup?.monitoredReleaseMbids.includes(releaseMbid),
+        )) ?? null;
+      // A monitored provider edition is the resource the file came from. It
+      // outranks a different monitored sibling, including one chosen because it
+      // has an extra track.
       entry.releaseMbid =
         storedRelease
+        ?? monitoredProviderRelease
         ?? (explicitReleaseIsMonitored ? explicitRelease?.mbid : null)
         ?? uniqueMonitoredRelease
         ?? selectedForResolvedGroup?.releaseMbid

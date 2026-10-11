@@ -1,3 +1,5 @@
+import { normalizeTitle } from "../mediafiles/import-matching-utils.js";
+
 export type CanonicalMediumKind = "digital" | "cd" | "vinyl" | "other";
 
 export interface CurationEditionCandidate {
@@ -38,6 +40,13 @@ export interface CurationEditionCandidate {
   /** This monitored edition is the current representative. */
   existingRepresentative: boolean;
 
+  /**
+   * Edition title is the release-group title. A foreign-script or otherwise
+   * differently named superset must not become the representative just because
+   * it has one more track. Unset means the caller did not compare titles.
+   */
+  albumTitleMatch?: boolean;
+
   protectedReason?: "manual_selection" | "locked_selection";
 }
 
@@ -75,6 +84,25 @@ const mediumRank: Record<CanonicalMediumKind, number> = {
   other: 3,
 };
 
+/**
+ * True when the edition is the album under another name only by punctuation
+ * or a parenthetical. A title that normalizes to nothing (kana, for example)
+ * is not a match.
+ */
+export function editionTitleMatchesAlbum(
+  editionTitle: string | null | undefined,
+  albumTitle: string | null | undefined,
+): boolean {
+  const album = normalizeTitle(albumTitle || "");
+  if (!album) return false;
+  const direct = normalizeTitle(editionTitle || "");
+  if (direct && direct === album) return true;
+  const withoutParenthetical = normalizeTitle(
+    String(editionTitle || "").replace(/\s*\([^)]*\)\s*/g, " "),
+  );
+  return Boolean(withoutParenthetical) && withoutParenthetical === album;
+}
+
 export function comparePrimaryEditionCandidates(
   left: CurationEditionCandidate,
   right: CurationEditionCandidate,
@@ -82,9 +110,10 @@ export function comparePrimaryEditionCandidates(
   const leftUnits = left.attainableUnitIds;
   const rightUnits = right.attainableUnitIds;
   return (left.secondaryTypeRank ?? 0) - (right.secondaryTypeRank ?? 0)
+    || Number(Boolean(right.hasUsablePlan)) - Number(Boolean(left.hasUsablePlan))
+    || Number(Boolean(right.albumTitleMatch)) - Number(Boolean(left.albumTitleMatch))
     || rightUnits.size - leftUnits.size
     || (right.statusRank ?? 0) - (left.statusRank ?? 0)
-    || Number(Boolean(right.hasUsablePlan)) - Number(Boolean(left.hasUsablePlan))
     || (right.planExplicitPreferenceRank ?? 0) - (left.planExplicitPreferenceRank ?? 0)
     || (right.editionExplicitPreferenceRank ?? 0) - (left.editionExplicitPreferenceRank ?? 0)
     || mediumRank[left.medium] - mediumRank[right.medium]

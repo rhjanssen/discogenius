@@ -58,6 +58,54 @@ export class CommandFileWorkRepository {
         })();
     }
 
+    static peek(commandId: number, workerId: string): { id: number; fileType: string | null } {
+        this.assertOwner(commandId, workerId);
+        const plan = this.get(commandId)!;
+        const file = db.prepare(`SELECT track_file_id FROM CommandFileWork
+            WHERE command_id = ? AND generation = ? AND ordinal = ? AND status IN ('pending', 'started')`)
+            .get(commandId, plan.generation, plan.cursor) as { track_file_id: number } | undefined;
+        if (!file) throw new Error("Retag work cursor does not identify a pending file");
+        const current = db.prepare("SELECT file_type FROM TrackFiles WHERE id = ?").get(file.track_file_id) as {
+            file_type: string | null;
+        } | undefined;
+        return { id: file.track_file_id, fileType: current?.file_type == null ? null : String(current.file_type) };
+    }
+
+    /** Record a skip or a missing file without a separate intent transaction. */
+    static settleDirect(commandId: number, workerId: string, fileId: number, result: RetagApplyResult): FileWorkPlan {
+        const counts = [result.retagged, result.skipped, result.missing];
+        if (result.retagged !== 0 || result.errors.length !== 0
+            || counts.some(count => !Number.isSafeInteger(count) || count < 0 || count > 1)
+            || result.skipped + result.missing !== 1) {
+            throw new Error(`Retag unchanged outcome must identify exactly file #${fileId}`);
+        }
+        return db.transaction(() => {
+            this.assertOwner(commandId, workerId);
+            const plan = this.get(commandId)!;
+            const expected = db.prepare(`SELECT identity_snapshot, status FROM CommandFileWork
+                WHERE command_id = ? AND generation = ? AND ordinal = ? AND track_file_id = ?`)
+                .get(commandId, plan.generation, plan.cursor, fileId) as {
+                identity_snapshot: string;
+                status: string;
+            } | undefined;
+            const current = db.prepare(`SELECT ${fileColumns} FROM TrackFiles WHERE id = ?`).get(fileId) as FileRow | undefined;
+            if (!expected || (expected.status !== "pending" && expected.status !== "started")
+                || (current && snapshot(current) !== expected.identity_snapshot)
+                || (!current && result.missing === 0)) {
+                throw new Error(`File #${fileId} changed identity before its retag outcome was committed`);
+            }
+            const written = db.prepare(`UPDATE CommandFileWork SET status = 'settled', retagged = 0, skipped = ?, missing = ?,
+                error = NULL, settled_at = CURRENT_TIMESTAMP
+                WHERE command_id = ? AND generation = ? AND ordinal = ? AND track_file_id = ? AND status IN ('pending', 'started')`)
+                .run(result.skipped, result.missing, commandId, plan.generation, plan.cursor, fileId);
+            if (written.changes !== 1) throw new Error("Retag file outcome does not own the current work item");
+            db.prepare(`UPDATE CommandFileWorkPlans SET cursor = cursor + 1, skipped = skipped + ?,
+                missing = missing + ?, updated_at = CURRENT_TIMESTAMP WHERE command_id = ?`)
+                .run(result.skipped, result.missing, commandId);
+            return this.get(commandId)!;
+        })();
+    }
+
     static begin(commandId: number, workerId: string): { id: number; fileType: string | null } {
         return db.transaction(() => {
             this.assertOwner(commandId, workerId);

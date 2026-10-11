@@ -694,6 +694,32 @@ for (const recordingRedirect of [false,true]) test(`catalog occurrence replaceme
   } finally {db.prepare('DELETE FROM TrackFiles WHERE id=?').run(fileId);}
 });
 
+test("a conflicting recording credit leaves the release group incomplete instead of failing the refresh", async () => {
+  resetCatalog();
+  const { db } = dbModule;
+  const payload = twoTrackPayload();
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  const artistId = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id;
+  const source = db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original) as { id: number };
+  const targetId = Number(db.prepare(
+    "INSERT INTO Recordings (mbid, title, artist_mbid) VALUES ('redirect-target', 'Redirect target', 'artist-mbid')",
+  ).run().lastInsertRowid);
+  db.prepare("DELETE FROM RecordingArtistCredits WHERE recording_id = ?").run(source.id);
+  db.prepare("INSERT INTO RecordingArtistCredits (recording_id, artist_id, ordinal, credited_name) VALUES (?, ?, 0, 'Source credit')").run(source.id, artistId);
+  db.prepare("INSERT INTO RecordingArtistCredits (recording_id, artist_id, ordinal, credited_name) VALUES (?, ?, 0, 'Other credit')").run(targetId, artistId);
+  const before = db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get();
+  Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get(), before);
+  assert.ok(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original));
+  assert.equal((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+  assert.equal((db.prepare("SELECT credited_name FROM RecordingArtistCredits WHERE recording_id = ?").get(source.id) as { credited_name: string }).credited_name, "Source credit");
+  assert.equal((db.prepare("SELECT credited_name FROM RecordingArtistCredits WHERE recording_id = ?").get(targetId) as { credited_name: string }).credited_name, "Other credit");
+});
+
 function addOwnedTrack(trackMbid: string): number {
   const { db } = dbModule;
   return Number(db.prepare(`INSERT INTO TrackFiles(artist_metadata_id, track_id, canonical_track_mbid, file_path, relative_path, filename, extension, library_root, file_type)

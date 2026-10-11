@@ -10,7 +10,7 @@ import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
-import {reconcileRecordingRedirects} from "../catalog/catalog-recording-reconciliation.js";
+import {isPreservedCatalogIdentityConflict, reconcileRecordingRedirects} from "../catalog/catalog-recording-reconciliation.js";
 import { collectCatalogRedirects, groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions, reconcileEditionTrackIdentities } from "../catalog/catalog-track-reconciliation.js";
 import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
@@ -1029,29 +1029,46 @@ export class ServarrMetadataService {
         );
     };
     const editionGroups = groupConnectedEditions(db, releases);
-    await runGatedChunkedWrite(editionGroups, editions => {
-      // Seed redirect targets before transferring owners in this admitted write.
-      for (const release of editions) for (const track of release.Tracks) insertCanonicalRecording(track);
-      reconcileRecordingRedirects(db,editions.flatMap(release => release.Tracks));
-      for (const release of editions) reconcileEditionTrackIdentities(db,release.Id,release.Tracks,retainedTrackIds);
-      for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
-      for (const release of editions) for (const track of release.Tracks) {
-        insertTrack.run(
-          track.Id,
-          release.Id,
-          track.RecordingId,
-          track.MediumNumber,
-          track.TrackPosition,
-          track.TrackNumber,
-          track.TrackName,
-          track.DurationMs,
-        );
+    // One connected edition group per transaction, same as chunk size 1.
+    // A credit, relation, video-match, or audio/video identity collision rolls
+    // that group back and leaves it for a later refresh. It must not fail the
+    // artist, and it must not stamp the release group complete.
+    let preservedIdentityConflict = false;
+    for (const editions of editionGroups) {
+      try {
+        await withSqliteWriteGate(() => {
+          db.transaction(() => {
+            for (const release of editions) for (const track of release.Tracks) insertCanonicalRecording(track);
+            reconcileRecordingRedirects(db, editions.flatMap(release => release.Tracks));
+            for (const release of editions) reconcileEditionTrackIdentities(db, release.Id, release.Tracks, retainedTrackIds);
+            for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
+            for (const release of editions) for (const track of release.Tracks) {
+              insertTrack.run(
+                track.Id,
+                release.Id,
+                track.RecordingId,
+                track.MediumNumber,
+                track.TrackPosition,
+                track.TrackNumber,
+                track.TrackName,
+                track.DurationMs,
+              );
+            }
+          })();
+        }, "servarr:edition-tracks");
+      } catch (error) {
+        if (!isPreservedCatalogIdentityConflict(error)) throw error;
+        preservedIdentityConflict = true;
+        const editionIds = editions.map(release => release.Id).join(",");
+        console.warn(`[Catalog] Left ${releaseGroupMbid} editions ${editionIds} unchanged: ${error instanceof Error ? error.message : error}`);
       }
-    }, 1, "servarr:edition-tracks");
+    }
     await withSqliteWriteGate(() => {
       db.transaction(() => {
         MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
-        db.prepare("UPDATE Albums SET content_hash = ? WHERE mbid = ?").run(contentHash, releaseGroupMbid);
+        if (!preservedIdentityConflict) {
+          db.prepare("UPDATE Albums SET content_hash = ? WHERE mbid = ?").run(contentHash, releaseGroupMbid);
+        }
       })();
     }, "servarr:release-group-credits");
   }

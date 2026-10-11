@@ -4,6 +4,7 @@ import { getConfigSection } from "../config/config.js";
 import {
   comparePrimaryEditionCandidates,
   curateLibraryReleases,
+  editionTitleMatchesAlbum,
   type CanonicalMediumKind,
   type CurationEditionCandidate,
   type CurationEditionDecision,
@@ -62,6 +63,7 @@ interface ReleaseRow {
   media: string | null;
   title: string;
   disambiguation: string | null;
+  album_title: string;
 }
 
 interface ScopedCurationSelection {
@@ -325,7 +327,8 @@ export class LibraryCurationService {
             release.media_count,
             release.media,
             release.title,
-            release.disambiguation
+            release.disambiguation,
+            release_group.title AS album_title
           FROM AlbumEditions release
           JOIN Albums release_group ON release_group.id = release.release_group_id
           WHERE release.id IN (${chunk.map(() => "?").join(",")})
@@ -500,6 +503,7 @@ export class LibraryCurationService {
         editionExplicitPreferenceRank: editionPreferenceRank,
         protected: isProtected,
         existingRepresentative: isExistingRep,
+        albumTitleMatch: editionTitleMatchesAlbum(release.title, release.album_title),
         protectedReason,
       });
     }

@@ -95,6 +95,63 @@ async function sidecarContentsMatch(source: string, destination: string): Promis
     && destinationIdentity === sidecarFileIdentity(destination);
 }
 
+/** Case-insensitive mounts report the destination as occupied when it is this
+ * same file. A direct rename cannot change only the case, so callers hop
+ * through a temporary name. Different files are never accepted here. */
+export function pathsDifferOnlyByCase(left: string, right: string): boolean {
+  const source = path.resolve(left).split(path.sep);
+  const expected = path.resolve(right).split(path.sep);
+  if (source.length !== expected.length || source.length === 0) return false;
+  let differs = false;
+  for (let index = 0; index < source.length; index++) {
+    if (source[index] === expected[index]) continue;
+    if (source[index].toLowerCase() !== expected[index].toLowerCase()) return false;
+    differs = true;
+  }
+  return differs;
+}
+
+export function sameDirectoryEntry(left: string, right: string): boolean {
+  try {
+    const source = fs.lstatSync(left);
+    const expected = fs.lstatSync(right);
+    return source.dev === expected.dev && source.ino === expected.ino;
+  } catch {
+    return false;
+  }
+}
+
+export function renameToCanonicalCase(source: string, expected: string): void {
+  if (!pathsDifferOnlyByCase(source, expected) || !sameDirectoryEntry(source, expected)) {
+    throw new Error("Case rename requires the same file under a different case");
+  }
+  const fromParts = path.resolve(source).split(path.sep);
+  const toParts = path.resolve(expected).split(path.sep);
+  const current = fromParts.slice();
+  for (let index = 1; index < current.length; index++) {
+    if (current[index] === toParts[index]) continue;
+    const parent = current.slice(0, index).join(path.sep) || path.sep;
+    const from = current.slice(0, index + 1).join(path.sep);
+    const temporary = path.join(parent, `.discogenius-case-${process.pid}-${index}`);
+    if (fs.existsSync(temporary)) throw new Error(`Case rename temporary path is occupied: ${temporary}`);
+    fs.renameSync(from, temporary);
+    try {
+      fs.renameSync(temporary, path.join(parent, toParts[index]));
+    } catch (error) {
+      try { fs.renameSync(temporary, from); } catch { /* the original error is the one to surface */ }
+      throw error;
+    }
+    current[index] = toParts[index];
+  }
+}
+
+function trackedAudioInDirectory(directory: string): number {
+  const prefix = `${directory}${directory.endsWith("/") || directory.endsWith("\\") ? "" : path.sep}`;
+  const escaped = prefix.replace(/[\\%_]/g, "\\$&");
+  const row = db.prepare("SELECT COUNT(*) AS n FROM TrackFiles WHERE file_path LIKE ? ESCAPE '\\'").get(`${escaped}%`) as { n: number };
+  return Number(row.n || 0);
+}
+
 function sidecarFileIdentity(file: string): string {
   const stat = fs.lstatSync(file, { bigint: true });
   if (!stat.isFile()) throw new Error(`Sidecar changed to a non-file: ${file}`);
@@ -450,7 +507,35 @@ export class RenameTrackFileService {
   }
 
   static getRenameWorkIds(options: RenameScopeOptions = {}): number[] {
-    return this.getRenameRows(options, false).map(row => row.id);
+    // Same decision as executeRenameFilesByQuery: a path that already matches
+    // is not a work item. The command used to settle every file, including
+    // the ones with nothing to move. Track-linked extras are omitted when
+    // their audio file is in the same plan: that apply already co-moves them,
+    // and a second work item then fails the identity check.
+    const ids = this.evaluateRenameRows(this.getRenameRows(options, false), { persist: false })
+      .filter((item) => item.needs_rename || item.drop_duplicate)
+      .map((item) => item.id);
+    const trackIds = ids
+      .map((id) => decodeSyntheticId(id))
+      .filter((decoded) => decoded.tableName === "TrackFiles")
+      .map((decoded) => decoded.id);
+    const covered = new Set<number>();
+    if (trackIds.length > 0) {
+      const extraTables: Array<Exclude<RenameTableName, "TrackFiles">> = ["MetadataFiles", "ExtraFiles", "LyricFiles"];
+      for (const table of extraTables) {
+        const linked = db.prepare(
+          `SELECT id FROM ${table} WHERE track_file_id IN (SELECT value FROM json_each(?))`,
+        ).all(JSON.stringify(trackIds)) as Array<{ id: number }>;
+        for (const row of linked) covered.add(encodeSyntheticId(row.id, table));
+      }
+    }
+    return ids
+      .filter((id) => !covered.has(id))
+      .sort((left, right) => {
+        const leftTrack = decodeSyntheticId(left).tableName === "TrackFiles" ? 0 : 1;
+        const rightTrack = decodeSyntheticId(right).tableName === "TrackFiles" ? 0 : 1;
+        return leftTrack - rightTrack || left - right;
+      });
   }
 
   static async executeRenameFilesByQuery(options: RenameScopeOptions = {}): Promise<RenameApplyResult> {
@@ -573,11 +658,54 @@ export class RenameTrackFileService {
           continue;
         }
 
-        const samePath = normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath);
         const decoded = decodeSyntheticId(id);
         const tableName = decoded.tableName;
         const idCol = tableIdColumn(tableName);
 
+        // Checked before the same-path skip. Windows comparison folds case, so
+        // a case-only difference would otherwise be stored and never renamed.
+        if (resolvedFilePath !== expectedPath
+          && pathsDifferOnlyByCase(resolvedFilePath, expectedPath)
+          && sameDirectoryEntry(resolvedFilePath, expectedPath)) {
+          releaseFileLocks = await acquireMediaFileLocks([resolvedFilePath, expectedPath]);
+          renameToCanonicalCase(resolvedFilePath, expectedPath);
+          const root = resolveLibraryRootPath(null, expectedPath)
+            || resolveLibraryRootPath(row.library_root, resolvedFilePath)
+            || path.dirname(expectedPath);
+          const relativePath = root ? path.relative(root, expectedPath) : path.basename(expectedPath);
+          const extension = path.extname(expectedPath).replace(".", "");
+          const stats = fs.statSync(expectedPath);
+          if (tableName === "TrackFiles") {
+            dbUpdates.push({
+              sql: `UPDATE TrackFiles
+                SET file_path = ?, relative_path = ?, library_root = ?, filename = ?, extension = ?,
+                    expected_path = ?, needs_rename = 0, modified_at = ?, verified_at = CURRENT_TIMESTAMP
+                WHERE id = ?`,
+              args: [expectedPath, relativePath, root, path.basename(expectedPath), extension, expectedPath, stats.mtime.toISOString(), decoded.id],
+            });
+          } else {
+            dbUpdates.push({
+              sql: `UPDATE ${tableName}
+                SET file_path = ?, relative_path = ?, library_root = ?, extension = ?,
+                    expected_path = ?, needs_rename = 0, last_updated = CURRENT_TIMESTAMP
+                WHERE ${idCol} = ?`,
+              args: [expectedPath, relativePath, root, extension, expectedPath, decoded.id],
+            });
+          }
+          historyEvents.push({
+            artistId: row.artist_metadata_id,
+            albumId: row.album_id,
+            mediaId: row.media_id,
+            libraryFileId: row.id,
+            eventType: HISTORY_EVENT_TYPES.TrackFileRenamed,
+            data: { fromPath: resolvedFilePath, toPath: expectedPath, fileType: row.file_type, reason: "case-only" },
+          });
+          await commitRenameRecords(dbUpdates, historyEvents);
+          result.renamed++;
+          continue;
+        }
+
+        const samePath = normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath);
         if (samePath) {
           dbUpdates.push({
             sql: `UPDATE ${tableName} SET expected_path = ?, needs_rename = 0, ${tableTouchedAtColumn(tableName)} WHERE ${idCol} = ?`,
@@ -642,7 +770,15 @@ export class RenameTrackFileService {
 
           const audioProof = tableName === "TrackFiles" && dbConflict && fsConflict
             ? await proveAudioDuplicate(decoded.id, dbConflict.id, resolvedFilePath, expectedPath) : null;
-          if (audioProof || (duplicateOfSameScope && fsConflict && await sidecarContentsMatch(resolvedFilePath, expectedPath))) {
+          const sourceDirTrackCount = tableName === "TrackFiles" ? 1 : trackedAudioInDirectory(path.dirname(row.file_path));
+          const bytesMatch = tableName !== "TrackFiles" && fsConflict
+            ? await sidecarContentsMatch(resolvedFilePath, expectedPath)
+            : false;
+          // A cover left in an empty edition folder is the same bytes as the
+          // cover already beside the audio, even when the row still names the
+          // old edition. Different lyric text is not deleted here.
+          const identicalLeftover = tableName !== "TrackFiles" && fsConflict && sourceDirTrackCount === 0 && bytesMatch;
+          if (audioProof || (duplicateOfSameScope && fsConflict && bytesMatch) || identicalLeftover) {
             pendingIntent = await FileMutationJournal.prepare(tableName, decoded.id, row.file_path, resolvedFilePath, null);
             const stagedPath = await FileMutationJournal.move(pendingIntent);
             // Admission may have yielded since the first comparison. Verify the
@@ -701,6 +837,71 @@ export class RenameTrackFileService {
             result.renamed++;
             await FileMutationJournal.recoverOne(pendingIntent!);
             pendingIntent = null;
+            continue;
+          }
+
+          // Different lyric text stays. When its old folder no longer has
+          // audio, park it beside the kept lyric under a numbered name so the
+          // rename can finish without dropping either transcription.
+          if (tableName === "LyricFiles" && duplicateOfSameScope && fsConflict
+            && !bytesMatch && sourceDirTrackCount === 0) {
+            const extensionWithDot = path.extname(expectedPath);
+            const stem = expectedPath.slice(0, -extensionWithDot.length);
+            let alternate = "";
+            for (let number = 2; number < 20; number++) {
+              const candidate = `${stem} (${number})${extensionWithDot}`;
+              if (!fs.existsSync(candidate) && !db.prepare("SELECT 1 FROM LyricFiles WHERE file_path = ?").get(candidate)) {
+                alternate = candidate;
+                break;
+              }
+            }
+            if (alternate) {
+              pendingIntent = await FileMutationJournal.prepare(tableName, decoded.id, row.file_path, resolvedFilePath, alternate);
+              await FileMutationJournal.move(pendingIntent);
+              const root = resolveLibraryRootPath(null, alternate)
+                || resolveLibraryRootPath(row.library_root, resolvedFilePath)
+                || path.dirname(alternate);
+              const relativePath = root ? path.relative(root, alternate) : path.basename(alternate);
+              dbUpdates.push({
+                sql: `UPDATE LyricFiles
+                  SET file_path = ?, relative_path = ?, library_root = ?, extension = ?,
+                      expected_path = ?, needs_rename = 0, last_updated = CURRENT_TIMESTAMP
+                  WHERE id = ?`,
+                args: [alternate, relativePath, root, extensionWithDot.replace(".", ""), alternate, decoded.id],
+              });
+              historyEvents.push({
+                artistId: row.artist_metadata_id,
+                albumId: row.album_id,
+                mediaId: row.media_id,
+                libraryFileId: row.id,
+                eventType: HISTORY_EVENT_TYPES.TrackFileRenamed,
+                data: { fromPath: resolvedFilePath, toPath: alternate, fileType: row.file_type, reason: "kept-different-lyric" },
+              });
+              pendingMove = {
+                sourcePath: resolvedFilePath,
+                destinationPath: alternate,
+                sourceRoot: resolveLibraryRootPath(row.library_root, resolvedFilePath),
+              };
+              await commitRenameRecords(dbUpdates, historyEvents, pendingIntent);
+              physicalMoves.push(pendingMove);
+              pendingMove = null;
+              result.renamed++;
+              await FileMutationJournal.recoverOne(pendingIntent);
+              pendingIntent = null;
+              continue;
+            }
+          }
+
+          // Audio that would overwrite a different file stays a conflict.
+          // A sidecar that still sits with its audio is left there. Moving it
+          // would strip the cover or lyrics from the folder the tracks use.
+          if (tableName !== "TrackFiles" && sourceDirTrackCount > 0) {
+            dbUpdates.push({
+              sql: `UPDATE ${tableName} SET expected_path = ?, needs_rename = 0 WHERE ${idCol} = ?`,
+              args: [row.file_path, decoded.id],
+            });
+            await commitRenameRecords(dbUpdates, historyEvents);
+            result.skipped++;
             continue;
           }
 

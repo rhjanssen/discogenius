@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {after,test} from "node:test";
 import {prepareActiveSchemaEnv,openActiveSchemaDb,closeActiveSchemaDb} from "../../test-support/active-schema-fixture.js";
 import {seedTestLibrary} from "../../test-support/library-fixtures.js";
-import {reconcileRecordingRedirects,RECORDING_OWNERS} from "./catalog-recording-reconciliation.js";
+import {isPreservedCatalogIdentityConflict,reconcileRecordingRedirects,RECORDING_OWNERS} from "./catalog-recording-reconciliation.js";
 import {reconcileEditionTrackIdentities} from "./catalog-track-reconciliation.js";
 const {tempDir}=prepareActiveSchemaEnv('recording-reconciliation');
 const {db,dbModule}=await openActiveSchemaDb();
@@ -141,6 +141,15 @@ test('video redirects preserve exact provider decision and manual placement',()=
     assert.equal((db.prepare('SELECT youtube_video_id FROM Recordings WHERE id=2').get() as {youtube_video_id:string}).youtube_video_id,'abcdefghijk');
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
 }));
+
+test('a refresh may skip a preserved identity collision and must still fail other errors',()=>{
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: RecordingArtistCredits.recording_id, RecordingArtistCredits.ordinal')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: RecordingRelations.source_recording_id, RecordingRelations.target_recording_id, RecordingRelations.relation_type')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: ProviderVideoMatches.provider_video_item_id, ProviderVideoMatches.recording_id')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('Conflicting recording presentation identity for 4ed0911c-48be-45e6-9526-edaf0b995b22')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('test edition write failure')),false);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: Tracks.mbid')),false);
+});
 
 test('recording owners cover every active runtime recording foreign key',()=>{
     const expected=new Set(RECORDING_OWNERS.map(([table,col])=>table+'.'+col));

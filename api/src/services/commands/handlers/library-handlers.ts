@@ -234,7 +234,7 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
         throw new Error("RetagArtist requires at least one artist id");
     }
     const result = await runRetagWorkUnit(job, ctx, () => [
-        ...AudioTagService.getTrackFileIds({ artistIds }),
+        ...AudioTagService.getRetagWorkIds({ artistIds }),
         ...VideoTagService.getFileIdsForArtists(artistIds),
     ]);
     if (result.retagged > 0) await ArtistStatisticsService.refreshAsync(artistIds);
@@ -261,7 +261,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
         const result = await runRetagWorkUnit(job, ctx, () =>
             ids
                 ? ids
-                : AudioTagService.getTrackFileIds({
+                : AudioTagService.getRetagWorkIds({
                     artistId: job.payload.artistId,
                     albumId: job.payload.albumId,
                     editionId: job.payload.editionId,
@@ -283,7 +283,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
     const result = await runRetagWorkUnit(job, ctx, () =>
         ids
             ? ids
-            : AudioTagService.getTrackFileIds({
+            : AudioTagService.getRetagWorkIds({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
                 editionId: job.payload.editionId,

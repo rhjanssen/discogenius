@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
+import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-rebind-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -127,4 +128,97 @@ test("rebind moves a scan-imported file from an unmonitored sibling onto the sel
   assert.equal(rebound.track_id, selectedTrack.id);
   assert.equal(rebound.canonical_release_mbid, "rel-bbx-selected");
   assert.equal(rebound.canonical_track_mbid, "t-mmxxiii-selected");
+});
+
+test("rebind prefers a monitored provider edition over a different monitored sibling", () => {
+  const { db } = dbModule;
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Billie Eilish");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-hmhas", "artist-mbid", "HIT ME HARD AND SOFT");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, '2024-05-17', 1, 10)
+  `).run("rel-english", "rg-hmhas", "artist-mbid", "HIT ME HARD AND SOFT");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, '2025-08-01', 1, 11)
+  `).run("rel-japanese", "rg-hmhas", "artist-mbid", "ヒット・ミー・ハード・アンド・ソフト");
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 0)")
+    .run("rec-skinny", "SKINNY", "artist-mbid");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 1)
+  `).run("t-skinny-english", "rel-english", "rec-skinny", "SKINNY");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 1)
+  `).run("t-skinny-japanese", "rel-japanese", "rec-skinny", "スキニー");
+  db.prepare(`UPDATE Albums SET artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')`).run();
+  db.prepare(`
+    UPDATE AlbumEditions SET
+      release_group_id = (SELECT id FROM Albums WHERE mbid = AlbumEditions.release_group_mbid),
+      artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')
+  `).run();
+  db.prepare(`
+    UPDATE Tracks SET
+      album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid),
+      recording_id = (SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid)
+  `).run();
+
+  const englishEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-english'").get() as { id: number };
+  const japaneseEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-japanese'").get() as { id: number };
+  const englishTrack = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-skinny-english'").get() as { id: number };
+  const japaneseTrack = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-skinny-japanese'").get() as { id: number };
+  const group = db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-hmhas'").get() as { id: number };
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = 'Rebind Stereo'").get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, group.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+    VALUES (?, ?, 'auto', 1, 'curation_primary', 1)
+  `).run(library.id, englishEdition.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'discography_gap_fill', 1)
+  `).run(library.id, japaneseEdition.id);
+  seedAcceptedProviderTrackMatch(db, {
+    provider: "tidal",
+    providerEditionId: "tidal-hmhas",
+    providerTrackId: "tidal-skinny",
+    releaseMbid: "rel-english",
+    trackMbid: "t-skinny-english",
+  });
+
+  const filePath = path.join(tempDir, "stereo", "Billie Eilish", "japanese", "01.flac");
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, album_edition_id, track_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      provider, provider_entity_type, provider_id,
+      canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid
+    ) VALUES (
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, ?, ?, 'track', 'stereo',
+      ?, ?, 'Billie Eilish/japanese/01.flac', '01.flac', 'flac',
+      'tidal', 'track', 'tidal-skinny',
+      'rg-hmhas', 'rel-japanese', 't-skinny-japanese', 'rec-skinny'
+    )
+  `).run(library.id, japaneseEdition.id, japaneseTrack.id, path.join(tempDir, "stereo"), filePath);
+
+  const result = libraryFilesModule.LibraryFilesService.rebindFilesToMonitoredEditions("artist-mbid");
+  assert.equal(result.rebound, 1);
+  const rebound = db.prepare(`
+    SELECT album_edition_id, track_id, canonical_release_mbid, canonical_track_mbid
+    FROM TrackFiles WHERE file_path = ?
+  `).get(filePath) as {
+    album_edition_id: number;
+    track_id: number;
+    canonical_release_mbid: string;
+    canonical_track_mbid: string;
+  };
+  assert.equal(rebound.album_edition_id, englishEdition.id);
+  assert.equal(rebound.track_id, englishTrack.id);
+  assert.equal(rebound.canonical_release_mbid, "rel-english");
+  assert.equal(rebound.canonical_track_mbid, "t-skinny-english");
 });

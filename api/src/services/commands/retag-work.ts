@@ -43,15 +43,23 @@ export async function runRetagWorkUnit(
     try {
         while (plan.cursor < plan.total) {
             if (CommandQueueManager.get(job.id)?.payload.cancelRequested) throw new Error("Retag cancellation requested");
-            const file = await withSqliteWriteGate(() => Work.begin(job.id, owner), "retag:file-intent");
-            const result = file.fileType === null
+            const peeked = Work.peek(job.id, owner);
+            const result = peeked.fileType === null
                 ? { retagged: 0, skipped: 0, missing: 1, errors: [] }
                 : stripOnly
-                    ? await AudioTagService.stripTags([file.id])
-                : file.fileType === "video"
-                    ? await VideoTagService.apply([file.id])
-                    : await session.apply([file.id]);
-            plan = await withSqliteWriteGate(() => Work.settle(job.id, owner, file.id, result), "retag:file-settled");
+                    ? await AudioTagService.stripTags([peeked.id])
+                : peeked.fileType === "video"
+                    ? await VideoTagService.apply([peeked.id])
+                    : await session.apply([peeked.id]);
+            const unchanged = result.retagged === 0 && result.errors.length === 0
+                && result.skipped + result.missing === 1;
+            plan = unchanged
+                ? await withSqliteWriteGate(() => Work.settleDirect(job.id, owner, peeked.id, result), "retag:unchanged")
+                : await withSqliteWriteGate(() => {
+                    const file = Work.begin(job.id, owner);
+                    if (file.id !== peeked.id) throw new Error("Retag cursor moved before the file was written");
+                    return Work.settle(job.id, owner, file.id, result);
+                }, "retag:file-settled");
             ctx.updateCommandDescription(job, {
                 progress: 5 + Math.floor(plan.cursor / Math.max(plan.total, 1) * 90),
                 description: `${stripOnly ? "Strip tags" : "Retag"} - processed ${plan.cursor}/${plan.total} files`,

@@ -236,6 +236,44 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", a
   assert.equal(trackedFile.needsRename, 0);
 });
 
+test("case-only path renames the directory entry instead of conflicting", async () => {
+  const seeded = seedTrackedFile();
+  const wrongPath = path.join(seeded.musicRoot, "Artist One", "album one", "01 - track one.flac");
+  fs.mkdirSync(path.dirname(wrongPath), { recursive: true });
+  fs.renameSync(seeded.sourcePath, wrongPath);
+  dbModule.db.prepare(`
+    UPDATE TrackFiles
+    SET file_path = ?, relative_path = ?, needs_rename = 1
+    WHERE provider_id = '100'
+  `).run(wrongPath, path.join("Artist One", "album one", "01 - track one.flac"));
+
+  const tracked = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE provider_id = '100'").get() as { id: number };
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([tracked.id]);
+
+  assert.equal(result.conflicts, 0);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(seeded.expectedPath), true);
+  assert.ok(fs.readdirSync(path.join(seeded.musicRoot, "Artist One")).includes("Album One"));
+  assert.ok(fs.readdirSync(path.dirname(seeded.expectedPath)).includes("01 - Track One.flac"));
+});
+
+test("rename work ids leave an already-correct file out of the command plan", () => {
+  const seeded = seedTrackedFile();
+  const service = renameTrackFileServiceModule.RenameTrackFileService;
+  assert.equal(service.getRenameWorkIds({ artistId: "1" }).length, 1);
+
+  fs.mkdirSync(path.dirname(seeded.expectedPath), { recursive: true });
+  fs.renameSync(seeded.sourcePath, seeded.expectedPath);
+  dbModule.db.prepare(`
+    UPDATE TrackFiles
+    SET file_path = ?, relative_path = ?, needs_rename = 1
+    WHERE provider_id = '100'
+  `).run(seeded.expectedPath, path.join("Artist One", "Album One", "01 - Track One.flac"));
+
+  assert.deepEqual(service.getRenameWorkIds({ artistId: "1" }), []);
+});
+
 test("id-only renames avoid library-wide post-processing", async () => {
   const seeded = seedTrackedFile();
   const unrelatedEmptyDir = path.join(configModule.Config.getVideoPath(), "Unrelated Artist", "Empty Album");
@@ -1567,15 +1605,17 @@ function seedConflictingLyrics(destinationContents = "[00:01.00] source") {
   return { audioId, lyricId, importDir, sourceLyricPath, destinationLyricPath };
 }
 
-test("rename preserves conflicting lyrics with different contents and their ownership", async () => {
+test("rename keeps a different lyric beside the existing one instead of blocking", async () => {
   const seeded = seedConflictingLyrics("[00:01.00] a different transcription");
   const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([seeded.audioId]);
-  assert.equal(result.conflicts, 1);
+  const kept = path.join(path.dirname(seeded.destinationLyricPath), "01 - Track One (2).lrc");
+  assert.equal(result.conflicts, 0);
   assert.equal(result.errors.length, 0);
-  assert.equal(fs.readFileSync(seeded.sourceLyricPath, "utf8"), "[00:01.00] source");
+  assert.equal(fs.existsSync(seeded.sourceLyricPath), false);
+  assert.equal(fs.readFileSync(kept, "utf8"), "[00:01.00] source");
   assert.equal(fs.readFileSync(seeded.destinationLyricPath, "utf8"), "[00:01.00] a different transcription");
   assert.equal((dbModule.db.prepare("SELECT file_path FROM LyricFiles WHERE id = ?")
-    .get(seeded.lyricId) as { file_path: string }).file_path, seeded.sourceLyricPath);
+    .get(seeded.lyricId) as { file_path: string }).file_path, kept);
 });
 
 test("rename removes identical duplicate lyrics and prunes their abandoned folder", async () => {

@@ -51,6 +51,35 @@ test("plain artist folders resolve only a unique catalogue name", () => {
   assert.equal(resolveCatalogArtistFromFolderName("Bastille"), null);
 });
 
+test("child album folders pick the artist who owns them", () => {
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('band', 'Bastille')").run();
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('person', 'Bastille')").run();
+  const band = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'band'").get() as { id: number }).id;
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+    VALUES ('oph', 'band', ?, 'Other People''s Heartache', 'Album')`).run(band);
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+    VALUES ('oph2', 'band', ?, 'Other People''s Heartache, Pt. 2', 'Album')`).run(band);
+
+  assert.equal(resolveCatalogArtistFromFolderName("Bastille"), null);
+  const match = resolveCatalogArtistFromFolderName("Bastille", [
+    "Other People’s Heartache (2012)",
+    "Other People’s Heartache, Pt. 2 (2012)",
+  ]);
+  assert.equal(match?.mbid, "band");
+});
+
+test("child albums owned by more than one same-named artist stay unresolved", () => {
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('band', 'Bastille')").run();
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('person', 'Bastille')").run();
+  const band = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'band'").get() as { id: number }).id;
+  const person = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'person'").get() as { id: number }).id;
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+    VALUES ('oph-band', 'band', ?, 'Other People''s Heartache', 'Album')`).run(band);
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+    VALUES ('oph-person', 'person', ?, 'Other People''s Heartache', 'Album')`).run(person);
+  assert.equal(resolveCatalogArtistFromFolderName("Bastille", ["Other People's Heartache (2012)"]), null);
+});
+
 test("an unknown explicit folder MBID cannot fall back to its artist name", () => {
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('plain-one', 'Bastille')").run();
   assert.equal(resolveCatalogArtistFromFolderName("Bastille {mbid-301b45a4-b8b9-410e-8344-4b4eaf96691a}"), null);

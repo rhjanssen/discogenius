@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "fs";
 import { nativeMediaTagKeys } from "./media-tag-io.js";
 import { withMediaFileLock } from "./media-file-lock.js";
@@ -184,6 +185,9 @@ type RetagTrackRow = {
   canonical_recording_mbid: string | null;
   recording_artist_credit: string | null;
   recording_data: string | null;
+  file_hash: string | null;
+  file_size: number | null;
+  file_modified_at: string | null;
 };
 
 export type RetagDifference = {
@@ -1283,6 +1287,70 @@ export class AudioTagService {
     `).all(...params) as Array<{ id: number }>).map((row) => row.id);
   }
 
+  /**
+   * Files whose stored retag stamp still matches the catalogue and the file
+   * on disk. The first pass stamps them; a later pass does not open them.
+   */
+  static getRetagWorkIds(options: RetagScopeOptions = {}): number[] {
+    const ids = this.getTrackFileIds(options);
+    if (ids.length === 0) return ids;
+    const stamped = db.prepare(`
+      SELECT id FROM TrackFiles
+      WHERE file_hash LIKE 'retag:v1:%'
+        AND file_size IS NOT NULL
+        AND modified_at IS NOT NULL
+        AND id IN (SELECT value FROM json_each(?))
+    `).all(JSON.stringify(ids)) as Array<{ id: number }>;
+    if (stamped.length === 0) return ids;
+    const config = getConfigSection("metadata") as MetadataConfig;
+    const quality = getConfigSection("quality");
+    const clean = new Set<number>();
+    for (const row of this.getTrackRowsByIds(stamped.map((item) => item.id))) {
+      if (this.retagStampMatches(row, config, quality)) clean.add(row.id);
+    }
+    return ids.filter((id) => !clean.has(id));
+  }
+
+  private static retagFingerprint(config: MetadataConfig, quality: QualityConfig, tags: ManagedTag[]): string {
+    return `retag:v1:${createHash("sha256").update(JSON.stringify({
+      policy: config.write_audio_tags_policy ?? "no",
+      replaygain: config.embed_replaygain !== false,
+      lyrics: quality.embed_lyrics === true,
+      cover: quality.embed_cover === true,
+      tags: tags.map((tag) => [tag.key, tag.targetValue]),
+    })).digest("hex")}`;
+  }
+
+  private static retagStampMatches(row: RetagTrackRow, config: MetadataConfig, quality: QualityConfig): boolean {
+    if (!row.file_hash?.startsWith("retag:v1:") || row.file_size == null || !row.file_modified_at) return false;
+    const tags = this.buildDesiredTags(row, config);
+    if (quality.embed_lyrics) {
+      try {
+        const resolved = resolveStoredLibraryPath({
+          filePath: row.file_path,
+          libraryRoot: row.library_root,
+          relativePath: row.relative_path,
+        });
+        const lyricTag = buildEmbeddedLyricsManagedTag(findAdjacentLyricSidecar(resolved));
+        if (lyricTag) tags.push(lyricTag);
+      } catch {
+        return false;
+      }
+    }
+    if (this.retagFingerprint(config, quality, tags) !== row.file_hash) return false;
+    try {
+      const resolved = resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+        relativePath: row.relative_path,
+      });
+      const stat = fs.statSync(resolved);
+      return stat.size === Number(row.file_size) && stat.mtime.toISOString() === row.file_modified_at;
+    } catch {
+      return false;
+    }
+  }
+
   static getAffectedArtistIds(options: RetagScopeOptions & { ids?: number[] }): string[] {
     const scope = options.ids?.length
       ? { where: ["lf.id IN (SELECT value FROM json_each(?))"], params: [JSON.stringify(options.ids)] }
@@ -1329,6 +1397,9 @@ export class AudioTagService {
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
+        lf.file_hash AS file_hash,
+        lf.file_size AS file_size,
+        lf.modified_at AS file_modified_at,
         artist.name AS primary_artist_name,
         COALESCE(canonical_track.title, canonical_recording.title, provider_track.title) AS media_title,
         NULL AS media_version,
@@ -3023,11 +3094,11 @@ export class AudioTagService {
     const rowsById = new Map(this.getTrackRowsByIds(ids).map((row) => [row.id, row]));
     const updateFileRecord = db.prepare(`
       UPDATE TrackFiles
-      SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
+      SET file_size = ?, modified_at = ?, file_hash = ?, verified_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
 
-    const pendingUpdates: Array<[number, string, number]> = []; // [size, mtime, id]
+    const pendingUpdates: Array<[number, string, string | null, number]> = []; // [size, mtime, stamp, id]
     const lyricsByProviderMedia = options.lyricsByProviderMedia ?? new Map<string, ResolvedLyrics | null>();
     const quality = getConfigSection("quality");
     const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext ?? {
@@ -3083,6 +3154,11 @@ export class AudioTagService {
             return;
           }
 
+          if (options.includeExternalLyrics !== true && this.retagStampMatches(row, config, quality)) {
+            result.skipped++;
+            return;
+          }
+
           const desiredTagsArr = this.buildDesiredTags(row, config);
 
           if (quality.embed_lyrics) {
@@ -3096,8 +3172,11 @@ export class AudioTagService {
             removals: this.buildRowManagedTagRemovals(row, config),
             embeddedCoverContext,
           };
+          const fingerprint = this.retagFingerprint(config, quality, desiredTagsArr);
           const preview = await this.evaluateRow(row, config, evaluationOptions);
           if (!preview.missing && preview.changes.length === 0) {
+            const stat = fs.statSync(resolvedPath);
+            pendingUpdates.push([stat.size, stat.mtime.toISOString(), fingerprint, id]);
             result.skipped++;
             return;
           }
@@ -3127,10 +3206,10 @@ export class AudioTagService {
           }
 
           const stat = fs.statSync(resolvedPath);
-          pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
-
           const verification = await this.evaluateRow(row, config, evaluationOptions);
-          if (verification.missing || verification.error || verification.changes.length > 0) {
+          const verified = !verification.missing && !verification.error && verification.changes.length === 0;
+          pendingUpdates.push([stat.size, stat.mtime.toISOString(), verified ? fingerprint : null, id]);
+          if (!verified) {
             const remainingFields = verification.changes
               .map((change) => change.field)
               .filter(Boolean)
@@ -3169,8 +3248,8 @@ export class AudioTagService {
     // Wait asynchronously between short commits. A catalog writer must not
     // turn successfully written tags into a failed job at the batch boundary.
     if (pendingUpdates.length > 0) {
-      await runGatedChunkedWrite(pendingUpdates, ([size, mtime, id]) => {
-        updateFileRecord.run(size, mtime, id);
+      await runGatedChunkedWrite(pendingUpdates, ([size, mtime, stamp, id]) => {
+        updateFileRecord.run(size, mtime, stamp, id);
       }, 100, "retag:file-facts");
     }
 
@@ -3185,9 +3264,10 @@ export class AudioTagService {
 
     // `apply` performs the same diff and skips aligned files. Pass exact row
     // identities instead of evaluating the scope first, which used to parse
-    // every file twice. Batching also keeps a large library below SQLite's
-    // bound-variable limit and avoids holding all joined tag context in memory.
-    const ids = this.getTrackFileIds(options);
+    // every file twice. Files already stamped against the current catalogue
+    // are left out of the batch. Batching also keeps a large library below
+    // SQLite's bound-variable limit.
+    const ids = this.getRetagWorkIds(options);
     const result: RetagApplyResult = {
       retagged: 0,
       skipped: 0,
