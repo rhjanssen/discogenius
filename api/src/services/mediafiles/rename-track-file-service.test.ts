@@ -1680,6 +1680,38 @@ for (const identical of [true, false]) {
   });
 }
 
+test("case-only cover rename drops the stale row when the canonical path is already registered", async () => {
+  seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
+  const root = configModule.Config.getMusicPath();
+  const stalePath = path.join(root, "Artist One", "album one", "cover.jpg");
+  const canonicalPath = path.join(root, "Artist One", "Album One", "cover.jpg");
+  fs.mkdirSync(path.dirname(stalePath), { recursive: true });
+  fs.writeFileSync(stalePath, "cover-bytes");
+  const insert = dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension, type, file_type,
+      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid
+    ) VALUES ('1', ?, ?, ?, 'jpg', 'AlbumImage', 'cover', 'artist-one-mbid', 'release-group-mbid-1', 'release-mbid-1')
+  `);
+  const stale = insert.run(path.relative(root, stalePath), stalePath, root);
+  const occupant = insert.run(path.relative(root, canonicalPath), canonicalPath, root);
+
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([
+    10_000_000 + Number(stale.lastInsertRowid),
+  ]);
+
+  assert.equal(result.errors.length, 0, result.errors.map((error) => error.error).join("; "));
+  assert.equal(result.conflicts, 0);
+  assert.equal(fs.existsSync(canonicalPath), true);
+  assert.equal(fs.readFileSync(canonicalPath, "utf8"), "cover-bytes");
+  assert.equal(dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE id = ?").get(stale.lastInsertRowid), undefined);
+  assert.equal(
+    (dbModule.db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ?").get(occupant.lastInsertRowid) as { file_path: string }).file_path,
+    canonicalPath,
+  );
+  assert.ok(fs.readdirSync(path.join(root, "Artist One")).includes("Album One"));
+});
+
 test("a failed duplicate-sidecar commit restores the staged source sidecar", async () => {
   const { audioId, lyricId, importDir, sourceLyricPath, destinationLyricPath } = seedConflictingLyrics();
 

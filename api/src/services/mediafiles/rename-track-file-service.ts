@@ -668,7 +668,49 @@ export class RenameTrackFileService {
           && pathsDifferOnlyByCase(resolvedFilePath, expectedPath)
           && sameDirectoryEntry(resolvedFilePath, expectedPath)) {
           releaseFileLocks = await acquireMediaFileLocks([resolvedFilePath, expectedPath]);
+          // A case-insensitive mount already has one directory entry. A second
+          // row that stores the canonical spelling owns that path. Updating this
+          // row onto it fails the unique index, so drop the stale registration
+          // and keep the file.
+          const occupant = db.prepare(`
+            SELECT ${idCol} AS id
+            FROM ${tableName}
+            WHERE ${idCol} != ? AND file_path = ?
+          `).get(decoded.id, expectedPath) as { id: number } | undefined;
           renameToCanonicalCase(resolvedFilePath, expectedPath);
+          if (occupant) {
+            if (tableName === "MetadataFiles") {
+              dbUpdates.push({
+                sql: `UPDATE ArtworkLibraryLinks
+                  SET metadata_file_id = ?
+                  WHERE metadata_file_id = ?
+                    AND NOT EXISTS (
+                      SELECT 1 FROM ArtworkLibraryLinks keeper
+                      WHERE keeper.metadata_file_id = ?
+                        AND keeper.cover_entity = ArtworkLibraryLinks.cover_entity
+                        AND keeper.entity_id = ArtworkLibraryLinks.entity_id
+                        AND keeper.cover_type = ArtworkLibraryLinks.cover_type
+                        AND keeper.file_path = ArtworkLibraryLinks.file_path
+                    )`,
+                args: [occupant.id, decoded.id, occupant.id],
+              });
+            }
+            dbUpdates.push({
+              sql: `DELETE FROM ${tableName} WHERE ${idCol} = ?`,
+              args: [decoded.id],
+            });
+            historyEvents.push({
+              artistId: row.artist_metadata_id,
+              albumId: row.album_id,
+              mediaId: row.media_id,
+              libraryFileId: row.id,
+              eventType: HISTORY_EVENT_TYPES.TrackFileRenamed,
+              data: { fromPath: resolvedFilePath, toPath: expectedPath, fileType: row.file_type, reason: "case-only-duplicate" },
+            });
+            await commitRenameRecords(dbUpdates, historyEvents);
+            result.renamed++;
+            continue;
+          }
           const root = resolveLibraryRootPath(null, expectedPath)
             || resolveLibraryRootPath(row.library_root, resolvedFilePath)
             || path.dirname(expectedPath);

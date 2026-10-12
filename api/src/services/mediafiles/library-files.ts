@@ -868,6 +868,41 @@ function mustDisambiguateTrackPath(
   return hasExpectedTrackPathConflict(cache, expectedPath, rowId);
 }
 
+/** The monitored edition named in the file's folder, when it has exactly one
+ * track for this recording. A later mbid that is not an edition is ignored. */
+function monitoredEditionTrackForPath(
+  filePath: string,
+  recordingMbid: string | null,
+  libraryId: number | null,
+): { releaseMbid: string; releaseGroupMbid: string; trackMbid: string } | null {
+  if (!recordingMbid || libraryId == null) return null;
+  const mbids = [...filePath.matchAll(/\{mbid-([0-9a-f-]{36})\}/gi)].map((match) => match[1]);
+  for (let index = mbids.length - 1; index >= 0; index -= 1) {
+    const rows = db.prepare(`
+      SELECT ae.mbid AS release_mbid, al.mbid AS release_group_mbid, t.mbid AS track_mbid
+      FROM AlbumEditions ae
+      JOIN Albums al ON al.id = ae.release_group_id
+      JOIN LibraryEditions le ON le.edition_id = ae.id AND le.library_id = ?
+      JOIN Tracks t ON t.album_edition_id = ae.id
+      JOIN Recordings r ON r.id = t.recording_id AND r.mbid = ?
+      WHERE ae.mbid = ?
+    `).all(libraryId, recordingMbid, mbids[index]) as Array<{
+      release_mbid: string;
+      release_group_mbid: string;
+      track_mbid: string;
+    }>;
+    if (rows.length > 1) return null;
+    if (rows.length === 1) {
+      return {
+        releaseMbid: rows[0].release_mbid,
+        releaseGroupMbid: rows[0].release_group_mbid,
+        trackMbid: rows[0].track_mbid,
+      };
+    }
+  }
+  return null;
+}
+
 export class LibraryFilesService {
   private static buildFileEventPayload(input: LibraryFileEventInput) {
     return {
@@ -3007,13 +3042,20 @@ export class LibraryFilesService {
    * while curation later selects the Jan 1 edition). Re-resolve identity now
    * that LibraryEditions exist: the unique monitored edition that carries this
    * recording wins, matching download-import remap.
+   *
+   * A file that already sits in a monitored edition folder keeps that edition
+   * when the folder has exactly one track for its recording. Several monitored
+   * editions often share a recording (remix albums, reissues). Pulling every
+   * copy onto the representative makes rename try to stack different audio
+   * onto one path. Unmonitor the folder edition before a scan when the file
+   * should move, the same way a foreign edition is dropped before rebind.
    */
   static rebindFilesToMonitoredEditions(artistId: string): { rebound: number } {
     const artistMetadataId = resolveArtistMetadataId(artistId);
     if (artistMetadataId == null) return { rebound: 0 };
     const rows = db.prepare(`
       SELECT
-        id, artist_metadata_id, file_path, library_root, file_type, quality, library_slot,
+        id, artist_metadata_id, library_id, file_path, library_root, file_type, quality, library_slot,
         provider, provider_entity_type, provider_id,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid
@@ -3024,6 +3066,7 @@ export class LibraryFilesService {
     `).all(artistMetadataId) as Array<{
       id: number;
       artist_metadata_id: string | number;
+      library_id: number | null;
       file_path: string;
       library_root: string | null;
       file_type: string;
@@ -3071,10 +3114,19 @@ export class LibraryFilesService {
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const identity = identities[index];
-      if (!identity?.canonicalReleaseMbid || !identity.canonicalTrackMbid) continue;
+      const folderTrack = monitoredEditionTrackForPath(
+        row.file_path,
+        row.canonical_recording_mbid,
+        row.library_id,
+      );
+      const releaseMbid = folderTrack?.releaseMbid ?? identity?.canonicalReleaseMbid ?? null;
+      const trackMbid = folderTrack?.trackMbid ?? identity?.canonicalTrackMbid ?? null;
+      const releaseGroupMbid = folderTrack?.releaseGroupMbid ?? identity?.canonicalReleaseGroupMbid ?? null;
+      const recordingMbid = identity?.canonicalRecordingMbid ?? row.canonical_recording_mbid;
+      if (!releaseMbid || !trackMbid) continue;
       if (
-        identity.canonicalReleaseMbid === row.canonical_release_mbid
-        && identity.canonicalTrackMbid === row.canonical_track_mbid
+        releaseMbid === row.canonical_release_mbid
+        && trackMbid === row.canonical_track_mbid
       ) {
         continue;
       }
@@ -3084,9 +3136,9 @@ export class LibraryFilesService {
           (SELECT id FROM Tracks WHERE mbid = ?) AS track_id,
           (SELECT id FROM Recordings WHERE mbid = ?) AS recording_id
       `).get(
-        identity.canonicalReleaseMbid,
-        identity.canonicalTrackMbid,
-        identity.canonicalRecordingMbid,
+        releaseMbid,
+        trackMbid,
+        recordingMbid,
       ) as {
         album_edition_id: number | null;
         track_id: number | null;
@@ -3097,10 +3149,10 @@ export class LibraryFilesService {
         catalogIds.album_edition_id,
         catalogIds.track_id,
         catalogIds.recording_id,
-        identity.canonicalReleaseMbid,
-        identity.canonicalTrackMbid,
-        identity.canonicalRecordingMbid,
-        identity.canonicalReleaseGroupMbid,
+        releaseMbid,
+        trackMbid,
+        recordingMbid,
+        releaseGroupMbid,
         row.id,
       );
       rebound += 1;

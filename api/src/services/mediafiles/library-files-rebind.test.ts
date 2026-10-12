@@ -222,3 +222,100 @@ test("rebind prefers a monitored provider edition over a different monitored sib
   assert.equal(rebound.canonical_release_mbid, "rel-english");
   assert.equal(rebound.canonical_track_mbid, "t-skinny-english");
 });
+
+test("rebind keeps a file on the monitored edition named in its folder", () => {
+  const { db } = dbModule;
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Lost Frequencies");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-aywm", "artist-mbid", "Are You With Me");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, 1, 20)
+  `).run("11111111-1111-4111-8111-111111111111", "rg-aywm", "artist-mbid", "Are You With Me (Remixes Two)");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, 1, 12)
+  `).run("22222222-2222-4222-8222-222222222222", "rg-aywm", "artist-mbid", "Are You With Me (Remixes Two)");
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 0)")
+    .run("rec-extended", "Are You With Me (extended remix)", "artist-mbid");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 14)
+  `).run("t-short", "11111111-1111-4111-8111-111111111111", "rec-extended", "Are You With Me (remix)");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 9)
+  `).run("t-extended", "22222222-2222-4222-8222-222222222222", "rec-extended", "Are You With Me (extended remix)");
+  db.prepare(`UPDATE Albums SET artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')`).run();
+  db.prepare(`
+    UPDATE AlbumEditions SET
+      release_group_id = (SELECT id FROM Albums WHERE mbid = AlbumEditions.release_group_mbid),
+      artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')
+  `).run();
+  db.prepare(`
+    UPDATE Tracks SET
+      album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid),
+      recording_id = (SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid)
+  `).run();
+
+  const shortEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = '11111111-1111-4111-8111-111111111111'").get() as { id: number };
+  const extendedEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = '22222222-2222-4222-8222-222222222222'").get() as { id: number };
+  const shortTrack = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-short'").get() as { id: number };
+  const extendedTrack = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-extended'").get() as { id: number };
+  const group = db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-aywm'").get() as { id: number };
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = 'Rebind Stereo'").get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, group.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+    VALUES (?, ?, 'auto', 1, 'curation_primary', 1)
+  `).run(library.id, shortEdition.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'discography_gap_fill', 1)
+  `).run(library.id, extendedEdition.id);
+  seedAcceptedProviderTrackMatch(db, {
+    provider: "tidal",
+    providerEditionId: "tidal-short",
+    providerTrackId: "tidal-extended-file",
+    releaseMbid: "11111111-1111-4111-8111-111111111111",
+    trackMbid: "t-short",
+  });
+
+  const filePath = path.join(
+    tempDir, "stereo", "Lost Frequencies {mbid-artist-mbid}",
+    "Are You With Me (Remixes Two) {mbid-22222222-2222-4222-8222-222222222222}",
+    "09 - Are You With Me (extended remix).flac",
+  );
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, album_edition_id, track_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      provider, provider_entity_type, provider_id,
+      canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid
+    ) VALUES (
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, ?, ?, 'track', 'stereo',
+      ?, ?, 'Lost Frequencies/extended/09.flac', '09 - Are You With Me (extended remix).flac', 'flac',
+      'tidal', 'track', 'tidal-extended-file',
+      'rg-aywm', '11111111-1111-4111-8111-111111111111', 't-short', 'rec-extended'
+    )
+  `).run(library.id, shortEdition.id, shortTrack.id, path.join(tempDir, "stereo"), filePath);
+
+  const result = libraryFilesModule.LibraryFilesService.rebindFilesToMonitoredEditions("artist-mbid");
+  assert.equal(result.rebound, 1);
+  const rebound = db.prepare(`
+    SELECT album_edition_id, track_id, canonical_release_mbid, canonical_track_mbid
+    FROM TrackFiles WHERE file_path = ?
+  `).get(filePath) as {
+    album_edition_id: number;
+    track_id: number;
+    canonical_release_mbid: string;
+    canonical_track_mbid: string;
+  };
+  assert.equal(rebound.album_edition_id, extendedEdition.id);
+  assert.equal(rebound.track_id, extendedTrack.id);
+  assert.equal(rebound.canonical_release_mbid, "22222222-2222-4222-8222-222222222222");
+  assert.equal(rebound.canonical_track_mbid, "t-extended");
+});
