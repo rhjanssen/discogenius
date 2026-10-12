@@ -37,6 +37,7 @@ import {
   type library_slot,
 } from "./library-file-identity.js";
 import { getCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
+import { parseFilenameDiscTrack } from "./library-scan-metadata-match.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata/canonical-album-metadata.js";
@@ -868,8 +869,23 @@ function mustDisambiguateTrackPath(
   return hasExpectedTrackPathConflict(cache, expectedPath, rowId);
 }
 
-/** The monitored edition named in the file's folder, when it has exactly one
- * track for this recording. A later mbid that is not an edition is ignored. */
+function chooseTrackForFilename<T extends {
+  medium_position: number | null;
+  position: number | null;
+}>(rows: T[], filePath: string): T | null {
+  if (rows.length === 1) return rows[0];
+  const disc = parseFilenameDiscTrack(filePath);
+  if (!disc) return null;
+  const hits = rows.filter((row) =>
+    Number(row.medium_position || 1) === disc.medium
+    && Number(row.position || 0) === disc.position
+  );
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** The monitored edition named in the file's folder. Several tracks for one
+ * recording stay unresolved unless the filename's disc and position pick one.
+ * A later mbid that is not an edition is ignored. */
 function monitoredEditionTrackForPath(
   filePath: string,
   recordingMbid: string | null,
@@ -879,7 +895,8 @@ function monitoredEditionTrackForPath(
   const mbids = [...filePath.matchAll(/\{mbid-([0-9a-f-]{36})\}/gi)].map((match) => match[1]);
   for (let index = mbids.length - 1; index >= 0; index -= 1) {
     const rows = db.prepare(`
-      SELECT ae.mbid AS release_mbid, al.mbid AS release_group_mbid, t.mbid AS track_mbid
+      SELECT ae.mbid AS release_mbid, al.mbid AS release_group_mbid, t.mbid AS track_mbid,
+             t.medium_position AS medium_position, t.position AS position
       FROM AlbumEditions ae
       JOIN Albums al ON al.id = ae.release_group_id
       JOIN LibraryEditions le ON le.edition_id = ae.id AND le.library_id = ?
@@ -890,17 +907,42 @@ function monitoredEditionTrackForPath(
       release_mbid: string;
       release_group_mbid: string;
       track_mbid: string;
+      medium_position: number | null;
+      position: number | null;
     }>;
-    if (rows.length > 1) return null;
-    if (rows.length === 1) {
-      return {
-        releaseMbid: rows[0].release_mbid,
-        releaseGroupMbid: rows[0].release_group_mbid,
-        trackMbid: rows[0].track_mbid,
-      };
-    }
+    if (rows.length === 0) continue;
+    const chosen = chooseTrackForFilename(rows, filePath);
+    if (!chosen) return null;
+    return {
+      releaseMbid: chosen.release_mbid,
+      releaseGroupMbid: chosen.release_group_mbid,
+      trackMbid: chosen.track_mbid,
+    };
   }
   return null;
+}
+
+/** When the chosen edition lists this recording more than once, the filename
+ * disc and position select the track. One track, or no filename hit, leaves
+ * the caller's choice alone. */
+function filenameTrackOnRelease(
+  filePath: string,
+  releaseMbid: string,
+  recordingMbid: string,
+): string | null {
+  const rows = db.prepare(`
+    SELECT t.mbid AS track_mbid, t.medium_position AS medium_position, t.position AS position
+    FROM Tracks t
+    JOIN AlbumEditions ae ON ae.id = t.album_edition_id
+    JOIN Recordings r ON r.id = t.recording_id
+    WHERE ae.mbid = ? AND r.mbid = ?
+  `).all(releaseMbid, recordingMbid) as Array<{
+    track_mbid: string;
+    medium_position: number | null;
+    position: number | null;
+  }>;
+  if (rows.length < 2) return null;
+  return chooseTrackForFilename(rows, filePath)?.track_mbid ?? null;
 }
 
 export class LibraryFilesService {
@@ -3120,7 +3162,10 @@ export class LibraryFilesService {
         row.library_id,
       );
       const releaseMbid = folderTrack?.releaseMbid ?? identity?.canonicalReleaseMbid ?? null;
-      const trackMbid = folderTrack?.trackMbid ?? identity?.canonicalTrackMbid ?? null;
+      const namedTrack = releaseMbid && row.canonical_recording_mbid
+        ? filenameTrackOnRelease(row.file_path, releaseMbid, row.canonical_recording_mbid)
+        : null;
+      const trackMbid = namedTrack ?? folderTrack?.trackMbid ?? identity?.canonicalTrackMbid ?? null;
       const releaseGroupMbid = folderTrack?.releaseGroupMbid ?? identity?.canonicalReleaseGroupMbid ?? null;
       const recordingMbid = identity?.canonicalRecordingMbid ?? row.canonical_recording_mbid;
       if (!releaseMbid || !trackMbid) continue;

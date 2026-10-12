@@ -319,3 +319,173 @@ test("rebind keeps a file on the monitored edition named in its folder", () => {
   assert.equal(rebound.canonical_release_mbid, "22222222-2222-4222-8222-222222222222");
   assert.equal(rebound.canonical_track_mbid, "t-extended");
 });
+
+test("rebind splits two disc files onto the folder edition tracks they are named for", () => {
+  const { db } = dbModule;
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "The Kinks");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-face", "artist-mbid", "Face to Face");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, 1, 1)
+  `).run("33333333-3333-4333-8333-333333333333", "rg-face", "artist-mbid", "Face to Face");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, 2, 2)
+  `).run("44444444-4444-4444-8444-444444444444", "rg-face", "artist-mbid", "Face to Face");
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 0)")
+    .run("rec-party", "Party Line", "artist-mbid");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 2, 1)
+  `).run("t-party-single", "33333333-3333-4333-8333-333333333333", "rec-party", "Party Line");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 1)
+  `).run("t-party-d1", "44444444-4444-4444-8444-444444444444", "rec-party", "Party Line");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 2, 1)
+  `).run("t-party-d2", "44444444-4444-4444-8444-444444444444", "rec-party", "Party Line");
+  db.prepare(`UPDATE Albums SET artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')`).run();
+  db.prepare(`
+    UPDATE AlbumEditions SET
+      release_group_id = (SELECT id FROM Albums WHERE mbid = AlbumEditions.release_group_mbid),
+      artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')
+  `).run();
+  db.prepare(`
+    UPDATE Tracks SET
+      album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid),
+      recording_id = (SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid)
+  `).run();
+
+  const singleEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = '33333333-3333-4333-8333-333333333333'").get() as { id: number };
+  const boxEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = '44444444-4444-4444-8444-444444444444'").get() as { id: number };
+  const singleTrack = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-party-single'").get() as { id: number };
+  const disc1 = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-party-d1'").get() as { id: number };
+  const disc2 = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-party-d2'").get() as { id: number };
+  const group = db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-face'").get() as { id: number };
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = 'Rebind Stereo'").get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, group.id);
+  for (const editionId of [singleEdition.id, boxEdition.id]) {
+    db.prepare(`
+      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+      VALUES (?, ?, 'auto', ?, 'test', 1)
+    `).run(library.id, editionId, editionId === singleEdition.id ? 1 : 0);
+  }
+  const insert = db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, album_edition_id, track_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid
+    ) VALUES (
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, ?, ?, 'track', 'stereo',
+      ?, ?, ?, ?, 'flac',
+      'rg-face', '33333333-3333-4333-8333-333333333333', 't-party-single', 'rec-party'
+    )
+  `);
+  const folder = path.join(
+    tempDir, "stereo", "The Kinks {mbid-artist-mbid}",
+    "Face to Face {mbid-44444444-4444-4444-8444-444444444444}",
+  );
+  const disc1Path = path.join(folder, "101 - Party Line.flac");
+  const disc2Path = path.join(folder, "201 - Party Line.flac");
+  insert.run(library.id, singleEdition.id, singleTrack.id, path.join(tempDir, "stereo"), disc1Path, "kinks/101.flac", "101 - Party Line.flac");
+  insert.run(library.id, singleEdition.id, singleTrack.id, path.join(tempDir, "stereo"), disc2Path, "kinks/201.flac", "201 - Party Line.flac");
+
+  const result = libraryFilesModule.LibraryFilesService.rebindFilesToMonitoredEditions("artist-mbid");
+  assert.equal(result.rebound, 2);
+  const bound = db.prepare(`
+    SELECT file_path, album_edition_id, track_id, canonical_track_mbid
+    FROM TrackFiles ORDER BY filename
+  `).all() as Array<{ file_path: string; album_edition_id: number; track_id: number; canonical_track_mbid: string }>;
+  assert.equal(bound[0].file_path, disc1Path);
+  assert.equal(bound[0].album_edition_id, boxEdition.id);
+  assert.equal(bound[0].track_id, disc1.id);
+  assert.equal(bound[0].canonical_track_mbid, "t-party-d1");
+  assert.equal(bound[1].file_path, disc2Path);
+  assert.equal(bound[1].album_edition_id, boxEdition.id);
+  assert.equal(bound[1].track_id, disc2.id);
+  assert.equal(bound[1].canonical_track_mbid, "t-party-d2");
+});
+
+test("rebind uses the filename position when one monitored edition lists the recording twice", () => {
+  const { db } = dbModule;
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "The Supremes");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-joined", "artist-mbid", "Joined Together");
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, 2, 2)
+  `).run("55555555-5555-4555-8555-555555555555", "rg-joined", "artist-mbid", "Joined Together: The Complete Studio Duets");
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 0)")
+    .run("rec-try", "I'll Try Something New", "artist-mbid");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 1, 8)
+  `).run("t-try-stereo", "55555555-5555-4555-8555-555555555555", "rec-try", "I'll Try Something New");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, 2, 11)
+  `).run("t-try-single", "55555555-5555-4555-8555-555555555555", "rec-try", "I'll Try Something New (single mix)");
+  db.prepare(`UPDATE Albums SET artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')`).run();
+  db.prepare(`
+    UPDATE AlbumEditions SET
+      release_group_id = (SELECT id FROM Albums WHERE mbid = AlbumEditions.release_group_mbid),
+      artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid')
+  `).run();
+  db.prepare(`
+    UPDATE Tracks SET
+      album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid),
+      recording_id = (SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid)
+  `).run();
+
+  const edition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = '55555555-5555-4555-8555-555555555555'").get() as { id: number };
+  const stereo = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-try-stereo'").get() as { id: number };
+  const single = db.prepare("SELECT id FROM Tracks WHERE mbid = 't-try-single'").get() as { id: number };
+  const group = db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-joined'").get() as { id: number };
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = 'Rebind Stereo'").get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, group.id);
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, reason, curation_version)
+    VALUES (?, ?, 'manual', 1, 'test', 1)
+  `).run(library.id, edition.id);
+  const insert = db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, album_edition_id, track_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid
+    ) VALUES (
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'), ?, ?, ?, 'track', 'stereo',
+      ?, ?, ?, ?, 'flac',
+      'rg-joined', '55555555-5555-4555-8555-555555555555', 't-try-stereo', 'rec-try'
+    )
+  `);
+  const sessions = path.join(
+    tempDir, "stereo", "The Supremes {mbid-artist-mbid}",
+    "Joined Together The Complete Studio Sessions {mbid-66666666-6666-4666-8666-666666666666}",
+  );
+  const stereoPath = path.join(sessions, "108 - I'll Try Something New (stereo version).flac");
+  const singlePath = path.join(sessions, "211 - I'll Try Something New.flac");
+  insert.run(library.id, edition.id, stereo.id, path.join(tempDir, "stereo"), stereoPath, "supremes/108.flac", "108 - I'll Try Something New (stereo version).flac");
+  insert.run(library.id, edition.id, stereo.id, path.join(tempDir, "stereo"), singlePath, "supremes/211.flac", "211 - I'll Try Something New.flac");
+
+  const result = libraryFilesModule.LibraryFilesService.rebindFilesToMonitoredEditions("artist-mbid");
+  assert.equal(result.rebound, 1);
+  const moved = db.prepare(`
+    SELECT track_id, canonical_track_mbid FROM TrackFiles WHERE file_path = ?
+  `).get(singlePath) as { track_id: number; canonical_track_mbid: string };
+  const stayed = db.prepare(`
+    SELECT track_id, canonical_track_mbid FROM TrackFiles WHERE file_path = ?
+  `).get(stereoPath) as { track_id: number; canonical_track_mbid: string };
+  assert.equal(moved.track_id, single.id);
+  assert.equal(moved.canonical_track_mbid, "t-try-single");
+  assert.equal(stayed.track_id, stereo.id);
+  assert.equal(stayed.canonical_track_mbid, "t-try-stereo");
+});

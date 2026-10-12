@@ -994,3 +994,71 @@ test("inline video without a provider filename token matches the catalog recordi
   assert.equal(match!.mediaId, "");
   assert.equal(match!.duplicateOfExisting, false);
 });
+
+test("a file tagged for its own edition is not a duplicate of the same recording elsewhere", () => {
+  const artistMetaId = seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-talkin",
+    releaseMbid: "rel-1991",
+    trackMbid: "trk-1991",
+    recordingMbid: "rec-gus",
+    title: "Get Up, Stand Up",
+    albumTitle: "Talkin' Blues",
+    editionTitle: "Talkin' Blues",
+    position: 7,
+    lengthMs: 200000,
+  });
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-talkin",
+    releaseMbid: "rel-2002",
+    trackMbid: "trk-2002",
+    recordingMbid: "rec-gus",
+    title: "Get Up, Stand Up",
+    albumTitle: "Talkin' Blues",
+    editionTitle: "Talkin' Blues",
+    position: 7,
+    lengthMs: 200000,
+  });
+  seedOffer({
+    providerId: "tidal-gus",
+    title: "Get Up, Stand Up",
+    albumId: "album-2002",
+    duration: 200,
+    recordingMbid: "rec-gus",
+  });
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      canonical_release_mbid, canonical_recording_mbid, canonical_track_mbid
+    ) VALUES (
+      ?, 'tidal', 'track', 'tidal-gus', 'track', 'stereo',
+      'music', ?, 'Bob Marley/2002/07.flac', '07 - Get Up, Stand Up.flac', 'flac',
+      'rel-2002', 'rec-gus', 'trk-2002'
+    )
+  `).run(
+    artistMetaId,
+    "/library/stereo-music/Bob Marley/Talkin Blues (2002)/07 - Get Up, Stand Up.flac",
+  );
+
+  const match = matchModule.matchAudioFileByMetadata(
+    "/library/stereo-music/Bob Marley/Talkin Blues (1991)/07 - Get Up Stand Up.flac",
+    String(artistMetaId),
+    "music",
+    {
+      title: "Get Up Stand Up",
+      album: "Talkin' Blues",
+      musicbrainzRecordingId: "rec-gus",
+      musicbrainzTrackId: "trk-1991",
+      musicbrainzAlbumId: "rel-1991",
+      durationSeconds: 200,
+    },
+  );
+
+  assert.ok(match);
+  assert.equal(match!.duplicateOfExisting, false);
+  assert.equal(match!.canonicalReleaseMbid, "rel-1991");
+  assert.equal(match!.canonicalTrackMbid, "trk-1991");
+  assert.equal(match!.canonicalRecordingMbid, "rec-gus");
+});

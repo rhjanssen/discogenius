@@ -496,9 +496,9 @@ function existingTrackFileForOffer(
     provider: string,
     providerId: string,
     librarySlot: string,
-): { file_path: string } | undefined {
+): { file_path: string; canonical_release_mbid: string | null } | undefined {
     return db.prepare(`
-        SELECT file_path
+        SELECT file_path, canonical_release_mbid
         FROM TrackFiles
         WHERE artist_metadata_id = ?
           AND provider = ?
@@ -508,7 +508,10 @@ function existingTrackFileForOffer(
           AND library_slot = ?
         ORDER BY verified_at DESC, id DESC
         LIMIT 1
-    `).get(artistId, provider, providerId, librarySlot) as { file_path: string } | undefined;
+    `).get(artistId, provider, providerId, librarySlot) as {
+        file_path: string;
+        canonical_release_mbid: string | null;
+    } | undefined;
 }
 
 function offersByRecordingMbid(artistId: string, recordingMbid: string, preferredSlot: string): ProviderOfferRow[] {
@@ -1004,7 +1007,15 @@ export function matchAudioFileByMetadata(
     // means a later provider-offer hit still carries canonical MBIDs (the file
     // often has none yet — Apple rips in a Discogenius folder).
     const catalogMatch = matchCatalogTrackByTags(filePath, artistId, tags, preferredSlot);
-    if (catalogMatch?.duplicateOfExisting) {
+    // A copy that names its own release is not a leftover of another edition
+    // that already has this recording.
+    const otherEditionDuplicate = Boolean(
+        catalogMatch?.duplicateOfExisting
+        && releaseMbid
+        && catalogMatch?.canonicalReleaseMbid
+        && catalogMatch.canonicalReleaseMbid !== releaseMbid
+    );
+    if (catalogMatch?.duplicateOfExisting && !otherEditionDuplicate) {
         return catalogMatch;
     }
     const siblingPinned = folderCanonicalReleaseMbids(filePath, artistId).size > 0;
@@ -1118,7 +1129,7 @@ export function matchAudioFileByMetadata(
         // file directly (Lidarr-style). The TrackFile carries no provider
         // identity, only canonical MBIDs, which is enough to count as downloaded
         // and to render on the album page.
-        if (catalogMatch) return catalogMatch;
+        if (catalogMatch && !otherEditionDuplicate) return catalogMatch;
         if (catalogLink) {
             return {
                 albumId: catalogLink.releaseGroupMbid,
@@ -1140,8 +1151,15 @@ export function matchAudioFileByMetadata(
     const librarySlot = preferredSlot;
     const existing = existingTrackFileForOffer(artistId, best.provider, String(best.provider_id), librarySlot);
     const resolvedExisting = existing?.file_path || null;
+    const fileReleaseMbid = releaseMbid || catalogLink?.releaseMbid || catalogMatch?.canonicalReleaseMbid || null;
+    // The same provider recording on another edition is a second track. Only a
+    // file already attached to this release is a leftover copy.
+    const sameRelease = !fileReleaseMbid
+        || !existing?.canonical_release_mbid
+        || existing.canonical_release_mbid === fileReleaseMbid;
     const duplicateOfExisting = Boolean(
         resolvedExisting
+        && sameRelease
         && path.resolve(resolvedExisting) !== path.resolve(filePath)
     );
 
