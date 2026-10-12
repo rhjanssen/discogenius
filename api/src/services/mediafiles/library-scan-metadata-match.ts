@@ -979,8 +979,14 @@ export function matchAudioFileByMetadata(
     // Prefer same-folder title+duration siblings first. Wild World Complete vs
     // standard share a recording MBID but different provider album ids; linking
     // the leftover 201 file to Complete Edition would create a second TrackFile.
+    // An embedded release-track id that names a different track is that track,
+    // not a leftover of the one sibling with a similar title and length.
     const folderDuplicate = findSameFolderDuplicate(filePath, artistId, tags);
-    if (folderDuplicate) {
+    const embeddedTrackId = tags.musicbrainzTrackId?.trim() || null;
+    if (
+        folderDuplicate
+        && (!embeddedTrackId || embeddedTrackId === folderDuplicate.canonicalTrackMbid)
+    ) {
         return {
             albumId: folderDuplicate.albumId,
             mediaId: folderDuplicate.providerId,
@@ -1018,10 +1024,40 @@ export function matchAudioFileByMetadata(
     if (catalogMatch?.duplicateOfExisting && !otherEditionDuplicate) {
         return catalogMatch;
     }
-    const siblingPinned = folderCanonicalReleaseMbids(filePath, artistId).size > 0;
-    if (siblingPinned && !catalogMatch) {
-        // Known album folder, title not on that edition. Stay Unmapped rather
-        // than attaching a different album via ISRC (e.g. the standalone single).
+    const siblingReleases = folderCanonicalReleaseMbids(filePath, artistId);
+    if (siblingReleases.size > 0 && !catalogMatch) {
+        // Title matching missed. An embedded release-track id that belongs to
+        // this folder's edition is still that track. Anything else stays
+        // unmapped rather than attaching a different album via ISRC.
+        const embedded = resolveCatalogTrackFromEmbeddedMbids(tags, preferredSlot);
+        if (embedded && siblingReleases.has(embedded.releaseMbid)) {
+            const existing = embedded.recordingMbid
+                ? existingTrackFileForCanonical(
+                    artistId,
+                    embedded.recordingMbid,
+                    preferredSlot,
+                    embedded.releaseMbid,
+                )
+                : undefined;
+            const resolvedExisting = existing?.file_path || null;
+            const duplicateOfExisting = Boolean(
+                resolvedExisting && path.resolve(resolvedExisting) !== path.resolve(filePath),
+            );
+            return {
+                albumId: embedded.releaseGroupMbid,
+                mediaId: "",
+                provider: "",
+                fileType: "track",
+                quality: importedQualityForTrackedFile(filePath),
+                librarySlot: preferredSlot,
+                duplicateOfExisting,
+                existingFilePath: duplicateOfExisting ? resolvedExisting : null,
+                canonicalTrackMbid: embedded.trackMbid,
+                canonicalRecordingMbid: embedded.recordingMbid,
+                canonicalReleaseMbid: embedded.releaseMbid,
+                canonicalReleaseGroupMbid: embedded.releaseGroupMbid,
+            };
+        }
         return null;
     }
 

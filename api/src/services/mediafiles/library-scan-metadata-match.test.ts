@@ -1062,3 +1062,134 @@ test("a file tagged for its own edition is not a duplicate of the same recording
   assert.equal(match!.canonicalTrackMbid, "trk-1991");
   assert.equal(match!.canonicalRecordingMbid, "rec-gus");
 });
+
+test("an interview titled like its siblings stays on the embedded release track", () => {
+  const artistMetaId = seedArtist();
+  const talks = [
+    { trackMbid: "trk-talk-1", recordingMbid: "rec-talk-1", position: 1, lengthMs: 50000 },
+    { trackMbid: "trk-talk-5", recordingMbid: "rec-talk-5", position: 5, lengthMs: 52000 },
+    { trackMbid: "trk-talk-12", recordingMbid: "rec-talk-12", position: 12, lengthMs: 51173 },
+  ];
+  for (const talk of talks) {
+    seedCatalogTrack({
+      releaseGroupMbid: "rg-talkin",
+      releaseMbid: "rel-1991",
+      trackMbid: talk.trackMbid,
+      recordingMbid: talk.recordingMbid,
+      title: "Talkin'",
+      albumTitle: "Talkin' Blues",
+      editionTitle: "Talkin' Blues",
+      position: talk.position,
+      lengthMs: talk.lengthMs,
+    });
+  }
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-talkin",
+    releaseMbid: "rel-2002",
+    trackMbid: "trk-talk-2002",
+    recordingMbid: "rec-talk-12",
+    title: "Talkin'",
+    albumTitle: "Talkin' Blues",
+    editionTitle: "Talkin' Blues",
+    position: 13,
+    lengthMs: 51173,
+  });
+  seedOffer({
+    providerId: "tidal-talk-12",
+    title: "Talkin'",
+    albumId: "album-2002",
+    duration: 51,
+    recordingMbid: "rec-talk-12",
+  });
+  const { db } = dbModule;
+  const folder = "/library/stereo-music/Bob Marley/Talkin Blues (1991)";
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension, duration,
+      canonical_track_mbid, canonical_recording_mbid, canonical_release_mbid, canonical_release_group_mbid
+    ) VALUES (
+      ?, 'tidal', 'track', 'tidal-talk-1', 'track', 'stereo',
+      'music', ?, 'Bob Marley/1991/01.flac', '01 - Talkin''.flac', 'flac', 50,
+      'trk-talk-1', 'rec-talk-1', 'rel-1991', 'rg-talkin'
+    )
+  `).run(artistMetaId, `${folder}/01 - Talkin'.flac`);
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension, duration,
+      canonical_track_mbid, canonical_recording_mbid, canonical_release_mbid, canonical_release_group_mbid
+    ) VALUES (
+      ?, 'tidal', 'track', 'tidal-talk-12', 'track', 'stereo',
+      'music', ?, 'Bob Marley/2002/13.flac', '13 - Talkin''.flac', 'flac', 51,
+      'trk-talk-2002', 'rec-talk-12', 'rel-2002', 'rg-talkin'
+    )
+  `).run(artistMetaId, "/library/stereo-music/Bob Marley/Talkin Blues (2002)/13 - Talkin'.flac");
+
+  const match = matchModule.matchAudioFileByMetadata(
+    `${folder}/12 - Talkin'.flac`,
+    String(artistMetaId),
+    "music",
+    {
+      title: "Talkin'",
+      album: "Talkin' Blues",
+      musicbrainzRecordingId: "rec-talk-12",
+      musicbrainzTrackId: "trk-talk-12",
+      musicbrainzAlbumId: "rel-1991",
+      durationSeconds: 51,
+    },
+  );
+
+  assert.ok(match);
+  assert.equal(match!.duplicateOfExisting, false);
+  assert.equal(match!.canonicalReleaseMbid, "rel-1991");
+  assert.equal(match!.canonicalTrackMbid, "trk-talk-12");
+  assert.equal(match!.canonicalRecordingMbid, "rec-talk-12");
+});
+
+test("a pinned folder still accepts an embedded track id when the title misses", () => {
+  const artistMetaId = seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-talkin",
+    releaseMbid: "rel-1991",
+    trackMbid: "trk-talk-12",
+    recordingMbid: "rec-talk-12",
+    title: "Talkin'",
+    albumTitle: "Talkin' Blues",
+    editionTitle: "Talkin' Blues",
+    position: 12,
+    lengthMs: 51173,
+  });
+  const { db } = dbModule;
+  const folder = "/library/stereo-music/Bob Marley/Talkin Blues (1991)";
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, provider, provider_entity_type, provider_id, file_type, library_slot,
+      library_root, file_path, relative_path, filename, extension,
+      canonical_track_mbid, canonical_recording_mbid, canonical_release_mbid, canonical_release_group_mbid
+    ) VALUES (
+      ?, 'tidal', 'track', 'tidal-other', 'track', 'stereo',
+      'music', ?, 'Bob Marley/1991/01.flac', '01 - Other.flac', 'flac',
+      'trk-other', 'rec-other', 'rel-1991', 'rg-talkin'
+    )
+  `).run(artistMetaId, `${folder}/01 - Other.flac`);
+
+  const match = matchModule.matchAudioFileByMetadata(
+    `${folder}/Spoken intro.flac`,
+    String(artistMetaId),
+    "music",
+    {
+      title: "Spoken intro",
+      album: "Talkin' Blues",
+      musicbrainzRecordingId: "rec-talk-12",
+      musicbrainzTrackId: "trk-talk-12",
+      musicbrainzAlbumId: "rel-1991",
+      durationSeconds: 51,
+    },
+  );
+
+  assert.ok(match);
+  assert.equal(match!.duplicateOfExisting, false);
+  assert.equal(match!.canonicalTrackMbid, "trk-talk-12");
+  assert.equal(match!.canonicalReleaseMbid, "rel-1991");
+});
