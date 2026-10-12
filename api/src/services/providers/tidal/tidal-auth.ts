@@ -9,6 +9,15 @@ const TIDAL_AUTH_DIR = path.join(CONFIG_DIR, "providers", "tidal");
 const TIDAL_AUTH_TOKEN_FILE = path.join(TIDAL_AUTH_DIR, "token.json");
 const TIDAL_AUTH_BASE = "https://auth.tidal.com/v1";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
+// TIDAL answers a refused refresh with 403 abuse_detected. Retrying on the
+// five-minute token interval keeps that block in place. One refusal pauses
+// further attempts for 12 hours; the stored token stays untouched.
+const TIDAL_ABUSE_BACKOFF_MS = 12 * 60 * 60 * 1000;
+let tidalRefreshBlockedUntilMs = 0;
+
+export function resetTidalRefreshBackoffForTests(): void {
+    tidalRefreshBlockedUntilMs = 0;
+}
 
 function getTidalAuthClientConfig() {
     return resolveTidalAuthClientConfig(process.env);
@@ -199,6 +208,9 @@ export function clearStoredTidalToken(): void {
 }
 
 export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> {
+    if (Date.now() < tidalRefreshBlockedUntilMs) {
+        return null;
+    }
     const token = loadStoredTidalToken();
     if (!token?.refresh_token) {
         return null;
@@ -227,8 +239,13 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
         } catch {
             // The status alone is enough when the provider returns no JSON.
         }
+        if (response.status === 403 && errorCode === "abuse_detected") {
+            tidalRefreshBlockedUntilMs = Date.now() + TIDAL_ABUSE_BACKOFF_MS;
+            console.warn("[TIDAL] Token refresh paused for 12 hours after HTTP 403 abuse_detected");
+        }
         throw new Error(`TIDAL token refresh failed (HTTP ${response.status}${errorCode ? `: ${errorCode}` : ""})`);
     }
+    tidalRefreshBlockedUntilMs = 0;
 
     const data = await response.json() as {
         access_token: string;
