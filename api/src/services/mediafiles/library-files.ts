@@ -678,6 +678,8 @@ export interface ExpectedPathCache {
   trackMeta: Map<string, CanonicalTrackLookupRow | null>;
   /** ArtistMetadata (name/mbid) by mbid — bulk-loaded once per batch. */
   artistMeta: Map<string, { name?: string; mbid?: string | null } | null>;
+  /** Parsed AlbumEditions.media by release mbid and medium position. */
+  mediums: Map<string, { mediumName: string | null; mediumFormat: string | null }>;
   /** Rename batches collect candidate paths, then resolve all occupants in one indexed query. */
   trackCollisionMode: "database" | "collect" | "loaded";
   pendingTrackPaths: Map<string, string>;
@@ -703,6 +705,7 @@ export function createExpectedPathCache(
     albumDirs: new Map(),
     trackMeta: new Map(),
     artistMeta: new Map(),
+    mediums: new Map(),
     trackCollisionMode: options.deferTrackCollisionLookup ? "collect" : "database",
     pendingTrackPaths: new Map(),
     trackPathOwners: new Map(),
@@ -828,6 +831,20 @@ export function hasExpectedTrackPathConflict(
   if (cache.trackCollisionMode !== "loaded" || !expectedPath) return false;
   const owners = cache.trackPathOwners.get(normalizeResolvedPath(expectedPath));
   return Boolean(owners && Array.from(owners).some((ownerId) => ownerId !== rowId));
+}
+
+function cachedMediumNaming(
+  cache: ExpectedPathCache | undefined,
+  releaseMbid: string | null | undefined,
+  position: number | null | undefined,
+): { mediumName: string | null; mediumFormat: string | null } {
+  if (!cache) return getCanonicalMediumNaming(releaseMbid, position);
+  const key = `${releaseMbid ?? ""}|${position ?? ""}`;
+  const hit = cache.mediums.get(key);
+  if (hit) return hit;
+  const resolved = getCanonicalMediumNaming(releaseMbid, position);
+  cache.mediums.set(key, resolved);
+  return resolved;
 }
 
 function mustDisambiguateTrackPath(
@@ -1481,7 +1498,7 @@ export class LibraryFilesService {
         ...albumContext,
         originalFileName: path.parse(String(row.file_path || "")).name,
         originalTitle: path.parse(String(row.file_path || "")).name,
-        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, 1),
+        ...cachedMediumNaming(cache, canonicalIdentity.canonicalReleaseMbid, 1),
         trackTitle: "Track",
         trackNumber: 1,
         volumeNumber: 1,
@@ -1578,7 +1595,7 @@ export class LibraryFilesService {
         ...albumContext,
         originalFileName: path.parse(String(row.file_path || "")).name,
         originalTitle: path.parse(String(row.file_path || "")).name,
-        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
+        ...cachedMediumNaming(cache, canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,
@@ -1707,7 +1724,7 @@ export class LibraryFilesService {
         ...albumContext,
         originalFileName: path.parse(String(row.file_path || "")).name,
         originalTitle: path.parse(String(row.file_path || "")).name,
-        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
+        ...cachedMediumNaming(cache, canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,

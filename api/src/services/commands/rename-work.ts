@@ -36,13 +36,13 @@ function outcomes(plan: Plan): Array<{ file_id: number; identity_snapshot: strin
  * not. Each physical mutation has its own recovery journal; the command plan
  * settles bounded work and releases disk admission between dispatches. */
 export async function runRenameWorkUnit(job: CommandModel, ctx: CommandHandlerContext,
-    resolveIds: () => number[], reconcileSidecars: boolean): Promise<RenameApplyResult> {
+    resolveIds: () => number[] | Promise<number[]>, reconcileSidecars: boolean): Promise<RenameApplyResult> {
     assertOwner(job);
     const revision = createHash("sha256").update(JSON.stringify({ path: getConfigSection("path"),
         naming: getConfigSection("naming"), metadata: getConfigSection("metadata") })).digest("hex");
     let plan = getPlan(job.id);
     if (!plan) {
-        const ids = [...new Set(resolveIds())];
+        const ids = [...new Set(await Promise.resolve(resolveIds()))];
         if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("Invalid rename file identity");
         const files = ids.map(id => ({ id, identity: identity(id) }));
         await withSqliteWriteGate(() => db.transaction(() => {

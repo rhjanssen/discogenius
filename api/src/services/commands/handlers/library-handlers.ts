@@ -8,6 +8,7 @@ import { AudioTagService } from "../../mediafiles/audio-tag-service.js";
 import { parseFileSelectionIds } from "../../mediafiles/file-selection.js";
 import { VideoTagService } from "../../mediafiles/video-tag-service.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
+import { resolveArtistMetadataId } from "../../music/managed-artists.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import { CommandQueueManager } from "../command-queue-manager.js";
@@ -163,15 +164,33 @@ export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) =
 
 export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
-        progress: Math.max(5, job.progress),
-        description: 'Rename Artist - applying artist-wide rename plan',
+        progress: 1,
+        description: "Rename - choosing files",
     });
-    const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
+    const requestedIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds
         : (job.payload.artistId ? [job.payload.artistId] : []);
+    const seenArtists = new Set<string>();
+    const artistIds: string[] = [];
+    for (const requestedId of requestedIds) {
+        const key = String(resolveArtistMetadataId(String(requestedId)) ?? requestedId);
+        if (seenArtists.has(key)) continue;
+        seenArtists.add(key);
+        artistIds.push(key);
+    }
     if (artistIds.length === 0) throw new Error("RenameArtist requires at least one artist id");
-    const result = await runRenameWorkUnit(job, ctx, () => artistIds.flatMap(artistId =>
-        RenameTrackFileService.getRenameWorkIds({ artistId })), true);
+    const result = await runRenameWorkUnit(job, ctx, async () => {
+        const ids: number[] = [];
+        for (let index = 0; index < artistIds.length; index += 1) {
+            ids.push(...RenameTrackFileService.getRenameWorkIds({ artistId: artistIds[index] }));
+            ctx.updateCommandDescription(job, {
+                progress: Math.max(1, Math.min(4, Math.floor(((index + 1) / artistIds.length) * 4))),
+                description: `Rename - choosing files ${index + 1}/${artistIds.length}`,
+            });
+            await ctx.yieldToEventLoop();
+        }
+        return ids;
+    }, true);
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.errors.length} error(s), ${result.cleanedDirectories} empty folder(s) cleaned`,

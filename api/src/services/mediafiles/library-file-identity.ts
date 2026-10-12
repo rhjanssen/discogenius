@@ -818,7 +818,18 @@ export function resolveLibraryFileIdentities(
     ]),
   );
   const selections = loadLibrarySelections(releaseGroupMbids);
-  const uniqueMonitoredReleases = loadUniqueMonitoredReleaseByRecording(releaseGroupMbids);
+  // A stored file already names its release. Rename planning resolves every
+  // row that way, and the unique-release query joins every track of those
+  // albums. Skip it when the stored release will win for the whole batch.
+  const storedReleaseWins = evidence.every((entry) => {
+    if (entry.prepared.input.editionContext !== "stored-file") return false;
+    const stored = nullableText(entry.prepared.input.canonicalReleaseMbid)
+      ?? entry.inputTrack?.releaseMbid;
+    return Boolean(stored);
+  });
+  const uniqueMonitoredReleases = storedReleaseWins
+    ? new Map<string, string>()
+    : loadUniqueMonitoredReleaseByRecording(releaseGroupMbids);
   for (const entry of evidence) {
       const libraryClass = entry.prepared.preferredSlot === "spatial" ? "spatial" : "stereo";
       const selection = entry.releaseGroupMbid
