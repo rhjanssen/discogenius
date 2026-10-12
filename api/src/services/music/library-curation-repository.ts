@@ -203,6 +203,8 @@ export class LibraryCurationRepository {
       // Automation may only reconsider rows it created itself. A manual choice
       // is the user's, and a locked Album holds every Edition under it — the
       // lock lives on LibraryAlbums, which is the one authority on the subject.
+      // An edition that already has library files stays monitored too. Dropping
+      // it would let housekeeping delete those files on the next pass.
       const overruledScope = overruledReleaseGroupIds.length === 0
         ? ""
         : `OR edition.release_group_id IN (${overruledPlaceholders})`;
@@ -229,6 +231,11 @@ export class LibraryCurationRepository {
           AND COALESCE(library_album.locked, 0) = 0
           AND (monitored_edition.selection_mode = 'auto' ${overruledScope})
           ${ownedByThisPass}
+          AND NOT EXISTS (
+            SELECT 1 FROM TrackFiles owned_file
+            WHERE owned_file.library_id = monitored_edition.library_id
+              AND owned_file.album_edition_id = monitored_edition.edition_id
+          )
       `).all(
         input.libraryId,
         ...overruledReleaseGroupIds,
