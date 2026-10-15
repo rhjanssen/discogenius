@@ -7,6 +7,7 @@ import { resolveTidalAuthClientConfig } from "../../config/provider-client-confi
 
 const TIDAL_AUTH_DIR = path.join(CONFIG_DIR, "providers", "tidal");
 const TIDAL_AUTH_TOKEN_FILE = path.join(TIDAL_AUTH_DIR, "token.json");
+const TIDAL_REFRESH_PAUSE_FILE = path.join(TIDAL_AUTH_DIR, "refresh-pause.json");
 const TIDAL_AUTH_BASE = "https://auth.tidal.com/v1";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 // TIDAL answers a refused refresh with 403 abuse_detected. Retrying on the
@@ -17,6 +18,34 @@ let tidalRefreshBlockedUntilMs = 0;
 
 export function resetTidalRefreshBackoffForTests(): void {
     tidalRefreshBlockedUntilMs = 0;
+    fs.rmSync(TIDAL_REFRESH_PAUSE_FILE, { force: true });
+}
+
+function tidalRefreshBlockedUntilFromDisk(): number {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(TIDAL_REFRESH_PAUSE_FILE, "utf8")) as { until?: unknown };
+        const until = typeof parsed.until === "string" ? Date.parse(parsed.until) : Number.NaN;
+        return Number.isFinite(until) ? until : 0;
+    } catch {
+        return 0;
+    }
+}
+
+export function isTidalRefreshPaused(now = Date.now()): boolean {
+    return now < Math.max(tidalRefreshBlockedUntilMs, tidalRefreshBlockedUntilFromDisk());
+}
+
+function pauseTidalRefresh(untilMs: number): void {
+    tidalRefreshBlockedUntilMs = untilMs;
+    fs.mkdirSync(TIDAL_AUTH_DIR, { recursive: true });
+    const temporary = `${TIDAL_REFRESH_PAUSE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify({ until: new Date(untilMs).toISOString() }));
+    fs.renameSync(temporary, TIDAL_REFRESH_PAUSE_FILE);
+}
+
+function clearTidalRefreshPause(): void {
+    tidalRefreshBlockedUntilMs = 0;
+    fs.rmSync(TIDAL_REFRESH_PAUSE_FILE, { force: true });
 }
 
 function getTidalAuthClientConfig() {
@@ -208,7 +237,7 @@ export function clearStoredTidalToken(): void {
 }
 
 export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> {
-    if (Date.now() < tidalRefreshBlockedUntilMs) {
+    if (isTidalRefreshPaused()) {
         return null;
     }
     const token = loadStoredTidalToken();
@@ -240,12 +269,12 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
             // The status alone is enough when the provider returns no JSON.
         }
         if (response.status === 403 && errorCode === "abuse_detected") {
-            tidalRefreshBlockedUntilMs = Date.now() + TIDAL_ABUSE_BACKOFF_MS;
+            pauseTidalRefresh(Date.now() + TIDAL_ABUSE_BACKOFF_MS);
             console.warn("[TIDAL] Token refresh paused for 12 hours after HTTP 403 abuse_detected");
         }
         throw new Error(`TIDAL token refresh failed (HTTP ${response.status}${errorCode ? `: ${errorCode}` : ""})`);
     }
-    tidalRefreshBlockedUntilMs = 0;
+    clearTidalRefreshPause();
 
     const data = await response.json() as {
         access_token: string;

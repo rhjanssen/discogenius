@@ -6,6 +6,7 @@ import {
   saveStoredTidalToken,
   clearStoredTidalToken,
   refreshStoredTidalToken,
+  isTidalRefreshPaused,
 } from "./tidal-auth.js";
 import { tidalVideoQualityTag } from "./tidal-quality.js";
 import { resolveTidalVideoQualityTag } from "./tidal-video-probe.js";
@@ -673,6 +674,10 @@ export async function refreshTidalToken(force: boolean = false): Promise<void> {
 
   // Skip refresh if token is still valid (unless forced)
   if (!force && !shouldRefreshToken(token)) {
+    return;
+  }
+
+  if (isTidalRefreshPaused()) {
     return;
   }
 

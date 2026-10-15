@@ -47,8 +47,39 @@ test("TIDAL abuse_detected pauses further refresh attempts and keeps the token",
 
   try {
     await assert.rejects(refreshStoredTidalToken, /TIDAL token refresh failed \(HTTP 403: abuse_detected\)/);
+    const pause = JSON.parse(fs.readFileSync(path.join(path.dirname(TIDAL_AUTH_TOKEN_FILE), "refresh-pause.json"), "utf8"));
+    assert.equal(typeof pause.until, "string");
+    assert.equal(JSON.stringify(pause).includes("old-refresh"), false);
     assert.equal(await refreshStoredTidalToken(), null);
     assert.equal(calls, 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(TIDAL_AUTH_TOKEN_FILE, "utf8")), token);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTidalRefreshBackoffForTests();
+    fs.rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test("a pause file blocks TIDAL refresh after the in-memory pause is gone", async () => {
+  resetTidalRefreshBackoffForTests();
+  const directory = path.dirname(TIDAL_AUTH_TOKEN_FILE);
+  fs.mkdirSync(directory, { recursive: true });
+  const token = { access_token: "old-access", refresh_token: "old-refresh", expires_at: 1 };
+  fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify(token));
+  fs.writeFileSync(path.join(directory, "refresh-pause.json"), JSON.stringify({
+    until: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  }));
+
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error("fetch should not run");
+  };
+
+  try {
+    assert.equal(await refreshStoredTidalToken(), null);
+    assert.equal(calls, 0);
     assert.deepEqual(JSON.parse(fs.readFileSync(TIDAL_AUTH_TOKEN_FILE, "utf8")), token);
   } finally {
     globalThis.fetch = originalFetch;
