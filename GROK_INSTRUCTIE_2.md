@@ -1,0 +1,10 @@
+﻿Nieuwe instructie van Robert (via Grok Bot), 9 okt 13:50. Lees dit volledig.
+
+1. Koerswijziging artwork/MediaCover-cache. Robert wil GEEN permanente opruim-/retirementlogica voor originelen op volle resolutie. De echte fix is het gedrag van de app zelf:
+   - De MediaCover-cache in de config-map bewaart alleen kleine UI-proxies (250/500). Er worden geen full-res originelen meer in de cache opgeslagen.
+   - Full-res artwork (cover, editiecover, artiestbeelden en andere sidecars) wordt bij download/import of bij een retag direct van de provider gehaald en naast de media in de bibliotheek geschreven. Zie .ref_lidarr en .ref_jellyfin hoe zij dat doen. De bibliotheek is de master, niet de cache.
+   - Als de proxies ontbreken of de cache wordt geleegd, moet de app ze gewoon opnieuw genereren (vanuit de bibliotheekfile of de provider), net als Lidarr.
+   - Het opruimen van de huidige ~92 GB originelen is een EENMALIGE migratie: zorg dat elke geïmporteerde release zijn full-res sidecar in de bibliotheek heeft (de retag/rename-ronde mag die aanmaken), en verwijder daarna in één keer de originelen uit de cache. Dat mag een eenvoudig eenmalig commando of script zijn. Houd het klein. Bouw er geen blijvend subsysteem omheen, en draai of versimpel de retirement-machinerie uit 833b207d terug waar die alleen voor deze migratie dient.
+2. Eerst live stabiliseren: health is unhealthy door een vastgelopen worker op commando 16281, en er staan 117 commando's in de wachtrij. Zoek de oorzaak en los die op. Een containerherstart om de stuck worker los te krijgen mag, mits gelogd. Downloads blijven gepauzeerd.
+3. Geef voorrang aan wat nodig is om dit weekend (za 10 en zo 11 okt) de downloads te hervatten: de cleanup-planner, de sidecar-koppeling, een geteste deploy, een verse volledige scan, rename, retag, strikte opruiming, verificatie, daarna de wachtrij leegmaken en de downloads hervatten. Pak door en vermijd perfectionisme op randgevallen die geen dataverlies veroorzaken.
+4. De regels uit GROK_HANDOFF.md blijven gelden. Push je commits en deploy alleen geteste builds. Meld je kort in het Nederlands bij een mijlpaal of een echte blokkade.

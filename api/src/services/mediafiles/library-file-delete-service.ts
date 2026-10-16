@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "fs";
 import path from "path";
 import { db } from "../../database.js";
@@ -7,6 +8,7 @@ import {
 } from "../download/download-state.js";
 import {
   captureLinkedExtras,
+  deleteExtraFileById,
   emptyExtraDeletionResult,
   releaseExtrasForDeletedTrackFiles,
   type ExtraDeletionResult,
@@ -438,4 +440,136 @@ export function deleteLibraryFilesByIds(
     invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
   }
   return { ...result, unmonitored: false };
+}
+
+type MetadataFileDeleteRow = {
+  id: number;
+  file_path: string;
+  expected_path: string | null;
+  library_root: string;
+  file_type: string;
+};
+
+/**
+ * Delete one MetadataFiles row and the bytes it names.
+ *
+ * When album art still points at this row and another cover already occupies
+ * the expected path, the link moves to that cover before this row is removed.
+ */
+export function deleteMetadataFileById(
+  fileId: number,
+  options: DeleteLibraryFilesOptions = {},
+): DeleteLibraryFilesResult {
+  const empty = (): DeleteLibraryFilesResult => ({
+    deleted: 0,
+    missing: 0,
+    errors: 0,
+    skippedOutsideRoot: 0,
+    unmonitored: false,
+    extras: emptyExtraDeletionResult(),
+  });
+  if (!Number.isInteger(fileId) || fileId <= 0) return empty();
+
+  const scope = resolveDeletionScope(options);
+  const row = db.prepare(`
+    SELECT id, file_path, expected_path, library_root, file_type
+    FROM MetadataFiles
+    WHERE id = ?
+  `).get(fileId) as MetadataFileDeleteRow | undefined;
+  if (!row) return empty();
+
+  const resolvedFilePath = resolveStoredLibraryPath({
+    filePath: row.file_path,
+    libraryRoot: row.library_root,
+  });
+  if (!pathIsInsideScopeRoot(scope, resolvedFilePath)) {
+    return { ...empty(), skippedOutsideRoot: 1 };
+  }
+
+  const keeper = findReplacementCover(row);
+  if (keeper) {
+    const keeperPath = resolveStoredLibraryPath({
+      filePath: keeper.file_path,
+      libraryRoot: keeper.library_root,
+    });
+    if (!pathIsInsideScopeRoot(scope, keeperPath) || !fs.existsSync(keeperPath)) {
+      return { ...empty(), errors: 1 };
+    }
+    const hash = createHash("sha256").update(fs.readFileSync(keeperPath)).digest("hex");
+    retargetArtworkLinks(row.id, keeper.id, keeper.file_path, hash);
+  }
+
+  const extras = deleteExtraFileById("MetadataFiles", fileId, scope);
+  if (!extras) return empty();
+  if (extras.errors === 0 && extras.deleted + extras.missing > 0) {
+    const root = resolveLibraryRootPath(row.library_root, resolvedFilePath);
+    if (root) removeEmptyParents(path.dirname(resolvedFilePath), root);
+  }
+  return {
+    deleted: extras.deleted,
+    missing: extras.missing,
+    errors: extras.errors,
+    skippedOutsideRoot: 0,
+    unmonitored: false,
+    extras,
+  };
+}
+
+function findReplacementCover(row: MetadataFileDeleteRow): MetadataFileDeleteRow | undefined {
+  const expected = String(row.expected_path || "").trim();
+  if (!expected || expected === row.file_path) return undefined;
+  return db.prepare(`
+    SELECT id, file_path, expected_path, library_root, file_type
+    FROM MetadataFiles
+    WHERE file_path = ? AND id != ? AND file_type = ?
+  `).get(expected, row.id, row.file_type) as MetadataFileDeleteRow | undefined;
+}
+
+function retargetArtworkLinks(
+  fromMetadataFileId: number,
+  toMetadataFileId: number,
+  toFilePath: string,
+  contentHash: string,
+): void {
+  const links = db.prepare(`
+    SELECT cover_entity, entity_id, cover_type, file_path
+    FROM ArtworkLibraryLinks
+    WHERE metadata_file_id = ?
+  `).all(fromMetadataFileId) as Array<{
+    cover_entity: string;
+    entity_id: string;
+    cover_type: string;
+    file_path: string;
+  }>;
+  if (links.length === 0) return;
+
+  db.transaction(() => {
+    for (const link of links) {
+      const occupiesDestination = db.prepare(`
+        SELECT 1 AS present
+        FROM ArtworkLibraryLinks
+        WHERE cover_entity = ? AND entity_id = ? AND cover_type = ? AND file_path = ?
+      `).get(link.cover_entity, link.entity_id, link.cover_type, toFilePath) as { present: number } | undefined;
+      if (occupiesDestination) {
+        db.prepare(`
+          DELETE FROM ArtworkLibraryLinks
+          WHERE cover_entity = ? AND entity_id = ? AND cover_type = ? AND file_path = ?
+        `).run(link.cover_entity, link.entity_id, link.cover_type, link.file_path);
+        continue;
+      }
+      db.prepare(`
+        UPDATE ArtworkLibraryLinks
+        SET file_path = ?, content_hash = ?, metadata_file_id = ?
+        WHERE cover_entity = ? AND entity_id = ? AND cover_type = ? AND file_path = ?
+      `).run(
+        toFilePath,
+        contentHash,
+        toMetadataFileId,
+        link.cover_entity,
+        link.entity_id,
+        link.cover_type,
+        link.file_path,
+      );
+    }
+  })();
 }

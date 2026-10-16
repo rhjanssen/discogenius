@@ -236,3 +236,20 @@ export function releaseExtrasForDeletedTrackFiles(input: {
 
   return result;
 }
+
+/** Remove one extra row and its bytes. Returns null when the id does not exist. */
+export function deleteExtraFileById(
+  table: ExtraFileTableName,
+  id: number,
+  scope: DeletionScope,
+): ExtraDeletionResult | null {
+  const row = db.prepare(`
+    SELECT id, file_path, library_root, track_file_id
+    FROM ${table}
+    WHERE id = ?
+  `).get(id) as ExtraRow | undefined;
+  if (!row) return null;
+  const result = emptyExtraDeletionResult();
+  releaseExtra(table, row, scope, true, result);
+  return result;
+}
