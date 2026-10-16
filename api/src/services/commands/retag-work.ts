@@ -9,9 +9,12 @@ import { CommandFileWorkRepository as Work } from "./command-file-work-repositor
 import { CommandContinuation } from "./command-continuation.js";
 import type { CommandHandlerContext } from "./handlers/handler-context.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
+import { hasPendingImportHandoff } from "./import-admission.js";
 
-/** A dispatch owns the disk slot for at most 25 settled files or 30 seconds
- * between files. File intents/results are durable indexed records. An in-flight
+/** A dispatch owns the disk slot for up to 250 settled files or 120 seconds,
+ * but hands it back after the current file as soon as a finished download is
+ * waiting to import. (A fixed 25-file/30s slice re-queued the command every
+ * ~20s and dropped the per-album cover cache each time.) File intents/results are durable indexed records. An in-flight
  * write is deliberately not declared safe for automatic replay. */
 export async function runRetagWorkUnit(
     job: CommandModel,
@@ -65,7 +68,8 @@ export async function runRetagWorkUnit(
                 description: `${stripOnly ? "Strip tags" : "Retag"} - processed ${plan.cursor}/${plan.total} files`,
             });
             settled++;
-            if (settled >= 25 || performance.now() - started >= 30_000) break;
+            if (settled >= 250 || performance.now() - started >= 120_000) break;
+            if (settled % 5 === 0 && hasPendingImportHandoff()) break;
             await ctx.yieldToEventLoop();
         }
     } finally {

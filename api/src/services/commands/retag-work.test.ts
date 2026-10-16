@@ -21,7 +21,7 @@ before(async () => {
     config = await import("../config/config.js");
     const artist = database.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('retag-artist', 'Bastille')").run().lastInsertRowid;
     const recording = database.db.prepare("INSERT INTO Recordings (foreign_recording_id, mbid, title, artist_mbid) VALUES ('retag-recording', 'retag-recording', 'Pompeii', 'retag-artist')").run().lastInsertRowid;
-    ids = Array.from({ length: 26 }, (_, i) => Number(database.db.prepare(`
+    ids = Array.from({ length: 251 }, (_, i) => Number(database.db.prepare(`
         INSERT INTO TrackFiles (artist_metadata_id, recording_id, file_path, filename, relative_path, library_root, extension, file_type, library_slot)
         VALUES (?, ?, ?, ?, ?, ?, 'flac', 'track', 'stereo')
     `).run(artist, recording, path.join(tempDir, `missing-${i}.flac`), `missing-${i}.flac`, `missing-${i}.flac`, tempDir).lastInsertRowid));
@@ -46,14 +46,14 @@ test("retag resumes its exact settled file plan after a database reopen", async 
     const { CommandContinuation } = await import("./command-continuation.js");
     assert.ok(continuation instanceof CommandContinuation);
     assert.equal(await context.persistCommandOutcome(job, continuation), "requeued");
-    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 25);
-    assert.equal(records.CommandFileWorkRepository.get(job.id)?.missing, 25);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 250);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.missing, 250);
     assert.equal(database.db.prepare("SELECT 1 FROM CommandFileWork WHERE command_id = ? AND status = 'started'").get(job.id), undefined);
     database.dbModule.closeDatabase();
     database.dbModule.initDatabase();
     const next = queue.CommandQueueManager.claimForExecution(job.id, "unit-two", 60_000)!;
     const result = await work.runRetagWorkUnit(next, context.buildHandlerContext(), () => { throw new Error("Scope must not be reselected"); });
-    assert.equal(result.missing, 26);
+    assert.equal(result.missing, 251);
     assert.equal(result.errors.length, 0);
     assert.deepEqual((database.db.prepare("SELECT track_file_id FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id) as Array<{ track_file_id: number }>).map(row => row.track_file_id), ids);
     assert.equal(await context.persistCommandOutcome(next, null), "completed");
@@ -65,11 +65,11 @@ test("tag stripping uses the same bounded durable work units", async () => {
     try { await work.runRetagWorkUnit(job, context.buildHandlerContext(), () => ids, true); }
     catch (error) { continuation = error; }
     assert.equal(await context.persistCommandOutcome(job, continuation), "requeued");
-    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 25);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 250);
     assert.equal((database.db.prepare("SELECT operation FROM CommandFileWorkPlans WHERE command_id = ?").get(job.id) as { operation: string }).operation, "strip");
     const next = queue.CommandQueueManager.claimForExecution(job.id, "strip-two", 60_000)!;
     const result = await work.runRetagWorkUnit(next, context.buildHandlerContext(), () => { throw new Error("Must not reselect"); }, true);
-    assert.equal(result.missing, 26);
+    assert.equal(result.missing, 251);
 });
 
 test("a settings change cannot silently mix tag policies across retag units", async () => {
@@ -81,7 +81,7 @@ test("a settings change cannot silently mix tag policies across retag units", as
     config.updateConfig("metadata", { write_audio_tags_policy: "no" });
     const next = queue.CommandQueueManager.claimForExecution(job.id, "policy-two", 60_000)!;
     await assert.rejects(work.runRetagWorkUnit(next, context.buildHandlerContext(), () => ids), /settings changed/);
-    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 25);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 250);
 });
 
 test("retired ownership prevents a retag from starting its next file", async () => {

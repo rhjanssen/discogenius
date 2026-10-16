@@ -106,6 +106,8 @@ export type MediaTagWriteResult = {
   success: boolean;
   backend?: "taglib";
   error?: string;
+  /** True when the requested cover was written and verified in the same rewrite. */
+  coverEmbedded?: boolean;
 };
 
 function extensionOf(filePath: string): string {
@@ -501,9 +503,8 @@ function writeTagLibValues(
   });
 }
 
-function readTagLibValue(filePath: string, rawKey: string): string {
-  const extension = extensionOf(filePath);
-  return withTagLibFile(filePath, (file) => {
+function readTagLibValueFromFile(file: TagLibFile, extension: string, rawKey: string): string {
+  {
     if (rawKey === "ID3v1") return (file.tagTypesOnDisk & TagTypes.Id3v1) ? "present" : "";
     if (XIPH_EXTENSIONS.has(extension)) {
       if (rawKey.toLowerCase() === "isrc") {
@@ -516,7 +517,7 @@ function readTagLibValue(filePath: string, rawKey: string): string {
       return readId3Value(file.getTag(TagTypes.Id3v2, false) as Id3v2Tag, rawKey);
     }
     return readMp4Value(file.getTag(TagTypes.Apple, false) as Mpeg4AppleTag, rawKey);
-  });
+  }
 }
 
 function verifyTagLibValues(
@@ -524,8 +525,20 @@ function verifyTagLibValues(
   tags: Record<string, string>,
   removeKeys: string[],
 ): void {
+  // Parse the file once for every key: opening it per key re-read the whole
+  // metadata block (including embedded art) 30-40 times per retagged track.
+  const extension = extensionOf(filePath);
+  withTagLibFile(filePath, (file) => verifyTagLibValuesInFile(file, extension, tags, removeKeys));
+}
+
+function verifyTagLibValuesInFile(
+  file: TagLibFile,
+  extension: string,
+  tags: Record<string, string>,
+  removeKeys: string[],
+): void {
   for (const [key, expected] of Object.entries(tags)) {
-    const actual = readTagLibValue(filePath, key);
+    const actual = readTagLibValueFromFile(file, extension, key);
     if (isArtistIdList(key)) {
       if (JSON.stringify(tagValues(key, actual).sort()) !== JSON.stringify(tagValues(key, expected).sort())) throw new Error(`Artist ID verification failed for ${key}`);
       continue;
@@ -554,22 +567,23 @@ function verifyTagLibValues(
   }
   for (const key of removeKeys) {
     if (Object.hasOwn(tags, key)) continue;
-    if (normalizeTagValue(readTagLibValue(filePath, key))) {
+    if (normalizeTagValue(readTagLibValueFromFile(file, extension, key))) {
       throw new Error(`TagLib removal verification failed for ${key}`);
     }
   }
 }
 
 export async function writeMediaTagsWithTagLib(
-  filePath: string, tags: Record<string, string>, removeKeys: string[] = [],
+  filePath: string, tags: Record<string, string>, removeKeys: string[] = [], coverPath?: string | null,
 ): Promise<MediaTagWriteResult> {
-  return withMediaFileLock(filePath, () => writeMediaTagsWithTagLibUnlocked(filePath, tags, removeKeys));
+  return withMediaFileLock(filePath, () => writeMediaTagsWithTagLibUnlocked(filePath, tags, removeKeys, coverPath));
 }
 
 async function writeMediaTagsWithTagLibUnlocked(
   filePath: string,
   tags: Record<string, string>,
   removeKeys: string[] = [],
+  coverPath?: string | null,
 ): Promise<MediaTagWriteResult> {
   if (!canHandleWithTagLib(filePath)) {
     return { handled: false, success: false };
@@ -580,10 +594,31 @@ async function writeMediaTagsWithTagLibUnlocked(
     const mediaStructure = readMediaStructure(filePath);
     fs.copyFileSync(filePath, workingPath);
     writeTagLibValues(workingPath, tags, removeKeys);
-    verifyTagLibValues(workingPath, tags, removeKeys);
+    // Embed the front cover in the same working copy, so a retag that needs
+    // tags and art costs one file copy + one replace instead of two.
+    const expectedCover = coverPath ? fs.readFileSync(coverPath) : null;
+    if (coverPath) {
+      withTagLibFile(workingPath, (file) => {
+        const picture = Picture.fromPath(coverPath);
+        picture.type = PictureType.FrontCover;
+        picture.description = "Cover (front)";
+        file.tag.pictures = [picture];
+        file.save();
+      });
+    }
+    const extension = extensionOf(workingPath);
+    withTagLibFile(workingPath, (file) => {
+      verifyTagLibValuesInFile(file, extension, tags, removeKeys);
+      if (expectedCover) {
+        const actual = file.tag.pictures[0]?.data?.toByteArray();
+        if (!actual || !Buffer.from(actual).equals(expectedCover)) throw new Error("TagLib cover verification failed");
+      }
+    });
     verifyMediaStructure(workingPath, mediaStructure);
     replaceMediaFile(filePath, workingPath);
-    return { handled: true, success: true, backend: "taglib" };
+    return coverPath
+      ? { handled: true, success: true, backend: "taglib", coverEmbedded: true }
+      : { handled: true, success: true, backend: "taglib" };
   } catch (error) {
     fs.rmSync(workingPath, { force: true });
     return {

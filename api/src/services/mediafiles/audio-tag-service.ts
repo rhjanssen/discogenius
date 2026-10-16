@@ -14,7 +14,7 @@ import {
   type WriteAudioTagsPolicy,
   getConfigSection,
 } from "../config/config.js";
-import { embedAudioCover, compareEmbeddedAudioCover, prepareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, removeAllTags } from "./audioUtils.js";
+import { embedAudioCover, compareEmbeddedAudioCover, prepareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, writeMetadataWithCover, removeAllTags } from "./audioUtils.js";
 import {
   type AcoustIdLookupResult,
   type MusicBrainzRecording,
@@ -3194,15 +3194,27 @@ export class AudioTagService {
 
           // Remove unwanted fields in the same atomic rewrite as the desired
           // tags, so a failed write never leaves an already-scrubbed original.
-          const success = await writeMetadata(resolvedPath, desiredTags, removalKeys);
-          if (!success) {
+          // Resolve the album cover (cached per album in the session) up front
+          // and fold it into the tag rewrite when it differs from the embedded
+          // one: one copy/verify/replace of the audio file instead of two.
+          let combinedCover: string | null = null;
+          if (quality.embed_cover !== false) {
+            const coverPath = await resolvePreferredEmbeddedCover(row, config, resolvedPath, embeddedCoverContext);
+            if (coverPath && !shouldSkipCoverEmbed(await compareEmbeddedAudioCover(resolvedPath, coverPath))) {
+              combinedCover = coverPath;
+            }
+          }
+          const write = await writeMetadataWithCover(resolvedPath, desiredTags, removalKeys, combinedCover);
+          if (!write.success) {
             result.errors.push({ id, error: "Metadata write failed" });
             return;
           }
 
-          const coverOutcome = await applyPreferredCover(row, resolvedPath, id);
-          if (coverOutcome === "failed") {
-            return;
+          if (!write.coverEmbedded && combinedCover) {
+            const coverOutcome = await applyPreferredCover(row, resolvedPath, id);
+            if (coverOutcome === "failed") {
+              return;
+            }
           }
 
           const stat = fs.statSync(resolvedPath);

@@ -494,6 +494,20 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
     return withMediaFileLock(filePath, () => writeMetadataUnlocked(filePath, tags, removeKeys));
 }
 
+/** Tags plus front cover in one TagLib rewrite. Returns coverEmbedded=false when
+ * the cover still needs the separate embed path (non-TagLib backends). */
+export async function writeMetadataWithCover(
+    filePath: string, tags: Record<string, string>, removeKeys: string[], coverPath: string | null,
+): Promise<{ success: boolean; coverEmbedded: boolean }> {
+    return withMediaFileLock(filePath, async () => {
+        if (coverPath && fs.existsSync(coverPath)) {
+            const combined = await writeMediaTagsWithTagLib(filePath, tags, removeKeys, coverPath);
+            if (combined.success) return { success: true, coverEmbedded: combined.coverEmbedded === true };
+        }
+        return { success: await writeMetadataUnlocked(filePath, tags, removeKeys), coverEmbedded: false };
+    });
+}
+
 async function writeMetadataUnlocked(filePath: string, tags: Record<string, string>, removeKeys: string[]): Promise<boolean> {
     const tagLibResult = await writeMediaTagsWithTagLib(filePath, tags, removeKeys);
     if (tagLibResult.success) {
