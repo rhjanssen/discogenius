@@ -1,4 +1,5 @@
 import { markAcquisitionPlanningStale } from "../music/acquisition-planning-control.js";
+import { prefetchImportNetworkData, resolveImportedCatalogIdentity } from "../mediafiles/downloaded-tracks-import-service.js";
 import { ProviderUnavailableError } from "./provider-unavailable-error.js";
 import { providerRequestWorkerData } from "../providers/provider-request-state.js";
 import { superviseDownloadProcesses } from "./download-child-process.js";
@@ -893,6 +894,9 @@ export class DownloadProcessor {
                     cover: resolved.cover,
                 }, waitJobId);
                 console.log(`[DOWNLOAD-PROCESSOR] Completed download+import for ${type} ${providerId} (command #${commandId})`);
+                // Identity/album refresh after the plan is released; network-bound,
+                // so it never holds the disk slot or blocks the next import.
+                void resolveImportedCatalogIdentity(type, String(importPayload.providerId || providerId), importPayload.provider || null);
             } catch (error: any) {
                 if (error?.name === 'ImportDownloadCancelledError' || error?.constructor?.name === 'ImportDownloadCancelledError') {
                     console.log(`[DOWNLOAD-PROCESSOR] Import command #${commandId} cancelled (${error.message})`);
@@ -2008,6 +2012,14 @@ export class DownloadProcessor {
             // the import completes/fails. No separate ImportDownload row, so the UI
             // shows one row advancing by state instead of a download row vanishing
             // and an import row appearing.
+            // Network work (tag supplements, lyrics) happens here, in the download
+            // slot, so the disk-exclusive import slot only moves/tags files.
+            const prefetchedNetwork = await prefetchImportNetworkData({
+                type,
+                provider: entry.provider || payload.provider,
+                providerId: entry.providerId || payload.providerId || providerId,
+                trackOffers: resolvedTrackOffers as any,
+            });
             const importPayload: ImportDownloadCommand = {
                 // Source the provider identity from the offer that actually
                 // produced the files on disk. On a cross-provider fallback,
@@ -2047,6 +2059,7 @@ export class DownloadProcessor {
                 cover: payload.cover,
                 url: payload.url,
                 resolved,
+                ...prefetchedNetwork,
                 downloadState: {
                     outcome: completedDownloadState.outcome,
                     warningMessage: completedDownloadState.warningMessage,

@@ -308,6 +308,10 @@ export interface RescanFoldersCommand extends CommandBodyCommon {
 }
 
 export interface ImportDownloadCommand extends CommandBodyCommon {
+  /** Lyrics fetched while the download slot still owned the network work,
+   * keyed by providerMediaLyricsKey. Import uses these instead of calling the
+   * provider while it holds the disk-exclusive import slot. */
+  prefetchedLyrics?: Record<string, { text?: string | null; subtitles?: string | null; [key: string]: unknown } | null>;
   type: DownloadMediaType;
   provider: string;
   providerId: string;

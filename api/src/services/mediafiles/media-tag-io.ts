@@ -573,6 +573,136 @@ function verifyTagLibValuesInFile(
   }
 }
 
+const IN_PLACE_PROBE_TAIL_BYTES = 256 * 1024;
+
+/** Byte length of the leading metadata region that TagLib rewrites for this
+ * container, or null when the file layout is not eligible for an in-place
+ * header rewrite (unknown container, trailing tags TagLib may also touch). */
+function leadingMetadataLength(filePath: string, size: number): number | null {
+  const extension = extensionOf(filePath);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const read = (position: number, length: number): Buffer => {
+      const buffer = Buffer.alloc(length);
+      const bytes = fs.readSync(fd, buffer, 0, length, position);
+      return buffer.subarray(0, bytes);
+    };
+    if (extension === ".flac") {
+      if (read(0, 4).toString("latin1") !== "fLaC") return null;
+      let position = 4;
+      for (let guard = 0; guard < 1024; guard++) {
+        const header = read(position, 4);
+        if (header.length < 4) return null;
+        const last = (header[0] & 0x80) !== 0;
+        position += 4 + header.readUIntBE(1, 3);
+        if (position > size) return null;
+        if (last) return position;
+      }
+      return null;
+    }
+    if (extension === ".mp3") {
+      const header = read(0, 10);
+      if (header.length < 10 || header.toString("latin1", 0, 3) !== "ID3") return null;
+      const tagSize = ((header[6] & 0x7f) << 21) | ((header[7] & 0x7f) << 14) | ((header[8] & 0x7f) << 7) | (header[9] & 0x7f);
+      const end = 10 + tagSize + ((header[5] & 0x10) ? 10 : 0);
+      // Trailing ID3v1/APE tags are rewritten at the end of the file; keep
+      // those on the copy path so only the head can ever change in place.
+      if (size >= 128 && read(size - 128, 3).toString("latin1") === "TAG") return null;
+      if (size >= 32 && read(Math.max(0, size - 160), 160).includes("APETAGEX")) return null;
+      return end <= size ? end : null;
+    }
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Lidarr-style in-place tag write. TagLib reuses padding, so when the new
+ * metadata fits, only the leading metadata region changes. We render it on a
+ * small probe (head + a slice of audio), and only if the region keeps its exact
+ * length and the audio bytes are untouched do we overwrite that region of the
+ * original, fsync, and verify tags/cover/structure on the real file. The old
+ * head is kept in a sibling backup until verification passes and is restored on
+ * any failure. Returns null when the write does not fit or the layout is not
+ * eligible; the caller then uses the copy+replace path.
+ */
+function tryWriteTagsInPlace(
+  filePath: string,
+  tags: Record<string, string>,
+  removeKeys: string[],
+  coverPath: string | null | undefined,
+  mediaStructure: MediaStructureSnapshot,
+): MediaTagWriteResult | null {
+  const extension = extensionOf(filePath);
+  if (extension !== ".flac" && extension !== ".mp3") return null;
+  if (removeKeys.includes("ID3v1")) return null;
+  const size = fs.statSync(filePath).size;
+  const headLength = leadingMetadataLength(filePath, size);
+  if (!headLength) return null;
+  const probeLength = Math.min(size, headLength + IN_PLACE_PROBE_TAIL_BYTES);
+  const original = Buffer.alloc(probeLength);
+  {
+    const fd = fs.openSync(filePath, "r");
+    try { fs.readSync(fd, original, 0, probeLength, 0); } finally { fs.closeSync(fd); }
+  }
+  const probePath = mediaRewritePath(filePath, "tags");
+  const backupPath = mediaRewritePath(filePath, "tags");
+  let headWritten = false;
+  try {
+    fs.writeFileSync(probePath, original);
+    writeTagLibValues(probePath, tags, removeKeys);
+    if (coverPath) {
+      withTagLibFile(probePath, (file) => {
+        const picture = Picture.fromPath(coverPath);
+        picture.type = PictureType.FrontCover;
+        picture.description = "Cover (front)";
+        file.tag.pictures = [picture];
+        file.save();
+      });
+    }
+    const rendered = fs.readFileSync(probePath);
+    if (rendered.length !== probeLength) return null; // metadata grew/shrank past padding
+    if (leadingMetadataLength(probePath, rendered.length) !== headLength) return null;
+    if (!rendered.subarray(headLength).equals(original.subarray(headLength))) return null;
+    const newHead = rendered.subarray(0, headLength);
+    if (newHead.equals(original.subarray(0, headLength))) {
+      // Nothing to change on disk; still verify below.
+    } else {
+      const backupFd = fs.openSync(backupPath, "w");
+      try { fs.writeSync(backupFd, original, 0, headLength, 0); fs.fsyncSync(backupFd); } finally { fs.closeSync(backupFd); }
+      const fd = fs.openSync(filePath, "r+");
+      try {
+        headWritten = true;
+        fs.writeSync(fd, newHead, 0, headLength, 0);
+        fs.fsyncSync(fd);
+      } finally { fs.closeSync(fd); }
+    }
+    const expectedCover = coverPath ? fs.readFileSync(coverPath) : null;
+    withTagLibFile(filePath, (file) => {
+      verifyTagLibValuesInFile(file, extension, tags, removeKeys);
+      if (expectedCover) {
+        const actual = file.tag.pictures[0]?.data?.toByteArray();
+        if (!actual || !Buffer.from(actual).equals(expectedCover)) throw new Error("TagLib cover verification failed");
+      }
+    });
+    verifyMediaStructure(filePath, mediaStructure);
+    return coverPath
+      ? { handled: true, success: true, backend: "taglib", coverEmbedded: true }
+      : { handled: true, success: true, backend: "taglib" };
+  } catch (error) {
+    if (headWritten) {
+      const fd = fs.openSync(filePath, "r+");
+      try { fs.writeSync(fd, original, 0, headLength, 0); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    }
+    console.warn(`[MediaTags] In-place tag write fell back to copy for ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  } finally {
+    fs.rmSync(probePath, { force: true });
+    fs.rmSync(backupPath, { force: true });
+  }
+}
+
 export async function writeMediaTagsWithTagLib(
   filePath: string, tags: Record<string, string>, removeKeys: string[] = [], coverPath?: string | null,
 ): Promise<MediaTagWriteResult> {
@@ -589,9 +719,17 @@ async function writeMediaTagsWithTagLibUnlocked(
     return { handled: false, success: false };
   }
 
+  let mediaStructure: MediaStructureSnapshot;
+  try {
+    mediaStructure = readMediaStructure(filePath);
+  } catch (error) {
+    return { handled: true, success: false, backend: "taglib", error: error instanceof Error ? error.message : String(error) };
+  }
+  const inPlace = tryWriteTagsInPlace(filePath, tags, removeKeys, coverPath, mediaStructure);
+  if (inPlace) return inPlace;
+
   const workingPath = mediaRewritePath(filePath, "tags");
   try {
-    const mediaStructure = readMediaStructure(filePath);
     fs.copyFileSync(filePath, workingPath);
     writeTagLibValues(workingPath, tags, removeKeys);
     // Embed the front cover in the same working copy, so a retag that needs

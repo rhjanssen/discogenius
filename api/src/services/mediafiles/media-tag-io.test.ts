@@ -330,3 +330,30 @@ test("M4A ISRC writes retain the Apple code when it belongs to the complete cano
     assert.equal(decodedAudioHash(filePath), beforeHash);
   } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
 });
+
+test("TagLib rewrites FLAC/MP3 tags in place when padding fits and keeps audio intact", {
+  skip: !hasFfmpeg,
+}, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-taglib-inplace-"));
+  try {
+    for (const format of formats.filter((item) => item.extension === ".flac" || item.extension === ".mp3")) {
+      const filePath = path.join(tempDir, `inplace${format.extension}`);
+      generateAudio(filePath, format.codec);
+      const beforeHash = decodedAudioHash(filePath);
+      // First write adds padding (may need the copy path).
+      assert.equal((await writeMediaTagsWithTagLib(filePath, formatTags(format.extension))).success, true);
+      const inode = fs.statSync(filePath).ino;
+      const size = fs.statSync(filePath).size;
+      const second = await writeMediaTagsWithTagLib(filePath, { title: "Short" });
+      assert.equal(second.success, true);
+      assert.equal(fs.statSync(filePath).ino, inode, `${format.extension} was replaced instead of updated in place`);
+      assert.equal(fs.statSync(filePath).size, size);
+      assert.equal(decodedAudioHash(filePath), beforeHash, `${format.extension} audio changed`);
+      const tagged = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
+      try { assert.equal(tagged.tag.title, "Short"); } finally { tagged.dispose(); }
+      assert.deepEqual(fs.readdirSync(tempDir).filter((name) => name.startsWith(".discogenius-")), []);
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

@@ -1290,51 +1290,13 @@ export class DownloadedTracksImportService {
         }
 
         if ((type === "album" || type === "track") && organizeResult.processedTrackIds.length > 0) {
-            cancellationCheckpoint("before resolving metadata identity");
-            options.updateState({
-                progress: 86,
-                description: "ImportDownload: resolving catalog identity",
-                currentFileNum: organizeResult.processedTrackIds.length,
-                totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                statusMessage: "Resolving catalog identity",
-                state: "importing",
-            });
-
-            try {
-                if (type === "album") {
-                    cancellationCheckpoint(`before resolving album identity ${providerId}`);
-                    try {
-                        await MetadataIdentityService.resolveAlbum(providerId, { provider });
-                        const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
-                        await RefreshAlbumService.refreshMetadata(providerId, { provider: provider || undefined });
-                    } catch (err) {
-                        console.warn(`[ImportDownload] Metadata identity resolution failed for album ${providerId}:`, err);
-                    }
-                    cancellationCheckpoint(`after resolving album identity ${providerId}`);
-                } else {
-                    await MetadataIdentityService.resolveTrack(providerId, { provider });
-                    cancellationCheckpoint("after resolving track identity");
-                }
-            } catch (error) {
-                if (isImportDownloadCancelledError(error)) throw error;
-                console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${providerId}:`, error);
-            }
-
-            options.updateState({ progress: 88, description: "ImportDownload: fetching tag supplements", statusMessage: "Fetching tag supplements", state: "importing" });
-            cancellationCheckpoint("before refreshing provider tag supplements");
-            try {
-                await ProviderTrackTagSupplementService.refresh({
-                    providerId: job.payload.provider || null,
-                    albumProviderIds: type === "album" ? [providerId] : [],
-                    trackProviderIds: type === "track" ? [providerId] : [],
-                });
-            } catch (error) {
-                // Loudness/copyright are provider supplements. Their absence
-                // must not prevent importing otherwise valid media.
-                console.warn(`[ImportDownload] Failed to refresh provider tag supplements for ${type} ${providerId}:`, error);
-            }
-            cancellationCheckpoint("after refreshing provider tag supplements");
-
+            // Catalog identity / album refresh and provider tag supplements are
+            // network work. They run outside the disk-exclusive import slot:
+            // supplements + lyrics are prefetched at download completion
+            // (prefetchImportNetworkData) and identity is resolved after the
+            // import released its acquisition plan (resolveImportedCatalogIdentity).
+            // Running identity here also always failed with
+            // AcquisitionPlanInUseError, because this import owns that plan.
             const importedFileIds = importedLibraryFileIds(organizeResult);
             if (importedFileIds.length === 0) {
                 throw new Error(
@@ -1354,7 +1316,7 @@ export class DownloadedTracksImportService {
             cancellationCheckpoint("before materializing lyrics");
             try {
                 lyricResult = importedFileIds.length > 0
-                    ? await TrackLyricsMaterializer.materializeForFileIds(importedFileIds)
+                    ? await TrackLyricsMaterializer.materializeForFileIds(importedFileIds, null, job.payload.prefetchedLyrics as any)
                     : await TrackLyricsMaterializer.materializeForMediaIds(
                         organizeResult.processedTrackIds,
                         provider,
@@ -1562,5 +1524,67 @@ export class DownloadedTracksImportService {
             }
         }
     }
+    }
+}
+
+
+/**
+ * Network work for an import, run by the download slot right after the bytes
+ * finished downloading and before the import queues for the disk-exclusive
+ * slot. Best-effort: anything missing is looked up again by the import.
+ */
+export async function prefetchImportNetworkData(payload: {
+    type: string;
+    provider?: string | null;
+    providerId: string;
+    trackOffers?: Array<{ providerTrackId?: string | null }> | null;
+}): Promise<{ prefetchedLyrics?: Record<string, unknown> }> {
+    const provider = String(payload.provider || "").trim();
+    if (!provider || (payload.type !== "album" && payload.type !== "track")) return {};
+    try {
+        await ProviderTrackTagSupplementService.refresh({
+            providerId: provider,
+            albumProviderIds: payload.type === "album" ? [payload.providerId] : [],
+            trackProviderIds: payload.type === "track" ? [payload.providerId] : [],
+        });
+    } catch (error) {
+        console.warn(`[ImportDownload] Prefetch of provider tag supplements failed for ${payload.type} ${payload.providerId}:`, error);
+    }
+    try {
+        let trackIds: string[];
+        if (payload.type === "track") {
+            trackIds = [payload.providerId];
+        } else if (Array.isArray(payload.trackOffers) && payload.trackOffers.length > 0) {
+            trackIds = payload.trackOffers.map((offer) => String(offer?.providerTrackId || "")).filter(Boolean);
+        } else {
+            trackIds = (db.prepare(`
+                SELECT track.provider_id AS id
+                FROM ProviderItems release
+                JOIN ProviderEditionMembers member ON member.provider_edition_item_id = release.id
+                JOIN ProviderItems track ON track.id = member.member_item_id
+                WHERE release.provider = ? AND release.entity_type = 'release' AND release.provider_id = ?
+            `).all(provider, payload.providerId) as Array<{ id: string }>).map((row) => String(row.id));
+        }
+        const { prefetchProviderLyrics } = await import("./track-lyrics-materializer.js");
+        return { prefetchedLyrics: await prefetchProviderLyrics(provider, trackIds) };
+    } catch (error) {
+        console.warn(`[ImportDownload] Lyrics prefetch failed for ${payload.type} ${payload.providerId}:`, error);
+        return {};
+    }
+}
+
+/** Catalog identity + album metadata refresh after an import completed and
+ * released its acquisition plan. Never runs inside the disk-exclusive slot. */
+export async function resolveImportedCatalogIdentity(type: string, providerId: string, provider: string | null): Promise<void> {
+    try {
+        if (type === "album") {
+            await MetadataIdentityService.resolveAlbum(providerId, { provider: provider || undefined } as any);
+            const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
+            await RefreshAlbumService.refreshMetadata(providerId, { provider: provider || undefined });
+        } else if (type === "track") {
+            await MetadataIdentityService.resolveTrack(providerId, { provider: provider || undefined } as any);
+        }
+    } catch (error) {
+        console.warn(`[ImportDownload] Post-import catalog identity refresh failed for ${type} ${providerId}: ${error instanceof Error ? error.message : String(error)}`);
     }
 }

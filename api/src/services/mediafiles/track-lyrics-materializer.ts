@@ -204,6 +204,7 @@ export class TrackLyricsMaterializer {
   static async materializeForFileIds(
     fileIds: number[],
     requestedProvider?: string | null,
+    prefetched?: Record<string, ResolvedLyrics | null>,
   ): Promise<TrackLyricsMaterializeResult> {
     const metadata = getConfigSection("metadata");
     const quality = getConfigSection("quality");
@@ -215,12 +216,13 @@ export class TrackLyricsMaterializer {
         missing: 0,
       };
     }
-    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider);
+    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider, prefetched);
   }
 
   private static async materializeRows(
     rows: TrackLyricsRow[],
     requestedProvider?: string | null,
+    prefetched?: Record<string, ResolvedLyrics | null>,
   ): Promise<TrackLyricsMaterializeResult> {
     const result: TrackLyricsMaterializeResult = {
       lyricsByProviderMedia: new Map(),
@@ -261,7 +263,9 @@ export class TrackLyricsMaterializer {
         );
         resolution = (existingHasSync
           ? Promise.resolve(existingSidecar?.lyrics ?? null)
-          : getLyricsForProviderMedia(providerId, provider)
+          : (prefetched && Object.hasOwn(prefetched, key)
+            ? Promise.resolve(prefetched[key] ?? null)
+            : getLyricsForProviderMedia(providerId, provider))
             .then((apiLyrics) => apiLyrics || existingSidecar?.lyrics || null)
         ).catch((error) => {
           console.warn(`[Lyrics] Failed to resolve ${provider} track ${providerId}:`, error);
@@ -345,4 +349,35 @@ export class TrackLyricsMaterializer {
     await Promise.all(Array.from({ length: Math.min(4, rows.length) }, () => worker()));
     return result;
   }
+}
+
+/**
+ * Fetch provider lyrics for the given provider track ids without touching the
+ * library. Download completion calls this so the disk-exclusive import slot
+ * never waits on lyric APIs. Failures resolve to "not prefetched" (absent key),
+ * so the import falls back to its normal lookup.
+ */
+export async function prefetchProviderLyrics(
+  provider: string,
+  providerTrackIds: string[],
+  concurrency = 4,
+): Promise<Record<string, ResolvedLyrics | null>> {
+  const metadata = getConfigSection("metadata");
+  const quality = getConfigSection("quality");
+  const out: Record<string, ResolvedLyrics | null> = {};
+  if (!provider || (!metadata.save_lyrics && !quality.embed_lyrics)) return out;
+  const ids = Array.from(new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean)));
+  let next = 0;
+  const worker = async () => {
+    while (next < ids.length) {
+      const id = ids[next++];
+      try {
+        out[providerMediaLyricsKey(provider, id)] = await getLyricsForProviderMedia(id, provider);
+      } catch {
+        /* leave absent: import retries the lookup itself */
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
+  return out;
 }
