@@ -125,6 +125,8 @@ export interface MetadataConfig {
   write_audio_tags_policy?: WriteAudioTagsPolicy;
   /** Remove all existing tags before writing desired ones (scrub existing tags first). */
   scrub_audio_tags?: boolean;
+  /** ALBUMARTIST = full credit ("A, B") instead of the primary artist. Off: media servers keep one artist per discography. */
+  full_album_artist_credit?: boolean;
 }
 
 export interface AccountConfig {
@@ -306,6 +308,7 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_replaygain: true,
     write_audio_tags_policy: "new_files",
     scrub_audio_tags: false,
+    full_album_artist_credit: false,
   },
   streaming: {
     default_provider: "tidal",
@@ -406,6 +409,7 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
       ? writeAudioTagsPolicy
       : DEFAULT_CONFIG.metadata.write_audio_tags_policy,
     scrub_audio_tags: raw?.scrub_audio_tags ?? DEFAULT_CONFIG.metadata.scrub_audio_tags,
+    full_album_artist_credit: raw?.full_album_artist_credit ?? DEFAULT_CONFIG.metadata.full_album_artist_credit,
   };
 }
 

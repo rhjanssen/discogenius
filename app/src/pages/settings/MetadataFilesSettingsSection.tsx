@@ -156,6 +156,12 @@ export const MetadataFilesSettingsSection = ({
                     onChange: (checked) => void updateMetadataSettings({ scrub_audio_tags: checked }),
                 })}
                 {renderToggleRow({
+                    title: "Full artist credit as album artist",
+                    description: "Write every credited artist (\"Artist, Guest\") as album artist. Off keeps one album artist per discography in Plex and Jellyfin; the full credit is always kept in the ALBUMARTISTS tag.",
+                    checked: metadataSettings?.full_album_artist_credit === true,
+                    onChange: (checked) => void updateMetadataSettings({ full_album_artist_credit: checked }),
+                })}
+                {renderToggleRow({
                     title: "Embed album covers",
                     description: "Write cover art into audio files when tags are written.",
                     checked: embedCover,

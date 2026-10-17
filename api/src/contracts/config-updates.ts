@@ -75,6 +75,7 @@ const METADATA_UPDATE_KEYS = [
   "write_audio_tags_policy",
   "embed_replaygain",
   "scrub_audio_tags",
+  "full_album_artist_credit",
 ] as const satisfies readonly (keyof MetadataConfigContract)[];
 
 const PATH_UPDATE_KEYS = [

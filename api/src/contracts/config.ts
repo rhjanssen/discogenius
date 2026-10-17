@@ -91,6 +91,8 @@ export interface MetadataConfigContract {
   write_audio_tags_policy?: WriteAudioTagsPolicyValue;
   embed_replaygain?: boolean;
   scrub_audio_tags?: boolean;
+  /** Write the full album-artist credit into ALBUMARTIST instead of the primary artist only. */
+  full_album_artist_credit?: boolean;
 }
 
 export interface CatalogConfigContract {
@@ -255,6 +257,7 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     write_audio_tags_policy: expectOptionalOneOf(record.write_audio_tags_policy, WRITE_AUDIO_TAGS_POLICY_VALUES, "metadata.write_audio_tags_policy"),
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
     scrub_audio_tags: expectOptionalBoolean(record.scrub_audio_tags, "metadata.scrub_audio_tags"),
+    full_album_artist_credit: expectOptionalBoolean(record.full_album_artist_credit, "metadata.full_album_artist_credit"),
   };
 }
 

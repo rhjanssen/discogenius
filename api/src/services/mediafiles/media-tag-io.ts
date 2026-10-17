@@ -74,9 +74,16 @@ function isArtistIdList(key: string): boolean {
   return /musicbrainz(?:album)?artistid$/i.test(key.replace(/[^a-z0-9]/gi, ""));
 }
 
+/** Fields written as one value per credited artist (ARTISTS, ALBUMARTISTS, DISCOGENIUS_ALBUMARTIST_MBIDS). */
+function isMultiValueList(key: string): boolean {
+  const name = key.replace(/^(txxx:|----:com\.apple\.itunes:)/i, "").toLowerCase();
+  return name === "artists" || name === "albumartists" || name === "discogenius_albumartist_mbids";
+}
+
 function tagValues(key: string, value: string): string[] {
   if (key.toLowerCase() === "isrc") return parseRecordingIsrcs(value);
   if (isArtistIdList(key)) return [...new Set(value.split(/[;,/\s]+/).filter(Boolean))];
+  if (isMultiValueList(key)) return value.split(/\s*;\s*/).map(item => item.trim()).filter(Boolean);
   return value ? [value] : [];
 }
 
@@ -284,7 +291,8 @@ function setId3UserText(tag: Id3v2Tag, description: string, value: string): void
   }
   const frame = existing ?? Id3v2UserTextInformationFrame.fromDescription(description);
   const values = tagValues(description, value);
-  frame.text = tag.version >= 4 ? values : [values.join("/")];
+  // ID3v2.3 has no multi-value text; "/" is ambiguous for names like AC/DC.
+  frame.text = tag.version >= 4 ? values : [values.join(isMultiValueList(description) ? "; " : "/")];
   if (!existing) tag.addFrame(frame);
 }
 
@@ -539,6 +547,10 @@ function verifyTagLibValuesInFile(
 ): void {
   for (const [key, expected] of Object.entries(tags)) {
     const actual = readTagLibValueFromFile(file, extension, key);
+    if (isMultiValueList(key)) {
+      if (JSON.stringify(tagValues(key, actual)) !== JSON.stringify(tagValues(key, expected))) throw new Error(`Multi-value verification failed for ${key}`);
+      continue;
+    }
     if (isArtistIdList(key)) {
       if (JSON.stringify(tagValues(key, actual).sort()) !== JSON.stringify(tagValues(key, expected).sort())) throw new Error(`Artist ID verification failed for ${key}`);
       continue;

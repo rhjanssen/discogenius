@@ -435,6 +435,97 @@ export function parseArtistCreditIds(data?: string | null): string[] {
   } catch { return []; }
 }
 
+/** Full credit string with MusicBrainz join phrases ("A feat. B"), or null when only names are known. */
+export function parseArtistCreditString(data?: string | null): string | null {
+  if (!data) return null;
+  try {
+    const parsed = JSON.parse(data);
+    const credits = Array.isArray(parsed) ? parsed : parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
+    if (!Array.isArray(credits) || credits.length === 0) return null;
+    const hasJoinPhrases = credits.some(credit => typeof (credit?.join_phrase ?? credit?.joinphrase) === "string");
+    if (!hasJoinPhrases) return null;
+    const text = credits.map(credit => {
+      const name = String(credit?.name || credit?.artist?.name || "").trim();
+      const join = String(credit?.join_phrase ?? credit?.joinphrase ?? "");
+      return name + join;
+    }).join("").trim();
+    return text || null;
+  } catch { return null; }
+}
+
+/** Case-insensitive de-duplication that keeps the first spelling and order. */
+export function dedupeNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of names) {
+    const name = String(raw || "").trim();
+    const key = name.toLocaleLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    result.push(name);
+  }
+  return result;
+}
+
+/** Tags written as one field per value, joined with "; " in managed tag values. */
+export const MULTI_VALUE_TAG_KEYS = new Set(["artists", "album_artists", "album_artist_mbids"]);
+export const MULTI_VALUE_SEPARATOR = "; ";
+
+export function splitMultiValue(value: string | null | undefined): string[] {
+  return String(value || "").split(/\s*;\s*/).map(item => item.trim()).filter(Boolean);
+}
+
+export type AlbumArtistTagPlan = {
+  /** ALBUMARTIST: primary (owner) artist by default, the full credit when enabled. */
+  albumArtist: string;
+  /** MUSICBRAINZ_ALBUMARTISTID values matching `albumArtist`. */
+  albumArtistMbids: string[];
+  /** ALBUMARTISTS: every credited album artist (lossless, multi-value). */
+  creditNames: string[];
+  /** All album-artist MBIDs (lossless, multi-value, ignored by Plex/Jellyfin). */
+  creditMbids: string[];
+};
+
+/**
+ * Plex and Jellyfin create one artist per distinct ALBUMARTIST string, so a
+ * full credit ("A, B") splits an artist's discography. By default only the
+ * owning artist is written there; the full credit stays in ALBUMARTISTS and
+ * DISCOGENIUS_ALBUMARTIST_MBIDS (and in the database).
+ */
+export function planAlbumArtistTags(input: {
+  creditNames: string[];
+  creditMbids: string[];
+  ownerMbid: string | null;
+  ownerName: string | null;
+  fullCredit: boolean;
+  fallbackName: string;
+}): AlbumArtistTagPlan {
+  const creditNames = dedupeNames(input.creditNames);
+  const creditMbids = [...new Set(input.creditMbids.map(id => id.toLowerCase()).filter(Boolean))];
+  if (input.fullCredit) {
+    return {
+      albumArtist: creditNames.join(", ") || input.ownerName || input.fallbackName,
+      albumArtistMbids: creditMbids.length ? creditMbids : (input.ownerMbid ? [input.ownerMbid] : []),
+      creditNames,
+      creditMbids,
+    };
+  }
+  const owner = input.ownerMbid?.toLowerCase() || null;
+  const primaryIndex = owner ? creditMbids.indexOf(owner) : -1;
+  const primaryMbid = primaryIndex >= 0 ? creditMbids[primaryIndex] : (creditMbids[0] ?? owner);
+  const primaryName = (primaryMbid && primaryMbid === owner ? input.ownerName : null)
+    || (primaryIndex >= 0 ? creditNames[primaryIndex] : null)
+    || creditNames[0]
+    || input.ownerName
+    || input.fallbackName;
+  return {
+    albumArtist: primaryName,
+    albumArtistMbids: primaryMbid ? [primaryMbid] : [],
+    creditNames,
+    creditMbids,
+  };
+}
+
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -505,6 +596,13 @@ export function isTagValueEqual(tagKey: string, current: string | null, target: 
     const actual = parseRecordingIsrcs(current).sort();
     const expected = parseRecordingIsrcs(target).sort();
     return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+  }
+  if (tagKey === "album_artist_mbids") {
+    const ids = (raw: string | null) => [...new Set(splitMultiValue(raw).map(id => id.toLowerCase()))].sort();
+    return JSON.stringify(ids(current)) === JSON.stringify(ids(target));
+  }
+  if (MULTI_VALUE_TAG_KEYS.has(tagKey)) {
+    return JSON.stringify(splitMultiValue(current)) === JSON.stringify(splitMultiValue(target));
   }
   if (tagKey === "musicbrainz_artistid" || tagKey === "musicbrainz_albumartistid") {
     const values = (raw: string | null) => [...new Set((raw || "").toLowerCase().split(/[;,/\s]+/).filter(Boolean))].sort();
@@ -975,9 +1073,34 @@ function mergeMp4KeyedNativeLookup(metadata: mm.IAudioMetadata, lookup: Map<stri
   }
 }
 
+/**
+ * Every value of a multi-value field (one Vorbis field / ID3 text string /
+ * iTunes string per value), joined with "; ". The generic lookup keeps only
+ * the first value, which would make a multi-value tag look perpetually stale.
+ */
+function readNativeMultiValue(metadata: mm.IAudioMetadata, keys: string[]): string | null {
+  const wanted = new Set(keys.map(key => key.toLowerCase()));
+  for (const tagSet of Object.values(metadata.native || {})) {
+    const values: string[] = [];
+    for (const tag of tagSet as Array<{ id?: string; value?: unknown }>) {
+      if (!buildNativeTagAliases(String(tag?.id || "")).some(alias => wanted.has(alias))) continue;
+      const items = Array.isArray(tag.value) ? tag.value : [tag.value];
+      for (const item of items) {
+        if (typeof item === "string") values.push(...splitMultiValue(item));
+      }
+    }
+    if (values.length) return values.join(MULTI_VALUE_SEPARATOR);
+  }
+  return null;
+}
+
 export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, string>, tag: ManagedTag): string | null {
   const common = metadata.common as Record<string, any>;
   const fallback = () => getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
+
+  if (MULTI_VALUE_TAG_KEYS.has(tag.key)) {
+    return readNativeMultiValue(metadata, [tag.ffmpegKey, ...(tag.aliases || [])]);
+  }
 
   switch (tag.key) {
     case "lyrics":
@@ -1606,6 +1729,21 @@ export class AudioTagService {
     }
 
     return [fallbackArtistName];
+  }
+
+  private static getAlbumArtistTagPlan(row: RetagTrackRow, fallbackArtistName: string, fullCredit: boolean): AlbumArtistTagPlan {
+    const ownerMbid = row.artist_mbid ? String(row.artist_mbid) : null;
+    const ownerRow = ownerMbid
+      ? db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(ownerMbid) as { name?: string | null } | undefined
+      : undefined;
+    return planAlbumArtistTags({
+      creditNames: this.getAlbumArtistNames(row, fallbackArtistName),
+      creditMbids: this.getArtistMbids(row, true),
+      ownerMbid,
+      ownerName: String(ownerRow?.name || "").trim() || null,
+      fullCredit,
+      fallbackName: fallbackArtistName,
+    });
   }
 
   private static getArtistMbids(row: RetagTrackRow, album: boolean): string[] {
@@ -2244,10 +2382,10 @@ export class AudioTagService {
 
   private static buildDesiredTags(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
     const fallbackArtistName = String(row.primary_artist_name || "").trim() || "Unknown Artist";
-    const artistNames = this.getTrackArtistNames(row, fallbackArtistName);
-    const albumArtistNames = this.getAlbumArtistNames(row, fallbackArtistName);
+    const artistNames = dedupeNames(this.getTrackArtistNames(row, fallbackArtistName));
+    const artistCredit = parseArtistCreditString(row.recording_data) || artistNames.join(", ");
     const artistMbids = this.getArtistMbids(row, false);
-    const albumArtistMbids = this.getArtistMbids(row, true);
+    const albumArtistPlan = this.getAlbumArtistTagPlan(row, fallbackArtistName, config.full_album_artist_credit === true);
     const discNumber = Number(row.media_volume_number || 1);
     const discCount = Number(row.album_num_volumes || 1);
     const trackCount = this.getTrackCountForDisc(row.album_id, discNumber, row.canonical_release_mbid || row.album_mbid);
@@ -2296,13 +2434,27 @@ export class AudioTagService {
           key: "artist",
           label: "Artist",
           ffmpegKey: "artist",
-          targetValue: artistNames.join(", "),
+          targetValue: artistCredit,
+        },
+        {
+          key: "artists",
+          label: "Artists",
+          ffmpegKey: "ARTISTS",
+          targetValue: artistNames.join(MULTI_VALUE_SEPARATOR),
+          aliases: ["artists"],
         },
         {
           key: "album_artist",
           label: "Album Artist",
           ffmpegKey: "album_artist",
-          targetValue: albumArtistNames.join(", "),
+          targetValue: albumArtistPlan.albumArtist,
+        },
+        {
+          key: "album_artists",
+          label: "Album Artists",
+          ffmpegKey: "ALBUMARTISTS",
+          targetValue: albumArtistPlan.creditNames.join(MULTI_VALUE_SEPARATOR),
+          aliases: ["albumartists"],
         },
         {
           key: "album",
@@ -2513,12 +2665,21 @@ export class AudioTagService {
         });
       }
 
-      if (albumArtistMbids.length) {
+      if (albumArtistPlan.creditMbids.length) {
+        tags.push({
+          key: "album_artist_mbids",
+          label: "Album Artist Credit MBIDs",
+          ffmpegKey: "DISCOGENIUS_ALBUMARTIST_MBIDS",
+          targetValue: albumArtistPlan.creditMbids.join(MULTI_VALUE_SEPARATOR),
+          aliases: ["discogenius_albumartist_mbids"],
+        });
+      }
+      if (albumArtistPlan.albumArtistMbids.length) {
         tags.push({
           key: "musicbrainz_albumartistid",
           label: "MusicBrainz Album Artist ID",
           ffmpegKey: "musicbrainz_albumartistid",
-          targetValue: albumArtistMbids.join("; "),
+          targetValue: albumArtistPlan.albumArtistMbids.join("; "),
           aliases: [
             "musicbrainz_albumartistid",
             "musicbrainzalbumartistid",
