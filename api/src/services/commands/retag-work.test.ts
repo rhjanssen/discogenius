@@ -130,6 +130,38 @@ test("retag journal refuses a changed catalogue identity before writing or settl
     }
 });
 
+test("one file changing identity mid-plan is re-planned alone and never fails the library-wide retag", async () => {
+    const job = claim("identity-isolation");
+    const repo = records.CommandFileWorkRepository;
+    repo.create(job.id, job.worker_id!, "unused", repo.prepare(ids));
+    database.db.prepare("DELETE FROM CommandFileWork WHERE command_id = ?").run(job.id);
+    database.db.prepare("DELETE FROM CommandFileWorkPlans WHERE command_id = ?").run(job.id);
+    const previous = database.db.prepare("SELECT canonical_recording_mbid FROM TrackFiles WHERE id = ?").get(ids[3]) as { canonical_recording_mbid: string | null };
+    const ctx = context.buildHandlerContext();
+    let yields = 0;
+    // Simulate a concurrent import re-identifying file #4 after the plan exists.
+    ctx.yieldToEventLoop = async () => {
+        if (++yields === 1) database.db.prepare("UPDATE TrackFiles SET canonical_recording_mbid = 're-identified-by-import' WHERE id = ?").run(ids[3]);
+    };
+    try {
+        let continuation: unknown;
+        try { await work.runRetagWorkUnit(job, ctx, () => ids); } catch (error) { continuation = error; }
+        const { CommandContinuation } = await import("./command-continuation.js");
+        assert.ok(continuation instanceof CommandContinuation, String(continuation));
+        assert.equal(await context.persistCommandOutcome(job, continuation), "requeued");
+        const next = queue.CommandQueueManager.claimForExecution(job.id, "identity-isolation-2", 60_000)!;
+        const result = await work.runRetagWorkUnit(next, context.buildHandlerContext(), () => ids);
+        const plan = records.CommandFileWorkRepository.get(job.id)!;
+        assert.equal(plan.cursor, plan.total, JSON.stringify({ plan, result }));
+        assert.equal(result.missing + result.skipped + result.retagged, 251, JSON.stringify({ plan, result }));
+        assert.equal(result.errors.length, 0);
+        assert.deepEqual(result.identityChanged, [ids[3]]);
+        assert.equal(result.identityChangedCount, 1);
+    } finally {
+        database.db.prepare("UPDATE TrackFiles SET canonical_recording_mbid = ? WHERE id = ?").run(previous.canonical_recording_mbid, ids[3]);
+    }
+});
+
 test("retrying failed file outcomes preserves earlier evidence and excludes successful files", () => {
     const job = claim("outcome-owner");
     const repo = records.CommandFileWorkRepository;

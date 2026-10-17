@@ -106,6 +106,27 @@ export class CommandFileWorkRepository {
         })();
     }
 
+    /** Per-file isolation: a concurrent import or redownload may re-identify one
+     * planned file. Re-plan only that work item against its current catalogue
+     * identity instead of failing the library-wide command. Returns the file id
+     * when its snapshot was replaced, null when it was unchanged or is missing. */
+    static replanChangedIdentity(commandId: number, workerId: string): number | null {
+        return db.transaction(() => {
+            this.assertOwner(commandId, workerId);
+            const plan = this.get(commandId)!;
+            const file = db.prepare(`SELECT track_file_id, identity_snapshot FROM CommandFileWork
+                WHERE command_id = ? AND generation = ? AND ordinal = ? AND status IN ('pending', 'started')`)
+                .get(commandId, plan.generation, plan.cursor) as { track_file_id: number; identity_snapshot: string } | undefined;
+            if (!file) return null;
+            const current = db.prepare(`SELECT ${fileColumns} FROM TrackFiles WHERE id = ?`).get(file.track_file_id) as FileRow | undefined;
+            if (!current || snapshot(current) === file.identity_snapshot) return null;
+            db.prepare(`UPDATE CommandFileWork SET identity_snapshot = ?, status = 'pending'
+                WHERE command_id = ? AND generation = ? AND ordinal = ?`)
+                .run(snapshot(current), commandId, plan.generation, plan.cursor);
+            return file.track_file_id;
+        })();
+    }
+
     static begin(commandId: number, workerId: string): { id: number; fileType: string | null } {
         return db.transaction(() => {
             this.assertOwner(commandId, workerId);

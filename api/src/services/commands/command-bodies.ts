@@ -98,6 +98,9 @@ export interface ResolvedDownloadMetadata {
 
 export interface RetagWorkCheckpoint {
   version: 1;
+  /** Files re-planned after a concurrent identity change (capped list + total). */
+  identityChanged?: number[];
+  identityChangedCount?: number;
 }
 
 export interface ScanWorkCheckpoint {
