@@ -11,6 +11,7 @@ import {
   normalizeComparablePath,
 } from "../../mediafiles/path-utils.js";
 import { ExtraFileService, type ExtraFileTableName } from "./extra-file-service.js";
+import { SQL_JSON_LIST, jsonList } from "../../../utils/sql-id-list.js";
 
 const EXTRA_TABLES: ExtraFileTableName[] = ["MetadataFiles", "LyricFiles", "ExtraFiles"];
 
@@ -79,12 +80,11 @@ function remainingSiblingTrackFiles(
 
 function selectLinkedExtras(table: ExtraFileTableName, trackFileIds: number[]): ExtraRow[] {
   if (trackFileIds.length === 0) return [];
-  const placeholders = trackFileIds.map(() => "?").join(",");
   return db.prepare(`
     SELECT id, file_path, library_root, track_file_id
     FROM ${table}
-    WHERE track_file_id IN (${placeholders})
-  `).all(...trackFileIds) as ExtraRow[];
+    WHERE track_file_id IN ${SQL_JSON_LIST}
+  `).all(jsonList(trackFileIds)) as ExtraRow[];
 }
 
 function selectFolderExtras(table: ExtraFileTableName, directory: string): ExtraRow[] {

@@ -15,6 +15,7 @@ import {
 } from "../extras/lyrics/lyric-sidecar.js";
 import { LibraryFilesService } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 type TrackLyricsRow = {
   id: number;
@@ -96,7 +97,6 @@ async function removeUnsyncedLyricSidecar(
 function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
   const uniqueIds = Array.from(new Set(fileIds.filter((id) => Number.isInteger(id) && id > 0)));
   if (uniqueIds.length === 0) return [];
-  const placeholders = uniqueIds.map(() => "?").join(",");
   return db.prepare(`
     SELECT
       id,
@@ -117,9 +117,9 @@ function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
       canonical_recording_mbid
     FROM TrackFiles
     WHERE file_type = 'track'
-      AND id IN (${placeholders})
+      AND id IN ${SQL_JSON_LIST}
     ORDER BY id ASC
-  `).all(...uniqueIds) as TrackLyricsRow[];
+  `).all(jsonList(uniqueIds)) as TrackLyricsRow[];
 }
 
 function trackRowsForMediaIds(

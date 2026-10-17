@@ -35,6 +35,7 @@ import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics
 import { cleanProviderText } from "./metadata-files.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
 import { classifyLyricsForSidecar, findAdjacentLyricSidecar } from "../extras/lyrics/lyric-sidecar.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 export type ManagedTag = {
   key: string;
@@ -453,6 +454,18 @@ export function parseArtistCreditString(data?: string | null): string | null {
   } catch { return null; }
 }
 
+/** Sort-name credit with the recording's MusicBrainz join phrases when they line up ("Buuren, Armin van feat. Adel, Sharon den"). */
+export function joinSortCredit(data: string | null | undefined, sortNames: string[]): string {
+  try {
+    const parsed = data ? JSON.parse(data) : null;
+    const credits = Array.isArray(parsed) ? parsed : parsed?.["artist-credit"] || parsed?.artistCredits || parsed?.artist_credits;
+    if (Array.isArray(credits) && credits.length === sortNames.length) {
+      return credits.map((credit, index) => sortNames[index] + String(credit?.join_phrase ?? credit?.joinphrase ?? (index < credits.length - 1 ? ", " : ""))).join("").trim();
+    }
+  } catch { /* fall through */ }
+  return sortNames.join(", ");
+}
+
 /** Case-insensitive de-duplication that keeps the first spelling and order. */
 export function dedupeNames(names: string[]): string[] {
   const seen = new Set<string>();
@@ -469,6 +482,8 @@ export function dedupeNames(names: string[]): string[] {
 
 /** Tags written as one field per value, joined with "; " in managed tag values. */
 export const MULTI_VALUE_TAG_KEYS = new Set(["artists", "album_artists", "album_artist_mbids"]);
+/** Picard writes these as one field/value per item too; compared order-insensitively. */
+export const MULTI_VALUE_SET_TAG_KEYS = new Set(["genre", "release_type"]);
 export const MULTI_VALUE_SEPARATOR = "; ";
 
 export function splitMultiValue(value: string | null | undefined): string[] {
@@ -484,7 +499,12 @@ export type AlbumArtistTagPlan = {
   creditNames: string[];
   /** All album-artist MBIDs (lossless, multi-value, ignored by Plex/Jellyfin). */
   creditMbids: string[];
+  /** Release credited to MusicBrainz "Various Artists" (COMPILATION=1, Picard semantics). */
+  compilation: boolean;
 };
+
+/** MusicBrainz special-purpose artist "Various Artists". */
+export const VARIOUS_ARTISTS_MBID = "89ad4ac3-39f7-470e-963a-56509c546377";
 
 /**
  * Plex and Jellyfin create one artist per distinct ALBUMARTIST string, so a
@@ -502,12 +522,25 @@ export function planAlbumArtistTags(input: {
 }): AlbumArtistTagPlan {
   const creditNames = dedupeNames(input.creditNames);
   const creditMbids = [...new Set(input.creditMbids.map(id => id.toLowerCase()).filter(Boolean))];
+  // Picard/MusicBrainz: a VA release keeps "Various Artists" as album artist
+  // whatever folder owns the file, so players group it as one compilation.
+  const vaIndex = creditMbids.indexOf(VARIOUS_ARTISTS_MBID);
+  if (vaIndex >= 0) {
+    return {
+      albumArtist: creditNames[vaIndex] || "Various Artists",
+      albumArtistMbids: [VARIOUS_ARTISTS_MBID],
+      creditNames,
+      creditMbids,
+      compilation: true,
+    };
+  }
   if (input.fullCredit) {
     return {
       albumArtist: creditNames.join(", ") || input.ownerName || input.fallbackName,
       albumArtistMbids: creditMbids.length ? creditMbids : (input.ownerMbid ? [input.ownerMbid] : []),
       creditNames,
       creditMbids,
+      compilation: false,
     };
   }
   const owner = input.ownerMbid?.toLowerCase() || null;
@@ -523,6 +556,7 @@ export function planAlbumArtistTags(input: {
     albumArtistMbids: primaryMbid ? [primaryMbid] : [],
     creditNames,
     creditMbids,
+    compilation: false,
   };
 }
 
@@ -603,6 +637,10 @@ export function isTagValueEqual(tagKey: string, current: string | null, target: 
   }
   if (MULTI_VALUE_TAG_KEYS.has(tagKey)) {
     return JSON.stringify(splitMultiValue(current)) === JSON.stringify(splitMultiValue(target));
+  }
+  if (tagKey === "compilation") {
+    const flag = (raw: string | null) => /^(1|true|yes)$/i.test(String(raw || "").trim());
+    return flag(current) === flag(target);
   }
   if (tagKey === "musicbrainz_artistid" || tagKey === "musicbrainz_albumartistid") {
     const values = (raw: string | null) => [...new Set((raw || "").toLowerCase().split(/[;,/\s]+/).filter(Boolean))].sort();
@@ -1101,6 +1139,17 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
   if (MULTI_VALUE_TAG_KEYS.has(tag.key)) {
     return readNativeMultiValue(metadata, [tag.ffmpegKey, ...(tag.aliases || [])]);
   }
+  if (tag.key === "release_type") {
+    const native = readNativeMultiValue(metadata, [tag.ffmpegKey, ...(tag.aliases || []), "releasetype", "musicbrainz album type"]);
+    if (native) return native;
+    const common_ = Array.isArray(common.releasetype) ? common.releasetype : (common.releasetype ? [common.releasetype] : []);
+    return common_.map((item: unknown) => String(item).trim()).filter(Boolean).join(MULTI_VALUE_SEPARATOR) || fallback();
+  }
+  if (tag.key === "compilation") {
+    if (common.compilation === true) return "1";
+    const raw = fallback();
+    return raw && /^(1|true|yes)$/i.test(raw) ? "1" : null;
+  }
 
   switch (tag.key) {
     case "lyrics":
@@ -1344,7 +1393,6 @@ export class AudioTagService {
       ...(options.artistId ? [options.artistId] : []),
     ].map((id) => String(id).trim()).filter(Boolean)));
     if (artistIds.length > 0) {
-      const placeholders = artistIds.map(() => "?").join(",");
       // Public artist identity is the MusicBrainz MBID; TrackFiles stores the
       // internal ArtistMetadata FK. Accept either form at this boundary so the
       // artist page, Library selection bar, API, and command worker share one
@@ -1352,10 +1400,10 @@ export class AudioTagService {
       where.push(`lf.artist_metadata_id IN (
         SELECT artist.id
         FROM ArtistMetadata artist
-        WHERE CAST(artist.id AS TEXT) IN (${placeholders})
-           OR artist.mbid IN (${placeholders})
+        WHERE CAST(artist.id AS TEXT) IN ${SQL_JSON_LIST}
+           OR artist.mbid IN ${SQL_JSON_LIST}
       )`);
-      params.push(...artistIds, ...artistIds);
+      params.push(jsonList(artistIds), jsonList(artistIds));
     }
     const editionTarget = options.releaseMbid
       ? String(options.releaseMbid).trim()
@@ -1655,8 +1703,7 @@ export class AudioTagService {
       return [];
     }
 
-    const placeholders = ids.map(() => "?").join(",");
-    return db.prepare(this.buildTrackRowsSql(`lf.id IN (${placeholders})`, false)).all(...ids) as RetagTrackRow[];
+    return db.prepare(this.buildTrackRowsSql(`lf.id IN ${SQL_JSON_LIST}`, false)).all(jsonList(ids)) as RetagTrackRow[];
   }
 
   private static getTrackArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
@@ -1729,6 +1776,28 @@ export class AudioTagService {
     }
 
     return [fallbackArtistName];
+  }
+
+  /** MusicBrainz sort names (ArtistMetadata.sort_name) for the track and album-artist credits; null when any is unknown. */
+  private static getSortNames(row: RetagTrackRow): { artistSort: string | null; albumArtistSort: string | null } {
+    const sortOf = (mbids: string[]): string[] | null => {
+      if (mbids.length === 0) return null;
+      const result: string[] = [];
+      for (const mbid of mbids) {
+        const found = db.prepare("SELECT sort_name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(mbid) as { sort_name?: string | null } | undefined;
+        const value = String(found?.sort_name || "").trim();
+        if (!value) return null;
+        result.push(value);
+      }
+      return result;
+    };
+    const trackSorts = sortOf(this.getArtistMbids(row, false));
+    const plan = this.getAlbumArtistTagPlan(row, String(row.primary_artist_name || "").trim() || "Unknown Artist", false);
+    const albumSorts = sortOf(plan.albumArtistMbids);
+    return {
+      artistSort: trackSorts ? joinSortCredit(row.recording_data, trackSorts) : null,
+      albumArtistSort: albumSorts ? albumSorts.join(", ") : null,
+    };
   }
 
   private static getAlbumArtistTagPlan(row: RetagTrackRow, fallbackArtistName: string, fullCredit: boolean): AlbumArtistTagPlan {
@@ -1841,6 +1910,9 @@ export class AudioTagService {
       release_status: "RELEASESTATUS",
       release_type: "RELEASETYPE",
       initialkey: "INITIALKEY",
+      artist_sort: "ARTISTSORT",
+      album_artist_sort: "ALBUMARTISTSORT",
+      compilation: "COMPILATION",
     };
 
     const mp3Map: Record<string, string> = {
@@ -1880,6 +1952,13 @@ export class AudioTagService {
       release_status: "TXXX:MusicBrainz Album Status",
       release_type: "TXXX:MusicBrainz Album Type",
       initialkey: "TKEY",
+      artist_sort: "TSOP",
+      album_artist_sort: "TSO2",
+      compilation: "TCMP",
+      legacy_track_number: "TXXX:Track Number",
+      legacy_track_count: "TXXX:Track Count",
+      legacy_disc_number: "TXXX:Disc Number",
+      legacy_disc_count: "TXXX:Disc Count",
     };
 
     const m4aMap: Record<string, string> = {
@@ -1920,6 +1999,18 @@ export class AudioTagService {
       release_status: "----:com.apple.iTunes:MusicBrainz Album Status",
       release_type: "----:com.apple.iTunes:MusicBrainz Album Type",
       initialkey: "----:com.apple.iTunes:initialkey",
+      artist_sort: "soar",
+      album_artist_sort: "soaa",
+      compilation: "cpil",
+      legacy_track_number: "----:com.apple.iTunes:Track Number",
+      legacy_track_count: "----:com.apple.iTunes:Track Count",
+      legacy_disc_number: "----:com.apple.iTunes:Disc Number",
+      legacy_disc_count: "----:com.apple.iTunes:Disc Count",
+      legacy_album_sort: "soal",
+      legacy_title_sort: "sonm",
+      legacy_composer_sort: "soco",
+      legacy_publisher: "\u00a9pub",
+      legacy_release_time: "----:com.apple.iTunes:RELEASETIME",
     };
 
     // ASF/WMA descriptor names:
@@ -2095,6 +2186,30 @@ export class AudioTagService {
 
   private static buildRowManagedTagRemovals(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
     const removals = this.buildManagedTagRemovals(config);
+    const remove = (key: string, label: string, ffmpegKey: string): void => {
+      removals.push({ key, label, ffmpegKey, targetValue: "" });
+    };
+    // Non-standard duplicates of TRCK/TPOS/trkn/disk written by older releases.
+    remove("legacy_track_number", "Legacy Track Number", "TXXX:Track Number");
+    remove("legacy_track_count", "Legacy Track Count", "TXXX:Track Count");
+    remove("legacy_disc_number", "Legacy Disc Number", "TXXX:Disc Number");
+    remove("legacy_disc_count", "Legacy Disc Count", "TXXX:Disc Count");
+    // Provider (Apple/iTunes) sort atoms that do not come from MusicBrainz and
+    // can contradict the managed title/album (soal "… (Deluxe Edition)").
+    remove("legacy_album_sort", "Legacy Album Sort", "soal");
+    remove("legacy_title_sort", "Legacy Title Sort", "sonm");
+    remove("legacy_composer_sort", "Legacy Composer Sort", "soco");
+    // Provider duplicates of fields we manage; only removed when we write the
+    // managed value so no unique information is lost.
+    if (parseJsonStringList(row.album_label).length > 0) remove("legacy_publisher", "Legacy Publisher", "\u00a9pub");
+    if (normalizeReleaseDate(row.media_release_date || row.album_release_date)) {
+      remove("legacy_release_time", "Legacy Release Time", "----:com.apple.iTunes:RELEASETIME");
+    }
+    // Sort tags are written only from MusicBrainz sort names; otherwise drop
+    // stale provider sort tags instead of leaving them inconsistent.
+    const sortNames = this.getSortNames(row);
+    if (!sortNames.artistSort) remove("artist_sort", "Artist Sort", "ARTISTSORT");
+    if (!sortNames.albumArtistSort) remove("album_artist_sort", "Album Artist Sort", "ALBUMARTISTSORT");
     if (config.embed_replaygain !== false) {
       if (row.media_replay_gain === null || row.media_replay_gain === undefined) {
         removals.push({
@@ -2456,6 +2571,18 @@ export class AudioTagService {
           targetValue: albumArtistPlan.creditNames.join(MULTI_VALUE_SEPARATOR),
           aliases: ["albumartists"],
         },
+      );
+      const sortNames = this.getSortNames(row);
+      if (sortNames.artistSort) {
+        tags.push({ key: "artist_sort", label: "Artist Sort", ffmpegKey: "ARTISTSORT", targetValue: sortNames.artistSort, aliases: ["artistsort", "tsop", "soar"] });
+      }
+      if (sortNames.albumArtistSort) {
+        tags.push({ key: "album_artist_sort", label: "Album Artist Sort", ffmpegKey: "ALBUMARTISTSORT", targetValue: sortNames.albumArtistSort, aliases: ["albumartistsort", "tso2", "soaa"] });
+      }
+      if (albumArtistPlan.compilation) {
+        tags.push({ key: "compilation", label: "Compilation", ffmpegKey: "COMPILATION", targetValue: "1", aliases: ["compilation", "tcmp", "cpil"] });
+      }
+      tags.push(
         {
           key: "album",
           label: "Album",
@@ -2578,7 +2705,7 @@ export class AudioTagService {
           key: "genre",
           label: "Genre",
           ffmpegKey: "genre",
-          targetValue: albumGenres.join(" / "),
+          targetValue: albumGenres.join(MULTI_VALUE_SEPARATOR),
         });
       }
 

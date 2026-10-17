@@ -32,6 +32,7 @@ import {
   resolveLibraryRootPath,
   resolveStoredLibraryPath,
 } from "./library-paths.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 export type DeleteLibraryFilesResult = {
   deleted: number;
@@ -423,10 +424,9 @@ export function deleteLibraryFilesByIds(
   }
 
   const scope = resolveDeletionScope(options);
-  const placeholders = uniqueIds.map(() => "?").join(",");
   const rows = selectScopedRows(
-    `SELECT ${TRACK_FILE_DELETE_COLUMNS} FROM TrackFiles WHERE id IN (${placeholders})`,
-    uniqueIds,
+    `SELECT ${TRACK_FILE_DELETE_COLUMNS} FROM TrackFiles WHERE id IN ${SQL_JSON_LIST}`,
+    [jsonList(uniqueIds)],
     scope,
   );
 

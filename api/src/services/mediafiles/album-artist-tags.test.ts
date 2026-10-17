@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   dedupeNames,
   isTagValueEqual,
+  joinSortCredit,
+  VARIOUS_ARTISTS_MBID,
   parseArtistCreditString,
   planAlbumArtistTags,
   splitMultiValue,
@@ -91,4 +93,31 @@ test("multi-value tags compare per value, in order, and keep names containing sl
 test("a full-credit album artist on disk differs from the primary-only target", () => {
   assert.equal(isTagValueEqual("album_artist", "Afrojack, Eva Simons", "AFROJACK"), false);
   assert.equal(isTagValueEqual("musicbrainz_albumartistid", `${AFROJACK}; ${EVA}`, AFROJACK), false);
+});
+
+test("Various Artists releases keep 'Various Artists' as album artist and are flagged as compilation", () => {
+  const plan = planAlbumArtistTags({
+    creditNames: ["Various Artists"],
+    creditMbids: [VARIOUS_ARTISTS_MBID],
+    ownerMbid: AFROJACK,
+    ownerName: "AFROJACK",
+    fullCredit: false,
+    fallbackName: "x",
+  });
+  assert.equal(plan.albumArtist, "Various Artists");
+  assert.deepEqual(plan.albumArtistMbids, [VARIOUS_ARTISTS_MBID]);
+  assert.equal(plan.compilation, true);
+  assert.equal(planAlbumArtistTags({ creditNames: ["A"], creditMbids: [AFROJACK], ownerMbid: AFROJACK, ownerName: "A", fullCredit: false, fallbackName: "x" }).compilation, false);
+});
+
+test("sort credit follows MusicBrainz join phrases when credits line up", () => {
+  const data = JSON.stringify([{ id: "1", name: "Armin van Buuren", join_phrase: " feat. " }, { id: "2", name: "Sharon den Adel", join_phrase: "" }]);
+  assert.equal(joinSortCredit(data, ["Buuren, Armin van", "Adel, Sharon den"]), "Buuren, Armin van feat. Adel, Sharon den");
+  assert.equal(joinSortCredit(null, ["Who, The", "Doe, John"]), "Who, The, Doe, John");
+});
+
+test("genre and release type compare as sets; compilation flags compare by truthiness", () => {
+  assert.equal(isTagValueEqual("genre", "Rock, Pop", "Pop; Rock"), true);
+  assert.equal(isTagValueEqual("compilation", "true", "1"), true);
+  assert.equal(isTagValueEqual("compilation", null, "1"), false);
 });

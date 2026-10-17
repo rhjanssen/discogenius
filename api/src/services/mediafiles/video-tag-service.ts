@@ -6,6 +6,7 @@ import { writeMetadata } from "./audioUtils.js";
 import { AudioTagService, parseArtistCreditNames, parseArtistCreditIds, type ManagedTag, type RetagApplyResult } from "./audio-tag-service.js";
 import { getConfigSection } from "../config/config.js";
 import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 type VideoTagRow = {
   id: number;
@@ -124,8 +125,7 @@ export class VideoTagService {
   static async apply(ids: number[]): Promise<RetagApplyResult> {
     const uniqueIds = Array.from(new Set(ids.filter(Number.isFinite)));
     if (uniqueIds.length === 0) return { retagged: 0, skipped: 0, missing: 0, errors: [] };
-    const marks = uniqueIds.map(() => "?").join(",");
-    return this.applyRows(this.getRows(`file.id IN (${marks})`, uniqueIds));
+    return this.applyRows(this.getRows(`file.id IN ${SQL_JSON_LIST}`, [jsonList(uniqueIds)]));
   }
 
   static async applyForArtists(artistIds: string[]): Promise<RetagApplyResult> {

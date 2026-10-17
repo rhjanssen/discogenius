@@ -184,7 +184,7 @@ dbModule.db.prepare(`
   assert.equal(byKey.get("track"), "1/1");
   assert.equal(byKey.get("disc"), "1/1");
   assert.equal(byKey.get("date"), "2024-03-01");
-  assert.equal(byKey.get("genre"), "Indie Rock / Alternative");
+  assert.equal(byKey.get("genre"), "Indie Rock; Alternative");
   assert.equal(byKey.get("label"), "Canonical Label");
   assert.equal(byKey.get("barcode"), "987654321000");
   assert.equal(byKey.get("isrc"), "TESTISRC1234");

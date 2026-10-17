@@ -47,6 +47,9 @@ const ID3_TEXT_KEYS: Record<string, string> = {
   tdor: "TDOR",
   tory: "TORY",
   genre: "TCON",
+  tcmp: "TCMP",
+  tsop: "TSOP",
+  tso2: "TSO2",
   isrc: "TSRC",
   copyright: "TCOP",
   publisher: "TPUB",
@@ -64,6 +67,12 @@ const MP4_TEXT_KEYS: Record<string, string> = {
   comment: "\xa9cmt",
   copyright: "cprt",
   genre: "\xa9gen",
+  soar: "soar",
+  soaa: "soaa",
+  soal: "soal",
+  sonm: "sonm",
+  soco: "soco",
+  "\xa9pub": "\xa9pub",
   composer: "\xa9wrt",
   lyrics: "\xa9lyr",
   "lyrics-eng": "\xa9lyr",
@@ -75,15 +84,29 @@ function isArtistIdList(key: string): boolean {
 }
 
 /** Fields written as one value per credited artist (ARTISTS, ALBUMARTISTS, DISCOGENIUS_ALBUMARTIST_MBIDS). */
+const MULTI_VALUE_FIELD_NAMES = new Set([
+  "artists", "albumartists", "discogenius_albumartist_mbids",
+  "genre", "tcon", "\xa9gen", "releasetype", "musicbrainz album type",
+]);
+const SLASH_LIST_FIELD_NAMES = new Set(["genre", "tcon", "\xa9gen", "releasetype", "musicbrainz album type"]);
+
+function multiValueFieldName(key: string): string {
+  return key.replace(/^(txxx:|----:com\.apple\.itunes:)/i, "").toLowerCase();
+}
+
+/** Picard writes these as one Vorbis field / ID3v2.4 string / MP4 data atom per value. */
 function isMultiValueList(key: string): boolean {
-  const name = key.replace(/^(txxx:|----:com\.apple\.itunes:)/i, "").toLowerCase();
-  return name === "artists" || name === "albumartists" || name === "discogenius_albumartist_mbids";
+  return MULTI_VALUE_FIELD_NAMES.has(multiValueFieldName(key));
 }
 
 function tagValues(key: string, value: string): string[] {
   if (key.toLowerCase() === "isrc") return parseRecordingIsrcs(value);
   if (isArtistIdList(key)) return [...new Set(value.split(/[;,/\s]+/).filter(Boolean))];
-  if (isMultiValueList(key)) return value.split(/\s*;\s*/).map(item => item.trim()).filter(Boolean);
+  if (isMultiValueList(key)) {
+    // Genre/release type never contain "/" legitimately; ID3v2.3 joins them with it.
+    const separator = SLASH_LIST_FIELD_NAMES.has(multiValueFieldName(key)) ? /\s*[;/]\s*/ : /\s*;\s*/;
+    return value.split(separator).map(item => item.trim()).filter(Boolean);
+  }
   return value ? [value] : [];
 }
 
@@ -292,7 +315,8 @@ function setId3UserText(tag: Id3v2Tag, description: string, value: string): void
   const frame = existing ?? Id3v2UserTextInformationFrame.fromDescription(description);
   const values = tagValues(description, value);
   // ID3v2.3 has no multi-value text; "/" is ambiguous for names like AC/DC.
-  frame.text = tag.version >= 4 ? values : [values.join(isMultiValueList(description) ? "; " : "/")];
+  const v23Separator = isMultiValueList(description) && !SLASH_LIST_FIELD_NAMES.has(multiValueFieldName(description)) ? "; " : "/";
+  frame.text = tag.version >= 4 ? values : [values.join(v23Separator)];
   if (!existing) tag.addFrame(frame);
 }
 
@@ -345,6 +369,11 @@ function setId3Value(tag: Id3v2Tag, rawKey: string, value: string): void {
   }
   const identifier = id3TextIdentifier(lower);
   if (identifier) {
+    if (value && isMultiValueList(lower)) {
+      const values = tagValues(lower, value);
+      tag.setTextFrame(identifier, ...(tag.version >= 4 ? values : [values.join("/")]));
+      return;
+    }
     tag.setTextFrame(identifier, value);
     return;
   }
@@ -397,6 +426,10 @@ function setMp4Value(tag: Mpeg4AppleTag, rawKey: string, value: string): void {
   const key = rawKey.trim();
   const lower = key.toLowerCase();
   const freeform = mp4FreeformName(key);
+  if (lower === "cpil") {
+    tag.setQuickTimeData(mp4BoxType(key), /^(1|true)$/i.test(value) ? [ByteVector.fromByte(1)] : [], Mpeg4AppleDataBoxFlagType.ForTempo);
+    return;
+  }
   if (lower === "rtng" || lower === "stik") {
     if (value && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 255)) throw new Error(`Invalid ${key} value`);
     tag.setQuickTimeData(mp4BoxType(key), value ? [ByteVector.fromByte(Number(value))] : [], Mpeg4AppleDataBoxFlagType.ForTempo);
@@ -425,6 +458,11 @@ function setMp4Value(tag: Mpeg4AppleTag, rawKey: string, value: string): void {
   }
   const box = MP4_TEXT_KEYS[lower];
   if (box) {
+    if (value && isMultiValueList(box)) {
+      const values = tagValues(box, value).map(item => ByteVector.fromString(item, StringType.UTF8));
+      tag.setQuickTimeData(mp4BoxType(box), values, Mpeg4AppleDataBoxFlagType.ContainsText);
+      return;
+    }
     tag.setQuickTimeString(mp4BoxType(box), value);
     return;
   }
@@ -439,6 +477,10 @@ function readMp4Value(tag: Mpeg4AppleTag, rawKey: string): string {
   const key = rawKey.trim();
   const lower = key.toLowerCase();
   const freeform = mp4FreeformName(key);
+  if (lower === "cpil") {
+    const data = tag.getFirstQuickTimeData(mp4BoxType(key), Mpeg4AppleDataBoxFlagType.ForTempo);
+    return data?.length && data.get(0) ? "1" : "";
+  }
   if (lower === "rtng" || lower === "stik") {
     const data = tag.getFirstQuickTimeData(mp4BoxType(key), Mpeg4AppleDataBoxFlagType.ForTempo);
     return data?.length ? String(data.get(0)) : "";
@@ -467,6 +509,10 @@ function readMp4Value(tag: Mpeg4AppleTag, rawKey: string): string {
 }
 
 function readMp4TextAtom(tag: Mpeg4AppleTag, box: string): string {
+  if (isMultiValueList(box)) {
+    return tag.getQuickTimeData(mp4BoxType(box), Mpeg4AppleDataBoxFlagType.ContainsText)
+      .map(data => data.toString(StringType.UTF8)).filter(Boolean).join("; ");
+  }
   // TagLib's string-list getter splits text on semicolons and trims every
   // segment. Comments and lyrics are single UTF-8 values, not artist lists.
   return tag.getFirstQuickTimeData(mp4BoxType(box), Mpeg4AppleDataBoxFlagType.ContainsText)

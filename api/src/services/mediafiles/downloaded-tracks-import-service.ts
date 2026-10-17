@@ -34,6 +34,7 @@ import { classifyNeutralAudio } from "../providers/provider-quality.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { deriveQuality, parseAudioFile } from "./audioUtils.js";
 import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
@@ -98,14 +99,13 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
     ));
     if (ids.length === 0) return;
 
-    const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(`
         SELECT canonical_release_mbid AS release_mbid, album_edition_id, library_id,
                file_path, library_root, relative_path
         FROM TrackFiles
-        WHERE id IN (${placeholders})
+        WHERE id IN ${SQL_JSON_LIST}
           AND file_type = 'track'
-    `).all(...ids) as Array<{
+    `).all(jsonList(ids)) as Array<{
         release_mbid: string | null;
         album_edition_id: number | null;
         library_id: number | null;
@@ -212,7 +212,6 @@ export async function ensureAlbumCatalogGenresForFileIds(fileIds: readonly numbe
     ));
     if (ids.length === 0) return;
 
-    const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(`
         SELECT DISTINCT
           album.mbid AS mbid,
@@ -220,7 +219,7 @@ export async function ensureAlbumCatalogGenresForFileIds(fileIds: readonly numbe
           album.genres AS genres
         FROM TrackFiles file
         JOIN Albums album ON album.mbid = file.canonical_release_group_mbid
-        WHERE file.id IN (${placeholders})
+        WHERE file.id IN ${SQL_JSON_LIST}
           AND file.file_type = 'track'
           AND album.mbid IS NOT NULL
     `).all(...ids) as Array<{ mbid: string; artistMbid: string | null; genres: string | null }>;
