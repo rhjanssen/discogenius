@@ -222,7 +222,7 @@ export async function ensureAlbumCatalogGenresForFileIds(fileIds: readonly numbe
         WHERE file.id IN ${SQL_JSON_LIST}
           AND file.file_type = 'track'
           AND album.mbid IS NOT NULL
-    `).all(...ids) as Array<{ mbid: string; artistMbid: string | null; genres: string | null }>;
+    `).all(jsonList(ids)) as Array<{ mbid: string; artistMbid: string | null; genres: string | null }>;
 
     const missing = rows.filter((row) => {
         const raw = String(row.genres || "").trim();

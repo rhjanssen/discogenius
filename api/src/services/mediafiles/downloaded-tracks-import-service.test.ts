@@ -162,3 +162,11 @@ test("YouTube album imports reconcile the exact downloaded plan instead of provi
   assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 12, trackOfferCount: 12 }), false);
   assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', provider: 'youtube-music' }, 22), 22);
 });
+
+test("post-import catalog helpers bind multi-file id lists as one JSON parameter", async () => {
+  // Regression: 979ad8b2 spread the ids into a single-parameter json_each()
+  // statement, failing every multi-track import with "Too many parameter values".
+  const ids = Array.from({ length: 40 }, (_, index) => index + 1);
+  await assert.doesNotReject(() => importModule.ensureAlbumCatalogGenresForFileIds(ids));
+  await assert.doesNotReject(() => importModule.ensureDestAlbumArtworkForFileIds(ids));
+});
