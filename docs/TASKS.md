@@ -2,7 +2,7 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
-- 18 Oct 2026, local only, branch `grok/restart-safe-file-commands`: retag and rename resume from `CommandFileWork` / `CommandRenameWork` after a process restart. Not deployed. Schema stays 46. Migration `file-work-restart-resume` adds `restart_claims` only and does not bump `user_version`. A plan row's existence is the complete plan, including the plan retag 19285 already wrote in one transaction with its file rows. The first deploy requeues that command from its cursor and redoes at most the in-flight file. Do not queue a second retag for it.
+- 18 Oct 2026, local only, branch `grok/restart-safe-file-commands`: retag and rename resume from `CommandFileWork` / `CommandRenameWork` after a process restart. Not deployed. Schema stays 46. Migration `file-work-restart-resume` adds `restart_claims` only and does not bump `user_version`. A plan row's existence is the complete plan, including the plan retag 19285 already wrote in one transaction with its file rows. The first deploy requeues that command from its cursor and redoes at most the in-flight file. Do not queue a second retag for it. Five restarts with no cursor progress fail the command; a resume that advances the cursor clears that count.
 
 - October 9 tested deploy: `yarn ci` on `7cb91669` passed in 326 seconds with
   2250 API tests, 187 frontend tests, lint, typechecks and both builds. No

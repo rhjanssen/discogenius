@@ -68,7 +68,9 @@ and then requeues those commands from the plan. Settled rows stay settled. The
 claimed-but-unsettled row is reclaimed. The plan row is inserted in the same
 transaction as every work row, so the row's existence is the complete plan and
 startup does not select the library again. A file still claimed after five
-restarts is stored as a per-file error and the command continues. Commands
-without `fileWorkCheckpoint` keep today's fail-closed attempt budget. Imports
-are not replayed.
+restarts is stored as a per-file error and the command continues. Five restarts
+in a row that leave the checkpoint cursor where it was fail the command with
+`no checkpoint progress`. A resume that advances the cursor, including a
+per-file skip, clears that count. Commands without `fileWorkCheckpoint` keep
+today's fail-closed attempt budget. Imports are not replayed.
 

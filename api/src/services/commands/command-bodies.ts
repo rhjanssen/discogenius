@@ -137,6 +137,8 @@ export interface FileWorkRestartResume {
   settled: number;
   total: number;
   skippedFiles: number;
+  /** Consecutive resumes that did not advance `settled`. Zero after progress. */
+  count: number;
 }
 
 export interface CommandBodyCommon {

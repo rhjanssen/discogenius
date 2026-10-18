@@ -242,6 +242,7 @@ test("startup recovery resumes a mid-retag checkpoint and finishes only the unse
         settled: 2,
         total: 4,
         skippedFiles: 0,
+        count: 1,
     });
     const visible = history.getActivityPage({ statuses: ["queued"], types: ["RetagArtist"], categories: ["scans"] });
     const item = visible.items.find(entry => entry.id === job.id);
@@ -488,4 +489,85 @@ test("a retag with no plan yet is requeued and plans once", async (t) => {
     assert.equal(records.CommandFileWorkRepository.get(job.id)?.total, ids.length);
     assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, ids.length);
     assert.equal(commandRow(job.id).status, "completed");
+});
+
+test("five resumes with no cursor progress fail the command", async (t) => {
+    const job = claim(queue.CommandNames.RetagFiles, { ids });
+    stampRunning(job.id, 2);
+    const planned = t.mock.method(records.CommandFileWorkRepository, "create");
+    for (let resume = 1; resume < policy.FILE_CHECKPOINT_COMMAND_STALL_LIMIT; resume += 1) {
+        await bootRecovery(t);
+        const row = commandRow(job.id);
+        assert.equal(row.status, "queued");
+        assert.equal(row.attempt, 2);
+        const marker = JSON.parse(row.payload).restartResume as { count: number; settled: number };
+        assert.equal(marker.count, resume);
+        assert.equal(marker.settled, 0);
+        database.db.prepare("UPDATE commands SET status = 'started', worker_id = 'previous-process' WHERE id = ?").run(job.id);
+    }
+    await bootRecovery(t);
+    const failed = commandRow(job.id);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.attempt, 2);
+    assert.equal(failed.blocked_reason, policy.FILE_CHECKPOINT_COMMAND_STALL_REASON);
+    assert.equal(failed.error, policy.fileCheckpointCommandStallError(policy.FILE_CHECKPOINT_COMMAND_STALL_LIMIT));
+    assert.equal(JSON.parse(failed.payload).restartResume.count, policy.FILE_CHECKPOINT_COMMAND_STALL_LIMIT);
+    assert.equal(planned.mock.callCount(), 0);
+    assert.equal(records.CommandFileWorkRepository.get(job.id), undefined);
+});
+
+test("cursor progress resets the restart stall count", async (t) => {
+    const job = claim(queue.CommandNames.RetagFiles, { ids: [ids[0], ids[1]] });
+    records.CommandFileWorkRepository.create(job.id, job.worker_id!, retag.retagPlanRevision(), records.CommandFileWorkRepository.prepare([ids[0], ids[1]]));
+    database.db.prepare("UPDATE CommandFileWork SET status = 'started' WHERE command_id = ? AND ordinal = 0").run(job.id);
+    stampRunning(job.id, 3);
+    await bootRecovery(t);
+    assert.equal(JSON.parse(commandRow(job.id).payload).restartResume.count, 1);
+
+    database.db.prepare("UPDATE CommandFileWork SET status = 'settled', skipped = 1 WHERE command_id = ? AND ordinal = 0").run(job.id);
+    database.db.prepare("UPDATE CommandFileWork SET status = 'started' WHERE command_id = ? AND ordinal = 1").run(job.id);
+    database.db.prepare("UPDATE CommandFileWorkPlans SET cursor = 1, skipped = 1 WHERE command_id = ?").run(job.id);
+    database.db.prepare("UPDATE commands SET status = 'started', worker_id = 'previous-process' WHERE id = ?").run(job.id);
+    await bootRecovery(t);
+    const progressed = JSON.parse(commandRow(job.id).payload).restartResume as { count: number; settled: number };
+    assert.equal(commandRow(job.id).status, "queued");
+    assert.equal(commandRow(job.id).attempt, 3);
+    assert.equal(progressed.settled, 1);
+    assert.equal(progressed.count, 0);
+
+    database.db.prepare("UPDATE commands SET status = 'started', worker_id = 'previous-process' WHERE id = ?").run(job.id);
+    await bootRecovery(t);
+    const again = JSON.parse(commandRow(job.id).payload).restartResume as { count: number; settled: number };
+    assert.equal(commandRow(job.id).status, "queued");
+    assert.equal(again.settled, 1);
+    assert.equal(again.count, 1);
+});
+
+test("skipping a poison file counts as checkpoint progress", async (t) => {
+    const job = claim(queue.CommandNames.RetagFiles, { ids: [ids[0]] });
+    records.CommandFileWorkRepository.create(job.id, job.worker_id!, retag.retagPlanRevision(), records.CommandFileWorkRepository.prepare([ids[0]]));
+    database.db.prepare("UPDATE CommandFileWork SET status = 'started', restart_claims = ? WHERE command_id = ?")
+        .run(policy.FILE_CHECKPOINT_RESTART_LIMIT - 1, job.id);
+    const payload = JSON.parse(commandRow(job.id).payload) as { restartResume?: unknown };
+    payload.restartResume = {
+        version: 1,
+        reason: "earlier restart",
+        settled: 0,
+        total: 1,
+        skippedFiles: 0,
+        count: policy.FILE_CHECKPOINT_COMMAND_STALL_LIMIT - 1,
+    };
+    database.db.prepare("UPDATE commands SET payload = ? WHERE id = ?").run(JSON.stringify(payload), job.id);
+    stampRunning(job.id, 4);
+    await bootRecovery(t);
+    const row = commandRow(job.id);
+    assert.equal(row.status, "queued");
+    assert.equal(row.attempt, 4);
+    assert.notEqual(row.blocked_reason, policy.FILE_CHECKPOINT_COMMAND_STALL_REASON);
+    const resume = JSON.parse(row.payload).restartResume as { count: number; settled: number };
+    assert.equal(resume.settled, 1);
+    assert.equal(resume.count, 0);
+    const file = database.db.prepare("SELECT status, error FROM CommandFileWork WHERE command_id = ?").get(job.id) as { status: string; error: string };
+    assert.equal(file.status, "settled");
+    assert.equal(JSON.parse(file.error)[0], policy.FILE_CHECKPOINT_POISON_ERROR);
 });

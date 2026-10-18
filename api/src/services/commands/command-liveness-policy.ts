@@ -42,10 +42,35 @@ export function resolveCommandNoProgressTimeoutMs(name: CommandName): number {
  */
 export const FILE_CHECKPOINT_RESTART_LIMIT = 5;
 
+/**
+ * Consecutive checkpoint resumes that leave the cursor where it was.
+ * A crash during planning, or anywhere outside a file claim, used to requeue
+ * forever. Progress resets the count. The per-file skip advances the cursor
+ * and therefore counts as progress.
+ */
+export const FILE_CHECKPOINT_COMMAND_STALL_LIMIT = 5;
+
+export const FILE_CHECKPOINT_COMMAND_STALL_REASON = "no checkpoint progress";
+
 export const FILE_CHECKPOINT_RESUME_PHASE = "resumed after restart";
 
 export const FILE_CHECKPOINT_POISON_ERROR =
   `Skipped after ${FILE_CHECKPOINT_RESTART_LIMIT} restarts without settling`;
+
+export function fileCheckpointCommandStallError(resumes: number): string {
+    return `Stopped after ${resumes} restarts with no checkpoint progress`;
+}
+
+/** First resume is 1. A higher cursor stores 0. No cursor movement adds one. */
+export function nextFileCheckpointResumeCount(
+    previous: { settled: number; count?: number } | undefined,
+    settled: number,
+): number {
+    if (!previous) return 1;
+    if (settled > previous.settled) return 0;
+    const prior = Number.isInteger(previous.count) ? Number(previous.count) : 1;
+    return prior + 1;
+}
 
 /**
  * Generic infrastructure retries. These commands either have no per-file

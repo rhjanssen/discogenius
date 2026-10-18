@@ -57,7 +57,13 @@ export {
 } from "./command-ordering.js";
 
 import { appEvents, AppEvent, CommandEventPayload } from "./app-events.js";
-import { FILE_CHECKPOINT_RESUME_PHASE } from "./command-liveness-policy.js";
+import {
+    FILE_CHECKPOINT_COMMAND_STALL_LIMIT,
+    FILE_CHECKPOINT_COMMAND_STALL_REASON,
+    FILE_CHECKPOINT_RESUME_PHASE,
+    fileCheckpointCommandStallError,
+    nextFileCheckpointResumeCount,
+} from "./command-liveness-policy.js";
 
 const QUEUE_RANK_STEP = 1024;
 const QUEUE_REBALANCE_WINDOW = 64;
@@ -1541,8 +1547,10 @@ ${orderBy}
             if (!current) return { outcome: "not-owner", attempt: 0, retryAfter: null };
             const display = options.prepare();
             if (!display) return { outcome: "not-checkpoint", attempt: Number(current.attempt) || 0, retryAfter: null };
+            const parsed = safeParsePayload(current.payload, options.id);
+            const count = nextFileCheckpointResumeCount(parsed.restartResume, display.settled);
             const payload = {
-                ...safeParsePayload(current.payload, options.id),
+                ...parsed,
                 description: display.description,
                 restartResume: {
                     version: 1 as const,
@@ -1550,8 +1558,37 @@ ${orderBy}
                     settled: display.settled,
                     total: display.total,
                     skippedFiles: display.skippedFiles,
+                    count,
                 },
             };
+            if (count >= FILE_CHECKPOINT_COMMAND_STALL_LIMIT) {
+                const stalled = db.prepare(`
+                    UPDATE commands
+                    SET
+                        status = 'failed',
+                        error = ?,
+                        completed_at = ?,
+                        updated_at = ?,
+                        progress_phase = 'failed',
+                        blocked_reason = ?,
+                        lease_expires_at = NULL,
+                        retry_after = NULL,
+                        last_retry_reason = ?,
+                        payload = ?
+                    WHERE id = ? AND status = 'started' AND worker_id = ?
+                `).run(
+                    fileCheckpointCommandStallError(count),
+                    nowTimestamp,
+                    nowTimestamp,
+                    FILE_CHECKPOINT_COMMAND_STALL_REASON,
+                    options.reason,
+                    JSON.stringify(payload),
+                    options.id,
+                    options.workerId,
+                );
+                if (stalled.changes === 0) return { outcome: "not-owner", attempt: Number(current.attempt) || 0, retryAfter: null };
+                return { outcome: "failed", attempt: Number(current.attempt) || 0, retryAfter: null };
+            }
             const result = db.prepare(`
                 UPDATE commands
                 SET
@@ -1587,7 +1624,7 @@ ${orderBy}
             return { outcome: "requeued", attempt: Number(current.attempt) || 0, retryAfter: null };
         });
         const outcome = resume();
-        if (outcome.outcome === "requeued") {
+        if (outcome.outcome === "requeued" || outcome.outcome === "failed") {
             clearCommandOverlay(options.id);
             clearCommandUpdateThrottle(options.id);
             const job = this.get(options.id);
@@ -1600,7 +1637,11 @@ ${orderBy}
                     payload: job.payload,
                     error: job.error,
                 } as CommandEventPayload);
-                console.log(`[CommandQueue] Resumed command #${options.id} (${job.name}) from its file checkpoint: ${job.payload?.description ?? options.reason}`);
+                if (outcome.outcome === "requeued") {
+                    console.log(`[CommandQueue] Resumed command #${options.id} (${job.name}) from its file checkpoint: ${job.payload?.description ?? options.reason}`);
+                } else {
+                    console.warn(`[CommandQueue] Failed command #${options.id} (${job.name}) after ${FILE_CHECKPOINT_COMMAND_STALL_LIMIT} restarts with no checkpoint progress`);
+                }
             }
         }
         return outcome;
