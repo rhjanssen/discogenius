@@ -22,6 +22,7 @@ import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { hexToRgb } from "@/ultrablur/color";
 import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
+import { ProviderAuthNotice } from "@/components/ProviderAuthNotice";
 import { useTheme } from "@/providers/themeContext";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { formatCompactNumber } from "@/utils/format";
@@ -571,6 +572,7 @@ const Layout = () => {
           tabIndex={-1}
           className={mergeClasses(styles.main, isAuthRoute && styles.authMain)}
         >
+          <ProviderAuthNotice />
           <Outlet />
         </main>
         <div className={styles.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">
