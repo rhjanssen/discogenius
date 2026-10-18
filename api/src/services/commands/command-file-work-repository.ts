@@ -12,14 +12,12 @@ export interface FileWorkPlan {
     skipped: number;
     missing: number;
     error_count: number;
-    plan_complete: number;
 }
 
 export interface FileCheckpointReclaim {
     cursor: number;
     total: number;
     skippedFiles: number;
-    planComplete: boolean;
 }
 
 const identityFields = ["artist_metadata_id", "recording_id", "track_id", "album_edition_id", "release_group_id",
@@ -76,49 +74,15 @@ export class CommandFileWorkRepository {
     static create(commandId: number, workerId: string, revision: string, files: PlannedFile[], operation: "retag" | "strip" = "retag"): void {
         db.transaction(() => {
             this.assertOwner(commandId, workerId);
-            const existing = this.get(commandId);
-            if (existing?.plan_complete) return;
+            // The plan row and every work row commit together. A row that
+            // already exists is the complete plan, including one written by
+            // the previous process before this column set existed.
+            if (this.get(commandId)) return;
+            db.prepare("INSERT INTO CommandFileWorkPlans (command_id, operation, config_revision, total) VALUES (?, ?, ?, ?)")
+                .run(commandId, operation, revision, files.length);
             const insert = db.prepare(`INSERT INTO CommandFileWork (command_id, generation, ordinal, track_file_id, identity_snapshot)
-                VALUES (?, ?, ?, ?, ?)`);
-            if (!existing) {
-                db.prepare(`INSERT INTO CommandFileWorkPlans
-                    (command_id, operation, config_revision, total, plan_complete)
-                    VALUES (?, ?, ?, ?, 0)`)
-                    .run(commandId, operation, revision, files.length);
-                files.forEach((file, ordinal) => insert.run(commandId, 1, ordinal, file.id, file.identity));
-                db.prepare("UPDATE CommandFileWorkPlans SET plan_complete = 1, updated_at = CURRENT_TIMESTAMP WHERE command_id = ?")
-                    .run(commandId);
-                return;
-            }
-            if (existing.config_revision !== revision) {
-                throw new Error("Tag settings changed during this retag plan. Start a new retag with the current settings.");
-            }
-            const settled = db.prepare(`SELECT COUNT(*) AS n FROM CommandFileWork
-                WHERE command_id = ? AND generation = ? AND status = 'settled'`)
-                .get(commandId, existing.generation) as { n: number };
-            if (Number(settled.n) === 0) {
-                db.prepare("DELETE FROM CommandFileWork WHERE command_id = ? AND generation = ?")
-                    .run(commandId, existing.generation);
-                files.forEach((file, ordinal) => insert.run(commandId, existing.generation, ordinal, file.id, file.identity));
-                db.prepare(`UPDATE CommandFileWorkPlans SET operation = ?, total = ?, cursor = 0, retagged = 0,
-                    skipped = 0, missing = 0, error_count = 0, plan_complete = 1, updated_at = CURRENT_TIMESTAMP
-                    WHERE command_id = ?`).run(operation, files.length, commandId);
-                return;
-            }
-            const present = new Set((db.prepare(`SELECT track_file_id FROM CommandFileWork
-                WHERE command_id = ? AND generation = ?`).all(commandId, existing.generation) as Array<{ track_file_id: number }>)
-                .map(row => row.track_file_id));
-            let ordinal = Number((db.prepare(`SELECT COALESCE(MAX(ordinal), -1) AS ordinal FROM CommandFileWork
-                WHERE command_id = ? AND generation = ?`).get(commandId, existing.generation) as { ordinal: number }).ordinal) + 1;
-            for (const file of files) {
-                if (present.has(file.id)) continue;
-                insert.run(commandId, existing.generation, ordinal, file.id, file.identity);
-                ordinal += 1;
-            }
-            const total = Number((db.prepare(`SELECT COUNT(*) AS n FROM CommandFileWork
-                WHERE command_id = ? AND generation = ?`).get(commandId, existing.generation) as { n: number }).n);
-            db.prepare(`UPDATE CommandFileWorkPlans SET total = ?, plan_complete = 1, updated_at = CURRENT_TIMESTAMP
-                WHERE command_id = ?`).run(total, commandId);
+                VALUES (?, 1, ?, ?, ?)`);
+            files.forEach((file, ordinal) => insert.run(commandId, ordinal, file.id, file.identity));
         })();
     }
 
@@ -128,7 +92,7 @@ export class CommandFileWorkRepository {
     static reclaimInFlight(commandId: number): FileCheckpointReclaim {
         return db.transaction(() => {
             const plan = this.get(commandId);
-            if (!plan) return { cursor: 0, total: 0, skippedFiles: 0, planComplete: false };
+            if (!plan) return { cursor: 0, total: 0, skippedFiles: 0 };
             const file = db.prepare(`SELECT ordinal, track_file_id, restart_claims FROM CommandFileWork
                 WHERE command_id = ? AND generation = ? AND ordinal = ? AND status = 'started'`)
                 .get(commandId, plan.generation, plan.cursor) as {
@@ -157,7 +121,6 @@ export class CommandFileWorkRepository {
                 cursor: next.cursor,
                 total: next.total,
                 skippedFiles,
-                planComplete: next.plan_complete === 1,
             };
         })();
     }

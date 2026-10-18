@@ -26,4 +26,4 @@ A separate live log recorded a 20-second unmapped-files request. Its route compu
 
 ## Addendum, 18 October 2026
 
-Retag and rename now resume from their per-file checkpoint after a process restart. A partial import is still not replayed. The schema version stays 46. The additive migration is `file-work-restart-resume`: it adds `plan_complete` and `restart_claims` and marks a plan that already existed complete, because that plan was written in one transaction with its file rows. The first deploy must not bump `user_version`. A retag that was planned by the previous process keeps that plan and continues from its cursor.
+Retag and rename now resume from their per-file checkpoint after a process restart. A partial import is still not replayed. The schema version stays 46. The additive migration is `file-work-restart-resume`: it adds `restart_claims` only. It does not bump `user_version`. A plan row is written in the same transaction as its file rows, including the plan retag 19285 already has, so the row's existence is the complete plan. The first deploy leaves that plan untouched and continues from its cursor. Do not queue a second retag for it.

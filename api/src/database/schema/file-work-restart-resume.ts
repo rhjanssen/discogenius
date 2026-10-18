@@ -8,9 +8,13 @@ import type Database from "better-sqlite3";
  * This is not a user_version bump. Opening a schema-46 database is the live
  * contract (`assertDatabaseVersionCanStart` refuses any other version), and the
  * first deploy of this code has to open the database a running retag already
- * wrote. Fresh databases get the columns from `createCommandFileWorkSchema`.
- * Existing databases gain them here. A plan row that already exists was
- * inserted in one transaction with every work row, so it is complete.
+ * wrote. Fresh databases get `restart_claims` from `createCommandFileWorkSchema`.
+ * Existing databases gain it here.
+ *
+ * A plan row is inserted in the same transaction as every work row, by this
+ * code and by the process that planned retag 19285. The row's existence is the
+ * complete plan. There is no `plan_complete` flag to repair: startup leaves
+ * that plan untouched and continues from its cursor.
  */
 export const FILE_WORK_RESTART_RESUME_MIGRATION = "file-work-restart-resume";
 
@@ -40,13 +44,7 @@ function addColumn(
 
 export function migrateFileWorkRestartResume(db: Database.Database): void {
   const apply = db.transaction(() => {
-    addColumn(db, "CommandFileWorkPlans", "plan_complete", "INTEGER NOT NULL DEFAULT 0", () => {
-      db.prepare("UPDATE CommandFileWorkPlans SET plan_complete = 1").run();
-    });
     addColumn(db, "CommandFileWork", "restart_claims", "INTEGER NOT NULL DEFAULT 0");
-    addColumn(db, "CommandRenamePlans", "plan_complete", "INTEGER NOT NULL DEFAULT 0", () => {
-      db.prepare("UPDATE CommandRenamePlans SET plan_complete = 1").run();
-    });
     addColumn(db, "CommandRenameWork", "restart_claims", "INTEGER NOT NULL DEFAULT 0");
     const hasConfig = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'config'").get();
     if (hasConfig) {

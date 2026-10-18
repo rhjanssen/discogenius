@@ -65,9 +65,10 @@ RetagArtist, RetagFiles, RenameArtist, and RenameFiles store progress in
 `CommandFileWork` or `CommandRenameWork`. The command definition declares that
 with `fileWorkCheckpoint`. A process restart runs `FileMutationJournal.recoverPending()`
 and then requeues those commands from the plan. Settled rows stay settled. The
-claimed-but-unsettled row is reclaimed. A complete plan (`plan_complete`) skips
-library selection. An incomplete plan is filled without inserting a file twice.
-A file still claimed after five restarts is stored as a per-file error and the
-command continues. Commands without `fileWorkCheckpoint` keep today's fail-closed
-attempt budget. Imports are not replayed.
+claimed-but-unsettled row is reclaimed. The plan row is inserted in the same
+transaction as every work row, so the row's existence is the complete plan and
+startup does not select the library again. A file still claimed after five
+restarts is stored as a per-file error and the command continues. Commands
+without `fileWorkCheckpoint` keep today's fail-closed attempt budget. Imports
+are not replayed.
 

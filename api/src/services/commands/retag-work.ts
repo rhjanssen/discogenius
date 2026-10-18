@@ -44,7 +44,7 @@ export async function runRetagWorkUnit(
     if (plan && plan.config_revision !== revision) {
         throw new Error("Tag settings changed during this retag plan. Start a new retag with the current settings.");
     }
-    if (!plan?.plan_complete) {
+    if (!plan) {
         const files = Work.prepare(resolveIds());
         await withSqliteWriteGate(() => Work.create(job.id, owner, revision, files, stripOnly ? "strip" : "retag"), "retag:plan");
         plan = Work.get(job.id)!;

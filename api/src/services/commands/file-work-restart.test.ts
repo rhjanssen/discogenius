@@ -83,10 +83,6 @@ function stampRunning(id: number, attempt = 4): void {
     database.db.prepare("UPDATE commands SET attempt = ?, started_at = ? WHERE id = ?").run(attempt, STARTED_AT, id);
 }
 
-function snapshot(fileId: number): string {
-    return records.CommandFileWorkRepository.prepare([fileId])[0].identity;
-}
-
 async function bootRecovery(t: TestContext): Promise<void> {
     const loop = t.mock.method(executor.CommandExecutor as unknown as { loop: () => Promise<void> }, "loop", async () => {});
     try {
@@ -130,7 +126,7 @@ test("checkpoint resume is a property of the command definition", () => {
     assert.equal(policy.resolveInfrastructureMaxAttempts(queue.CommandNames.CheckHealth, 3), 3);
 });
 
-test("migration marks an existing plan complete once and leaves schema 46", async () => {
+test("migration keeps an existing plan and adds restart claims without bumping schema 46", async () => {
     const Database = (await import("better-sqlite3")).default;
     const { migrateFileWorkRestartResume } = await import("../../database/schema/file-work-restart-resume.js");
     const raw = new Database(":memory:");
@@ -160,33 +156,41 @@ test("migration marks an existing plan complete once and leaves schema 46", asyn
     raw.prepare(`INSERT INTO CommandRenamePlans (command_id, config_revision, total, cursor, result)
         VALUES (7, 'old', 10, 4, '{}')`).run();
     migrateFileWorkRestartResume(raw);
-    const plan = raw.prepare("SELECT cursor, total, plan_complete FROM CommandFileWorkPlans WHERE command_id = 19285").get() as {
-        cursor: number; total: number; plan_complete: number;
+    const plan = raw.prepare("SELECT cursor, total FROM CommandFileWorkPlans WHERE command_id = 19285").get() as {
+        cursor: number; total: number;
     };
-    assert.deepEqual(plan, { cursor: 15316, total: 24502, plan_complete: 1 });
+    assert.deepEqual(plan, { cursor: 15316, total: 24502 });
     assert.equal((raw.prepare("SELECT restart_claims FROM CommandFileWork WHERE command_id = 19285").get() as { restart_claims: number }).restart_claims, 0);
-    assert.equal((raw.prepare("SELECT plan_complete FROM CommandRenamePlans WHERE command_id = 7").get() as { plan_complete: number }).plan_complete, 1);
+    const names = (table: string) => (raw.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name);
+    assert.equal(names("CommandFileWorkPlans").includes("plan_complete"), false);
+    assert.equal(names("CommandRenamePlans").includes("plan_complete"), false);
+    assert.equal(names("CommandFileWork").includes("restart_claims"), true);
+    assert.equal(names("CommandRenameWork").includes("restart_claims"), true);
     assert.equal((raw.prepare("SELECT value FROM config WHERE key = 'schema.migration.file-work-restart-resume'").get() as { value: string }).value, "applied");
     assert.equal(Number(raw.pragma("user_version", { simple: true })), 0);
-    raw.prepare("UPDATE CommandFileWorkPlans SET plan_complete = 0 WHERE command_id = 19285").run();
     raw.prepare("UPDATE CommandFileWork SET restart_claims = 3 WHERE command_id = 19285").run();
     migrateFileWorkRestartResume(raw);
-    assert.equal((raw.prepare("SELECT plan_complete FROM CommandFileWorkPlans WHERE command_id = 19285").get() as { plan_complete: number }).plan_complete, 0);
+    assert.deepEqual(raw.prepare("SELECT cursor, total FROM CommandFileWorkPlans WHERE command_id = 19285").get(), { cursor: 15316, total: 24502 });
     assert.equal((raw.prepare("SELECT restart_claims FROM CommandFileWork WHERE command_id = 19285").get() as { restart_claims: number }).restart_claims, 3);
     raw.close();
 
     const bare = new Database(":memory:");
-    bare.exec("CREATE TABLE CommandFileWorkPlans (command_id INTEGER PRIMARY KEY, operation TEXT, config_revision TEXT, total INTEGER, cursor INTEGER)");
+    bare.exec(`
+        CREATE TABLE CommandFileWork (command_id INTEGER PRIMARY KEY);
+        CREATE TABLE CommandRenameWork (command_id INTEGER PRIMARY KEY);
+    `);
     migrateFileWorkRestartResume(bare);
     migrateFileWorkRestartResume(bare);
+    assert.equal((bare.prepare("PRAGMA table_info(CommandFileWork)").all() as Array<{ name: string }>).some(column => column.name === "restart_claims"), true);
     bare.close();
 
     assert.equal(Number(database.db.pragma("user_version", { simple: true })), 46);
     const held = claim(queue.CommandNames.RetagFiles, { ids: [ids[0]] });
-    database.db.prepare(`INSERT INTO CommandFileWorkPlans (command_id, operation, config_revision, total, plan_complete)
-        VALUES (?, 'retag', 'later', 1, 0)`).run(held.id);
+    database.db.prepare(`INSERT INTO CommandFileWorkPlans (command_id, operation, config_revision, total)
+        VALUES (?, 'retag', 'later', 1)`).run(held.id);
     migrateFileWorkRestartResume(database.db);
-    assert.equal((database.db.prepare("SELECT plan_complete FROM CommandFileWorkPlans WHERE command_id = ?").get(held.id) as { plan_complete: number }).plan_complete, 0);
+    assert.deepEqual(database.db.prepare("SELECT cursor, total FROM CommandFileWorkPlans WHERE command_id = ?").get(held.id), { cursor: 0, total: 1 });
+    assert.equal((database.db.prepare("PRAGMA table_info(CommandFileWorkPlans)").all() as Array<{ name: string }>).some(column => column.name === "plan_complete"), false);
 });
 
 test("startup recovery resumes a mid-retag checkpoint and finishes only the unsettled files", async (t) => {
@@ -275,7 +279,6 @@ test("startup recovery resumes a mid-retag checkpoint and finishes only the unse
     assert.equal(plan.retagged, 0);
     assert.equal(plan.missing, 0);
     assert.equal(plan.error_count, 0);
-    assert.equal(plan.plan_complete, 1);
     assert.deepEqual(records.CommandFileWorkRepository.errors(job.id), []);
     assert.equal(commandRow(job.id).status, "completed");
     assert.equal(commandRow(job.id).progress, 100);
@@ -333,63 +336,14 @@ test("a crash after one settle leaves exactly the next file claimed", async (t) 
     assert.equal(commandRow(job.id).status, "queued");
 });
 
-test("an interrupted plan restarts selection without duplicating rows", async (t) => {
+test("a second create leaves the existing plan unchanged", () => {
     const job = claim(queue.CommandNames.RetagFiles, { ids });
-    database.db.prepare(`INSERT INTO CommandFileWorkPlans (command_id, operation, config_revision, total, cursor, plan_complete)
-        VALUES (?, 'retag', ?, 2, 0, 0)`).run(job.id, retag.retagPlanRevision());
-    const insert = database.db.prepare(`INSERT INTO CommandFileWork (command_id, generation, ordinal, track_file_id, identity_snapshot)
-        VALUES (?, 1, ?, ?, ?)`);
-    insert.run(job.id, 0, ids[0], snapshot(ids[0]));
-    insert.run(job.id, 1, ids[1], snapshot(ids[1]));
-    stampRunning(job.id, 5);
-    const applied: number[] = [];
-    mockRetagApply(t, applied);
-    const planned = t.mock.method(records.CommandFileWorkRepository, "create");
-    await bootRecovery(t);
-    assert.equal(commandRow(job.id).status, "queued");
-    assert.match(JSON.parse(commandRow(job.id).payload).description as string, /0\/2 files already settled/);
-    const next = queue.CommandQueueManager.claimForExecution(job.id, "resume-owner", 60_000)!;
-    await context.executeCommand(next);
-    assert.equal(planned.mock.callCount(), 1);
-    assert.deepEqual(applied, ids);
+    records.CommandFileWorkRepository.create(job.id, job.worker_id!, retag.retagPlanRevision(), records.CommandFileWorkRepository.prepare([ids[0], ids[1]]));
+    records.CommandFileWorkRepository.create(job.id, job.worker_id!, retag.retagPlanRevision(), records.CommandFileWorkRepository.prepare(ids));
     const rows = database.db.prepare("SELECT track_file_id FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id) as Array<{ track_file_id: number }>;
-    assert.deepEqual(rows.map(row => row.track_file_id), ids);
-    const plan = records.CommandFileWorkRepository.get(job.id)!;
-    assert.equal(plan.plan_complete, 1);
-    assert.equal(plan.cursor, 4);
-    assert.equal(plan.total, 4);
-    assert.equal(commandRow(job.id).status, "completed");
-});
-
-test("a partial plan keeps settled rows and appends only the missing files", async (t) => {
-    const job = claim(queue.CommandNames.RetagFiles, { ids });
-    database.db.prepare(`INSERT INTO CommandFileWorkPlans
-        (command_id, operation, config_revision, total, cursor, skipped, plan_complete)
-        VALUES (?, 'retag', ?, 2, 1, 1, 0)`).run(job.id, retag.retagPlanRevision());
-    const insert = database.db.prepare(`INSERT INTO CommandFileWork
-        (command_id, generation, ordinal, track_file_id, identity_snapshot, status, skipped, intent_path)
-        VALUES (?, 1, ?, ?, ?, ?, ?, ?)`);
-    insert.run(job.id, 0, ids[0], snapshot(ids[0]), "settled", 1, "keep-settled");
-    insert.run(job.id, 1, ids[1], snapshot(ids[1]), "pending", 0, null);
-    stampRunning(job.id, 2);
-    const applied: number[] = [];
-    mockRetagApply(t, applied);
-    await bootRecovery(t);
-    const next = queue.CommandQueueManager.claimForExecution(job.id, "resume-owner", 60_000)!;
-    await context.executeCommand(next);
-    assert.deepEqual(applied, [ids[1], ids[2], ids[3]]);
-    const rows = database.db.prepare(`SELECT ordinal, track_file_id, status, intent_path FROM CommandFileWork
-        WHERE command_id = ? ORDER BY ordinal`).all(job.id) as Array<{ ordinal: number; track_file_id: number; status: string; intent_path: string | null }>;
-    assert.deepEqual(rows.map(row => row.track_file_id), ids);
-    assert.equal(rows[0].status, "settled");
-    assert.equal(rows[0].intent_path, "keep-settled");
-    assert.equal(new Set(rows.map(row => row.track_file_id)).size, 4);
-    const plan = records.CommandFileWorkRepository.get(job.id)!;
-    assert.equal(plan.plan_complete, 1);
-    assert.equal(plan.total, 4);
-    assert.equal(plan.cursor, 4);
-    assert.equal(plan.skipped, 4);
-    assert.equal(commandRow(job.id).status, "completed");
+    assert.deepEqual(rows.map(row => row.track_file_id), [ids[0], ids[1]]);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.total, 2);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 0);
 });
 
 test("a file that crashes across restarts is skipped and the command still completes", async (t) => {
@@ -531,6 +485,7 @@ test("a retag with no plan yet is requeued and plans once", async (t) => {
     await context.executeCommand(next);
     assert.equal(planned.mock.callCount(), 1);
     assert.deepEqual(applied, ids);
-    assert.equal(records.CommandFileWorkRepository.get(job.id)?.plan_complete, 1);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.total, ids.length);
+    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, ids.length);
     assert.equal(commandRow(job.id).status, "completed");
 });

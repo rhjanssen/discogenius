@@ -13,9 +13,9 @@ import { CommandQueueManager } from "./command-queue-manager.js";
 import { FILE_CHECKPOINT_POISON_ERROR, FILE_CHECKPOINT_RESTART_LIMIT } from "./command-liveness-policy.js";
 
 type Plan = { command_id: number; generation: number; config_revision: string; total: number; cursor: number;
-    plan_complete: number; result: string };
+    result: string };
 export interface RenameCheckpointReclaim {
-    cursor: number; total: number; skippedFiles: number; planComplete: boolean;
+    cursor: number; total: number; skippedFiles: number;
 }
 const empty = (): RenameApplyResult => ({ renamed: 0, skipped: 0, conflicts: 0, missing: 0, cleanedDirectories: 0, errors: [] });
 const identityFields = ["artist_metadata_id", "artist_id", "recording_id", "track_id", "track_file_id", "album_edition_id",
@@ -49,7 +49,7 @@ function outcomes(plan: Plan): Array<{ file_id: number; identity_snapshot: strin
 export function reclaimRenameCheckpoint(commandId: number): RenameCheckpointReclaim {
     return db.transaction(() => {
         const plan = getPlan(commandId);
-        if (!plan) return { cursor: 0, total: 0, skippedFiles: 0, planComplete: false };
+        if (!plan) return { cursor: 0, total: 0, skippedFiles: 0 };
         const row = db.prepare(`SELECT ordinal, file_id, restart_claims FROM CommandRenameWork
             WHERE command_id = ? AND generation = ? AND ordinal = ? AND status = 'started'`)
             .get(commandId, plan.generation, plan.cursor) as { ordinal: number; file_id: number; restart_claims: number } | undefined;
@@ -74,7 +74,7 @@ export function reclaimRenameCheckpoint(commandId: number): RenameCheckpointRecl
             }
         }
         const next = getPlan(commandId)!;
-        return { cursor: next.cursor, total: next.total, skippedFiles, planComplete: next.plan_complete === 1 };
+        return { cursor: next.cursor, total: next.total, skippedFiles };
     })();
 }
 
@@ -88,44 +88,20 @@ export async function runRenameWorkUnit(job: CommandModel, ctx: CommandHandlerCo
     const revision = renamePlanRevision();
     let plan = getPlan(job.id);
     if (plan && plan.config_revision !== revision) throw new Error("Rename settings changed during this plan. Start a new rename with the current settings.");
-    if (!plan?.plan_complete) {
+    if (!plan) {
         const ids = [...new Set(await Promise.resolve(resolveIds()))];
         if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("Invalid rename file identity");
         const files = ids.map(id => ({ id, identity: identity(id) }));
         await withSqliteWriteGate(() => db.transaction(() => {
             assertOwner(job);
-            const existing = getPlan(job.id);
-            if (existing?.plan_complete) return;
+            // Same rule as retag: the plan row commits with every work row,
+            // so a row that already exists is complete and must not be refilled.
+            if (getPlan(job.id)) return;
+            db.prepare("INSERT INTO CommandRenamePlans (command_id, config_revision, total, result) VALUES (?, ?, ?, ?)")
+                .run(job.id, revision, files.length, JSON.stringify(empty()));
             const insert = db.prepare(`INSERT INTO CommandRenameWork
-                (command_id, generation, ordinal, file_id, identity_snapshot) VALUES (?, ?, ?, ?, ?)`);
-            if (!existing) {
-                db.prepare(`INSERT INTO CommandRenamePlans (command_id, config_revision, total, plan_complete, result)
-                    VALUES (?, ?, ?, 0, ?)`).run(job.id, revision, files.length, JSON.stringify(empty()));
-                files.forEach((file, ordinal) => insert.run(job.id, 1, ordinal, file.id, file.identity));
-                db.prepare("UPDATE CommandRenamePlans SET plan_complete = 1 WHERE command_id = ?").run(job.id);
-                return;
-            }
-            const settled = db.prepare(`SELECT COUNT(*) AS n FROM CommandRenameWork
-                WHERE command_id = ? AND generation = ? AND status = 'settled'`).get(job.id, existing.generation) as { n: number };
-            if (Number(settled.n) === 0) {
-                db.prepare("DELETE FROM CommandRenameWork WHERE command_id = ? AND generation = ?").run(job.id, existing.generation);
-                files.forEach((file, ordinal) => insert.run(job.id, existing.generation, ordinal, file.id, file.identity));
-                db.prepare(`UPDATE CommandRenamePlans SET total = ?, cursor = 0, plan_complete = 1, result = ? WHERE command_id = ?`)
-                    .run(files.length, JSON.stringify(empty()), job.id);
-                return;
-            }
-            const present = new Set((db.prepare(`SELECT file_id FROM CommandRenameWork WHERE command_id = ? AND generation = ?`)
-                .all(job.id, existing.generation) as Array<{ file_id: number }>).map(row => row.file_id));
-            let ordinal = Number((db.prepare(`SELECT COALESCE(MAX(ordinal), -1) AS ordinal FROM CommandRenameWork
-                WHERE command_id = ? AND generation = ?`).get(job.id, existing.generation) as { ordinal: number }).ordinal) + 1;
-            for (const file of files) {
-                if (present.has(file.id)) continue;
-                insert.run(job.id, existing.generation, ordinal, file.id, file.identity);
-                ordinal += 1;
-            }
-            const total = Number((db.prepare(`SELECT COUNT(*) AS n FROM CommandRenameWork
-                WHERE command_id = ? AND generation = ?`).get(job.id, existing.generation) as { n: number }).n);
-            db.prepare("UPDATE CommandRenamePlans SET total = ?, plan_complete = 1 WHERE command_id = ?").run(total, job.id);
+                (command_id, generation, ordinal, file_id, identity_snapshot) VALUES (?, 1, ?, ?, ?)`);
+            files.forEach((file, ordinal) => insert.run(job.id, ordinal, file.id, file.identity));
         })(), "rename:plan");
         plan = getPlan(job.id)!;
     }
