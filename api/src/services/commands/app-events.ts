@@ -38,6 +38,9 @@ export enum AppEvent {
     // Emitted from the ImportProviderArtists command handler (on a worker) and
     // bridged to the main thread for the SSE route.
     IMPORT_ARTISTS_PROGRESS = 'import.artists.progress',
+
+    // Provider login flipped. One event per transition (ok ↔ needs_reauth).
+    PROVIDER_AUTH_CHANGED = 'provider.auth.changed',
 }
 
 export interface CommandEventPayload {
@@ -99,6 +102,16 @@ export interface ImportArtistsProgressEventPayload {
     data: Record<string, unknown>;
 }
 
+export interface ProviderAuthChangedEventPayload {
+    provider: string;
+    status: "ok" | "needs_reauth" | "unknown";
+    banner: string | null;
+    queueMessage: string | null;
+    held: number;
+    href: string | null;
+    settingsLabel: string | null;
+}
+
 export interface FileChangeEventPayload {
     libraryFileId?: number | null;
     artistId?: string | number | null;
@@ -139,6 +152,7 @@ export interface AppEventPayloadMap {
     [AppEvent.FILE_DELETED]: FileChangeEventPayload;
     [AppEvent.FILE_UPGRADED]: FileChangeEventPayload;
     [AppEvent.IMPORT_ARTISTS_PROGRESS]: ImportArtistsProgressEventPayload;
+    [AppEvent.PROVIDER_AUTH_CHANGED]: ProviderAuthChangedEventPayload;
 }
 
 class TypedAppEventEmitter extends EventEmitter {

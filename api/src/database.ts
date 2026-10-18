@@ -36,6 +36,7 @@ import {
   createCommandFileWorkSchema,
 } from "./database/schema/commands.js";
 import { migrateFileWorkRestartResume } from "./database/schema/file-work-restart-resume.js";
+import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
   createCanonicalCreditSchemaV41,
@@ -511,6 +512,9 @@ export function initDatabase() {
   // second catalogue schema or a compatibility writer.
   createCommandFileWorkSchema(db, { ifNotExists: true });
   migrateFileWorkRestartResume(db);
+  // New table + config marker only. user_version stays 46 so a running
+  // RetagArtist is not reset.
+  migrateProviderAuthState(db);
   createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();
@@ -770,6 +774,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
   createCatalogSchema(schemaDb);
   createCanonicalCreditSchemaV41(schemaDb);
   createCommandsSchema(schemaDb);
+  createProviderAuthStateSchema(schemaDb);
   createCommandFileWorkSchema(schemaDb);
   createRuntimeControlSchema(schemaDb);
   createLibrarySchemaV41(schemaDb);
