@@ -45,7 +45,7 @@ async function probeOnce(
   videoId: string,
   accessToken: string,
   countryCode: string,
-): Promise<TidalVideoQualityProbe | null> {
+): Promise<TidalVideoQualityProbe | "unauthorized" | null> {
   // Prefer HIGH; TIDAL silently downgrades videoQuality when 1080p is absent.
   for (const requested of ["HIGH", "MEDIUM", "LOW"] as const) {
     const url =
@@ -54,7 +54,12 @@ async function probeOnce(
       + `&countryCode=${encodeURIComponent(countryCode)}`;
     const { ok, status, data } = await fetchJson(url, accessToken);
     if (!ok || !data?.manifest) {
-      if (status === 401 || status === 403) {
+      // Only 401 means the access token is rejected. 403 is a per-video
+      // entitlement/region refusal; refreshing the token cannot fix it.
+      if (status === 401) {
+        return "unauthorized";
+      }
+      if (status === 403) {
         return null;
       }
       continue;
@@ -95,15 +100,16 @@ export async function probeTidalVideoQuality(videoId: string): Promise<TidalVide
   if (!token?.access_token) return null;
   const cc = getCountryCode();
 
-  let result = await probeOnce(id, token.access_token, cc);
-  if (result) return result;
+  const first = await probeOnce(id, token.access_token, cc);
+  if (first !== "unauthorized") return first;
 
   try {
     await refreshTidalToken(true);
-    token = loadToken();
-    if (!token?.access_token) return null;
-    result = await probeOnce(id, token.access_token, cc);
-    return result;
+    const refreshed = loadToken();
+    if (!refreshed?.access_token || refreshed.access_token === token.access_token) return null;
+    token = refreshed;
+    const retry = await probeOnce(id, token.access_token, cc);
+    return retry === "unauthorized" ? null : retry;
   } catch (error) {
     console.warn(`[TIDAL] Video quality probe token refresh failed for ${id}:`, error);
     return null;

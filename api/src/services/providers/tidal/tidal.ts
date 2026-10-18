@@ -29,6 +29,7 @@ export interface TidalToken {
   expires_in?: number;
   expiry_time?: number;
   expires_at?: number; // Unix timestamp when token expires (calculated)
+  refreshed_at?: number; // Epoch ms of the last successful refresh/login
   scope?: string;
   user?: {
     userId: number;
@@ -84,6 +85,7 @@ export function loadToken(): TidalToken | null {
     refresh_token: token.refresh_token,
     token_type: token.token_type,
     expires_at: token.expires_at || getJwtExpiry(token.access_token),
+    refreshed_at: token.refreshed_at,
     user,
   };
 }

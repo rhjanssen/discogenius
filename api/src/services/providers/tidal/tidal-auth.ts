@@ -10,37 +10,72 @@ const TIDAL_AUTH_TOKEN_FILE = path.join(TIDAL_AUTH_DIR, "token.json");
 const TIDAL_REFRESH_PAUSE_FILE = path.join(TIDAL_AUTH_DIR, "refresh-pause.json");
 const TIDAL_AUTH_BASE = "https://auth.tidal.com/v1";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
-// TIDAL answers a refused refresh with 403 abuse_detected. Retrying on the
-// five-minute token interval keeps that block in place. One refusal pauses
-// further attempts for 12 hours; the stored token stays untouched.
-const TIDAL_ABUSE_BACKOFF_MS = 12 * 60 * 60 * 1000;
+// TIDAL answers too-frequent refreshes with 403 abuse_detected. Retrying on
+// the five-minute token interval keeps that block in place, so a refusal
+// pauses further attempts. The pause escalates (30 min, 1 h, 2 h, 4 h) and is
+// capped below the access-token lifetime: a pause longer than the token's
+// remaining life guarantees an outage (18 Oct 2026: a 12 h pause let the token
+// expire and every TIDAL download failed for 8 h). The stored token stays
+// untouched while paused.
+const TIDAL_ABUSE_BACKOFF_BASE_MS = 30 * 60 * 1000;
+const TIDAL_ABUSE_BACKOFF_MAX_MS = 4 * 60 * 60 * 1000;
+// A token that is not close to expiry is only refreshed again when the last
+// successful refresh is at least this old. Callers force a refresh on any
+// failed request (a 403/404 video probe, a missing manifest); without this
+// floor a metadata pass refreshed a still-valid token every ~12 minutes and
+// TIDAL flagged the account with abuse_detected.
+export const TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+// Refresh proactively when the access token expires within this window.
+export const TIDAL_REFRESH_EXPIRY_WINDOW_SECONDS = 25 * 60;
 let tidalRefreshBlockedUntilMs = 0;
+let tidalRefreshInFlight: Promise<TidalAuthToken | null> | null = null;
 
 export function resetTidalRefreshBackoffForTests(): void {
     tidalRefreshBlockedUntilMs = 0;
+    tidalRefreshInFlight = null;
     fs.rmSync(TIDAL_REFRESH_PAUSE_FILE, { force: true });
 }
 
-function tidalRefreshBlockedUntilFromDisk(): number {
+interface TidalRefreshPauseState {
+    until: number;
+    strikes: number;
+    writtenAt: number;
+}
+
+function readTidalRefreshPause(): TidalRefreshPauseState {
     try {
-        const parsed = JSON.parse(fs.readFileSync(TIDAL_REFRESH_PAUSE_FILE, "utf8")) as { until?: unknown };
+        const parsed = JSON.parse(fs.readFileSync(TIDAL_REFRESH_PAUSE_FILE, "utf8")) as { until?: unknown; strikes?: unknown };
         const until = typeof parsed.until === "string" ? Date.parse(parsed.until) : Number.NaN;
-        return Number.isFinite(until) ? until : 0;
+        const strikes = typeof parsed.strikes === "number" && Number.isFinite(parsed.strikes) ? parsed.strikes : 1;
+        const writtenAt = fs.statSync(TIDAL_REFRESH_PAUSE_FILE).mtimeMs;
+        return { until: Number.isFinite(until) ? until : 0, strikes: Math.max(1, Math.floor(strikes)), writtenAt };
     } catch {
-        return 0;
+        return { until: 0, strikes: 0, writtenAt: 0 };
     }
 }
 
 export function isTidalRefreshPaused(now = Date.now()): boolean {
-    return now < Math.max(tidalRefreshBlockedUntilMs, tidalRefreshBlockedUntilFromDisk());
+    const persisted = readTidalRefreshPause();
+    // Clamp legacy/long pauses (the old 12 h value) to the cap, counted from
+    // when the pause was written.
+    const persistedUntil = Math.min(persisted.until, persisted.writtenAt + TIDAL_ABUSE_BACKOFF_MAX_MS);
+    return now < Math.max(tidalRefreshBlockedUntilMs, persistedUntil);
 }
 
-function pauseTidalRefresh(untilMs: number): void {
+export function tidalAbuseBackoffMs(strikes: number): number {
+    const exponent = Math.max(0, Math.floor(strikes) - 1);
+    return Math.min(TIDAL_ABUSE_BACKOFF_MAX_MS, TIDAL_ABUSE_BACKOFF_BASE_MS * 2 ** exponent);
+}
+
+function pauseTidalRefresh(now: number): number {
+    const strikes = readTidalRefreshPause().strikes + 1;
+    const untilMs = now + tidalAbuseBackoffMs(strikes);
     tidalRefreshBlockedUntilMs = untilMs;
     fs.mkdirSync(TIDAL_AUTH_DIR, { recursive: true });
     const temporary = `${TIDAL_REFRESH_PAUSE_FILE}.${process.pid}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify({ until: new Date(untilMs).toISOString() }));
+    fs.writeFileSync(temporary, JSON.stringify({ until: new Date(untilMs).toISOString(), strikes }));
     fs.renameSync(temporary, TIDAL_REFRESH_PAUSE_FILE);
+    return untilMs - now;
 }
 
 function clearTidalRefreshPause(): void {
@@ -69,6 +104,8 @@ export interface TidalAuthToken {
     refresh_token: string;
     token_type?: string;
     expires_at?: number;
+    /** Epoch ms of the last successful refresh or login (not secret). */
+    refreshed_at?: number;
     user?: TidalAuthUser;
 }
 
@@ -236,13 +273,42 @@ export function clearStoredTidalToken(): void {
     });
 }
 
+function tokenExpiresWithinRefreshWindow(token: TidalAuthToken, nowMs: number): boolean {
+    const expiresAt = token.expires_at ?? getJwtExpiry(token.access_token);
+    if (!expiresAt) return true;
+    return expiresAt - Math.floor(nowMs / 1000) < TIDAL_REFRESH_EXPIRY_WINDOW_SECONDS;
+}
+
+/**
+ * Refresh the stored TIDAL token. Single-flight: concurrent callers share one
+ * request. A token that is not close to expiry and was refreshed less than
+ * TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS ago is returned as-is without calling
+ * TIDAL, whatever the caller asked for.
+ */
 export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> {
+    if (!tidalRefreshInFlight) {
+        tidalRefreshInFlight = performTidalTokenRefresh().finally(() => {
+            tidalRefreshInFlight = null;
+        });
+    }
+    return tidalRefreshInFlight;
+}
+
+async function performTidalTokenRefresh(): Promise<TidalAuthToken | null> {
     if (isTidalRefreshPaused()) {
         return null;
     }
     const token = loadStoredTidalToken();
     if (!token?.refresh_token) {
         return null;
+    }
+    const now = Date.now();
+    if (
+        !tokenExpiresWithinRefreshWindow(token, now)
+        && typeof token.refreshed_at === "number"
+        && now - token.refreshed_at < TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS
+    ) {
+        return token;
     }
     const tidalClient = getTidalAuthClientConfig();
 
@@ -269,8 +335,8 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
             // The status alone is enough when the provider returns no JSON.
         }
         if (response.status === 403 && errorCode === "abuse_detected") {
-            pauseTidalRefresh(Date.now() + TIDAL_ABUSE_BACKOFF_MS);
-            console.warn("[TIDAL] Token refresh paused for 12 hours after HTTP 403 abuse_detected");
+            const pauseMs = pauseTidalRefresh(Date.now());
+            console.warn(`[TIDAL] Token refresh paused for ${Math.round(pauseMs / 60_000)} minutes after HTTP 403 abuse_detected`);
         }
         throw new Error(`TIDAL token refresh failed (HTTP ${response.status}${errorCode ? `: ${errorCode}` : ""})`);
     }
@@ -289,6 +355,7 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
         refresh_token: data.refresh_token || token.refresh_token,
         token_type: data.token_type || token.token_type || "Bearer",
         expires_at: Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
+        refreshed_at: Date.now(),
     });
 
     await saveStoredTidalToken(refreshed);
@@ -411,6 +478,7 @@ export async function pollTidalDeviceLogin(): Promise<{
         refresh_token: data.refresh_token,
         token_type: data.token_type || "Bearer",
         expires_at: Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
+        refreshed_at: Date.now(),
     });
 
     await saveStoredTidalToken(token);
