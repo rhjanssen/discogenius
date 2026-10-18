@@ -26,7 +26,11 @@ export function retagPlanRevision(stripOnly = false): string {
  * waiting to import. (A fixed 25-file/30s slice re-queued the command every
  * ~20s and dropped the per-album cover cache each time.) Settled CommandFileWork
  * rows are the checkpoint. A process restart continues this plan and redoes
- * at most the file that was claimed and not settled. */
+ * at most the file that was claimed and not settled.
+ *
+ * Steady state is one write-gate transaction per file: settling file N claims
+ * file N+1. The first file of a dispatch is claimed on its own. An unchanged
+ * identity check is a read and does not take the gate. */
 export async function runRetagWorkUnit(
     job: CommandModel,
     ctx: CommandHandlerContext,
@@ -61,55 +65,81 @@ export async function runRetagWorkUnit(
         console.warn(`[Retag] File #${fileId} changed catalogue identity during command ${job.id}; re-planned that file only`);
     };
     const raceAttempts = new Map<number, number>();
+    let claimed: { id: number; fileType: string | null } | null = null;
+    const identityError = (error: unknown): error is Error => error instanceof Error && /changed (catalogue )?identity/.test(error.message);
+    const refreshDrift = async (): Promise<void> => {
+        if (!Work.identityDrifted(job.id)) return;
+        const replanned = await withSqliteWriteGate(() => Work.replanChangedIdentity(job.id, owner), "retag:replan");
+        if (replanned !== null) noteIdentityChange(replanned);
+        claimed = null;
+    };
     try {
         while (plan.cursor < plan.total) {
             if (CommandQueueManager.get(job.id)?.payload.cancelRequested) throw new Error("Retag cancellation requested");
-            const replanned = await withSqliteWriteGate(() => Work.replanChangedIdentity(job.id, owner), "retag:replan");
-            if (replanned !== null) noteIdentityChange(replanned);
-            // Claim before the file is opened. A crash during the write leaves
-            // this row `started`, which restart recovery can count and reclaim.
-            let claimed: { id: number; fileType: string | null };
-            try {
-                claimed = await withSqliteWriteGate(() => Work.begin(job.id, owner), "retag:file-claim");
-            } catch (error) {
-                if (!(error instanceof Error) || !/changed (catalogue )?identity/.test(error.message)) throw error;
-                const replannedAgain = await withSqliteWriteGate(() => Work.replanChangedIdentity(job.id, owner), "retag:replan");
-                if (replannedAgain !== null) noteIdentityChange(replannedAgain);
-                continue;
+            // The next file may already be claimed by the previous settle. Do not
+            // open it once this worker no longer owns the command.
+            if (claimed && !Work.executionOwned(job.id, owner)) throw new Error("Retag execution ownership changed");
+            await refreshDrift();
+            if (!claimed) {
+                // Claim before the file is opened. A crash during the write leaves
+                // this row `started`, which restart recovery can count and reclaim.
+                try {
+                    claimed = await withSqliteWriteGate(() => Work.begin(job.id, owner), "retag:file-claim");
+                } catch (error) {
+                    if (!identityError(error)) throw error;
+                    const replannedAgain = await withSqliteWriteGate(() => Work.replanChangedIdentity(job.id, owner), "retag:replan");
+                    if (replannedAgain !== null) noteIdentityChange(replannedAgain);
+                    continue;
+                }
             }
-            const result = claimed.fileType === null
+            const current = claimed;
+            const result = current.fileType === null
                 ? { retagged: 0, skipped: 0, missing: 1, errors: [] }
                 : stripOnly
-                    ? await AudioTagService.stripTags([claimed.id])
-                : claimed.fileType === "video"
-                    ? await VideoTagService.apply([claimed.id])
-                    : await session.apply([claimed.id]);
+                    ? await AudioTagService.stripTags([current.id])
+                : current.fileType === "video"
+                    ? await VideoTagService.apply([current.id])
+                    : await session.apply([current.id]);
             const unchanged = result.retagged === 0 && result.errors.length === 0
                 && result.skipped + result.missing === 1;
+            const nextSettled = settled + 1;
+            const claimNext = plan.cursor + 1 < plan.total
+                && nextSettled < 250
+                && performance.now() - started < 120_000
+                && !(nextSettled % 5 === 0 && hasPendingImportHandoff())
+                && !CommandQueueManager.get(job.id)?.payload.cancelRequested;
+            const label = claimNext ? "retag:settle-and-claim" : unchanged ? "retag:unchanged" : "retag:file-settled";
             try {
-                plan = unchanged
-                    ? await withSqliteWriteGate(() => Work.settleDirect(job.id, owner, claimed.id, result), "retag:unchanged")
-                    : await withSqliteWriteGate(() => Work.settle(job.id, owner, claimed.id, result), "retag:file-settled");
+                const step = await withSqliteWriteGate(
+                    () => Work.settleAndClaimNext(job.id, owner, current.id, result, claimNext),
+                    label,
+                );
+                plan = step.plan;
+                if (step.replannedId !== null) noteIdentityChange(step.replannedId);
+                claimed = step.next;
             } catch (error) {
-                if (!(error instanceof Error) || !/changed (catalogue )?identity/.test(error.message)) throw error;
+                if (!identityError(error)) throw error;
                 // The file was re-identified between planning and settling. Re-plan
                 // just this item and process it again; after repeated races, record
                 // it as skipped so one busy file can never abort the whole command.
-                const attempts = (raceAttempts.get(claimed.id) ?? 0) + 1;
-                raceAttempts.set(claimed.id, attempts);
+                const attempts = (raceAttempts.get(current.id) ?? 0) + 1;
+                raceAttempts.set(current.id, attempts);
                 const replannedAgain = await withSqliteWriteGate(() => Work.replanChangedIdentity(job.id, owner), "retag:replan");
                 if (replannedAgain !== null) noteIdentityChange(replannedAgain);
+                claimed = null;
                 if (attempts < 3) continue;
-                plan = await withSqliteWriteGate(() => Work.settleDirect(job.id, owner, claimed.id,
-                    { retagged: 0, skipped: 1, missing: 0, errors: [] }), "retag:identity-dropped");
+                const dropped = await withSqliteWriteGate(() => Work.settleAndClaimNext(job.id, owner, current.id,
+                    { retagged: 0, skipped: 1, missing: 0, errors: [] }, claimNext), "retag:identity-dropped");
+                plan = dropped.plan;
+                if (dropped.replannedId !== null) noteIdentityChange(dropped.replannedId);
+                claimed = dropped.next;
             }
             ctx.updateCommandDescription(job, {
                 progress: 5 + Math.floor(plan.cursor / Math.max(plan.total, 1) * 90),
                 description: `${stripOnly ? "Strip tags" : "Retag"} - ${resumed}processed ${plan.cursor}/${plan.total} files`,
             });
             settled++;
-            if (settled >= 250 || performance.now() - started >= 120_000) break;
-            if (settled % 5 === 0 && hasPendingImportHandoff()) break;
+            if (!claimNext) break;
             await ctx.yieldToEventLoop();
         }
     } finally {

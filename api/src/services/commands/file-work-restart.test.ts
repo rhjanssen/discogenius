@@ -302,6 +302,37 @@ test("a crash during the tag write is claimed before the file is opened", async 
     assert.match(JSON.parse(commandRow(job.id).payload).description as string, /resumed after restart/);
 });
 
+test("a crash after one settle leaves exactly the next file claimed", async (t) => {
+    const job = claim(queue.CommandNames.RetagFiles, { ids: [ids[0], ids[1], ids[2]] });
+    records.CommandFileWorkRepository.create(job.id, job.worker_id!, retag.retagPlanRevision(), records.CommandFileWorkRepository.prepare([ids[0], ids[1], ids[2]]));
+    let opened = 0;
+    t.mock.method(tags.AudioTagService, "createRetagSession", () => ({
+        apply: async (fileIds: number[]) => {
+            opened += 1;
+            if (opened === 2) throw new Error("process killed during write");
+            assert.deepEqual(fileIds, [ids[0]]);
+            return { retagged: 0, skipped: 1, missing: 0, errors: [] };
+        },
+        close: () => {},
+    }));
+    await assert.rejects(
+        retag.runRetagWorkUnit(job, context.buildHandlerContext(), () => { throw new Error("must not reselect"); }),
+        /process killed during write/,
+    );
+    assert.deepEqual(database.db.prepare("SELECT ordinal, status FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id), [
+        { ordinal: 0, status: "settled" },
+        { ordinal: 1, status: "started" },
+        { ordinal: 2, status: "pending" },
+    ]);
+    await bootRecovery(t);
+    assert.deepEqual(database.db.prepare("SELECT ordinal, status, restart_claims FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id), [
+        { ordinal: 0, status: "settled", restart_claims: 0 },
+        { ordinal: 1, status: "pending", restart_claims: 1 },
+        { ordinal: 2, status: "pending", restart_claims: 0 },
+    ]);
+    assert.equal(commandRow(job.id).status, "queued");
+});
+
 test("an interrupted plan restarts selection without duplicating rows", async (t) => {
     const job = claim(queue.CommandNames.RetagFiles, { ids });
     database.db.prepare(`INSERT INTO CommandFileWorkPlans (command_id, operation, config_revision, total, cursor, plan_complete)

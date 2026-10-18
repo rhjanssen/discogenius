@@ -37,9 +37,27 @@ const snapshot = (row: FileRow | undefined): string => JSON.stringify(row
  * a small UI marker; settling one file never rewrites the library-wide ID plan. */
 export class CommandFileWorkRepository {
     private static assertOwner(commandId: number, workerId: string): void {
-        if (!db.prepare("SELECT 1 FROM commands WHERE id = ? AND status = 'started' AND worker_id = ?").get(commandId, workerId)) {
+        if (!this.executionOwned(commandId, workerId)) {
             throw new Error("Retag execution ownership changed");
         }
+    }
+
+    /** Read-only. A pre-claimed file must not be opened after ownership was retired. */
+    static executionOwned(commandId: number, workerId: string): boolean {
+        return Boolean(db.prepare("SELECT 1 FROM commands WHERE id = ? AND status = 'started' AND worker_id = ?").get(commandId, workerId));
+    }
+
+    /** Read-only. The common retag file has not moved, so this must not take the write gate. */
+    static identityDrifted(commandId: number): boolean {
+        const plan = this.get(commandId);
+        if (!plan) return false;
+        const file = db.prepare(`SELECT track_file_id, identity_snapshot FROM CommandFileWork
+            WHERE command_id = ? AND generation = ? AND ordinal = ? AND status IN ('pending', 'started')`)
+            .get(commandId, plan.generation, plan.cursor) as { track_file_id: number; identity_snapshot: string } | undefined;
+        if (!file) return false;
+        const current = db.prepare(`SELECT ${fileColumns} FROM TrackFiles WHERE id = ?`).get(file.track_file_id) as FileRow | undefined;
+        if (!current) return false;
+        return snapshot(current) !== file.identity_snapshot;
     }
 
     static get(commandId: number): FileWorkPlan | undefined {
@@ -231,6 +249,51 @@ export class CommandFileWorkRepository {
                 .run(current?.file_path ?? null, current?.file_size ?? null, current?.modified_at ?? null,
                     commandId, plan.generation, plan.cursor);
             return { id: file.track_file_id, fileType: current?.file_type == null ? null : String(current.file_type) };
+        })();
+    }
+
+    /** Claim the cursor file. A drifted identity is refreshed here so the caller's
+     * settle of the previous file is not rolled back. */
+    private static claimCursor(commandId: number, plan: FileWorkPlan): {
+        id: number; fileType: string | null; replannedId: number | null;
+    } {
+        const file = db.prepare(`SELECT track_file_id, identity_snapshot FROM CommandFileWork
+            WHERE command_id = ? AND generation = ? AND ordinal = ? AND status IN ('pending', 'started')`)
+            .get(commandId, plan.generation, plan.cursor) as { track_file_id: number; identity_snapshot: string } | undefined;
+        if (!file) throw new Error("Retag work cursor does not identify a pending file");
+        const current = db.prepare(`SELECT ${fileColumns} FROM TrackFiles WHERE id = ?`).get(file.track_file_id) as FileRow | undefined;
+        const drifted = Boolean(current && snapshot(current) !== file.identity_snapshot);
+        const identity = drifted && current ? snapshot(current) : file.identity_snapshot;
+        db.prepare(`UPDATE CommandFileWork SET status = 'started', identity_snapshot = ?, intent_path = ?, intent_size = ?,
+            intent_modified_at = ?, started_at = CURRENT_TIMESTAMP
+            WHERE command_id = ? AND generation = ? AND ordinal = ?`)
+            .run(identity, current?.file_path ?? null, current?.file_size ?? null, current?.modified_at ?? null,
+                commandId, plan.generation, plan.cursor);
+        return {
+            id: file.track_file_id,
+            fileType: current?.file_type == null ? null : String(current.file_type),
+            replannedId: drifted ? file.track_file_id : null,
+        };
+    }
+
+    /** Settle file N and, when the dispatch will open another file, claim N+1
+     * in the same transaction. A crash still leaves exactly one `started` row. */
+    static settleAndClaimNext(
+        commandId: number,
+        workerId: string,
+        fileId: number,
+        result: RetagApplyResult,
+        claimNext: boolean,
+    ): { plan: FileWorkPlan; next: { id: number; fileType: string | null } | null; replannedId: number | null } {
+        return db.transaction(() => {
+            const unchanged = result.retagged === 0 && result.errors.length === 0
+                && result.skipped + result.missing === 1;
+            const plan = unchanged
+                ? this.settleDirect(commandId, workerId, fileId, result)
+                : this.settle(commandId, workerId, fileId, result);
+            if (!claimNext || plan.cursor >= plan.total) return { plan, next: null, replannedId: null };
+            const claimed = this.claimCursor(commandId, plan);
+            return { plan, next: { id: claimed.id, fileType: claimed.fileType }, replannedId: claimed.replannedId };
         })();
     }
 

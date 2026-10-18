@@ -84,13 +84,51 @@ test("a settings change cannot silently mix tag policies across retag units", as
     assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 250);
 });
 
-test("retired ownership prevents a retag from starting its next file", async () => {
+test("retired ownership stops before the pre-claimed next file is opened", async () => {
     const job = claim("retired-owner");
     const ctx = context.buildHandlerContext();
     ctx.yieldToEventLoop = async () => { queue.CommandQueueManager.fail(job.id, "Ownership retired", job.worker_id!); };
     await assert.rejects(work.runRetagWorkUnit(job, ctx, () => ids), /ownership changed/);
-    assert.equal(records.CommandFileWorkRepository.get(job.id)?.cursor, 1);
-    assert.equal(database.db.prepare("SELECT 1 FROM CommandFileWork WHERE command_id = ? AND status = 'started'").get(job.id), undefined);
+    const plan = records.CommandFileWorkRepository.get(job.id);
+    assert.equal(plan?.cursor, 1);
+    assert.equal(plan?.missing, 1);
+    // The claim of file 2 rode on the settle of file 1. Yield retired ownership
+    // before that file was opened, so it stays claimed and unsettled.
+    assert.deepEqual(database.db.prepare("SELECT ordinal, status FROM CommandFileWork WHERE command_id = ? AND status = 'started'").all(job.id), [
+        { ordinal: 1, status: "started" },
+    ]);
+});
+
+test("settling one file claims the next in the same transaction", () => {
+    const job = claim("settle-and-claim");
+    const repo = records.CommandFileWorkRepository;
+    repo.create(job.id, job.worker_id!, "settle-claim", repo.prepare(ids.slice(0, 3)));
+    assert.equal(repo.begin(job.id, job.worker_id!).id, ids[0]);
+    database.db.exec(`CREATE TRIGGER abort_next_claim BEFORE UPDATE ON CommandFileWork
+        WHEN NEW.ordinal = 1 AND NEW.status = 'started'
+        BEGIN SELECT RAISE(ABORT, 'killed while claiming the next file'); END;`);
+    try {
+        assert.throws(() => repo.settleAndClaimNext(job.id, job.worker_id!, ids[0],
+            { retagged: 0, skipped: 1, missing: 0, errors: [] }, true), /claiming the next file/);
+        assert.equal(repo.get(job.id)?.cursor, 0);
+        assert.deepEqual(database.db.prepare("SELECT ordinal, status FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id), [
+            { ordinal: 0, status: "started" },
+            { ordinal: 1, status: "pending" },
+            { ordinal: 2, status: "pending" },
+        ]);
+    } finally {
+        database.db.exec("DROP TRIGGER abort_next_claim");
+    }
+    const step = repo.settleAndClaimNext(job.id, job.worker_id!, ids[0],
+        { retagged: 0, skipped: 1, missing: 0, errors: [] }, true);
+    assert.equal(step.plan.cursor, 1);
+    assert.equal(step.next?.id, ids[1]);
+    assert.equal(step.replannedId, null);
+    assert.deepEqual(database.db.prepare("SELECT ordinal, status FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id), [
+        { ordinal: 0, status: "settled" },
+        { ordinal: 1, status: "started" },
+        { ordinal: 2, status: "pending" },
+    ]);
 });
 
 test("an interrupted file intent stays failed until an explicit retry resumes its exact identity", async () => {
