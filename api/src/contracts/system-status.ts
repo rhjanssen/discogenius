@@ -126,7 +126,25 @@ export interface SystemStatusContract {
     imports: HealthCheckResultContract;
     statistics: HealthCheckResultContract;
     catalog: HealthCheckResultContract;
+    providerAuth: HealthCheckResultContract;
   };
+  /** Login state per download provider. Empty before the table exists. */
+  providerAuth: Array<{
+    provider: string;
+    status: "ok" | "needs_reauth" | "unknown";
+    since: string | null;
+    lastOkAt: string | null;
+    lastError: string | null;
+    accountLabel: string | null;
+    credentialSavedAt: string | null;
+    credentialAgeDays: number | null;
+    ageWarning: string | null;
+    held: number;
+    banner: string | null;
+    queueMessage: string | null;
+    href: string | null;
+    settingsLabel: string | null;
+  }>;
   issues: HealthCheckResultContract[];
   /** Added by the /system/status route (not part of the /health probe snapshot). */
   imports: {

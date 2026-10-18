@@ -45,6 +45,7 @@ import {
 } from "./services/commands/runtime-diagnostics.js";
 import { runRuntimeMaintenance } from "./services/commands/runtime-maintenance.js";
 import { collectHealthDiagnosticsSnapshot } from "./services/commands/health.js";
+import { listProviderAuthPublic } from "./services/providers/provider-auth-state.js";
 import { CommandExecutor } from "./services/commands/command-executor.js";
 import { CommandWorkerPool } from "./services/commands/worker/command-worker-pool.js";
 import { readIntEnv } from "./utils/env.js";
@@ -287,9 +288,17 @@ function sendHealthSnapshot(res: express.Response) {
 app.get("/health", (_req, res) => {
   // Liveness only. Diagnostic snapshots (queue, WAL, imports) live on
   // /api/health so a stale command or last week's failed import cannot 503
-  // a reverse-proxy probe and restart a busy process.
+  // a reverse-proxy probe and restart a busy process. providerAuth is a
+  // read of the persisted login state. status stays "ok" even when a
+  // provider needs a new login.
   res.setHeader("cache-control", "no-store");
-  res.status(200).json({ status: "ok" });
+  let providerAuth: ReturnType<typeof listProviderAuthPublic> = [];
+  try {
+    providerAuth = listProviderAuthPublic();
+  } catch {
+    providerAuth = [];
+  }
+  res.status(200).json({ status: "ok", providerAuth });
 });
 
 app.get("/api/health", authMiddleware, (_, res) => {

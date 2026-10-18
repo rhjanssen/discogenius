@@ -21,6 +21,7 @@ import {
   TIDDL_CONFIG_DIR,
 } from "../providers/tidal/tiddl.js";
 import { getDownloadQueueControlState } from "../download/download-queue-control.js";
+import { listProviderAuthPublic, type ProviderAuthPublic } from "../providers/provider-auth-state.js";
 import { CommandNames } from "./command-names.js";
 import { importAdmissionStallMs, listStrandedImportHandoffs } from "./import-admission.js";
 
@@ -92,7 +93,10 @@ export interface HealthDiagnosticsSnapshot {
     imports: HealthCheckResult;
     statistics: HealthCheckResult;
     catalog: HealthCheckResult;
+    providerAuth: HealthCheckResult;
   };
+  /** Current rows. Empty when the table is not there yet. Never contains secrets. */
+  providerAuth: ProviderAuthPublic[];
   issues: HealthCheckResult[];
 }
 
@@ -922,6 +926,40 @@ export function runDeepDatabaseHealthCheck(): DeepDatabaseHealthResult {
   return persistDeepHealthResult(result).result;
 }
 
+/**
+ * A missing table (the snapshot collected before initDatabase) is ok.
+ * needs_reauth is a warning, so the rollup is degraded and /api/health stays
+ * HTTP 200. It must not become unhealthy: Docker restarts on 503.
+ */
+function providerAuthCheckFrom(rows: ProviderAuthPublic[]): HealthCheckResult {
+  const blocked = rows.filter((row) => row.status === "needs_reauth");
+  if (blocked.length === 0) {
+    return {
+      scope: "providers.auth",
+      status: "ok",
+      message: "Provider logins are usable",
+    };
+  }
+  const held = blocked.reduce((sum, row) => sum + row.held, 0);
+  return {
+    scope: "providers.auth",
+    status: "warning",
+    message: `Provider login required (${blocked.map((row) => `${row.provider}: ${row.held} held`).join("; ")})`,
+    details: {
+      held,
+      providers: blocked.map((row) => row.provider),
+    },
+  };
+}
+
+function readProviderAuthRows(): ProviderAuthPublic[] {
+  try {
+    return listProviderAuthPublic();
+  } catch {
+    return [];
+  }
+}
+
 export function collectHealthDiagnosticsSnapshot(
   options: { deepResult?: DeepDatabaseHealthResult } = {},
 ): HealthDiagnosticsSnapshot {
@@ -1010,6 +1048,8 @@ export function collectHealthDiagnosticsSnapshot(
   const importCheck = collectImportCheck();
   const statisticsCheck = collectStatisticsCheck();
   const catalogCheck = collectCatalogCheck();
+  const providerAuth = readProviderAuthRows();
+  const providerAuthCheck = providerAuthCheckFrom(providerAuth);
 
   const issues = flattenChecks(
     [
@@ -1031,6 +1071,7 @@ export function collectHealthDiagnosticsSnapshot(
       importCheck,
       statisticsCheck,
       catalogCheck,
+      providerAuthCheck,
       safeCheck("files.recovery", "File mutation recovery", () => {
         const failures = db.prepare(`SELECT
           (SELECT COUNT(*) FROM FileMutationJournal WHERE recovery_error IS NOT NULL) +
@@ -1086,7 +1127,9 @@ export function collectHealthDiagnosticsSnapshot(
       imports: importCheck,
       statistics: statisticsCheck,
       catalog: catalogCheck,
+      providerAuth: providerAuthCheck,
     },
+    providerAuth,
     issues,
   };
 }
