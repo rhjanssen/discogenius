@@ -6,7 +6,7 @@ import { AudioTagService, type RetagApplyResult } from "../mediafiles/audio-tag-
 import { VideoTagService } from "../mediafiles/video-tag-service.js";
 import type { CommandModel } from "./command-model.js";
 import type { RetagWorkCheckpoint } from "./command-bodies.js";
-import { CommandFileWorkRepository as Work } from "./command-file-work-repository.js";
+import { CommandFileWorkRepository as Work, type FileWorkPlan } from "./command-file-work-repository.js";
 import { fileCheckpointResumePrefix } from "./command-file-checkpoint.js";
 import { CommandContinuation } from "./command-continuation.js";
 import type { CommandHandlerContext } from "./handlers/handler-context.js";
@@ -40,14 +40,19 @@ export async function runRetagWorkUnit(
     if (!job.worker_id) throw new Error("Retag work requires an execution owner");
     const owner = job.worker_id;
     const revision = retagPlanRevision(stripOnly);
-    let plan = Work.get(job.id);
-    if (plan && plan.config_revision !== revision) {
+    const existing = Work.get(job.id);
+    if (existing && existing.config_revision !== revision) {
         throw new Error("Tag settings changed during this retag plan. Start a new retag with the current settings.");
     }
-    if (!plan) {
+    let plan: FileWorkPlan;
+    if (!existing) {
         const files = Work.prepare(resolveIds());
         await withSqliteWriteGate(() => Work.create(job.id, owner, revision, files, stripOnly ? "strip" : "retag"), "retag:plan");
-        plan = Work.get(job.id)!;
+        const stored = Work.get(job.id);
+        if (!stored) throw new Error("Retag plan was not stored");
+        plan = stored;
+    } else {
+        plan = existing;
     }
     if (plan.cursor === plan.total && plan.error_count > 0) {
         plan = await withSqliteWriteGate(() => Work.retryFailed(job.id, owner), "retag:failed-files");
@@ -103,17 +108,18 @@ export async function runRetagWorkUnit(
             const unchanged = result.retagged === 0 && result.errors.length === 0
                 && result.skipped + result.missing === 1;
             const nextSettled = settled + 1;
-            const claimNext = plan.cursor + 1 < plan.total
+            const claimNext: boolean = plan.cursor + 1 < plan.total
                 && nextSettled < 250
                 && performance.now() - started < 120_000
                 && !(nextSettled % 5 === 0 && hasPendingImportHandoff())
                 && !CommandQueueManager.get(job.id)?.payload.cancelRequested;
             const label = claimNext ? "retag:settle-and-claim" : unchanged ? "retag:unchanged" : "retag:file-settled";
             try {
-                const step = await withSqliteWriteGate(
-                    () => Work.settleAndClaimNext(job.id, owner, current.id, result, claimNext),
-                    label,
-                );
+                const step = await withSqliteWriteGate((): {
+                    plan: FileWorkPlan;
+                    next: { id: number; fileType: string | null } | null;
+                    replannedId: number | null;
+                } => Work.settleAndClaimNext(job.id, owner, current.id, result, claimNext), label);
                 plan = step.plan;
                 if (step.replannedId !== null) noteIdentityChange(step.replannedId);
                 claimed = step.next;
@@ -128,7 +134,11 @@ export async function runRetagWorkUnit(
                 if (replannedAgain !== null) noteIdentityChange(replannedAgain);
                 claimed = null;
                 if (attempts < 3) continue;
-                const dropped = await withSqliteWriteGate(() => Work.settleAndClaimNext(job.id, owner, current.id,
+                const dropped = await withSqliteWriteGate((): {
+                    plan: FileWorkPlan;
+                    next: { id: number; fileType: string | null } | null;
+                    replannedId: number | null;
+                } => Work.settleAndClaimNext(job.id, owner, current.id,
                     { retagged: 0, skipped: 1, missing: 0, errors: [] }, claimNext), "retag:identity-dropped");
                 plan = dropped.plan;
                 if (dropped.replannedId !== null) noteIdentityChange(dropped.replannedId);
