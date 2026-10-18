@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { after, before, beforeEach, test, type TestContext } from "node:test";
 import { prepareActiveSchemaEnv, openActiveSchemaDb, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
@@ -570,4 +571,92 @@ test("skipping a poison file counts as checkpoint progress", async (t) => {
     const file = database.db.prepare("SELECT status, error FROM CommandFileWork WHERE command_id = ?").get(job.id) as { status: string; error: string };
     assert.equal(file.status, "settled");
     assert.equal(JSON.parse(file.error)[0], policy.FILE_CHECKPOINT_POISON_ERROR);
+});
+
+test("a rename killed after the move restores the file and renames it once", async (t) => {
+    const source = path.join(tempDir, "rename-crash", "source.flac");
+    const dest = path.join(tempDir, "rename-crash", "dest.flac");
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, "rename crash fixture");
+    const artist = (database.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'restart-artist'").get() as { id: number }).id;
+    const recording = (database.db.prepare("SELECT id FROM Recordings WHERE mbid = 'restart-recording'").get() as { id: number }).id;
+    const fileId = Number(database.db.prepare(`
+        INSERT INTO TrackFiles (artist_metadata_id, recording_id, file_path, filename, relative_path, library_root, extension, file_type, library_slot)
+        VALUES (?, ?, ?, 'source.flac', 'source.flac', ?, 'flac', 'track', 'stereo')
+    `).run(artist, recording, source, path.dirname(source)).lastInsertRowid);
+    const job = claim(queue.CommandNames.RenameFiles, { ids: [fileId] });
+    let phase: "crash" | "resume" = "crash";
+    let resumeMoves = 0;
+    const originalMove = journal.FileMutationJournal.move.bind(journal.FileMutationJournal);
+    t.mock.method(journal.FileMutationJournal, "move", async (id: string) => {
+        if (phase === "resume") resumeMoves += 1;
+        return originalMove(id);
+    });
+    t.mock.method(renames.RenameTrackFileService, "executeRenameFiles", async (fileIds: number[]) => {
+        assert.deepEqual(fileIds, [fileId]);
+        if (phase === "crash") {
+            const intent = await journal.FileMutationJournal.prepare("TrackFiles", fileId, source, source, dest);
+            await journal.FileMutationJournal.move(intent);
+            throw new Error("process killed after move");
+        }
+        assert.equal(fs.existsSync(source), true);
+        assert.equal(fs.existsSync(dest), false);
+        assert.equal(journal.FileMutationJournal.hasPending(), false);
+        const intent = await journal.FileMutationJournal.prepare("TrackFiles", fileId, source, source, dest);
+        await journal.FileMutationJournal.move(intent);
+        database.db.transaction(() => {
+            journal.FileMutationJournal.assertBeforeCommit(intent);
+            database.db.prepare("UPDATE TrackFiles SET file_path = ? WHERE id = ?").run(dest, fileId);
+            journal.FileMutationJournal.markCommitted(intent);
+        })();
+        await journal.FileMutationJournal.recoverOne(intent);
+        return { renamed: 1, skipped: 0, conflicts: 0, missing: 0, cleanedDirectories: 0, errors: [] };
+    });
+
+    await assert.rejects(
+        rename.runRenameWorkUnit(job, context.buildHandlerContext(), () => [fileId], false),
+        /process killed after move/,
+    );
+    assert.equal(fs.existsSync(source), false);
+    assert.equal(fs.readFileSync(dest, "utf8"), "rename crash fixture");
+    assert.equal((database.db.prepare("SELECT file_path FROM TrackFiles WHERE id = ?").get(fileId) as { file_path: string }).file_path, source);
+    assert.equal((database.db.prepare("SELECT status FROM CommandRenameWork WHERE command_id = ?").get(job.id) as { status: string }).status, "started");
+    assert.equal(journal.FileMutationJournal.hasPending(), true);
+
+    const sequence: string[] = [];
+    const originalRecover = journal.FileMutationJournal.recoverPending.bind(journal.FileMutationJournal);
+    t.mock.method(journal.FileMutationJournal, "recoverPending", async () => {
+        const errors = await originalRecover();
+        assert.deepEqual(errors, []);
+        assert.equal(fs.readFileSync(source, "utf8"), "rename crash fixture");
+        assert.equal(fs.existsSync(dest), false);
+        sequence.push("journal");
+        return errors;
+    });
+    const originalRequeue = queue.CommandQueueManager.requeueFromCheckpoint;
+    t.mock.method(queue.CommandQueueManager, "requeueFromCheckpoint", function requeue(this: unknown, ...args: unknown[]) {
+        sequence.push("requeue");
+        return originalRequeue.apply(queue.CommandQueueManager, args as never);
+    });
+
+    phase = "resume";
+    await bootRecovery(t);
+    assert.deepEqual(sequence, ["journal", "requeue"]);
+    assert.equal(journal.FileMutationJournal.hasPending(), false);
+    assert.equal(resumeMoves, 0);
+    assert.deepEqual(database.db.prepare("SELECT status, restart_claims FROM CommandRenameWork WHERE command_id = ?").get(job.id), {
+        status: "pending", restart_claims: 1,
+    });
+    assert.equal(commandRow(job.id).status, "queued");
+
+    const next = queue.CommandQueueManager.claimForExecution(job.id, "resume-owner", 60_000)!;
+    await context.executeCommand(next);
+    assert.equal(resumeMoves, 1);
+    assert.equal(fs.existsSync(source), false);
+    assert.equal(fs.readFileSync(dest, "utf8"), "rename crash fixture");
+    assert.equal((database.db.prepare("SELECT file_path FROM TrackFiles WHERE id = ?").get(fileId) as { file_path: string }).file_path, dest);
+    assert.equal(journal.FileMutationJournal.hasPending(), false);
+    assert.equal(commandRow(job.id).status, "completed");
+    const stored = JSON.parse((database.db.prepare("SELECT result FROM CommandRenameWork WHERE command_id = ?").get(job.id) as { result: string }).result) as { renamed: number };
+    assert.equal(stored.renamed, 1);
 });
