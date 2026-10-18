@@ -2,6 +2,8 @@
 
 Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
+- 18 Oct 2026, local only, branch `grok/import-handoff-self-heal` (stacked on the restart-resume work): a started `importPending` handoff missing from the download worker's memory is re-adopted on the next scheduling pass, same attempt, no restart. One unclaimable head no longer blocks the handoffs behind it. A 60s watchdog raises `imports.health` when a completed download has waited 5 minutes and no import is active, then schedules one reconcile. Schema stays 46. No migration and no `user_version` bump. Not deployed. Each scheduling pass is one indexed read of queued and started download commands (`idx_commands_status_name_started`); that read also serves import backpressure. A write happens only when a missing handoff needs a dead, null, or queued owner replaced. Do not queue a second retag for command 19285.
+
 - 18 Oct 2026, local only, branch `grok/restart-safe-file-commands`: retag and rename resume from `CommandFileWork` / `CommandRenameWork` after a process restart. Not deployed. Schema stays 46. Migration `file-work-restart-resume` adds `restart_claims` only and does not bump `user_version`. A plan row's existence is the complete plan, including the plan retag 19285 already wrote in one transaction with its file rows. The first deploy requeues that command from its cursor and redoes at most the in-flight file. Do not queue a second retag for it. Five restarts with no cursor progress fail the command; a resume that advances the cursor clears that count.
 
 - October 9 tested deploy: `yarn ci` on `7cb91669` passed in 326 seconds with

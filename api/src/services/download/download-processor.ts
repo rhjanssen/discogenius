@@ -13,7 +13,13 @@ import { startExecutionHeartbeat } from '../commands/worker/execution-heartbeat.
 import {CommandModel, CommandModelOf} from "../commands/command-model.js";
 import { DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
-import { buildDurableQueueOrderClause } from "../commands/command-ordering.js";
+import { parseSqliteDate } from "../commands/command-ordering.js";
+import {
+    listImportPendingHandoffs,
+    listStrandedImportHandoffs,
+    type ImportPendingHandoff,
+} from "../commands/import-admission.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 import { getConfigSection, Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
 import { DownloadWaitQueue, type QueueRankRow } from './download-wait-queue.js';
@@ -474,6 +480,11 @@ const DOWNLOAD_RECOVERY_RETRY_MS = readIntEnv(
     5_000,
     0,
 );
+const IMPORT_ADMISSION_WATCHDOG_MS = readIntEnv(
+    'DISCOGENIUS_IMPORT_ADMISSION_WATCHDOG_MS',
+    60_000,
+    1_000,
+);
 export const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
 
 type DurableImportHandoff = {
@@ -540,6 +551,13 @@ export function recoverInterruptedDownloadAttempts(
 
     for (const row of rows) {
         const payload = parseCommandPayload(row.payload);
+        if (isParkedImportPending(payload)) {
+            // The scheduler re-adopts this handoff in place. Requeueing it would
+            // burn an attempt and leave status='queued', which is the only shape
+            // the old recovery claim could see.
+            continue;
+        }
+
         const owner = row.worker_id || `download-restart-recovery:${row.id}:${randomUUID()}`;
         if (!row.worker_id) {
             const adopted = db.prepare(`
@@ -554,7 +572,6 @@ export function recoverInterruptedDownloadAttempts(
         }
 
         const unsafeImport = isUnsafeInterruptedImport(payload);
-        const parkedImport = isParkedImportPending(payload);
         const currentAttempt = Math.max(1, Number(row.attempt) || 1);
         const recovery = CommandQueueManager.recoverOwnedCommand({
             id: row.id,
@@ -564,13 +581,10 @@ export function recoverInterruptedDownloadAttempts(
                 : reason,
             // Setting maxAttempts to the current attempt makes the recovery API
             // take its visible poison/fail branch for unsafe partial imports.
-            // Parked "waiting to import" is Lidarr Completed-download state: it
-            // must not burn retry budget while Rename/Retag holds the disk slot.
+            // Parked importPending rows are skipped above and never reach this call.
             maxAttempts: unsafeImport
                 ? currentAttempt
-                : parkedImport
-                    ? currentAttempt + 1
-                    : DOWNLOAD_RECOVERY_MAX_ATTEMPTS,
+                : DOWNLOAD_RECOVERY_MAX_ATTEMPTS,
             retryDelayMs: unsafeImport ? 0 : DOWNLOAD_RECOVERY_RETRY_MS,
             now,
         });
@@ -627,12 +641,18 @@ export class DownloadProcessor {
     private explicitlyCancelledDownloads = new Set<number>();
     /** Attempt owner retained across download → pending import → active import. */
     private attemptOwners = new Map<number, string>();
+    /** Every owner token this process minted. Clearing attemptOwners must not
+     * forget that a live handoff still belongs to this worker. */
+    private mintedAttemptOwners = new Set<string>();
+    private importAdmissionWatchdog?: NodeJS.Timeout;
 
     // Download commands whose download phase finished and are waiting for an
     // import slot. The command stays 'started' throughout (one queue entity
     // spanning download → import, Lidarr TrackedDownload-style); it only leaves
-    // the active queue for History when the import completes/fails. Rebuilt from
-    // scratch on restart — interrupted commands are re-queued by crash recovery.
+    // the active queue for History when the import completes/fails. The DB row
+    // is the source of truth: a scheduling pass re-adopts any replayable
+    // handoff this list lost. Entries leave the list only when the import
+    // starts, the durable row is terminal, or another live owner holds it.
     private pendingImports: Array<{
         commandId: number;
         providerId: string;
@@ -732,7 +752,27 @@ export class DownloadProcessor {
     }
 
     private makeAttemptOwner(commandId: number): string {
-        return `download-attempt:${process.pid}:${commandId}:${randomUUID()}`;
+        const workerId = `download-attempt:${process.pid}:${commandId}:${randomUUID()}`;
+        this.mintedAttemptOwners.add(workerId);
+        return workerId;
+    }
+
+    private ownsImportWorker(workerId: string | null | undefined): boolean {
+        if (!workerId) return false;
+        if (this.mintedAttemptOwners.has(workerId)) return true;
+        for (const owner of this.attemptOwners.values()) {
+            if (owner === workerId) return true;
+        }
+        // Worker threads share the process id. A restarted download worker is
+        // the only downloader in this process, so a live download-attempt token
+        // minted here still belongs to it after the in-memory queue is gone.
+        return workerId.startsWith(`download-attempt:${process.pid}:`);
+    }
+
+    private leaseIsLive(leaseExpiresAt: string | null | undefined, now: Date): boolean {
+        if (!leaseExpiresAt) return false;
+        const expiresAt = parseSqliteDate(leaseExpiresAt);
+        return expiresAt > now.getTime();
     }
 
     private claimDownloadJob(job: CommandModel): CommandModel | null {
@@ -778,6 +818,10 @@ export class DownloadProcessor {
             || command.status !== 'started'
             || (workerId && command.worker_id && command.worker_id !== workerId)
         ) {
+            // The claim already reserved the disk. Put that reservation back
+            // when this attempt will not run, or the row stays progress_phase
+            // 'importing' with nobody in activeImports.
+            if (workerId) this.releaseStuckImportReservation(commandId, workerId);
             // Never let a retired attempt delete a workspace now owned by a
             // replacement. Explicit cancellation performs its own safe cleanup.
             this.scheduleNext();
@@ -1448,76 +1492,267 @@ export class DownloadProcessor {
     }
 
     /**
-     * Rebuild durable download→import handoffs after a process/worker restart.
-     * Only handoffs that never entered import execution are replayable.
+     * The DB is the source of truth for import handoffs. One indexed read per
+     * scheduling pass. A write happens only when a missing handoff needs a new
+     * owner (queued, null owner, or a dead lease). A live owner this worker
+     * minted is put back in memory with no write and no extra attempt.
      */
-    private claimRecoveredImportHandoffs(): void {
-        const available = MAX_CONCURRENT_IMPORTS
-            - this.activeImports.size
-            - this.pendingImports.length;
-        if (available <= 0) return;
+    private reconcileImportHandoffs(rows: readonly ImportPendingHandoff[], now: Date): void {
+        const present = new Set<number>([
+            ...this.pendingImports.map((entry) => entry.commandId),
+            ...this.activeImports.keys(),
+            ...this.activeDownloads.keys(),
+        ]);
+        const missing = rows.filter((row) =>
+            !present.has(row.id)
+            && row.hasImportPayload
+            && !row.executionStartedAt
+        );
+        if (missing.length === 0) return;
 
-        const candidateIds = db.prepare(`
-            SELECT id
-            FROM commands
-            WHERE status = 'queued'
-              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
-              AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
+        const payloads = this.loadCommandPayloads(missing.map((row) => row.id));
+        for (const row of missing) {
+            const payload = payloads.get(row.id);
+            if (!payload) continue;
+            const workerId = this.resolveImportHandoffOwner(row, now);
+            if (!workerId) continue;
+            this.rememberImportHandoff(row, workerId, payload);
+        }
+    }
+
+    private resolveImportHandoffOwner(row: ImportPendingHandoff, now: Date): string | null {
+        const live = row.status === 'started' && !!row.workerId && this.leaseIsLive(row.leaseExpiresAt, now);
+        if (live) {
+            return this.ownsImportWorker(row.workerId) ? row.workerId : null;
+        }
+        return this.takeoverImportHandoff(row.id, row.workerId, now);
+    }
+
+    /** Compare-and-swap the owner. Attempt is not incremented. A second scheduler
+     * loses the WHERE worker_id predicate and must not import. */
+    private takeoverImportHandoff(id: number, previousWorkerId: string | null, now: Date): string | null {
+        const workerId = this.makeAttemptOwner(id);
+        const heartbeat = now.toISOString();
+        const expires = new Date(now.getTime() + DOWNLOAD_LEASE_MS).toISOString();
+        const result = db.prepare(`
+            UPDATE commands
+            SET status = 'started',
+                worker_id = ?,
+                heartbeat_at = ?,
+                lease_expires_at = ?,
+                started_at = COALESCE(started_at, ?),
+                blocked_reason = COALESCE(blocked_reason, 'waiting on import slot'),
+                progress_phase = CASE
+                    WHEN progress_phase = 'importing' THEN 'waiting to import'
+                    ELSE COALESCE(progress_phase, 'waiting to import')
+                END,
+                updated_at = ?
+            WHERE id = ?
+              AND status IN ('queued', 'started')
+              AND worker_id IS ?
               AND json_valid(payload)
               AND json_extract(payload, '$.downloadState.state') = 'importPending'
-            ORDER BY ${buildDurableQueueOrderClause()}
-            LIMIT ?
-        `).all(...DOWNLOAD_COMMAND_NAMES, available) as Array<{ id: number }>;
-        const candidates = candidateIds
-            .map((row) => CommandQueueManager.get(row.id))
-            .filter((candidate): candidate is CommandModel => candidate != null);
-        let claimedCount = 0;
-        for (const candidate of candidates) {
-            if (claimedCount >= available) break;
-            const payload = candidate.payload as Record<string, any>;
-            const state = String(payload.downloadState?.state || '');
-            const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+              AND json_extract(payload, '$.downloadImportHandoff.executionStartedAt') IS NULL
+              AND json_extract(payload, '$.downloadImportHandoff.importPayload') IS NOT NULL
+              AND (
+                status = 'queued'
+                OR worker_id IS NULL
+                OR lease_expires_at IS NULL
+                OR julianday(lease_expires_at) <= julianday(?)
+              )
+        `).run(
+            workerId,
+            heartbeat,
+            expires,
+            heartbeat,
+            heartbeat,
+            id,
+            previousWorkerId,
+            heartbeat,
+        );
+        if (result.changes !== 1) return null;
+        console.warn(`[DOWNLOAD-PROCESSOR] Re-adopted import handoff #${id} without a new attempt`);
+        return workerId;
+    }
+
+    private loadCommandPayloads(ids: readonly number[]): Map<number, Record<string, any>> {
+        const payloads = new Map<number, Record<string, any>>();
+        if (ids.length === 0) return payloads;
+        const rows = db.prepare(`
+            SELECT id, payload FROM commands WHERE id IN ${SQL_JSON_LIST}
+        `).all(jsonList(ids)) as Array<{ id: number; payload: string | null }>;
+        for (const row of rows) {
+            payloads.set(Number(row.id), parseCommandPayload(row.payload));
+        }
+        return payloads;
+    }
+
+    private rememberImportHandoff(row: ImportPendingHandoff, workerId: string, payload: Record<string, any>): void {
+        if (this.pendingImports.some((entry) => entry.commandId === row.id) || this.activeImports.has(row.id)) return;
+        const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+        if (!handoff?.importPayload || handoff.executionStartedAt) return;
+        const type: DownloadJobType = row.name === CommandNames.DownloadVideo
+            ? 'video'
+            : row.name === CommandNames.DownloadAlbum
+                ? 'album'
+                : 'track';
+        this.attemptOwners.set(row.id, workerId);
+        this.pendingImports.push({
+            commandId: row.id,
+            providerId: String(
+                handoff.importPayload.providerId
+                || handoff.importPayload.provider
+                || '',
+            ),
+            type,
+            importPayload: handoff.importPayload,
+            resolved: handoff.resolved || {
+                title: String(payload.title || 'Unknown'),
+                artist: String(payload.artist || 'Unknown'),
+                cover: (payload.cover as string | null | undefined) ?? null,
+            },
+            workerId,
+        });
+        if (workerId !== row.workerId) {
+            // takeoverImportHandoff already logged the owner change.
+            return;
+        }
+        console.warn(`[DOWNLOAD-PROCESSOR] Re-adopted import handoff #${row.id} on attempt ${row.attempt}`);
+    }
+
+    private releaseStuckImportReservation(commandId: number, workerId: string): boolean {
+        const result = db.prepare(`
+            UPDATE commands
+            SET progress_phase = 'waiting to import',
+                blocked_reason = 'waiting on import slot'
+            WHERE id = ?
+              AND status = 'started'
+              AND worker_id = ?
+              AND progress_phase = 'importing'
+              AND json_valid(payload)
+              AND json_extract(payload, '$.downloadState.state') = 'importPending'
+              AND json_extract(payload, '$.downloadImportHandoff.executionStartedAt') IS NULL
+        `).run(commandId, workerId);
+        return result.changes === 1;
+    }
+
+    /** 'drop' is only for a durable terminal row, an import that already started,
+     * or a live owner that is not this worker. Replayable work stays queued. */
+    private preparePendingImport(
+        entry: DownloadProcessor['pendingImports'][number],
+        now: Date,
+    ): 'ready' | 'defer' | 'drop' {
+        const command = CommandQueueManager.get(entry.commandId);
+        if (!command || (command.status !== 'started' && command.status !== 'queued')) return 'drop';
+        const payload = command.payload as Record<string, any>;
+        const handoff = payload?.downloadImportHandoff as DurableImportHandoff | undefined;
+        if (String(payload?.downloadState?.state || '') !== 'importPending' || !handoff?.importPayload || handoff.executionStartedAt) {
+            return 'drop';
+        }
+        const dbOwner = command.worker_id ?? null;
+        const live = command.status === 'started' && !!dbOwner && this.leaseIsLive(command.lease_expires_at, now);
+        if (live) {
+            if (!dbOwner || !this.ownsImportWorker(dbOwner)) return 'drop';
+            entry.workerId = dbOwner;
+            this.attemptOwners.set(entry.commandId, dbOwner);
             if (
-                state !== 'importPending'
-                || !handoff?.importPayload
-                || handoff.executionStartedAt
+                command.progress_phase === 'importing'
+                && this.mintedAttemptOwners.has(dbOwner)
+                && !this.activeImports.has(entry.commandId)
             ) {
+                this.releaseStuckImportReservation(entry.commandId, dbOwner);
+            }
+            return 'ready';
+        }
+        const adopted = this.takeoverImportHandoff(entry.commandId, dbOwner, now);
+        if (!adopted) {
+            // The compare-and-swap lost, or the row changed between the read
+            // and the update. A replayable handoff stays in memory. Dropping
+            // it here is how a started import disappeared with no durable write.
+            const latest = CommandQueueManager.get(entry.commandId);
+            if (!latest || (latest.status !== 'started' && latest.status !== 'queued')) return 'drop';
+            const latestPayload = latest.payload as Record<string, any>;
+            const latestHandoff = latestPayload?.downloadImportHandoff as DurableImportHandoff | undefined;
+            if (
+                String(latestPayload?.downloadState?.state || '') !== 'importPending'
+                || !latestHandoff?.importPayload
+                || latestHandoff.executionStartedAt
+            ) {
+                return 'drop';
+            }
+            const latestOwner = latest.worker_id ?? null;
+            const latestLive = latest.status === 'started'
+                && !!latestOwner
+                && this.leaseIsLive(latest.lease_expires_at, now);
+            if (latestLive && latestOwner && this.ownsImportWorker(latestOwner)) {
+                entry.workerId = latestOwner;
+                this.attemptOwners.set(entry.commandId, latestOwner);
+                return 'ready';
+            }
+            if (latestLive) return 'drop';
+            return 'defer';
+        }
+        entry.workerId = adopted;
+        entry.importPayload = handoff.importPayload;
+        entry.resolved = handoff.resolved || entry.resolved;
+        return 'ready';
+    }
+
+    private dispatchReadyImports(now: Date): void {
+        const deferred: DownloadProcessor['pendingImports'] = [];
+        const queued = this.pendingImports.splice(0, this.pendingImports.length);
+        for (const entry of queued) {
+            if (this.activeImports.size >= MAX_CONCURRENT_IMPORTS) {
+                deferred.push(entry);
                 continue;
             }
-
-            const claimed = this.claimDownloadJob(candidate);
-            if (!claimed) continue;
-            const workerId = claimed.worker_id;
-            if (!workerId) continue;
-
-            const type: DownloadJobType = candidate.name === CommandNames.DownloadVideo
-                ? 'video'
-                : candidate.name === CommandNames.DownloadAlbum
-                    ? 'album'
-                    : 'track';
-            this.pendingImports.push({
-                commandId: candidate.id,
-                providerId: String(
-                    handoff.importPayload.providerId
-                    || handoff.importPayload.provider
-                    || candidate.ref_id
-                    || '',
-                ),
-                type,
-                importPayload: handoff.importPayload,
-                resolved: handoff.resolved || {
-                    title: String(payload.title || 'Unknown'),
-                    artist: String(payload.artist || 'Unknown'),
-                    cover: payload.cover ?? null,
-                },
-                workerId,
-            });
-            this.persistDownloadState(candidate.id, {
-                state: 'importPending',
-                statusMessage: 'Recovered download; waiting to import',
-            }, workerId);
-            claimedCount += 1;
+            if (this.activeImports.has(entry.commandId)) continue;
+            const prepared = this.preparePendingImport(entry, now);
+            if (prepared === 'drop') continue;
+            if (prepared !== 'ready') {
+                deferred.push(entry);
+                continue;
+            }
+            // One refusal must not stop the handoff behind it. Disk admission
+            // is global, but a single reserved or foreign head used to break
+            // the loop and leave every later import unscheduled.
+            if (!CommandQueueManager.claimImportForExecution(entry.commandId, entry.workerId)) {
+                deferred.push(entry);
+                continue;
+            }
+            this.dispatchImportPhase(entry);
         }
+        const seen = new Set(this.pendingImports.map((entry) => entry.commandId));
+        for (const entry of deferred) {
+            if (seen.has(entry.commandId) || this.activeImports.has(entry.commandId)) continue;
+            this.pendingImports.push(entry);
+            seen.add(entry.commandId);
+        }
+    }
+
+    private startImportAdmissionWatchdog(): void {
+        if (this.importAdmissionWatchdog) return;
+        this.importAdmissionWatchdog = setInterval(() => {
+            try {
+                this.runImportAdmissionWatchdog();
+            } catch (error) {
+                console.error('[DOWNLOAD-PROCESSOR] Import admission watchdog failed:', error);
+            }
+        }, IMPORT_ADMISSION_WATCHDOG_MS);
+        this.importAdmissionWatchdog.unref();
+    }
+
+    /** One read and, only when a handoff has been waiting with no import, one
+     * schedule. A second call does not loop; the interval is the retry. */
+    runImportAdmissionWatchdog(now: Date = new Date()): void {
+        if (this.suspended || this.activeImports.size > 0) return;
+        const stranded = listStrandedImportHandoffs(now);
+        if (stranded.length === 0) return;
+        const ids = stranded.map((row) => `#${row.id}`).join(', ');
+        console.error(
+            `[DOWNLOAD-PROCESSOR] Completed downloads waiting for disk admission with no import active: ${ids}`,
+        );
+        this.scheduleNext();
     }
 
     async initialize() {
@@ -1533,6 +1768,7 @@ export class DownloadProcessor {
         }
 
         this.startHeartbeatLoop();
+        this.startImportAdmissionWatchdog();
 
         // Recover durable ownership before any provider initialization can
         // block. No replacement work is dispatched until every old attempt is
@@ -1599,22 +1835,12 @@ export class DownloadProcessor {
         // ── Import slot: imports run alongside downloads (Lidarr/Tidarr pattern) ──
         // Downloads and imports use separate slots so importing never blocks the
         // next download from starting. Import phases belong to download commands
-        // that finished downloading (this.pendingImports) — there is no separate
-        // ImportDownload queue row.
-        this.claimRecoveredImportHandoffs();
-        while (this.activeImports.size < MAX_CONCURRENT_IMPORTS && this.pendingImports.length > 0) {
-            const entry = this.pendingImports[0];
-            if (!entry) break;
-            if (this.activeImports.has(entry.commandId)) { this.pendingImports.shift(); continue; }
-            const owner = entry.workerId || this.attemptOwners.get(entry.commandId);
-            if (!owner || !CommandQueueManager.isExecutionOwner(entry.commandId, owner)) {
-                this.pendingImports.shift();
-                continue;
-            }
-            if (!CommandQueueManager.claimImportForExecution(entry.commandId, owner)) break;
-            this.pendingImports.shift();
-            this.dispatchImportPhase(entry);
-        }
+        // that finished downloading. The durable handoff, not this.pendingImports,
+        // decides what is waiting.
+        const now = new Date();
+        const importHandoffs = listImportPendingHandoffs();
+        this.reconcileImportHandoffs(importHandoffs, now);
+        this.dispatchReadyImports(now);
 
         // Pausing blocks new provider downloads, but a download that already
         // reached the safe import handoff may still import. Active imports also
@@ -1634,7 +1860,7 @@ export class DownloadProcessor {
         // otherwise fast downloads can strand dozens of finished albums behind
         // slow file moves and retags. Count queued handoffs too, so a worker
         // restart cannot bypass the limit by emptying the in-memory list.
-        if (this.importBackpressureReached()) return;
+        if (importHandoffs.length >= MAX_PENDING_IMPORTS) return;
         if (this.admissionVerificationRunning) return;
 
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
@@ -1684,16 +1910,8 @@ export class DownloadProcessor {
         }
     }
 
-    private importBackpressureReached():boolean {
-        const pendingImportCount = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM commands INDEXED BY idx_commands_status_name_started
-            WHERE status IN ('queued', 'started')
-              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
-              AND json_valid(payload)
-              AND json_extract(payload, '$.downloadState.state') = 'importPending'
-        `).get(...DOWNLOAD_COMMAND_NAMES) as { count: number };
-        return pendingImportCount.count >= MAX_PENDING_IMPORTS;
+    private importBackpressureReached(): boolean {
+        return listImportPendingHandoffs().length >= MAX_PENDING_IMPORTS;
     }
 
     private async verifyWaitingFiles(waitId:number, epoch:number, cursor:QueueRankRow|null):Promise<void> {
@@ -2966,6 +3184,8 @@ export class DownloadProcessor {
     async suspend(): Promise<void> {
         console.log('[DOWNLOAD-PROCESSOR] Suspending queue for shutdown...');
         this.suspended = true;
+        clearInterval(this.importAdmissionWatchdog);
+        this.importAdmissionWatchdog = undefined;
         clearTimeout(this.retryWakeTimer);
         this.retryWakeTimer = undefined;
         this.haltProcessing();

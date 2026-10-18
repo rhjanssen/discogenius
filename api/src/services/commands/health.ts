@@ -22,6 +22,7 @@ import {
 } from "../providers/tidal/tiddl.js";
 import { getDownloadQueueControlState } from "../download/download-queue-control.js";
 import { CommandNames } from "./command-names.js";
+import { importAdmissionStallMs, listStrandedImportHandoffs } from "./import-admission.js";
 
 // Single source of truth; see the note on the constant.
 const EXPECTED_SCHEMA_VERSION = BASE_SCHEMA_VERSION;
@@ -609,6 +610,7 @@ function collectImportCheck(): HealthCheckResult {
       return progressAt != null && Date.now() - progressAt >= staleImportMs;
     });
     const failedCount = Number(failed.count) || 0;
+    const stranded = listStrandedImportHandoffs();
     const details = {
       active: active.length,
       failedLast7Days: failedCount,
@@ -621,8 +623,19 @@ function collectImportCheck(): HealthCheckResult {
         startedAt: command.started_at,
         lastProgressAt: command.last_progress_at,
       })),
+      importAdmissionStallMs: importAdmissionStallMs(),
+      strandedCommandIds: stranded.map((row) => row.id),
     };
 
+    if (stranded.length > 0) {
+      const ids = stranded.map((row) => `#${row.id}`).join(", ");
+      return {
+        scope: "imports.health",
+        status: "error",
+        message: `${stranded.length} completed download(s) are waiting for disk admission and no import is running: ${ids}`,
+        details,
+      };
+    }
     if (stale.length > 0) {
       return {
         scope: "imports.health",
