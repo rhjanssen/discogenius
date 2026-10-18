@@ -16,6 +16,7 @@ import type { ScanResult } from "../../mediafiles/library-scan.js";
 import type { CommandHandler } from "./handler-context.js";
 import { runRetagWorkUnit } from "../retag-work.js";
 import { runRenameWorkUnit } from "../rename-work.js";
+import { fileCheckpointResumePrefix } from "../command-file-checkpoint.js";
 import { runScanWorkUnit } from "../scan-work.js";
 import { runRootInventoryWorkUnit } from "../root-inventory-work.js";
 
@@ -163,9 +164,10 @@ export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) =
 };
 
 export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ctx) => {
+    const renameResume = fileCheckpointResumePrefix(job.payload);
     ctx.updateCommandDescription(job, {
-        progress: 1,
-        description: "Rename - choosing files",
+        progress: Math.max(1, job.progress),
+        description: renameResume ? `Rename - ${renameResume}choosing files` : "Rename - choosing files",
     });
     const requestedIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds
@@ -195,7 +197,7 @@ export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ct
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.errors.length} error(s), ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
-    throwOnFileErrors("Rename", result.errors, result.renamed);
+    throwOnFileErrors("Rename", result.errors, result.renamed + result.skipped + result.missing);
 };
 
 export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx) => {
@@ -205,9 +207,10 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
     ].some(value => value != null && String(value).trim()))) {
         throw new Error("RenameFiles requires file identifiers or an explicit artist/album/edition/root scope");
     }
+    const renameResume = fileCheckpointResumePrefix(job.payload);
     ctx.updateCommandDescription(job, {
         progress: Math.max(5, job.progress),
-        description: 'Rename Files - applying rename plan',
+        description: renameResume ? `Rename Files - ${renameResume}applying rename plan` : "Rename Files - applying rename plan",
     });
     const explicitIds = Boolean(ids);
     const result = await runRenameWorkUnit(job, ctx, () => explicitIds
@@ -225,7 +228,7 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.errors.length} error(s), ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
-    throwOnFileErrors("Rename", result.errors, result.renamed);
+    throwOnFileErrors("Rename", result.errors, result.renamed + result.skipped + result.missing);
 };
 
 function throwOnFileErrors(
@@ -242,9 +245,12 @@ function throwOnFileErrors(
 }
 
 export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx) => {
+    const retagResume = fileCheckpointResumePrefix(job.payload);
     ctx.updateCommandDescription(job, {
         progress: Math.max(5, job.progress),
-        description: 'Retag Artist - applying artist-wide tag plan',
+        description: retagResume
+            ? `Retag Artist - ${retagResume}${job.payload.restartResume?.settled ?? 0}/${job.payload.restartResume?.total ?? 0} files already settled`
+            : "Retag Artist - applying artist-wide tag plan",
     });
     const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
         ? job.payload.artistIds
@@ -261,7 +267,7 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
     });
-    throwOnFileErrors("Retag", result.errors);
+    throwOnFileErrors("Retag", result.errors, result.retagged + result.skipped + result.missing);
 };
 
 export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) => {
@@ -273,9 +279,10 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
     }
     const affectedArtists = AudioTagService.getAffectedArtistIds(job.payload);
     if (job.payload.stripOnly === true) {
+        const stripResume = fileCheckpointResumePrefix(job.payload);
         ctx.updateCommandDescription(job, {
             progress: Math.max(5, job.progress),
-            description: 'Strip Tags - removing embedded metadata',
+            description: stripResume ? `Strip Tags - ${stripResume}removing embedded metadata` : "Strip Tags - removing embedded metadata",
         });
         const result = await runRetagWorkUnit(job, ctx, () =>
             ids
@@ -291,13 +298,16 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             progress: 100,
             description: `Stripped tags on ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
         });
-        throwOnFileErrors("Strip tags", result.errors);
+        throwOnFileErrors("Strip tags", result.errors, result.retagged + result.skipped + result.missing);
         return;
     }
 
+    const filesResume = fileCheckpointResumePrefix(job.payload);
     ctx.updateCommandDescription(job, {
         progress: Math.max(5, job.progress),
-        description: 'Retag Files - applying media tag plan',
+        description: filesResume
+            ? `Retag Files - ${filesResume}${job.payload.restartResume?.settled ?? 0}/${job.payload.restartResume?.total ?? 0} files already settled`
+            : "Retag Files - applying media tag plan",
     });
     const result = await runRetagWorkUnit(job, ctx, () =>
         ids
@@ -314,5 +324,5 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
     });
-    throwOnFileErrors("Retag", result.errors);
+    throwOnFileErrors("Retag", result.errors, result.retagged + result.skipped + result.missing);
 };

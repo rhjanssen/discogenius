@@ -23,3 +23,7 @@ The built container ran a real executor against a new database with a command ow
 The live dashboard was loaded in a browser without JavaScript errors. It displayed the queued workload and an import at 86 percent with 100 of 100 files, followed by active provider downloads. These displays do not prove those jobs are advancing; post-update verification must check timestamps and terminal outcomes.
 
 A separate live log recorded a 20-second unmapped-files request. Its route computes candidate guesses before returning the list; the performance of that path remains to be investigated independently of restart recovery.
+
+## Addendum, 18 October 2026
+
+Retag and rename now resume from their per-file checkpoint after a process restart. A partial import is still not replayed. The schema version stays 46. The additive migration is `file-work-restart-resume`: it adds `plan_complete` and `restart_claims` and marks a plan that already existed complete, because that plan was written in one transaction with its file rows. The first deploy must not bump `user_version`. A retag that was planned by the previous process keeps that plan and continues from its cursor.

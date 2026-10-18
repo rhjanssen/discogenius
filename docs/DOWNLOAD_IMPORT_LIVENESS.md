@@ -59,3 +59,15 @@ This fail-closed behavior is intentional. Safe automatic recovery of partial
 imports remains blocked on an idempotent per-file operation journal and
 reconciliation pass.
 
+## File-command restart resume
+
+RetagArtist, RetagFiles, RenameArtist, and RenameFiles store progress in
+`CommandFileWork` or `CommandRenameWork`. The command definition declares that
+with `fileWorkCheckpoint`. A process restart runs `FileMutationJournal.recoverPending()`
+and then requeues those commands from the plan. Settled rows stay settled. The
+claimed-but-unsettled row is reclaimed. A complete plan (`plan_complete`) skips
+library selection. An incomplete plan is filled without inserting a file twice.
+A file still claimed after five restarts is stored as a per-file error and the
+command continues. Commands without `fileWorkCheckpoint` keep today's fail-closed
+attempt budget. Imports are not replayed.
+

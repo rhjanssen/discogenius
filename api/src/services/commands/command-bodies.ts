@@ -130,12 +130,22 @@ export interface RootInventoryCheckpoint {
   complete: boolean;
 }
 
+/** Written when startup or watchdog recovery continues a file checkpoint. */
+export interface FileWorkRestartResume {
+  version: 1;
+  reason: string;
+  settled: number;
+  total: number;
+  skippedFiles: number;
+}
+
 export interface CommandBodyCommon {
   artworkCacheWork?: { version: 1; stage?: "adopt" | "retire"; root: string; rootIdentity: string; family: number; after: string;
     current?: {name:string;after:string}; directories?:number };
   cancelRequested?: boolean;
   retagWork?: RetagWorkCheckpoint;
   renameWork?: { version: 1 };
+  restartResume?: FileWorkRestartResume;
   scanWork?: ScanWorkCheckpoint;
   rootInventory?: RootInventoryCheckpoint;
   id?: string;

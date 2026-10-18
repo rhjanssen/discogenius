@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import type { RetagApplyResult } from "../mediafiles/audio-tag-service.js";
+import { FILE_CHECKPOINT_POISON_ERROR, FILE_CHECKPOINT_RESTART_LIMIT } from "./command-liveness-policy.js";
 
 export interface FileWorkPlan {
     command_id: number;
@@ -11,6 +12,14 @@ export interface FileWorkPlan {
     skipped: number;
     missing: number;
     error_count: number;
+    plan_complete: number;
+}
+
+export interface FileCheckpointReclaim {
+    cursor: number;
+    total: number;
+    skippedFiles: number;
+    planComplete: boolean;
 }
 
 const identityFields = ["artist_metadata_id", "recording_id", "track_id", "album_edition_id", "release_group_id",
@@ -49,12 +58,89 @@ export class CommandFileWorkRepository {
     static create(commandId: number, workerId: string, revision: string, files: PlannedFile[], operation: "retag" | "strip" = "retag"): void {
         db.transaction(() => {
             this.assertOwner(commandId, workerId);
-            if (this.get(commandId)) return;
-            db.prepare("INSERT INTO CommandFileWorkPlans (command_id, operation, config_revision, total) VALUES (?, ?, ?, ?)")
-                .run(commandId, operation, revision, files.length);
+            const existing = this.get(commandId);
+            if (existing?.plan_complete) return;
             const insert = db.prepare(`INSERT INTO CommandFileWork (command_id, generation, ordinal, track_file_id, identity_snapshot)
-                VALUES (?, 1, ?, ?, ?)`);
-            files.forEach((file, ordinal) => insert.run(commandId, ordinal, file.id, file.identity));
+                VALUES (?, ?, ?, ?, ?)`);
+            if (!existing) {
+                db.prepare(`INSERT INTO CommandFileWorkPlans
+                    (command_id, operation, config_revision, total, plan_complete)
+                    VALUES (?, ?, ?, ?, 0)`)
+                    .run(commandId, operation, revision, files.length);
+                files.forEach((file, ordinal) => insert.run(commandId, 1, ordinal, file.id, file.identity));
+                db.prepare("UPDATE CommandFileWorkPlans SET plan_complete = 1, updated_at = CURRENT_TIMESTAMP WHERE command_id = ?")
+                    .run(commandId);
+                return;
+            }
+            if (existing.config_revision !== revision) {
+                throw new Error("Tag settings changed during this retag plan. Start a new retag with the current settings.");
+            }
+            const settled = db.prepare(`SELECT COUNT(*) AS n FROM CommandFileWork
+                WHERE command_id = ? AND generation = ? AND status = 'settled'`)
+                .get(commandId, existing.generation) as { n: number };
+            if (Number(settled.n) === 0) {
+                db.prepare("DELETE FROM CommandFileWork WHERE command_id = ? AND generation = ?")
+                    .run(commandId, existing.generation);
+                files.forEach((file, ordinal) => insert.run(commandId, existing.generation, ordinal, file.id, file.identity));
+                db.prepare(`UPDATE CommandFileWorkPlans SET operation = ?, total = ?, cursor = 0, retagged = 0,
+                    skipped = 0, missing = 0, error_count = 0, plan_complete = 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE command_id = ?`).run(operation, files.length, commandId);
+                return;
+            }
+            const present = new Set((db.prepare(`SELECT track_file_id FROM CommandFileWork
+                WHERE command_id = ? AND generation = ?`).all(commandId, existing.generation) as Array<{ track_file_id: number }>)
+                .map(row => row.track_file_id));
+            let ordinal = Number((db.prepare(`SELECT COALESCE(MAX(ordinal), -1) AS ordinal FROM CommandFileWork
+                WHERE command_id = ? AND generation = ?`).get(commandId, existing.generation) as { ordinal: number }).ordinal) + 1;
+            for (const file of files) {
+                if (present.has(file.id)) continue;
+                insert.run(commandId, existing.generation, ordinal, file.id, file.identity);
+                ordinal += 1;
+            }
+            const total = Number((db.prepare(`SELECT COUNT(*) AS n FROM CommandFileWork
+                WHERE command_id = ? AND generation = ?`).get(commandId, existing.generation) as { n: number }).n);
+            db.prepare(`UPDATE CommandFileWorkPlans SET total = ?, plan_complete = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE command_id = ?`).run(total, commandId);
+        })();
+    }
+
+    /** A process restart left the cursor row claimed. Count that claim, give
+     * the file back, or settle it as a per-file error once the bound is hit.
+     * Settled rows are not touched. */
+    static reclaimInFlight(commandId: number): FileCheckpointReclaim {
+        return db.transaction(() => {
+            const plan = this.get(commandId);
+            if (!plan) return { cursor: 0, total: 0, skippedFiles: 0, planComplete: false };
+            const file = db.prepare(`SELECT ordinal, track_file_id, restart_claims FROM CommandFileWork
+                WHERE command_id = ? AND generation = ? AND ordinal = ? AND status = 'started'`)
+                .get(commandId, plan.generation, plan.cursor) as {
+                ordinal: number; track_file_id: number; restart_claims: number;
+            } | undefined;
+            let skippedFiles = 0;
+            if (file) {
+                const claims = Number(file.restart_claims) + 1;
+                if (claims >= FILE_CHECKPOINT_RESTART_LIMIT) {
+                    db.prepare(`UPDATE CommandFileWork SET status = 'settled', restart_claims = ?, retagged = 0,
+                        skipped = 1, missing = 0, error = ?, settled_at = CURRENT_TIMESTAMP
+                        WHERE command_id = ? AND generation = ? AND ordinal = ? AND status = 'started'`)
+                        .run(claims, JSON.stringify([FILE_CHECKPOINT_POISON_ERROR]), commandId, plan.generation, file.ordinal);
+                    db.prepare(`UPDATE CommandFileWorkPlans SET cursor = cursor + 1, skipped = skipped + 1,
+                        error_count = error_count + 1, updated_at = CURRENT_TIMESTAMP
+                        WHERE command_id = ? AND cursor = ?`).run(commandId, plan.cursor);
+                    skippedFiles = 1;
+                } else {
+                    db.prepare(`UPDATE CommandFileWork SET status = 'pending', restart_claims = ?, started_at = NULL
+                        WHERE command_id = ? AND generation = ? AND ordinal = ? AND status = 'started'`)
+                        .run(claims, commandId, plan.generation, file.ordinal);
+                }
+            }
+            const next = this.get(commandId)!;
+            return {
+                cursor: next.cursor,
+                total: next.total,
+                skippedFiles,
+                planComplete: next.plan_complete === 1,
+            };
         })();
     }
 
@@ -195,9 +281,11 @@ export class CommandFileWorkRepository {
         return db.transaction(() => {
             this.assertOwner(commandId, workerId);
             const plan = this.get(commandId)!;
-            const files = db.prepare(`SELECT track_file_id, identity_snapshot FROM CommandFileWork
+            const files = (db.prepare(`SELECT track_file_id, identity_snapshot, error FROM CommandFileWork
                 WHERE command_id = ? AND generation = ? AND error IS NOT NULL ORDER BY ordinal`)
-                .all(commandId, plan.generation) as Array<{ track_file_id: number; identity_snapshot: string }>;
+                .all(commandId, plan.generation) as Array<{ track_file_id: number; identity_snapshot: string; error: string }>)
+                .filter(file => !file.error.includes(FILE_CHECKPOINT_POISON_ERROR));
+            if (files.length === 0) return this.get(commandId)!;
             const insert = db.prepare(`INSERT INTO CommandFileWork (command_id, generation, ordinal, track_file_id, identity_snapshot)
                 VALUES (?, ?, ?, ?, ?)`);
             files.forEach((file, ordinal) => insert.run(commandId, plan.generation + 1, ordinal, file.track_file_id, file.identity_snapshot));

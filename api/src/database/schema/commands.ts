@@ -9,6 +9,7 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       generation INTEGER NOT NULL DEFAULT 1,
       total INTEGER NOT NULL,
       cursor INTEGER NOT NULL DEFAULT 0,
+      plan_complete INTEGER NOT NULL DEFAULT 0,
       result TEXT NOT NULL,
       CHECK (cursor >= 0 AND cursor <= total)
     );
@@ -19,6 +20,7 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       file_id INTEGER NOT NULL,
       identity_snapshot TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'started', 'settled')),
+      restart_claims INTEGER NOT NULL DEFAULT 0,
       result TEXT,
       PRIMARY KEY (command_id, generation, ordinal),
       UNIQUE (command_id, generation, file_id)
@@ -87,6 +89,9 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       skipped INTEGER NOT NULL DEFAULT 0,
       missing INTEGER NOT NULL DEFAULT 0,
       error_count INTEGER NOT NULL DEFAULT 0,
+      -- 0 while file rows are still being inserted. Existing plans created
+      -- before this column are marked complete by the restart-resume migration.
+      plan_complete INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CHECK (cursor >= 0 AND cursor <= total)
@@ -99,6 +104,7 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       track_file_id INTEGER NOT NULL,
       identity_snapshot TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'started', 'settled')),
+      restart_claims INTEGER NOT NULL DEFAULT 0,
       intent_path TEXT,
       intent_size INTEGER,
       intent_modified_at TEXT,

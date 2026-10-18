@@ -36,10 +36,24 @@ export function resolveCommandNoProgressTimeoutMs(name: CommandName): number {
 }
 
 /**
- * These commands can leave externally visible filesystem mutations between
- * durable DB checkpoints. Until they have an operation journal, an automatic
- * replay after worker death could double-move, overwrite, or retag the wrong
- * bytes. Fail the interrupted attempt visibly; a human may inspect and retry.
+ * How many times an in-flight file may be found claimed-but-unsettled across
+ * process restarts before that file is recorded as an error and skipped.
+ * The command itself continues. This is not the command-level attempt budget.
+ */
+export const FILE_CHECKPOINT_RESTART_LIMIT = 5;
+
+export const FILE_CHECKPOINT_RESUME_PHASE = "resumed after restart";
+
+export const FILE_CHECKPOINT_POISON_ERROR =
+  `Skipped after ${FILE_CHECKPOINT_RESTART_LIMIT} restarts without settling`;
+
+/**
+ * Generic infrastructure retries. These commands either have no per-file
+ * checkpoint, or (retag / rename) must not be replayed by this attempt budget.
+ * Retag and rename resume through `fileWorkCheckpoint` on the command
+ * definition: that path keeps settled rows and bounds a poison file. Calling
+ * the generic retry here would either redo work blindly or poison-fail the
+ * whole command after a few restarts, so they stay fail-closed on this path.
  */
 export function isInfrastructureRetrySafe(name: CommandName): boolean {
     switch (name) {

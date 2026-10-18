@@ -57,6 +57,7 @@ export {
 } from "./command-ordering.js";
 
 import { appEvents, AppEvent, CommandEventPayload } from "./app-events.js";
+import { FILE_CHECKPOINT_RESUME_PHASE } from "./command-liveness-policy.js";
 
 const QUEUE_RANK_STEP = 1024;
 const QUEUE_REBALANCE_WINDOW = 64;
@@ -904,7 +905,7 @@ ${orderBy}
                 UPDATE commands
                 SET
                     status = 'started',
-                    started_at = CASE WHEN progress_phase = 'checkpoint ready'
+                    started_at = CASE WHEN progress_phase IN ('checkpoint ready', '${FILE_CHECKPOINT_RESUME_PHASE}')
                         THEN COALESCE(started_at, ?) ELSE ? END,
                     completed_at = NULL,
                     updated_at = ?,
@@ -913,8 +914,8 @@ ${orderBy}
                     heartbeat_at = ?,
                     last_progress_at = ?,
                     progress_phase = 'starting',
-                    progress_current = progress,
-                    progress_total = 100,
+                    progress_current = CASE WHEN progress_phase = '${FILE_CHECKPOINT_RESUME_PHASE}' THEN progress_current ELSE progress END,
+                    progress_total = CASE WHEN progress_phase = '${FILE_CHECKPOINT_RESUME_PHASE}' THEN COALESCE(progress_total, 100) ELSE 100 END,
                     lease_expires_at = ?,
                     blocked_reason = NULL,
                     retry_after = NULL,
@@ -1509,15 +1510,123 @@ ${orderBy}
     }
 
     /**
+     * Put a checkpointed file command back on the queue without spending the
+     * infrastructure attempt budget and without zeroing its progress.
+     * `prepare` reclaims in-flight file rows in this same transaction.
+     * A null prepare result means the command is not checkpoint-resumable.
+     */
+    static requeueFromCheckpoint(options: {
+        id: number;
+        workerId: string;
+        reason: string;
+        now?: Date;
+        prepare: () => {
+            progress: number;
+            progressCurrent: number;
+            progressTotal: number;
+            description: string;
+            settled: number;
+            total: number;
+            skippedFiles: number;
+        } | null;
+    }): CommandLeaseRecoveryResult | { outcome: "not-checkpoint"; attempt: number; retryAfter: null } {
+        const now = options.now ?? new Date();
+        const nowTimestamp = leaseTimestamp(now);
+        const resume = db.transaction((): CommandLeaseRecoveryResult | { outcome: "not-checkpoint"; attempt: number; retryAfter: null } => {
+            const current = db.prepare(`
+                SELECT attempt, payload
+                FROM commands
+                WHERE id = ? AND status = 'started' AND worker_id = ?
+            `).get(options.id, options.workerId) as { attempt: number; payload: string } | undefined;
+            if (!current) return { outcome: "not-owner", attempt: 0, retryAfter: null };
+            const display = options.prepare();
+            if (!display) return { outcome: "not-checkpoint", attempt: Number(current.attempt) || 0, retryAfter: null };
+            const payload = {
+                ...safeParsePayload(current.payload, options.id),
+                description: display.description,
+                restartResume: {
+                    version: 1 as const,
+                    reason: options.reason,
+                    settled: display.settled,
+                    total: display.total,
+                    skippedFiles: display.skippedFiles,
+                },
+            };
+            const result = db.prepare(`
+                UPDATE commands
+                SET
+                    status = 'queued',
+                    completed_at = NULL,
+                    updated_at = ?,
+                    progress = ?,
+                    progress_phase = ?,
+                    progress_current = ?,
+                    progress_total = ?,
+                    worker_id = NULL,
+                    heartbeat_at = NULL,
+                    lease_expires_at = NULL,
+                    blocked_reason = ?,
+                    retry_after = NULL,
+                    last_retry_reason = ?,
+                    error = NULL,
+                    payload = ?
+                WHERE id = ? AND status = 'started' AND worker_id = ?
+            `).run(
+                nowTimestamp,
+                display.progress,
+                FILE_CHECKPOINT_RESUME_PHASE,
+                display.progressCurrent,
+                display.progressTotal,
+                FILE_CHECKPOINT_RESUME_PHASE,
+                options.reason,
+                JSON.stringify(payload),
+                options.id,
+                options.workerId,
+            );
+            if (result.changes === 0) return { outcome: "not-owner", attempt: Number(current.attempt) || 0, retryAfter: null };
+            return { outcome: "requeued", attempt: Number(current.attempt) || 0, retryAfter: null };
+        });
+        const outcome = resume();
+        if (outcome.outcome === "requeued") {
+            clearCommandOverlay(options.id);
+            clearCommandUpdateThrottle(options.id);
+            const job = this.get(options.id);
+            if (job) {
+                appEvents.emit(AppEvent.COMMAND_UPDATED, {
+                    id: options.id,
+                    type: job.name,
+                    status: job.status,
+                    progress: job.progress,
+                    payload: job.payload,
+                    error: job.error,
+                } as CommandEventPayload);
+                console.log(`[CommandQueue] Resumed command #${options.id} (${job.name}) from its file checkpoint: ${job.payload?.description ?? options.reason}`);
+            }
+        }
+        return outcome;
+    }
+
+    /**
      * Deterministically recover attempts left `started` by a process restart.
      * There are no live workers at executor startup, so a NULL legacy owner is
      * also safe to recover. Attempt and reason evidence remain persisted.
+     * Checkpointed file commands are requeued from their plan instead of
+     * poison-failed when `prepareCheckpoint` returns a display.
      */
     static recoverInterruptedJobsByTypes(options: {
         types: readonly CommandName[];
         reason: string;
         maxAttempts: number;
         resolveMaxAttempts?: (name: CommandName) => number;
+        prepareCheckpoint?: (row: { id: number; name: CommandName }) => {
+            progress: number;
+            progressCurrent: number;
+            progressTotal: number;
+            description: string;
+            settled: number;
+            total: number;
+            skippedFiles: number;
+        } | null;
         retryDelayMs?: number;
         now?: Date;
     }): { requeued: number; failed: number } {
@@ -1546,14 +1655,25 @@ ${orderBy}
                     WHERE id = ? AND status = 'started' AND worker_id IS NULL
                 `).run(restartOwner, row.id);
             }
-            const result = this.recoverOwnedCommand({
-                id: row.id,
-                workerId: restartOwner,
-                reason: options.reason,
-                maxAttempts: options.resolveMaxAttempts?.(row.name) ?? options.maxAttempts,
-                retryDelayMs: options.retryDelayMs ?? 0,
-                now: options.now,
-            });
+            const resumed = options.prepareCheckpoint
+                ? this.requeueFromCheckpoint({
+                    id: row.id,
+                    workerId: restartOwner,
+                    reason: options.reason,
+                    now: options.now,
+                    prepare: () => options.prepareCheckpoint!(row),
+                })
+                : null;
+            const result = resumed && resumed.outcome !== "not-checkpoint"
+                ? resumed
+                : this.recoverOwnedCommand({
+                    id: row.id,
+                    workerId: restartOwner,
+                    reason: options.reason,
+                    maxAttempts: options.resolveMaxAttempts?.(row.name) ?? options.maxAttempts,
+                    retryDelayMs: options.retryDelayMs ?? 0,
+                    now: options.now,
+                });
             if (result.outcome === "requeued") requeued += 1;
             if (result.outcome === "failed") failed += 1;
         }

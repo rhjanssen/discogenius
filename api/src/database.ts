@@ -35,6 +35,7 @@ import {
   createDownloadQueueSchema,
   createCommandFileWorkSchema,
 } from "./database/schema/commands.js";
+import { migrateFileWorkRestartResume } from "./database/schema/file-work-restart-resume.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
   createCanonicalCreditSchemaV41,
@@ -509,6 +510,7 @@ export function initDatabase() {
   // Durable runtime work records are additive command-queue objects, not a
   // second catalogue schema or a compatibility writer.
   createCommandFileWorkSchema(db, { ifNotExists: true });
+  migrateFileWorkRestartResume(db);
   createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();

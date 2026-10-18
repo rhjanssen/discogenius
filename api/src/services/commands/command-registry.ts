@@ -66,6 +66,14 @@ export interface CommandDefinition {
    * overrides `maxConcurrent` at scheduling time.
    */
   resolveMaxConcurrent?: () => number;
+  /**
+   * Durable per-file checkpoint. A process restart requeues the same command
+   * and continues from settled rows. This is the type-level resume switch:
+   * recovery reads it instead of a command-name list.
+   * - `retag` stores the plan in CommandFileWork.
+   * - `rename` stores the plan in CommandRenameWork.
+   */
+  fileWorkCheckpoint?: "retag" | "rename";
 }
 
 export interface SystemTaskDefinition {
@@ -379,6 +387,7 @@ export const COMMAND_DEFINITIONS = {
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "rename",
   },
   [CommandNames.RenameArtist]: {
     type: CommandNames.RenameArtist,
@@ -387,6 +396,7 @@ export const COMMAND_DEFINITIONS = {
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "rename",
   },
   [CommandNames.RetagFiles]: {
     type: CommandNames.RetagFiles,
@@ -395,6 +405,7 @@ export const COMMAND_DEFINITIONS = {
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "retag",
   },
   [CommandNames.RetagArtist]: {
     type: CommandNames.RetagArtist,
@@ -403,6 +414,7 @@ export const COMMAND_DEFINITIONS = {
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "retag",
   },
 } satisfies Record<string, CommandDefinition>;
 
@@ -603,6 +615,11 @@ const SYSTEM_TASK_DEFINITIONS = [
 
 function normalizeCommandName(value: string): string {
   return String(value || "").trim().toLowerCase();
+}
+
+/** True when a process restart must continue this command from its file plan. */
+export function commandResumesFromFileCheckpoint(jobType: string): boolean {
+  return getCommandDefinition(jobType).fileWorkCheckpoint != null;
 }
 
 export function getCommandDefinition(jobType: string): CommandDefinition {
