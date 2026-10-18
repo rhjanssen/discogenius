@@ -8,6 +8,63 @@ const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-tidal-auth-
 process.env.DISCOGENIUS_CONFIG_DIR = configDir;
 
 const { refreshStoredTidalToken, resetTidalRefreshBackoffForTests, TIDAL_AUTH_TOKEN_FILE, tidalAbuseBackoffMs, isTidalRefreshPaused } = await import("./tidal-auth.js");
+const { ProviderAuthError } = await import("../provider-auth-error.js");
+
+test("a 401 TIDAL refresh is an auth failure and preserves the stored token", async () => {
+  fs.mkdirSync(path.dirname(TIDAL_AUTH_TOKEN_FILE), { recursive: true });
+  const token = { access_token: "old-access", refresh_token: "old-refresh", expires_at: 1 };
+  fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify(token));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: "invalid_token",
+    error_description: "token has expired",
+  }), { status: 401, headers: { "Content-Type": "application/json" } });
+  try {
+    await assert.rejects(refreshStoredTidalToken, (error: unknown) => {
+      assert.equal(error instanceof ProviderAuthError, true);
+      assert.match((error as Error).message, /token has expired/);
+      return true;
+    });
+    assert.deepEqual(JSON.parse(fs.readFileSync(TIDAL_AUTH_TOKEN_FILE, "utf8")), token);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("invalid_grant that says the token has expired is an auth failure", async () => {
+  fs.mkdirSync(path.dirname(TIDAL_AUTH_TOKEN_FILE), { recursive: true });
+  fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify({
+    access_token: "old-access", refresh_token: "old-refresh", expires_at: 1,
+  }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: "invalid_grant",
+    error_description: "The token has expired",
+  }), { status: 400, headers: { "Content-Type": "application/json" } });
+  try {
+    await assert.rejects(refreshStoredTidalToken, (error: unknown) => error instanceof ProviderAuthError);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a network error during TIDAL refresh is not an auth failure", async () => {
+  fs.mkdirSync(path.dirname(TIDAL_AUTH_TOKEN_FILE), { recursive: true });
+  fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify({
+    access_token: "old-access", refresh_token: "old-refresh", expires_at: 1,
+  }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  try {
+    await assert.rejects(refreshStoredTidalToken, (error: unknown) => {
+      assert.equal(error instanceof ProviderAuthError, false);
+      assert.match((error as Error).message, /fetch failed/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("a rejected TIDAL refresh reports its HTTP error and preserves the stored token", async () => {
   fs.mkdirSync(path.dirname(TIDAL_AUTH_TOKEN_FILE), { recursive: true });

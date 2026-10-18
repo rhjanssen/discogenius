@@ -10,6 +10,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-deezer-"));
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.STREAMRIP_BIN = "rip-test";
+process.env.DISCOGENIUS_DEEZER_JITTER_MAX_MS = "0";
 
 const { DeezerProvider, deezerArtworkUrl } = await import("./deezer-provider.js");
 const {

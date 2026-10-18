@@ -1,4 +1,6 @@
 import { withSqliteWriteGate } from "../../../database.js";
+import { ProviderAuthError } from "../provider-auth-error.js";
+import { providerNeedsReauth, recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
 import fs from "fs";
 import path from "path";
 import { CONFIG_DIR, updateConfig } from "../../config/config.js";
@@ -237,6 +239,11 @@ export async function saveStoredTidalToken(token: TidalAuthToken): Promise<void>
     }
 
     await cacheAccountInfo(token.user);
+    try {
+        await recordProviderAuthOk("tidal");
+    } catch (error) {
+        console.error("[TIDAL-AUTH] Failed to record auth state:", error instanceof Error ? error.message : "unknown");
+    }
 }
 
 export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {
@@ -260,6 +267,9 @@ export function clearStoredTidalToken(): void {
 
     clearTiddlAuth();
     activeDeviceLogin = null;
+    void recordProviderAuthFailure("tidal", "Tidal login was cleared.").catch((error) => {
+        console.error("[TIDAL-AUTH] Failed to record auth state:", error instanceof Error ? error.message : "unknown");
+    });
 
     updateConfig("account", {
         userId: undefined,
@@ -294,8 +304,19 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
     return tidalRefreshInFlight;
 }
 
+function tidalRefreshIsAuthFailure(status: number, errorCode: string, errorDescription: string): boolean {
+    if (status === 403 && errorCode === "abuse_detected") return false;
+    if (status === 401) return true;
+    return /token has expired/i.test(`${errorCode}\n${errorDescription}`);
+}
+
 async function performTidalTokenRefresh(): Promise<TidalAuthToken | null> {
     if (isTidalRefreshPaused()) {
+        return null;
+    }
+    // A dead login cannot be refreshed. Stop calling TIDAL until a re-login
+    // saves a new token; repeating the 401 is what failed the whole queue.
+    if (providerNeedsReauth("tidal")) {
         return null;
     }
     const token = loadStoredTidalToken();
@@ -328,15 +349,26 @@ async function performTidalTokenRefresh(): Promise<TidalAuthToken | null> {
 
     if (!response.ok) {
         let errorCode = "";
+        let errorDescription = "";
         try {
-            const payload = await response.json() as { error?: unknown };
+            const payload = await response.json() as { error?: unknown; error_description?: unknown };
             if (typeof payload.error === "string") errorCode = payload.error;
+            if (typeof payload.error_description === "string") errorDescription = payload.error_description;
         } catch {
             // The status alone is enough when the provider returns no JSON.
         }
         if (response.status === 403 && errorCode === "abuse_detected") {
             const pauseMs = pauseTidalRefresh(Date.now());
             console.warn(`[TIDAL] Token refresh paused for ${Math.round(pauseMs / 60_000)} minutes after HTTP 403 abuse_detected`);
+        }
+        if (tidalRefreshIsAuthFailure(response.status, errorCode, errorDescription)) {
+            const authMessage = "Tidal login expired (token has expired).";
+            try {
+                await recordProviderAuthFailure("tidal", authMessage);
+            } catch (error) {
+                console.error("[TIDAL-AUTH] Failed to record auth state:", error instanceof Error ? error.message : "unknown");
+            }
+            throw new ProviderAuthError("tidal", authMessage);
         }
         throw new Error(`TIDAL token refresh failed (HTTP ${response.status}${errorCode ? `: ${errorCode}` : ""})`);
     }
