@@ -1,4 +1,5 @@
 import { ProviderUnavailableError } from "./provider-unavailable-error.js";
+import { errorIndicatesProviderAuth } from "../providers/provider-auth-error.js";
 import { readIntEnv } from "../../utils/env.js";
 import { streamingProviderManager } from "../providers/index.js";
 
@@ -51,10 +52,10 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\bDRM\/SNIP\b/i,
   /\bpolicy=SNIP\b/i,
   /\bencrypted HLS\b/i,
-  // Deezer / Streamrip permanent entitlement
+  // Deezer / Streamrip permanent entitlement. ARL expiry is a provider auth
+  // failure (ProviderAuthError), not a per-album permanent result.
   /\bnot available in (?:your|this) country\b/i,
-  /\binvalid (?:arl|token)\b/i,
-  /\barl (?:expired|invalid)\b/i,
+  /\binvalid token\b/i,
   /\bwronglicense\b/i,
   /\blicense.*(?:denied|invalid)\b/i,
   /\bsubscription required\b/i,
@@ -193,7 +194,7 @@ export async function executeWithSameOfferRetries<T>(
       return await fn();
     } catch (error) {
       lastError = error;
-      if (isDownloadCancellationError(error)) {
+      if (isDownloadCancellationError(error) || errorIndicatesProviderAuth(error)) {
         throw error;
       }
       const kind = classifyDownloadFailure(error);

@@ -12,6 +12,7 @@ import { assertSafeDownloadResourceId } from '../../services/download/download-p
 import { DownloadQueueQueryService } from '../../services/download/download-queue-query-service.js';
 import { DownloadWaitQueue } from '../../services/download/download-wait-queue.js';
 import { retryDownloadQueueItem } from '../../services/download/download-queue-retry.js';
+import { retryAuthFailedAlbums } from '../../services/download/download-auth-retry.js';
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../../services/metadata/provider-track-resolver.js';
 import { resolvePreferredVideoOffer, resolveRequestedVideoOffer } from '../../services/music/video-offer-resolver.js';
 import { CurationService } from '../../services/music/curation-service.js';
@@ -317,6 +318,30 @@ router.delete('/:id', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('[QUEUE-API] Error deleting job:', error);
     res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to delete job', message: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/queue/retry-auth-failures
+ * Put albums that failed because a provider login expired back on the queue.
+ */
+router.post('/retry-auth-failures', async (req: Request, res: Response) => {
+  try {
+    const body = getObjectBody(req.body ?? {});
+    rejectUnknownKeys(body, ['days']);
+    const days = getOptionalInteger(body, 'days');
+    if (days !== undefined && (days < 1 || days > 90)) {
+      return res.status(400).json({ error: 'days must be between 1 and 90' });
+    }
+    const result = await runQueueUserWrite(() => retryAuthFailedAlbums(days));
+    void downloadProcessor.processQueue().catch((error) => {
+      console.error('[QUEUE-API] Error resuming auth-failed albums:', error);
+    });
+    res.json(result);
+  } catch (error: any) {
+    if (isRequestValidationError(error)) return res.status(400).json({ error: error.message });
+    console.error('[QUEUE-API] Error retrying auth failures:', error);
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to retry auth failures', message: error.message });
   }
 });
 

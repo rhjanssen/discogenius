@@ -27,6 +27,16 @@ test("classifyDownloadFailure treats 404 / not found as permanent", () => {
   assert.equal(classifyDownloadFailure(new Error("Album unavailable")), "permanent");
 });
 
+test("a provider auth error is not retried on the same offer", async () => {
+  const { ProviderAuthError } = await import("../providers/provider-auth-error.js");
+  let attempts = 0;
+  await assert.rejects(executeWithSameOfferRetries({ sleep: async () => {} }, async () => {
+    attempts += 1;
+    throw new ProviderAuthError("tidal", "Tidal login expired (token has expired).");
+  }), /token has expired/);
+  assert.equal(attempts, 1);
+});
+
 test("missing downloader provisioning does not repeat same-offer attempts", async () => {
   let attempts = 0;
   await assert.rejects(executeWithSameOfferRetries({ sleep: async () => {} }, async () => {

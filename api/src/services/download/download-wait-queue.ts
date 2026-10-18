@@ -12,6 +12,7 @@ import {
 } from "../music/acquisition-download-command.js";
 import { evaluateWaitingAcquisitionPlan } from "./waiting-acquisition-plan.js";
 import type { AnyCommandBody } from "../commands/command-model.js";
+import { authHoldRecord, providerNeedsReauth } from "../providers/provider-auth-state.js";
 
 export type DownloadWaitMediaKind = "album" | "track" | "video";
 export type DownloadWaitPosition = "front" | "back";
@@ -303,7 +304,11 @@ export class DownloadWaitQueue {
     }
 
     const position = input.position === "front" ? "front" : "back";
-    const payload = input.payload ?? {};
+    const payload = { ...(input.payload ?? {}) };
+    const providerId = String(input.provider || payload.provider || "").trim().toLowerCase();
+    if (providerId && providerNeedsReauth(providerId) && payload.authHold == null) {
+      payload.authHold = authHoldRecord(providerId);
+    }
     const trackIds = input.trackIds ?? [];
     const inserted = db.transaction(() => {
       const rank = position === "front" ? this.nextFrontRank() : this.nextAppendRank();
@@ -416,7 +421,7 @@ export class DownloadWaitQueue {
     for (const raw of candidates) {
       const wait = hydrateWaitRow(raw);
       const provider = (wait.provider || String(wait.payload.provider || "")).toLowerCase();
-      if (provider && excludeProviders.has(provider)) {
+      if (provider && (excludeProviders.has(provider) || providerNeedsReauth(provider))) {
         continue;
       }
 
@@ -434,6 +439,28 @@ export class DownloadWaitQueue {
       ? { id: Number(last.id), queue_order: Number(last.queue_order) } : null };
   }
 
+  /** Put a started download back on its wait row without failing it or burning a retry. */
+  static releaseForAuthHold(commandId: number, provider: string): void {
+    const hold = JSON.stringify(authHoldRecord(provider));
+    const release = db.transaction(() => {
+      db.prepare(`
+        UPDATE DownloadQueue
+        SET command_id = NULL,
+            claimed_at = NULL,
+            payload = json_set(
+              CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,
+              '$.authHold',
+              json(?)
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE command_id = ?
+      `).run(hold, commandId);
+      db.prepare(`DELETE FROM commands WHERE id = ? AND status = 'started'`).run(commandId);
+    });
+    release();
+    notifyQueueChanged();
+  }
+
   static claim(waitId: number, verifiedTrackIds?: ReadonlySet<number>): { wait: DownloadWaitRow; commandId: number } | null {
     const wait = this.get(waitId);
     if (!wait || wait.command_id != null) {
@@ -441,6 +468,9 @@ export class DownloadWaitQueue {
         ? { wait, commandId: wait.command_id }
         : null;
     }
+
+    const provider = (wait.provider || String(wait.payload.provider || "")).toLowerCase();
+    if (provider && providerNeedsReauth(provider)) return null;
 
     let commandName: CommandName = wait.command_name as CommandName;
     let body: AnyCommandBody;

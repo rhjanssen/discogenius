@@ -25,6 +25,7 @@ import type {
 import { resolveRequestedVideoOffer } from "../music/video-offer-resolver.js";
 import { formatDisambiguatedTitle } from "../../utils/display-title.js";
 import { acquisitionWaitMessage } from "../music/acquisition-download-command.js";
+import { authHoldMessageFromPayload } from "../providers/provider-auth-state.js";
 
 type QueueJobRow = {
   id: number;
@@ -1386,7 +1387,8 @@ export class DownloadQueueQueryService {
         : getOptionalNumber(job.payload?.volumeNumber) ?? undefined,
       trackProgress: typeof downloadState.trackProgress === "number" ? downloadState.trackProgress : undefined,
       trackStatus: getOptionalString(downloadState.trackStatus) as QueueItemContract["trackStatus"] | undefined,
-      statusMessage: getOptionalString(downloadState.statusMessage)
+      statusMessage: authHoldMessageFromPayload(job.payload?.authHold)
+        ?? getOptionalString(downloadState.statusMessage)
         ?? acquisitionWaitMessage(job.payload?.acquisitionWaitReason),
       state: getOptionalString(downloadState.state) as QueueItemContract["state"] | undefined,
       outcome: (() => {

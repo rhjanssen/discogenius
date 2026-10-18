@@ -53,8 +53,6 @@ interface ProviderAuthRow {
 }
 
 let tableReady: boolean | null = null;
-let cacheLoaded = false;
-const cache = new Map<string, ProviderAuthRow>();
 
 const COPY: Record<string, Omit<ProviderAuthCopy, "provider">> = {
   tidal: {
@@ -102,8 +100,6 @@ export function authHoldMessageFromPayload(value: unknown): string | undefined {
 
 export function resetProviderAuthCacheForTests(): void {
   tableReady = null;
-  cacheLoaded = false;
-  cache.clear();
 }
 
 function authTableReady(): boolean {
@@ -119,19 +115,27 @@ function authTableReady(): boolean {
   }
 }
 
-function loadCache(): void {
-  if (cacheLoaded || !authTableReady()) return;
-  const rows = db.prepare(`SELECT * FROM ProviderAuthState`).all() as ProviderAuthRow[];
-  cache.clear();
-  for (const row of rows) cache.set(row.provider, row);
-  cacheLoaded = true;
-}
-
 function readRow(provider: string): ProviderAuthRow | null {
   const id = normalizeProviderId(provider);
   if (!id || !authTableReady()) return null;
-  loadCache();
-  return cache.get(id) ?? null;
+  try {
+    return (db.prepare(`SELECT * FROM ProviderAuthState WHERE provider = ?`).get(id) as ProviderAuthRow | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** One indexed read per schedule. Not a write, and not cached across threads. */
+export function providersNeedingReauth(): string[] {
+  if (!authTableReady()) return [];
+  try {
+    const rows = db.prepare(`
+      SELECT provider FROM ProviderAuthState WHERE status = 'needs_reauth'
+    `).all() as Array<{ provider: string }>;
+    return rows.map((row) => row.provider);
+  } catch {
+    return [];
+  }
 }
 
 export function providerNeedsReauth(provider: string): boolean {
@@ -247,16 +251,10 @@ function persistRow(row: ProviderAuthRow): void {
   );
 }
 
-function remember(row: ProviderAuthRow): void {
-  cache.set(row.provider, row);
-  cacheLoaded = true;
-}
-
 export async function recordProviderAuthFailure(provider: string, message: string): Promise<ProviderAuthTransition> {
   const id = normalizeProviderId(provider);
   if (!id || !authTableReady()) return { provider: id, status: "unknown", transitioned: false, persisted: false };
-  loadCache();
-  const current = cache.get(id) ?? null;
+  const current = readRow(id);
   // Already held. A second refresh failure must not write or notify again.
   if (current?.status === "needs_reauth") {
     return { provider: id, status: "needs_reauth", transitioned: false, persisted: false };
@@ -282,7 +280,6 @@ export async function recordProviderAuthFailure(provider: string, message: strin
     });
     write();
   }, "provider-auth:needs-reauth");
-  remember(row);
   emitTransition(row);
   return { provider: id, status: "needs_reauth", transitioned: true, persisted: true };
 }
@@ -296,8 +293,7 @@ export interface RecordProviderAuthOkOptions {
 export async function recordProviderAuthOk(provider: string, options: RecordProviderAuthOkOptions = {}): Promise<ProviderAuthTransition> {
   const id = normalizeProviderId(provider);
   if (!id || !authTableReady()) return { provider: id, status: "unknown", transitioned: false, persisted: false };
-  loadCache();
-  const current = cache.get(id) ?? null;
+  const current = readRow(id);
   const now = isoNow();
   const accountLabel = options.accountLabel === undefined ? current?.account_label ?? null : options.accountLabel;
   const credentialSavedAt = options.credentialSavedAt === undefined
@@ -335,7 +331,6 @@ export async function recordProviderAuthOk(provider: string, options: RecordProv
     });
     write();
   }, "provider-auth:ok");
-  remember(row);
   if (notify) emitTransition(row);
   return { provider: id, status: "ok", transitioned, persisted: true };
 }
@@ -375,10 +370,12 @@ export function toPublicProviderAuth(row: ProviderAuthRow, now = Date.now()): Pr
 
 export function listProviderAuthPublic(): ProviderAuthPublic[] {
   if (!authTableReady()) return [];
-  loadCache();
-  return [...cache.values()]
-    .sort((a, b) => a.provider.localeCompare(b.provider))
-    .map((row) => toPublicProviderAuth(row));
+  try {
+    const rows = db.prepare(`SELECT * FROM ProviderAuthState ORDER BY provider`).all() as ProviderAuthRow[];
+    return rows.map((row) => toPublicProviderAuth(row));
+  } catch {
+    return [];
+  }
 }
 
 export function readProviderAuthPublic(provider: string): ProviderAuthPublic | null {

@@ -87,6 +87,9 @@ import type {
 import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-import-service.js';
 import { removeEmptyParents } from '../mediafiles/library-files.js';
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
+import { asProviderAuthError, ProviderAuthError } from '../providers/provider-auth-error.js';
+import { providersNeedingReauth, providerNeedsReauth, queueHoldMessage, recordProviderAuthFailure } from '../providers/provider-auth-state.js';
+import { probeDeezerBeforeDownloadBatch, startDeezerAuthProbeLoop } from '../providers/deezer/deezer-arl-health.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
 import {
@@ -1810,8 +1813,13 @@ export class DownloadProcessor {
                 // admission. Wake pending imports before its next work unit.
                 if (event.status === 'queued' || event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.scheduleNext();
             });
+            appEvents.on(AppEvent.PROVIDER_AUTH_CHANGED, (event) => {
+                if (event.status === "ok") this.scheduleNext();
+            });
             this.queueEventsSubscribed = true;
         }
+
+        startDeezerAuthProbeLoop();
 
         // The download queue is event-driven, not polled: it runs on app
         // startup, when items are added, and when the previous item finishes.
@@ -1820,11 +1828,27 @@ export class DownloadProcessor {
 
     async processQueue(restartAdmission = true): Promise<void> {
         if (this.suspended) return;
+        await this.probeDeezerQueueAuth();
         return withSqliteWriteGate(() => {
             if (restartAdmission) { this.admissionCursor = null; this.admissionEpoch++; }
             this.scheduleQueueWithWriteLock();
             this.armRetryWake();
         }, 'download:schedule');
+    }
+
+    /** One indexed read. The Deezer network probe runs only when a wait row exists and the last probe is stale. */
+    private async probeDeezerQueueAuth(): Promise<void> {
+        try {
+            const waiting = db.prepare(`
+                SELECT 1 AS present FROM DownloadQueue
+                WHERE command_id IS NULL AND lower(COALESCE(provider, '')) = 'deezer'
+                LIMIT 1
+            `).get();
+            if (!waiting) return;
+            await probeDeezerBeforeDownloadBatch();
+        } catch (error) {
+            console.error("[DOWNLOAD-PROCESSOR] Deezer auth probe failed:", error instanceof Error ? error.message : "unknown");
+        }
     }
 
     private scheduleQueueWithWriteLock(): void {
@@ -1871,13 +1895,14 @@ export class DownloadProcessor {
         // only those claimed wait rows; never start a command with no wait row.
         while (this.activeDownloads.size < MAX_CONCURRENT_DOWNLOADS) {
             const activeProviders = new Set<string>();
+            for (const provider of providersNeedingReauth()) activeProviders.add(provider.toLowerCase());
             for (const entry of this.activeDownloads.values()) {
-                activeProviders.add(entry.provider);
+                activeProviders.add(entry.provider.toLowerCase());
             }
 
             const candidates = CommandQueueManager.getTopPendingJobsByTypes(DOWNLOAD_COMMAND_NAMES, 20);
             let job = candidates.find((candidate) => {
-                if (activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand))) {
+                if (activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand).toLowerCase())) {
                     return false;
                 }
                 return DownloadWaitQueue.getByCommandId(candidate.id) != null;
@@ -2351,7 +2376,19 @@ export class DownloadProcessor {
 
             console.log(`[DOWNLOAD-PROCESSOR] Downloaded ${type} ${providerId} — queued import phase for command #${job.id}`);
         } catch (error: any) {
-            if (entry.cancelRequested && this.isPaused) {
+            const authError = asProviderAuthError(entry.provider, error);
+            if (authError && !(entry.cancelRequested && this.isPaused)) {
+                console.warn(`[DOWNLOAD-PROCESSOR] Holding job #${job.id}: ${authError.message}`);
+                try {
+                    await recordProviderAuthFailure(authError.provider, authError.message);
+                } catch (recordError) {
+                    console.error("[DOWNLOAD-PROCESSOR] Failed to record provider auth:", recordError instanceof Error ? recordError.message : "unknown");
+                }
+                await withSqliteWriteGate(() => {
+                    DownloadWaitQueue.releaseForAuthHold(job.id, authError.provider);
+                }, "download:auth-hold");
+                await this.cleanupDownloadSourcePath(entry.downloadPath);
+            } else if (entry.cancelRequested && this.isPaused) {
                 const current = CommandQueueManager.get(job.id);
                 if (current?.status === 'started' && current.worker_id === workerId) {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; returning to queue`);
@@ -2476,9 +2513,12 @@ export class DownloadProcessor {
                 if (entry.cancelRequested || signal.aborted) {
                     throw new Error("Download cancelled");
                 }
+                if (providerNeedsReauth(activeProvider)) {
+                    throw new ProviderAuthError(activeProvider, queueHoldMessage(activeProvider));
+                }
 
                 if (String(activeProviderItemId).startsWith("acquisition-plan:")) {
-                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
                         throw new Error(`Acquisition plan ${activeProviderItemId} has no downloadable track offers or fallback offers available`);
                     }
@@ -2495,7 +2535,7 @@ export class DownloadProcessor {
 
                 const backend = downloadBackendRegistry.resolve(activeProvider, capability);
                 if (!backend) {
-                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
                         throw new Error(`No download backend found for provider ${activeProvider} with capability ${capability}`);
                     }
@@ -2566,6 +2606,9 @@ export class DownloadProcessor {
                         },
                         async () => {
                             await this.prepareProviderForDownload(activeProvider, downloadPath);
+                            if (providerNeedsReauth(activeProvider)) {
+                                throw new ProviderAuthError(activeProvider, queueHoldMessage(activeProvider));
+                            }
                             await backend.download({
                                 provider: activeProvider,
                                 entityType: type as "album" | "track" | "video",
@@ -2629,8 +2672,10 @@ export class DownloadProcessor {
                     if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
                         throw error;
                     }
+                    const authError = asProviderAuthError(activeProvider, error);
+                    if (authError) throw authError;
                     await this.recordUnavailableProviderResource(error);
-                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
                         throw error;
                     }
@@ -2655,6 +2700,19 @@ export class DownloadProcessor {
             }
         } finally {
             clearInterval(checkCancelInterval);
+        }
+    }
+
+    private nextDownloadOffer(
+        ranked: readonly RankedDownloadOffer[],
+        tried: ReadonlySet<string>,
+    ): RankedDownloadOffer | null {
+        const skipped = new Set(tried);
+        while (true) {
+            const next = nextOfferAfterTried(ranked, skipped);
+            if (!next) return null;
+            if (!providerNeedsReauth(next.provider)) return next;
+            skipped.add(makeOfferAttemptKey(next.provider, next.providerId));
         }
     }
 
@@ -2850,7 +2908,7 @@ export class DownloadProcessor {
                     } catch (error) {
                         if (!(error instanceof ProviderUnavailableError)) throw error;
                         await this.recordUnavailableProviderResource(error);
-                        const next = nextOfferAfterTried(ranked, tried);
+                        const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) throw error;
                         fallbackPrimary ||= provider;
                         fallbackUsed = next.provider;
@@ -2889,7 +2947,7 @@ export class DownloadProcessor {
                     const providerId = offer.provider || defaultProvider;
                     const backend = downloadBackendRegistry.resolve(providerId, capability);
                     if (!backend) {
-                        const next = nextOfferAfterTried(ranked, tried);
+                        const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {
                             throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
                         }
@@ -3011,8 +3069,10 @@ export class DownloadProcessor {
                         if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
                             throw error;
                         }
+                        const authError = asProviderAuthError(providerId, error);
+                        if (authError) throw authError;
                         await this.recordUnavailableProviderResource(error);
-                        const next = nextOfferAfterTried(ranked, tried);
+                        const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {
                             throw error;
                         }
@@ -3401,6 +3461,10 @@ export class DownloadProcessorWorkerProxy {
         appEvents.on(AppEvent.COMMAND_UPDATED, (event: CommandEventPayload) => {
             if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
             if (event.status === 'queued' || event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.kickQueue();
+        });
+        appEvents.on(AppEvent.PROVIDER_AUTH_CHANGED, (event) => {
+            if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
+            if (event.status === "ok") this.kickQueue();
         });
     }
 
