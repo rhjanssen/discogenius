@@ -25,6 +25,14 @@ import {
 } from "../music/managed-artists.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
+import {
+  forgetRetiredLibraryFileRows,
+  listPreviousReleaseTrackFiles,
+  listPreviousVideoFiles,
+  resolveReleaseTrackId,
+  unlinkRetiredLibraryFiles,
+  type RetiredLibraryFile,
+} from "./release-track-replacement.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata/canonical-album-metadata.js";
 import { albumCoverLocalUrl, resolveArtistArtwork } from "../metadata/media-cover-service.js";
@@ -1002,93 +1010,38 @@ export class OrganizerService {
   }
 
   /**
-   * Remove old library files for a media item when a new file replaces them.
-   * This handles the case where the extension changes (e.g. .m4a → .flac during upgrade)
-   * so the new file goes to a different path and the old file would be orphaned.
-   *
-   * Replacement is slot-scoped: the stereo and spatial copies of the same
-   * canonical track share a media identity but are siblings, never
-   * replacements — without the slot constraint a spatial import would delete
-   * the freshly imported stereo file (and vice versa).
+   * Previous file of this release track only. Stereo and spatial stay
+   * siblings: a spatial import must not retire the stereo copy.
+   * Listing happens before the folder lock so the old file's folder can be
+   * held without nesting locks. Bytes are removed under the HDD permit;
+   * the row delete stays inside the write gate.
    */
-  private static cleanupOldMediaFiles(
-    mediaId: string,
-    newFilePath: string,
-    fileType: "track" | "video",
-    librarySlot: string | null,
-    provider?: string | null,
-  ) {
-    const identity = resolveLibraryFileIdentity({
-      mediaId,
-      fileType,
-      librarySlot,
-      provider,
+  private static previousReleaseTrackFiles(params: {
+    trackMbid: string | null;
+    releaseMbid: string | null;
+    mediumPosition: number | null;
+    position: number | null;
+    librarySlot: string | null;
+    newFilePath: string;
+  }): RetiredLibraryFile[] {
+    const librarySlot = params.librarySlot === "spatial"
+      ? "spatial"
+      : params.librarySlot === "stereo"
+        ? "stereo"
+        : null;
+    if (!librarySlot) return [];
+    const trackId = resolveReleaseTrackId({
+      trackMbid: params.trackMbid,
+      releaseMbid: params.releaseMbid,
+      mediumPosition: params.mediumPosition,
+      position: params.position,
     });
-    if (!identity.provider || !identity.providerEntityType || !identity.providerId) {
-      return;
-    }
-
-    const oldFiles = db.prepare(
-      `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, file_path, library_root, quality
-       FROM TrackFiles
-       WHERE provider = ?
-         AND provider_entity_type = ?
-         AND provider_id = ?
-         AND file_type = ?
-         AND library_slot IS ?
-         AND file_path != ?`
-    ).all(identity.provider, identity.providerEntityType, identity.providerId, fileType, librarySlot, newFilePath) as Array<{
-      id: number;
-      artist_id: number;
-      album_id: number | null;
-      media_id: number | null;
-      file_path: string;
-      library_root: string;
-      quality: string | null;
-    }>;
-    const normalizedNewFilePath = path.resolve(newFilePath);
-
-    for (const old of oldFiles) {
-      try {
-        const resolvedFilePath = resolveStoredLibraryPath({
-          filePath: old.file_path,
-          libraryRoot: old.library_root,
-        });
-        const isSameResolvedFile = path.resolve(resolvedFilePath) === normalizedNewFilePath;
-
-        if (!isSameResolvedFile && fs.existsSync(resolvedFilePath)) {
-          fs.rmSync(resolvedFilePath, { force: true });
-          console.log(`[Organizer] Deleted old ${fileType} file (replaced by upgrade): ${resolvedFilePath}`);
-
-          try {
-            recordHistoryEvent({
-              artistId: old.artist_id,
-              albumId: old.album_id,
-              mediaId: old.media_id,
-              libraryFileId: old.id,
-              eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
-              quality: old.quality,
-              data: {
-                deletedPath: resolvedFilePath,
-                replacementPath: newFilePath,
-                fileType,
-              },
-            });
-          } catch (historyError) {
-            console.warn(`[Organizer] Failed to record replacement delete history for ${resolvedFilePath}:`, historyError);
-          }
-
-          // Clean up empty parent directories left behind
-          const libraryRoot = this.resolveLibraryRoot(resolvedFilePath, old.library_root);
-          if (libraryRoot) {
-            removeEmptyParents(path.dirname(resolvedFilePath), libraryRoot);
-          }
-        }
-        db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(old.id);
-      } catch (e) {
-        console.warn(`[Organizer] Failed to delete old ${fileType} file: ${old.file_path}`, e);
-      }
-    }
+    if (trackId == null) return [];
+    return listPreviousReleaseTrackFiles({
+      trackId,
+      librarySlot,
+      newFilePath: params.newFilePath,
+    });
   }
 
   private static normalizeResolvedPath(filePath: string): string {
@@ -2359,6 +2312,14 @@ export class OrganizerService {
         }
 
         const destFile = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
+        const previousReleaseTracks = this.previousReleaseTrackFiles({
+          trackMbid: canonicalIdentity.canonicalTrackMbid,
+          releaseMbid: canonicalIdentity.canonicalReleaseMbid,
+          mediumPosition: volumeNumber,
+          position: trackNumber,
+          librarySlot: canonicalIdentity.librarySlot,
+          newFilePath: destFile,
+        });
         onProgress?.({
           phase: "importing",
           currentFileNum: destFiles.length + 1,
@@ -2372,7 +2333,11 @@ export class OrganizerService {
         });
 
         let importedTrackFileId: number | null = null;
-        await this.holdImportFolders([srcFile, destFile], async () => {
+        await this.holdImportFolders([
+          srcFile,
+          destFile,
+          ...previousReleaseTracks.map((row) => row.resolvedPath),
+        ], async () => {
         await this.moveFileCrossDevice(srcFile, destFile);
 
         for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
@@ -2386,6 +2351,10 @@ export class OrganizerService {
         // Fingerprinting and embedded tags are applied by the post-organize
         // import finalizer after MusicBrainz identity is resolved.
         const fileFingerprint: string | null = null;
+        const retiredReleaseTracks = await withHddIoPermit(
+          this.importDiskMeta(),
+          async () => unlinkRetiredLibraryFiles(previousReleaseTracks, destFile, "track"),
+        );
 
         // Batch all per-track DB writes in a single transaction.
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
@@ -2438,16 +2407,8 @@ export class OrganizerService {
             console.warn(`[Organizer] Failed to record track import history for ${mediaIdStr}:`, historyError);
           }
 
-          if (mediaIdStr) {
-            this.cleanupOldMediaFiles(
-              mediaIdStr,
-              destFile,
-              "track",
-              canonicalIdentity.librarySlot ?? null,
-              canonicalIdentity.provider,
-            );
-            this.cleanupSiblingMediaVariants(destFile, "track");
-          }
+          forgetRetiredLibraryFileRows(retiredReleaseTracks, destFile, "track");
+          this.cleanupSiblingMediaVariants(destFile, "track");
         })(), "import:media-commit");
         });
 
@@ -3048,8 +3009,20 @@ export class OrganizerService {
       });
 
       const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
+      const previousReleaseTracks = this.previousReleaseTrackFiles({
+        trackMbid: trackIdentity.canonicalTrackMbid,
+        releaseMbid: trackIdentity.canonicalReleaseMbid,
+        mediumPosition: volumeNumber,
+        position: trackNumber,
+        librarySlot: trackIdentity.librarySlot,
+        newFilePath: dest,
+      });
       let importedTrackFileId: number | null = null;
-      await this.holdImportFolders([src, dest], async () => {
+      await this.holdImportFolders([
+        src,
+        dest,
+        ...previousReleaseTracks.map((row) => row.resolvedPath),
+      ], async () => {
       await this.moveFileCrossDevice(src, dest);
 
       for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
@@ -3063,6 +3036,10 @@ export class OrganizerService {
       // Fingerprinting and embedded tags are applied by the post-organize
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
+      const retiredReleaseTracks = await withHddIoPermit(
+        this.importDiskMeta(),
+        async () => unlinkRetiredLibraryFiles(previousReleaseTracks, dest, "track"),
+      );
       // Batch all per-track DB writes in a single transaction.
       await withSqliteWriteGate(() => db.transaction(() => {
         const libraryFileId = this.persistLibraryFile({
@@ -3112,9 +3089,9 @@ export class OrganizerService {
           console.warn(`[Organizer] Failed to record track import history for ${providerId}:`, historyError);
         }
 
-        // Keep the track branch aligned with album/video organization so quality
-        // changes replace the previous file instead of leaving duplicates behind.
-        this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null, streamingProviderId);
+        // Same release track only. A shared provider id or recording must not
+        // retire another album's file.
+        forgetRetiredLibraryFileRows(retiredReleaseTracks, dest, "track");
         this.cleanupSiblingMediaVariants(dest, "track");
       })(), "import:media-commit");
       });
@@ -3589,11 +3566,20 @@ export class OrganizerService {
         };
       }
       this.ensureDir(path.dirname(dest));
+      const previousVideos = listPreviousVideoFiles({
+        provider: videoProvider,
+        providerVideoId: providerId,
+        newFilePath: dest,
+      });
 
       let derivedVideoQuality = sourceVideoQuality;
       let libraryFileId: number | null = null;
       // Convert to MP4 directly from source into destination if not already MP4
-      await this.holdImportFolders([src, dest], async () => {
+      await this.holdImportFolders([
+        src,
+        dest,
+        ...previousVideos.map((row) => row.resolvedPath),
+      ], async () => {
       if (ext !== '.mp4') {
         console.log(`[Organizer] Converting video ${src} to ${dest}...`);
         const success = await withHddIoPermit(this.importDiskMeta(), () => convertToMp4(src, dest));
@@ -3620,6 +3606,10 @@ export class OrganizerService {
         providerEntityType: "video",
         providerId,
       });
+      const retiredVideos = await withHddIoPermit(
+        this.importDiskMeta(),
+        async () => unlinkRetiredLibraryFiles(previousVideos, dest, "video"),
+      );
 
       // Batch all per-video DB writes in a single transaction.
       await withSqliteWriteGate(() => db.transaction(() => {
@@ -3670,8 +3660,7 @@ export class OrganizerService {
           console.warn(`[Organizer] Failed to record video import history for ${providerId}:`, historyError);
         }
 
-        // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
-        this.cleanupOldMediaFiles(providerId, dest, "video", videoIdentity.librarySlot ?? null, videoProvider);
+        forgetRetiredLibraryFileRows(retiredVideos, dest, "video");
         this.cleanupSiblingMediaVariants(dest, "video");
       })(), "import:media-commit");
       });

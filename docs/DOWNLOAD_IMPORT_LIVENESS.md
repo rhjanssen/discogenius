@@ -55,6 +55,21 @@ These are liveness expectations, not global download-duration limits. A
 multi-hour download remains healthy while it heartbeats and reports meaningful
 progress.
 
+## Upgrade replacement
+
+An import may delete a previous file only when that file is the same release
+track: `Tracks.id`, or that row's track MBID, in the same library slot.
+Stereo and spatial copies of one track are siblings. A recording MBID and a
+provider track id are not replacement keys. One streaming track is often a
+member of several releases (a studio album and a later box set), and deleting
+by that id removes the other album's file and its `TrackFiles` row.
+
+A video import may delete only another `file_type = 'video'` row of the same
+provider video. That query cannot name an album track.
+
+The bytes are removed under the folder lock and the HDD permit. The row
+delete is inside the write gate, after the permit is dropped.
+
 ## Import handoff self-heal
 
 The command row is the source of truth for an import handoff. Every scheduling
