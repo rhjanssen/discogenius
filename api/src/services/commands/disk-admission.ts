@@ -12,7 +12,10 @@
  * 2. HDD I/O permit (`withHddIoPermit`). Only while a folder lock is held,
  *    and never while the SQLite write gate is held. Drop the permit before
  *    any write gate. Default limit is 1 (spinning disks); override with
- *    DISCOGENIUS_HDD_IO_LIMIT (clamped to 1..8).
+ *    DISCOGENIUS_HDD_IO_LIMIT (clamped to 1..8). The permit is a FIFO ticket
+ *    queue: a holder that drops it and asks again takes a new ticket, so a
+ *    task that is already waiting cannot be starved. Import priority is the
+ *    folder lock only; it does not jump this queue.
  * 3. SQLite write gate. `enterWriteGate` refuses to run while a permit is
  *    held. No file or network I/O belongs inside the gate.
  *
@@ -74,7 +77,12 @@ const WAIT_COMMAND = 3;
 const WAIT_LANE = 4;
 const WAIT_SINCE = 5;
 const WAIT_TOKEN = 6;
-const INT_COUNT = WAIT_BASE + WAIT_SLOTS * WAIT_STRIDE;
+const WAIT_INTS = WAIT_BASE + WAIT_SLOTS * WAIT_STRIDE;
+const IO_TICKET = WAIT_INTS;
+const IO_QUEUE_CAPACITY = 256;
+const IO_QUEUE_STRIDE = 2;
+const IO_QUEUE_START = IO_TICKET + 1;
+const INT_COUNT = IO_QUEUE_START + IO_QUEUE_CAPACITY * IO_QUEUE_STRIDE;
 
 const PATH_REGION = INT_COUNT * 4;
 const REASON_REGION = PATH_REGION + LANES * PATH_BYTES;
@@ -487,13 +495,77 @@ export function withAlbumFolders<T>(folders: readonly string[], meta: DiskAdmiss
   return withFolders([...folders], meta, fn);
 }
 
-function tryTakePermit(view: Int32Array, token: number): number {
+type IoRequest = { slot: number };
+
+/** Publish a ticket before taking a slot. Ticket 0 means the publisher has
+ * the queue cell but has not stored the number yet, and it counts as ahead
+ * so a half-published request cannot be overtaken. */
+function publishIoRequest(view: Int32Array, token: number): IoRequest {
+  for (let index = 0; index < IO_QUEUE_CAPACITY; index += 1) {
+    const slot = IO_QUEUE_START + index * IO_QUEUE_STRIDE;
+    if (Atomics.compareExchange(view, slot, 0, token) !== 0) continue;
+    let ticket = Atomics.add(view, IO_TICKET, 1) + 1;
+    if ((ticket | 0) === 0) ticket = Atomics.add(view, IO_TICKET, 1) + 1;
+    Atomics.store(view, slot + 1, ticket);
+    Atomics.notify(view, IO_IN_USE);
+    return { slot };
+  }
+  throw new Error("HDD I/O permit queue is full");
+}
+
+function clearIoRequest(view: Int32Array, request: IoRequest): void {
+  Atomics.store(view, request.slot + 1, 0);
+  Atomics.store(view, request.slot, 0);
+  Atomics.notify(view, IO_IN_USE);
+}
+
+function clearIoQueueForOwner(view: Int32Array, token: number): void {
+  let cleared = false;
+  for (let index = 0; index < IO_QUEUE_CAPACITY; index += 1) {
+    const slot = IO_QUEUE_START + index * IO_QUEUE_STRIDE;
+    if (Atomics.load(view, slot) !== token) continue;
+    Atomics.store(view, slot + 1, 0);
+    Atomics.store(view, slot, 0);
+    cleared = true;
+  }
+  if (cleared) Atomics.notify(view, IO_IN_USE);
+}
+
+/** How many queued tickets are strictly ahead of ours. Null while our own
+ * ticket is still unpublished. Signed subtraction keeps order across wrap. */
+function ticketsAhead(view: Int32Array, request: IoRequest): number | null {
+  const ticket = Atomics.load(view, request.slot + 1);
+  if (ticket === 0) return null;
+  let ahead = 0;
+  for (let index = 0; index < IO_QUEUE_CAPACITY; index += 1) {
+    const slot = IO_QUEUE_START + index * IO_QUEUE_STRIDE;
+    if (slot === request.slot || Atomics.load(view, slot) === 0) continue;
+    const other = Atomics.load(view, slot + 1);
+    if (other === 0 || ((other - ticket) | 0) < 0) ahead += 1;
+  }
+  return ahead;
+}
+
+function tryTakePermit(view: Int32Array, token: number, request: IoRequest): number {
+  const ahead = ticketsAhead(view, request);
+  if (ahead == null) return -1;
   const limit = Atomics.load(view, IO_LIMIT);
+  const inUse = Atomics.load(view, IO_IN_USE);
+  if (ahead >= limit - inUse) return -1;
   for (let slot = 0; slot < limit; slot += 1) {
-    if (Atomics.compareExchange(view, IO_OWNER_START + slot, 0, token) === 0) {
-      Atomics.add(view, IO_IN_USE, 1);
+    if (Atomics.compareExchange(view, IO_OWNER_START + slot, 0, token) !== 0) continue;
+    Atomics.add(view, IO_IN_USE, 1);
+    const stillAhead = ticketsAhead(view, request);
+    const freeBeforeUs = Atomics.load(view, IO_LIMIT) - (Atomics.load(view, IO_IN_USE) - 1);
+    if (stillAhead != null && stillAhead < freeBeforeUs) {
+      clearIoRequest(view, request);
       return slot;
     }
+    Atomics.sub(view, IO_IN_USE, 1);
+    if (Atomics.compareExchange(view, IO_OWNER_START + slot, token, 0) === token) {
+      Atomics.notify(view, IO_IN_USE);
+    }
+    return -1;
   }
   return -1;
 }
@@ -509,22 +581,22 @@ function releasePermitSlot(slot: number): void {
 async function acquirePermit(meta: DiskAdmissionMeta, folder: string): Promise<number> {
   const view = ints();
   const token = currentOwner();
+  let request: IoRequest | null = null;
   let waiting = false;
   let waitSlot = -1;
   let logged = false;
   try {
+    request = publishIoRequest(view, token);
     while (true) {
-      const slot = tryTakePermit(view, token);
+      const slot = tryTakePermit(view, token, request);
       if (slot >= 0) return slot;
       if (!waiting) {
         Atomics.add(view, IO_WAITERS, 1);
         waiting = true;
       }
-      const again = tryTakePermit(view, token);
-      if (again >= 0) return again;
       const observed = Atomics.load(view, IO_IN_USE);
-      const third = tryTakePermit(view, token);
-      if (third >= 0) return third;
+      const again = tryTakePermit(view, token, request);
+      if (again >= 0) return again;
       const reason = ioWaitReason();
       if (!logged) {
         waitSlot = beginWait({
@@ -546,6 +618,7 @@ async function acquirePermit(meta: DiskAdmissionMeta, folder: string): Promise<n
   } finally {
     if (waiting) Atomics.sub(view, IO_WAITERS, 1);
     clearWait(waitSlot);
+    if (request && Atomics.load(view, request.slot) === token) clearIoRequest(view, request);
   }
 }
 
@@ -629,6 +702,7 @@ export function releaseExitedDiskAdmissionOwner(token: number): void {
     releasedPermit = true;
   }
   if (releasedPermit) Atomics.notify(view, IO_IN_USE);
+  clearIoQueueForOwner(view, token);
   for (let slot = 0; slot < WAIT_SLOTS; slot += 1) {
     const index = WAIT_BASE + slot * WAIT_STRIDE;
     if (Atomics.load(view, index + WAIT_TOKEN) === token) clearWait(slot);

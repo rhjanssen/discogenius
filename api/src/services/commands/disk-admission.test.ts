@@ -275,3 +275,138 @@ test("a dead worker's folder lock and I/O permit are released", async () => {
     releaseExitedDiskAdmissionOwner(Number(data[DISK_ADMISSION_OWNER_KEY]));
   }
 });
+
+test("a tight permit reacquirer cannot keep a waiter out for more than one turn", async () => {
+  const previous = hddIoLimit();
+  configureHddIoLimit(1);
+  const [holderFolder, waiterFolder] = distinctFolders("/library/fifo", 2);
+  const data = diskAdmissionWorkerData();
+  const entry = fileURLToPath(new URL("./disk-admission.ts", import.meta.url));
+  try {
+    const retagTurns = await bargingTurns(data, entry, holderFolder, waiterFolder, "retag", "import");
+    assert.ok(retagTurns <= 1, `retag reacquirer entered ${retagTurns} times before the import waiter`);
+    const importTurns = await bargingTurns(data, entry, holderFolder, waiterFolder, "import", "retag");
+    assert.ok(importTurns <= 1, `import reacquirer entered ${importTurns} times before the retag waiter`);
+    assert.equal(diskAdmissionSnapshot().ioInUse, 0);
+    assert.equal(diskAdmissionSnapshot().waits.length, 0);
+  } finally {
+    configureHddIoLimit(previous);
+  }
+});
+
+test("a dead permit waiter does not stall the ticket queue", async () => {
+  const previous = hddIoLimit();
+  configureHddIoLimit(1);
+  const [heldFolder, queuedFolder, nextFolder] = distinctFolders("/library/fifo-dead", 3);
+  const data = diskAdmissionWorkerData();
+  const entry = fileURLToPath(new URL("./disk-admission.ts", import.meta.url));
+  let releaseHold: () => void = () => {};
+  const hold = new Promise<void>((resolve) => { releaseHold = resolve; });
+  const holder = withAlbumFolder(heldFolder, retag(1), () => withHddIoPermit(retag(1), () => hold));
+  await waitFor(() => diskAdmissionSnapshot().ioInUse === 1, "holder permit");
+  const worker = new Worker(`
+    require("tsx/cjs");
+    const { parentPort, workerData } = require("node:worker_threads");
+    const { withAlbumFolder, withHddIoPermit } = require(workerData.entry);
+    setInterval(() => {}, 1000);
+    withAlbumFolder(workerData.folder, { role: "retag", commandId: 2, reason: "queued" }, () =>
+      withHddIoPermit({ role: "retag", commandId: 2, reason: "queued" }, async () => {
+        parentPort.postMessage("entered");
+        await new Promise(() => {});
+      })).catch((error) => parentPort.postMessage(String(error)));
+  `, { eval: true, workerData: { ...data, entry, folder: queuedFolder } });
+  try {
+    await waitFor(() => diskAdmissionSnapshot().waits.some((wait) => wait.kind === "io" && wait.commandId === 2), "queued waiter");
+    await worker.terminate();
+    releaseExitedDiskAdmissionOwner(Number(data[DISK_ADMISSION_OWNER_KEY]));
+    releaseHold();
+    await holder;
+    const next = await withAlbumFolder(nextFolder, importing(3), () => withHddIoPermit(importing(3), async () => "open"));
+    assert.equal(next, "open");
+    assert.equal(diskAdmissionSnapshot().ioInUse, 0);
+  } finally {
+    await worker.terminate();
+    releaseExitedDiskAdmissionOwner(Number(data[DISK_ADMISSION_OWNER_KEY]));
+    releaseHold();
+    configureHddIoLimit(previous);
+  }
+});
+
+/** Cross-thread tight loop. Returns how many times the reacquirer entered after
+ * the waiter was already queued and before the waiter entered. */
+function bargingTurns(
+  data: Record<string, SharedArrayBuffer | number>,
+  entry: string,
+  holderFolder: string,
+  waiterFolder: string,
+  holderRole: DiskAdmissionMeta["role"],
+  waiterRole: DiskAdmissionMeta["role"],
+): Promise<number> {
+  const worker = new Worker(`
+    require("tsx/cjs");
+    const { parentPort, workerData } = require("node:worker_threads");
+    const { withAlbumFolder, withHddIoPermit } = require(workerData.entry);
+    const meta = { role: workerData.role, commandId: 41, reason: "reacquire" };
+    let releaseHold = () => {};
+    const held = new Promise((resolve) => { releaseHold = resolve; });
+    let stop = false;
+    let turns = 0;
+    parentPort.on("message", (message) => {
+      if (message === "go") releaseHold();
+      if (message === "entered") parentPort.postMessage({ turnsBeforeWaiter: turns });
+      if (message === "stop") stop = true;
+    });
+    withAlbumFolder(workerData.folder, meta, async () => {
+      await withHddIoPermit(meta, async () => {
+        parentPort.postMessage("held");
+        await held;
+      });
+      while (!stop && turns < 40) {
+        await withHddIoPermit(meta, async () => {
+          turns += 1;
+        });
+      }
+    }).then(() => parentPort.postMessage("done")).catch((error) => parentPort.postMessage(String(error)));
+  `, {
+    eval: true,
+    workerData: { ...data, entry, folder: holderFolder, role: holderRole },
+  });
+  const token = Number(data[DISK_ADMISSION_OWNER_KEY]);
+  let turnsBeforeWaiter: number | null = null;
+  return new Promise((resolve, reject) => {
+    const finish = (error?: Error, turns?: number) => {
+      worker.removeAllListeners("message");
+      void worker.terminate().finally(() => {
+        releaseExitedDiskAdmissionOwner(token);
+        if (error) reject(error);
+        else resolve(turns ?? 0);
+      });
+    };
+    const timer = setTimeout(() => finish(new Error(`FIFO waiter stalled: ${JSON.stringify(diskAdmissionSnapshot())}`)), 3000);
+    worker.on("message", (message: unknown) => {
+      if (message && typeof message === "object" && "turnsBeforeWaiter" in message) {
+        turnsBeforeWaiter = Number((message as { turnsBeforeWaiter: number }).turnsBeforeWaiter);
+      }
+      if (message !== "held") return;
+      const waiter = withAlbumFolder(waiterFolder, { role: waiterRole, commandId: 42, reason: "waiter" }, () =>
+        withHddIoPermit({ role: waiterRole, commandId: 42, reason: "waiter" }, async () => {
+          worker.postMessage("entered");
+          await waitFor(() => turnsBeforeWaiter !== null, "turn report");
+        }));
+      void waitFor(
+        () => diskAdmissionSnapshot().waits.some((wait) => wait.kind === "io" && wait.commandId === 42),
+        "fifo waiter",
+      ).then(() => {
+        worker.postMessage("go");
+        return waiter;
+      }).then(() => {
+        clearTimeout(timer);
+        worker.postMessage("stop");
+        finish(undefined, turnsBeforeWaiter ?? 0);
+      }).catch((error: unknown) => {
+        clearTimeout(timer);
+        finish(error instanceof Error ? error : new Error(String(error)));
+      });
+    });
+  });
+}
