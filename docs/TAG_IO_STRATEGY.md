@@ -184,6 +184,27 @@ are removed in the same write. Cover art follows its separate policy, and
 MP4 iTunSMPB playback information is preserved. The TagLib read-back is the
 only post-write check; retag does not parse the file again with music-metadata.
 
+A read-back that does not match the requested text is a warning, not a file
+error. The original file is kept: in-place undo restores it, and a copy that
+fails verification is discarded. That covers `TagLib verification failed`,
+multi-value order, artist-id lists, ISRC sets, a removal that did not stick,
+and a cover whose stored bytes differ. Those notices do not fail the command.
+A command whose only problems are warnings ends `completed`, and its
+description includes the warning count and a short sample.
+
+These stay file errors, and the message is the writer’s own cause rather than
+a bare “Metadata write failed”: MP4 layout, `ftyp`, `mdat` length, sample
+entry, or chunk-offset checks; a strip whose clear verification failed; and
+read-only, permission, or lock failures (`EACCES`, `EROFS`, `EPERM`, `EBUSY`).
+
+An album cover is validated once per album before it is embedded. A file ffmpeg
+cannot decode, including a `cover.jpg` whose JPEG header parses but whose
+scan data is corrupt, is not the canonical cover anymore: it is removed, then
+replaced through the normal artwork resolve and materialize path when that
+path can produce a readable image. Otherwise the tracks are tagged with no
+embedded cover and the album records one warning. One bad cover does not
+fail every track.
+
 Track and edition artist IDs come from their respective canonical credits.
 ISRCs and artist IDs retain multiple native values. MP4 uses native integer
 advisory/media-kind atoms; music videos have media kind 6. Barcode and original

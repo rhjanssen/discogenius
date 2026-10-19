@@ -230,6 +230,12 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
     throwOnFileErrors("Rename", result.errors, result.renamed + result.skipped + result.missing);
 };
 
+function warningSuffix(warnings: string[] | undefined): string {
+    if (!warnings || warnings.length === 0) return "";
+    const sample = warnings.slice(0, 3).join("; ");
+    return `, ${warnings.length} warning(s): ${sample}`;
+}
+
 function throwOnFileErrors(
     operation: string,
     errors: Array<{ id: number; error: string }>,
@@ -265,7 +271,7 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
     if (result.retagged > 0) await ArtistStatisticsService.refreshAsync(artistIds);
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
+        description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)${warningSuffix(result.warnings)}`,
     });
     throwOnFileErrors("Retag", result.errors, result.retagged + result.skipped + result.missing);
 };
@@ -327,7 +333,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
     if (result.retagged > 0 && affectedArtists.length > 0) await ArtistStatisticsService.refreshAsync(affectedArtists);
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
+        description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)${warningSuffix(result.warnings)}`,
     });
     throwOnFileErrors("Retag", result.errors, result.retagged + result.skipped + result.missing);
 };

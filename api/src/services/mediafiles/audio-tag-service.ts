@@ -14,7 +14,9 @@ import {
   type WriteAudioTagsPolicy,
   getConfigSection,
 } from "../config/config.js";
-import { embedAudioCover, compareEmbeddedAudioCover, prepareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadataWithCover, removeAllTags } from "./audioUtils.js";
+import { embedAudioCover, compareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadataWithCover, removeAllTags } from "./audioUtils.js";
+import { resolveUsableAlbumCover } from "./album-cover-repair.js";
+import { metadataWriteFailureKind } from "./tag-write-failure.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
@@ -217,6 +219,9 @@ export type RetagApplyResult = {
   skipped: number;
   missing: number;
   errors: Array<{ id: number; error: string }>;
+  /** Album-level cover repairs and tag read-back notices. Omitted when empty so
+   * existing result equality checks stay stable. Not file errors. */
+  warnings?: string[];
   /** Set when persistence is deferred to the album settle write. */
   fileFacts?: RetagFileFact[];
 };
@@ -290,6 +295,9 @@ function formatCoverBytes(bytes: number): string {
 type EmbeddedCoverContext = {
   byAlbum: Map<string, Promise<string | null>>;
   temporaryDirectories: string[];
+  warnings: string[];
+  /** Preview resolves a cover without deleting or refetching it. */
+  repair: boolean;
 };
 
 type EmbeddedCoverSyncOutcome = "embedded" | "unchanged" | "failed";
@@ -326,8 +334,13 @@ async function resolvePreferredEmbeddedCover(
         albumMbid: albumMbid || null,
         libraryRoot: row.library_root,
       });
-      return cover && fs.existsSync(cover)
-        ? prepareEmbeddedAudioCover(_resolvedMediaPath, cover, context.temporaryDirectories, config.album_cover_resolution) : null;
+      try {
+        return await resolveUsableAlbumCover(row, _resolvedMediaPath, cover, context);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "unreadable image";
+        context.warnings.push(`Album cover is unreadable (${reason}); tags were written without an embedded cover`);
+        return null;
+      }
     })();
     context.byAlbum.set(key, pending);
   }
@@ -2141,7 +2154,7 @@ export class AudioTagService {
   }
 
   static async readPreferredEmbeddedCoverForTest(canonicalReleaseMbid: string): Promise<Buffer | null> {
-    const context: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [] };
+    const context: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: false };
     try {
       const coverPath = await resolvePreferredEmbeddedCover(
         { canonical_release_mbid: canonicalReleaseMbid } as RetagTrackRow,
@@ -2786,7 +2799,7 @@ export class AudioTagService {
         // context is created only when the batch did not supply a shared one.
         const ownsContext = !options.embeddedCoverContext;
         const coverContext = options.embeddedCoverContext
-          ?? { byAlbum: new Map(), temporaryDirectories: [] };
+          ?? { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: false };
         const preferredCover = await resolvePreferredEmbeddedCover(row, config, resolvedPath, coverContext);
         if (preferredCover) {
           const comparison = await compareEmbeddedAudioCover(resolvedPath, preferredCover);
@@ -2841,7 +2854,7 @@ export class AudioTagService {
     // One cover context for the whole batch so an album's embedded-cover
     // rendition is resolved/downloaded once, not per track.
     const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext
-      ?? { byAlbum: new Map(), temporaryDirectories: [] };
+      ?? { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: false };
     const scopedOptions: RetagEvaluationOptions = { ...options, embeddedCoverContext };
 
     // Read files concurrently (Lidarr-style) instead of one-at-a-time — the
@@ -2947,6 +2960,8 @@ export class AudioTagService {
     const context: EmbeddedCoverContext = {
       byAlbum: new Map(),
       temporaryDirectories: [],
+      warnings: [],
+      repair: true,
     };
     const updated: Array<[number, string, number]> = [];
 
@@ -2996,6 +3011,7 @@ export class AudioTagService {
       for (const tempDir of context.temporaryDirectories) {
         try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best effort */ }
       }
+      if (context.warnings.length > 0) result.warnings = [...context.warnings];
     }
 
     if (updated.length > 0) {
@@ -3009,8 +3025,13 @@ export class AudioTagService {
     return result;
   }
 
-  static createRetagSession(): { apply: (ids: number[], options?: { deferPersistence?: boolean }) => Promise<RetagApplyResult>; close: () => void } {
-    const embeddedCoverContext: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [] };
+  static createRetagSession(): {
+    apply: (ids: number[], options?: { deferPersistence?: boolean }) => Promise<RetagApplyResult>;
+    warmAlbumCovers: (ids: number[]) => Promise<void>;
+    warnings: () => string[];
+    close: () => void;
+  } {
+    const embeddedCoverContext: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: true };
     const lyricsByProviderMedia = new Map<string, ResolvedLyrics | null>();
     return {
       apply: (ids, options) => this.apply(ids, {
@@ -3019,6 +3040,18 @@ export class AudioTagService {
         lyricsByProviderMedia,
         deferPersistence: options?.deferPersistence,
       }),
+      warmAlbumCovers: async (ids: number[]) => {
+        const metadata = getConfigSection("metadata") as MetadataConfig;
+        for (const row of this.getTrackRowsByIds(ids)) {
+          const resolvedPath = resolveStoredLibraryPath({
+            filePath: row.file_path,
+            libraryRoot: row.library_root,
+            relativePath: row.relative_path,
+          });
+          await resolvePreferredEmbeddedCover(row, metadata, resolvedPath, embeddedCoverContext);
+        }
+      },
+      warnings: () => [...embeddedCoverContext.warnings],
       close: () => {
         for (const directory of embeddedCoverContext.temporaryDirectories) {
           try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* best-effort session cleanup */ }
@@ -3066,6 +3099,8 @@ export class AudioTagService {
     const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext ?? {
       byAlbum: new Map(),
       temporaryDirectories: [],
+      warnings: [],
+      repair: true,
     };
 
     const applyPreferredCover = async (
@@ -3173,7 +3208,13 @@ export class AudioTagService {
           }
           const write = await writeMetadataWithCover(resolvedPath, desiredTags, removalKeys, combinedCover);
           if (!write.success) {
-            result.errors.push({ id, error: "Metadata write failed" });
+            const message = write.error || "Metadata write failed";
+            if (metadataWriteFailureKind(message) === "warning") {
+              embeddedCoverContext.warnings.push(`File #${id}: ${message}`);
+              result.skipped++;
+              return;
+            }
+            result.errors.push({ id, error: message });
             return;
           }
 
@@ -3205,6 +3246,9 @@ export class AudioTagService {
 
     for (const tempDir of options.embeddedCoverContext ? [] : embeddedCoverContext.temporaryDirectories) {
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort temp cleanup */ }
+    }
+    if (embeddedCoverContext.warnings.length > 0) {
+      result.warnings = [...embeddedCoverContext.warnings];
     }
 
     // Wait asynchronously between short commits. A catalog writer must not
@@ -3248,6 +3292,7 @@ export class AudioTagService {
       result.skipped += batchResult.skipped;
       result.missing += batchResult.missing;
       result.errors.push(...batchResult.errors);
+      if (batchResult.warnings?.length) result.warnings = [...(result.warnings ?? []), ...batchResult.warnings];
       completed += batch.length;
     }
     return result;

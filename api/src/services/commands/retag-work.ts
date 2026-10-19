@@ -31,7 +31,12 @@ export type RetagWorkSource =
     | { kind: "scope"; options: RetagScopeOptions; includeVideo?: boolean };
 
 type AlbumFile = { ordinal: number; id: number; fileType: string | null; filePath: string | null };
-type RetagSession = { apply: (ids: number[], options?: { deferPersistence?: boolean }) => Promise<RetagApplyResult>; close: () => void };
+type RetagSession = {
+    apply: (ids: number[], options?: { deferPersistence?: boolean }) => Promise<RetagApplyResult>;
+    warmAlbumCovers?: (ids: number[]) => Promise<void>;
+    warnings?: () => string[];
+    close: () => void;
+};
 
 const emptyResult = (): RetagApplyResult => ({ retagged: 0, skipped: 0, missing: 0, errors: [] });
 
@@ -148,6 +153,7 @@ export async function runRetagWorkUnit(
     if (!plan) return { ...emptyResult(), identityChanged, identityChangedCount };
     return {
         retagged: plan.retagged, skipped: plan.skipped, missing: plan.missing, errors: Work.errors(job.id),
+        warnings: session?.warnings?.() ?? [],
         identityChanged, identityChangedCount,
     };
 }
@@ -196,6 +202,8 @@ async function runAlbum(
         );
         for (const fileId of drifted) noteIdentityChange(fileId);
         if (!Work.executionOwned(job.id, owner)) throw new Error("Retag execution ownership changed");
+        const trackIds = ioFiles.filter(file => file.fileType === "track").map(file => file.id);
+        if (session?.warmAlbumCovers && trackIds.length > 0) await session.warmAlbumCovers(trackIds);
         const outcomes: AlbumOutcome[] = [];
         for (const file of album.files) {
             if (!needsIo(file)) {
