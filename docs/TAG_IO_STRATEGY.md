@@ -205,6 +205,12 @@ path can produce a readable image. Otherwise the tracks are tagged with no
 embedded cover and the album records one warning. One bad cover does not
 fail every track.
 
+Default ALBUMARTIST is the primary artist's MusicBrainz name (the folder
+artist), not the release credited-as name. The credited-as string stays in
+ALBUMARTISTS, and in ALBUMARTIST only when full album-artist credit is on.
+ARTIST stays the track credit string. ALBUMARTISTSORT is that primary artist's
+sort name.
+
 Track and edition artist IDs come from their respective canonical credits.
 ISRCs and artist IDs retain multiple native values. MP4 uses native integer
 advisory/media-kind atoms; music videos have media kind 6. Barcode and original

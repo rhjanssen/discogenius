@@ -17,6 +17,7 @@ const EVA = "481cbdd9-02ac-46fd-825f-afed658bc505";
 test("album artist defaults to the owning artist with a single MBID; full credit is kept separately", () => {
   const plan = planAlbumArtistTags({
     creditNames: ["Afrojack", "Eva Simons"],
+    artistNames: ["AFROJACK", "Eva Simons"],
     creditMbids: [AFROJACK, EVA],
     ownerMbid: AFROJACK,
     ownerName: "AFROJACK",
@@ -32,6 +33,7 @@ test("album artist defaults to the owning artist with a single MBID; full credit
 test("album artist uses the owner even when the owner is not credited first", () => {
   const plan = planAlbumArtistTags({
     creditNames: ["Eva Simons", "Afrojack"],
+    artistNames: ["Eva Simons", "AFROJACK"],
     creditMbids: [EVA, AFROJACK],
     ownerMbid: AFROJACK,
     ownerName: "AFROJACK",
@@ -42,9 +44,10 @@ test("album artist uses the owner even when the owner is not credited first", ()
   assert.deepEqual(plan.albumArtistMbids, [AFROJACK]);
 });
 
-test("album artist falls back to the first credit when the owner is unknown", () => {
+test("album artist falls back to the first artist's name, not the credited-as name", () => {
   const plan = planAlbumArtistTags({
-    creditNames: ["Eva Simons", "Afrojack"],
+    creditNames: ["The Eva Simons", "Afrojack"],
+    artistNames: ["Eva Simons", "Afrojack"],
     creditMbids: [EVA, AFROJACK],
     ownerMbid: null,
     ownerName: null,
@@ -52,12 +55,14 @@ test("album artist falls back to the first credit when the owner is unknown", ()
     fallbackName: "x",
   });
   assert.equal(plan.albumArtist, "Eva Simons");
+  assert.deepEqual(plan.creditNames, ["The Eva Simons", "Afrojack"]);
   assert.deepEqual(plan.albumArtistMbids, [EVA]);
 });
 
 test("full-credit setting writes every credited artist and all MBIDs", () => {
   const plan = planAlbumArtistTags({
     creditNames: ["Afrojack", "Eva Simons", "eva simons"],
+    artistNames: ["AFROJACK", "Eva Simons"],
     creditMbids: [AFROJACK, EVA],
     ownerMbid: AFROJACK,
     ownerName: "AFROJACK",
@@ -90,6 +95,32 @@ test("multi-value tags compare per value, in order, and keep names containing sl
   assert.equal(isTagValueEqual("album_artist_mbids", `${EVA.toUpperCase()}; ${AFROJACK}`, `${AFROJACK}; ${EVA}`), true);
 });
 
+test("default album artist is the MusicBrainz artist name when the credit differs", () => {
+  const golden = "3cce09c5-5c6e-4f6a-a176-5a9d0b0a0a01";
+  const plan = planAlbumArtistTags({
+    creditNames: ["The Golden Earrings"],
+    artistNames: ["Golden Earring"],
+    creditMbids: [golden],
+    ownerMbid: golden,
+    ownerName: "Golden Earring",
+    fullCredit: false,
+    fallbackName: "The Golden Earrings",
+  });
+  assert.equal(plan.albumArtist, "Golden Earring");
+  assert.deepEqual(plan.albumArtistMbids, [golden]);
+  assert.deepEqual(plan.creditNames, ["The Golden Earrings"]);
+  const full = planAlbumArtistTags({
+    creditNames: ["The Golden Earrings"],
+    artistNames: ["Golden Earring"],
+    creditMbids: [golden],
+    ownerMbid: golden,
+    ownerName: "Golden Earring",
+    fullCredit: true,
+    fallbackName: "x",
+  });
+  assert.equal(full.albumArtist, "The Golden Earrings");
+});
+
 test("a full-credit album artist on disk differs from the primary-only target", () => {
   assert.equal(isTagValueEqual("album_artist", "Afrojack, Eva Simons", "AFROJACK"), false);
   assert.equal(isTagValueEqual("musicbrainz_albumartistid", `${AFROJACK}; ${EVA}`, AFROJACK), false);
@@ -97,7 +128,8 @@ test("a full-credit album artist on disk differs from the primary-only target", 
 
 test("Various Artists releases keep 'Various Artists' as album artist and are flagged as compilation", () => {
   const plan = planAlbumArtistTags({
-    creditNames: ["Various Artists"],
+    creditNames: ["VA"],
+    artistNames: ["Various Artists"],
     creditMbids: [VARIOUS_ARTISTS_MBID],
     ownerMbid: AFROJACK,
     ownerName: "AFROJACK",
@@ -105,9 +137,18 @@ test("Various Artists releases keep 'Various Artists' as album artist and are fl
     fallbackName: "x",
   });
   assert.equal(plan.albumArtist, "Various Artists");
+  assert.deepEqual(plan.creditNames, ["VA"]);
   assert.deepEqual(plan.albumArtistMbids, [VARIOUS_ARTISTS_MBID]);
   assert.equal(plan.compilation, true);
-  assert.equal(planAlbumArtistTags({ creditNames: ["A"], creditMbids: [AFROJACK], ownerMbid: AFROJACK, ownerName: "A", fullCredit: false, fallbackName: "x" }).compilation, false);
+  assert.equal(planAlbumArtistTags({
+    creditNames: ["The A"],
+    artistNames: ["A"],
+    creditMbids: [AFROJACK],
+    ownerMbid: AFROJACK,
+    ownerName: "A",
+    fullCredit: false,
+    fallbackName: "x",
+  }).compilation, false);
 });
 
 test("sort credit follows MusicBrainz join phrases when credits line up", () => {

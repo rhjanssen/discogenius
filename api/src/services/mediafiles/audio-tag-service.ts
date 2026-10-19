@@ -522,11 +522,16 @@ export const VARIOUS_ARTISTS_MBID = "89ad4ac3-39f7-470e-963a-56509c546377";
 /**
  * Plex and Jellyfin create one artist per distinct ALBUMARTIST string, so a
  * full credit ("A, B") splits an artist's discography. By default only the
- * owning artist is written there; the full credit stays in ALBUMARTISTS and
- * DISCOGENIUS_ALBUMARTIST_MBIDS (and in the database).
+ * owning artist's MusicBrainz name is written there, never the release
+ * credited-as string. The credited-as credit stays in ALBUMARTISTS and, when
+ * full credit is enabled, in ALBUMARTIST. ALBUMARTISTSORT uses that artist's
+ * sort name.
  */
 export function planAlbumArtistTags(input: {
+  /** Release credited-as strings. Full-credit ALBUMARTIST and ALBUMARTISTS only. */
   creditNames: string[];
+  /** MusicBrainz artist names, aligned with `creditMbids`. Default ALBUMARTIST reads only this list. */
+  artistNames: string[];
   creditMbids: string[];
   ownerMbid: string | null;
   ownerName: string | null;
@@ -534,41 +539,44 @@ export function planAlbumArtistTags(input: {
   fallbackName: string;
 }): AlbumArtistTagPlan {
   const creditNames = dedupeNames(input.creditNames);
-  const creditMbids = [...new Set(input.creditMbids.map(id => id.toLowerCase()).filter(Boolean))];
+  const artistNames = input.artistNames.map((name) => String(name || "").trim());
+  const creditMbids = input.creditMbids.map((id) => id.toLowerCase());
+  const uniqueMbids = [...new Set(creditMbids.filter(Boolean))];
   // Picard/MusicBrainz: a VA release keeps "Various Artists" as album artist
   // whatever folder owns the file, so players group it as one compilation.
-  const vaIndex = creditMbids.indexOf(VARIOUS_ARTISTS_MBID);
+  const vaIndex = uniqueMbids.indexOf(VARIOUS_ARTISTS_MBID);
   if (vaIndex >= 0) {
+    const vaName = artistNames[creditMbids.indexOf(VARIOUS_ARTISTS_MBID)] || "Various Artists";
     return {
-      albumArtist: creditNames[vaIndex] || "Various Artists",
+      albumArtist: vaName,
       albumArtistMbids: [VARIOUS_ARTISTS_MBID],
       creditNames,
-      creditMbids,
+      creditMbids: uniqueMbids,
       compilation: true,
     };
   }
   if (input.fullCredit) {
     return {
       albumArtist: creditNames.join(", ") || input.ownerName || input.fallbackName,
-      albumArtistMbids: creditMbids.length ? creditMbids : (input.ownerMbid ? [input.ownerMbid] : []),
+      albumArtistMbids: uniqueMbids.length ? uniqueMbids : (input.ownerMbid ? [input.ownerMbid] : []),
       creditNames,
-      creditMbids,
+      creditMbids: uniqueMbids,
       compilation: false,
     };
   }
   const owner = input.ownerMbid?.toLowerCase() || null;
   const primaryIndex = owner ? creditMbids.indexOf(owner) : -1;
-  const primaryMbid = primaryIndex >= 0 ? creditMbids[primaryIndex] : (creditMbids[0] ?? owner);
-  const primaryName = (primaryMbid && primaryMbid === owner ? input.ownerName : null)
-    || (primaryIndex >= 0 ? creditNames[primaryIndex] : null)
-    || creditNames[0]
+  const primaryMbid = primaryIndex >= 0 ? creditMbids[primaryIndex] : (uniqueMbids[0] ?? owner);
+  const alignedName = primaryIndex >= 0 ? artistNames[primaryIndex] : artistNames.find((name) => name);
+  const primaryName = alignedName
+    || (primaryMbid && primaryMbid === owner ? input.ownerName : null)
     || input.ownerName
     || input.fallbackName;
   return {
     albumArtist: primaryName,
     albumArtistMbids: primaryMbid ? [primaryMbid] : [],
     creditNames,
-    creditMbids,
+    creditMbids: uniqueMbids,
     compilation: false,
   };
 }
@@ -1634,54 +1642,61 @@ export class AudioTagService {
     return [fallbackArtistName];
   }
 
-  private static getAlbumArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
-    if (row.album_mbid) {
-      const credits = db.prepare(`SELECT COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS name
-        FROM ReleaseArtistCredits credit JOIN AlbumEditions edition ON edition.id = credit.edition_id
+  /**
+   * Album-artist roster. `name` is ArtistMetadata.name and is the only value
+   * default ALBUMARTIST may use. `credit` is the release credited-as string.
+   */
+  private static getAlbumArtistRoster(row: RetagTrackRow, fallbackArtistName: string): Array<{ name: string; credit: string; mbid: string }> {
+    const queries: Array<[string, string | null | undefined]> = [
+      [`SELECT artist.name AS name,
+          COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS credit,
+          artist.mbid AS mbid
+        FROM ReleaseArtistCredits credit
+        JOIN AlbumEditions edition ON edition.id = credit.edition_id
         JOIN ArtistMetadata artist ON artist.id = credit.artist_id
-        WHERE edition.mbid = ? ORDER BY credit.ordinal`).all(row.album_mbid) as Array<{ name: string }>;
-      if (credits.length) return credits.map(credit => credit.name);
-    }
-    if (row.album_mb_release_group_id) {
-      const canonicalRows = db.prepare(`
-        SELECT COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS name
+        WHERE edition.mbid = ?
+        ORDER BY credit.ordinal`, row.album_mbid],
+      [`SELECT artist.name AS name,
+          COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS credit,
+          artist.mbid AS mbid
         FROM ReleaseGroupArtistCredits credit
         JOIN Albums release_group ON release_group.id = credit.release_group_id
         JOIN ArtistMetadata artist ON artist.id = credit.artist_id
         WHERE release_group.mbid = ?
-        ORDER BY credit.ordinal ASC
-      `).all(row.album_mb_release_group_id) as Array<{ name?: string | null }>;
-
-      let canonicalNames = canonicalRows.map((canonicalRow) => String(canonicalRow.name || "").trim()).filter(Boolean);
-      if (canonicalNames.length === 0) {
-        const listingRows = db.prepare(`
-          SELECT COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS name
-          FROM AlbumArtists aa
-          LEFT JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
-          WHERE aa.release_group_mbid = ?
-          ORDER BY aa.ord ASC
-        `).all(row.album_mb_release_group_id) as Array<{ name?: string | null }>;
-        canonicalNames = listingRows.map((listingRow) => String(listingRow.name || "").trim()).filter(Boolean);
-      }
-      if (canonicalNames.length > 0) {
-        return canonicalNames;
-      }
+        ORDER BY credit.ordinal ASC`, row.album_mb_release_group_id],
+      [`SELECT artist.name AS name,
+          COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS credit,
+          artist.mbid AS mbid
+        FROM AlbumArtists aa
+        JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
+        WHERE aa.release_group_mbid = ?
+        ORDER BY aa.ord ASC`, row.album_mb_release_group_id],
+    ];
+    for (const [sql, id] of queries) {
+      if (!id) continue;
+      const credits = db.prepare(sql).all(id) as Array<{ name?: string | null; credit?: string | null; mbid?: string | null }>;
+      const roster = credits.map((credit) => ({
+        name: String(credit.name || "").trim(),
+        credit: String(credit.credit || credit.name || "").trim(),
+        mbid: String(credit.mbid || "").trim(),
+      })).filter((credit) => credit.name || credit.credit);
+      if (roster.length > 0) return roster;
     }
 
     if (row.artist_mbid) {
       const artistRow = db.prepare(`
-        SELECT name
+        SELECT name, mbid
         FROM ArtistMetadata
         WHERE mbid = ?
         LIMIT 1
-      `).get(row.artist_mbid) as { name?: string | null } | undefined;
+      `).get(row.artist_mbid) as { name?: string | null; mbid?: string | null } | undefined;
       const artistName = String(artistRow?.name || "").trim();
       if (artistName) {
-        return [artistName];
+        return [{ name: artistName, credit: artistName, mbid: String(artistRow?.mbid || row.artist_mbid) }];
       }
     }
 
-    return [fallbackArtistName];
+    return [{ name: fallbackArtistName, credit: fallbackArtistName, mbid: String(row.artist_mbid || "") }];
   }
 
   /** MusicBrainz sort names (ArtistMetadata.sort_name) for the track and album-artist credits; null when any is unknown. */
@@ -1711,9 +1726,11 @@ export class AudioTagService {
     const ownerRow = ownerMbid
       ? db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(ownerMbid) as { name?: string | null } | undefined
       : undefined;
+    const roster = this.getAlbumArtistRoster(row, fallbackArtistName);
     return planAlbumArtistTags({
-      creditNames: this.getAlbumArtistNames(row, fallbackArtistName),
-      creditMbids: this.getArtistMbids(row, true),
+      creditNames: roster.map((credit) => credit.credit),
+      artistNames: roster.map((credit) => credit.name),
+      creditMbids: roster.map((credit) => credit.mbid),
       ownerMbid,
       ownerName: String(ownerRow?.name || "").trim() || null,
       fullCredit,
