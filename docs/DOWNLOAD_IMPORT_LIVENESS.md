@@ -87,18 +87,48 @@ This fail-closed behavior is intentional. Safe automatic recovery of partial
 imports remains blocked on an idempotent per-file operation journal and
 reconciliation pass.
 
+## Disk admission
+
+Retag, rename, folder rescan, and import no longer share one global disk slot.
+Lock order, never inverted:
+
+1. Album-folder lock. A rename that touches two folders takes both in one call,
+   paths normalized and sorted, lanes acquired in ascending index. Do not take
+   a new folder lock while one is held, and do not take one while an I/O permit
+   or the SQLite write gate is held.
+2. HDD I/O permit, only while the folder lock is held, never while the write
+   gate is held. Default limit is 1 for spinning disks. `DISCOGENIUS_HDD_IO_LIMIT`
+   clamps to 1..8.
+3. SQLite write gate. No file or network I/O inside it.
+
+Imports waiting on a folder outrank retag, rename, and rescan. The retag drops
+the folder between files so an import of that album enters before the next
+file. An import of a different album takes the permit when the retag drops it,
+so the two interleave. A wait is logged once:
+`[disk-admission] <role> command <id> waiting: <reason>`.
+Whole-library commands (rescan all roots, move artist, cleanup, backup,
+compact, housekeeping) still take the single global disk slot and do not start
+beside a folder-scoped command.
+
 ## File-command restart resume
 
 RetagArtist, RetagFiles, RenameArtist, and RenameFiles store progress in
 `CommandFileWork` or `CommandRenameWork`. The command definition declares that
 with `fileWorkCheckpoint`. A process restart runs `FileMutationJournal.recoverPending()`
 and then requeues those commands from the plan. Settled rows stay settled. The
-claimed-but-unsettled row is reclaimed. The plan row is inserted in the same
-transaction as every work row, so the row's existence is the complete plan and
-startup does not select the library again. A file still claimed after five
-restarts is stored as a per-file error and the command continues. Five restarts
-in a row that leave the checkpoint cursor where it was fail the command with
-`no checkpoint progress`. A resume that advances the cursor, including a
-per-file skip, clears that count. Commands without `fileWorkCheckpoint` keep
-today's fail-closed attempt budget. Imports are not replayed.
+claimed-but-unsettled album is reclaimed; a cursor file that has already been
+restarted five times is stored as a per-file error and the command continues.
+Five restarts in a row that leave the checkpoint cursor where it was fail the
+command with `no checkpoint progress`. A resume that advances the cursor,
+including a per-file skip, clears that count.
+
+New retag and rename plans stream. The first album is inserted and started
+before the rest of the library is selected. `plan_complete` stays 0 until the
+scope is exhausted. Migration `retag-album-scheduling` adds that column with
+default 1 and does not bump `user_version` (stays 46), so a plan written by
+the previous process — including RetagArtist 19285, whose rows were inserted
+in one transaction — is already complete and resumes from its cursor. It is
+not reselected. A null `managed_tag_fingerprint` opens that file once and then
+stores the catalogue hash. Commands without `fileWorkCheckpoint` keep today's
+fail-closed attempt budget. Imports are not replayed.
 

@@ -74,18 +74,29 @@ routes it to Mutagen.
 
 ## Production verification policy
 
-Every TagLib write:
+A TagLib write now verifies once:
 
-1. reads the original technical structure;
-2. copies the source to a sibling working file;
-3. modifies only the working file;
-4. rereads and verifies every requested tag or cover;
-5. rereads and compares duration, media types, codec descriptions, audio
-   channels/sample rate/bit depth, and video dimensions;
-6. atomically replaces the original only after verification succeeds.
+1. FLAC and MP3 reuse padding in place when the new metadata fits the leading
+   tag. The audio tail of the probe is compared before the original head is
+   patched. A write that does not fit copies the file and replaces it.
+2. MP4 and M4A tag-only changes stay in place when `mdat` is before `moov`
+   (the usual ffmpeg layout): TagLib saves on the original and the `moov` tail
+   is restored if the tag read-back or the layout check fails. When `moov` is
+   before `mdat`, the header is rendered on a probe and patched back only when
+   a `free` or `skip` atom at or after `stco` can absorb TagLib's growth, and
+   chunk offsets are put back so `mdat` does not move. Otherwise the file is
+   copied. `mdta`/`keys` files still go to Mutagen and are not patched.
+3. The only value check is one TagLib read-back of the requested tags and
+   cover. FLAC and MP3 no longer take a second structure parse. MP4 keeps a
+   lightweight check: `ftyp` bytes (including an Atmos `dby1` brand), `mdat`
+   payload length, and the raw `dec3` / `ec-3` / `dac3` sample-entry atoms.
+   An in-place success also requires the `mdat` offset and chunk offsets to
+   stay put.
 
-A structural reread averaged about 1 ms even for the 507 MB 4K sample. The
-complete production path for metadata plus a separate cover update measured:
+The measurements below are the previous copy-plus-structure path, kept so the
+cost of a full rewrite is still visible. A structural reread averaged about
+1 ms even for the 507 MB 4K sample. The complete production path for metadata
+plus a separate cover update measured:
 
 - Atmos M4A: 207.35 ms;
 - 4K MP4: 1,518.64 ms.
@@ -141,12 +152,17 @@ with an existing Apple freeform field and checks decoded audio preservation.
 
 ## Managed fields and cleanup
 
-Audio and video retagging share the native-field diff. Unchanged files are
-skipped. Obsolete aliases of managed fields are removed during the verified
-write. Unrelated custom tags remain unless `scrub_audio_tags`, exposed as
-"Remove unmanaged tags", is enabled. Scrubbing detects custom-only changes
-and removes them in the same atomic write. Cover art follows its separate
-policy, and MP4 iTunSMPB playback information is preserved.
+Audio and video retagging share the native-field diff. A file whose
+`managed_tag_fingerprint` already equals the catalogue projection (policy,
+scrub flag, ReplayGain, lyrics and cover flags, and the managed tag values)
+is skipped without opening it. A null fingerprint, or a fingerprint that
+predates the scrub flag, is opened once. Obsolete aliases of managed fields
+are removed during that diff. Unrelated custom tags remain unless
+`scrub_audio_tags`, exposed as "Remove unmanaged tags", is enabled. Turning
+scrub on changes the fingerprint, so each file is opened once and custom tags
+are removed in the same write. Cover art follows its separate policy, and
+MP4 iTunSMPB playback information is preserved. The TagLib read-back is the
+only post-write check; retag does not parse the file again with music-metadata.
 
 Track and edition artist IDs come from their respective canonical credits.
 ISRCs and artist IDs retain multiple native values. MP4 uses native integer

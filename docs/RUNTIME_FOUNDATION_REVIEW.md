@@ -34,9 +34,13 @@ boundaries rather than the operations that actually require each resource.
    whole-artist assignment/relation repair. `prepareArtistVideoUpsert` only moves
    audio candidate preparation; its returned callback is not a persistence-only
    contract. Other callers also wrap the combined operation in writer admission.
-2. `requiresDiskAccess` reserves one global slot for the command's entire life.
-   Yielding the event loop after a retag batch does not release this slot.
-   Manual-command priority can also delay completed download imports indefinitely.
+2. `requiresDiskAccess` reserved one global slot for the command's entire life.
+   That is still true for whole-library commands (rescan all roots, move artist,
+   cleanup, backup, compact). Folder-scoped retag, rename, import, and folder
+   rescan no longer take that slot. They take a per-album folder lock and a
+   shared HDD I/O permit (default 1, `DISCOGENIUS_HDD_IO_LIMIT` 1..8) and drop
+   both between files. See `api/src/services/commands/disk-admission.ts` for the
+   lock order. An import is not stuck behind a library retag of a different album.
 3. File mutation has no durable intent/result journal. A planned restart can
    leave successful partial work and a failed parent command. Raising retry
    attempts would hide this gap and risk destructive replay.
