@@ -375,7 +375,10 @@ export class CommandFileWorkRepository {
         const insert = db.prepare(`INSERT INTO CommandFileWork (command_id, generation, ordinal, track_file_id, identity_snapshot)
             VALUES (?, ?, ?, ?, ?)`);
         let ordinal = plan.total;
-        for (const file of files) insert.run(commandId, plan.generation, ordinal, file.id, file.identity), ordinal += 1;
+        for (const file of files) {
+            insert.run(commandId, plan.generation, ordinal, file.id, file.identity);
+            ordinal += 1;
+        }
         db.prepare(`UPDATE CommandFileWorkPlans SET total = ?, updated_at = CURRENT_TIMESTAMP WHERE command_id = ?`)
             .run(ordinal, commandId);
     }
