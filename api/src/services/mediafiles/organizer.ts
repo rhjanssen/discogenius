@@ -1478,14 +1478,22 @@ export class OrganizerService {
     return params.expectedPath;
   }
 
-  private static cleanupSiblingMediaVariants(newFilePath: string, fileType: "track" | "video") {
+  /**
+   * Remove same-name, same-extension media siblings that differ only in path
+   * spelling (case). File I/O only: call under the album-folder lock and an HDD
+   * I/O permit, before the SQLite write gate. Returns the paths it removed so
+   * the caller's write transaction can forget their rows with
+   * `forgetSiblingMediaVariantRows`.
+   */
+  private static unlinkSiblingMediaVariants(newFilePath: string): string[] {
     const targetPath = path.resolve(newFilePath);
     const targetDir = path.dirname(targetPath);
     const targetStem = path.parse(targetPath).name;
     if (!fs.existsSync(targetDir)) {
-      return;
+      return [];
     }
 
+    const removed: string[] = [];
     for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
       if (!entry.isFile()) {
         continue;
@@ -1503,44 +1511,56 @@ export class OrganizerService {
       }
 
       try {
-        const siblingLibraryFiles = db.prepare(
-          `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, quality
-           FROM TrackFiles
-           WHERE file_path = ? AND file_type = ?`
-        ).all(siblingPath, fileType) as Array<{
-          id: number;
-          artist_id: number;
-          album_id: number | null;
-          media_id: number | null;
-          quality: string | null;
-        }>;
-
-        for (const siblingRow of siblingLibraryFiles) {
-          try {
-            recordHistoryEvent({
-              artistId: siblingRow.artist_id,
-              albumId: siblingRow.album_id,
-              mediaId: siblingRow.media_id,
-              libraryFileId: siblingRow.id,
-              eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
-              quality: siblingRow.quality,
-              data: {
-                deletedPath: siblingPath,
-                replacementPath: newFilePath,
-                fileType,
-              },
-            });
-          } catch (historyError) {
-            console.warn(`[Organizer] Failed to record sibling ${fileType} delete history for ${siblingPath}:`, historyError);
-          }
-        }
-
+        // On a case-insensitive filesystem the "sibling" is the new file itself.
+        const sibling = fs.statSync(siblingPath);
+        const target = fs.existsSync(targetPath) ? fs.statSync(targetPath) : null;
+        if (target && sibling.ino === target.ino && sibling.dev === target.dev) continue;
         fs.rmSync(siblingPath, { force: true });
-        db.prepare("DELETE FROM TrackFiles WHERE file_path = ? AND file_type = ?").run(siblingPath, fileType);
-        console.log(`[Organizer] Deleted conflicting ${fileType} variant: ${siblingPath}`);
+        removed.push(siblingPath);
+        console.log(`[Organizer] Deleted conflicting media variant: ${siblingPath}`);
       } catch (error) {
-        console.warn(`[Organizer] Failed to delete conflicting ${fileType} variant: ${siblingPath}`, error);
+        console.warn(`[Organizer] Failed to delete conflicting media variant: ${siblingPath}`, error);
       }
+    }
+    return removed;
+  }
+
+  /** Database half of `unlinkSiblingMediaVariants`. Runs inside the import write transaction. */
+  private static forgetSiblingMediaVariantRows(removedPaths: readonly string[], newFilePath: string, fileType: "track" | "video") {
+    for (const siblingPath of removedPaths) {
+      const siblingLibraryFiles = db.prepare(
+        `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, quality
+         FROM TrackFiles
+         WHERE file_path = ? AND file_type = ?`
+      ).all(siblingPath, fileType) as Array<{
+        id: number;
+        artist_id: number;
+        album_id: number | null;
+        media_id: number | null;
+        quality: string | null;
+      }>;
+
+      for (const siblingRow of siblingLibraryFiles) {
+        try {
+          recordHistoryEvent({
+            artistId: siblingRow.artist_id,
+            albumId: siblingRow.album_id,
+            mediaId: siblingRow.media_id,
+            libraryFileId: siblingRow.id,
+            eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
+            quality: siblingRow.quality,
+            data: {
+              deletedPath: siblingPath,
+              replacementPath: newFilePath,
+              fileType,
+            },
+          });
+        } catch (historyError) {
+          console.warn(`[Organizer] Failed to record sibling ${fileType} delete history for ${siblingPath}:`, historyError);
+        }
+      }
+
+      db.prepare("DELETE FROM TrackFiles WHERE file_path = ? AND file_type = ?").run(siblingPath, fileType);
     }
   }
 
@@ -2351,9 +2371,12 @@ export class OrganizerService {
         // Fingerprinting and embedded tags are applied by the post-organize
         // import finalizer after MusicBrainz identity is resolved.
         const fileFingerprint: string | null = null;
-        const retiredReleaseTracks = await withHddIoPermit(
+        const { retiredReleaseTracks, removedSiblings } = await withHddIoPermit(
           this.importDiskMeta(),
-          async () => unlinkRetiredLibraryFiles(previousReleaseTracks, destFile, "track"),
+          async () => ({
+            retiredReleaseTracks: unlinkRetiredLibraryFiles(previousReleaseTracks, destFile, "track"),
+            removedSiblings: this.unlinkSiblingMediaVariants(destFile),
+          }),
         );
 
         // Batch all per-track DB writes in a single transaction.
@@ -2408,7 +2431,7 @@ export class OrganizerService {
           }
 
           forgetRetiredLibraryFileRows(retiredReleaseTracks, destFile, "track");
-          this.cleanupSiblingMediaVariants(destFile, "track");
+          this.forgetSiblingMediaVariantRows(removedSiblings, destFile, "track");
         })(), "import:media-commit");
         });
 
@@ -3036,9 +3059,12 @@ export class OrganizerService {
       // Fingerprinting and embedded tags are applied by the post-organize
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
-      const retiredReleaseTracks = await withHddIoPermit(
+      const { retiredReleaseTracks, removedSiblings } = await withHddIoPermit(
         this.importDiskMeta(),
-        async () => unlinkRetiredLibraryFiles(previousReleaseTracks, dest, "track"),
+        async () => ({
+          retiredReleaseTracks: unlinkRetiredLibraryFiles(previousReleaseTracks, dest, "track"),
+          removedSiblings: this.unlinkSiblingMediaVariants(dest),
+        }),
       );
       // Batch all per-track DB writes in a single transaction.
       await withSqliteWriteGate(() => db.transaction(() => {
@@ -3092,7 +3118,7 @@ export class OrganizerService {
         // Same release track only. A shared provider id or recording must not
         // retire another album's file.
         forgetRetiredLibraryFileRows(retiredReleaseTracks, dest, "track");
-        this.cleanupSiblingMediaVariants(dest, "track");
+        this.forgetSiblingMediaVariantRows(removedSiblings, dest, "track");
       })(), "import:media-commit");
       });
 
@@ -3606,9 +3632,12 @@ export class OrganizerService {
         providerEntityType: "video",
         providerId,
       });
-      const retiredVideos = await withHddIoPermit(
+      const { retiredVideos, removedSiblings } = await withHddIoPermit(
         this.importDiskMeta(),
-        async () => unlinkRetiredLibraryFiles(previousVideos, dest, "video"),
+        async () => ({
+          retiredVideos: unlinkRetiredLibraryFiles(previousVideos, dest, "video"),
+          removedSiblings: this.unlinkSiblingMediaVariants(dest),
+        }),
       );
 
       // Batch all per-video DB writes in a single transaction.
@@ -3661,7 +3690,7 @@ export class OrganizerService {
         }
 
         forgetRetiredLibraryFileRows(retiredVideos, dest, "video");
-        this.cleanupSiblingMediaVariants(dest, "video");
+        this.forgetSiblingMediaVariantRows(removedSiblings, dest, "video");
       })(), "import:media-commit");
       });
 
