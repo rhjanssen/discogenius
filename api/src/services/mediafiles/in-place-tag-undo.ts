@@ -91,7 +91,8 @@ function writeDurable(file: string, data: Buffer | string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const fd = fs.openSync(file, "w");
   try {
-    fs.writeSync(fd, data);
+    if (typeof data === "string") fs.writeSync(fd, data);
+    else fs.writeSync(fd, data);
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
