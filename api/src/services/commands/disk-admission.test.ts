@@ -410,3 +410,77 @@ function bargingTurns(
     });
   });
 }
+
+/** Run `work` from a continuation created inside `section` but run after it settles. */
+async function spawnedAfter<T>(section: (spawn: () => void) => Promise<unknown> | unknown, work: () => Promise<T>): Promise<T> {
+  let spawned!: Promise<T>;
+  await section(() => {
+    spawned = new Promise<T>((resolve, reject) => setImmediate(() => work().then(resolve, reject)));
+  });
+  return spawned;
+}
+
+test("work scheduled inside the write gate does not hold it after the gate is released", async () => {
+  const result = await spawnedAfter(
+    async (spawn) => enterWriteGate(async () => { spawn(); }),
+    () => withAlbumFolder("/library/after-gate", importing(11), async () => "imported"),
+  );
+  assert.equal(result, "imported");
+  // A synchronous gate section too.
+  const sync = await spawnedAfter(
+    (spawn) => enterWriteGate(() => { spawn(); }),
+    () => withAlbumFolder("/library/after-sync-gate", importing(12), async () => "imported"),
+  );
+  assert.equal(sync, "imported");
+});
+
+test("the write gate is still held by work that runs inside its section", async () => {
+  await enterWriteGate(async () => {
+    await delay(1);
+    await assert.rejects(withAlbumFolder("/library/inside-gate", importing(13), async () => undefined), /write gate is held/);
+    // Nested gate sections stay held until the outer one ends.
+    await enterWriteGate(async () => undefined);
+    await assert.rejects(withAlbumFolder("/library/inside-gate", importing(13), async () => undefined), /write gate is held/);
+  });
+});
+
+test("work scheduled inside a folder lock or permit does not inherit them after release", async () => {
+  const folder = "/library/leaked-lane";
+  // Leaked lanes would let this skip the lock while another holder owns it.
+  const blocker = { release: () => {} };
+  const leaked = await spawnedAfter(
+    async (spawn) => withAlbumFolder(folder, retag(14), async () => { spawn(); }),
+    async () => {
+      const held = withAlbumFolder(folder, retag(15), () => new Promise<void>((resolve) => { blocker.release = resolve; }));
+      await delay(5);
+      let entered = false;
+      const second = withAlbumFolder(folder, retag(16), async () => { entered = true; });
+      await delay(20);
+      const enteredWhileHeld = entered;
+      blocker.release();
+      await held;
+      await second;
+      return enteredWhileHeld;
+    },
+  );
+  assert.equal(leaked, false, "a flow spawned inside a released folder lock skipped the lock");
+
+  const afterPermit = await spawnedAfter(
+    async (spawn) => withAlbumFolder("/library/leaked-permit", retag(17), () => withHddIoPermit(retag(17), async () => { spawn(); })),
+    async () => enterWriteGate(() => "gate entered"),
+  );
+  assert.equal(afterPermit, "gate entered");
+
+  // Released permit inside a still-held folder: the folder lock still counts.
+  await withAlbumFolder("/library/permit-then-folder", retag(18), async () => {
+    const spawned = await spawnedAfter(
+      async (spawn) => withHddIoPermit(retag(18), async () => { spawn(); }),
+      async () => {
+        assert.equal(enterWriteGate(() => "gate"), "gate");
+        await withAlbumFolder("/library/permit-then-folder", retag(18), async () => undefined);
+        return withHddIoPermit(retag(18), async () => "permit");
+      },
+    );
+    assert.equal(spawned, "permit");
+  });
+});

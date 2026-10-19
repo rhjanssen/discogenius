@@ -127,11 +127,28 @@ export type DiskAdmissionSnapshot = {
   waits: DiskAdmissionWait[];
 };
 
+/**
+ * What this async flow holds. AsyncLocalStorage hands the store to every
+ * continuation created inside `run`, including timers, `setImmediate`,
+ * fire-and-forget promises and event-listener callbacks that outlive the
+ * section. A depth counter therefore answered "was this flow *started* inside
+ * a lock?", not "is the lock held now?". A download-queue wake scheduled by a
+ * command-status event inside a SQLite write section made every later import
+ * look like it held the write gate (deploy d2ae132a, 19 Oct 2026).
+ *
+ * Each hold is an object that is marked released when its section settles.
+ * Code that inherited a released hold sees through it to the enclosing live
+ * hold (`parent`), or to nothing.
+ */
 type AdmissionContext = {
   lanes: Set<number>;
   folders: string[];
   permitDepth: number;
+  released: boolean;
+  parent: AdmissionContext | null;
 };
+
+type WriteGateHold = { released: boolean };
 
 type WaitDraft = {
   kind: "folder" | "io";
@@ -144,7 +161,38 @@ type WaitDraft = {
 };
 
 const admissionContext = new AsyncLocalStorage<AdmissionContext>();
-const writeGateDepth = new AsyncLocalStorage<number>();
+const writeGateHold = new AsyncLocalStorage<WriteGateHold>();
+
+function liveAdmission(): AdmissionContext | null {
+  let ctx = admissionContext.getStore() ?? null;
+  while (ctx && ctx.released) ctx = ctx.parent;
+  return ctx;
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return value !== null
+    && (typeof value === "object" || typeof value === "function")
+    && typeof (value as { then?: unknown }).then === "function";
+}
+
+/** Run `fn` and call `release` once it has settled, sync or async. */
+function runHold<T>(fn: () => T, release: () => void): T {
+  let result: T;
+  try {
+    result = fn();
+  } catch (error) {
+    release();
+    throw error;
+  }
+  if (!isPromiseLike(result)) {
+    release();
+    return result;
+  }
+  return Promise.resolve(result).then(
+    (value) => { release(); return value; },
+    (error) => { release(); throw error; },
+  ) as T;
+}
 let ownerToken = 0;
 
 function configuredLimit(): number {
@@ -265,11 +313,12 @@ function roleName(code: number): DiskRole | "" {
 }
 
 export function writeGateIsHeld(): boolean {
-  return (writeGateDepth.getStore() ?? 0) > 0;
+  const hold = writeGateHold.getStore();
+  return hold !== undefined && !hold.released;
 }
 
 export function ioPermitIsHeld(): boolean {
-  return (admissionContext.getStore()?.permitDepth ?? 0) > 0;
+  return (liveAdmission()?.permitDepth ?? 0) > 0;
 }
 
 /**
@@ -280,8 +329,10 @@ export function enterWriteGate<T>(fn: () => T): T {
   if (ioPermitIsHeld()) {
     throw new Error("SQLite write gate entered while an HDD I/O permit is held");
   }
-  const depth = (writeGateDepth.getStore() ?? 0) + 1;
-  return writeGateDepth.run(depth, fn);
+  // Nested section of a live gate: the outer section owns the release.
+  if (writeGateIsHeld()) return fn();
+  const hold: WriteGateHold = { released: false };
+  return writeGateHold.run(hold, () => runHold(fn, () => { hold.released = true; }));
 }
 
 function assertMayAcquireFolder(): void {
@@ -459,7 +510,7 @@ async function withFolders<T>(folders: string[], meta: DiskAdmissionMeta, fn: ()
   const normalized = [...new Set(folders.map((folder) => normalizeResolvedPath(folder)))].filter((folder) => folder.length > 0).sort();
   if (normalized.length === 0) return fn();
   const lanes = orderedLanes(normalized);
-  const current = admissionContext.getStore();
+  const current = liveAdmission();
   // Same folders on this flow are re-entrant, including while a permit or the
   // write gate is held. A new folder is a new acquisition and must follow the
   // lock order.
@@ -475,8 +526,14 @@ async function withFolders<T>(folders: string[], meta: DiskAdmissionMeta, fn: ()
       await acquireLane(lane, meta, folder);
       acquired.push(lane);
     }
-    const ctx: AdmissionContext = { lanes: new Set(acquired), folders: normalized, permitDepth: 0 };
-    return await admissionContext.run(ctx, fn);
+    const ctx: AdmissionContext = {
+      lanes: new Set(acquired), folders: normalized, permitDepth: 0, released: false, parent: null,
+    };
+    try {
+      return await admissionContext.run(ctx, fn);
+    } finally {
+      ctx.released = true;
+    }
   } finally {
     for (const lane of acquired.reverse()) releaseLane(lane);
   }
@@ -628,17 +685,20 @@ async function acquirePermit(meta: DiskAdmissionMeta, folder: string): Promise<n
  */
 export async function withHddIoPermit<T>(meta: DiskAdmissionMeta, fn: () => Promise<T>): Promise<T> {
   if (writeGateIsHeld()) throw new Error("HDD I/O permit requested while the SQLite write gate is held");
-  const ctx = admissionContext.getStore();
+  const ctx = liveAdmission();
   if (!ctx || ctx.lanes.size === 0) throw new Error("HDD I/O permit requested without an album folder lock");
   // Nested permit on this flow reuses the slot. A sibling task in the parent
   // flow has its own store, so it cannot clear this depth and then take the
   // write gate while the permit is still held.
   if (ctx.permitDepth > 0) return fn();
   const slot = await acquirePermit(meta, ctx.folders.join(", "));
-  const holding: AdmissionContext = { lanes: ctx.lanes, folders: ctx.folders, permitDepth: 1 };
+  const holding: AdmissionContext = {
+    lanes: ctx.lanes, folders: ctx.folders, permitDepth: 1, released: false, parent: ctx,
+  };
   try {
     return await admissionContext.run(holding, fn);
   } finally {
+    holding.released = true;
     releasePermitSlot(slot);
   }
 }
