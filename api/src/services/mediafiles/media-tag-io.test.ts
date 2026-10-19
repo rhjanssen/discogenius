@@ -331,6 +331,146 @@ test("M4A ISRC writes retain the Apple code when it belongs to the complete cano
   } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
 });
 
+function topLevelAtoms(buffer: Buffer): Array<{ type: string; offset: number; size: number; headerSize: number }> {
+  const atoms: Array<{ type: string; offset: number; size: number; headerSize: number }> = [];
+  let position = 0;
+  while (position + 8 <= buffer.length) {
+    let size = buffer.readUInt32BE(position);
+    let headerSize = 8;
+    if (size === 1) {
+      size = Number(buffer.readBigUInt64BE(position + 8));
+      headerSize = 16;
+    } else if (size === 0) {
+      size = buffer.length - position;
+    }
+    atoms.push({
+      type: buffer.toString("latin1", position + 4, position + 8),
+      offset: position,
+      size,
+      headerSize,
+    });
+    position += size;
+  }
+  return atoms;
+}
+
+function mdatPayload(filePath: string): { offset: number; payload: Buffer } {
+  const buffer = fs.readFileSync(filePath);
+  const mdat = topLevelAtoms(buffer).find((atom) => atom.type === "mdat");
+  assert.ok(mdat, `${filePath} has no mdat`);
+  return {
+    offset: mdat.offset,
+    payload: Buffer.from(buffer.subarray(mdat.offset + mdat.headerSize, mdat.offset + mdat.size)),
+  };
+}
+
+/** Grow the free atom that sits in front of mdat and shift chunk offsets by the same amount. */
+function expandFreeBeforeMdat(filePath: string, extra: number): void {
+  const buffer = fs.readFileSync(filePath);
+  const atoms = topLevelAtoms(buffer);
+  const mdat = atoms.find((atom) => atom.type === "mdat");
+  assert.ok(mdat);
+  const free = [...atoms].reverse().find((atom) => (atom.type === "free" || atom.type === "skip") && atom.offset + atom.size <= mdat.offset);
+  assert.ok(free, "expected a free atom before mdat");
+  const grown = Buffer.alloc(buffer.length + extra);
+  const insertAt = free.offset + free.size;
+  buffer.copy(grown, 0, 0, insertAt);
+  buffer.copy(grown, insertAt + extra, insertAt);
+  grown.writeUInt32BE(free.size + extra, free.offset);
+  const shifted = walkChunkOffsets(grown, (value) => (value >= BigInt(mdat.offset) ? value + BigInt(extra) : value));
+  assert.ok(shifted > 0, "expected chunk offsets to shift");
+  fs.writeFileSync(filePath, grown);
+}
+
+function walkChunkOffsets(buffer: Buffer, update: (value: bigint) => bigint): number {
+  let updates = 0;
+  const visit = (start: number, end: number): void => {
+    let position = start;
+    while (position + 8 <= end) {
+      let size = buffer.readUInt32BE(position);
+      let headerSize = 8;
+      if (size === 1) {
+        size = Number(buffer.readBigUInt64BE(position + 8));
+        headerSize = 16;
+      } else if (size === 0) size = end - position;
+      const type = buffer.toString("latin1", position + 4, position + 8);
+      const boxEnd = position + size;
+      if (type === "stco" || type === "co64") {
+        const body = position + headerSize;
+        const count = buffer.readUInt32BE(body + 4);
+        const width = type === "co64" ? 8 : 4;
+        for (let index = 0; index < count; index += 1) {
+          const at = body + 8 + index * width;
+          const value = type === "co64" ? buffer.readBigUInt64BE(at) : BigInt(buffer.readUInt32BE(at));
+          const next = update(value);
+          if (next !== value) {
+            if (type === "co64") buffer.writeBigUInt64BE(next, at);
+            else buffer.writeUInt32BE(Number(next), at);
+            updates += 1;
+          }
+        }
+      } else if (["moov", "trak", "mdia", "minf", "stbl", "udta", "edts"].includes(type)) {
+        visit(position + headerSize, boxEnd);
+      } else if (type === "meta") {
+        visit(position + headerSize + 4, boxEnd);
+      } else if (type === "stsd") {
+        visit(position + headerSize + 8, boxEnd);
+      }
+      position = boxEnd;
+    }
+  };
+  visit(0, buffer.length);
+  return updates;
+}
+
+test("MP4 tag-only writes keep mdat bytes and offset when the layout has room", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mp4-inplace-"));
+  try {
+    const mdatFirst = path.join(tempDir, "mdat-first.m4a");
+    generateAudio(mdatFirst, ["-c:a", "aac", "-f", "mp4"]);
+    await assertMp4AudioStaysPut(mdatFirst);
+
+    const fastStart = path.join(tempDir, "faststart.m4a");
+    const generated = spawnSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+      "-t", "1", "-c:a", "aac", "-movflags", "+faststart", "-f", "mp4", fastStart,
+    ], { windowsHide: true, encoding: "utf-8" });
+    assert.equal(generated.status, 0, generated.stderr);
+    // The stock 8-byte free cannot absorb TagLib's first-write padding. A free
+    // atom large enough to cover that growth must keep mdat at its offset.
+    expandFreeBeforeMdat(fastStart, 4096);
+    await assertMp4AudioStaysPut(fastStart);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+async function assertMp4AudioStaysPut(filePath: string): Promise<void> {
+  const before = mdatPayload(filePath);
+  const inode = fs.statSync(filePath).ino;
+  const first = await writeMediaTagsWithTagLib(filePath, { title: "In place", artist: "Kept Audio" });
+  assert.equal(first.success, true, first.error);
+  const after = mdatPayload(filePath);
+  assert.equal(after.offset, before.offset, `${path.basename(filePath)} mdat moved`);
+  assert.ok(after.payload.equals(before.payload), `${path.basename(filePath)} mdat bytes changed`);
+  assert.equal(fs.statSync(filePath).ino, inode, `${path.basename(filePath)} was replaced`);
+  const second = await writeMediaTagsWithTagLib(filePath, { title: "Still in place" });
+  assert.equal(second.success, true, second.error);
+  const rewritten = mdatPayload(filePath);
+  assert.equal(rewritten.offset, before.offset, `${path.basename(filePath)} mdat moved on the second write`);
+  assert.ok(rewritten.payload.equals(before.payload));
+  assert.equal(fs.statSync(filePath).ino, inode);
+  const tagged = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
+  try {
+    assert.equal(tagged.tag.title, "Still in place");
+    assert.deepEqual(tagged.tag.performers, ["Kept Audio"]);
+  } finally {
+    tagged.dispose();
+  }
+  assert.deepEqual(fs.readdirSync(path.dirname(filePath)).filter((name) => name.startsWith(".discogenius-")), []);
+}
+
 test("TagLib rewrites FLAC/MP3 tags in place when padding fits and keeps audio intact", {
   skip: !hasFfmpeg,
 }, async () => {

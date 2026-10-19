@@ -253,42 +253,6 @@ function withTagLibFile<T>(
   }
 }
 
-type MediaStructureSnapshot = {
-  durationMilliseconds: number;
-  mediaTypes: number;
-  codecDescriptions: string[];
-  audioChannels: number;
-  audioSampleRate: number;
-  bitsPerSample: number;
-  videoWidth: number;
-  videoHeight: number;
-};
-
-function readMediaStructure(filePath: string): MediaStructureSnapshot {
-  return withTagLibFile(filePath, (file) => ({
-    durationMilliseconds: file.properties.durationMilliseconds,
-    mediaTypes: file.properties.mediaTypes,
-    codecDescriptions: file.properties.codecs.map((codec) => codec?.description ?? ""),
-    audioChannels: file.properties.audioChannels,
-    audioSampleRate: file.properties.audioSampleRate,
-    bitsPerSample: file.properties.bitsPerSample,
-    videoWidth: file.properties.videoWidth,
-    videoHeight: file.properties.videoHeight,
-  }), ReadStyle.Average);
-}
-
-function verifyMediaStructure(
-  filePath: string,
-  expected: MediaStructureSnapshot,
-): void {
-  const actual = readMediaStructure(filePath);
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `TagLib media-structure verification failed: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
-}
-
 function userTextFrames(tag: Id3v2Tag): Id3v2UserTextInformationFrame[] {
   return tag.getFramesByClassType<Id3v2UserTextInformationFrame>(
     Id3v2FrameClassType.UserTextInformationFrame,
@@ -680,17 +644,17 @@ function leadingMetadataLength(filePath: string, size: number): number | null {
  * metadata fits, only the leading metadata region changes. We render it on a
  * small probe (head + a slice of audio), and only if the region keeps its exact
  * length and the audio bytes are untouched do we overwrite that region of the
- * original, fsync, and verify tags/cover/structure on the real file. The old
- * head is kept in a sibling backup until verification passes and is restored on
- * any failure. Returns null when the write does not fit or the layout is not
- * eligible; the caller then uses the copy+replace path.
+ * original, fsync, and verify tags and cover on the real file. The probe's
+ * untouched audio tail is the structure check. The old head is kept in a
+ * sibling backup until verification passes and is restored on any failure.
+ * Returns null when the write does not fit or the layout is not eligible; the
+ * caller then uses the copy+replace path.
  */
 function tryWriteTagsInPlace(
   filePath: string,
   tags: Record<string, string>,
   removeKeys: string[],
   coverPath: string | null | undefined,
-  mediaStructure: MediaStructureSnapshot,
 ): MediaTagWriteResult | null {
   const extension = extensionOf(filePath);
   if (extension !== ".flac" && extension !== ".mp3") return null;
@@ -739,12 +703,8 @@ function tryWriteTagsInPlace(
     const expectedCover = coverPath ? fs.readFileSync(coverPath) : null;
     withTagLibFile(filePath, (file) => {
       verifyTagLibValuesInFile(file, extension, tags, removeKeys);
-      if (expectedCover) {
-        const actual = file.tag.pictures[0]?.data?.toByteArray();
-        if (!actual || !Buffer.from(actual).equals(expectedCover)) throw new Error("TagLib cover verification failed");
-      }
+      if (expectedCover) verifyCoverBytes(file, expectedCover);
     });
-    verifyMediaStructure(filePath, mediaStructure);
     return coverPath
       ? { handled: true, success: true, backend: "taglib", coverEmbedded: true }
       : { handled: true, success: true, backend: "taglib" };
@@ -761,10 +721,452 @@ function tryWriteTagsInPlace(
   }
 }
 
+function verifyCoverBytes(file: TagLibFile, expected: Buffer): void {
+  const actual = file.tag.pictures[0]?.data?.toByteArray();
+  if (!actual || !Buffer.from(actual).equals(expected)) throw new Error("TagLib cover verification failed");
+}
+
+function writeCoverWithTagLib(filePath: string, coverPath: string): void {
+  withTagLibFile(filePath, (file) => {
+    const picture = Picture.fromPath(coverPath);
+    picture.type = PictureType.FrontCover;
+    picture.description = "Cover (front)";
+    file.tag.pictures = [picture];
+    file.save();
+  });
+}
+
+const MP4_CONTAINERS = new Set(["moov", "trak", "mdia", "minf", "stbl", "udta", "edts"]);
+const MP4_SAMPLE_ENTRY_TYPES = new Set(["dec3", "ec-3", "dac3"]);
+const MP4_FREE_TYPES = new Set(["free", "skip"]);
+
+type Mp4Layout = {
+  size: number;
+  mdatOffset: number;
+  mdatSize: number;
+  mdatHeaderSize: number;
+  moovOffset: number;
+  moovBeforeMdat: boolean;
+  ftyp: Buffer;
+  sampleEntries: Buffer;
+  chunkOffsets: bigint[];
+};
+
+type ParsedBox = {
+  type: string;
+  offset: number;
+  size: number;
+  headerSize: number;
+  parent: number;
+};
+
+type Mp4InPlaceResult = { kind: "written" } | { kind: "fallback" } | { kind: "failed"; error: string };
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function containerChildStart(box: { type: string; offset: number; size: number; headerSize: number }): number | null {
+  const end = box.offset + box.size;
+  const start = box.type === "meta"
+    ? box.offset + box.headerSize + 4
+    : box.type === "stsd"
+      ? box.offset + box.headerSize + 8
+      : MP4_CONTAINERS.has(box.type)
+        ? box.offset + box.headerSize
+        : null;
+  if (start === null || start > end) return null;
+  return start;
+}
+
+function readHeaderFromBuffer(buffer: Buffer, offset: number, rangeEnd: number): Mp4AtomHeader | null {
+  if (offset < 0 || offset + 8 > rangeEnd) return null;
+  let size = buffer.readUInt32BE(offset);
+  let headerSize = 8;
+  if (size === 1) {
+    if (offset + 16 > rangeEnd) return null;
+    const large = buffer.readBigUInt64BE(offset + 8);
+    if (large > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    size = Number(large);
+    headerSize = 16;
+  } else if (size === 0) {
+    size = rangeEnd - offset;
+  }
+  if (!Number.isSafeInteger(size) || size < headerSize || offset + size > rangeEnd) return null;
+  return { type: buffer.toString("latin1", offset + 4, offset + 8), size, headerSize };
+}
+
+/** Header walk of one MP4. Returns null when the file has zero or several
+ * `mdat` atoms, no `moov`/`ftyp`/`stco`, or a box the walker cannot trust.
+ * Sample-entry bytes are the raw `dec3` / `ec-3` / `dac3` atoms under `moov`. */
+function readMp4Layout(filePath: string): Mp4Layout | null {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const size = fs.fstatSync(fd).size;
+    const sampleChunks: Buffer[] = [];
+    const chunkOffsets: bigint[] = [];
+    // Assigned inside the walker. A `let` captured by that closure is not
+    // narrowed afterwards, so the located atoms live on this object.
+    const located: {
+      mdat: { offset: number; size: number; headerSize: number } | null;
+      moovOffset: number;
+      ftyp: Buffer | null;
+    } = { mdat: null, moovOffset: -1, ftyp: null };
+    const readBytes = (offset: number, length: number): Buffer | null => {
+      if (length < 0 || offset < 0 || offset + length > size) return null;
+      const buffer = Buffer.alloc(length);
+      return fs.readSync(fd!, buffer, 0, length, offset) === length ? buffer : null;
+    };
+    const walk = (start: number, end: number, depth: number): boolean => {
+      if (depth > 16) return false;
+      let position = start;
+      while (position + 8 <= end) {
+        const atom = readMp4AtomHeader(fd!, position, end);
+        if (!atom) return false;
+        if (atom.type === "mdat") {
+          if (located.mdat) return false;
+          located.mdat = { offset: position, size: atom.size, headerSize: atom.headerSize };
+        } else if (atom.type === "moov") {
+          if (located.moovOffset >= 0) return false;
+          located.moovOffset = position;
+        } else if (atom.type === "ftyp" && !located.ftyp) {
+          located.ftyp = readBytes(position, atom.size);
+          if (!located.ftyp) return false;
+        }
+        if (MP4_SAMPLE_ENTRY_TYPES.has(atom.type)) {
+          const bytes = readBytes(position, atom.size);
+          if (!bytes) return false;
+          sampleChunks.push(bytes);
+        } else if (atom.type === "stco" || atom.type === "co64") {
+          const body = readBytes(position + atom.headerSize, atom.size - atom.headerSize);
+          if (!body || body.length < 8) return false;
+          const count = body.readUInt32BE(4);
+          const wide = atom.type === "co64";
+          const width = wide ? 8 : 4;
+          if (8 + count * width > body.length) return false;
+          for (let index = 0; index < count; index += 1) {
+            const at = 8 + index * width;
+            chunkOffsets.push(wide ? body.readBigUInt64BE(at) : BigInt(body.readUInt32BE(at)));
+          }
+        } else {
+          const childStart = containerChildStart({
+            type: atom.type, offset: position, size: atom.size, headerSize: atom.headerSize,
+          });
+          if (childStart !== null && !walk(childStart, position + atom.size, depth + 1)) return false;
+        }
+        position += atom.size;
+      }
+      return true;
+    };
+    if (!walk(0, size, 0)) return null;
+    const mdat = located.mdat;
+    const ftyp = located.ftyp;
+    const moovOffset = located.moovOffset;
+    if (!mdat || moovOffset < 0 || !ftyp || chunkOffsets.length === 0) return null;
+    return {
+      size,
+      mdatOffset: mdat.offset,
+      mdatSize: mdat.size,
+      mdatHeaderSize: mdat.headerSize,
+      moovOffset,
+      moovBeforeMdat: moovOffset < mdat.offset,
+      ftyp,
+      sampleEntries: sampleChunks.length > 0 ? Buffer.concat(sampleChunks) : Buffer.alloc(0),
+      chunkOffsets,
+    };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+function parseBoxTree(buffer: Buffer): ParsedBox[] | null {
+  const boxes: ParsedBox[] = [];
+  const walk = (start: number, end: number, parent: number, depth: number): boolean => {
+    if (depth > 16) return false;
+    let position = start;
+    while (position + 8 <= end) {
+      const header = readHeaderFromBuffer(buffer, position, end);
+      if (!header) return false;
+      const index = boxes.length;
+      const box: ParsedBox = {
+        type: header.type, offset: position, size: header.size, headerSize: header.headerSize, parent,
+      };
+      boxes.push(box);
+      const childStart = containerChildStart(box);
+      if (childStart !== null && !walk(childStart, position + header.size, index, depth + 1)) return false;
+      position += header.size;
+    }
+    return true;
+  };
+  return walk(0, buffer.length, -1, 0) ? boxes : null;
+}
+
+function writeParsedBoxSize(buffer: Buffer, offset: number, size: number, headerSize: number): boolean {
+  if (!Number.isSafeInteger(size) || size < headerSize) return false;
+  if (buffer.readUInt32BE(offset) === 1) {
+    buffer.writeBigUInt64BE(BigInt(size), offset + 8);
+    return true;
+  }
+  if (size > 0xffffffff) return false;
+  buffer.writeUInt32BE(size, offset);
+  return true;
+}
+
+function spliceOut(buffer: Buffer, offset: number, length: number): Buffer {
+  const out = Buffer.allocUnsafe(buffer.length - length);
+  buffer.copy(out, 0, 0, offset);
+  buffer.copy(out, offset, offset + length);
+  return out;
+}
+
+/** TagLib's MPEG-4 save appends a new `free` atom inside `meta` and, when the
+ * file grows, adds that growth to every chunk offset at or after `udta`.
+ * Shrink `free`/`skip` atoms that start at or after `stco` until the header is
+ * back to `targetLength`, then subtract the growth so `mdat` stays put. Returns
+ * null when the padding cannot absorb the growth; the caller copies the file. */
+function fitMp4Prefix(rendered: Buffer, targetLength: number, mdatOffset: number): Buffer | null {
+  if (rendered.length < targetLength) return null;
+  const growth = rendered.length - targetLength;
+  let buffer = rendered;
+  let need = growth;
+  while (need > 0) {
+    const boxes = parseBoxTree(buffer);
+    if (!boxes) return null;
+    let stcoAt = -1;
+    for (const box of boxes) {
+      if ((box.type === "stco" || box.type === "co64") && (stcoAt < 0 || box.offset < stcoAt)) stcoAt = box.offset;
+    }
+    if (stcoAt < 0) return null;
+    const candidates = boxes
+      .filter((box) => MP4_FREE_TYPES.has(box.type) && box.offset >= stcoAt && box.size > box.headerSize)
+      .sort((left, right) => right.offset - left.offset);
+    if (candidates.length === 0) return null;
+    const box = candidates[0];
+    const cut = Math.min(need, box.size - box.headerSize);
+    if (!writeParsedBoxSize(buffer, box.offset, box.size - cut, box.headerSize)) return null;
+    let parent = box.parent;
+    while (parent >= 0) {
+      const ancestor = boxes[parent];
+      if (!writeParsedBoxSize(buffer, ancestor.offset, ancestor.size - cut, ancestor.headerSize)) return null;
+      parent = ancestor.parent;
+    }
+    buffer = spliceOut(buffer, box.offset + box.size - cut, cut);
+    need -= cut;
+  }
+  if (buffer.length !== targetLength) return null;
+  if (growth !== 0 && !adjustChunkOffsets(buffer, -growth, BigInt(mdatOffset))) return null;
+  return parseBoxTree(buffer) ? buffer : null;
+}
+
+function adjustChunkOffsets(buffer: Buffer, delta: number, threshold: bigint): boolean {
+  const boxes = parseBoxTree(buffer);
+  if (!boxes) return false;
+  for (const box of boxes) {
+    if (box.type !== "stco" && box.type !== "co64") continue;
+    const wide = box.type === "co64";
+    const body = box.offset + box.headerSize;
+    if (body + 8 > buffer.length) return false;
+    const count = buffer.readUInt32BE(body + 4);
+    const width = wide ? 8 : 4;
+    if (body + 8 + count * width > box.offset + box.size) return false;
+    for (let index = 0; index < count; index += 1) {
+      const at = body + 8 + index * width;
+      if (wide) {
+        const value = buffer.readBigUInt64BE(at);
+        if (value < threshold) continue;
+        const next = value + BigInt(delta);
+        if (next < 0n) return false;
+        buffer.writeBigUInt64BE(next, at);
+      } else {
+        const value = buffer.readUInt32BE(at);
+        if (BigInt(value) < threshold) continue;
+        const next = value + delta;
+        if (next < 0 || next > 0xffffffff) return false;
+        buffer.writeUInt32BE(next, at);
+      }
+    }
+  }
+  return true;
+}
+
+function sameChunkOffsets(left: bigint[], right: bigint[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
+  return true;
+}
+
+function assertMp4AudioPreserved(before: Mp4Layout, after: Mp4Layout | null, samePlace: boolean): void {
+  if (!after) throw new Error("MP4 layout became unreadable");
+  if (!before.ftyp.equals(after.ftyp)) throw new Error("MP4 ftyp changed");
+  const beforePayload = before.mdatSize - before.mdatHeaderSize;
+  const afterPayload = after.mdatSize - after.mdatHeaderSize;
+  if (beforePayload !== afterPayload) throw new Error("MP4 mdat payload length changed");
+  if (!before.sampleEntries.equals(after.sampleEntries)) throw new Error("MP4 audio sample entry changed");
+  if (!samePlace) return;
+  if (before.mdatOffset !== after.mdatOffset || before.mdatSize !== after.mdatSize) throw new Error("MP4 mdat moved");
+  if (!sameChunkOffsets(before.chunkOffsets, after.chunkOffsets)) throw new Error("MP4 chunk offsets changed");
+}
+
+function restoreBytes(filePath: string, offset: number, bytes: Buffer, size: number): void {
+  const fd = fs.openSync(filePath, "r+");
+  try {
+    fs.ftruncateSync(fd, size);
+    fs.writeSync(fd, bytes, 0, bytes.length, offset);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** In-place MP4 tag mutation. `mdat` before `moov` is saved on the original and
+ * the `moov` tail is restored on failure. `moov` before `mdat` is rendered on a
+ * header probe and patched back only when padding can keep `mdat` at its
+ * offset. A layout that cannot be patched returns `fallback` with the original
+ * bytes untouched so the caller can copy the file. */
+function tryMutateMp4InPlace(
+  filePath: string,
+  mutate: (targetPath: string) => void,
+  verify: (targetPath: string) => void,
+): Mp4InPlaceResult {
+  const before = readMp4Layout(filePath);
+  if (!before) return { kind: "fallback" };
+  return before.moovBeforeMdat
+    ? mutateMp4Prefix(filePath, before, mutate, verify)
+    : mutateMp4Tail(filePath, before, mutate, verify);
+}
+
+function mutateMp4Prefix(
+  filePath: string,
+  before: Mp4Layout,
+  mutate: (targetPath: string) => void,
+  verify: (targetPath: string) => void,
+): Mp4InPlaceResult {
+  const probePath = mediaRewritePath(filePath, "tags");
+  const prefix = Buffer.alloc(before.mdatOffset);
+  const readFd = fs.openSync(filePath, "r");
+  try {
+    if (fs.readSync(readFd, prefix, 0, prefix.length, 0) !== prefix.length) return { kind: "fallback" };
+  } finally {
+    fs.closeSync(readFd);
+  }
+  try {
+    fs.writeFileSync(probePath, prefix);
+    try {
+      mutate(probePath);
+    } catch {
+      return { kind: "fallback" };
+    }
+    const rendered = fs.readFileSync(probePath);
+    const fitted = rendered.length === before.mdatOffset
+      ? rendered
+      : fitMp4Prefix(rendered, before.mdatOffset, before.mdatOffset);
+    if (!fitted || fitted.length !== before.mdatOffset) return { kind: "fallback" };
+    let patched = false;
+    try {
+      const out = fs.openSync(filePath, "r+");
+      try {
+        patched = true;
+        fs.writeSync(out, fitted, 0, fitted.length, 0);
+        fs.fsyncSync(out);
+      } finally {
+        fs.closeSync(out);
+      }
+      verify(filePath);
+      assertMp4AudioPreserved(before, readMp4Layout(filePath), true);
+      return { kind: "written" };
+    } catch (error) {
+      if (patched) {
+        try {
+          restoreBytes(filePath, 0, prefix, before.size);
+        } catch (restoreError) {
+          return { kind: "failed", error: `${errorText(error)}; restore failed: ${errorText(restoreError)}` };
+        }
+      }
+      return { kind: "fallback" };
+    }
+  } finally {
+    fs.rmSync(probePath, { force: true });
+  }
+}
+
+function mutateMp4Tail(
+  filePath: string,
+  before: Mp4Layout,
+  mutate: (targetPath: string) => void,
+  verify: (targetPath: string) => void,
+): Mp4InPlaceResult {
+  const tailLength = before.size - before.moovOffset;
+  if (tailLength <= 0) return { kind: "fallback" };
+  const tail = Buffer.alloc(tailLength);
+  const readFd = fs.openSync(filePath, "r");
+  try {
+    if (fs.readSync(readFd, tail, 0, tail.length, before.moovOffset) !== tail.length) return { kind: "fallback" };
+  } finally {
+    fs.closeSync(readFd);
+  }
+  try {
+    mutate(filePath);
+    verify(filePath);
+    assertMp4AudioPreserved(before, readMp4Layout(filePath), true);
+    return { kind: "written" };
+  } catch (error) {
+    try {
+      restoreBytes(filePath, before.moovOffset, tail, before.size);
+    } catch (restoreError) {
+      return { kind: "failed", error: `${errorText(error)}; restore failed: ${errorText(restoreError)}` };
+    }
+    return { kind: "fallback" };
+  }
+}
+
+function writtenResult(coverPath?: string | null): MediaTagWriteResult {
+  return coverPath
+    ? { handled: true, success: true, backend: "taglib", coverEmbedded: true }
+    : { handled: true, success: true, backend: "taglib" };
+}
+
+function copyTagLibWorkingFile(
+  filePath: string,
+  mutate: (workingPath: string) => void,
+  verify: (workingPath: string) => void,
+  coverPath?: string | null,
+): MediaTagWriteResult {
+  const extension = extensionOf(filePath);
+  const beforeLayout = MP4_EXTENSIONS.has(extension) ? readMp4Layout(filePath) : null;
+  const workingPath = mediaRewritePath(filePath, "tags");
+  try {
+    fs.copyFileSync(filePath, workingPath);
+    mutate(workingPath);
+    verify(workingPath);
+    if (beforeLayout) assertMp4AudioPreserved(beforeLayout, readMp4Layout(workingPath), false);
+    replaceMediaFile(filePath, workingPath);
+    return writtenResult(coverPath);
+  } catch (error) {
+    fs.rmSync(workingPath, { force: true });
+    return { handled: true, success: false, backend: "taglib", error: errorText(error) };
+  }
+}
+
 export async function writeMediaTagsWithTagLib(
   filePath: string, tags: Record<string, string>, removeKeys: string[] = [], coverPath?: string | null,
 ): Promise<MediaTagWriteResult> {
   return withMediaFileLock(filePath, () => writeMediaTagsWithTagLibUnlocked(filePath, tags, removeKeys, coverPath));
+}
+
+function verifyWrittenTags(
+  filePath: string,
+  tags: Record<string, string>,
+  removeKeys: string[],
+  coverPath?: string | null,
+): void {
+  const expectedCover = coverPath ? fs.readFileSync(coverPath) : null;
+  withTagLibFile(filePath, (file) => {
+    verifyTagLibValuesInFile(file, extensionOf(filePath), tags, removeKeys);
+    if (expectedCover) verifyCoverBytes(file, expectedCover);
+  });
 }
 
 async function writeMediaTagsWithTagLibUnlocked(
@@ -777,53 +1179,34 @@ async function writeMediaTagsWithTagLibUnlocked(
     return { handled: false, success: false };
   }
 
-  let mediaStructure: MediaStructureSnapshot;
-  try {
-    mediaStructure = readMediaStructure(filePath);
-  } catch (error) {
-    return { handled: true, success: false, backend: "taglib", error: error instanceof Error ? error.message : String(error) };
-  }
-  const inPlace = tryWriteTagsInPlace(filePath, tags, removeKeys, coverPath, mediaStructure);
-  if (inPlace) return inPlace;
-
-  const workingPath = mediaRewritePath(filePath, "tags");
-  try {
-    fs.copyFileSync(filePath, workingPath);
-    writeTagLibValues(workingPath, tags, removeKeys);
-    // Embed the front cover in the same working copy, so a retag that needs
-    // tags and art costs one file copy + one replace instead of two.
-    const expectedCover = coverPath ? fs.readFileSync(coverPath) : null;
-    if (coverPath) {
-      withTagLibFile(workingPath, (file) => {
-        const picture = Picture.fromPath(coverPath);
-        picture.type = PictureType.FrontCover;
-        picture.description = "Cover (front)";
-        file.tag.pictures = [picture];
-        file.save();
-      });
+  const extension = extensionOf(filePath);
+  if (extension === ".flac" || extension === ".mp3") {
+    const inPlace = tryWriteTagsInPlace(filePath, tags, removeKeys, coverPath);
+    if (inPlace) return inPlace;
+  } else if (MP4_EXTENSIONS.has(extension)) {
+    const attempt = tryMutateMp4InPlace(
+      filePath,
+      (target) => {
+        writeTagLibValues(target, tags, removeKeys);
+        if (coverPath) writeCoverWithTagLib(target, coverPath);
+      },
+      (target) => verifyWrittenTags(target, tags, removeKeys, coverPath),
+    );
+    if (attempt.kind === "written") return writtenResult(coverPath);
+    if (attempt.kind === "failed") {
+      return { handled: true, success: false, backend: "taglib", error: attempt.error };
     }
-    const extension = extensionOf(workingPath);
-    withTagLibFile(workingPath, (file) => {
-      verifyTagLibValuesInFile(file, extension, tags, removeKeys);
-      if (expectedCover) {
-        const actual = file.tag.pictures[0]?.data?.toByteArray();
-        if (!actual || !Buffer.from(actual).equals(expectedCover)) throw new Error("TagLib cover verification failed");
-      }
-    });
-    verifyMediaStructure(workingPath, mediaStructure);
-    replaceMediaFile(filePath, workingPath);
-    return coverPath
-      ? { handled: true, success: true, backend: "taglib", coverEmbedded: true }
-      : { handled: true, success: true, backend: "taglib" };
-  } catch (error) {
-    fs.rmSync(workingPath, { force: true });
-    return {
-      handled: true,
-      success: false,
-      backend: "taglib",
-      error: error instanceof Error ? error.message : String(error),
-    };
   }
+
+  return copyTagLibWorkingFile(
+    filePath,
+    (workingPath) => {
+      writeTagLibValues(workingPath, tags, removeKeys);
+      if (coverPath) writeCoverWithTagLib(workingPath, coverPath);
+    },
+    (workingPath) => verifyWrittenTags(workingPath, tags, removeKeys, coverPath),
+    coverPath,
+  );
 }
 
 export async function clearMediaTagsWithTagLib(
@@ -832,55 +1215,52 @@ export async function clearMediaTagsWithTagLib(
   return withMediaFileLock(filePath, () => clearMediaTagsWithTagLibUnlocked(filePath));
 }
 
+function clearTagsOn(filePath: string): void {
+  withTagLibFile(filePath, (file) => {
+    const pictures = file.tag.pictures.map((picture) => {
+      const copy = Picture.fromFullData(
+        picture.data,
+        picture.type,
+        picture.mimeType,
+        picture.description,
+      );
+      copy.filename = picture.filename;
+      return copy;
+    });
+    file.tag.clear();
+    file.tag.pictures = pictures;
+    file.save();
+  });
+}
+
+function verifyClearedTags(filePath: string): void {
+  withTagLibFile(filePath, (file) => {
+    if (
+      file.tag.title
+      || file.tag.album
+      || file.tag.performers.length > 0
+      || file.tag.comment
+      || file.tag.lyrics
+    ) {
+      throw new Error("TagLib clear verification failed");
+    }
+  });
+}
+
 async function clearMediaTagsWithTagLibUnlocked(
   filePath: string,
 ): Promise<MediaTagWriteResult> {
   if (!canHandleWithTagLib(filePath)) {
     return { handled: false, success: false };
   }
-
-  const workingPath = mediaRewritePath(filePath, "tags");
-  try {
-    const mediaStructure = readMediaStructure(filePath);
-    fs.copyFileSync(filePath, workingPath);
-    withTagLibFile(workingPath, (file) => {
-      const pictures = file.tag.pictures.map((picture) => {
-        const copy = Picture.fromFullData(
-          picture.data,
-          picture.type,
-          picture.mimeType,
-          picture.description,
-        );
-        copy.filename = picture.filename;
-        return copy;
-      });
-      file.tag.clear();
-      file.tag.pictures = pictures;
-      file.save();
-    });
-    withTagLibFile(workingPath, (file) => {
-      if (
-        file.tag.title
-        || file.tag.album
-        || file.tag.performers.length > 0
-        || file.tag.comment
-        || file.tag.lyrics
-      ) {
-        throw new Error("TagLib clear verification failed");
-      }
-    });
-    verifyMediaStructure(workingPath, mediaStructure);
-    replaceMediaFile(filePath, workingPath);
-    return { handled: true, success: true, backend: "taglib" };
-  } catch (error) {
-    fs.rmSync(workingPath, { force: true });
-    return {
-      handled: true,
-      success: false,
-      backend: "taglib",
-      error: error instanceof Error ? error.message : String(error),
-    };
+  if (MP4_EXTENSIONS.has(extensionOf(filePath))) {
+    const attempt = tryMutateMp4InPlace(filePath, clearTagsOn, verifyClearedTags);
+    if (attempt.kind === "written") return { handled: true, success: true, backend: "taglib" };
+    if (attempt.kind === "failed") {
+      return { handled: true, success: false, backend: "taglib", error: attempt.error };
+    }
   }
+  return copyTagLibWorkingFile(filePath, clearTagsOn, verifyClearedTags);
 }
 
 export function readMediaCoverWithTagLib(filePath: string): Buffer | null {
@@ -903,6 +1283,11 @@ export async function replaceMediaCoverWithTagLib(
   return withMediaFileLock(filePath, () => replaceMediaCoverWithTagLibUnlocked(filePath, coverPath));
 }
 
+function verifyReplacedCover(filePath: string, coverPath: string): void {
+  const expected = fs.readFileSync(coverPath);
+  withTagLibFile(filePath, (file) => verifyCoverBytes(file, expected));
+}
+
 async function replaceMediaCoverWithTagLibUnlocked(
   filePath: string,
   coverPath: string,
@@ -910,35 +1295,20 @@ async function replaceMediaCoverWithTagLibUnlocked(
   if (!canHandleWithTagLib(filePath)) {
     return { handled: false, success: false };
   }
-
-  const workingPath = mediaRewritePath(filePath, "tags");
-  try {
-    const expected = fs.readFileSync(coverPath);
-    const mediaStructure = readMediaStructure(filePath);
-    fs.copyFileSync(filePath, workingPath);
-    withTagLibFile(workingPath, (file) => {
-      const picture = Picture.fromPath(coverPath);
-      picture.type = PictureType.FrontCover;
-      picture.description = "Cover (front)";
-      file.tag.pictures = [picture];
-      file.save();
-    });
-    withTagLibFile(workingPath, (file) => {
-      const actual = file.tag.pictures[0]?.data?.toByteArray();
-      if (!actual || !Buffer.from(actual).equals(expected)) {
-        throw new Error("TagLib cover verification failed");
-      }
-    });
-    verifyMediaStructure(workingPath, mediaStructure);
-    replaceMediaFile(filePath, workingPath);
-    return { handled: true, success: true, backend: "taglib" };
-  } catch (error) {
-    fs.rmSync(workingPath, { force: true });
-    return {
-      handled: true,
-      success: false,
-      backend: "taglib",
-      error: error instanceof Error ? error.message : String(error),
-    };
+  if (MP4_EXTENSIONS.has(extensionOf(filePath))) {
+    const attempt = tryMutateMp4InPlace(
+      filePath,
+      (target) => writeCoverWithTagLib(target, coverPath),
+      (target) => verifyReplacedCover(target, coverPath),
+    );
+    if (attempt.kind === "written") return { handled: true, success: true, backend: "taglib" };
+    if (attempt.kind === "failed") {
+      return { handled: true, success: false, backend: "taglib", error: attempt.error };
+    }
   }
+  return copyTagLibWorkingFile(
+    filePath,
+    (workingPath) => writeCoverWithTagLib(workingPath, coverPath),
+    (workingPath) => verifyReplacedCover(workingPath, coverPath),
+  );
 }
