@@ -189,6 +189,9 @@ initDatabase();
 initAppLogging();
 const fileRecoveryErrors = await FileMutationJournal.recoverPending();
 for (const error of fileRecoveryErrors) console.error(`[FileRecovery] ${error}`);
+const { recoverArtworkMaterializeFollowUps } = await import("./services/metadata/artwork-materialize-followup.js");
+const artworkFollowUpErrors = await recoverArtworkMaterializeFollowUps();
+for (const error of artworkFollowUpErrors) console.error(`[ArtworkFollowUp] ${error}`);
 startRuntimeDiagnostics();
 const startupHealthSnapshot = collectHealthDiagnosticsSnapshot();
 if (startupHealthSnapshot.status !== "healthy") {

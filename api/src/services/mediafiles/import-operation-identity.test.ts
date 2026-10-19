@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import { after, beforeEach, test } from "node:test";
 
 import {
@@ -300,6 +301,82 @@ test("dest edition cover cache overwrites a leftover downloader cover.jpg", asyn
     crypto.createHash("sha256").update(destCover).digest("hex"),
     "dest cover.jpg must be the edition MediaCover, not leftover downloader art",
   );
+});
+
+test("a busy writer during cover materialization does not fail the import", async () => {
+  const destCover = Buffer.from("DEST-EDITION-COVER-BUSY");
+  const leftoverCover = Buffer.from("DOWNLOADER-COVER-BUSY");
+  const releaseMbid = "a1b2c3d4-e5f6-4789-a012-3456789abcde";
+  const albumDir = path.join(tempDir, "library", "Afterlife", "Busy Writer");
+  fs.mkdirSync(albumDir, { recursive: true });
+  const trackPath = path.join(albumDir, "01 - Busy Writer.m4a");
+  const destSidecar = path.join(albumDir, "cover.jpg");
+  fs.writeFileSync(trackPath, "fixture audio");
+  fs.writeFileSync(destSidecar, leftoverCover);
+
+  seedLibrary();
+  const fileId = seedTrackFile({
+    file_path: trackPath,
+    library_root: path.join(tempDir, "library"),
+    relative_path: path.join("Afterlife", "Busy Writer", "01 - Busy Writer.m4a"),
+    filename: "01 - Busy Writer.m4a",
+    extension: "m4a",
+  });
+  db.prepare(`UPDATE TrackFiles SET canonical_release_mbid = ? WHERE id = ?`).run(releaseMbid, fileId);
+
+  const { getMediaCoverPath } = await import("../metadata/media-cover-service.js");
+  const cachePath = getMediaCoverPath(releaseMbid, "Edition", "cover", ".jpg");
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+  fs.writeFileSync(cachePath, destCover);
+
+  const { sqliteWriteMutexWorkerData, SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY, forceReleaseSqliteWriteMutexOwner } = await import("../../database/sqlite-write-mutex.js");
+  const { listArtworkMaterializeFollowUps, recoverArtworkMaterializeFollowUps } = await import("../metadata/artwork-materialize-followup.js");
+  const workerData = sqliteWriteMutexWorkerData();
+  const worker = new Worker(new URL("../commands/worker/command-worker-bootstrap.mjs", import.meta.url), {
+    workerData: {
+      ...workerData,
+      mode: "hold",
+      name: "busy cover writer",
+      __entry: new URL("../../database/sqlite-write-mutex.fixture.ts", import.meta.url).href,
+    },
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("busy writer did not acquire the database lock")), 10_000);
+      worker.on("message", (message: { kind?: string }) => {
+        if (message?.kind === "acquired") {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      worker.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+
+    await ensureDestAlbumArtworkForFileIds([fileId]);
+    assert.equal(fs.readFileSync(destSidecar).toString(), leftoverCover.toString(),
+      "the import keeps the previous cover when the database write cannot commit");
+    const pending = listArtworkMaterializeFollowUps();
+    assert.equal(pending.some((item) => item.outputPath === destSidecar && item.reason === "database is locked"), true);
+
+    worker.postMessage("release");
+    await new Promise<void>((resolve, reject) => {
+      worker.once("exit", (code) => (code === 0 ? resolve() : reject(new Error(`busy writer exited ${code}`))));
+      worker.once("error", reject);
+    });
+    assert.deepEqual(await recoverArtworkMaterializeFollowUps(), []);
+    assert.equal(
+      crypto.createHash("sha256").update(fs.readFileSync(destSidecar)).digest("hex"),
+      crypto.createHash("sha256").update(destCover).digest("hex"),
+      "the follow-up writes the edition cover once the database is free",
+    );
+    assert.equal(listArtworkMaterializeFollowUps().some((item) => item.outputPath === destSidecar), false);
+  } finally {
+    await worker.terminate();
+    forceReleaseSqliteWriteMutexOwner(Number(workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]));
+  }
 });
 
 test("dest edition artwork cache does not materialize cover.jpg when sidecars are disabled", async () => {

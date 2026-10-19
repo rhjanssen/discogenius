@@ -3,11 +3,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 import * as jpeg from "jpeg-js";
 import * as pngjs from "pngjs";
-import { db, withSqliteWriteGate } from "../../database.js";
-import { storeArtworkSource } from "./media-cover-state.js";
-import { rememberLibraryCoverSidecar } from "./media-cover-library-storage.js";
 import { decodeArtworkImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
-import { ArtworkMutationJournal } from "./artwork-mutation-journal.js";
+import { artworkFileIdentity } from "./artwork-mutation-journal.js";
+import { commitArtworkSidecar } from "./artwork-sidecar-commit.js";
 import { getCachedMediaCoverOriginalFilePath, syncCachedMediaCoverToFile, normalizeMediaCoverEntityId,
   getSelectedArtworkSource, getMediaCoverFolder, normalizeMediaCoverType, mediaCoverFileSha256,
   normalizeArtworkUrl, configuredArtworkPreference, type MediaCoverSidecarOptions, type MediaCoverSidecarSyncResult } from "./media-cover-service.js";
@@ -79,44 +77,39 @@ export async function materializeMediaCoverToFile(options: MediaCoverSidecarOpti
   const unchanged = fs.existsSync(options.outputPath) && mediaCoverFileSha256(options.outputPath) === hash;
   fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
   const staged = `${options.outputPath}.${crypto.randomUUID()}.tmp`;
-  let intentId: string | null = null;
-  try {
-    if (!unchanged) fs.writeFileSync(staged, master);
-    await withSqliteWriteGate(() => {
-      const current = getSelectedArtworkSource(entityId, options.coverEntity, identity.coverType);
-      if (JSON.stringify(current) !== JSON.stringify(source) || configuredArtworkPreference() !== preference) {
-        throw new Error("Artwork source changed during materialization; retry with the selected source");
-      }
-      if (localPath && fileWitness(localPath) !== localWitness) throw new Error("Artwork master changed during conversion; retry after inventory");
+  if (!unchanged) fs.writeFileSync(staged, master);
+  const originalIdentity = artworkFileIdentity(options.outputPath);
+  const replacementIdentity = unchanged ? null : artworkFileIdentity(staged);
+  const sourceStillSelected = (): void => {
+    const current = getSelectedArtworkSource(entityId, options.coverEntity, identity.coverType);
+    if (JSON.stringify(current) !== JSON.stringify(source) || configuredArtworkPreference() !== preference) {
+      throw new Error("Artwork source changed during materialization; retry with the selected source");
+    }
+    if (localPath && fileWitness(localPath) !== localWitness) throw new Error("Artwork master changed during conversion; retry after inventory");
+  };
+  return commitArtworkSidecar({
+    unchanged,
+    stagedPath: staged,
+    destination: options.outputPath,
+    scope: identity,
+    folder: getMediaCoverFolder(entityId, options.coverEntity),
+    hash,
+    source,
+    originalIdentity,
+    replacementIdentity,
+    assertWitnesses: () => {
+      sourceStillSelected();
       if (witness() !== destinationWitness) throw new Error("Artwork destination changed during materialization; retry after inventory");
-      try {
-        if (!unchanged) {
-          intentId = ArtworkMutationJournal.prepare(identity,options.outputPath,staged);
-          ArtworkMutationJournal.publish(intentId);
-        }
-        db.transaction(() => {
-          const row = db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')")
-            .get(options.outputPath) as { id: number } | undefined;
-          rememberLibraryCoverSidecar(identity, getMediaCoverFolder(entityId, options.coverEntity), options.outputPath, hash, row?.id);
-          if (source) storeArtworkSource(identity, { ...source, contentHash: hash });
-          if (intentId) ArtworkMutationJournal.markCommitted(intentId);
-        })();
-        if (intentId) ArtworkMutationJournal.recoverOneSync(intentId);
-      } catch (error) {
-        if (intentId && ArtworkMutationJournal.hasPending()) {
-          try {
-            ArtworkMutationJournal.recoverOneSync(intentId);
-          } catch (restoreError) {
-            throw new AggregateError([error, restoreError], `Artwork replacement needs recovery; intent ${intentId} retained`);
-          }
-        }
-        throw error;
-      }
-    }, "materialize selected library artwork");
-  } finally {
-    // Once intent exists, recovery owns its paths, including failed restores.
-    if (!intentId) fs.rmSync(staged, { force: true });
-  }
-  return unchanged ? "unchanged" : "written";
+    },
+    assertSource: sourceStillSelected,
+    followUp: {
+      entityId,
+      coverEntity: options.coverEntity,
+      coverTypes: [identity.coverType],
+      outputPath: options.outputPath,
+      libraryRoot: options.libraryRoot ?? null,
+      reason: "database is locked",
+    },
+  });
 }
 

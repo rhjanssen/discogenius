@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db } from "../../database.js";
 import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
 import { artworkLinkOwnsTrackedPath } from "./media-cover-library-storage.js";
 
@@ -31,6 +31,26 @@ export function artworkFileIdentity(file: string): string | null {
   }
 }
 
+/** Same dev, inode, size, and mtime as a recorded identity. No byte read. */
+export function artworkStatMatchesIdentity(file: string, identity: string | null): boolean {
+  let stat: fs.BigIntStats | null = null;
+  try {
+    const found = fs.lstatSync(file, { bigint: true });
+    if (!found.isFile() || found.isSymbolicLink()) return false;
+    stat = found;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") stat = null;
+    else throw error;
+  }
+  if (identity === null) return stat === null;
+  if (!stat) return false;
+  const parsed = JSON.parse(identity) as { dev?: string; ino?: string; size?: string; mtime?: string };
+  return parsed.dev === String(stat.dev)
+    && parsed.ino === String(stat.ino)
+    && parsed.size === String(stat.size)
+    && parsed.mtime === String(stat.mtimeNs);
+}
+
 function identity(intent: Intent): ArtworkIdentity {
   return { coverEntity: intent.cover_entity, entityId: intent.entity_id, coverType: intent.cover_type };
 }
@@ -58,9 +78,10 @@ function ownershipSnapshot(snapshot: string): string {
   return JSON.stringify({links,file});
 }
 
-/** Caller owns writer admission. Persist intent BEFORE touching the old image;
- * acknowledge in the same transaction as source/link updates. Startup and the
- * command watchdog recover this journal before more disk commands can run. */
+/** Persist intent BEFORE touching the old image; acknowledge it in the same
+ * transaction as the source and link updates. File hashes and the rename stay
+ * outside the write lock: the caller holds that lock only around `recordIntent`
+ * and `markCommitted`. Startup recovery runs before disk commands. */
 export class ArtworkMutationJournal {
   static hasPending(): boolean {
     return Boolean(db.prepare("SELECT 1 FROM ArtworkMutationJournal LIMIT 1").get());
@@ -72,7 +93,21 @@ export class ArtworkMutationJournal {
     return row;
   }
 
+  /** Hash outside the write lock, then insert. Tests and recovery call this directly. */
   static prepare(scope: ArtworkIdentity, destination: string, staged: string): string {
+    const replacement = artworkFileIdentity(staged);
+    if (!replacement) throw new Error("Staged artwork is missing");
+    return this.recordIntent(scope, destination, staged, artworkFileIdentity(destination), replacement);
+  }
+
+  /** SQL only. Caller holds the write lock. Identities were hashed before the lock. */
+  static recordIntent(
+    scope: ArtworkIdentity,
+    destination: string,
+    staged: string,
+    originalIdentity: string | null,
+    replacementIdentity: string,
+  ): string {
     if (db.inTransaction) throw new Error("Artwork replacement intent must commit before file publication");
     if (db.prepare("SELECT 1 FROM FileMutationJournal WHERE source_path=? OR destination_path=? LIMIT 1").get(destination,destination)
       || db.prepare("SELECT 1 FROM LibraryCleanupJournal WHERE source_path=? LIMIT 1").get(destination)) {
@@ -81,22 +116,24 @@ export class ArtworkMutationJournal {
     if (path.resolve(destination) === path.resolve(staged) || path.dirname(destination) !== path.dirname(staged)) {
       throw new Error("Artwork staging must be a separate file beside its destination");
     }
-    const replacement = artworkFileIdentity(staged);
-    if (!replacement) throw new Error("Staged artwork is missing");
+    if (!artworkStatMatchesIdentity(staged, replacementIdentity)) throw new Error("Staged artwork is missing");
+    if (!artworkStatMatchesIdentity(destination, originalIdentity)) throw new Error("Artwork or ownership changed before publication");
     const id = randomUUID();
     db.prepare(`INSERT INTO ArtworkMutationJournal
       (id,cover_entity,entity_id,cover_type,destination_path,staged_path,backup_path,original_identity,replacement_identity,database_snapshot)
       VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id,...artworkKey(scope),destination,staged,
       path.join(path.dirname(destination), `.discogenius-artwork-${id}.previous`),
-      artworkFileIdentity(destination),replacement,databaseSnapshot(scope,destination));
+      originalIdentity,replacementIdentity,databaseSnapshot(scope,destination));
     return id;
   }
 
   static publish(id: string): void {
     const intent = this.get(id);
-    if (intent.phase !== "prepared" || databaseSnapshot(identity(intent),intent.destination_path) !== intent.database_snapshot
+    // Hash before the ownership re-read so the snapshot check sits next to the rename.
+    if (intent.phase !== "prepared"
       || artworkFileIdentity(intent.destination_path) !== intent.original_identity
-      || artworkFileIdentity(intent.staged_path) !== intent.replacement_identity) {
+      || artworkFileIdentity(intent.staged_path) !== intent.replacement_identity
+      || databaseSnapshot(identity(intent),intent.destination_path) !== intent.database_snapshot) {
       throw new Error("Artwork or ownership changed before publication");
     }
     if (intent.original_identity) fs.linkSync(intent.destination_path,intent.backup_path);
@@ -106,7 +143,11 @@ export class ArtworkMutationJournal {
   static markCommitted(id: string): void {
     if (!db.inTransaction) throw new Error("Artwork acknowledgement requires the provenance transaction");
     const intent = this.get(id);
-    if (artworkFileIdentity(intent.destination_path) !== intent.replacement_identity) throw new Error("Published artwork changed before commit");
+    // Rename keeps the staged inode. Comparing that stat avoids hashing the
+    // image inside the provenance transaction.
+    if (!artworkStatMatchesIdentity(intent.destination_path, intent.replacement_identity)) {
+      throw new Error("Published artwork changed before commit");
+    }
     if (!hasCommittedLibraryLink(intent)) throw new Error("Artwork commit has no matching library link");
     if (db.prepare("UPDATE ArtworkMutationJournal SET phase='committed' WHERE id=? AND phase='prepared'").run(id).changes !== 1) {
       throw new Error("Artwork commit lost its intent");
@@ -156,7 +197,9 @@ export class ArtworkMutationJournal {
     const rows = db.prepare("SELECT id FROM ArtworkMutationJournal ORDER BY created_at,id").all() as Array<{id:string}>;
     const errors: string[] = [];
     for (const {id} of rows) {
-      try { await withSqliteWriteGate(() => this.recoverOneSync(id),"artwork:recovery"); }
+      // Hashes and renames stay outside the write lock. Each statement takes it
+      // only for its own write.
+      try { this.recoverOneSync(id); }
       catch (error) { errors.push(`${id}: ${error instanceof Error ? error.message : String(error)}`); }
       // Recovery may inspect a full-size image; let requests run between intents.
       await new Promise<void>(resolve => setImmediate(resolve));

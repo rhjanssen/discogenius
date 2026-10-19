@@ -1,9 +1,9 @@
 import { CONTENT_TYPES_BY_EXTENSION, decodeImage, decodeArtworkImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
 import { commitArtworkProxies, hasCurrentArtworkProxies } from "./media-cover-proxy-storage.js";
-import { ArtworkMutationJournal, artworkFileIdentity } from "./artwork-mutation-journal.js";
+import { artworkFileIdentity, artworkStatMatchesIdentity } from "./artwork-mutation-journal.js";
+import { commitArtworkSidecar } from "./artwork-sidecar-commit.js";
 import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSidecar } from "./media-cover-library-storage.js";
 import { readArtworkSource, storeArtworkSource, type ArtworkSource } from "./media-cover-state.js";
-import { withSqliteWriteMutexSync } from "../../database/sqlite-write-mutex.js";
 import { CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import { db, withSqliteWriteGate } from "../../database.js";
@@ -505,7 +505,7 @@ export function mediaCoverFilesMatch(leftPath: string, rightPath: string): boole
   }
 }
 
-export type MediaCoverSidecarSyncResult = "missing" | "unchanged" | "written";
+export type MediaCoverSidecarSyncResult = "missing" | "unchanged" | "written" | "deferred";
 
 export type MediaCoverSidecarOptions = {
   entityId: string | number | null | undefined;
@@ -543,47 +543,48 @@ export function syncCachedMediaCoverToFile(options: MediaCoverSidecarOptions): M
   const destinationWitness = artworkFileIdentity(options.outputPath);
   fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
   const temporaryPath = `${options.outputPath}.${crypto.randomUUID()}.tmp`;
-  let intentId: string | null = null;
-  try {
-    if (!unchanged) fs.copyFileSync(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
-    const entityId = normalizeMediaCoverEntityId(options.entityId)!;
-    const coverType = coverTypes.find(type => getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, type) === sourcePath)!;
-    const folder = getMediaCoverFolder(entityId, options.coverEntity);
-    const hash = mediaCoverFileSha256(sourcePath);
-    let metadataFileId: number | undefined;
-    try { metadataFileId = (db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')").get(options.outputPath) as { id: number } | undefined)?.id; } catch { /* Import has not registered its sidecar yet. */ }
-    const identity = { entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(coverType) };
-    const marker = getSelectedArtworkSource(entityId, options.coverEntity, coverType);
-    withSqliteWriteMutexSync(() => {
-      if (artworkFileIdentity(sourcePath) !== sourceWitness || artworkFileIdentity(options.outputPath) !== destinationWitness
-        || JSON.stringify(getSelectedArtworkSource(entityId,options.coverEntity,coverType)) !== JSON.stringify(marker)) {
+  if (!unchanged) fs.copyFileSync(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
+  const entityId = normalizeMediaCoverEntityId(options.entityId)!;
+  const coverType = coverTypes.find(type => getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, type) === sourcePath)!;
+  const folder = getMediaCoverFolder(entityId, options.coverEntity);
+  const hash = mediaCoverFileSha256(sourcePath);
+  const identity = { entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(coverType) };
+  const marker = getSelectedArtworkSource(entityId, options.coverEntity, coverType);
+  const replacementIdentity = unchanged ? null : artworkFileIdentity(temporaryPath);
+  const witnessesStillMatch = (): void => {
+    if (!artworkStatMatchesIdentity(sourcePath, sourceWitness)
+      || !artworkStatMatchesIdentity(options.outputPath, destinationWitness)
+      || JSON.stringify(getSelectedArtworkSource(entityId, options.coverEntity, coverType)) !== JSON.stringify(marker)) {
+      throw new Error("Artwork source or destination changed before local publication");
+    }
+  };
+  // Legacy originals retire through witnessed cache maintenance. Provisional
+  // import links and existing proxy filenames cannot authorize deletion.
+  return commitArtworkSidecar({
+    unchanged,
+    stagedPath: temporaryPath,
+    destination: options.outputPath,
+    scope: identity,
+    folder,
+    hash,
+    source: marker,
+    originalIdentity: destinationWitness,
+    replacementIdentity,
+    assertWitnesses: witnessesStillMatch,
+    assertSource: () => {
+      if (JSON.stringify(getSelectedArtworkSource(entityId, options.coverEntity, coverType)) !== JSON.stringify(marker)) {
         throw new Error("Artwork source or destination changed before local publication");
       }
-      try {
-        if (!unchanged) {
-          intentId = ArtworkMutationJournal.prepare(identity,options.outputPath,temporaryPath);
-          ArtworkMutationJournal.publish(intentId);
-        }
-        db.transaction(() => {
-          rememberLibraryCoverSidecar(identity, folder, options.outputPath, hash, metadataFileId);
-          if (marker) storeArtworkSource(identity, { ...marker, contentHash: hash });
-          if (intentId) ArtworkMutationJournal.markCommitted(intentId);
-        })();
-        if (intentId) ArtworkMutationJournal.recoverOneSync(intentId);
-      } catch (error) {
-        if (intentId && ArtworkMutationJournal.hasPending()) {
-          try { ArtworkMutationJournal.recoverOneSync(intentId); }
-          catch (recoveryError) { throw new AggregateError([error,recoveryError],`Artwork replacement needs recovery; intent ${intentId} retained`); }
-        }
-        throw error;
-      }
-    }, "artwork sidecar provenance");
-    // Legacy originals retire through witnessed cache maintenance. Provisional
-    // import links and existing proxy filenames cannot authorize deletion.
-  } finally {
-    if (!intentId) fs.rmSync(temporaryPath,{force:true});
-  }
-  return unchanged ? "unchanged" : "written";
+    },
+    followUp: {
+      entityId,
+      coverEntity: options.coverEntity,
+      coverTypes: [identity.coverType],
+      outputPath: options.outputPath,
+      libraryRoot: options.libraryRoot ?? null,
+      reason: "database is locked",
+    },
+  });
 }
 
 function appendMediaCoverQuery(url: string, key: string, value: string): string {

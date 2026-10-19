@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db, isSqliteBusyError, withSqliteWriteGate } from "../../database.js";
 import { OrganizerService, type OrganizeResult } from "./organizer.js";
 import {
     updateAlbumDownloadStatus,
@@ -35,6 +35,7 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { deriveQuality, parseAudioFile } from "./audioUtils.js";
 import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
+import { recordArtworkMaterializeFollowUp } from "../metadata/artwork-materialize-followup.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
@@ -222,10 +223,22 @@ export async function ensureDestAlbumArtworkForFileIds(
                     });
                 }
             }
+            // A locked database records its own follow-up and must not fail the import.
+            if (result === "deferred") continue;
             if (resolvedCovers.has(releaseMbid) && result === "missing") {
                 failures.push(`edition ${releaseMbid}: resolved artwork was not present in the media-cover cache`);
             }
         } catch (error) {
+            if (isSqliteBusyError(error)) {
+                recordArtworkMaterializeFollowUp({
+                    entityId: releaseMbid,
+                    coverEntity: "Edition",
+                    coverTypes: ["cover"],
+                    outputPath,
+                    reason: "database is locked",
+                });
+                continue;
+            }
             failures.push(`${outputPath}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
