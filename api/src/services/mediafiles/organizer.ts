@@ -818,6 +818,9 @@ export class OrganizerService {
     }
     this.ensureDir(path.dirname(dest));
 
+    let derivedVideoQuality = sourceVideoQuality;
+    let albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
+    let libraryFileId: number | null = null;
     await this.holdImportFolders([params.src, dest], async () => {
     if (path.extname(params.src).toLowerCase() !== ".mp4") {
       const success = await withHddIoPermit(this.importDiskMeta(), () => convertToMp4(params.src, dest));
@@ -830,10 +833,9 @@ export class OrganizerService {
     }
 
     const metrics = await withHddIoPermit(this.importDiskMeta(), () => parseAudioFile(dest));
-    const derivedVideoQuality = deriveVideoQuality(metrics) ?? row.quality ?? null;
-    const albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
+    derivedVideoQuality = deriveVideoQuality(metrics) ?? row.quality ?? null;
+    albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
 
-    let libraryFileId: number | null = null;
     await withSqliteWriteGate(() => db.transaction(() => {
       // Refresh ONLY the provider VIDEO offer's own facts (never canonical ids,
       // never INSERT OR REPLACE). Match authority belongs to the matcher: the
@@ -2369,6 +2371,7 @@ export class OrganizerService {
           statusMessage: `Importing ${trackTitle}`,
         });
 
+        let importedTrackFileId: number | null = null;
         await this.holdImportFolders([srcFile, destFile], async () => {
         await this.moveFileCrossDevice(srcFile, destFile);
 
@@ -2387,7 +2390,6 @@ export class OrganizerService {
         // Batch all per-track DB writes in a single transaction.
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
         const mediaIdStr = trackRow?.id ? String(trackRow.id) : trackId;
-        let importedTrackFileId: number | null = null;
         await withSqliteWriteGate(() => db.transaction(() => {
           const libraryFileId = this.persistLibraryFile({
             artistId,
@@ -3046,6 +3048,7 @@ export class OrganizerService {
       });
 
       const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
+      let importedTrackFileId: number | null = null;
       await this.holdImportFolders([src, dest], async () => {
       await this.moveFileCrossDevice(src, dest);
 
@@ -3061,7 +3064,6 @@ export class OrganizerService {
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
       // Batch all per-track DB writes in a single transaction.
-      let importedTrackFileId: number | null = null;
       await withSqliteWriteGate(() => db.transaction(() => {
         const libraryFileId = this.persistLibraryFile({
           artistId,
@@ -3588,6 +3590,8 @@ export class OrganizerService {
       }
       this.ensureDir(path.dirname(dest));
 
+      let derivedVideoQuality = sourceVideoQuality;
+      let libraryFileId: number | null = null;
       // Convert to MP4 directly from source into destination if not already MP4
       await this.holdImportFolders([src, dest], async () => {
       if (ext !== '.mp4') {
@@ -3604,7 +3608,7 @@ export class OrganizerService {
 
       // Analyze file quality/resolution from the actual downloaded file.
       const metrics = await withHddIoPermit(this.importDiskMeta(), () => parseAudioFile(dest));
-      const derivedVideoQuality = deriveVideoQuality(metrics) ?? video.quality ?? null;
+      derivedVideoQuality = deriveVideoQuality(metrics) ?? video.quality ?? null;
       const videoIdentity = resolveLibraryFileIdentity({
         artistId,
         albumId: video.album_id ? String(video.album_id) : null,
@@ -3618,7 +3622,6 @@ export class OrganizerService {
       });
 
       // Batch all per-video DB writes in a single transaction.
-      let libraryFileId: number | null = null;
       await withSqliteWriteGate(() => db.transaction(() => {
         libraryFileId = this.persistLibraryFile({
           artistId,
