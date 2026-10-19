@@ -1,5 +1,15 @@
 import { mediaRewritePath, replaceMediaFile } from "./media-file-rewrite.js";
 import { withMediaFileLock } from "./media-file-lock.js";
+import {
+  armInPlaceUndo,
+  discardInPlaceUndo,
+  fsyncMediaFile,
+  isInPlaceTagCrash,
+  markInPlaceUndoVerified,
+  noteInPlaceWriteFinished,
+  restoreInPlaceUndo,
+  type ArmedUndo,
+} from "./in-place-tag-undo.js";
 import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -645,8 +655,8 @@ function leadingMetadataLength(filePath: string, size: number): number | null {
  * small probe (head + a slice of audio), and only if the region keeps its exact
  * length and the audio bytes are untouched do we overwrite that region of the
  * original, fsync, and verify tags and cover on the real file. The probe's
- * untouched audio tail is the structure check. The old head is kept in a
- * sibling backup until verification passes and is restored on any failure.
+ * untouched audio tail is the structure check. The old head is fsynced to a
+ * sibling undo before the original is patched and restored on any failure.
  * Returns null when the write does not fit or the layout is not eligible; the
  * caller then uses the copy+replace path.
  */
@@ -669,8 +679,7 @@ function tryWriteTagsInPlace(
     try { fs.readSync(fd, original, 0, probeLength, 0); } finally { fs.closeSync(fd); }
   }
   const probePath = mediaRewritePath(filePath, "tags");
-  const backupPath = mediaRewritePath(filePath, "tags");
-  let headWritten = false;
+  let armed: ArmedUndo | null = null;
   try {
     fs.writeFileSync(probePath, original);
     writeTagLibValues(probePath, tags, removeKeys);
@@ -688,36 +697,37 @@ function tryWriteTagsInPlace(
     if (leadingMetadataLength(probePath, rendered.length) !== headLength) return null;
     if (!rendered.subarray(headLength).equals(original.subarray(headLength))) return null;
     const newHead = rendered.subarray(0, headLength);
-    if (newHead.equals(original.subarray(0, headLength))) {
-      // Nothing to change on disk; still verify below.
-    } else {
-      const backupFd = fs.openSync(backupPath, "w");
-      try { fs.writeSync(backupFd, original, 0, headLength, 0); fs.fsyncSync(backupFd); } finally { fs.closeSync(backupFd); }
+    if (!newHead.equals(original.subarray(0, headLength))) {
+      armed = armInPlaceUndo(filePath, 0, original.subarray(0, headLength), size);
       const fd = fs.openSync(filePath, "r+");
       try {
-        headWritten = true;
         fs.writeSync(fd, newHead, 0, headLength, 0);
         fs.fsyncSync(fd);
       } finally { fs.closeSync(fd); }
+      noteInPlaceWriteFinished();
     }
     const expectedCover = coverPath ? fs.readFileSync(coverPath) : null;
     withTagLibFile(filePath, (file) => {
       verifyTagLibValuesInFile(file, extension, tags, removeKeys);
       if (expectedCover) verifyCoverBytes(file, expectedCover);
     });
+    if (armed) {
+      markInPlaceUndoVerified(armed);
+      discardInPlaceUndo(armed.id, armed.filePath);
+      armed = null;
+    }
     return coverPath
       ? { handled: true, success: true, backend: "taglib", coverEmbedded: true }
       : { handled: true, success: true, backend: "taglib" };
   } catch (error) {
-    if (headWritten) {
-      const fd = fs.openSync(filePath, "r+");
-      try { fs.writeSync(fd, original, 0, headLength, 0); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    if (isInPlaceTagCrash(error)) throw error;
+    if (armed && !restoreArmedUndo(armed, error)) {
+      return { handled: true, success: false, backend: "taglib", error: errorText(error) };
     }
     console.warn(`[MediaTags] In-place tag write fell back to copy for ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   } finally {
     fs.rmSync(probePath, { force: true });
-    fs.rmSync(backupPath, { force: true });
   }
 }
 
@@ -1010,14 +1020,16 @@ function assertMp4AudioPreserved(before: Mp4Layout, after: Mp4Layout | null, sam
   if (!sameChunkOffsets(before.chunkOffsets, after.chunkOffsets)) throw new Error("MP4 chunk offsets changed");
 }
 
-function restoreBytes(filePath: string, offset: number, bytes: Buffer, size: number): void {
-  const fd = fs.openSync(filePath, "r+");
+/** Put the original region back and drop the undo. False leaves the undo armed
+ * so startup recovery can still repair the file; the caller must not copy. */
+function restoreArmedUndo(armed: ArmedUndo, error: unknown): boolean {
   try {
-    fs.ftruncateSync(fd, size);
-    fs.writeSync(fd, bytes, 0, bytes.length, offset);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
+    restoreInPlaceUndo(armed);
+    discardInPlaceUndo(armed.id, armed.filePath);
+    return true;
+  } catch (restoreError) {
+    console.warn(`[MediaTags] In-place restore failed for ${armed.filePath}: ${errorText(error)}; ${errorText(restoreError)}`);
+    return false;
   }
 }
 
@@ -1052,6 +1064,7 @@ function mutateMp4Prefix(
   } finally {
     fs.closeSync(readFd);
   }
+  let armed: ArmedUndo | null = null;
   try {
     fs.writeFileSync(probePath, prefix);
     try {
@@ -1064,29 +1077,31 @@ function mutateMp4Prefix(
       ? rendered
       : fitMp4Prefix(rendered, before.mdatOffset, before.mdatOffset);
     if (!fitted || fitted.length !== before.mdatOffset) return { kind: "fallback" };
-    let patched = false;
-    try {
+    if (!fitted.equals(prefix)) {
+      armed = armInPlaceUndo(filePath, 0, prefix, before.size);
       const out = fs.openSync(filePath, "r+");
       try {
-        patched = true;
         fs.writeSync(out, fitted, 0, fitted.length, 0);
         fs.fsyncSync(out);
       } finally {
         fs.closeSync(out);
       }
-      verify(filePath);
-      assertMp4AudioPreserved(before, readMp4Layout(filePath), true);
-      return { kind: "written" };
-    } catch (error) {
-      if (patched) {
-        try {
-          restoreBytes(filePath, 0, prefix, before.size);
-        } catch (restoreError) {
-          return { kind: "failed", error: `${errorText(error)}; restore failed: ${errorText(restoreError)}` };
-        }
-      }
-      return { kind: "fallback" };
+      noteInPlaceWriteFinished();
     }
+    verify(filePath);
+    assertMp4AudioPreserved(before, readMp4Layout(filePath), true);
+    if (armed) {
+      markInPlaceUndoVerified(armed);
+      discardInPlaceUndo(armed.id, armed.filePath);
+      armed = null;
+    }
+    return { kind: "written" };
+  } catch (error) {
+    if (isInPlaceTagCrash(error)) throw error;
+    if (armed && !restoreArmedUndo(armed, error)) {
+      return { kind: "failed", error: errorText(error) };
+    }
+    return { kind: "fallback" };
   } finally {
     fs.rmSync(probePath, { force: true });
   }
@@ -1107,16 +1122,22 @@ function mutateMp4Tail(
   } finally {
     fs.closeSync(readFd);
   }
+  let armed: ArmedUndo | null = null;
   try {
+    armed = armInPlaceUndo(filePath, before.moovOffset, tail, before.size);
     mutate(filePath);
+    fsyncMediaFile(filePath);
+    noteInPlaceWriteFinished();
     verify(filePath);
     assertMp4AudioPreserved(before, readMp4Layout(filePath), true);
+    markInPlaceUndoVerified(armed);
+    discardInPlaceUndo(armed.id, armed.filePath);
+    armed = null;
     return { kind: "written" };
   } catch (error) {
-    try {
-      restoreBytes(filePath, before.moovOffset, tail, before.size);
-    } catch (restoreError) {
-      return { kind: "failed", error: `${errorText(error)}; restore failed: ${errorText(restoreError)}` };
+    if (isInPlaceTagCrash(error)) throw error;
+    if (armed && !restoreArmedUndo(armed, error)) {
+      return { kind: "failed", error: errorText(error) };
     }
     return { kind: "fallback" };
   }

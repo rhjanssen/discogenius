@@ -10,7 +10,22 @@ export function mediaRewritePath(originalPath: string, kind: "tags" | "rewrite" 
 
 /** Only exclude files owned by our rewrite protocol, not arbitrary hidden music. */
 export function isMediaRewriteTemporaryName(name: string): boolean {
-  return /^\.discogenius-(?:tags|rewrite|cleanup)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[^/\\]+$/i.test(name);
+  return /^\.discogenius-(?:tags|rewrite|cleanup)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[^/\\]+$/i.test(name)
+    || /^\.discogenius-tag-undo-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:bin|json)$/i.test(name);
+}
+
+/** Make a directory entry durable. Some platforms reject directory fsync. */
+export function fsyncDirectory(dir: string): void {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(dir, "r");
+    fs.fsyncSync(fd);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EINVAL" && code !== "ENOTSUP" && code !== "EPERM" && code !== "EBADF") throw error;
+  } finally {
+    if (fd != null) fs.closeSync(fd);
+  }
 }
 
 export async function rewriteMediaCopy(
@@ -51,6 +66,7 @@ export function replaceMediaFile(originalPath: string, preparedPath: string): vo
   const fd = fs.openSync(prepared, "r+");
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(prepared, original);
+  fsyncDirectory(path.dirname(original));
 }
 
 /** Wait for the child to close before deleting temporary output or releasing

@@ -93,6 +93,26 @@ A TagLib write now verifies once:
    An in-place success also requires the `mdat` offset and chunk offsets to
    stay put.
 
+An in-place write is crash-safe. Before the original is patched, the bytes
+needed to undo that region are written to a sibling
+`.discogenius-tag-undo-<id>.bin`, and the intent is fsynced (file and
+directory) as `.discogenius-tag-undo-<id>.json` plus a pointer in
+`config/tag-undo/`. The intent is not a `FileMutationJournal` row: inserting
+one would take the SQLite write gate while the retag still holds the HDD
+permit. `FileMutationJournal.recoverPending()` is still the only startup
+entry. It runs before any command touches the folder, under the album-folder
+lock and then the HDD permit.
+
+Recovery is deterministic:
+
+- `preparing` (the backup was not durable yet): delete leftovers, do not touch the media file.
+- `armed`, and the patched region still matches the pre-write image: delete the backup.
+- `armed`, and the region does not match: write the backup back, truncate to the original size, fsync, and delete the backup only after the pre-write image matches. A kill after the patched bytes were fsynced and before verify therefore comes back byte-identical to the original.
+- `verified`, and the post-write image matches: delete the backup and keep the new tags.
+- `verified`, but the file matches neither image: restore the original, same as `armed`.
+
+OGG, Opus, AAC, and any FLAC, MP3, or MP4 layout that does not fit the in-place rules stay on copy-plus-`rename`. That rename fsyncs the replacement and its directory. A kill leaves either the old file or the new file. Hashing only the patched region (the tag head, or the `moov` tail) keeps a large `mdat` out of the undo hash.
+
 The measurements below are the previous copy-plus-structure path, kept so the
 cost of a full rewrite is still visible. A structural reread averaged about
 1 ms even for the 507 MB 4K sample. The complete production path for metadata

@@ -18,6 +18,13 @@ import {
   clearMediaTagsWithTagLib,
   writeMediaTagsWithTagLib,
 } from "./media-tag-io.js";
+import {
+  clearInPlaceTagCrashHooks,
+  crashNextInPlaceTagWrite,
+  hasPendingInPlaceTagUndo,
+  isInPlaceTagCrash,
+  recoverInPlaceTagUndos,
+} from "./in-place-tag-undo.js";
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
 
@@ -497,3 +504,69 @@ test("TagLib rewrites FLAC/MP3 tags in place when padding fits and keeps audio i
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("a killed in-place MP4 tail write restores the original file on startup", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mp4-tail-crash-"));
+  const filePath = path.join(tempDir, "mdat-first.m4a");
+  try {
+    generateAudio(filePath, ["-c:a", "aac", "-f", "mp4"]);
+    await assertKilledInPlaceWriteRestores(filePath, { title: "Torn moov" });
+  } finally {
+    clearInPlaceTagCrashHooks();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("a killed in-place MP4 prefix write restores the original file on startup", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mp4-prefix-crash-"));
+  const filePath = path.join(tempDir, "faststart.m4a");
+  try {
+    const generated = spawnSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+      "-t", "1", "-c:a", "aac", "-movflags", "+faststart", "-f", "mp4", filePath,
+    ], { windowsHide: true, encoding: "utf-8" });
+    assert.equal(generated.status, 0, generated.stderr);
+    expandFreeBeforeMdat(filePath, 4096);
+    await assertKilledInPlaceWriteRestores(filePath, { title: "Torn prefix" });
+  } finally {
+    clearInPlaceTagCrashHooks();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("a killed in-place FLAC tag write restores the original file on startup", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-flac-crash-"));
+  const filePath = path.join(tempDir, "sample.flac");
+  try {
+    generateAudio(filePath, ["-c:a", "flac"]);
+    // The first write adds padding and may replace the file. The second is in place.
+    assert.equal((await writeMediaTagsWithTagLib(filePath, formatTags(".flac"))).success, true);
+    await assertKilledInPlaceWriteRestores(filePath, { TITLE: "Torn header" });
+  } finally {
+    clearInPlaceTagCrashHooks();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+/** Death after the patched bytes are fsynced and before verify must not leave
+ * a torn file or a backup once recovery has run. */
+async function assertKilledInPlaceWriteRestores(filePath: string, tags: Record<string, string>): Promise<void> {
+  const snapshot = fs.readFileSync(filePath);
+  const inode = fs.statSync(filePath).ino;
+  crashNextInPlaceTagWrite();
+  await assert.rejects(
+    () => writeMediaTagsWithTagLib(filePath, tags),
+    (error: unknown) => isInPlaceTagCrash(error),
+  );
+  assert.equal(fs.statSync(filePath).ino, inode, "the killed write replaced the file instead of patching it");
+  assert.equal(hasPendingInPlaceTagUndo(), true);
+  assert.ok(fs.readdirSync(path.dirname(filePath)).some((name) => name.startsWith(".discogenius-tag-undo-")));
+  const torn = fs.readFileSync(filePath);
+  assert.ok(!torn.equals(snapshot), "the crash hook ran before any byte changed");
+  assert.deepEqual(await recoverInPlaceTagUndos(), []);
+  assert.ok(fs.readFileSync(filePath).equals(snapshot), "recovery did not restore the pre-write bytes");
+  assert.equal(fs.statSync(filePath).ino, inode);
+  assert.equal(hasPendingInPlaceTagUndo(), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(filePath)).filter((name) => name.startsWith(".discogenius-")), []);
+}
