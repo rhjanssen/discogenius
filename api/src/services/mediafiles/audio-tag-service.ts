@@ -14,22 +14,8 @@ import {
   type WriteAudioTagsPolicy,
   getConfigSection,
 } from "../config/config.js";
-import { embedAudioCover, compareEmbeddedAudioCover, prepareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, writeMetadataWithCover, removeAllTags } from "./audioUtils.js";
-import {
-  type AcoustIdLookupResult,
-  type MusicBrainzRecording,
-  type MusicBrainzRelease,
-  generateFingerprint,
-  lookupAcoustIdMatches,
-  lookupMusicBrainzRecording,
-  lookupMusicBrainzRecordingsByIsrc,
-  lookupMusicBrainzReleasesByBarcode,
-} from "./fingerprint.js";
-import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
-import { shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
-import { loadArtistMetadataIdentity } from "../music/managed-artists.js";
+import { embedAudioCover, compareEmbeddedAudioCover, prepareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadataWithCover, removeAllTags } from "./audioUtils.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
-import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
 import { cleanProviderText } from "./metadata-files.js";
@@ -771,155 +757,6 @@ function formatReleaseCountryTag(value: unknown): string | null {
   return withoutBrackets.toLowerCase() === "worldwide" ? "Worldwide" : withoutBrackets;
 }
 
-function normalizeIdentifier(value: string | null | undefined): string {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-type FingerprintRecordingMatch = {
-  recording: MusicBrainzRecording;
-  titleScore: number;
-  artistScore: number;
-  albumScore: number;
-  durationDelta: number | null;
-  isrcMatch: boolean;
-  score: number;
-};
-
-type MusicBrainzReleaseMatch = {
-  release: MusicBrainzRelease;
-  titleScore: number;
-  artistScore: number;
-  yearScore: number;
-  score: number;
-};
-
-function evaluateFingerprintRecordingMatch(row: RetagTrackRow, recording: MusicBrainzRecording): FingerprintRecordingMatch {
-  const normalizedTrackTitle = normalizeComparableText(row.media_title);
-  const normalizedPrimaryArtist = normalizeComparableText(row.primary_artist_name);
-  const normalizedAlbumTitle = normalizeComparableText(row.album_title || "");
-  const normalizedRecordingTitle = normalizeComparableText(recording.title);
-  const recordingArtistScores = recording.artists.map((artistName) => stringSimilarity(
-    normalizedPrimaryArtist,
-    normalizeComparableText(artistName),
-  ));
-  const recordingAlbumScores = recording.releaseTitles.map((releaseTitle) => stringSimilarity(
-    normalizedAlbumTitle,
-    normalizeComparableText(releaseTitle),
-  ));
-  const titleScore = normalizedTrackTitle
-    ? stringSimilarity(normalizedTrackTitle, normalizedRecordingTitle)
-    : 0;
-  const artistScore = normalizedPrimaryArtist && recordingArtistScores.length > 0
-    ? Math.max(...recordingArtistScores)
-    : 0;
-  const albumScore = normalizedAlbumTitle && recordingAlbumScores.length > 0
-    ? Math.max(...recordingAlbumScores)
-    : 0;
-  const trackIsrcs = new Set(parseRecordingIsrcs(row.media_isrc));
-  const isrcMatch = recording.isrcs.some((isrc) => trackIsrcs.has(normalizeIdentifier(isrc)));
-
-  const rowDuration = Number(row.media_duration || 0);
-  const recordingDuration = Number(recording.durationSeconds || 0);
-  const durationDelta = rowDuration > 0 && recordingDuration > 0
-    ? Math.abs(rowDuration - recordingDuration)
-    : null;
-
-  let score = 0;
-  if (isrcMatch) {
-    score += 4;
-  }
-
-  score += titleScore * 3;
-  score += artistScore * 2;
-  score += albumScore;
-
-  if (durationDelta !== null) {
-    if (durationDelta <= 2) {
-      score += 1;
-    } else if (durationDelta <= 5) {
-      score += 0.5;
-    } else if (durationDelta > 12) {
-      score -= 1;
-    }
-  }
-
-  return {
-    recording,
-    titleScore,
-    artistScore,
-    albumScore,
-    durationDelta,
-    isrcMatch,
-    score,
-  };
-}
-
-function isAcceptableFingerprintMatch(match: FingerprintRecordingMatch): boolean {
-  if (match.isrcMatch) {
-    return true;
-  }
-
-  if (match.titleScore < 0.9) {
-    return false;
-  }
-
-  if (match.artistScore > 0 && match.artistScore < 0.72) {
-    return false;
-  }
-
-  if (match.durationDelta !== null && match.durationDelta > 10) {
-    return false;
-  }
-
-  return match.score >= 4.1;
-}
-
-function evaluateMusicBrainzReleaseMatch(row: RetagTrackRow, release: MusicBrainzRelease): MusicBrainzReleaseMatch {
-  const normalizedAlbumTitle = normalizeComparableText(row.album_title || "");
-  const normalizedPrimaryArtist = normalizeComparableText(row.primary_artist_name);
-  const normalizedReleaseTitle = normalizeComparableText(release.title);
-  const titleScore = normalizedAlbumTitle
-    ? stringSimilarity(normalizedAlbumTitle, normalizedReleaseTitle)
-    : 0;
-  const artistScore = normalizedPrimaryArtist && release.artistCredits.length > 0
-    ? Math.max(...release.artistCredits.map((credit) => stringSimilarity(
-      normalizedPrimaryArtist,
-      normalizeComparableText(credit.name),
-    )))
-    : 0;
-
-  const currentYear = normalizeReleaseDate(row.album_release_date || row.media_release_date)?.slice(0, 4) || "";
-  const releaseYear = String(release.date || "").slice(0, 4);
-  const yearScore = currentYear && releaseYear
-    ? (currentYear === releaseYear ? 1 : 0)
-    : 0;
-
-  let score = titleScore * 3 + artistScore * 2 + yearScore;
-  if (normalizeIdentifier(row.album_upc) && normalizeIdentifier(release.barcode) === normalizeIdentifier(row.album_upc)) {
-    score += 3;
-  }
-
-  return {
-    release,
-    titleScore,
-    artistScore,
-    yearScore,
-    score,
-  };
-}
-
-function isAcceptableReleaseMatch(match: MusicBrainzReleaseMatch): boolean {
-  if (match.titleScore < 0.85) {
-    return false;
-  }
-
-  if (match.artistScore > 0 && match.artistScore < 0.72) {
-    return false;
-  }
-
-  return match.score >= 4.2;
-}
-
 function buildNativeTagAliases(rawId: string): string[] {
   const normalized = rawId.trim().toLowerCase();
   if (!normalized) {
@@ -1377,32 +1214,6 @@ function escapeLike(value: string): string {
 }
 
 export class AudioTagService {
-  private static refreshArtistPathFromTemplateIfNeeded(artistId: number) {
-    const artist = loadArtistMetadataIdentity(String(artistId));
-    if (!artist) {
-      return;
-    }
-
-    if (!shouldReapplyArtistPathTemplate({
-      artistId: artist.id,
-      artistName: String(artist.name || "Unknown Artist"),
-      artistMbId: artist.mbid || null,
-      existingPath: artist.path || null,
-    })) {
-      return;
-    }
-
-    try {
-      MoveArtistService.moveArtist({
-        artistId: String(artist.id),
-        applyNamingTemplate: true,
-        moveFiles: true,
-      });
-    } catch (error) {
-      console.warn(`[Retag] Failed to reapply artist path template for ${artistId}:`, error);
-    }
-  }
-
   private static buildScope(options: RetagScopeOptions = {}): {
     where: string[];
     params: Array<string | number>;
@@ -1507,6 +1318,7 @@ export class AudioTagService {
   private static retagFingerprint(config: MetadataConfig, quality: QualityConfig, tags: ManagedTag[]): string {
     return `retag:v1:${createHash("sha256").update(JSON.stringify({
       policy: config.write_audio_tags_policy ?? "no",
+      scrub: config.scrub_audio_tags === true,
       replaygain: config.embed_replaygain !== false,
       lyrics: quality.embed_lyrics === true,
       cover: quality.embed_cover === true,
@@ -1516,9 +1328,10 @@ export class AudioTagService {
 
   /**
    * Desired managed tags from the catalogue row only. No stat, no lyric
-   * sidecar, no file open. A stored `retag:v1:` stamp matches when it was
-   * written without sidecar lyric text; stamps that included a sidecar open
-   * once and are then stored on `managed_tag_fingerprint`.
+   * sidecar, no file open. The hash includes the scrub flag, so turning scrub
+   * on reopens files once. A stored `retag:v1:` stamp matches when it was
+   * written without sidecar lyric text; stamps that included a sidecar, or
+   * that predate the scrub flag, open once and are then stored again.
    */
   static desiredManagedFingerprints(ids: number[]): Map<number, string> {
     const config = getConfigSection("metadata") as MetadataConfig;
@@ -2340,237 +2153,6 @@ export class AudioTagService {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
     }
-  }
-
-  private static async enrichMusicBrainzMetadata(row: RetagTrackRow, config: MetadataConfig): Promise<RetagTrackRow> {
-    let nextRow = { ...row };
-
-    if (nextRow.album_upc && (!nextRow.album_mbid || !nextRow.album_mb_release_group_id || !nextRow.artist_mbid)) {
-      const releases = await lookupMusicBrainzReleasesByBarcode(nextRow.album_upc);
-      let bestReleaseMatch: MusicBrainzReleaseMatch | null = null;
-
-      for (const release of releases) {
-        const candidate = evaluateMusicBrainzReleaseMatch(nextRow, release);
-        if (!isAcceptableReleaseMatch(candidate)) {
-          continue;
-        }
-
-        if (!bestReleaseMatch || candidate.score > bestReleaseMatch.score) {
-          bestReleaseMatch = candidate;
-        }
-      }
-
-      if (bestReleaseMatch) {
-        const primaryArtistCredit = bestReleaseMatch.release.artistCredits[0];
-        db.prepare(`
-          UPDATE TrackFiles
-          SET canonical_release_mbid = COALESCE(canonical_release_mbid, ?),
-              canonical_release_group_mbid = COALESCE(canonical_release_group_mbid, ?)
-          WHERE id = ?
-        `).run(bestReleaseMatch.release.id, bestReleaseMatch.release.releaseGroupId, nextRow.id);
-
-        if (primaryArtistCredit?.id) {
-          db.prepare(`
-            UPDATE ArtistMetadata
-            SET mbid = COALESCE(mbid, ?)
-            WHERE id = ?
-          `).run(primaryArtistCredit.id, nextRow.artist_id);
-          this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
-        }
-
-        nextRow = {
-          ...nextRow,
-          album_mbid: nextRow.album_mbid || bestReleaseMatch.release.id,
-          album_mb_release_group_id: nextRow.album_mb_release_group_id || bestReleaseMatch.release.releaseGroupId,
-          artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
-        };
-      }
-    }
-
-    if (nextRow.media_isrc && !nextRow.media_mbid) {
-      const recordings: MusicBrainzRecording[] = [];
-      for (const isrc of parseRecordingIsrcs(nextRow.media_isrc)) {
-        recordings.push(...await lookupMusicBrainzRecordingsByIsrc(isrc));
-      }
-      let bestIsrcMatch: FingerprintRecordingMatch | null = null;
-
-      for (const recording of recordings) {
-        const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
-        if (!isAcceptableFingerprintMatch(candidate)) {
-          continue;
-        }
-
-        if (!bestIsrcMatch || candidate.score > bestIsrcMatch.score) {
-          bestIsrcMatch = candidate;
-        }
-      }
-
-      if (bestIsrcMatch) {
-        const primaryArtistCredit = bestIsrcMatch.recording.artistCredits?.[0];
-        db.prepare(`
-          UPDATE TrackFiles
-          SET canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?)
-          WHERE id = ?
-        `).run(bestIsrcMatch.recording.id, nextRow.id);
-
-        if (primaryArtistCredit?.id) {
-          db.prepare(`
-            UPDATE ArtistMetadata
-            SET mbid = COALESCE(mbid, ?)
-            WHERE id = ?
-          `).run(primaryArtistCredit.id, nextRow.artist_id);
-          this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
-        }
-
-        nextRow = {
-          ...nextRow,
-          media_mbid: bestIsrcMatch.recording.id,
-          artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
-        };
-      }
-    }
-
-    // Canonical imports already carry their MusicBrainz recording identity.
-    // Fingerprinting is only for unknown/mistagged files; attempting fpcalc on
-    // Atmos E-AC-3 can fail and used to hold the import finalizer at 94%.
-    if (nextRow.media_mbid) return nextRow;
-
-    if (!config.enable_fingerprinting) {
-      return nextRow;
-    }
-
-    const resolvedPath = resolveStoredLibraryPath({
-      filePath: nextRow.file_path,
-      libraryRoot: nextRow.library_root,
-      relativePath: nextRow.relative_path,
-    });
-
-    if (!fs.existsSync(resolvedPath)) {
-      return nextRow;
-    }
-
-    let fingerprint = nextRow.file_fingerprint || nextRow.media_acoustid_fingerprint;
-    let fingerprintDuration = Number(nextRow.file_fingerprint_duration || nextRow.media_fingerprint_duration || nextRow.media_duration || 0) || null;
-
-    if (!fingerprint) {
-      try {
-        const fingerprintResult = await generateFingerprint(resolvedPath);
-        fingerprint = fingerprintResult.fingerprint;
-        fingerprintDuration = fingerprintResult.duration || fingerprintDuration;
-
-        db.prepare(`
-          UPDATE TrackFiles
-          SET fingerprint = ?, fingerprint_duration = ?, verified_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(fingerprint, fingerprintDuration, nextRow.id);
-      } catch (error) {
-        console.warn(`[Retag] Failed to fingerprint ${resolvedPath}:`, error);
-        return nextRow;
-      }
-    }
-
-    if (!fingerprint || !fingerprintDuration) {
-      return {
-        ...nextRow,
-        file_fingerprint: fingerprint,
-        media_duration: fingerprintDuration ?? nextRow.media_duration,
-      };
-    }
-
-    let acoustidMatches: AcoustIdLookupResult[] = [];
-    if (!nextRow.media_acoustid_id && !nextRow.file_acoustid_id) {
-      acoustidMatches = await lookupAcoustIdMatches(fingerprint, fingerprintDuration);
-    }
-
-    const matchedKnownAcoustId = nextRow.media_mbid
-      ? acoustidMatches.find((match) => match.id && match.recordingIds.includes(String(nextRow.media_mbid)))
-      : null;
-    const resolvedAcoustId = nextRow.media_acoustid_id || nextRow.file_acoustid_id || matchedKnownAcoustId?.id || null;
-
-    if (nextRow.media_mbid) {
-      db.prepare(`
-        UPDATE TrackFiles
-        SET acoustid_id = COALESCE(?, acoustid_id),
-            fingerprint = COALESCE(fingerprint, ?),
-            fingerprint_duration = COALESCE(fingerprint_duration, ?),
-            verified_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(resolvedAcoustId, fingerprint, fingerprintDuration, nextRow.id);
-
-      return {
-        ...nextRow,
-        file_fingerprint: fingerprint,
-        file_acoustid_id: resolvedAcoustId,
-        media_acoustid_id: resolvedAcoustId,
-        media_acoustid_fingerprint: nextRow.media_acoustid_fingerprint || fingerprint,
-        media_duration: fingerprintDuration ?? nextRow.media_duration,
-      };
-    }
-
-    let bestFingerprintMatch: FingerprintRecordingMatch | null = null;
-    let bestFingerprintAcoustId: string | null = null;
-    for (const acoustid of acoustidMatches) {
-      for (const recordingId of acoustid.recordingIds.slice(0, 5)) {
-        const recording = await lookupMusicBrainzRecording(recordingId);
-        if (!recording) {
-          continue;
-        }
-
-        const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
-        if (!isAcceptableFingerprintMatch(candidate)) {
-          continue;
-        }
-
-        if (!bestFingerprintMatch || candidate.score > bestFingerprintMatch.score) {
-          bestFingerprintMatch = candidate;
-          bestFingerprintAcoustId = acoustid.id || null;
-        }
-      }
-    }
-
-    if (!bestFingerprintMatch) {
-      return {
-        ...nextRow,
-        file_fingerprint: fingerprint,
-        media_duration: fingerprintDuration ?? nextRow.media_duration,
-      };
-    }
-
-    const fallbackIsrc = !nextRow.media_isrc && bestFingerprintMatch.recording.isrcs.length > 0
-      ? bestFingerprintMatch.recording.isrcs.join('; ')
-      : null;
-    const primaryArtistCredit = bestFingerprintMatch.recording.artistCredits?.[0];
-
-    db.prepare(`
-      UPDATE TrackFiles
-      SET canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?),
-          acoustid_id = COALESCE(?, acoustid_id),
-          fingerprint = COALESCE(fingerprint, ?),
-          fingerprint_duration = COALESCE(fingerprint_duration, ?),
-          verified_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(bestFingerprintMatch.recording.id, bestFingerprintAcoustId, fingerprint, fingerprintDuration, nextRow.id);
-
-    if (primaryArtistCredit?.id) {
-      db.prepare(`
-        UPDATE ArtistMetadata
-        SET mbid = COALESCE(mbid, ?)
-        WHERE id = ?
-      `).run(primaryArtistCredit.id, nextRow.artist_id);
-      this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
-    }
-
-    return {
-      ...nextRow,
-      file_fingerprint: fingerprint,
-      file_acoustid_id: bestFingerprintAcoustId || nextRow.file_acoustid_id,
-      media_duration: fingerprintDuration ?? nextRow.media_duration,
-      media_mbid: bestFingerprintMatch.recording.id,
-      media_acoustid_id: bestFingerprintAcoustId || nextRow.media_acoustid_id,
-      media_acoustid_fingerprint: nextRow.media_acoustid_fingerprint || fingerprint,
-      media_isrc: nextRow.media_isrc || fallbackIsrc,
-      artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
-    };
   }
 
   private static buildDesiredTags(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
@@ -3539,6 +3121,10 @@ export class AudioTagService {
           }
 
           const desiredTagsArr = this.buildDesiredTags(row, config);
+          // The stored fingerprint is the catalogue projection only. Lyric text
+          // is written when present, but it is not part of the skip hash, so a
+          // later pass does not reopen the file to re-read a sidecar.
+          const fingerprint = this.retagFingerprint(config, quality, desiredTagsArr);
 
           if (quality.embed_lyrics) {
             const lyrics = await resolveLyricsForRetagRow(row, resolvedPath, options.includeExternalLyrics === true, lyricsByProviderMedia);
@@ -3551,7 +3137,6 @@ export class AudioTagService {
             removals: this.buildRowManagedTagRemovals(row, config),
             embeddedCoverContext,
           };
-          const fingerprint = this.retagFingerprint(config, quality, desiredTagsArr);
           const preview = await this.evaluateRow(row, config, evaluationOptions);
           if (!preview.missing && preview.changes.length === 0) {
             const stat = fs.statSync(resolvedPath);
@@ -3597,26 +3182,9 @@ export class AudioTagService {
           }
 
           const stat = fs.statSync(resolvedPath);
-          const verification = await this.evaluateRow(row, config, evaluationOptions);
-          const verified = !verification.missing && !verification.error && verification.changes.length === 0;
-          rememberFact(stat.size, stat.mtime.toISOString(), verified ? fingerprint : null, id);
-          if (!verified) {
-            const remainingFields = verification.changes
-              .map((change) => change.field)
-              .filter(Boolean)
-              .join(", ");
-            const warnMsg = verification.error
-              ? `Metadata verification notice: ${verification.error}`
-              : `Metadata verification notice${remainingFields ? ` for: ${remainingFields}` : ""}`;
-            console.warn(`[Retag] Track ${id} file ${resolvedPath}: ${warnMsg}`);
-            result.errors.push({
-              id,
-              error: warnMsg,
-            });
-            result.retagged++;
-            return;
-          }
-
+          // The writer already read the tags back once. A second music-metadata
+          // pass used to disagree with that read-back and stamp a null fingerprint.
+          rememberFact(stat.size, stat.mtime.toISOString(), fingerprint, id);
           result.retagged++;
         });
       } catch (error) {

@@ -191,11 +191,6 @@ export class VideoTagService {
         } else {
           await withSqliteWriteGate(() => update.run(stat.size, stat.mtime.toISOString(), row.id), "retag:video-file-facts");
         }
-        const verification = await AudioTagService.evaluateFileTags(resolvedPath, managedTags, removals, config.scrub_audio_tags === true);
-        if (verification.changes.length) {
-          result.errors.push({ id: row.id, error: `Video metadata verification failed: ${verification.changes.map(change => change.field).join(", ")}` });
-          continue;
-        }
         result.retagged++;
       } catch (error) {
         result.errors.push({ id: row.id, error: error instanceof Error ? error.message : String(error) });

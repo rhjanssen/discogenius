@@ -422,7 +422,7 @@ for (const extension of ["flac", "m4a", "mp3"]) {
       })).success, true);
     }
     dbModule.db.prepare(`UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = ?,
-      provider_item_id = NULL, provider = NULL, provider_id = NULL WHERE id = ?`)
+      provider_item_id = NULL, provider = NULL, provider_id = NULL, managed_tag_fingerprint = NULL WHERE id = ?`)
       .run(mediaPath, path.basename(mediaPath), extension, row.id);
     configModule.updateConfig("metadata", {
       ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files", scrub_audio_tags: true,
@@ -479,7 +479,7 @@ test("retag verifies its written track-count snapshot while catalogue hydration 
   const mediaPath = path.join(tempDir, "concurrent-catalog.flac");
   const generated = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.1", mediaPath], { windowsHide: true, encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
-  dbModule.db.prepare("UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = 'flac' WHERE id = ?")
+  dbModule.db.prepare("UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = 'flac', managed_tag_fingerprint = NULL WHERE id = ?")
     .run(mediaPath, path.basename(mediaPath), row.id);
   configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files" });
   configModule.updateConfig("quality", { ...configModule.getConfigSection("quality"), embed_cover: false, embed_lyrics: false });
@@ -518,7 +518,7 @@ for (const extension of ["flac", "m4a", "mp3"]) {
     const generated = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.1",
       "-c:a", codec, "-metadata", "track=7/12", "-metadata", "disc=2/3", "-metadata", "title=Wrong title", mediaPath], { windowsHide: true, encoding: "utf8" });
     assert.equal(generated.status, 0, generated.stderr);
-    dbModule.db.prepare("UPDATE TrackFiles SET file_path=?, relative_path=?, extension=?, track_id=NULL, canonical_track_mbid=NULL WHERE id=?")
+    dbModule.db.prepare("UPDATE TrackFiles SET file_path=?, relative_path=?, extension=?, track_id=NULL, canonical_track_mbid=NULL, managed_tag_fingerprint=NULL WHERE id=?")
       .run(mediaPath, path.basename(mediaPath), extension, row.id);
     configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files", scrub_audio_tags: true });
     configModule.updateConfig("quality", { ...configModule.getConfigSection("quality"), embed_cover: false, embed_lyrics: false });
