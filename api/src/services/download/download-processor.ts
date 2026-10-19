@@ -462,6 +462,10 @@ const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 
 const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS', 2, 1);
 const MAX_PENDING_IMPORTS = readIntEnv('DISCOGENIUS_MAX_PENDING_IMPORTS', 4, 1);
 const DOWNLOAD_LEASE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_LEASE_MS', 90_000, 1_000);
+
+/** One id per process start. Docker reuses the same pid, so a pid prefix would
+ * treat the previous boot's still-live import lease as ours and skip CAS. */
+export const importWorkerInstanceId = randomUUID();
 const DOWNLOAD_HEARTBEAT_MS = readIntEnv(
     'DISCOGENIUS_DOWNLOAD_HEARTBEAT_MS',
     Math.max(1_000, Math.floor(DOWNLOAD_LEASE_MS / 3)),
@@ -778,7 +782,7 @@ export class DownloadProcessor {
     }
 
     private makeAttemptOwner(commandId: number): string {
-        const workerId = `download-attempt:${process.pid}:${commandId}:${randomUUID()}`;
+        const workerId = `download-attempt:${importWorkerInstanceId}:${commandId}:${randomUUID()}`;
         this.mintedAttemptOwners.add(workerId);
         return workerId;
     }
@@ -789,10 +793,9 @@ export class DownloadProcessor {
         for (const owner of this.attemptOwners.values()) {
             if (owner === workerId) return true;
         }
-        // Worker threads share the process id. A restarted download worker is
-        // the only downloader in this process, so a live download-attempt token
-        // minted here still belongs to it after the in-memory queue is gone.
-        return workerId.startsWith(`download-attempt:${process.pid}:`);
+        // Same boot, new in-memory queue: the token still names this start.
+        // A previous boot's pid token does not, even when the pid matches.
+        return workerId.startsWith(`download-attempt:${importWorkerInstanceId}:`);
     }
 
     private leaseIsLive(leaseExpiresAt: string | null | undefined, now: Date): boolean {

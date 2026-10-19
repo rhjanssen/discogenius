@@ -78,8 +78,11 @@ pass reads queued and started download commands whose payload says
 read is the import-backpressure count, so a steady tick adds no second query
 and no write. A write happens only when a handoff is missing from this
 worker's memory and its owner is queued, null, or its lease is dead. Taking
-that owner does not increment `attempt`. A live owner minted in this process
-is put back in memory with no write.
+that owner does not increment `attempt`. A live owner minted by this process
+start (its token carries that start's `importWorkerInstanceId`) is put back
+in memory with no write. A token from a previous boot, including the old
+`download-attempt:<pid>:` form, is foreign: a still-live lease is left with
+its owner, and an expired lease is taken by compare-and-swap.
 
 One unclaimable head does not stop the handoff behind it. An entry leaves the
 in-memory list only when its import starts, the durable row is terminal, or

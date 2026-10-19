@@ -21,6 +21,7 @@ const { db } = databaseModule;
 const {
     DownloadProcessor,
     DownloadProcessorWorkerProxy,
+    importWorkerInstanceId,
     recoverInterruptedDownloadAttempts,
 } = await import('./download-processor.js');
 const {
@@ -835,7 +836,7 @@ function seedImportHandoff(suffix: string, options: {
     readyAt?: string;
 } = {}) {
     const id = pushTrack(suffix);
-    const owner = options.owner ?? `download-attempt:${process.pid}:${id}:${suffix}`;
+    const owner = options.owner ?? `download-attempt:${importWorkerInstanceId}:${id}:${suffix}`;
     claim(id, owner);
     const readyAt = options.readyAt ?? new Date(Date.now() - 10 * 60_000).toISOString();
     CommandQueueManager.updateState(id, {
@@ -978,6 +979,63 @@ test('an owner mismatch keeps the replayable handoff and imports it on the same 
     assert.equal(current.worker_id, row.owner);
     assert.equal(current.attempt, row.attempt);
     assert.equal(current.payload.downloadState?.state, 'importPending');
+});
+
+test('a same-boot import token is resumed without compare-and-swap', () => {
+    const row = seedImportHandoff('same-boot');
+    assert.match(row.owner, new RegExp(`^download-attempt:${importWorkerInstanceId}:`));
+    const processor = new DownloadProcessor() as any;
+    assert.equal(processor.mintedAttemptOwners.has(row.owner), false);
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched, [{ commandId: row.id, workerId: row.owner }]);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.worker_id, row.owner);
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.status, 'started');
+});
+
+test('a previous-boot pid token with a live lease is left alone', () => {
+    const row = seedImportHandoff('previous-boot-live', {
+        owner: `download-attempt:${process.pid}:previous:live`,
+        lease: 'live',
+    });
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched, []);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.worker_id, row.owner);
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.status, 'started');
+    assert.equal(current.payload.downloadState?.state, 'importPending');
+});
+
+test('an expired previous-boot pid token is adopted by compare-and-swap', () => {
+    const row = seedImportHandoff('previous-boot-expired', {
+        owner: `download-attempt:${process.pid}:previous:expired`,
+        lease: 'dead',
+    });
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0]?.commandId, row.id);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.status, 'started');
+    assert.notEqual(current.worker_id, row.owner);
+    assert.match(current.worker_id || '', new RegExp(`^download-attempt:${importWorkerInstanceId}:`));
+    assert.equal(dispatched[0]?.workerId, current.worker_id);
 });
 
 test('a dead-owner import handoff is adopted once when two schedulers run', () => {
