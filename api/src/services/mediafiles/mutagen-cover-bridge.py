@@ -136,6 +136,11 @@ def write_mp4_metadata(media_path: str, payload_path: str) -> None:
     audio.save()
 
 
+def is_valid_vorbis_key(key: str) -> bool:
+    """Vorbis comment field names: printable ASCII 0x20-0x7D except '='."""
+    return bool(key) and all(" " <= char <= "}" and char != "=" for char in key)
+
+
 def write_metadata(media_path: str, payload_path: str) -> None:
     extension = os.path.splitext(media_path)[1].lower()
     classes = {".flac": FLAC, ".opus": OggOpus, ".ogg": OggVorbis, ".oga": OggVorbis}
@@ -146,8 +151,15 @@ def write_metadata(media_path: str, payload_path: str) -> None:
         payload = json.load(handle)
     audio = classes[extension](media_path)
     for key in payload.get("removeKeys", []):
+        # Removal lists are shared across formats and carry MP4/ID3 names such
+        # as "\u00a9pub" or "TXXX:...". A Vorbis comment cannot contain such a
+        # field, and mutagen raises ValueError for it instead of KeyError.
+        if not is_valid_vorbis_key(str(key)):
+            continue
         audio.pop(str(key), None)
     for key, value in payload.get("tags", {}).items():
+        if not is_valid_vorbis_key(str(key)):
+            raise ValueError(f"invalid Vorbis comment field name: {key!r}")
         if str(value):
             values = str(value).split(";") if str(key).lower() in {
                 "isrc", "musicbrainz_artistid", "musicbrainz_albumartistid"
