@@ -313,6 +313,128 @@ test('an interrupted active import fails closed and preserves its staging eviden
     assert.match(failed.error || '', /partially mutated library files/i);
     assert.equal(CommandQueueManager.complete(id, owner), false);
     assert.equal(fs.existsSync(stagedFile), true);
+    const repairs = db.prepare("SELECT COUNT(*) AS count FROM commands WHERE name = ?").get(CommandNames.RetagFiles) as { count: number };
+    assert.equal(repairs.count, 0, "an import that never recorded file ids does not invent a retag");
+});
+
+test("a tag-rule phase that ticks per file is not poisoned while the percent stays put", async () => {
+    const id = pushTrack("tag-ticks");
+    const owner = "download-attempt:tag-ticks";
+    claim(id, owner, new Date());
+    const processor = new DownloadProcessor() as any;
+    processor.attemptOwners.set(id, owner);
+    for (let file = 1; file <= 30; file += 1) {
+        processor.persistDownloadState(id, {
+            state: "importing",
+            progress: 94,
+            description: "ImportDownload: applying audio tag rules",
+            statusMessage: "Applying audio tag rules",
+            currentFileNum: file,
+            totalFiles: 477,
+            subphaseTick: true,
+        }, owner);
+    }
+    db.prepare(`
+        UPDATE commands
+        SET last_progress_at = '2020-01-01 00:00:00',
+            heartbeat_at = '2020-01-01 00:00:00'
+        WHERE id = ?
+    `).run(id);
+    processor.persistDownloadState(id, {
+        state: "importing",
+        progress: 94,
+        description: "ImportDownload: applying audio tag rules",
+        statusMessage: "Applying audio tag rules",
+        currentFileNum: 30,
+        totalFiles: 477,
+        subphaseTick: true,
+    }, owner);
+
+    const ticking = CommandQueueManager.get(id)!;
+    assert.equal(ticking.progress, 94);
+    assert.equal((ticking.payload as { downloadState?: { currentFileNum?: number; totalFiles?: number } }).downloadState?.currentFileNum, 30);
+    assert.equal((ticking.payload as { downloadState?: { totalFiles?: number } }).downloadState?.totalFiles, 477);
+    assert.notEqual(ticking.last_progress_at, "2020-01-01 00:00:00");
+    assert.notEqual(ticking.heartbeat_at, "2020-01-01 00:00:00");
+    const progressedAt = Date.parse(
+        String(ticking.last_progress_at).includes("T")
+            ? String(ticking.last_progress_at)
+            : `${String(ticking.last_progress_at).replace(" ", "T")}Z`,
+    );
+
+    let terminations = 0;
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.worker = {
+        terminate: async () => {
+            terminations += 1;
+            return 1;
+        },
+    };
+    assert.equal(await proxy.runWatchdogOnce(new Date(progressedAt + 200)), false);
+    assert.equal(terminations, 0);
+    assert.equal(CommandQueueManager.get(id)?.status, "started");
+    assert.equal(CommandQueueManager.get(id)?.blocked_reason ?? null, null);
+});
+
+test("a stuck tag-rule phase is poisoned and queues a retag of the files it touched", async () => {
+    const id = pushTrack("tag-stuck");
+    const owner = "download-attempt:tag-stuck";
+    claim(id, owner);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progress: 94,
+        progressPhase: "importing",
+        payloadPatch: {
+            downloadState: {
+                state: "importing",
+                progress: 94,
+                statusMessage: "Applying audio tag rules",
+            },
+            downloadImportHandoff: {
+                importPayload: {
+                    type: "album",
+                    provider: "synthetic",
+                    providerId: "track-tag-stuck",
+                    path: path.join(tempDir, "tag-stuck"),
+                },
+                resolved: { title: "Golden Earring", artist: "Lease Fixture", cover: null },
+                executionStartedAt: "2026-01-01T00:00:01.000Z",
+                importTouchedFileIds: [11, 22, 11],
+            },
+        } as any,
+    });
+    db.prepare(`
+        UPDATE commands
+        SET heartbeat_at = '2026-01-01 00:00:09',
+            lease_expires_at = '2026-01-01 00:01:00',
+            last_progress_at = '2026-01-01 00:00:00'
+        WHERE id = ?
+    `).run(id);
+
+    let terminations = 0;
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.worker = {
+        terminate: async () => {
+            terminations += 1;
+            return 1;
+        },
+    };
+    assert.equal(await proxy.runWatchdogOnce(new Date("2026-01-01T00:00:10.000Z")), true);
+    assert.equal(terminations, 1);
+
+    const recovered = recoverInterruptedDownloadAttempts(
+        "Download worker watchdog detected stale execution",
+        new Date("2026-01-01T00:00:10.000Z"),
+    );
+    assert.deepEqual(recovered, { requeued: 0, failed: 1, ignored: 0 });
+    const failed = CommandQueueManager.get(id)!;
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.blocked_reason, "poisoned command");
+    assert.match(failed.error || "", /not replayed/i);
+    const repairs = db.prepare("SELECT payload, ref_id FROM commands WHERE name = ?").all(CommandNames.RetagFiles) as Array<{ payload: string; ref_id: string }>;
+    assert.equal(repairs.length, 1);
+    assert.equal(repairs[0].ref_id, `import-tag-repair:${id}`);
+    assert.deepEqual(JSON.parse(repairs[0].payload).ids, [11, 22]);
 });
 
 test('a durable import-pending handoff is resumed on the same attempt without re-downloading', () => {

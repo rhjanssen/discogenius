@@ -64,6 +64,30 @@ export function shouldHardFailIncompleteAlbumImport(options: {
     && options.processedCount < options.trackOfferCount;
 }
 
+function rememberImportTouchedFiles(commandId: number, fileIds: readonly number[]): void {
+    const ids = Array.from(new Set(
+        fileIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
+    ));
+    if (ids.length === 0) return;
+    withSqliteWriteGate(() => {
+        const current = CommandQueueManager.get(commandId);
+        if (!current || current.status !== "started") return;
+        const payload = (current.payload ?? {}) as Record<string, any>;
+        const handoff = payload.downloadImportHandoff && typeof payload.downloadImportHandoff === "object"
+            ? payload.downloadImportHandoff
+            : {};
+        CommandQueueManager.updateState(commandId, {
+            workerId: current.worker_id || undefined,
+            payloadPatch: {
+                downloadImportHandoff: {
+                    ...handoff,
+                    importTouchedFileIds: ids,
+                },
+            } as any,
+        });
+    }, "import:touched-files");
+}
+
 function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
     return Array.from(new Set(
         Object.values(organizeResult.importedTrackFileIds || {})
@@ -93,7 +117,10 @@ export function assertImportedAudioTagsApplied(
  * Fetch/store via the same resolver the UI uses, then rewrite dest cover.jpg
  * from that cache so folder sidecar and embed agree.
  */
-export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[]): Promise<void> {
+export async function ensureDestAlbumArtworkForFileIds(
+    fileIds: readonly number[],
+    onFileStart?: (index: number, total: number) => void,
+): Promise<void> {
     const ids = Array.from(new Set(
         fileIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
     ));
@@ -149,7 +176,14 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
 
     const resolvedCovers = new Set<string>();
     const failures: string[] = [];
+    const stepTotal = Math.max(1, editions.size + sidecars.length);
+    let step = 0;
+    const tick = (): void => {
+        step += 1;
+        onFileStart?.(step, stepTotal);
+    };
     for (const { releaseMbid, libraryId } of editions.values()) {
+        tick();
         try {
             const albumMbid = albumMbidForEdition(releaseMbid);
             if (albumMbid) {
@@ -169,6 +203,7 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
     }
 
     for (const { releaseMbid, outputPath } of sidecars) {
+        tick();
         try {
             let result = await materializeMediaCoverToFile({
                 entityId: releaseMbid,
@@ -285,6 +320,8 @@ export type ImportDownloadState = {
     trackStatus?: "queued" | "downloading" | "completed" | "error" | "skipped";
     statusMessage?: string;
     state?: "queued" | "downloading" | "completed" | "failed" | "paused" | "importPending" | "importing" | "importFailed";
+    /** Renews liveness without changing the displayed percent. Set at the start of each file. */
+    subphaseTick?: boolean;
     outcome?: "ok" | "completedWithWarning";
     warningMessage?: string;
     primaryProvider?: string;
@@ -1302,12 +1339,26 @@ export class DownloadedTracksImportService {
                     `[ImportDownload] Organizer reported ${organizeResult.processedTrackIds.length} processed audio item(s) without exact TrackFiles row identity`,
                 );
             }
+            rememberImportTouchedFiles(job.id, importedFileIds);
+            const reportFile = (index: number, total: number, progress: number, description: string): void => {
+                options.updateState({
+                    progress,
+                    description,
+                    statusMessage: description,
+                    currentFileNum: index,
+                    totalFiles: total,
+                    state: "importing",
+                    subphaseTick: true,
+                });
+            };
             const metadataConfig = Config.getMetadataConfig();
             const qualityConfig = Config.getQualityConfig();
             if (metadataConfig.save_album_cover || qualityConfig.embed_cover) {
                 options.updateState({ progress: 90, description: "ImportDownload: caching artwork", statusMessage: "Caching artwork", state: "importing" });
                 cancellationCheckpoint("before caching dest album artwork");
-                await ensureDestAlbumArtworkForFileIds(importedFileIds);
+                await ensureDestAlbumArtworkForFileIds(importedFileIds, (index, total) => {
+                    reportFile(index, total, 90, "ImportDownload: caching artwork");
+                });
             }
 
             let lyricResult: TrackLyricsMaterializeResult | null = null;
@@ -1315,7 +1366,12 @@ export class DownloadedTracksImportService {
             cancellationCheckpoint("before materializing lyrics");
             try {
                 lyricResult = importedFileIds.length > 0
-                    ? await TrackLyricsMaterializer.materializeForFileIds(importedFileIds, null, job.payload.prefetchedLyrics as any)
+                    ? await TrackLyricsMaterializer.materializeForFileIds(
+                        importedFileIds,
+                        null,
+                        job.payload.prefetchedLyrics as any,
+                        (index, total) => reportFile(index, total, 92, "ImportDownload: preparing lyrics"),
+                    )
                     : await TrackLyricsMaterializer.materializeForMediaIds(
                         organizeResult.processedTrackIds,
                         provider,
@@ -1348,6 +1404,7 @@ export class DownloadedTracksImportService {
                 const retagResult = await AudioTagService.apply(importedFileIds, {
                     includeExternalLyrics: lyricResult !== null,
                     lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
+                    onFileStart: (index, total) => reportFile(index, total, 94, "ImportDownload: applying audio tag rules"),
                 });
                 assertImportedAudioTagsApplied(retagResult, `${type} ${providerId}`);
             }
@@ -1366,7 +1423,18 @@ export class DownloadedTracksImportService {
             });
             const videoFileIds = importedLibraryFileIds(organizeResult);
             if (videoFileIds.length === 0) throw new Error("Video importer did not report exact TrackFiles identities");
-            const retagResult = await VideoTagService.apply(videoFileIds);
+            rememberImportTouchedFiles(job.id, videoFileIds);
+            const retagResult = await VideoTagService.apply(videoFileIds, {
+                onFileStart: (index, total) => options.updateState({
+                    progress: 94,
+                    description: "ImportDownload: applying video tag rules",
+                    statusMessage: "Applying video tag rules",
+                    currentFileNum: index,
+                    totalFiles: total,
+                    state: "importing",
+                    subphaseTick: true,
+                }),
+            });
             if (retagResult.errors.length > 0 || retagResult.missing > 0) {
                 throw new Error(`Video tagging failed for ${providerId}: ${retagResult.errors.map(item => item.error).join("; ") || "imported file is missing"}`);
             }

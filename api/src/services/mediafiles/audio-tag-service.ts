@@ -234,6 +234,8 @@ type RetagApplyOptions = {
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
   /** Reports per-file progress (completed, total) so a command can show "x/y files". */
   onProgress?: (completed: number, total: number) => void;
+  /** Fires before each file so a long synchronous save still counts as liveness. */
+  onFileStart?: (index: number, total: number) => void;
   /** The album settle writes file size and the managed-tag fingerprint. */
   deferPersistence?: boolean;
 };
@@ -3086,6 +3088,7 @@ export class AudioTagService {
     let processedCount = 0;
     for (const id of ids) {
       processedCount++;
+      options.onFileStart?.(processedCount, ids.length);
 
       const row = rowsById.get(id);
       if (!row) {

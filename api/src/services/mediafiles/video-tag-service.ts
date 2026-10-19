@@ -122,7 +122,7 @@ export class VideoTagService {
     `).all(...params) as VideoTagRow[];
   }
 
-  static async apply(ids: number[], options: { deferPersistence?: boolean } = {}): Promise<RetagApplyResult> {
+  static async apply(ids: number[], options: { deferPersistence?: boolean; onFileStart?: (index: number, total: number) => void } = {}): Promise<RetagApplyResult> {
     const uniqueIds = Array.from(new Set(ids.filter(Number.isFinite)));
     if (uniqueIds.length === 0) return { retagged: 0, skipped: 0, missing: 0, errors: [] };
     return this.applyRows(this.getRows(`file.id IN ${SQL_JSON_LIST}`, [jsonList(uniqueIds)]), options);
@@ -148,7 +148,7 @@ export class VideoTagService {
       ORDER BY file.id`).all(JSON.stringify(artistIds)) as Array<{ id: number }>).map(row => row.id);
   }
 
-  private static async applyRows(rows: VideoTagRow[], options: { deferPersistence?: boolean } = {}): Promise<RetagApplyResult> {
+  private static async applyRows(rows: VideoTagRow[], options: { deferPersistence?: boolean; onFileStart?: (index: number, total: number) => void } = {}): Promise<RetagApplyResult> {
     const result: RetagApplyResult = { retagged: 0, skipped: 0, missing: 0, errors: [] };
     const config = getConfigSection("metadata");
     if ((config.write_audio_tags_policy ?? "no") === "no") return { ...result, skipped: rows.length };
@@ -156,7 +156,8 @@ export class VideoTagService {
       UPDATE TrackFiles SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP WHERE id = ?
     `);
 
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
+      options.onFileStart?.(index + 1, rows.length);
       try {
         const resolvedPath = resolveStoredLibraryPath({
           filePath: row.file_path,

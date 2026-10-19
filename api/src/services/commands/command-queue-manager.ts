@@ -1121,6 +1121,8 @@ ${orderBy}
         progressCurrent?: number | null;
         progressTotal?: number | null;
         blockedReason?: string | null;
+        /** A long synchronous step cannot run the lease timer. A sub-phase tick renews it. */
+        renewHeartbeat?: boolean;
     }) {
         const current = this.get(id);
         if (!current) return null;
@@ -1173,6 +1175,9 @@ ${orderBy}
         if (options.blockedReason !== undefined) {
             updates.push("blocked_reason = ?");
             params.push(options.blockedReason);
+        }
+        if (options.renewHeartbeat) {
+            updates.push("heartbeat_at = CURRENT_TIMESTAMP");
         }
         if (advancesProgress) {
             updates.push("last_progress_at = CURRENT_TIMESTAMP");

@@ -19,11 +19,20 @@ the replacement attempt.
 
 The download worker renews leases for active downloads, queued import
 handoffs, and active imports. The main API thread independently checks download
-leases. It terminates the dedicated worker when either:
+leases. A command is alive when its heartbeat (lease) is fresh and its
+sub-phase progress is fresh. The watchdog terminates the dedicated worker when
+either:
 
 - its lease expires because heartbeats stopped; or
-- a command keeps heartbeating but has made no phase/progress transition beyond
-  the configured expectation.
+- a command keeps heartbeating but has made no phase or per-file progress
+  beyond `DISCOGENIUS_DOWNLOAD_NO_PROGRESS_MS`.
+
+Artwork, lyrics, and tag rules used to emit one percent (94 for tags) and then
+go silent for the whole album, so a live tag pass looked frozen. Each file now
+ticks at the start of the file. The percent can stay at 94. The tick still
+moves `last_progress_at`, `progress_current`, and the lease, and it renews
+`heartbeat_at`, so a long synchronous tag write is covered for one no-progress
+window. A phase that stops ticking is still poisoned.
 
 Recovery happens only after physical worker termination. Resumable provider
 downloads are requeued with a persisted reason and a bounded attempt count.
@@ -78,10 +87,16 @@ in `importPending` without downloading the media again, including while new
 provider downloads are paused.
 
 An import sets a durable `executionStartedAt` marker before it may mutate
-library files. If its worker dies after that point, Discogenius fails the
-command visibly and preserves its staging workspace. It does **not**
-automatically replay the import: without a per-file operation journal, the
-prior attempt may already have moved, tagged, or registered some files.
+library files. Before artwork, lyrics, or tags it also stores
+`downloadImportHandoff.importTouchedFileIds`, the TrackFiles ids already
+placed. If its worker dies after that point, Discogenius fails the command
+visibly and preserves its staging workspace. It does **not** automatically
+replay the import: without a per-file operation journal, the prior attempt
+may already have moved, tagged, or registered some files. When those ids were
+recorded, the poison queues `RetagFiles` for exactly that list
+(`ref_id` `import-tag-repair:<command id>`), so provider tags are not left
+on the files the import had reached. An older in-flight import with no id
+list is still failed and does not invent a library-wide retag.
 
 This fail-closed behavior is intentional. Safe automatic recovery of partial
 imports remains blocked on an idempotent per-file operation journal and

@@ -495,6 +495,8 @@ type DurableImportHandoff = {
     importPayload: ImportDownloadCommand;
     resolved: { title: string; artist: string; cover: string | null };
     executionStartedAt?: string | null;
+    /** TrackFiles ids the import had already placed before artwork, lyrics, or tags. */
+    importTouchedFileIds?: number[];
 };
 
 type InterruptedDownloadRow = {
@@ -592,11 +594,32 @@ export function recoverInterruptedDownloadAttempts(
             now,
         });
         if (recovery.outcome === 'requeued') requeued += 1;
-        else if (recovery.outcome === 'failed') failed += 1;
+        else if (recovery.outcome === 'failed') {
+            failed += 1;
+            if (unsafeImport) queueImportTagRepair(row.id, payload);
+        }
         else ignored += 1;
     }
 
     return { requeued, failed, ignored };
+}
+
+/** A poisoned import may have tagged only part of the album. Retag exactly
+ * the files it had already placed. Older in-flight rows have no id list, and
+ * inventing a library-wide retag would be worse than leaving them for a person. */
+function queueImportTagRepair(commandId: number, payload: Record<string, any>): void {
+    const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+    const ids = Array.from(new Set(
+        (Array.isArray(handoff?.importTouchedFileIds) ? handoff.importTouchedFileIds : [])
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0),
+    ));
+    if (ids.length === 0) return;
+    CommandQueueManager.push(
+        CommandNames.RetagFiles,
+        { ids },
+        `import-tag-repair:${commandId}`,
+    );
 }
 
 // Docker: tiddl/ffmpeg installed globally via Dockerfile. Local dev resolves them from PATH (TIDDL_BIN override supported).
@@ -1203,6 +1226,8 @@ export class DownloadProcessor {
         warningMessage?: string;
         primaryProvider?: string;
         fallbackProvider?: string;
+        /** Same displayed percent, new file. Forces last_progress_at and the lease forward. */
+        subphaseTick?: boolean;
     }, workerId: string | undefined = this.attemptOwners.get(commandId)) {
         // Merge into any buffered snapshot instead of replacing it: progress
         // events are partial (a per-track update carries no statusMessage; a
@@ -1232,6 +1257,8 @@ export class DownloadProcessor {
         // scalar event would lose other tracks completed during this interval.
         const tracks = state.tracks ?? buffered?.tracks ?? this.getProgressTracksForEvent(commandId);
         if (tracks) merged.tracks = applyTrackProgress(tracks, state);
+        const subphaseTick = state.subphaseTick === true;
+        delete merged.subphaseTick;
         const snapshot = merged as typeof state;
 
         // Terminal / transition states bypass the buffer and write immediately.
@@ -1239,7 +1266,8 @@ export class DownloadProcessor {
             // Flush any pending buffered state for this job first so the
             // immediate write always represents the latest snapshot.
             this.progressBuffer.delete(commandId);
-            if (!this.tryWriteDownloadState(commandId, snapshot, workerId)) {
+            const toWrite = subphaseTick ? { ...snapshot, subphaseTick: true } : snapshot;
+            if (!this.tryWriteDownloadState(commandId, toWrite, workerId)) {
                 this.progressBuffer.set(commandId, { workerId, state: snapshot });
                 this.ensureProgressFlushTimer();
             }
@@ -1302,6 +1330,7 @@ export class DownloadProcessor {
         warningMessage?: string;
         primaryProvider?: string;
         fallbackProvider?: string;
+        subphaseTick?: boolean;
     }, workerId?: string) {
         const currentJob = CommandQueueManager.get(commandId);
         const currentDownloadState = (currentJob?.payload?.downloadState as Record<string, unknown> | undefined) || {};
@@ -1401,7 +1430,11 @@ export class DownloadProcessor {
             && nextProgress !== currentJob?.progress;
         const phaseChanged = phase !== undefined
             && phase !== currentJob?.progress_phase;
-        const positionChanged = nextCurrentFileNum !== currentDownloadState.currentFileNum
+        // A tag, lyric, or cover file keeps the same percent. The tick is still
+        // progress: last_progress_at and the lease move, or a live phase looks frozen.
+        const subphaseTick = state.subphaseTick === true;
+        const positionChanged = subphaseTick
+            || nextCurrentFileNum !== currentDownloadState.currentFileNum
             || nextTotalFiles !== currentDownloadState.totalFiles
             || state.trackStatus !== undefined
                 && state.trackStatus !== currentDownloadState.trackStatus;
@@ -1425,6 +1458,7 @@ export class DownloadProcessor {
                 : undefined,
             progressTotal: positionChanged ? 100 : undefined,
             blockedReason,
+            renewHeartbeat: subphaseTick,
         });
     }
 
@@ -3396,7 +3430,10 @@ export class DownloadProcessorWorkerProxy {
     /**
      * The dedicated worker can keep heartbeating while awaiting a provider or
      * importer promise that never resolves. Lease expiry catches a dead event
-     * loop; last-progress expiry catches that healthier-looking hang.
+     * loop. A fresh heartbeat with no sub-phase tick (artwork, lyrics, or
+     * per-file tag progress) is the same hang: last-progress expiry catches it.
+     * A tick at the start of each file renews last_progress_at and the lease
+     * even when the displayed percent does not move.
      */
     async runWatchdogOnce(now: Date = new Date()): Promise<boolean> {
         const worker = this.worker;

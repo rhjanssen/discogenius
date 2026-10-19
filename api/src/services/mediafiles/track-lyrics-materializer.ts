@@ -205,6 +205,7 @@ export class TrackLyricsMaterializer {
     fileIds: number[],
     requestedProvider?: string | null,
     prefetched?: Record<string, ResolvedLyrics | null>,
+    onFileStart?: (index: number, total: number) => void,
   ): Promise<TrackLyricsMaterializeResult> {
     const metadata = getConfigSection("metadata");
     const quality = getConfigSection("quality");
@@ -216,13 +217,14 @@ export class TrackLyricsMaterializer {
         missing: 0,
       };
     }
-    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider, prefetched);
+    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider, prefetched, onFileStart);
   }
 
   private static async materializeRows(
     rows: TrackLyricsRow[],
     requestedProvider?: string | null,
     prefetched?: Record<string, ResolvedLyrics | null>,
+    onFileStart?: (index: number, total: number) => void,
   ): Promise<TrackLyricsMaterializeResult> {
     const result: TrackLyricsMaterializeResult = {
       lyricsByProviderMedia: new Map(),
@@ -340,10 +342,14 @@ export class TrackLyricsMaterializer {
     };
 
     const pending = [...rows];
+    let started = 0;
     const worker = async () => {
       while (pending.length > 0) {
         const row = pending.shift();
-        if (row) await resolveRow(row);
+        if (!row) continue;
+        started += 1;
+        onFileStart?.(started, rows.length);
+        await resolveRow(row);
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, rows.length) }, () => worker()));
