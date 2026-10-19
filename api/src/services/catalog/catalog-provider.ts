@@ -94,6 +94,17 @@ export interface CatalogArtistCredit {
 }
 
 /** One name of a MusicBrainz track's published artist credit. */
+/** One MusicBrainz artist alias that carries a locale (ended aliases excluded). */
+export interface CatalogArtistLocaleAlias {
+  name: string;
+  sortName: string | null;
+  /** MusicBrainz locale as stored ("en", "nl", "en_US"). */
+  locale: string;
+  primaryForLocale: boolean;
+  /** "Artist name", "Legal name", "Search hint" or null. */
+  type: string | null;
+}
+
 export interface CatalogTrackArtistCredit {
   artistId: string;
   /** The artist's own MusicBrainz name. */
@@ -223,6 +234,12 @@ export interface CatalogProvider {
    * artist id per track; MB-local serves the full credit from Postgres.
    */
   getTrackArtistCredits?(trackMbids: string[]): Promise<Map<string, CatalogTrackArtistCredit[]>>;
+
+  /**
+   * Locale aliases of each artist MBID (Picard's translated artist names).
+   * Optional: only MB-local exposes `artist_alias`.
+   */
+  getArtistLocaleAliases?(artistMbids: string[]): Promise<Map<string, CatalogArtistLocaleAlias[]>>;
 
   /**
    * MusicBrainz video recordings credited to an artist. Optional: hosted Servarr

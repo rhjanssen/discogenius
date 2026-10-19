@@ -31,6 +31,7 @@ import type {
   CatalogUpcLookupResult,
   CatalogIsrcLookupResult,
   CatalogArtistCreditReleaseGroup,
+  CatalogArtistLocaleAlias,
   CatalogTrackArtistCredit,
   CatalogVideoRecording,
   LidarrArtist,
@@ -815,6 +816,50 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           joinPhrase: String(row.join_phrase ?? ""),
         });
         result.set(key, list);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Locale aliases of artists, in bounded batches. Ended aliases are skipped
+   * (Picard ignores them too); aliases without a locale cannot be chosen by
+   * locale and are not returned.
+   */
+  async getArtistLocaleAliases(artistMbids: string[]): Promise<Map<string, CatalogArtistLocaleAlias[]>> {
+    const result = new Map<string, CatalogArtistLocaleAlias[]>();
+    const wanted = Array.from(new Set(artistMbids
+      .map((mbid) => String(mbid || "").trim().toLowerCase())
+      .filter((mbid) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(mbid))));
+    for (let offset = 0; offset < wanted.length; offset += TRACK_CREDIT_BATCH_SIZE) {
+      const batch = wanted.slice(offset, offset + TRACK_CREDIT_BATCH_SIZE);
+      const rows = await this.query<{
+        artist_gid: string; name: string; sort_name: string | null; locale: string;
+        primary_for_locale: boolean; type_name: string | null;
+      }>(
+        `SELECT a.gid::text AS artist_gid, aa.name, aa.sort_name, aa.locale, aa.primary_for_locale,
+                aat.name AS type_name
+         FROM artist a
+         JOIN artist_alias aa ON aa.artist = a.id
+         LEFT JOIN artist_alias_type aat ON aat.id = aa.type
+         WHERE a.gid = ANY($1::uuid[])
+           AND aa.locale IS NOT NULL AND aa.locale <> ''
+           AND NOT aa.ended
+         ORDER BY a.gid, aa.locale, aa.primary_for_locale DESC, aa.id`,
+        [batch],
+      );
+      for (const mbid of batch) result.set(mbid, []);
+      for (const row of rows) {
+        const key = String(row.artist_gid).toLowerCase();
+        const name = String(row.name || "").trim();
+        if (!name) continue;
+        result.get(key)?.push({
+          name,
+          sortName: row.sort_name ? String(row.sort_name).trim() || null : null,
+          locale: String(row.locale).trim(),
+          primaryForLocale: row.primary_for_locale === true,
+          type: row.type_name ? String(row.type_name) : null,
+        });
       }
     }
     return result;

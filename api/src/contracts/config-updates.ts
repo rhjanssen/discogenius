@@ -76,6 +76,9 @@ const METADATA_UPDATE_KEYS = [
   "embed_replaygain",
   "scrub_audio_tags",
   "full_album_artist_credit",
+  "translate_artist_names",
+  "artist_name_locales",
+  "translate_artist_names_skip_latin",
 ] as const satisfies readonly (keyof MetadataConfigContract)[];
 
 const PATH_UPDATE_KEYS = [

@@ -40,6 +40,7 @@ import { migrateFileWorkRestartResume } from "./database/schema/file-work-restar
 import { migrateRetagAlbumScheduling } from "./database/schema/retag-album-scheduling.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createTrackArtistCreditNamesSchema, migrateTrackArtistCreditNames } from "./database/schema/track-artist-credit-names.js";
+import { createArtistLocaleAliasesSchema, migrateArtistLocaleAliases } from "./database/schema/artist-locale-aliases.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
   createCanonicalCreditSchemaV41,
@@ -526,6 +527,7 @@ export function initDatabase() {
   // New table + config marker only (published MusicBrainz track credits for
   // track artist tags). user_version stays 46.
   migrateTrackArtistCreditNames(db);
+  migrateArtistLocaleAliases(db);
   createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();
@@ -788,6 +790,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
   createCommandsSchema(schemaDb);
   createProviderAuthStateSchema(schemaDb);
   createTrackArtistCreditNamesSchema(schemaDb);
+  createArtistLocaleAliasesSchema(schemaDb);
   createCommandFileWorkSchema(schemaDb);
   createRuntimeControlSchema(schemaDb);
   createLibrarySchemaV41(schemaDb);

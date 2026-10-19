@@ -250,3 +250,27 @@ test("folksonomy genres keep only tags MusicBrainz recognises as genres", async 
     assert.match(tagSql, /FROM genre_alias ga/);
   } finally { await provider.dispose(); }
 });
+
+test("artist locale aliases: unended aliases with a locale, grouped per requested artist", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({ connectionString: "postgresql://unused:unused@127.0.0.1:1/unused" });
+  let aliasSql = "";
+  const tchaikovsky = "9ddd7abc-9e1b-471d-8031-583bc6bc8be9";
+  const other = "a3ee920f-4e7f-4993-8aca-4b8538cfaa4a";
+  (provider as any).query = async (sql: string) => {
+    aliasSql = sql;
+    return [
+      { artist_gid: tchaikovsky.toUpperCase(), name: "Pyotr Ilyich Tchaikovsky", sort_name: "Tchaikovsky, Pyotr Ilyich", locale: "en", primary_for_locale: true, type_name: "Artist name" },
+      { artist_gid: tchaikovsky, name: " ", sort_name: null, locale: "de", primary_for_locale: false, type_name: null },
+    ];
+  };
+  try {
+    const result = await provider.getArtistLocaleAliases([tchaikovsky, other, "nope"]);
+    assert.match(aliasSql, /NOT aa\.ended/);
+    assert.match(aliasSql, /aa\.locale IS NOT NULL/);
+    assert.deepEqual(result.get(tchaikovsky), [
+      { name: "Pyotr Ilyich Tchaikovsky", sortName: "Tchaikovsky, Pyotr Ilyich", locale: "en", primaryForLocale: true, type: "Artist name" },
+    ]);
+    assert.deepEqual(result.get(other), []);
+    assert.equal(result.size, 2);
+  } finally { await provider.dispose(); }
+});
