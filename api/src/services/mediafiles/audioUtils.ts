@@ -544,7 +544,10 @@ async function writeMetadataUnlocked(filePath: string, tags: Record<string, stri
         || XIPH_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         const mutagen = await writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
         if (mutagen.success) return { success: true };
-        return { success: false, error: mutagen.error || tagLibError };
+        // Keep the TagLib cause. The fallback's own error used to replace it,
+        // which hid why the primary writer failed.
+        if (!tagLibResult.handled) return { success: false, error: mutagen.error || tagLibError };
+        return { success: false, error: `${tagLibError}; Mutagen fallback: ${mutagen.error || "failed"}` };
     }
     const tempPath = mediaRewritePath(filePath);
     const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);

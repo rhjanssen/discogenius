@@ -2753,9 +2753,14 @@ export class AudioTagService {
     }
     if (obsolete.size) changes.push({ field: "Obsolete tag fields", oldValue: [...obsolete].sort().join(", "), newValue: null });
     if (unmanaged.size) changes.push({ field: "Unmanaged tags", oldValue: [...unmanaged].sort().join(", "), newValue: null });
+    // Removal names are shared across formats (MP4 atoms, ID3 frames). A Vorbis
+    // comment can only hold printable ASCII names without '=', so other names
+    // cannot be present and must not reach a Xiph writer.
+    const removable = (key: string) => !vorbis || /^[\x20-\x3C\x3E-\x7D]+$/.test(key);
     return {
       changes,
-      removalKeys: [...new Set([...this.buildAudioTagRemovalKeys(removals, extension), ...obsolete, ...unmanaged])],
+      removalKeys: [...new Set([...this.buildAudioTagRemovalKeys(removals, extension), ...obsolete, ...unmanaged])]
+        .filter(removable),
     };
   }
 
