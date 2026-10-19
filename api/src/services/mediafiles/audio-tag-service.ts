@@ -187,6 +187,7 @@ type RetagTrackRow = {
   recording_artist_credit: string | null;
   recording_data: string | null;
   file_hash: string | null;
+  managed_tag_fingerprint: string | null;
   file_size: number | null;
   file_modified_at: string | null;
 };
@@ -218,11 +219,20 @@ export type RetagStatusSummary = {
   sample: RetagPreviewItem[];
 };
 
+export type RetagFileFact = {
+  id: number;
+  size: number;
+  modifiedAt: string;
+  fingerprint: string | null;
+};
+
 export type RetagApplyResult = {
   retagged: number;
   skipped: number;
   missing: number;
   errors: Array<{ id: number; error: string }>;
+  /** Set when persistence is deferred to the album settle write. */
+  fileFacts?: RetagFileFact[];
 };
 
 type RetagApplyOptions = {
@@ -238,6 +248,8 @@ type RetagApplyOptions = {
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
   /** Reports per-file progress (completed, total) so a command can show "x/y files". */
   onProgress?: (completed: number, total: number) => void;
+  /** The album settle writes file size and the managed-tag fingerprint. */
+  deferPersistence?: boolean;
 };
 
 export type RetagScopeOptions = {
@@ -1354,6 +1366,16 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
   }
 }
 
+function albumFolderKey(filePath: string): string {
+  const normalized = filePath.replaceAll("\\", "/");
+  const index = normalized.lastIndexOf("/");
+  return index <= 0 ? normalized : normalized.slice(0, index);
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
+
 export class AudioTagService {
   private static refreshArtistPathFromTemplateIfNeeded(artistId: number) {
     const artist = loadArtistMetadataIdentity(String(artistId));
@@ -1492,34 +1514,89 @@ export class AudioTagService {
     })).digest("hex")}`;
   }
 
+  /**
+   * Desired managed tags from the catalogue row only. No stat, no lyric
+   * sidecar, no file open. A stored `retag:v1:` stamp matches when it was
+   * written without sidecar lyric text; stamps that included a sidecar open
+   * once and are then stored on `managed_tag_fingerprint`.
+   */
+  static desiredManagedFingerprints(ids: number[]): Map<number, string> {
+    const config = getConfigSection("metadata") as MetadataConfig;
+    const quality = getConfigSection("quality");
+    const fingerprints = new Map<number, string>();
+    for (const row of this.getTrackRowsByIds(ids)) {
+      fingerprints.set(row.id, this.retagFingerprint(config, quality, this.buildDesiredTags(row, config)));
+    }
+    return fingerprints;
+  }
+
+  /** Files whose stored fingerprint already equals the desired managed tags. */
+  static unchangedManagedFiles(ids: number[]): Map<number, string> {
+    const config = getConfigSection("metadata") as MetadataConfig;
+    const quality = getConfigSection("quality");
+    const matched = new Map<number, string>();
+    for (const row of this.getTrackRowsByIds(ids)) {
+      const fingerprint = this.retagFingerprint(config, quality, this.buildDesiredTags(row, config));
+      const stored = row.managed_tag_fingerprint
+        ?? (row.file_hash?.startsWith("retag:v1:") ? row.file_hash : null);
+      if (stored === fingerprint) matched.set(row.id, fingerprint);
+    }
+    return matched;
+  }
+
+  /**
+   * The next album in path order that this command has not planned. The
+   * caller inserts that album and can start it before the rest of the scope
+   * is planned. Files that sort behind the cursor wait for the next command.
+   */
+  static nextScopeAlbum(
+    commandId: number,
+    generation: number,
+    options: RetagScopeOptions,
+    includeVideo: boolean,
+  ): { folder: string; ids: number[] } | null {
+    const scope = this.buildScope(options);
+    if (includeVideo) scope.where[0] = "lf.file_type IN ('track', 'video')";
+    const where = scope.where.join(" AND ");
+    const first = db.prepare(`
+      SELECT lf.file_path AS file_path
+      FROM TrackFiles lf
+      WHERE ${where}
+        AND lf.file_path > COALESCE((
+          SELECT MAX(done.file_path)
+          FROM CommandFileWork work
+          JOIN TrackFiles done ON done.id = work.track_file_id
+          WHERE work.command_id = ? AND work.generation = ?
+        ), '')
+        AND NOT EXISTS (
+          SELECT 1 FROM CommandFileWork work
+          WHERE work.command_id = ? AND work.generation = ? AND work.track_file_id = lf.id
+        )
+      ORDER BY lf.file_path
+      LIMIT 1
+    `).get(...scope.params, commandId, generation, commandId, generation) as { file_path: string } | undefined;
+    if (!first?.file_path) return null;
+    const folder = albumFolderKey(first.file_path);
+    const pattern = `${escapeLike(folder)}/%`;
+    const rows = db.prepare(`
+      SELECT lf.id AS id, lf.file_path AS file_path
+      FROM TrackFiles lf
+      WHERE ${where}
+        AND lf.file_path LIKE ? ESCAPE '\\'
+        AND NOT EXISTS (
+          SELECT 1 FROM CommandFileWork work
+          WHERE work.command_id = ? AND work.generation = ? AND work.track_file_id = lf.id
+        )
+      ORDER BY lf.file_path
+    `).all(...scope.params, pattern, commandId, generation) as Array<{ id: number; file_path: string }>;
+    const ids = rows.filter(row => albumFolderKey(row.file_path) === folder).map(row => row.id);
+    return ids.length > 0 ? { folder, ids } : null;
+  }
+
   private static retagStampMatches(row: RetagTrackRow, config: MetadataConfig, quality: QualityConfig): boolean {
-    if (!row.file_hash?.startsWith("retag:v1:") || row.file_size == null || !row.file_modified_at) return false;
-    const tags = this.buildDesiredTags(row, config);
-    if (quality.embed_lyrics) {
-      try {
-        const resolved = resolveStoredLibraryPath({
-          filePath: row.file_path,
-          libraryRoot: row.library_root,
-          relativePath: row.relative_path,
-        });
-        const lyricTag = buildEmbeddedLyricsManagedTag(findAdjacentLyricSidecar(resolved));
-        if (lyricTag) tags.push(lyricTag);
-      } catch {
-        return false;
-      }
-    }
-    if (this.retagFingerprint(config, quality, tags) !== row.file_hash) return false;
-    try {
-      const resolved = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
-      const stat = fs.statSync(resolved);
-      return stat.size === Number(row.file_size) && stat.mtime.toISOString() === row.file_modified_at;
-    } catch {
-      return false;
-    }
+    const fingerprint = this.retagFingerprint(config, quality, this.buildDesiredTags(row, config));
+    if (row.managed_tag_fingerprint === fingerprint) return true;
+    return row.file_hash === fingerprint;
   }
 
   static getAffectedArtistIds(options: RetagScopeOptions & { ids?: number[] }): string[] {
@@ -1569,6 +1646,7 @@ export class AudioTagService {
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
         lf.file_hash AS file_hash,
+        lf.managed_tag_fingerprint AS managed_tag_fingerprint,
         lf.file_size AS file_size,
         lf.modified_at AS file_modified_at,
         artist.name AS primary_artist_name,
@@ -3347,11 +3425,16 @@ export class AudioTagService {
     return result;
   }
 
-  static createRetagSession(): { apply: (ids: number[]) => Promise<RetagApplyResult>; close: () => void } {
+  static createRetagSession(): { apply: (ids: number[], options?: { deferPersistence?: boolean }) => Promise<RetagApplyResult>; close: () => void } {
     const embeddedCoverContext: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [] };
     const lyricsByProviderMedia = new Map<string, ResolvedLyrics | null>();
     return {
-      apply: ids => this.apply(ids, { includeExternalLyrics: false, embeddedCoverContext, lyricsByProviderMedia }),
+      apply: (ids, options) => this.apply(ids, {
+        includeExternalLyrics: false,
+        embeddedCoverContext,
+        lyricsByProviderMedia,
+        deferPersistence: options?.deferPersistence,
+      }),
       close: () => {
         for (const directory of embeddedCoverContext.temporaryDirectories) {
           try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* best-effort session cleanup */ }
@@ -3382,11 +3465,18 @@ export class AudioTagService {
     const rowsById = new Map(this.getTrackRowsByIds(ids).map((row) => [row.id, row]));
     const updateFileRecord = db.prepare(`
       UPDATE TrackFiles
-      SET file_size = ?, modified_at = ?, file_hash = ?, verified_at = CURRENT_TIMESTAMP
+      SET file_size = ?, modified_at = ?, managed_tag_fingerprint = ?, verified_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
 
-    const pendingUpdates: Array<[number, string, string | null, number]> = []; // [size, mtime, stamp, id]
+    const pendingUpdates: Array<[number, string, string | null, number]> = []; // [size, mtime, fingerprint, id]
+    const rememberFact = (size: number, modifiedAt: string, fingerprint: string | null, fileId: number): void => {
+      if (options.deferPersistence) {
+        (result.fileFacts ??= []).push({ id: fileId, size, modifiedAt, fingerprint });
+        return;
+      }
+      pendingUpdates.push([size, modifiedAt, fingerprint, fileId]);
+    };
     const lyricsByProviderMedia = options.lyricsByProviderMedia ?? new Map<string, ResolvedLyrics | null>();
     const quality = getConfigSection("quality");
     const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext ?? {
@@ -3427,6 +3517,12 @@ export class AudioTagService {
       // A 2.13.6 library-wide retag mixed those together and wedged the live
       // server (one file at a time against MusicBrainz while 5k refresh
       // commands fought for the writer).
+      // A matching fingerprint is decided from the row. Do not stat or open.
+      if (options.includeExternalLyrics !== true && this.retagStampMatches(row, config, quality)) {
+        result.skipped++;
+        options.onProgress?.(processedCount, ids.length);
+        continue;
+      }
       try {
         const resolvedPath = resolveStoredLibraryPath({
           filePath: row.file_path,
@@ -3439,11 +3535,6 @@ export class AudioTagService {
 
           if (!fs.existsSync(resolvedPath)) {
             result.missing++;
-            return;
-          }
-
-          if (options.includeExternalLyrics !== true && this.retagStampMatches(row, config, quality)) {
-            result.skipped++;
             return;
           }
 
@@ -3464,7 +3555,7 @@ export class AudioTagService {
           const preview = await this.evaluateRow(row, config, evaluationOptions);
           if (!preview.missing && preview.changes.length === 0) {
             const stat = fs.statSync(resolvedPath);
-            pendingUpdates.push([stat.size, stat.mtime.toISOString(), fingerprint, id]);
+            rememberFact(stat.size, stat.mtime.toISOString(), fingerprint, id);
             result.skipped++;
             return;
           }
@@ -3508,7 +3599,7 @@ export class AudioTagService {
           const stat = fs.statSync(resolvedPath);
           const verification = await this.evaluateRow(row, config, evaluationOptions);
           const verified = !verification.missing && !verification.error && verification.changes.length === 0;
-          pendingUpdates.push([stat.size, stat.mtime.toISOString(), verified ? fingerprint : null, id]);
+          rememberFact(stat.size, stat.mtime.toISOString(), verified ? fingerprint : null, id);
           if (!verified) {
             const remainingFields = verification.changes
               .map((change) => change.field)
@@ -3595,7 +3686,7 @@ export class AudioTagService {
    * Lidarr-style strip tags: remove embedded metadata from audio files without
    * rewriting catalog tags. Skips Atmos/spatial files that are not safely writable.
    */
-  static async stripTags(ids: number[]): Promise<RetagApplyResult> {
+  static async stripTags(ids: number[], options: { deferPersistence?: boolean } = {}): Promise<RetagApplyResult> {
     const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))));
     const result: RetagApplyResult = {
       retagged: 0,
@@ -3630,9 +3721,19 @@ export class AudioTagService {
         continue;
       }
       const stats = fs.statSync(resolvedPath);
-      await withSqliteWriteGate(() => db.prepare(`UPDATE TrackFiles
-        SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP WHERE id = ? AND file_path = ?`)
-        .run(stats.size, stats.mtime.toISOString(), row.id, row.file_path), "retag:strip-file-facts");
+      if (options.deferPersistence) {
+        (result.fileFacts ??= []).push({
+          id: row.id,
+          size: stats.size,
+          modifiedAt: stats.mtime.toISOString(),
+          fingerprint: null,
+        });
+      } else {
+        await withSqliteWriteGate(() => db.prepare(`UPDATE TrackFiles
+          SET file_size = ?, modified_at = ?, managed_tag_fingerprint = NULL, verified_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND file_path = ?`)
+          .run(stats.size, stats.mtime.toISOString(), row.id, row.file_path), "retag:strip-file-facts");
+      }
       result.retagged++;
     }
 

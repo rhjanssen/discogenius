@@ -2298,7 +2298,15 @@ export class LibraryFilesService {
               width = COALESCE(?, width),
               height = COALESCE(?, height),
               duration = COALESCE(?, duration),
-              fingerprint = COALESCE(?, fingerprint)
+              fingerprint = COALESCE(?, fingerprint),
+              -- Import replaces bytes when the size changes, or when the same
+              -- path has a new mtime. A rename keeps the size and the path's
+              -- mtime, so the managed-tag fingerprint stays valid.
+              managed_tag_fingerprint = CASE
+                WHEN file_size IS NOT NULL AND ? IS NOT NULL AND file_size != ? THEN NULL
+                WHEN file_path = ? AND modified_at IS NOT NULL AND ? IS NOT NULL AND modified_at != ? THEN NULL
+                ELSE managed_tag_fingerprint
+              END
           WHERE id = ?
         `).run(
           artistMetadataId,
@@ -2339,6 +2347,11 @@ export class LibraryFilesService {
           params.height || null,
           params.duration || null,
           params.fingerprint || null,
+          fileSize,
+          fileSize,
+          params.filePath,
+          modifiedAt,
+          modifiedAt,
           rowToUpdate.id,
         );
 

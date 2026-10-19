@@ -191,7 +191,44 @@ test("migration keeps an existing plan and adds restart claims without bumping s
         VALUES (?, 'retag', 'later', 1)`).run(held.id);
     migrateFileWorkRestartResume(database.db);
     assert.deepEqual(database.db.prepare("SELECT cursor, total FROM CommandFileWorkPlans WHERE command_id = ?").get(held.id), { cursor: 0, total: 1 });
-    assert.equal((database.db.prepare("PRAGMA table_info(CommandFileWorkPlans)").all() as Array<{ name: string }>).some(column => column.name === "plan_complete"), false);
+    assert.equal((database.db.prepare("PRAGMA table_info(CommandFileWorkPlans)").all() as Array<{ name: string }>).some(column => column.name === "plan_complete"), true);
+    assert.equal((database.db.prepare("SELECT plan_complete FROM CommandFileWorkPlans WHERE command_id = ?").get(held.id) as { plan_complete: number }).plan_complete, 1);
+});
+
+test("album scheduling migration keeps a checkpointed retag and copies the v1 stamp", async () => {
+    const Database = (await import("better-sqlite3")).default;
+    const { migrateRetagAlbumScheduling } = await import("../../database/schema/retag-album-scheduling.js");
+    const raw = new Database(":memory:");
+    raw.exec(`
+        CREATE TABLE CommandFileWorkPlans (
+            command_id INTEGER PRIMARY KEY, operation TEXT NOT NULL, config_revision TEXT NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 1, total INTEGER NOT NULL, cursor INTEGER NOT NULL DEFAULT 0,
+            retagged INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0,
+            missing INTEGER NOT NULL DEFAULT 0, error_count INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE CommandRenamePlans (
+            command_id INTEGER PRIMARY KEY, config_revision TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 1,
+            total INTEGER NOT NULL, cursor INTEGER NOT NULL DEFAULT 0, result TEXT NOT NULL);
+        CREATE TABLE TrackFiles (
+            id INTEGER PRIMARY KEY, file_hash TEXT);
+        CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL, description TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+    `);
+    raw.prepare(`INSERT INTO CommandFileWorkPlans (command_id, operation, config_revision, total, cursor)
+        VALUES (19285, 'retag', 'old', 24502, 15316)`).run();
+    raw.prepare("INSERT INTO CommandRenamePlans (command_id, config_revision, total, cursor, result) VALUES (7, 'old', 10, 4, '{}')").run();
+    raw.prepare("INSERT INTO TrackFiles (id, file_hash) VALUES (1, 'retag:v1:abc'), (2, 'sha256:real')").run();
+    const before = Number(raw.pragma("user_version", { simple: true }));
+    migrateRetagAlbumScheduling(raw);
+    migrateRetagAlbumScheduling(raw);
+    assert.equal(Number(raw.pragma("user_version", { simple: true })), before);
+    assert.deepEqual(raw.prepare("SELECT cursor, total, plan_complete FROM CommandFileWorkPlans WHERE command_id = 19285").get(), {
+        cursor: 15316, total: 24502, plan_complete: 1,
+    });
+    assert.equal((raw.prepare("SELECT plan_complete FROM CommandRenamePlans WHERE command_id = 7").get() as { plan_complete: number }).plan_complete, 1);
+    assert.equal((raw.prepare("SELECT managed_tag_fingerprint FROM TrackFiles WHERE id = 1").get() as { managed_tag_fingerprint: string }).managed_tag_fingerprint, "retag:v1:abc");
+    assert.equal((raw.prepare("SELECT managed_tag_fingerprint FROM TrackFiles WHERE id = 2").get() as { managed_tag_fingerprint: string | null }).managed_tag_fingerprint, null);
+    assert.equal((raw.prepare("SELECT value FROM config WHERE key = 'schema.migration.retag-album-scheduling'").get() as { value: string }).value, "applied");
+    raw.close();
+    assert.equal(Number(database.db.pragma("user_version", { simple: true })), 46);
 });
 
 test("startup recovery resumes a mid-retag checkpoint and finishes only the unsettled files", async (t) => {
@@ -325,15 +362,15 @@ test("a crash after one settle leaves exactly the next file claimed", async (t) 
         /process killed during write/,
     );
     assert.deepEqual(database.db.prepare("SELECT ordinal, status FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id), [
-        { ordinal: 0, status: "settled" },
+        { ordinal: 0, status: "started" },
         { ordinal: 1, status: "started" },
-        { ordinal: 2, status: "pending" },
+        { ordinal: 2, status: "started" },
     ]);
     await bootRecovery(t);
     assert.deepEqual(database.db.prepare("SELECT ordinal, status, restart_claims FROM CommandFileWork WHERE command_id = ? ORDER BY ordinal").all(job.id), [
-        { ordinal: 0, status: "settled", restart_claims: 0 },
+        { ordinal: 0, status: "pending", restart_claims: 1 },
         { ordinal: 1, status: "pending", restart_claims: 1 },
-        { ordinal: 2, status: "pending", restart_claims: 0 },
+        { ordinal: 2, status: "pending", restart_claims: 1 },
     ]);
     assert.equal(commandRow(job.id).status, "queued");
 });
@@ -478,7 +515,7 @@ test("a retag with no plan yet is requeued and plans once", async (t) => {
     stampRunning(job.id, 5);
     const applied: number[] = [];
     mockRetagApply(t, applied);
-    const planned = t.mock.method(records.CommandFileWorkRepository, "create");
+    const planned = t.mock.method(records.CommandFileWorkRepository, "openPlan");
     await bootRecovery(t);
     assert.equal(commandRow(job.id).status, "queued");
     assert.equal(commandRow(job.id).progress, 1);

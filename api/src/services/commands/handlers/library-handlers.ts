@@ -6,7 +6,6 @@ import { MoveArtistService } from "../../mediafiles/move-artist-service.js";
 import { RenameTrackFileService } from "../../mediafiles/rename-track-file-service.js";
 import { AudioTagService } from "../../mediafiles/audio-tag-service.js";
 import { parseFileSelectionIds } from "../../mediafiles/file-selection.js";
-import { VideoTagService } from "../../mediafiles/video-tag-service.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { resolveArtistMetadataId } from "../../music/managed-artists.js";
 import { appEvents, AppEvent } from "../app-events.js";
@@ -258,10 +257,11 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
     if (artistIds.length === 0) {
         throw new Error("RetagArtist requires at least one artist id");
     }
-    const result = await runRetagWorkUnit(job, ctx, () => [
-        ...AudioTagService.getRetagWorkIds({ artistIds }),
-        ...VideoTagService.getFileIdsForArtists(artistIds),
-    ]);
+    const result = await runRetagWorkUnit(job, ctx, {
+        kind: "scope",
+        options: { artistIds },
+        includeVideo: true,
+    });
     if (result.retagged > 0) await ArtistStatisticsService.refreshAsync(artistIds);
     ctx.updateCommandDescription(job, {
         progress: 100,
@@ -284,15 +284,17 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             progress: Math.max(5, job.progress),
             description: stripResume ? `Strip Tags - ${stripResume}removing embedded metadata` : "Strip Tags - removing embedded metadata",
         });
-        const result = await runRetagWorkUnit(job, ctx, () =>
-            ids
-                ? ids
-                : AudioTagService.getRetagWorkIds({
+        const result = await runRetagWorkUnit(job, ctx, ids
+            ? () => ids
+            : {
+                kind: "scope",
+                options: {
                     artistId: job.payload.artistId,
                     albumId: job.payload.albumId,
                     editionId: job.payload.editionId,
                     releaseMbid: job.payload.releaseMbid,
-                }), true);
+                },
+            }, true);
         if (result.retagged > 0 && affectedArtists.length > 0) await ArtistStatisticsService.refreshAsync(affectedArtists);
         ctx.updateCommandDescription(job, {
             progress: 100,
@@ -309,15 +311,18 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             ? `Retag Files - ${filesResume}${job.payload.restartResume?.settled ?? 0}/${job.payload.restartResume?.total ?? 0} files already settled`
             : "Retag Files - applying media tag plan",
     });
-    const result = await runRetagWorkUnit(job, ctx, () =>
-        ids
-            ? ids
-            : AudioTagService.getRetagWorkIds({
+    const result = await runRetagWorkUnit(job, ctx, ids
+        ? () => ids
+        : {
+            kind: "scope",
+            options: {
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
                 editionId: job.payload.editionId,
                 releaseMbid: job.payload.releaseMbid,
-            }),
+            },
+            includeVideo: true,
+        },
     );
     if (result.retagged > 0 && affectedArtists.length > 0) await ArtistStatisticsService.refreshAsync(affectedArtists);
     ctx.updateCommandDescription(job, {

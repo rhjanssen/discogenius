@@ -10,6 +10,10 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       total INTEGER NOT NULL,
       cursor INTEGER NOT NULL DEFAULT 0,
       result TEXT NOT NULL,
+      -- 1 once every work row exists. Existing plans default to complete so a
+      -- checkpoint from the previous process resumes at its cursor. Streaming
+      -- plans insert 0 and append one album at a time.
+      plan_complete INTEGER NOT NULL DEFAULT 1,
       CHECK (cursor >= 0 AND cursor <= total)
     );
     CREATE TABLE ${guard} CommandRenameWork (
@@ -90,6 +94,9 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       error_count INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      -- See CommandRenamePlans.plan_complete. Default 1 keeps a fully inserted
+      -- plan from the previous code complete across this deploy.
+      plan_complete INTEGER NOT NULL DEFAULT 1,
       CHECK (cursor >= 0 AND cursor <= total)
     );
     CREATE TABLE ${guard} CommandFileWork (

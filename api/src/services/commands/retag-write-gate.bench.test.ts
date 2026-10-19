@@ -39,9 +39,15 @@ after(() => {
     closeActiveSchemaDb(database.dbModule, tempDir);
 });
 
-test("unchanged retag files take one write-gate transaction in steady state", async (t) => {
+test("unchanged retag files take one write-gate transaction per album", async (t) => {
+    const desired = tags.AudioTagService.desiredManagedFingerprints(ids);
+    assert.equal(desired.size, FILE_COUNT);
+    const stamp = database.db.prepare("UPDATE TrackFiles SET managed_tag_fingerprint = ? WHERE id = ?");
+    database.db.transaction(() => {
+        for (const [fileId, fingerprint] of desired) stamp.run(fingerprint, fileId);
+    })();
     t.mock.method(tags.AudioTagService, "createRetagSession", () => ({
-        apply: async () => ({ retagged: 0, skipped: 1, missing: 0, errors: [] }),
+        apply: async () => { throw new Error("fingerprint skip opened a file"); },
         close: () => {},
     }));
     const id = queue.CommandQueueManager.push(queue.CommandNames.RetagFiles, { ids });
@@ -68,29 +74,26 @@ test("unchanged retag files take one write-gate transaction in steady state", as
     locks.captureSqliteWriteLockLabels(false);
     const counts = new Map<string, number>();
     for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
-    const claims = counts.get("retag:file-claim") ?? 0;
-    const settles = (counts.get("retag:settle-and-claim") ?? 0)
-        + (counts.get("retag:unchanged") ?? 0)
-        + (counts.get("retag:file-settled") ?? 0);
-    const replans = counts.get("retag:replan") ?? 0;
-    const fileGates = labels.filter(label => label !== "retag:plan").length;
-    const perFile = fileGates / FILE_COUNT;
+    const claims = counts.get("retag:album-claim") ?? 0;
+    const skips = counts.get("retag:album-skip") ?? 0;
+    const albumWrites = skips + (counts.get("retag:album-settled") ?? 0) + (counts.get("retag:plan") ?? 0);
+    const perFile = albumWrites / FILE_COUNT;
     const filesPerMinute = FILE_COUNT / elapsedMs * 60_000;
     const report = {
         files: FILE_COUNT,
+        albums: 1,
         elapsedMs: Math.round(elapsedMs),
         filesPerMinute: Math.round(filesPerMinute),
         writeGateTransactionsPerFile: Number(perFile.toFixed(4)),
         claims,
-        settles,
-        replans,
+        albumSkips: skips,
         labels: Object.fromEntries(counts),
     };
     console.log(`RETAG_BENCH ${JSON.stringify(report)}`);
-    assert.equal(settles, FILE_COUNT);
-    assert.equal(replans, 0);
-    assert.equal(claims, Math.ceil(FILE_COUNT / 250));
-    assert.ok(perFile <= 1.01, `write-gate transactions per file ${perFile}`);
+    assert.equal(skips, 1);
+    assert.equal(claims, 0);
+    assert.equal(counts.get("retag:plan"), 1);
+    assert.ok(perFile <= 0.01, `write-gate transactions per file ${perFile}`);
     const plan = database.db.prepare("SELECT cursor, total, skipped FROM CommandFileWorkPlans WHERE command_id = ?").get(id) as {
         cursor: number; total: number; skipped: number;
     };

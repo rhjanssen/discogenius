@@ -37,6 +37,7 @@ import {
   createCommandFileWorkSchema,
 } from "./database/schema/commands.js";
 import { migrateFileWorkRestartResume } from "./database/schema/file-work-restart-resume.js";
+import { migrateRetagAlbumScheduling } from "./database/schema/retag-album-scheduling.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
@@ -515,6 +516,9 @@ export function initDatabase() {
   // second catalogue schema or a compatibility writer.
   createCommandFileWorkSchema(db, { ifNotExists: true });
   migrateFileWorkRestartResume(db);
+  // Columns only. user_version stays 46 so a running or queued RetagArtist
+  // is not reset. Existing plans stay plan_complete = 1 and resume at cursor.
+  migrateRetagAlbumScheduling(db);
   // New table + config marker only. user_version stays 46 so a running
   // RetagArtist is not reset.
   migrateProviderAuthState(db);
@@ -731,6 +735,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
       extension TEXT NOT NULL,           -- File extension (flac, mp3, mp4, etc)
       file_size INT,                     -- File size in bytes
       file_hash TEXT,                    -- MD5/SHA hash for integrity checking
+      managed_tag_fingerprint TEXT,     -- Last written managed-tag fingerprint. Null means the file has not been stamped.
       duration INT,                      -- Duration in seconds (from file metadata)
       bitrate INT,                       -- Bitrate in kbps
       sample_rate INT,                   -- Sample rate in Hz (e.g. 44100, 96000)

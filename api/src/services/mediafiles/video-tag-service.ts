@@ -122,10 +122,10 @@ export class VideoTagService {
     `).all(...params) as VideoTagRow[];
   }
 
-  static async apply(ids: number[]): Promise<RetagApplyResult> {
+  static async apply(ids: number[], options: { deferPersistence?: boolean } = {}): Promise<RetagApplyResult> {
     const uniqueIds = Array.from(new Set(ids.filter(Number.isFinite)));
     if (uniqueIds.length === 0) return { retagged: 0, skipped: 0, missing: 0, errors: [] };
-    return this.applyRows(this.getRows(`file.id IN ${SQL_JSON_LIST}`, [jsonList(uniqueIds)]));
+    return this.applyRows(this.getRows(`file.id IN ${SQL_JSON_LIST}`, [jsonList(uniqueIds)]), options);
   }
 
   static async applyForArtists(artistIds: string[]): Promise<RetagApplyResult> {
@@ -148,7 +148,7 @@ export class VideoTagService {
       ORDER BY file.id`).all(JSON.stringify(artistIds)) as Array<{ id: number }>).map(row => row.id);
   }
 
-  private static async applyRows(rows: VideoTagRow[]): Promise<RetagApplyResult> {
+  private static async applyRows(rows: VideoTagRow[], options: { deferPersistence?: boolean } = {}): Promise<RetagApplyResult> {
     const result: RetagApplyResult = { retagged: 0, skipped: 0, missing: 0, errors: [] };
     const config = getConfigSection("metadata");
     if ((config.write_audio_tags_policy ?? "no") === "no") return { ...result, skipped: rows.length };
@@ -181,7 +181,16 @@ export class VideoTagService {
         }
 
         const stat = fs.statSync(resolvedPath);
-        await withSqliteWriteGate(() => update.run(stat.size, stat.mtime.toISOString(), row.id), "retag:video-file-facts");
+        if (options.deferPersistence) {
+          (result.fileFacts ??= []).push({
+            id: row.id,
+            size: stat.size,
+            modifiedAt: stat.mtime.toISOString(),
+            fingerprint: null,
+          });
+        } else {
+          await withSqliteWriteGate(() => update.run(stat.size, stat.mtime.toISOString(), row.id), "retag:video-file-facts");
+        }
         const verification = await AudioTagService.evaluateFileTags(resolvedPath, managedTags, removals, config.scrub_audio_tags === true);
         if (verification.changes.length) {
           result.errors.push({ id: row.id, error: `Video metadata verification failed: ${verification.changes.map(change => change.field).join(", ")}` });
