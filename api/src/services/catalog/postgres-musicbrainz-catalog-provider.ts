@@ -31,12 +31,16 @@ import type {
   CatalogUpcLookupResult,
   CatalogIsrcLookupResult,
   CatalogArtistCreditReleaseGroup,
+  CatalogTrackArtistCredit,
   CatalogVideoRecording,
   LidarrArtist,
   LidarrReleaseGroupDetail,
   LidarrRelease,
 } from "./catalog-provider.js";
 import { CATALOG_DETAIL_BATCH_SIZE, releaseGroupsFromArtist } from "./catalog-provider.js";
+
+/** Track MBIDs per credit query; one indexed lookup per MBID. */
+const TRACK_CREDIT_BATCH_SIZE = 500;
 import type { MusicBrainzReleaseGroupForMatching } from "../metadata/provider-release-group-matcher.js";
 import {
   mapMbArtistToLidarr,
@@ -557,7 +561,9 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     }
 
     // Official MB genres are sparse. The folksonomy (`release_group_tag`) is
-    // what Servarr/Lidarr expose as Genres and what files should embed.
+    // what Servarr/Lidarr expose as Genres and what files embed, but only the
+    // tags MusicBrainz recognises as genres: user tags such as
+    // "need composers" or "seen live" are not genres (Picard's genre filter).
     const tagRows = await this.query<{ rg_id: number; tag_name: string }>(
       `SELECT rg.id AS rg_id, t.name AS tag_name
        FROM release_group rg
@@ -566,6 +572,10 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
        WHERE rg.id = ANY($1::int[])
          AND COALESCE(rgt.count, 0) > 0
          AND t.name NOT LIKE '%:%'
+         AND (
+           EXISTS (SELECT 1 FROM genre g WHERE lower(g.name) = lower(t.name))
+           OR EXISTS (SELECT 1 FROM genre_alias ga WHERE lower(ga.name) = lower(t.name))
+         )
        ORDER BY rg.id, rgt.count DESC, t.name`,
       [ids],
     );
@@ -696,6 +706,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       d: number | null;
       disambiguation: string | null;
       credit_artist_gid: string;
+      credit_artist_name: string;
+      credit_artist_sort_name: string | null;
       credit_name: string;
       join_phrase: string | null;
       credit_position: number;
@@ -716,6 +728,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           rgm.first_release_date_day AS d,
           rg.comment AS disambiguation,
           credit_artist.gid AS credit_artist_gid,
+          credit_artist.name AS credit_artist_name,
+          credit_artist.sort_name AS credit_artist_sort_name,
           acn.name AS credit_name,
           acn.join_phrase,
           acn.position AS credit_position
@@ -750,10 +764,60 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
         artistId: row.credit_artist_gid,
         name: row.credit_name,
         joinPhrase: row.join_phrase || "",
+        artistName: row.credit_artist_name || null,
+        artistSortName: row.credit_artist_sort_name || null,
       });
     }
 
     return Array.from(groups.values());
+  }
+
+  /**
+   * Track-level artist credits (what the release prints for each track), in
+   * bounded batches. A redirected (merged) track MBID resolves to its current
+   * track and is returned under the MBID the caller asked for.
+   */
+  async getTrackArtistCredits(trackMbids: string[]): Promise<Map<string, CatalogTrackArtistCredit[]>> {
+    const result = new Map<string, CatalogTrackArtistCredit[]>();
+    const wanted = Array.from(new Set(trackMbids
+      .map((mbid) => String(mbid || "").trim().toLowerCase())
+      .filter((mbid) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(mbid))));
+    for (let offset = 0; offset < wanted.length; offset += TRACK_CREDIT_BATCH_SIZE) {
+      const batch = wanted.slice(offset, offset + TRACK_CREDIT_BATCH_SIZE);
+      const rows = await this.query<{
+        requested_gid: string; position: number; artist_gid: string; artist_name: string;
+        artist_sort_name: string | null; credited_name: string; join_phrase: string | null;
+      }>(
+        `WITH requested AS (
+           SELECT t.gid::text AS requested_gid, t.artist_credit
+           FROM track t WHERE t.gid = ANY($1::uuid[])
+           UNION ALL
+           SELECT redirect.gid::text AS requested_gid, t.artist_credit
+           FROM track_gid_redirect redirect JOIN track t ON t.id = redirect.new_id
+           WHERE redirect.gid = ANY($1::uuid[])
+         )
+         SELECT requested.requested_gid, acn.position, a.gid::text AS artist_gid, a.name AS artist_name,
+                a.sort_name AS artist_sort_name, acn.name AS credited_name, acn.join_phrase
+         FROM requested
+         JOIN artist_credit_name acn ON acn.artist_credit = requested.artist_credit
+         JOIN artist a ON a.id = acn.artist
+         ORDER BY requested.requested_gid, acn.position`,
+        [batch],
+      );
+      for (const row of rows) {
+        const key = String(row.requested_gid).toLowerCase();
+        const list = result.get(key) ?? [];
+        list.push({
+          artistId: row.artist_gid,
+          artistName: String(row.artist_name || row.credited_name || "").trim(),
+          artistSortName: row.artist_sort_name ? String(row.artist_sort_name).trim() || null : null,
+          creditedName: String(row.credited_name || row.artist_name || "").trim(),
+          joinPhrase: String(row.join_phrase ?? ""),
+        });
+        result.set(key, list);
+      }
+    }
+    return result;
   }
 
   // ---- video recordings (canonical MB identity for is_video=1 rows) ----

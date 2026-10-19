@@ -209,3 +209,44 @@ test("earlierDate compares partial ISO dates with precision preference", () => {
   assert.equal(earlierDate("2016-04-15", "2016-04-29"), "2016-04-15");
   assert.equal(earlierDate("2016-04-29", "2016-04-15"), "2016-04-15");
 });
+
+test("track artist credits come from the track's own artist credit, in bounded batches, keyed by the requested MBID", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({ connectionString: "postgresql://unused:unused@127.0.0.1:1/unused" });
+  const tracks = Array.from({ length: 501 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`);
+  const batches: number[] = [];
+  (provider as any).query = async (sql: string, values: unknown[]) => {
+    assert.match(sql, /acn\.artist_credit = requested\.artist_credit/);
+    assert.match(sql, /track_gid_redirect/);
+    const batch = values[0] as string[];
+    batches.push(batch.length);
+    if (!batch.includes(tracks[0])) return [];
+    return [
+      { requested_gid: tracks[0].toUpperCase(), position: 0, artist_gid: "a3ee920f-4e7f-4993-8aca-4b8538cfaa4a", artist_name: "Afrojack", artist_sort_name: "Afrojack", credited_name: "AFROJACK", join_phrase: " feat. " },
+      { requested_gid: tracks[0], position: 1, artist_gid: "481cbdd9-02ac-46fd-825f-afed658bc505", artist_name: "Eva Simons", artist_sort_name: "Simons, Eva", credited_name: "Eva Simons", join_phrase: "" },
+    ];
+  };
+  try {
+    const result = await provider.getTrackArtistCredits([...tracks, "not-a-uuid", tracks[0]]);
+    assert.deepEqual(batches, [500, 1]);
+    assert.deepEqual(result.get(tracks[0]), [
+      { artistId: "a3ee920f-4e7f-4993-8aca-4b8538cfaa4a", artistName: "Afrojack", artistSortName: "Afrojack", creditedName: "AFROJACK", joinPhrase: " feat. " },
+      { artistId: "481cbdd9-02ac-46fd-825f-afed658bc505", artistName: "Eva Simons", artistSortName: "Simons, Eva", creditedName: "Eva Simons", joinPhrase: "" },
+    ]);
+    assert.equal(result.size, 1);
+  } finally { await provider.dispose(); }
+});
+
+test("folksonomy genres keep only tags MusicBrainz recognises as genres", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({ connectionString: "postgresql://unused:unused@127.0.0.1:1/unused" });
+  let tagSql = "";
+  (provider as any).query = async (sql: string) => {
+    if (sql.includes("JOIN release_group_tag")) tagSql = sql;
+    if (sql.includes("WHERE rg.gid = ANY")) return [{ id: 1, gid: "rg", name: "rg", secondary_types: [] }];
+    return [];
+  };
+  try {
+    await provider.getReleaseGroupDetails(["rg"]);
+    assert.match(tagSql, /FROM genre g WHERE lower\(g\.name\) = lower\(t\.name\)/);
+    assert.match(tagSql, /FROM genre_alias ga/);
+  } finally { await provider.dispose(); }
+});

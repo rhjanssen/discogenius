@@ -81,7 +81,26 @@ export interface CatalogIsrcLookupResult {
 
 export interface CatalogArtistCredit {
   artistId: string;
+  /** Credited-as name, exactly as printed on the release ("AFROJACK", "MJ"). */
   name: string;
+  joinPhrase: string;
+  /**
+   * The artist's own MusicBrainz name ("Afrojack"). Only this may become
+   * ArtistMetadata.name; a credited-as name never does.
+   */
+  artistName?: string | null;
+  /** The artist's MusicBrainz sort name ("Jackson, Michael"). */
+  artistSortName?: string | null;
+}
+
+/** One name of a MusicBrainz track's published artist credit. */
+export interface CatalogTrackArtistCredit {
+  artistId: string;
+  /** The artist's own MusicBrainz name. */
+  artistName: string;
+  artistSortName: string | null;
+  /** Credited-as name on this track. */
+  creditedName: string;
   joinPhrase: string;
 }
 
@@ -196,6 +215,14 @@ export interface CatalogProvider {
    * this from Postgres.
    */
   getCreditedReleaseGroupsForArtist?(artistMbid: string): Promise<CatalogArtistCreditReleaseGroup[]>;
+
+  /**
+   * Published artist credit of each track MBID (track-level credit, Picard's
+   * `artist`), keyed by the requested MBID (redirected MBIDs resolve to their
+   * current track). Optional: the Servarr Metadata Server only exposes one
+   * artist id per track; MB-local serves the full credit from Postgres.
+   */
+  getTrackArtistCredits?(trackMbids: string[]): Promise<Map<string, CatalogTrackArtistCredit[]>>;
 
   /**
    * MusicBrainz video recordings credited to an artist. Optional: hosted Servarr

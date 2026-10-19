@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
-import { AudioTagService, type RetagApplyResult, type RetagScopeOptions } from "../mediafiles/audio-tag-service.js";
+import { AudioTagService, syncTrackArtistCredits, type RetagApplyResult, type RetagScopeOptions } from "../mediafiles/audio-tag-service.js";
 import { VideoTagService } from "../mediafiles/video-tag-service.js";
 import type { CommandModel } from "./command-model.js";
 import type { RetagWorkCheckpoint } from "./command-bodies.js";
@@ -170,6 +170,10 @@ async function runAlbum(
     nextFiles: () => ReturnType<typeof Work.prepare> | null,
 ): Promise<FileWorkPlan> {
     const forceOpen = new Set<number>();
+    // Published MusicBrainz track credits decide ARTIST/ARTISTS; refresh them
+    // for this album before the unchanged check compares fingerprints. No
+    // folder lock or HDD permit is held here.
+    if (!stripOnly) await syncTrackArtistCredits(album.files.filter(file => file.fileType === "track").map(file => file.id));
     for (let attempt = 0; attempt < 2; attempt += 1) {
         const unchanged = stripOnly
             ? new Map<number, string>()
