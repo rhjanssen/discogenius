@@ -3333,6 +3333,7 @@ function resolveDownloadWorkerSpawn(): { entry: string; workerData: Record<strin
         [DOWNLOAD_WORKER_MARKER]: true,
         ...sqliteWriteMutexWorkerData(),
         ...mediaFileLockWorkerData(),
+        ...diskAdmissionWorkerData(),
         ...providerRequestWorkerData(),
     };
 
@@ -3540,6 +3541,7 @@ export class DownloadProcessorWorkerProxy {
         const { entry, workerData } = resolveDownloadWorkerSpawn();
         const worker = new Worker(entry, { workerData });
         const mediaFileOwner = Number(workerData[MEDIA_FILE_LOCK_OWNER_KEY]) || 0;
+        const diskAdmissionOwner = Number(workerData[DISK_ADMISSION_OWNER_KEY]) || 0;
         superviseDownloadProcesses(worker);
         this.workerSqliteWriteMutexOwnerToken = Number(
             workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY],
@@ -3558,6 +3560,7 @@ export class DownloadProcessorWorkerProxy {
         });
         worker.on('exit', (code) => {
             releaseExitedMediaFileOwner(mediaFileOwner);
+            releaseExitedDiskAdmissionOwner(diskAdmissionOwner);
             if (this.worker !== worker) return;
             forceReleaseSqliteWriteMutexOwner(this.workerSqliteWriteMutexOwnerToken);
             this.workerSqliteWriteMutexOwnerToken = 0;
@@ -3752,3 +3755,4 @@ export const downloadProcessor = isMainThread
         ? new DownloadProcessor()
         : new DownloadProcessorCommandWorkerStub();
 import { mediaFileLockWorkerData, MEDIA_FILE_LOCK_OWNER_KEY, releaseExitedMediaFileOwner } from "../mediafiles/media-file-lock.js";
+import { diskAdmissionWorkerData, DISK_ADMISSION_OWNER_KEY, releaseExitedDiskAdmissionOwner } from "../commands/disk-admission.js";

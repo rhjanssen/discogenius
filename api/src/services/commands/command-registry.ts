@@ -74,6 +74,26 @@ export interface CommandDefinition {
    * - `rename` stores the plan in CommandRenameWork.
    */
   fileWorkCheckpoint?: "retag" | "rename";
+  /**
+   * How this command shares the disk.
+   * - `global`: one at a time against every other disk command (backup, cleanup, move artist).
+   * - `folder`: per-album locks plus the HDD I/O permit. Runs beside other folder-scoped commands.
+   * - `none`: no disk admission.
+   * Omitted means `global` when `requiresDiskAccess` is set, otherwise `none`.
+   */
+  diskScope?: "global" | "folder" | "none";
+}
+
+export type CommandDiskScope = "global" | "folder" | "none";
+
+export function commandDiskScope(definition: Pick<CommandDefinition, "requiresDiskAccess" | "diskScope">): CommandDiskScope {
+  if (definition.diskScope) return definition.diskScope;
+  return definition.requiresDiskAccess ? "global" : "none";
+}
+
+/** True for both the global disk slot and per-album folder work. */
+export function commandWritesLibraryFiles(definition: Pick<CommandDefinition, "requiresDiskAccess" | "diskScope">): boolean {
+  return commandDiskScope(definition) !== "none";
 }
 
 export interface SystemTaskDefinition {
@@ -215,7 +235,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.ImportUnmappedFiles]: {
     type: CommandNames.ImportUnmappedFiles,
     name: "Import Unmapped Files",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: true,
@@ -349,7 +370,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.ImportDownload]: {
     type: CommandNames.ImportDownload,
     name: "Import Download",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: false,
@@ -357,7 +379,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.RescanFolders]: {
     type: CommandNames.RescanFolders,
     name: "Rescan Folders",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: false,
     isExclusive: false,
     isPerRefExclusive: true,
@@ -383,7 +406,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.RenameFiles]: {
     type: CommandNames.RenameFiles,
     name: "Rename Files",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
@@ -392,7 +416,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.RenameArtist]: {
     type: CommandNames.RenameArtist,
     name: "Rename Artist",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
@@ -401,7 +426,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.RetagFiles]: {
     type: CommandNames.RetagFiles,
     name: "Retag Files",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
@@ -410,7 +436,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.RetagArtist]: {
     type: CommandNames.RetagArtist,
     name: "Retag Artist",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,

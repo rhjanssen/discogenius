@@ -1,4 +1,5 @@
 import { withSqliteWriteGate } from "../../database.js";
+import { commandWritesLibraryFiles } from "./command-registry.js";
 import { CommandManager } from "./command.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
 import { CommandWorkerPool } from "./worker/command-worker-pool.js";
@@ -14,7 +15,7 @@ export async function cancelNonDownloadCommand(commandId: number): Promise<boole
         throw new Error("Downloads must be cancelled through the download processor");
     }
     if (job.status === "started" && job.worker_id) {
-        if (CommandManager.getDefinition(job.name).requiresDiskAccess) {
+        if (commandWritesLibraryFiles(CommandManager.getDefinition(job.name))) {
             return withSqliteWriteGate(() => Boolean(CommandQueueManager.updateState(commandId, {
                 workerId: job.worker_id!, payloadPatch: { cancelRequested: true, description: "Cancellation requested" },
             })), "commands:request-cancel");

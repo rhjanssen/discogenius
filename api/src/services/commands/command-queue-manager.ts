@@ -1,4 +1,5 @@
 import { CommandPriority, CommandTrigger } from "./command-trigger.js";
+import { commandDiskScope } from "./command-registry.js";
 import { CommandManager } from "./command.js";
 import { db, withDbWrite } from "../../database.js";
 import { recordRootScanCompletion } from "./root-scan-schedule.js";
@@ -1050,7 +1051,14 @@ ${orderBy}
             // slot ahead of a file operation explicitly requested in the UI.
             // Only yield to eligible work, so delayed retries or commands still
             // blocked by exclusivity cannot strand an import handoff.
-            const diskTypes = NON_DOWNLOAD_COMMAND_NAMES.filter(name => CommandManager.getDefinition(name).requiresDiskAccess);
+            // Folder-scoped retag and rename lock one album. They must not
+            // make an import wait behind a queued library retag. Only a global
+            // disk command (move artist, cleanup) still gets this yield.
+            const diskTypes = NON_DOWNLOAD_COMMAND_NAMES.filter(name => commandDiskScope(CommandManager.getDefinition(name)) === "global");
+            if (diskTypes.length === 0) {
+                return db.prepare(`UPDATE commands SET progress_phase = 'importing', blocked_reason = NULL
+                    WHERE id = ? AND status = 'started' AND worker_id = ?`).run(id, workerId).changes === 1;
+            }
             const waiting = db.prepare(`
                 SELECT * FROM commands WHERE status = 'queued'
                   AND name IN (${diskTypes.map(() => '?').join(',')})

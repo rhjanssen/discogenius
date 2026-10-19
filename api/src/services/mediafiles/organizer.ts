@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
 import { db, withSqliteWriteGate } from "../../database.js";
+import { withAlbumFolder, withAlbumFolders, withHddIoPermit, type DiskAdmissionMeta } from "../commands/disk-admission.js";
 import { Config } from "../config/config.js";
 import { downloadAlbumVideoCover, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
 import { streamingProviderManager } from "../providers/index.js";
@@ -817,17 +818,18 @@ export class OrganizerService {
     }
     this.ensureDir(path.dirname(dest));
 
+    await this.holdImportFolders([params.src, dest], async () => {
     if (path.extname(params.src).toLowerCase() !== ".mp4") {
-      const success = await convertToMp4(params.src, dest);
+      const success = await withHddIoPermit(this.importDiskMeta(), () => convertToMp4(params.src, dest));
       if (!success) {
         throw new Error(`[Organizer] MP4 conversion failed for bundled video ${params.src}`);
       }
       try { fs.rmSync(params.src, { force: true }); } catch { /* stale source is harmless */ }
     } else {
-      this.moveFileCrossDevice(params.src, dest);
+      await this.moveFileCrossDevice(params.src, dest);
     }
 
-    const metrics = await parseAudioFile(dest);
+    const metrics = await withHddIoPermit(this.importDiskMeta(), () => parseAudioFile(dest));
     const derivedVideoQuality = deriveVideoQuality(metrics) ?? row.quality ?? null;
     const albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
 
@@ -883,6 +885,7 @@ export class OrganizerService {
         console.warn(`[Organizer] Failed to record bundled-video import history for ${params.providerTrackId}:`, historyError);
       }
     })(), "import:media-commit");
+    });
 
     await this.ensureVideoThumbnailSidecar({
       artistId: params.artistId,
@@ -1288,7 +1291,7 @@ export class OrganizerService {
 
       try {
         if (!hasExpectedSidecar) {
-          this.moveFileCrossDevice(resolvedFilePath, expectedPath);
+          await this.moveFileCrossDevice(resolvedFilePath, expectedPath);
           hasExpectedSidecar = true;
 
           const sourceRoot = this.resolveLibraryRoot(resolvedFilePath, sidecar.library_root);
@@ -1433,15 +1436,17 @@ export class OrganizerService {
             continue;
           }
           if (!hasExpectedSidecar) {
-            this.ensureDir(destDir);
-            fs.copyFileSync(resolvedFilePath, params.expectedPath);
+            await withAlbumFolders([sourceDir, destDir], this.importDiskMeta(), () => withHddIoPermit(this.importDiskMeta(), async () => {
+              this.ensureDir(destDir);
+              fs.copyFileSync(resolvedFilePath, params.expectedPath);
+            }));
             hasExpectedSidecar = true;
           }
           continue;
         }
 
         if (!hasExpectedSidecar) {
-          this.moveFileCrossDevice(resolvedFilePath, params.expectedPath);
+          await this.moveFileCrossDevice(resolvedFilePath, params.expectedPath);
           hasExpectedSidecar = true;
         } else {
           fs.rmSync(resolvedFilePath, { force: true });
@@ -1725,9 +1730,17 @@ export class OrganizerService {
     return null;
   }
 
-  private static moveFileCrossDevice(sourcePath: string, destPath: string) {
-    this.ensureDir(path.dirname(destPath));
+  private static importDiskMeta(): DiskAdmissionMeta {
+    return { role: "import", commandId: 0, reason: "import album file" };
+  }
 
+  /** Hold every album folder a placement touches until `fn` finishes, including its database write. */
+  private static holdImportFolders<T>(files: readonly string[], fn: () => Promise<T>): Promise<T> {
+    return withAlbumFolders(files.map((file) => path.dirname(file)), OrganizerService.importDiskMeta(), fn);
+  }
+
+  private static moveFileBytes(sourcePath: string, destPath: string): void {
+    this.ensureDir(path.dirname(destPath));
     try {
       fs.renameSync(sourcePath, destPath);
       return;
@@ -1746,8 +1759,17 @@ export class OrganizerService {
 
     fs.rmSync(sourcePath, { force: true });
   }
+
+  private static async moveFileCrossDevice(sourcePath: string, destPath: string): Promise<void> {
+    const meta = this.importDiskMeta();
+    await withAlbumFolders([path.dirname(sourcePath), path.dirname(destPath)], meta, () =>
+      withHddIoPermit(meta, async () => {
+        this.moveFileBytes(sourcePath, destPath);
+      }));
+  }
   private static async upsertLibraryFile(params: Parameters<typeof OrganizerService.persistLibraryFile>[0]): Promise<number> {
-    return withSqliteWriteGate(() => this.persistLibraryFile(params), "import:file-record");
+    return withAlbumFolder(path.dirname(params.filePath), this.importDiskMeta(), () =>
+      withSqliteWriteGate(() => this.persistLibraryFile(params), "import:file-record"));
   }
 
   private static persistLibraryFile(params: {
@@ -2347,13 +2369,14 @@ export class OrganizerService {
           statusMessage: `Importing ${trackTitle}`,
         });
 
-        this.moveFileCrossDevice(srcFile, destFile);
+        await this.holdImportFolders([srcFile, destFile], async () => {
+        await this.moveFileCrossDevice(srcFile, destFile);
 
         for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
           const srcLyricFile = srcFile.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
           const destLyricFile = destFile.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
           if (fs.existsSync(srcLyricFile)) {
-            this.moveFileCrossDevice(srcLyricFile, destLyricFile);
+            await this.moveFileCrossDevice(srcLyricFile, destLyricFile);
           }
         }
 
@@ -2424,6 +2447,7 @@ export class OrganizerService {
             this.cleanupSiblingMediaVariants(destFile, "track");
           }
         })(), "import:media-commit");
+        });
 
         if (metadataConfig.save_lyrics && trackId) {
           try {
@@ -3022,13 +3046,14 @@ export class OrganizerService {
       });
 
       const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
-      this.moveFileCrossDevice(src, dest);
+      await this.holdImportFolders([src, dest], async () => {
+      await this.moveFileCrossDevice(src, dest);
 
       for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
         const srcLyricFile = src.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
         const destLyricFile = dest.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
         if (fs.existsSync(srcLyricFile)) {
-          this.moveFileCrossDevice(srcLyricFile, destLyricFile);
+          await this.moveFileCrossDevice(srcLyricFile, destLyricFile);
         }
       }
 
@@ -3090,6 +3115,7 @@ export class OrganizerService {
         this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null, streamingProviderId);
         this.cleanupSiblingMediaVariants(dest, "track");
       })(), "import:media-commit");
+      });
 
       if (metadataConfig.save_lyrics) {
         try {
@@ -3563,20 +3589,21 @@ export class OrganizerService {
       this.ensureDir(path.dirname(dest));
 
       // Convert to MP4 directly from source into destination if not already MP4
+      await this.holdImportFolders([src, dest], async () => {
       if (ext !== '.mp4') {
         console.log(`[Organizer] Converting video ${src} to ${dest}...`);
-        const success = await convertToMp4(src, dest);
+        const success = await withHddIoPermit(this.importDiskMeta(), () => convertToMp4(src, dest));
         if (!success) {
           throw new Error(`[Organizer] MP4 conversion failed for ${src}`);
         }
         // Cleanup the parsed source TS/MKV file if successful
         try { fs.rmSync(src, { force: true }); } catch (e) { console.warn('Failed to delete source video', e); }
       } else {
-        this.moveFileCrossDevice(src, dest);
+        await this.moveFileCrossDevice(src, dest);
       }
 
       // Analyze file quality/resolution from the actual downloaded file.
-      const metrics = await parseAudioFile(dest);
+      const metrics = await withHddIoPermit(this.importDiskMeta(), () => parseAudioFile(dest));
       const derivedVideoQuality = deriveVideoQuality(metrics) ?? video.quality ?? null;
       const videoIdentity = resolveLibraryFileIdentity({
         artistId,
@@ -3644,6 +3671,7 @@ export class OrganizerService {
         this.cleanupOldMediaFiles(providerId, dest, "video", videoIdentity.librarySlot ?? null, videoProvider);
         this.cleanupSiblingMediaVariants(dest, "video");
       })(), "import:media-commit");
+      });
 
       await this.ensureVideoThumbnailSidecar({
         artistId,

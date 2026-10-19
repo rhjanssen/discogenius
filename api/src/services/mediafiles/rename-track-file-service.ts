@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createHash } from "node:crypto";
 import { db, withSqliteWriteGate } from "../../database.js";
+import { withAlbumFolders, withHddIoPermit } from "../commands/disk-admission.js";
 import { Config } from "../config/config.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
@@ -1315,9 +1316,13 @@ export class RenameTrackFileService {
       }, pathCache).expectedPath;
       if (!expectedPath) return;
 
+      const renameMeta = { role: "rename" as const, commandId: 0, reason: "rename sidecar copy" };
+      await withAlbumFolders([path.dirname(sourcePath), path.dirname(expectedPath)], renameMeta, async () => {
       if (normalizeResolvedPath(sourcePath) !== normalizeResolvedPath(expectedPath) && !fs.existsSync(expectedPath)) {
-        fs.mkdirSync(path.dirname(expectedPath), { recursive: true });
-        fs.copyFileSync(sourcePath, expectedPath);
+        await withHddIoPermit(renameMeta, async () => {
+          fs.mkdirSync(path.dirname(expectedPath), { recursive: true });
+          fs.copyFileSync(sourcePath, expectedPath);
+        });
       }
       await withSqliteWriteGate(() => LibraryFilesService.upsertLibraryFile({
         artistId: target.artistId,
@@ -1338,6 +1343,7 @@ export class RenameTrackFileService {
         providerEntityType: target.providerEntityType,
         providerId: target.providerId,
       }), "rename:sidecar");
+      });
     };
 
     for (const track of tracks) {

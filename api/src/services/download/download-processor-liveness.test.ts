@@ -761,12 +761,14 @@ test('a started importPending handoff missing from memory starts on the next tic
     assert.equal(processor.activeDownloads.size, 0);
 });
 
-test('a queued RetagArtist gets disk admission after the stranded import finishes', () => {
+test('a stranded import does not block a queued RetagArtist', () => {
     const row = seedImportHandoff('retag-after-import');
     const retag = CommandQueueManager.push(CommandNames.RetagArtist, { artistId: 'bastille' } as any, 'bastille');
-    const blocked = CommandManager.canStartCommand(CommandNames.RetagArtist, { artistId: 'bastille' }, 'bastille');
-    assert.equal(blocked.canStart, false);
-    assert.match(blocked.reason || '', /completed download is waiting for disk admission/);
+    const retagStart = CommandManager.canStartCommand(CommandNames.RetagArtist, { artistId: 'bastille' }, 'bastille');
+    assert.equal(retagStart.canStart, true);
+    const backup = CommandManager.canStartCommand(CommandNames.BackupDatabase);
+    assert.equal(backup.canStart, false);
+    assert.match(backup.reason || '', /completed download is waiting for disk admission/);
 
     const processor = new DownloadProcessor() as any;
     const dispatched: Array<{ commandId: number; workerId: string }> = [];
@@ -775,7 +777,7 @@ test('a queued RetagArtist gets disk admission after the stranded import finishe
 
     assert.deepEqual(dispatched.map((entry) => entry.commandId), [row.id]);
     assert.equal(CommandQueueManager.complete(row.id, row.owner), true);
-    assert.equal(CommandManager.canStartCommand(CommandNames.RetagArtist, { artistId: 'bastille' }, 'bastille').canStart, true);
+    assert.equal(CommandManager.canStartCommand(CommandNames.BackupDatabase).canStart, true);
     assert.equal(CommandQueueManager.get(retag)?.status, 'queued');
 });
 

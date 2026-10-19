@@ -18,7 +18,7 @@ import { CommandWorkerPool, isPoolShutdownError } from "./worker/command-worker-
 import { shouldDeferCatalogHydration } from "./command-ordering.js";
 import { FileMutationJournal } from "../mediafiles/file-mutation-journal.js";
 import { prepareFileCheckpointResume } from "./command-file-checkpoint.js";
-import { commandResumesFromFileCheckpoint } from "./command-registry.js";
+import { commandResumesFromFileCheckpoint, commandWritesLibraryFiles } from "./command-registry.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
@@ -79,7 +79,7 @@ export async function recoverStaleNonDownloadCommands(options: {
 
     for (const command of stale) {
         await CommandWorkerPool.abortCommandAndWait(command.id, command.workerId, `Command watchdog recovered ${command.reason}`);
-        if (CommandManager.getDefinition(command.name).requiresDiskAccess) {
+        if (commandWritesLibraryFiles(CommandManager.getDefinition(command.name))) {
             const errors = await FileMutationJournal.recoverPending();
             if (errors.length) console.error("[CommandExecutor] File recovery requires attention:", errors);
         }
@@ -333,7 +333,7 @@ export class CommandExecutor {
                 const message = error instanceof Error ? error.message : String(error);
                 console.error(`[CommandExecutor] Command #${claimedJob.id} (${claimedJob.name}) worker interrupted:`, message);
                 try {
-                    if (CommandManager.getDefinition(claimedJob.name).requiresDiskAccess) {
+                    if (commandWritesLibraryFiles(CommandManager.getDefinition(claimedJob.name))) {
                         const errors = await FileMutationJournal.recoverPending();
                         if (errors.length) console.error("[CommandExecutor] File recovery requires attention:", errors);
                     }

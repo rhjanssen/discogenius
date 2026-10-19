@@ -5,6 +5,7 @@ import { assertOutsideSqliteReadPlan, recordSqlitePlanRead } from "./database/sq
 import { BASE_SCHEMA_VERSION } from "./database/schema/version.js";
 import { isMainThread } from "node:worker_threads";
 import { DB_PATH } from "./services/config/bootstrap.js";
+import { enterWriteGate } from "./services/commands/disk-admission.js";
 
 import {
   createCatalogForeignKeyIndexes,
@@ -415,7 +416,9 @@ export async function withSqliteWriteGate<T>(
   const { withGlobalSqliteWriteLock } = await import(
     "./services/commands/worker/sqlite-write-lock.js"
   );
-  return withGlobalSqliteWriteLock(work, undefined, label);
+  // Folder lock, then HDD permit, then this gate. enterWriteGate refuses the
+  // gate while a permit is held.
+  return enterWriteGate(() => withGlobalSqliteWriteLock(work, undefined, label));
 }
 
 /**
