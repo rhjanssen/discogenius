@@ -401,9 +401,23 @@ export async function startTidalDeviceLogin(): Promise<{
     expiresIn?: number;
     interval?: number;
 }> {
+    // Only skip the device login for a token that still works. An expired
+    // token, or one whose refresh was rejected, must lead to a fresh login;
+    // otherwise the connect button silently returns to the library.
     const existing = loadStoredTidalToken();
-    if (existing?.access_token) {
-        return { alreadyLoggedIn: true };
+    if (existing?.access_token && !providerNeedsReauth("tidal")) {
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        if (typeof existing.expires_at === "number" && existing.expires_at > nowSeconds + 60) {
+            return { alreadyLoggedIn: true };
+        }
+        try {
+            const refreshed = await refreshStoredTidalToken();
+            if (refreshed && typeof refreshed.expires_at === "number" && refreshed.expires_at > nowSeconds + 60) {
+                return { alreadyLoggedIn: true };
+            }
+        } catch {
+            // Fall through to a new device login.
+        }
     }
     const tidalClient = getTidalAuthClientConfig();
 
