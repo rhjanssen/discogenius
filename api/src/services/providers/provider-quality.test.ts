@@ -123,3 +123,11 @@ test("TIDAL catalog video quality distrusts aspirational MP4_1080P / FHD", async
   assert.equal(tidalVideoQualityTagFromProbe({ height: 480, streamQuality: "MEDIUM" }), "SD");
   assert.equal(tidalVideoQualityTagFromProbe({ streamQuality: "MEDIUM" }), "HD");
 });
+
+test("tidal legacy HI_RES / MQA tiers are 16-bit lossless, only HI_RES_LOSSLESS is hi-res", () => {
+  assert.equal(tidalQualityMapping.toNeutralAudio("HI_RES"), "lossless");
+  assert.equal(tidalQualityMapping.toNeutralAudio("MQA"), "lossless");
+  assert.equal(tidalQualityMapping.toNeutralAudio("HI_RES_LOSSLESS"), "hires-lossless");
+  assert.equal(tidalQualityMapping.toNeutral(["LOSSLESS", "MQA"]).audio, "lossless");
+  assert.equal(tidalQualityMapping.toNeutral(["LOSSLESS", "HIRES_LOSSLESS"]).audio, "hires-lossless");
+});

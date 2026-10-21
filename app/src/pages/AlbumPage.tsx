@@ -835,7 +835,6 @@ const AlbumPage = () => {
         providerUrl?: string | null;
         matchStatus?: string | null;
         releaseMbid?: string | null;
-        measured?: boolean;
       },
     ) => {
       const library = releaseAvailability?.libraries.find((candidate) =>
@@ -866,9 +865,7 @@ const AlbumPage = () => {
         // selected). Scanning every variant published on the source offers
         // would badge a stereo plan as Atmos whenever the provider also sells
         // an Atmos stream of the same album.
-        // Once files are on disk the badge names what was delivered (measured
-        // by ffprobe), not what the provider advertised for the plan.
-        const quality = (fallback.measured && fallback.quality) || acquisitionPlanDisplayQuality({
+        const quality = acquisitionPlanDisplayQuality({
           qualityTier: plan.qualityTier,
           displayQuality: plan.displayQuality,
           provider: plan.provider,
@@ -928,7 +925,6 @@ const AlbumPage = () => {
       providerUrl: album.stereo_provider_url,
       matchStatus: album.stereo_match_status,
       releaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
-      measured: album.stereo_quality_source === "files",
     });
     if (album.spatial_provider_id || album.spatial_quality) {
       pushFromPlan("spatial", /spatial/i, {
@@ -938,7 +934,6 @@ const AlbumPage = () => {
         providerUrl: album.spatial_provider_url,
         matchStatus: album.spatial_match_status,
         releaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
-        measured: album.spatial_quality_source === "files",
       });
     }
     return offers;
@@ -995,6 +990,28 @@ const AlbumPage = () => {
     }
     return badges;
   }, [album?.quality, headerPlanOffers]);
+
+  // Measured quality of the files on disk, shown beside (never instead of)
+  // the provider-advertised badge so a gap between offer and delivery shows.
+  const localQualityBadges = useMemo(() => {
+    const record = (album || {}) as { stereo_local_quality?: string | null; spatial_local_quality?: string | null };
+    const values = [record.stereo_local_quality, record.spatial_local_quality]
+      .map((value) => String(value || "").trim())
+      .filter((value) => value && value.toUpperCase() !== "UNKNOWN");
+    return [...new Set(values)];
+  }, [album]);
+  const renderLocalQualityBadges = () => localQualityBadges.length === 0 ? null : (
+    <>
+      <Text size={200} aria-hidden>Files:</Text>
+      {localQualityBadges.map((quality) => (
+        <QualityBadge
+          key={`local-${quality}`}
+          quality={quality}
+          tooltip="Measured from the downloaded files on disk"
+        />
+      ))}
+    </>
+  );
 
   const renderAlbumArtists = () => {
     if (albumArtists.length > 1) {
@@ -1719,13 +1736,17 @@ const AlbumPage = () => {
                       size="medium"
                       offers={headerPlanOffers}
                     />
+                    {renderLocalQualityBadges()}
                   </div>
                 ) : headerQualityBadges.length > 0 ? (
                   <div className={styles.metadataBadges}>
                     {headerQualityBadges.map((badge) => (
                       <QualityBadge key={badge.key} quality={badge.quality} />
                     ))}
+                    {renderLocalQualityBadges()}
                   </div>
+                ) : localQualityBadges.length > 0 ? (
+                  <div className={styles.metadataBadges}>{renderLocalQualityBadges()}</div>
                 ) : null}
                 <div className={styles.metadataFacts}>
                   <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>

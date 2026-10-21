@@ -31,13 +31,17 @@ export const tidalQualityMapping: ProviderQualityMapping = {
       case "HIGH":
         return "lossy";
       case "LOSSLESS":
-        return "lossless";
+      // TIDAL's legacy "HI_RES" tier (and the MQA/MASTER tags) was MQA: a
+      // 16-bit/44.1 kHz FLAC container. MQA was retired in 2024 and those
+      // streams are now served as plain 16/44.1 FLAC. Only HI_RES_LOSSLESS
+      // is genuine >16-bit audio.
       case "HI_RES":
+      case "MASTER":
+      case "MQA":
+        return "lossless";
       case "HIRES":
       case "HI_RES_LOSSLESS":
       case "HIRES_LOSSLESS":
-      case "MASTER":
-      case "MQA":
       case "MAX":
         return "hires-lossless";
       default:
@@ -51,7 +55,10 @@ export const tidalQualityMapping: ProviderQualityMapping = {
     const tags = Array.from(rawTags);
     const base = classifyNeutralQuality(tags);
     // Prefer the explicit TIDAL audio mapping for any non-spatial tag.
-    let audio = base.audio;
+    // Non-spatial tags are classified by TIDAL's own vocabulary only: the
+    // shared heuristic treats HI_RES/MQA as hi-res, which is wrong here.
+    const hasStereoTag = tags.some((tag) => tag && !isSpatialAudioQuality(tag) && this.toNeutralAudio(tag));
+    let audio = hasStereoTag ? null as NeutralAudioQuality | null : base.audio;
     for (const tag of tags) {
       if (isSpatialAudioQuality(tag)) continue;
       const mapped = this.toNeutralAudio(tag);
