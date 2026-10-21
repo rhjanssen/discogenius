@@ -10,9 +10,11 @@ import {
   loadStoredAppleMusicToken,
   resolveAppleStorefront,
   resolveAppleVideoMaxHeight,
+  requestWrapperServerRestart,
   resolveAppleWrapperHost,
   syncTokenToDownloader,
 } from "./apple-music-auth.js";
+import { ProviderAuthError } from "../provider-auth-error.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
 
 export function getAppleMusicDownloaderBinary(): string {
@@ -199,6 +201,53 @@ export async function waitForAppleMusicDownloaderReadiness(
   }
 }
 
+function onlyWrapperPortsMissing(snapshot: AppleMusicDownloaderCapabilitySnapshot, missing: string[]): boolean {
+  return snapshot.authenticated && missing.length > 0 && missing.every((item) => item.startsWith("decryption wrapper port"));
+}
+
+/**
+ * Pre-download wrapper check (no periodic polling): if the decryption ports do
+ * not answer, ask the supervisor to restart the hung server and wait for the
+ * ports. When they still do not answer, raise a provider hold so Apple jobs
+ * wait behind a banner instead of failing one by one.
+ */
+export async function ensureAppleWrapperReadyForDownload(
+  deps: {
+    readSnapshot?: () => Promise<AppleMusicDownloaderCapabilitySnapshot>;
+    requestRestart?: () => boolean;
+    signal?: AbortSignal;
+    initialTimeoutMs?: number;
+    restartTimeoutMs?: number;
+    pollMs?: number;
+  } = {},
+): Promise<AppleMusicDownloaderCapabilitySnapshot> {
+  const readSnapshot = deps.readSnapshot ?? getAppleMusicDownloaderCapabilitySnapshot;
+  const pollMs = deps.pollMs ?? 1_000;
+  let snapshot = await waitForAppleMusicDownloaderReadiness(readSnapshot, {
+    signal: deps.signal, timeoutMs: deps.initialTimeoutMs ?? 10_000, pollMs,
+  });
+  let missing = describeAppleDownloaderMissingPrerequisites(snapshot);
+  if (!onlyWrapperPortsMissing(snapshot, missing)) return snapshot;
+
+  console.warn(`[APPLE-MUSIC] Decryption wrapper unreachable before download (${missing.join(", ")}); requesting wrapper restart.`);
+  const requested = (deps.requestRestart ?? requestWrapperServerRestart)();
+  if (requested) {
+    snapshot = await waitForAppleMusicDownloaderReadiness(readSnapshot, {
+      signal: deps.signal, timeoutMs: deps.restartTimeoutMs ?? 90_000, pollMs,
+    });
+    missing = describeAppleDownloaderMissingPrerequisites(snapshot);
+    if (!onlyWrapperPortsMissing(snapshot, missing)) {
+      if (!missing.length) console.log("[APPLE-MUSIC] Decryption wrapper answered again after restart.");
+      return snapshot;
+    }
+  }
+  throw new ProviderAuthError(
+    "apple-music",
+    `Apple Music decryption wrapper is not answering (${missing.join(", ")})${requested ? " even after a restart" : ""}; Apple downloads are on hold until it responds.`,
+    "wrapper_unreachable",
+  );
+}
+
 export type AppleDownloaderProgressEvent = {
   currentFileNum?: number;
   totalFiles?: number;
@@ -324,7 +373,7 @@ export class AppleMusicBackend implements DownloadBackend {
     if (!loadStoredAppleMusicToken()) {
       throw new Error("Apple Music is not authenticated; cannot download");
     }
-    const missing = describeAppleDownloaderMissingPrerequisites(await waitForAppleMusicDownloaderReadiness(undefined, options));
+    const missing = describeAppleDownloaderMissingPrerequisites(await ensureAppleWrapperReadyForDownload({ signal: options.signal }));
     if (missing.length > 0) {
       throw new Error(`Apple Music downloader provisioning is incomplete: missing ${missing.join(", ")}.`);
     }

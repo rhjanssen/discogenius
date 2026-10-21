@@ -73,6 +73,10 @@ export interface AlbumContract {
   /** Human-facing provider permalink for the selected stereo offer. */
   stereo_provider_url?: string | null;
   stereo_quality?: string | null;
+  /** "files" when stereo_quality was measured from downloaded files, "plan" when it is the planned/advertised offer quality. */
+  stereo_quality_source?: "files" | "plan" | null;
+  /** The planned offer quality, kept even after files are measured. */
+  stereo_planned_quality?: string | null;
   stereo_match_status?: string | null;
   stereo_plan_relation?: string | null;
   stereo_plan_composition?: string | null;
@@ -84,6 +88,7 @@ export interface AlbumContract {
   /** Human-facing provider permalink for the selected spatial offer. */
   spatial_provider_url?: string | null;
   spatial_quality?: string | null;
+  spatial_quality_source?: "files" | "plan" | null;
   spatial_match_status?: string | null;
   spatial_plan_relation?: string | null;
   spatial_plan_composition?: string | null;
@@ -296,6 +301,8 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     stereo_provider_id: expectOptionalString(record.stereo_provider_id, `${label}.stereo_provider_id`) ?? null,
     stereo_provider_url: expectNullableString(record.stereo_provider_url, `${label}.stereo_provider_url`) ?? null,
     stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,
+    stereo_quality_source: (expectOptionalString(record.stereo_quality_source, `${label}.stereo_quality_source`) ?? null) as "files" | "plan" | null,
+    stereo_planned_quality: expectOptionalString(record.stereo_planned_quality, `${label}.stereo_planned_quality`) ?? null,
     stereo_match_status: expectOptionalString(record.stereo_match_status, `${label}.stereo_match_status`) ?? null,
     stereo_plan_relation: expectOptionalString(record.stereo_plan_relation, `${label}.stereo_plan_relation`) ?? null,
     stereo_plan_composition: expectOptionalString(record.stereo_plan_composition, `${label}.stereo_plan_composition`) ?? null,
@@ -306,6 +313,7 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
     spatial_provider_url: expectNullableString(record.spatial_provider_url, `${label}.spatial_provider_url`) ?? null,
     spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
+    spatial_quality_source: (expectOptionalString(record.spatial_quality_source, `${label}.spatial_quality_source`) ?? null) as "files" | "plan" | null,
     spatial_match_status: expectOptionalString(record.spatial_match_status, `${label}.spatial_match_status`) ?? null,
     spatial_plan_relation: expectOptionalString(record.spatial_plan_relation, `${label}.spatial_plan_relation`) ?? null,
     spatial_plan_composition: expectOptionalString(record.spatial_plan_composition, `${label}.spatial_plan_composition`) ?? null,

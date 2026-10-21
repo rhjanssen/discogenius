@@ -835,6 +835,7 @@ const AlbumPage = () => {
         providerUrl?: string | null;
         matchStatus?: string | null;
         releaseMbid?: string | null;
+        measured?: boolean;
       },
     ) => {
       const library = releaseAvailability?.libraries.find((candidate) =>
@@ -865,7 +866,9 @@ const AlbumPage = () => {
         // selected). Scanning every variant published on the source offers
         // would badge a stereo plan as Atmos whenever the provider also sells
         // an Atmos stream of the same album.
-        const quality = acquisitionPlanDisplayQuality({
+        // Once files are on disk the badge names what was delivered (measured
+        // by ffprobe), not what the provider advertised for the plan.
+        const quality = (fallback.measured && fallback.quality) || acquisitionPlanDisplayQuality({
           qualityTier: plan.qualityTier,
           displayQuality: plan.displayQuality,
           provider: plan.provider,
@@ -925,6 +928,7 @@ const AlbumPage = () => {
       providerUrl: album.stereo_provider_url,
       matchStatus: album.stereo_match_status,
       releaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
+      measured: album.stereo_quality_source === "files",
     });
     if (album.spatial_provider_id || album.spatial_quality) {
       pushFromPlan("spatial", /spatial/i, {
@@ -934,6 +938,7 @@ const AlbumPage = () => {
         providerUrl: album.spatial_provider_url,
         matchStatus: album.spatial_match_status,
         releaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
+        measured: album.spatial_quality_source === "files",
       });
     }
     return offers;

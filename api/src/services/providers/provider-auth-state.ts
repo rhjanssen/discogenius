@@ -61,6 +61,12 @@ const COPY: Record<string, Omit<ProviderAuthCopy, "provider">> = {
     href: "/auth?provider=tidal#provider-connect-tidal",
     settingsLabel: "Naar Tidal-login",
   },
+  "apple-music": {
+    banner: "Apple Music-decryptie reageert niet",
+    queueMessage: "Waiting for the Apple Music decryption wrapper",
+    href: "/auth?provider=apple-music",
+    settingsLabel: "Naar Apple Music",
+  },
   deezer: {
     banner: "Deezer opnieuw koppelen",
     queueMessage: "Waiting for Deezer login",

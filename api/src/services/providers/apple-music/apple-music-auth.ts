@@ -3,6 +3,7 @@ import net from "node:net";
 import path from "path";
 import { CONFIG_DIR, Config } from "../../config/config.js";
 import { configuredVideoMaxHeight } from "../provider-quality.js";
+import { providerNeedsReauth, recordProviderAuthOk } from "../provider-auth-state.js";
 
 /**
  * Apple Music auth (tiddl-style credential handoff).
@@ -299,7 +300,7 @@ let loginStatus: "idle" | "logging_in" | "waiting_for_2fa" | "success" | "failed
 let loginMessage = "";
 
 // Bump the marker when the script changes so existing installs pick up fixes.
-const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v9";
+const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v10";
 const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
 # ${WRAPPER_ENTRYPOINT_VERSION} — managed by Discogenius, manual edits are overwritten.
 # Supervises the Apple Music decryption wrapper: serves decryption on ports
@@ -313,6 +314,10 @@ STATUS_FILE="$DATA_DIR/login_status.json"
 LOG_FILE="$DATA_DIR/login.log"
 SERVER_LOG="$DATA_DIR/server.log"
 SESSION_MARKER="$DATA_DIR/data/com.apple.android.music/files/mpl_db/cookies.sqlitedb"
+# Discogenius drops this file right before an Apple download when the
+# decryption ports do not answer: the wrapper can hang with its process alive,
+# which the liveness check below never notices.
+RESTART_FILE="$DATA_DIR/restart_server.txt"
 
 SERVER_PID=""
 SERVER_RESTARTS=0
@@ -356,6 +361,22 @@ else
 fi
 
 while true; do
+    if [ -f "$RESTART_FILE" ] && [ ! -f "$CRED_FILE" ]; then
+        rm -f "$RESTART_FILE"
+        if [ -f "$SESSION_MARKER" ]; then
+            echo "[wrapper-manager] Restart requested by Discogenius (decryption ports unreachable). Restarting server..."
+            if [ -n "$SERVER_PID" ]; then
+                kill -9 "$SERVER_PID" 2>/dev/null
+                wait "$SERVER_PID" 2>/dev/null
+                SERVER_PID=""
+            fi
+            SERVER_RESTARTS=0
+            start_server
+        else
+            echo "[wrapper-manager] Restart requested but there is no session; waiting for login."
+        fi
+    fi
+
     if [ -f "$CRED_FILE" ]; then
         echo "[wrapper-manager] Login trigger detected."
         CREDS=$(cat "$CRED_FILE")
@@ -596,11 +617,34 @@ export async function getWrapperLoginStatus(): Promise<AppleWrapperLoginStatus> 
     checkWrapperPort(host, 10020),
     checkWrapperPort(host, 20020),
   ]);
-  return reconcileWrapperLoginStatus(saved, {
+  const reconciled = reconcileWrapperLoginStatus(saved, {
     decryptPortOpen,
     m3u8PortOpen,
     successAgeMs: savedAtMs == null ? undefined : Math.max(0, Date.now() - savedAtMs),
   });
+  // Apple jobs held because the wrapper stopped answering resume as soon as
+  // the decryption server answers again (after a re-login or manual restart).
+  if (reconciled.status === "success" && decryptPortOpen && m3u8PortOpen && providerNeedsReauth("apple-music")) {
+    await recordProviderAuthOk("apple-music").catch(() => undefined);
+  }
+  return reconciled;
+}
+
+/**
+ * Ask the wrapper supervisor to kill and relaunch its decryption server.
+ * Used right before an Apple download when ports 10020/20020 do not answer:
+ * the wrapper can hang with its process still alive. Returns false when the
+ * shared data directory is not writable (no supervisor to ask).
+ */
+export function requestWrapperServerRestart(): boolean {
+  try {
+    ensureWrapperEntrypointScript();
+    fs.mkdirSync(WRAPPER_ROOTFS_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(WRAPPER_ROOTFS_DATA_DIR, "restart_server.txt"), new Date().toISOString(), "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
