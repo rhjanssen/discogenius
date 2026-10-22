@@ -1680,7 +1680,26 @@ for (const identical of [true, false]) {
   });
 }
 
-test("case-only cover rename drops the stale row when the canonical path is already registered", async () => {
+// The stale-row branch only exists where both spellings resolve to one
+// directory entry (case-insensitive mounts such as Windows/macOS/SMB). On a
+// case-sensitive filesystem the two spellings are separate entries and the
+// canonical row is a genuine DB conflict, so the premise cannot be built.
+function filesystemFoldsCase(dir: string): boolean {
+  fs.mkdirSync(dir, { recursive: true });
+  const probe = path.join(dir, `.CaseProbe-${process.pid}`);
+  fs.writeFileSync(probe, "");
+  try {
+    return fs.existsSync(probe.toLowerCase().replace(dir.toLowerCase(), dir));
+  } finally {
+    fs.rmSync(probe, { force: true });
+  }
+}
+
+test("case-only cover rename drops the stale row when the canonical path is already registered", async (t) => {
+  if (!filesystemFoldsCase(configModule.Config.getMusicPath())) {
+    t.skip("requires a case-insensitive filesystem");
+    return;
+  }
   seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
   const root = configModule.Config.getMusicPath();
   const stalePath = path.join(root, "Artist One", "album one", "cover.jpg");
