@@ -593,11 +593,9 @@ const SettingsPage = () => {
                     <MonitoringSettingsSection
                         monitoringConfig={monitoringConfig}
                         upgradeExistingFiles={qualitySettings?.upgrade_existing_files ?? false}
-                        downconvertExistingFiles={qualitySettings?.downconvert_existing_files ?? false}
                         isScanInProgress={isScanInProgress}
                         onUpdateMonitoring={updateMonitoring}
                         onUpgradeExistingFilesChange={(upgrade_existing_files) => updateQualitySettings({ upgrade_existing_files })}
-                        onDownconvertExistingFilesChange={(downconvert_existing_files) => updateQualitySettings({ downconvert_existing_files })}
                         onRunNow={handleRunMonitoringNow}
                     />
                     <ProvidersSettingsSection

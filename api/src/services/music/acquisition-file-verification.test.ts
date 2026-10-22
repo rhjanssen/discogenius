@@ -147,7 +147,7 @@ test('missing physical file is claimed for download rather than retired', async 
 test('cutoff policy and spatial separation govern verified quality', () => {
     const profile = new QualityProfileRepository(db).get(profileId);
     assert.equal(importedQualitySatisfies(profile, 'lossless', { quality: 'hires-lossless', bitDepth: 24 }), true);
-    assert.equal(importedQualitySatisfies({ ...profile, continueUpgradesAfterCutoff: true }, 'lossless', { quality: 'hires-lossless', bitDepth: 24 }), false);
+    assert.equal(importedQualitySatisfies({ ...profile, cutoff: 'hires-lossless', continueUpgradesAfterCutoff: true }, 'lossless', { quality: 'hires-lossless', bitDepth: 24 }), false);
     assert.equal(importedQualitySatisfies(profile, 'lossy', { quality: 'lossless' }), false);
     assert.equal(importedQualitySatisfies(profile, 'spatial', { quality: 'lossless' }), false);
     assert.equal(importedQualitySatisfies({ ...profile, allowedQualities: new Set(['spatial']) }, 'lossless', { quality: 'spatial' }), false);
@@ -223,26 +223,24 @@ test('lossy upgrade comparison is codec aware and preserves measured same-source
     assert.equal(importedFidelitySatisfies(cutoff,'lossy',vbr,high),true,'stopping at the lossy cutoff is respected');
 });
 
-test('verification uses the same explicit 24-bit conformity policy as import',()=>{
-    const profile = {...new QualityProfileRepository(db).get(profileId),continueUpgradesAfterCutoff:true};
+test('verification uses the same profile-derived 24-bit conformity as import',()=>{
+    const base = {...new QualityProfileRepository(db).get(profileId),continueUpgradesAfterCutoff:true};
     const source = {quality:'hires-lossless',codec:'alac',bitDepth:24,sampleRate:96000} as const;
     const cd = observedFactsFromFile({codec:'FLAC',bit_depth:16,sample_rate:44100,channel_count:2});
-    assert.equal(importedFidelitySatisfies(profile,'lossless',cd,source),false);
-    assert.equal(importedFidelitySatisfies(profile,'lossless',cd,source,false,{conformToTarget:true}),true,
-        'a permitted 16/44.1 output must not trigger perpetual 24-bit redownloads');
+    assert.equal(importedFidelitySatisfies({...base,cutoff:'hires-lossless'},'lossless',cd,source),false,
+        'MAX keeps 24-bit, so a 16/44.1 file is not what MAX expects');
+    assert.equal(importedFidelitySatisfies({...base,cutoff:'lossless'},'lossless',cd,source),true,
+        'HIGH conforms to 16/44.1, which must not trigger perpetual 24-bit redownloads');
 });
 
-test('conformity setting is applied to real files and included in the admission snapshot',async context=>{
+test('profile-derived conformity is applied to real files and included in the admission snapshot',async()=>{
     db.prepare("UPDATE quality_profiles SET cutoff='lossless',continue_upgrades=1 WHERE id=?").run(profileId);
     db.exec("UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"hires-lossless\"}'; UPDATE ProviderItemAudioVariants SET bit_depth=24,sample_rate=96000;");
-    const original = Config.getQualityConfig.bind(Config);
-    let conform = true;
-    context.mock.method(Config,'getQualityConfig',()=>({...original(),downconvert_existing_files:conform}));
     await withVerifiedAcquisitionFiles(db,1,[],async(verified,current)=>{
-        assert.deepEqual([...verified],[1],'the actual 16-bit WAV is the configured converted output');
+        assert.deepEqual([...verified],[1],'the actual 16-bit WAV is the HIGH profile output');
         assert.equal(current(),true);
-        conform = false;
-        assert.equal(current(),false,'a changed output policy must reject the old proof');
+        db.prepare("UPDATE quality_profiles SET cutoff='hires-lossless' WHERE id=?").run(profileId);
+        assert.equal(current(),false,'a changed profile target must reject the old proof');
     });
     assert.deepEqual(await proof(),[]);
 });

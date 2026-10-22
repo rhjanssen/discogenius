@@ -56,7 +56,7 @@ export function persistedResourceAcquisitionPlanKey(db: Database.Database, planI
   const tracks = db.prepare(`SELECT assignment.track_id AS trackId,source.provider_edition_match_id AS providerEditionMatchId,
     assignment.provider_track_match_id AS providerTrackMatchId,match.provider_edition_member_id AS providerEditionMemberId,
     assignment.provider_audio_variant_id AS providerAudioVariantId,
-    COALESCE(json_extract(assignment.source_quality_snapshot,'$.quality'),variant.quality_class) AS sourceQuality
+    COALESCE(json_extract(assignment.source_quality_snapshot,'$.quality'),variant.delivered_quality_class,variant.quality_class) AS sourceQuality
     FROM AcquisitionPlanTracks assignment JOIN AcquisitionPlanSources source ON source.id=assignment.source_id
     JOIN ProviderTrackMatches match ON match.id=assignment.provider_track_match_id
     JOIN ProviderItemAudioVariants variant ON variant.id=assignment.provider_audio_variant_id WHERE assignment.plan_id=?`)

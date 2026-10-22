@@ -4,7 +4,7 @@ import { UpgradableSpecification } from "./upgradable-specification.js";
 
 function profile(
   audioQuality: "high" | "max" | "normal" | "low",
-  extras: { downconvert?: boolean; upgrade?: boolean } = {},
+  extras: { upgrade?: boolean } = {},
 ) {
   return UpgradableSpecification.buildEffectiveProfile({
     audio_quality: audioQuality,
@@ -12,13 +12,12 @@ function profile(
     embed_cover: true,
     embed_lyrics: true,
     upgrade_existing_files: extras.upgrade !== false,
-    downconvert_existing_files: extras.downconvert === true,
     extract_flac: true,
     convert_video_mp4: true,
   });
 }
 
-test("24/48 MAX file plus Apple HIGH offer is not an upgrade or a downconvert", () => {
+test("24/48 file above a lowered HIGH setting is conformed down", () => {
   const evaluation = UpgradableSpecification.evaluateAudioChange({
     profile: profile("high"),
     currentQuality: "HIRES_LOSSLESS",
@@ -28,7 +27,7 @@ test("24/48 MAX file plus Apple HIGH offer is not an upgrade or a downconvert", 
     bitDepth: 24,
     sampleRate: 48000,
   });
-  assert.equal(evaluation.needsChange, false);
+  assert.equal(evaluation.needsChange, true);
   assert.equal(evaluation.direction, "downgrade");
 });
 
@@ -59,9 +58,9 @@ test("24/48 Apple ALAC already satisfies MAX without chasing FLAC forever", () =
   assert.equal(evaluation.needsChange, false);
 });
 
-test("downconvert toggle marks 24/48 vs HIGH as a wanted downconvert", () => {
+test("HIGH setting marks 24/48 FLAC as a wanted downconvert", () => {
   const evaluation = UpgradableSpecification.evaluateAudioChange({
-    profile: profile("high", { downconvert: true }),
+    profile: profile("high"),
     currentQuality: "HIRES_LOSSLESS",
     sourceQuality: "LOSSLESS",
     codec: "FLAC",
@@ -117,7 +116,7 @@ test("LOSSLESS vs Settings MAX does not invent a hi-res offer when source qualit
 
 test("spatial files are never a stereo downconvert", () => {
   const evaluation = UpgradableSpecification.evaluateAudioChange({
-    profile: profile("low", { downconvert: true }),
+    profile: profile("low"),
     currentQuality: "DOLBY_ATMOS",
     codec: "eac3",
     extension: "m4a",

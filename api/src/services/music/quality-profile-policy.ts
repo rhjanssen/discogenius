@@ -28,11 +28,6 @@ export interface SourceAudioFacts {
   spatialFormat?: string | null;
 }
 
-export interface ImportQualityOptions {
-  /** When true, 24-bit lossless on a lossless profile is transcoded to 16/44.1. */
-  conformToTarget?: boolean;
-}
-
 export interface ImportQualityDecision {
   accepted: boolean;
   transcode: boolean;
@@ -238,7 +233,6 @@ export function buildDownconvertDecision(input: {
 export function decideImportedQuality(
   profile: QualityProfilePolicy,
   source: SourceAudioFacts,
-  options: ImportQualityOptions = {},
 ): ImportQualityDecision {
   if (!profile.allowedQualities.has(source.quality)) {
     return {
@@ -251,20 +245,17 @@ export function decideImportedQuality(
     };
   }
   const output = profile.outputFormat;
-  // 24-bit lossless is already MAX. Apple HIGH can deliver 24/48 ALAC; keep it
-  // on lossless profiles unless Settings asked to conform the library down.
-  // Lossy profiles (Normal/Low) still convert leftover lossless, including 24-bit.
+  // The audio quality setting is the only target. Max (cutoff hi-res) keeps
+  // 24-bit as delivered. High (cutoff lossless = 16-bit) conforms anything above
+  // it, e.g. Apple's 24/48 ALAC, to 16/44.1 in the same codec family. Lossy
+  // profiles (Normal/Low) convert leftover lossless further down.
   if (
     output.lossless
     && (source.quality === "lossless" || source.quality === "hires-lossless")
     && source.bitDepth != null
     && source.bitDepth >= 24
   ) {
-    // "Downconvert existing files" conforms the library DOWN to the profile
-    // target. A profile whose cutoff is hi-res (Max Quality) has no lower
-    // target, so 24-bit must be kept: conforming it threw away every hi-res
-    // stream TIDAL and Apple delivered and stored it as 16/44.1.
-    if (options.conformToTarget && profile.cutoff !== "hires-lossless") {
+    if (profile.cutoff === "lossless") {
       const codec = losslessDownconvertCodec(source);
       return {
         accepted: true,

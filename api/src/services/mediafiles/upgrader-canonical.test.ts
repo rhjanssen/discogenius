@@ -412,7 +412,7 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
 const ffmpegAvailable = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
 
 async function withQualityConfig(
-  updates: { audio_quality: "low" | "normal" | "high" | "max"; downconvert_existing_files: boolean },
+  updates: { audio_quality: "low" | "normal" | "high" | "max" },
   fn: () => Promise<void>,
 ): Promise<void> {
   const { updateConfig, getConfigSection } = await import("../config/config.js");
@@ -423,12 +423,11 @@ async function withQualityConfig(
   } finally {
     updateConfig("quality", {
       audio_quality: previous.audio_quality,
-      downconvert_existing_files: previous.downconvert_existing_files,
     });
   }
 }
 
-test("CheckUpgrades does not downconvert 24/48 when the toggle is off", {
+test("CheckUpgrades keeps 24/48 when the setting is MAX", {
   skip: !ffmpegAvailable,
 }, async () => {
   seedArtistAndRelease();
@@ -460,7 +459,7 @@ test("CheckUpgrades does not downconvert 24/48 when the toggle is off", {
     extension: "flac",
   });
 
-  await withQualityConfig({ audio_quality: "high", downconvert_existing_files: false }, async () => {
+  await withQualityConfig({ audio_quality: "max" }, async () => {
     const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
     assert.equal(result.tracks, 0);
     assert.deepEqual(listDownloadJobs(), []);
@@ -471,7 +470,7 @@ test("CheckUpgrades does not downconvert 24/48 when the toggle is off", {
   assert.match(probe.stdout, /48000/);
 });
 
-test("CheckUpgrades downconverts 24/48 FLAC to 16/44.1 when the toggle is on", {
+test("CheckUpgrades downconverts 24/48 FLAC to 16/44.1 when the setting is HIGH", {
   skip: !ffmpegAvailable,
 }, async () => {
   seedArtistAndRelease();
@@ -503,7 +502,7 @@ test("CheckUpgrades downconverts 24/48 FLAC to 16/44.1 when the toggle is on", {
     extension: "flac",
   });
 
-  await withQualityConfig({ audio_quality: "high", downconvert_existing_files: true }, async () => {
+  await withQualityConfig({ audio_quality: "high" }, async () => {
     const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
     assert.equal(result.tracks, 1);
     assert.equal(result.details[0]?.action, "downconvert");
@@ -554,7 +553,7 @@ test("CheckUpgrades downconverts FLAC to Opus 160 when Settings is NORMAL", {
     extension: "flac",
   });
 
-  await withQualityConfig({ audio_quality: "normal", downconvert_existing_files: true }, async () => {
+  await withQualityConfig({ audio_quality: "normal" }, async () => {
     const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
     assert.equal(result.tracks, 1);
     assert.equal(result.details[0]?.action, "downconvert");

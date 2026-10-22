@@ -4,8 +4,7 @@ import type { BigIntStats } from "node:fs";
 import { parseAudioFile, deriveQuality } from "../mediafiles/audioUtils.js";
 import { acquireMediaFileLocks } from "../mediafiles/media-file-lock.js";
 import { resolvedPathIsInsideRoot } from "../mediafiles/path-utils.js";
-import { QualityProfileRepository, decideImportedQuality, type QualityProfilePolicy, type SourceAudioFacts, type ImportQualityOptions } from "./quality-profile-policy.js";
-import { Config } from "../config/config.js";
+import { QualityProfileRepository, decideImportedQuality, type QualityProfilePolicy, type SourceAudioFacts } from "./quality-profile-policy.js";
 import type { NormalizedAudioQuality } from "./acquisition-plan-optimizer.js";
 import { observedFactsFromFile, fileSatisfiesOffer, type AudioFacts } from "../providers/audio-facts.js";
 type FileCandidate = {
@@ -51,13 +50,13 @@ function sameFile(before: BigIntStats, after: BigIntStats): boolean {
     return after.isFile() && after.dev === before.dev && after.ino === before.ino
         && after.size === before.size && after.mtimeNs === before.mtimeNs && after.ctimeNs === before.ctimeNs;
 }
-export function importedQualitySatisfies(profile: QualityProfilePolicy, actual: NormalizedAudioQuality, desired: SourceAudioFacts, options: ImportQualityOptions = {}): boolean {
+export function importedQualitySatisfies(profile: QualityProfilePolicy, actual: NormalizedAudioQuality, desired: SourceAudioFacts): boolean {
     if (!profile.allowedQualities.has(desired.quality))
         return false;
     if (actual === 'spatial' || desired.quality === 'spatial')
         return actual === desired.quality;
-    const expected = decideImportedQuality(profile, desired, options).importedQuality;
-    const cutoff = decideImportedQuality(profile, { quality: profile.cutoff }, options).importedQuality;
+    const expected = decideImportedQuality(profile, desired).importedQuality;
+    const cutoff = decideImportedQuality(profile, { quality: profile.cutoff }).importedQuality;
     if (!expected || !cutoff || expected === 'spatial' || cutoff === 'spatial')
         return false;
     const rank = (quality: NormalizedAudioQuality) => {
@@ -71,13 +70,13 @@ export function importedQualitySatisfies(profile: QualityProfilePolicy, actual: 
 /** Use the same delivered-fidelity comparison as planning. Estimates cannot
  * disqualify an unchanged, measured delivery of this exact native variant. */
 export function importedFidelitySatisfies(profile: QualityProfilePolicy, actualTier: NormalizedAudioQuality,
-    actual: AudioFacts, desired: SourceAudioFacts, sameMeasuredDelivery = false, options: ImportQualityOptions = {}): boolean {
-    if (!importedQualitySatisfies(profile, actualTier, desired, options)) return false;
+    actual: AudioFacts, desired: SourceAudioFacts, sameMeasuredDelivery = false): boolean {
+    if (!importedQualitySatisfies(profile, actualTier, desired)) return false;
     if (actualTier === 'spatial') return actual.immersiveFormat === 'dolby-atmos' && actual.objectAudio === true;
-    const cutoff = decideImportedQuality(profile, { quality: profile.cutoff }, options).importedQuality;
+    const cutoff = decideImportedQuality(profile, { quality: profile.cutoff }).importedQuality;
     if (!profile.continueUpgradesAfterCutoff && cutoff
-        && importedQualitySatisfies({ ...profile, continueUpgradesAfterCutoff: true }, actualTier, { quality: profile.cutoff }, options)) return true;
-    const decision = decideImportedQuality(profile, desired, options);
+        && importedQualitySatisfies({ ...profile, continueUpgradesAfterCutoff: true }, actualTier, { quality: profile.cutoff })) return true;
+    const decision = decideImportedQuality(profile, desired);
     if (sameMeasuredDelivery && actualTier === decision.importedQuality) return true;
     const output = decision.output;
     const preserve = !output || output.codec === 'preserve';
@@ -123,7 +122,6 @@ function snapshot(db: Database.Database, planId: number, trackIds: readonly numb
         throw new Error('Acquisition plan is no longer executable');
     const profileRow = db.prepare('SELECT * FROM quality_profiles WHERE id=?').get(header.quality_profile_id);
     const profile = new QualityProfileRepository(db).get(header.quality_profile_id);
-    const qualityOptions = { conformToTarget: Config.getQualityConfig().downconvert_existing_files === true };
     const rows = db.prepare(`SELECT file.id,file.track_id,file.file_path,file.recording_id,file.file_size,file.modified_at,
     COALESCE(track.length_ms,recording.length_ms) AS length_ms,assignment.source_quality_snapshot,
     variant.bit_depth AS source_bit_depth,variant.sample_rate AS source_sample_rate,variant.codec AS source_codec,
@@ -144,7 +142,7 @@ function snapshot(db: Database.Database, planId: number, trackIds: readonly numb
     ORDER BY file.id`).all(header.library_id, header.edition_id, planId) as FileCandidate[];
     const requested = new Set(trackIds);
     const files = requested.size ? rows.filter(row => requested.has(row.track_id)) : rows;
-    return { header, profile, files, qualityOptions, identity: JSON.stringify({ header, profileRow, files, qualityOptions }) };
+    return { header, profile, files, identity: JSON.stringify({ header, profileRow, files }) };
 }
 /** Filesystem work happens with file admission held, never the SQLite write gate.
  * The caller rechecks snapshotCurrent inside its brief commit transaction. */
@@ -191,7 +189,7 @@ export async function withVerifiedAcquisitionFiles<T>(db: Database.Database, pla
                 if (!importedFidelitySatisfies(before.profile, quality, actual, { quality: facts.quality,
                     bitDepth: file.source_bit_depth, sampleRate: file.source_sample_rate, codec: file.source_codec,
                     bitrate: file.source_bitrate == null ? null : file.source_bitrate * 1000 },
-                    isSameMeasuredDelivery(file, actual, stat.size), before.qualityOptions))
+                    isSameMeasuredDelivery(file, actual, stat.size)))
                     continue;
                 const after = await fs.lstat(file.file_path, { bigint: true });
                 if (!sameFile(stat, after))

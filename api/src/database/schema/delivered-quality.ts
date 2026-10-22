@@ -8,11 +8,17 @@ import type Database from "better-sqlite3";
  * Providers advertise a tier per track (TIDAL `HIRES_LOSSLESS` from
  * mediaMetadata.tags) that the stream does not always deliver: tiddl asked for
  * max and received 16-bit/44.1 kHz FLAC. After import we know what the stream
- * really is. `delivered_quality_class` records that measured class when it is
- * below the advertised one; `quality_class` then follows it (so badges and
- * plan ranking reflect reality) while `provider_quality_label` keeps the
- * advertised value for display. A provider refresh must not overwrite it.
- * Additive column, no user_version bump.
+ * really is.
+ *
+ * `quality_class` / `provider_quality_label` stay exactly what the provider
+ * offers (SOURCE CAPABILITY). The measurement lives only in
+ * `delivered_quality_class`; planning and the upgrade check read
+ * COALESCE(delivered_quality_class, quality_class) at query time.
+ *
+ * An earlier build overwrote `quality_class` with the measurement. The repair
+ * below puts the advertised class back for those rows; plan snapshots keep the
+ * delivered class because they describe what the plan will really receive.
+ * Additive column, no user_version bump. Idempotent.
  */
 export const DELIVERED_QUALITY_MIGRATION = "delivered-quality";
 
@@ -24,6 +30,7 @@ export function migrateDeliveredQuality(db: Database.Database): void {
     db.exec("ALTER TABLE ProviderItemAudioVariants ADD COLUMN delivered_quality_class TEXT");
   }
   backfillDeliveredQuality(db);
+  restoreAdvertisedQualityClass(db);
 }
 
 const RANK_SQL = (expr: string) => `CASE LOWER(REPLACE(TRIM(${expr}), '_', '-'))
@@ -35,7 +42,7 @@ const RANK_SQL = (expr: string) => `CASE LOWER(REPLACE(TRIM(${expr}), '_', '-'))
  * One-time pass over files imported before this column existed: when every
  * imported file of a track-owned stereo variant measured below the advertised
  * class, record the best measured class as delivered. Idempotent (only rows
- * whose quality_class is still above the measurement change).
+ * without a delivered class are considered).
  */
 function backfillDeliveredQuality(db: Database.Database): void {
   const needed = ["TrackFiles", "AcquisitionPlanTracks"].every((name) =>
@@ -52,6 +59,7 @@ function backfillDeliveredQuality(db: Database.Database): void {
       JOIN TrackFiles file ON file.source_audio_variant_id = variant.id
                           AND file.provider_item_id = variant.provider_item_id
       WHERE ${RANK_SQL("variant.quality_class")} IS NOT NULL
+        AND variant.delivered_quality_class IS NULL
       GROUP BY variant.id
       HAVING MAX(${RANK_SQL(measured)}) IS NOT NULL
          AND MAX(${RANK_SQL(measured)}) < MAX(${RANK_SQL("variant.quality_class")})
@@ -64,19 +72,21 @@ function backfillDeliveredQuality(db: Database.Database): void {
           updated_at = CURRENT_TIMESTAMP
       WHERE id IN (SELECT variant_id FROM delivered_quality_backfill)
     `);
-    db.exec(`
-      UPDATE ProviderItemAudioVariants
-      SET quality_class = delivered_quality_class
-      WHERE id IN (SELECT variant_id FROM delivered_quality_backfill)
-    `);
-    db.exec(`
-      UPDATE AcquisitionPlanTracks
-      SET source_quality_snapshot = json_object('quality', (
-            SELECT delivered_quality_class FROM ProviderItemAudioVariants v
-            WHERE v.id = AcquisitionPlanTracks.provider_audio_variant_id)),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE provider_audio_variant_id IN (SELECT variant_id FROM delivered_quality_backfill)
-    `);
     db.exec("DROP TABLE delivered_quality_backfill");
   })();
+}
+
+/** Put the provider-advertised class back where an earlier build replaced it
+ * with the measurement. Only rows carrying a delivered class were touched. */
+function restoreAdvertisedQualityClass(db: Database.Database): void {
+  db.exec(`
+    UPDATE ProviderItemAudioVariants
+    SET quality_class = CASE ${RANK_SQL("provider_quality_label")}
+          WHEN 4 THEN 'hires-lossless' WHEN 3 THEN 'lossless' END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE delivered_quality_class IS NOT NULL
+      AND quality_class = delivered_quality_class
+      AND ${RANK_SQL("provider_quality_label")} IN (3, 4)
+      AND ${RANK_SQL("provider_quality_label")} > COALESCE(${RANK_SQL("quality_class")}, 0)
+  `);
 }

@@ -28,33 +28,7 @@ function profile(overrides: Partial<Parameters<typeof parseQualityProfile>[0]> =
   });
 }
 
-test("HIGH keeps 24/48 instead of ffmpeg down to 16/44.1", () => {
-  assert.deepEqual(
-    decideImportedQuality(profile(), {
-      quality: "hires-lossless",
-      codec: "alac",
-      bitDepth: 24,
-      sampleRate: 48_000,
-    }),
-    {
-      accepted: true,
-      transcode: false,
-      reason: "native 24-bit lossless kept; not downconverted to 16-bit",
-      sourceQuality: "hires-lossless",
-      importedQuality: "hires-lossless",
-      output: {
-        codec: "preserve",
-        lossless: true,
-        bitDepth: 24,
-        sampleRate: 48_000,
-        bitrate: null,
-        spatial: false,
-      },
-    },
-  );
-});
-
-test("HIGH keeps 24-bit even when the Apple offer was tagged lossless", () => {
+test("HIGH conforms 24-bit to 16/44.1 even when the Apple offer was tagged lossless", () => {
   const decision = decideImportedQuality(profile(), {
     quality: "lossless",
     codec: "alac",
@@ -62,8 +36,9 @@ test("HIGH keeps 24-bit even when the Apple offer was tagged lossless", () => {
     sampleRate: 48_000,
   });
   assert.equal(decision.accepted, true);
-  assert.equal(decision.transcode, false);
-  assert.equal(decision.importedQuality, "hires-lossless");
+  assert.equal(decision.transcode, true);
+  assert.equal(decision.importedQuality, "lossless");
+  assert.equal(decision.output?.bitDepth, 16);
 });
 
 test("MAX preserves hi-res and never invents technical facts", () => {
@@ -119,14 +94,14 @@ test("NORMAL transcodes 24-bit FLAC to lossy; the 24-bit keep is lossless-profil
   assert.equal(decision.output?.codec, "opus");
 });
 
-test("HIGH conforms 24/48 FLAC to 16/44.1 FLAC when requested", () => {
+test("HIGH conforms 24/48 FLAC to 16/44.1 FLAC", () => {
   const decision = decideImportedQuality(profile(), {
     quality: "hires-lossless",
     codec: "flac",
     extension: "flac",
     bitDepth: 24,
     sampleRate: 48_000,
-  }, { conformToTarget: true });
+  });
   assert.equal(decision.transcode, true);
   assert.equal(decision.importedQuality, "lossless");
   assert.equal(decision.output?.codec, "flac");
@@ -134,14 +109,14 @@ test("HIGH conforms 24/48 FLAC to 16/44.1 FLAC when requested", () => {
   assert.equal(decision.output?.sampleRate, 44_100);
 });
 
-test("HIGH conforms 24/48 ALAC to 16/44.1 ALAC when requested", () => {
+test("HIGH conforms 24/48 ALAC to 16/44.1 ALAC", () => {
   const decision = decideImportedQuality(profile(), {
     quality: "hires-lossless",
     codec: "alac",
     extension: "m4a",
     bitDepth: 24,
     sampleRate: 48_000,
-  }, { conformToTarget: true });
+  });
   assert.equal(decision.output?.codec, "alac");
   assert.equal(decision.output?.bitDepth, 16);
   assert.equal(decision.output?.sampleRate, 44_100);
@@ -231,7 +206,7 @@ test("MAX keeps 24-bit hi-res even when 'downconvert existing files' is on", () 
     extension: "flac",
     bitDepth: 24,
     sampleRate: 192_000,
-  }, { conformToTarget: true });
+  });
   assert.equal(decision.accepted, true);
   assert.equal(decision.transcode, false);
   assert.equal(decision.importedQuality, "hires-lossless");

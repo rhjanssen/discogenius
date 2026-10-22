@@ -11,7 +11,7 @@ import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 const ffmpeg = resolveFfmpegBinary();
 const ffmpegAvailable = spawnSync(ffmpeg, ["-version"], { windowsHide: true }).status === 0;
 
-test("HIGH import leaves a 24/48 source untouched", {
+test("MAX import leaves a 24/48 source untouched", {
   skip: !ffmpegAvailable,
 }, async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-quality-transcode-"));
@@ -25,14 +25,14 @@ test("HIGH import leaves a 24/48 source untouched", {
     assert.equal(generated.status, 0, String(generated.stderr || ""));
     const decision = decideImportedQuality(parseQualityProfile({
       id: 1,
-      name: "High Quality",
+      name: "Max Quality",
       allowed_source_formats: '["lossless","hires-lossless"]',
       preference_order: '["hires-lossless","lossless"]',
-      cutoff: "lossless",
+      cutoff: "hires-lossless",
       continue_upgrades: 0,
       fallback_policy: "best_allowed",
-      output_format: '{"codec":"flac","lossless":true,"bitDepth":16,"sampleRate":44100}',
-      transcode_policy: "downconvert_hires",
+      output_format: '{"codec":"preserve","lossless":true}',
+      transcode_policy: "preserve",
     }), {
       quality: "hires-lossless",
       codec: "flac",
@@ -118,7 +118,7 @@ test("HIGH conform transcodes 24/48 FLAC to 16/44.1 FLAC in place", {
       extension: "flac",
       bitDepth: 24,
       sampleRate: 48_000,
-    }, { conformToTarget: true });
+    });
     assert.equal(decision.transcode, true);
     const result = await transcodeForQualityProfile(source, decision);
     assert.equal(result.outputPath, source);
@@ -155,7 +155,7 @@ test("HIGH conform transcodes 24/48 ALAC to 16/44.1 ALAC in place", {
       extension: "m4a",
       bitDepth: 24,
       sampleRate: 48_000,
-    }, { conformToTarget: true });
+    });
     assert.equal(decision.output?.codec, "alac");
     const result = await transcodeForQualityProfile(source, decision);
     assert.equal(result.outputPath, source);

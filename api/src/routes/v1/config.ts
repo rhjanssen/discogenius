@@ -34,6 +34,7 @@ import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
 
 import {
+  queueCheckUpgradesPass,
   queueConfigPrune,
   queueCurationPass,
   queueMetadataRefreshPass,
@@ -140,7 +141,8 @@ router.get("/quality", (_, res) => {
 
 router.post("/quality", async (req, res) => {
   try {
-    const updates = parseQualityConfigUpdate(getObjectBody(req.body), getConfigSection("quality"));
+    const previous = getConfigSection("quality");
+    const updates = parseQualityConfigUpdate(getObjectBody(req.body), previous);
     await runConfigUserWrite(() => {
       updateConfig("quality", updates);
       // Stereo library profile follows audio_quality (max/high/normal/low).
@@ -148,12 +150,12 @@ router.post("/quality", async (req, res) => {
     });
     await syncDownloadBackends();
 
-    // Trigger upgrade check asynchronously if enabled
+    // Changing a quality target is applied to existing files through the
+    // queued CheckUpgrades command (upgrade below target, conform above it),
+    // never as inline work on the request.
     const finalConfig = getConfigSection("quality");
-    if (finalConfig.upgrade_existing_files || finalConfig.downconvert_existing_files) {
-      UpgraderService.checkUpgrades().catch(err => {
-        console.error("❌ [UPGRADER] Error checking upgrades:", err);
-      });
+    if (finalConfig.audio_quality !== previous.audio_quality || finalConfig.video_quality !== previous.video_quality) {
+      queueCheckUpgradesPass({ trigger: CommandTrigger.Manual, mode: "settings" });
     }
 
     res.json({ success: true });

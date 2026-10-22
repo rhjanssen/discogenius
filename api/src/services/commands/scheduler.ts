@@ -50,6 +50,8 @@ const MONITORING_DUE_CHECK_INTERVAL_MINUTES = readIntEnv("DISCOGENIUS_MONITORING
 const HEALTH_CHECK_INTERVAL_MINUTES = 360;
 const DATABASE_BACKUP_INTERVAL_MINUTES = 10_080;
 const COMPACT_DATABASE_INTERVAL_MINUTES = 10_080;
+// Paced upgrade pass: small batches several times a day (see handleCheckUpgrades).
+const CHECK_UPGRADES_INTERVAL_MINUTES = 180;
 
 export type ScheduledTaskKey =
     | "monitoring-cycle"
@@ -57,7 +59,8 @@ export type ScheduledTaskKey =
     | "housekeeping"
     | "health-check"
     | "backup-database"
-    | "compact-database";
+    | "compact-database"
+    | "check-upgrades";
 
 interface ScheduledTaskDefinition {
     key: ScheduledTaskKey;
@@ -68,7 +71,8 @@ interface ScheduledTaskDefinition {
         | typeof CommandNames.Housekeeping
         | typeof CommandNames.CheckHealth
         | typeof CommandNames.BackupDatabase
-        | typeof CommandNames.CompactDatabase;
+        | typeof CommandNames.CompactDatabase
+        | typeof CommandNames.CheckUpgrades;
     intervalMinutes: number;
     enabled: boolean;
 }
@@ -535,12 +539,13 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
     reconcileMonitoringTerminalPass();
 }
 
-export function queueCheckUpgradesPass(options: { trigger?: number } = {}) {
+export function queueCheckUpgradesPass(options: { trigger?: number; mode?: "manual" | "settings" | "scheduled" } = {}) {
     return CommandQueueManager.push(
         CommandNames.CheckUpgrades,
         {
             title: "Checking upgrades",
             description: "Scanning the library for quality upgrades",
+            mode: options.mode ?? "manual",
         },
         "check-upgrades",
         0,
@@ -612,6 +617,13 @@ function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
             name: "Compact Database",
             taskName: CommandNames.CompactDatabase,
             intervalMinutes: COMPACT_DATABASE_INTERVAL_MINUTES,
+            enabled: true,
+        },
+        {
+            key: "check-upgrades",
+            name: "Check Upgrades",
+            taskName: CommandNames.CheckUpgrades,
+            intervalMinutes: CHECK_UPGRADES_INTERVAL_MINUTES,
             enabled: true,
         },
     ];
@@ -840,6 +852,18 @@ export function pollScheduledTasks() {
             if (commandId !== -1) {
                 markScheduledTaskQueued(definition.key);
                 console.log("📁 Scheduled root-folder rescan queued");
+            }
+            continue;
+        }
+
+        if (definition.key === "check-upgrades") {
+            if (hasActiveTask(definition.taskName)) {
+                continue;
+            }
+            const commandId = queueCheckUpgradesPass({ trigger: CommandTrigger.Scheduled, mode: "scheduled" });
+            if (commandId !== -1) {
+                markScheduledTaskQueued(definition.key);
+                console.log("⬆️ Scheduled upgrade check queued");
             }
             continue;
         }

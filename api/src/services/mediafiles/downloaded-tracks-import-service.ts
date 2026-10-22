@@ -445,7 +445,6 @@ async function prepareWorkspaceForLibraryProfile(
     `).get(libraryId) as { quality_profile_id: number } | undefined;
     if (!library) throw new Error(`Import library ${libraryId} is unavailable`);
     const profile = new QualityProfileRepository(db).get(library.quality_profile_id);
-    const conformToTarget = Config.getQualityConfig().downconvert_existing_files === true;
     const outcomes = new Map<string, PreparedImportQuality>();
 
     const files = listWorkspaceAudioFiles(downloadPath);
@@ -470,7 +469,7 @@ async function prepareWorkspaceForLibraryProfile(
                 sampleRate: metrics.sampleRate,
                 bitrate: metrics.bitrate,
                 spatialFormat: normalizedQuality === "spatial" ? legacyQuality : null,
-            }, { conformToTarget }),
+            }),
         });
     }
 
@@ -1697,6 +1696,8 @@ function stereoLadderRank(value: string | null | undefined): number | null {
  * advertised. Spatial variants are not touched.
  */
 export function recordDeliveredQuality(fileId: number, variantId: number): void {
+    // Measured stream class, before any profile conversion. The provider's own
+    // quality_class / label are never touched here: they are source capability.
     const row = db.prepare(`
         SELECT
           COALESCE(NULLIF(TRIM(file.source_quality), ''), NULLIF(TRIM(file.imported_quality), ''), NULLIF(TRIM(file.quality), '')) AS measured,
@@ -1707,21 +1708,11 @@ export function recordDeliveredQuality(fileId: number, variantId: number): void 
     `).get(variantId, fileId) as { measured: string | null; advertised: string | null } | undefined;
     if (!row) return;
     const measuredRank = stereoLadderRank(row.measured);
-    const advertisedRank = stereoLadderRank(row.advertised);
-    if (measuredRank == null || advertisedRank == null || measuredRank >= advertisedRank) return;
+    if (measuredRank == null || stereoLadderRank(row.advertised) == null) return;
     const delivered = ({ 1: "lossy", 2: "lossy", 3: "lossless", 4: "hires-lossless" } as Record<number, string>)[measuredRank];
     db.prepare(`
         UPDATE ProviderItemAudioVariants
-        SET delivered_quality_class = ?, quality_class = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    `).run(delivered, delivered, variantId);
-    db.prepare(`
-        UPDATE AcquisitionPlanTracks
-        SET source_quality_snapshot = CASE
-              WHEN json_valid(source_quality_snapshot) THEN json_set(source_quality_snapshot, '$.quality', ?)
-              ELSE json_object('quality', ?)
-            END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE provider_audio_variant_id = ?
-    `).run(delivered, delivered, variantId);
+        SET delivered_quality_class = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND delivered_quality_class IS NOT ?
+    `).run(delivered, variantId, delivered);
 }

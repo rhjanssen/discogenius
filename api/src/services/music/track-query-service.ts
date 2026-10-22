@@ -658,6 +658,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       LEFT JOIN ProviderItemAudioVariants delivered_variant
         ON delivered_variant.id = file.source_audio_variant_id
        AND delivered_variant.delivered_quality_class IS NOT NULL
+       AND delivered_variant.delivered_quality_class <> delivered_variant.quality_class
       JOIN Tracks track ON track.id = file.track_id
       JOIN AlbumEditions release ON release.id = file.album_edition_id
       JOIN Albums release_group ON release_group.id = release.release_group_id

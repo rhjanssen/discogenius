@@ -100,7 +100,9 @@ export class UpgradableSpecification {
             audioCutoff: getAudioCutoffFromSetting(config.audio_quality),
             videoCutoff: getVideoCutoffFromSetting(config.video_quality),
             allowRedownloads: config.upgrade_existing_files !== false,
-            allowDownconverts: config.downconvert_existing_files === true,
+            // Files above the single audio quality setting are always conformed
+            // down to it; there is no separate switch.
+            allowDownconverts: true,
             preferFlac: config.extract_flac !== false,
             preferMp4: config.convert_video_mp4 !== false,
         };

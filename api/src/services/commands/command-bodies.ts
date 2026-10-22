@@ -272,7 +272,12 @@ export interface DownloadMissingCommand extends CommandBodyCommon {
   artistIds?: string[];
 }
 
-export type CheckUpgradesCommand = CommandBodyCommon;
+export interface CheckUpgradesCommand extends CommandBodyCommon {
+  /** "manual": full scan, upgrades even when automatic upgrades are off.
+   * "settings": a quality target changed; full scan, honours the upgrade toggle.
+   * "scheduled": paced scan with a small queue budget, honours the toggle. */
+  mode?: "manual" | "settings" | "scheduled";
+}
 
 export type HousekeepingCommand = CommandBodyCommon;
 

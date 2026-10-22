@@ -111,8 +111,8 @@ export function ensureDefaultQualityProfiles(db: Database.Database): void {
     JSON.stringify({ codec: "preserve", lossless: true }),
     "preserve",
   ));
-  // High — preferred max = 16-bit lossless. 24-bit that arrives anyway (Apple
-  // ALAC at 24/48) is kept and badges MAX unless Settings also downconverts.
+  // High — target = 16-bit lossless. 24-bit that arrives anyway (Apple ALAC at
+  // 24/48) is conformed to 16/44.1 on import and by CheckUpgrades.
   upsert.run(...row(
     "High Quality",
     1,

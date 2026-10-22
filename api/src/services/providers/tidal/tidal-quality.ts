@@ -30,11 +30,11 @@ export const tidalQualityMapping: ProviderQualityMapping = {
       case "LOW":
       case "HIGH":
         return "lossy";
-      case "LOSSLESS":
       // TIDAL's legacy "HI_RES" tier (and the MQA/MASTER tags) was MQA: a
       // 16-bit/44.1 kHz FLAC container. MQA was retired in 2024 and those
       // streams are now served as plain 16/44.1 FLAC. Only HI_RES_LOSSLESS
       // is genuine >16-bit audio.
+      case "LOSSLESS":
       case "HI_RES":
       case "MASTER":
       case "MQA":

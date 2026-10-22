@@ -57,6 +57,27 @@ type AlbumUpgradeTarget = {
 };
 
 const UPGRADE_HISTORY_COOLDOWN_HOURS = 24;
+const UPGRADE_SCAN_PAGE_SIZE = 2000;
+
+export type CheckUpgradesOptions = {
+    /** Cap on queue units (album downloads, track/video downloads, in-place
+     * conversions) for one run. Unset = unlimited (manual full check). */
+    maxUnits?: number;
+};
+
+/**
+ * Source quality for the upgrade decision: what the provider really delivered
+ * when we have measured it (delivered_quality_class), otherwise what it
+ * advertises. A HIRES-labelled TIDAL track that streams 16/44.1 is therefore
+ * not re-downloaded again and again.
+ */
+const EFFECTIVE_SOURCE_TAG_SQL = `COALESCE(
+                      CASE variant.delivered_quality_class
+                        WHEN 'hires-lossless' THEN 'HIRES_LOSSLESS'
+                        WHEN 'lossless' THEN 'LOSSLESS'
+                        WHEN 'lossy' THEN 'HIGH'
+                      END,
+                      variant.provider_quality_label)`;
 
 function normalizeProviderId(value: string | null | undefined): string | null {
     const normalized = String(value || "").trim().toLowerCase();
@@ -152,15 +173,23 @@ export class UpgraderService {
      *
      * @param force  Skip the `upgrade_existing_files` config check (used by manual trigger)
      * @param artistId Optional artist ID to restrict the scan
+     * @param options  maxUnits caps queued albums/tracks/conversions for one paced run
      */
-    static async checkUpgrades(force = false, artistId?: string): Promise<UpgradeResult> {
+    /** Downloads waiting or running; a paced pass stays out of a busy queue. */
+    static pendingDownloadCount(): number {
+        const row = db.prepare("SELECT COUNT(*) AS cnt FROM DownloadQueue").get() as { cnt: number } | undefined;
+        return Number(row?.cnt) || 0;
+    }
+
+    /** Last TrackFiles.id a paced run looked at; the next paced run resumes after it. */
+    private static pacedCursor = 0;
+
+    static async checkUpgrades(force = false, artistId?: string, options: CheckUpgradesOptions = {}): Promise<UpgradeResult> {
         console.log(`🔍 [UPGRADER] Checking library for quality upgrades${artistId ? ` (Artist: ${artistId})` : ''}...`);
 
+        // Without force and with automatic upgrades off, the pass still conforms
+        // files above the audio quality setting; it only skips re-downloads.
         const qualityConfig = Config.getQualityConfig();
-        if (!force && !qualityConfig.upgrade_existing_files && !qualityConfig.downconvert_existing_files) {
-            console.log("⏭️ [UPGRADER] Upgrade/downconvert of existing files is disabled in settings. Skipping.");
-            return { tracks: 0, videos: 0, albums: 0, details: [] };
-        }
         const qualityProfile = UpgradableSpecification.buildEffectiveProfile(
             force ? { ...qualityConfig, upgrade_existing_files: true } : qualityConfig
         );
@@ -196,13 +225,13 @@ export class UpgraderService {
             CASE
                 WHEN lf.file_type = 'video' THEN media_item.video_quality
                 ELSE (
-                    SELECT variant.provider_quality_label
+                    SELECT ${EFFECTIVE_SOURCE_TAG_SQL}
                     FROM ProviderItemAudioVariants variant
                     WHERE variant.provider_item_id = media_item.id
                       AND variant.availability NOT IN ('unavailable', 'restricted')
                       AND variant.provider_quality_label IS NOT NULL
                     ORDER BY
-                      CASE variant.quality_class
+                      CASE COALESCE(variant.delivered_quality_class, variant.quality_class)
                         WHEN 'spatial' THEN 0
                         WHEN 'hires-lossless' THEN 1
                         WHEN 'lossless' THEN 2
@@ -230,7 +259,7 @@ export class UpgraderService {
             -- the best available variant across the resolved provider release's
             -- member tracks. Correlates on the release item resolved below.
             (
-                SELECT variant.provider_quality_label
+                SELECT ${EFFECTIVE_SOURCE_TAG_SQL}
                 FROM ProviderEditionMembers album_member
                 JOIN ProviderItemAudioVariants variant
                   ON variant.provider_item_id = album_member.member_item_id
@@ -238,7 +267,7 @@ export class UpgraderService {
                   AND variant.availability NOT IN ('unavailable', 'restricted')
                   AND variant.provider_quality_label IS NOT NULL
                 ORDER BY
-                  CASE variant.quality_class
+                  CASE COALESCE(variant.delivered_quality_class, variant.quality_class)
                     WHEN 'spatial' THEN 0
                     WHEN 'hires-lossless' THEN 1
                     WHEN 'lossless' THEN 2
@@ -313,18 +342,50 @@ export class UpgraderService {
                 CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN CAST(lf.provider_id AS TEXT) END
               ) IS NOT NULL
           ${artistId ? "AND lf.artist_metadata_id = ?" : ""}
+          AND lf.id > ?
         ORDER BY lf.id ASC
+        LIMIT ?
     `);
-
-        const rows = (artistId ? query.all(artistId) : query.all()) as UpgradeCandidateRow[];
 
         const result: UpgradeResult = { tracks: 0, videos: 0, albums: 0, details: [] };
         const albumsNeedingUpgrade = new Map<string, AlbumUpgradeTarget>();
 
+        // A paced (scheduled) run spends a small budget of queue units and
+        // resumes after the last file it looked at on the next run, so the
+        // whole library is covered gradually without flooding the queue.
+        const budget = options.maxUnits && options.maxUnits > 0 ? options.maxUnits : Number.POSITIVE_INFINITY;
+        const paced = Number.isFinite(budget) && !artistId;
+        const startAfter = paced ? UpgraderService.pacedCursor : 0;
+        let cursor = startAfter;
+        let wrapped = false;
+        let budgetSpent = false;
+        let conversions = 0;
+        const standaloneUnits = new Set<string>();
+        const unitsUsed = () => albumsNeedingUpgrade.size + standaloneUnits.size + conversions;
+
         let rowsLoopCounter = 0;
-        for (const row of rows) {
+        scan: while (true) {
+            const page = (artistId
+                ? query.all(artistId, cursor, UPGRADE_SCAN_PAGE_SIZE)
+                : query.all(cursor, UPGRADE_SCAN_PAGE_SIZE)) as UpgradeCandidateRow[];
+            if (page.length === 0) {
+                if (!paced || wrapped || startAfter === 0) break;
+                wrapped = true;
+                cursor = 0;
+                continue;
+            }
+            await this.yieldToEventLoop();
+        for (const row of page) {
             rowsLoopCounter++;
             await this.maybeYield(rowsLoopCounter);
+            if (wrapped && row.file_id > startAfter) break scan;
+            const rowAlbumKey = row.provider && row.album_id
+                ? albumUpgradeKey(normalizeProviderId(row.provider) ?? "", String(row.album_id)) : null;
+            if (unitsUsed() >= budget && !(rowAlbumKey && albumsNeedingUpgrade.has(rowAlbumKey))) {
+                budgetSpent = true;
+                break scan;
+            }
+            cursor = row.file_id;
 
             const provider = normalizeProviderId(row.provider);
             if (!provider || !row.media_id) {
@@ -378,6 +439,7 @@ export class UpgraderService {
                             audioQuality: qualityConfig.audio_quality,
                         });
                         result.tracks++;
+                        conversions++;
                         result.details.push({
                             mediaId: String(row.media_id),
                             type: row.media_type,
@@ -416,13 +478,20 @@ export class UpgraderService {
 
                 if (row.media_type === 'Music Video') {
                     result.videos++;
+                    standaloneUnits.add(`${provider}\0${row.media_id}`);
                 } else {
                     result.tracks++;
                     if (albumId) {
                         albumsNeedingUpgrade.set(albumUpgradeKey(provider, albumId), { provider, albumId });
+                    } else {
+                        standaloneUnits.add(`${provider}\0${row.media_id}`);
                     }
                 }
             }
+        }
+        }
+        if (paced) {
+            UpgraderService.pacedCursor = budgetSpent ? cursor : 0;
         }
 
         // Queue upgrades at album level where possible — more efficient than per-track downloads

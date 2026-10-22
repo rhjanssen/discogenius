@@ -544,10 +544,10 @@ const SYSTEM_TASK_DEFINITIONS = [
   },
   {
     id: "check-upgrades",
-    kind: "manual",
+    kind: "scheduled",
     commandName: "CheckUpgrades",
     name: "Check Upgrades",
-    description: "Scan the library for monitored items that can be upgraded.",
+    description: "Upgrade files below the audio/video quality setting using the quality providers really deliver. Scheduled runs queue a small batch at a time; Run now scans everything.",
     taskName: CommandNames.CheckUpgrades,
     category: "downloads",
     riskLevel: "medium",
