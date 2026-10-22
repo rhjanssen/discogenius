@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeLocaleList, translateStoredArtistName, type ArtistNameTranslationOptions } from "../metadata/artist-locale-names.js";
 import fs from "fs";
 import { nativeMediaTagKeys } from "./media-tag-io.js";
 import { withMediaFileLock } from "./media-file-lock.js";
@@ -593,6 +594,38 @@ export async function syncTrackArtistCredits(trackFileIds: number[]): Promise<vo
   } catch (error) {
     console.warn(`[AudioTagService] Track credit sync skipped: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/** Artist-name translation settings (metadata.translate_artist_names*). */
+export function getArtistNameTranslationOptions(config?: Partial<MetadataConfig>): ArtistNameTranslationOptions {
+  const metadata = (config ?? getConfigSection("metadata")) as Partial<MetadataConfig>;
+  return {
+    enabled: metadata.translate_artist_names === true,
+    locales: normalizeLocaleList(metadata.artist_name_locales ?? "en,nl"),
+    skipLatin: metadata.translate_artist_names_skip_latin !== false,
+  };
+}
+
+/**
+ * Track credit parts with locale names (Picard semantics): the artist name and
+ * sort name are translated; the credited-as name only when it is the plain
+ * MusicBrainz name, so a real credited spelling ("AFROJACK") stays printed.
+ */
+export function translateTrackArtistCreditParts(
+  parts: TrackArtistCreditPart[],
+  options: ArtistNameTranslationOptions,
+): TrackArtistCreditPart[] {
+  if (!options.enabled) return parts;
+  return parts.map((part) => {
+    const translated = translateStoredArtistName(part.artistMbid, part.artistName, part.artistSortName, options);
+    if (!translated.translated) return part;
+    return {
+      ...part,
+      artistName: translated.name,
+      artistSortName: translated.sortName,
+      creditedName: part.creditedName === part.artistName ? translated.name : part.creditedName,
+    };
+  });
 }
 
 /** Case-insensitive de-duplication that keeps the first spelling and order. */
@@ -1789,7 +1822,8 @@ export class AudioTagService {
 
   private static getTrackArtistTagPlan(row: RetagTrackRow): TrackArtistTagPlan {
     const fallbackArtistName = String(row.primary_artist_name || "").trim() || "Unknown Artist";
-    return planTrackArtistTags(this.getTrackArtistCreditParts(row), fallbackArtistName);
+    const parts = translateTrackArtistCreditParts(this.getTrackArtistCreditParts(row), getArtistNameTranslationOptions());
+    return planTrackArtistTags(parts, fallbackArtistName);
   }
 
   /**
@@ -1854,9 +1888,15 @@ export class AudioTagService {
     const sortOf = (mbids: string[]): string[] | null => {
       if (mbids.length === 0) return null;
       const result: string[] = [];
+      const translation = getArtistNameTranslationOptions();
       for (const mbid of mbids) {
-        const found = db.prepare("SELECT sort_name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(mbid) as { sort_name?: string | null } | undefined;
-        const value = String(found?.sort_name || "").trim();
+        const found = db.prepare("SELECT name, sort_name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(mbid) as { name?: string | null; sort_name?: string | null } | undefined;
+        const value = String(translateStoredArtistName(
+          mbid,
+          String(found?.name || "").trim(),
+          String(found?.sort_name || "").trim() || null,
+          translation,
+        ).sortName || "").trim();
         if (!value) return null;
         result.push(value);
       }
@@ -1875,13 +1915,22 @@ export class AudioTagService {
     const ownerRow = ownerMbid
       ? db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(ownerMbid) as { name?: string | null } | undefined
       : undefined;
-    const roster = this.getAlbumArtistRoster(row, fallbackArtistName);
+    const translation = getArtistNameTranslationOptions();
+    const roster = this.getAlbumArtistRoster(row, fallbackArtistName).map((credit) => {
+      const translated = translateStoredArtistName(credit.mbid, credit.name, null, translation);
+      if (!translated.translated) return credit;
+      return { ...credit, name: translated.name, credit: credit.credit === credit.name ? translated.name : credit.credit };
+    });
+    const ownerName = String(ownerRow?.name || "").trim() || null;
+    const translatedOwnerName = ownerName && ownerMbid
+      ? translateStoredArtistName(ownerMbid, ownerName, null, translation).name
+      : ownerName;
     return planAlbumArtistTags({
       creditNames: roster.map((credit) => credit.credit),
       artistNames: roster.map((credit) => credit.name),
       creditMbids: roster.map((credit) => credit.mbid),
       ownerMbid,
-      ownerName: String(ownerRow?.name || "").trim() || null,
+      ownerName: translatedOwnerName,
       fullCredit,
       fallbackName: fallbackArtistName,
     });

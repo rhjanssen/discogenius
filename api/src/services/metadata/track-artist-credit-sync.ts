@@ -1,5 +1,5 @@
 import { db, runGatedChunkedWrite } from "../../database.js";
-import type { CatalogProvider, CatalogTrackArtistCredit } from "../catalog/catalog-provider.js";
+import type { CatalogArtistLocaleAlias, CatalogProvider, CatalogTrackArtistCredit } from "../catalog/catalog-provider.js";
 
 /**
  * Keeps TrackArtistCreditNames (the published MusicBrainz credit of each
@@ -27,6 +27,8 @@ export type TrackArtistCreditSyncResult = {
   changed: number;
   /** ArtistMetadata rows whose name or sort name was repaired. */
   artistsRepaired: number;
+  /** Artists whose stored locale aliases were inserted or changed. */
+  aliasesChanged?: number;
   error?: string;
 };
 
@@ -75,12 +77,83 @@ export class TrackArtistCreditSync {
     trackFileIds: number[],
     options: { catalog?: CatalogProvider } = {},
   ): Promise<TrackArtistCreditSyncResult> {
-    return this.syncTrackMbids(this.trackMbidsForFiles(trackFileIds), options);
+    return this.syncTrackMbids(this.trackMbidsForFiles(trackFileIds), {
+      ...options,
+      extraArtistMbids: this.ownerArtistMbidsForFiles(trackFileIds),
+    });
+  }
+
+  /** Owning artists and release (album-artist) credits of the given files: ALBUMARTIST names are translated too. */
+  static ownerArtistMbidsForFiles(trackFileIds: number[]): string[] {
+    const ids = [...new Set(trackFileIds.filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (ids.length === 0) return [];
+    const rows = db.prepare(`
+      SELECT DISTINCT lower(artist.mbid) AS mbid
+      FROM TrackFiles lf
+      JOIN ArtistMetadata artist ON artist.id = lf.artist_metadata_id
+      WHERE lf.id IN (SELECT value FROM json_each(?)) AND artist.mbid IS NOT NULL
+      UNION
+      SELECT DISTINCT lower(artist.mbid)
+      FROM TrackFiles lf
+      JOIN AlbumEditions edition ON edition.mbid = lf.canonical_release_mbid
+      JOIN ReleaseArtistCredits credit ON credit.edition_id = edition.id
+      JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+      WHERE lf.id IN (SELECT value FROM json_each(?)) AND artist.mbid IS NOT NULL
+    `).all(JSON.stringify(ids), JSON.stringify(ids)) as Array<{ mbid: string }>;
+    return rows.map((row) => row.mbid).filter(Boolean);
+  }
+
+  /**
+   * Store the locale aliases of these artists (ArtistLocaleAliases). Never
+   * throws; a catalogue without aliases leaves the table as it is.
+   */
+  static async syncArtistLocaleAliases(artistMbids: string[], catalog: CatalogProvider): Promise<number> {
+    const wanted = [...new Set(artistMbids.map(normalizeMbid).filter(Boolean))];
+    if (wanted.length === 0 || typeof catalog.getArtistLocaleAliases !== "function") return 0;
+    let fetched: Map<string, CatalogArtistLocaleAlias[]>;
+    try {
+      fetched = await catalog.getArtistLocaleAliases(wanted);
+    } catch (error) {
+      console.warn(`[TrackArtistCredits] Artist alias lookup failed for ${wanted.length} artist(s): ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+    const readStored = db.prepare(`
+      SELECT name, sort_name, locale, primary_for_locale, alias_type
+      FROM ArtistLocaleAliases WHERE artist_mbid = ? ORDER BY ordinal
+    `);
+    const deleteStored = db.prepare("DELETE FROM ArtistLocaleAliases WHERE artist_mbid = ?");
+    const insert = db.prepare(`
+      INSERT INTO ArtistLocaleAliases (artist_mbid, ordinal, name, sort_name, locale, primary_for_locale, alias_type, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+    const mark = db.prepare(`
+      INSERT INTO ArtistLocaleAliasSync (artist_mbid, synced_at) VALUES (?, CURRENT_TIMESTAMP)
+      ON CONFLICT(artist_mbid) DO UPDATE SET synced_at = excluded.synced_at
+    `);
+    let changed = 0;
+    const entries = [...fetched.entries()].map(([mbid, aliases]) => [normalizeMbid(mbid), aliases] as const).filter(([mbid]) => mbid);
+    await runGatedChunkedWrite(entries, ([mbid, aliases]) => {
+      const stored = readStored.all(mbid) as Array<{ name: string; sort_name: string | null; locale: string; primary_for_locale: number; alias_type: string | null }>;
+      const same = stored.length === aliases.length && stored.every((row, index) => {
+        const alias = aliases[index];
+        return row.name === alias.name && (row.sort_name ?? null) === (alias.sortName ?? null)
+          && row.locale === alias.locale && row.primary_for_locale === (alias.primaryForLocale ? 1 : 0)
+          && (row.alias_type ?? null) === (alias.type ?? null);
+      });
+      mark.run(mbid);
+      if (same) return;
+      deleteStored.run(mbid);
+      aliases.forEach((alias, ordinal) => {
+        insert.run(mbid, ordinal, alias.name, alias.sortName ?? null, alias.locale, alias.primaryForLocale ? 1 : 0, alias.type ?? null);
+      });
+      changed += 1;
+    }, WRITE_CHUNK, "track-artist-credits:artist-aliases");
+    return changed;
   }
 
   static async syncTrackMbids(
     trackMbids: string[],
-    options: { catalog?: CatalogProvider } = {},
+    options: { catalog?: CatalogProvider; extraArtistMbids?: string[] } = {},
   ): Promise<TrackArtistCreditSyncResult> {
     const wanted = [...new Set(trackMbids.map(normalizeMbid).filter(Boolean))];
     const result: TrackArtistCreditSyncResult = { supported: true, requested: wanted.length, changed: 0, artistsRepaired: 0 };
@@ -152,6 +225,11 @@ export class TrackArtistCreditSync {
     await runGatedChunkedWrite([...artists.entries()], ([mbid, artist]) => {
       result.artistsRepaired += repair.run(artist.name, artist.sortName, mbid, artist.name, artist.sortName, artist.sortName).changes;
     }, WRITE_CHUNK, "track-artist-credits:artist-names");
+
+    result.aliasesChanged = await this.syncArtistLocaleAliases(
+      [...artists.keys(), ...(options.extraArtistMbids ?? [])],
+      catalog,
+    );
 
     return result;
   }

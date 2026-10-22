@@ -127,6 +127,12 @@ export interface MetadataConfig {
   scrub_audio_tags?: boolean;
   /** ALBUMARTIST = full credit ("A, B") instead of the primary artist. Off: media servers keep one artist per discography. */
   full_album_artist_credit?: boolean;
+  /** Artist names from MusicBrainz locale aliases (Picard "translate artist names"). On: "Tchaikovsky", not "Пётр Ильич Чайковский". */
+  translate_artist_names?: boolean;
+  /** Locale preference, comma separated, first match wins. */
+  artist_name_locales?: string;
+  /** Keep names already written in Latin script. */
+  translate_artist_names_skip_latin?: boolean;
 }
 
 export interface AccountConfig {
@@ -309,6 +315,9 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     write_audio_tags_policy: "new_files",
     scrub_audio_tags: false,
     full_album_artist_credit: false,
+    translate_artist_names: true,
+    artist_name_locales: "en,nl",
+    translate_artist_names_skip_latin: true,
   },
   streaming: {
     default_provider: "tidal",
@@ -410,6 +419,11 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
       : DEFAULT_CONFIG.metadata.write_audio_tags_policy,
     scrub_audio_tags: raw?.scrub_audio_tags ?? DEFAULT_CONFIG.metadata.scrub_audio_tags,
     full_album_artist_credit: raw?.full_album_artist_credit ?? DEFAULT_CONFIG.metadata.full_album_artist_credit,
+    translate_artist_names: raw?.translate_artist_names ?? DEFAULT_CONFIG.metadata.translate_artist_names,
+    artist_name_locales: typeof raw?.artist_name_locales === "string" && raw.artist_name_locales.trim()
+      ? raw.artist_name_locales.trim()
+      : DEFAULT_CONFIG.metadata.artist_name_locales,
+    translate_artist_names_skip_latin: raw?.translate_artist_names_skip_latin ?? DEFAULT_CONFIG.metadata.translate_artist_names_skip_latin,
   };
 }
 

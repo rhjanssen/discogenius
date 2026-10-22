@@ -93,6 +93,12 @@ export interface MetadataConfigContract {
   scrub_audio_tags?: boolean;
   /** Write the full album-artist credit into ALBUMARTIST instead of the primary artist only. */
   full_album_artist_credit?: boolean;
+  /** Write artist names from MusicBrainz locale aliases (Picard "translate artist names"). */
+  translate_artist_names?: boolean;
+  /** Locale preference for translated artist names, comma separated ("en,nl"). */
+  artist_name_locales?: string;
+  /** Keep names that are already in Latin script. */
+  translate_artist_names_skip_latin?: boolean;
 }
 
 export interface CatalogConfigContract {
@@ -258,6 +264,9 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
     scrub_audio_tags: expectOptionalBoolean(record.scrub_audio_tags, "metadata.scrub_audio_tags"),
     full_album_artist_credit: expectOptionalBoolean(record.full_album_artist_credit, "metadata.full_album_artist_credit"),
+    translate_artist_names: expectOptionalBoolean(record.translate_artist_names, "metadata.translate_artist_names"),
+    artist_name_locales: expectOptionalString(record.artist_name_locales, "metadata.artist_name_locales"),
+    translate_artist_names_skip_latin: expectOptionalBoolean(record.translate_artist_names_skip_latin, "metadata.translate_artist_names_skip_latin"),
   };
 }
 
