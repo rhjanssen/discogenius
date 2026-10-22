@@ -175,9 +175,13 @@ export class UpgraderService {
      * @param artistId Optional artist ID to restrict the scan
      * @param options  maxUnits caps queued albums/tracks/conversions for one paced run
      */
-    /** Downloads waiting or running; a paced pass stays out of a busy queue. */
-    static pendingDownloadCount(): number {
-        const row = db.prepare("SELECT COUNT(*) AS cnt FROM DownloadQueue").get() as { cnt: number } | undefined;
+    /** Upgrade downloads still waiting. A paced pass tops this up to a small
+     * ceiling instead of piling upgrades behind the regular download backlog. */
+    static pendingUpgradeCount(): number {
+        const row = db.prepare(`
+            SELECT COUNT(*) AS cnt FROM DownloadQueue
+            WHERE json_valid(payload) AND json_extract(payload, '$.reason') = 'upgrade'
+        `).get() as { cnt: number } | undefined;
         return Number(row?.cnt) || 0;
     }
 
