@@ -286,7 +286,8 @@ export class ProviderCatalogRepository {
         availability_reason, verified_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(provider_item_id, variant_key) DO UPDATE SET
-        quality_class = excluded.quality_class,
+        -- A measured delivery below the advertised tier wins over the advertisement.
+        quality_class = COALESCE(ProviderItemAudioVariants.delivered_quality_class, excluded.quality_class),
         codec = excluded.codec,
         container = excluded.container,
         lossless = excluded.lossless,

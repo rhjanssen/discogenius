@@ -219,3 +219,20 @@ test("NORMAL keeps a compliant native AAC file instead of transcoding to MP3", (
   assert.equal(decision.output?.codec, "preserve");
   assert.match(decision.reason, /native lossy/);
 });
+
+test("MAX keeps 24-bit hi-res even when 'downconvert existing files' is on", () => {
+  const decision = decideImportedQuality(profile({
+    name: "Max Quality",
+    cutoff: "hires-lossless",
+    output_format: JSON.stringify({ codec: "preserve", lossless: true }),
+  }), {
+    quality: "hires-lossless",
+    codec: "flac",
+    extension: "flac",
+    bitDepth: 24,
+    sampleRate: 192_000,
+  }, { conformToTarget: true });
+  assert.equal(decision.accepted, true);
+  assert.equal(decision.transcode, false);
+  assert.equal(decision.importedQuality, "hires-lossless");
+});

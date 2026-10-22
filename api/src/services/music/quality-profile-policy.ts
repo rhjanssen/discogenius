@@ -260,7 +260,11 @@ export function decideImportedQuality(
     && source.bitDepth != null
     && source.bitDepth >= 24
   ) {
-    if (options.conformToTarget) {
+    // "Downconvert existing files" conforms the library DOWN to the profile
+    // target. A profile whose cutoff is hi-res (Max Quality) has no lower
+    // target, so 24-bit must be kept: conforming it threw away every hi-res
+    // stream TIDAL and Apple delivered and stored it as 16/44.1.
+    if (options.conformToTarget && profile.cutoff !== "hires-lossless") {
       const codec = losslessDownconvertCodec(source);
       return {
         accepted: true,

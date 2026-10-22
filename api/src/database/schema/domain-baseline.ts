@@ -292,6 +292,7 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       channel_layout TEXT,
       spatial_format TEXT,
       provider_quality_label TEXT,
+      delivered_quality_class TEXT,
       availability TEXT NOT NULL DEFAULT 'unknown',
       availability_reason TEXT,
       verified_at TEXT,

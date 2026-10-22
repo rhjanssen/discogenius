@@ -39,6 +39,8 @@ export interface LibraryFileContract {
   codec?: string;
   /** Video stream codec (h264/hevc/av1/…) when the file is a music video. */
   video_codec?: string;
+  /** Provider-advertised tier when the delivered file measured below it. */
+  advertised_quality?: string | null;
   /** Probed video frame width in pixels. */
   width?: number;
   /** Probed video frame height in pixels. */
@@ -391,6 +393,7 @@ function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFi
     channels: expectOptionalNumber(record.channels, `${indexLabel}.channels`),
     codec: expectOptionalString(record.codec, `${indexLabel}.codec`),
     video_codec: expectOptionalString(record.video_codec, `${indexLabel}.video_codec`),
+    ...(record.advertised_quality !== undefined ? { advertised_quality: expectNullableString(record.advertised_quality, `${indexLabel}.advertised_quality`) } : {}),
     width: expectOptionalNumber(record.width, `${indexLabel}.width`),
     height: expectOptionalNumber(record.height, `${indexLabel}.height`),
     duration: expectOptionalNumber(record.duration, `${indexLabel}.duration`),

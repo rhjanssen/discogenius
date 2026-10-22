@@ -171,6 +171,8 @@ interface LibraryFileRow {
   width?: number;
   height?: number;
   duration?: number;
+  /** Provider-advertised tier when the delivered file measured below it. */
+  advertised_quality?: string | null;
   created_at?: string;
   modified_at?: string;
 }
@@ -234,6 +236,7 @@ function normalizeLibraryFileRow(file: LibraryFileRow): LibraryFileContract {
     width: file.width,
     height: file.height,
     duration: file.duration,
+    advertised_quality: file.advertised_quality ?? null,
   };
 }
 
@@ -649,8 +652,12 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
         file.video_codec,
         file.width,
         file.height,
-        file.duration
+        file.duration,
+        delivered_variant.provider_quality_label AS advertised_quality
       FROM TrackFiles file
+      LEFT JOIN ProviderItemAudioVariants delivered_variant
+        ON delivered_variant.id = file.source_audio_variant_id
+       AND delivered_variant.delivered_quality_class IS NOT NULL
       JOIN Tracks track ON track.id = file.track_id
       JOIN AlbumEditions release ON release.id = file.album_edition_id
       JOIN Albums release_group ON release_group.id = release.release_group_id

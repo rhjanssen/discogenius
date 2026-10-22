@@ -233,7 +233,7 @@ test('verification uses the same explicit 24-bit conformity policy as import',()
 });
 
 test('conformity setting is applied to real files and included in the admission snapshot',async context=>{
-    db.prepare("UPDATE quality_profiles SET cutoff='hires-lossless',continue_upgrades=1 WHERE id=?").run(profileId);
+    db.prepare("UPDATE quality_profiles SET cutoff='lossless',continue_upgrades=1 WHERE id=?").run(profileId);
     db.exec("UPDATE AcquisitionPlanTracks SET source_quality_snapshot='{\"quality\":\"hires-lossless\"}'; UPDATE ProviderItemAudioVariants SET bit_depth=24,sample_rate=96000;");
     const original = Config.getQualityConfig.bind(Config);
     let conform = true;

@@ -38,6 +38,7 @@ import {
 } from "./database/schema/commands.js";
 import { migrateFileWorkRestartResume } from "./database/schema/file-work-restart-resume.js";
 import { migrateRetagAlbumScheduling } from "./database/schema/retag-album-scheduling.js";
+import { migrateDeliveredQuality } from "./database/schema/delivered-quality.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createTrackArtistCreditNamesSchema, migrateTrackArtistCreditNames } from "./database/schema/track-artist-credit-names.js";
 import { createArtistLocaleAliasesSchema, migrateArtistLocaleAliases } from "./database/schema/artist-locale-aliases.js";
@@ -521,6 +522,7 @@ export function initDatabase() {
   // Columns only. user_version stays 46 so a running or queued RetagArtist
   // is not reset. Existing plans stay plan_complete = 1 and resume at cursor.
   migrateRetagAlbumScheduling(db);
+  migrateDeliveredQuality(db);
   // New table + config marker only. user_version stays 46 so a running
   // RetagArtist is not reset.
   migrateProviderAuthState(db);

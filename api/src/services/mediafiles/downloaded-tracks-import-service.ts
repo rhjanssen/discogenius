@@ -819,6 +819,9 @@ export function persistDownloadedProviderProvenance(
                     );
                 }
                 sourceAudioVariantId = variant.id;
+                if (variant.provider_item_id === providerItem.id) {
+                    recordDeliveredQuality(fileId, variant.id);
+                }
             }
 
             update.run({
@@ -1667,4 +1670,58 @@ export async function resolveImportedCatalogIdentity(type: string, providerId: s
     } catch (error) {
         console.warn(`[ImportDownload] Post-import catalog identity refresh failed for ${type} ${providerId}: ${error instanceof Error ? error.message : String(error)}`);
     }
+}
+
+const STEREO_QUALITY_LADDER: Record<string, number> = {
+    "low": 1,
+    "lossy": 2,
+    "high": 2,
+    "lossless": 3,
+    "hires-lossless": 4,
+};
+
+function stereoLadderRank(value: string | null | undefined): number | null {
+    const normalized = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+    const key = normalized === "hires" || normalized === "hi-res-lossless" ? "hires-lossless" : normalized;
+    return STEREO_QUALITY_LADDER[key] ?? null;
+}
+
+/**
+ * Compare what the provider advertised for this exact track variant with what
+ * the provider actually delivered (source_quality: the downloaded stream as
+ * probed BEFORE any profile conversion, so our own downconvert never counts as
+ * an under-delivery). When the file is below the advertisement (TIDAL
+ * "HIRES_LOSSLESS" that streams as 16/44.1), record the delivered class on the
+ * variant and on plan tracks that use it, so the track/album badge and future
+ * plan ranking stop treating it as hi-res. provider_quality_label is left as
+ * advertised. Spatial variants are not touched.
+ */
+export function recordDeliveredQuality(fileId: number, variantId: number): void {
+    const row = db.prepare(`
+        SELECT
+          COALESCE(NULLIF(TRIM(file.source_quality), ''), NULLIF(TRIM(file.imported_quality), ''), NULLIF(TRIM(file.quality), '')) AS measured,
+          variant.quality_class AS advertised
+        FROM TrackFiles file
+        JOIN ProviderItemAudioVariants variant ON variant.id = ?
+        WHERE file.id = ?
+    `).get(variantId, fileId) as { measured: string | null; advertised: string | null } | undefined;
+    if (!row) return;
+    const measuredRank = stereoLadderRank(row.measured);
+    const advertisedRank = stereoLadderRank(row.advertised);
+    if (measuredRank == null || advertisedRank == null || measuredRank >= advertisedRank) return;
+    const delivered = ({ 1: "low", 2: "high", 3: "lossless", 4: "hires-lossless" } as Record<number, string>)[measuredRank];
+    db.prepare(`
+        UPDATE ProviderItemAudioVariants
+        SET delivered_quality_class = ?, quality_class = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(delivered, delivered, variantId);
+    db.prepare(`
+        UPDATE AcquisitionPlanTracks
+        SET source_quality_snapshot = CASE
+              WHEN json_valid(source_quality_snapshot) THEN json_set(source_quality_snapshot, '$.quality', ?)
+              ELSE json_object('quality', ?)
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE provider_audio_variant_id = ?
+    `).run(delivered, delivered, variantId);
 }
