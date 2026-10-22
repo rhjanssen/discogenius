@@ -1709,7 +1709,7 @@ export function recordDeliveredQuality(fileId: number, variantId: number): void 
     const measuredRank = stereoLadderRank(row.measured);
     const advertisedRank = stereoLadderRank(row.advertised);
     if (measuredRank == null || advertisedRank == null || measuredRank >= advertisedRank) return;
-    const delivered = ({ 1: "low", 2: "high", 3: "lossless", 4: "hires-lossless" } as Record<number, string>)[measuredRank];
+    const delivered = ({ 1: "lossy", 2: "lossy", 3: "lossless", 4: "hires-lossless" } as Record<number, string>)[measuredRank];
     db.prepare(`
         UPDATE ProviderItemAudioVariants
         SET delivered_quality_class = ?, quality_class = ?, updated_at = CURRENT_TIMESTAMP

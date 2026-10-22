@@ -59,7 +59,7 @@ function backfillDeliveredQuality(db: Database.Database): void {
     db.exec(`
       UPDATE ProviderItemAudioVariants
       SET delivered_quality_class = (
-            SELECT CASE measured_rank WHEN 4 THEN 'hires-lossless' WHEN 3 THEN 'lossless' WHEN 2 THEN 'high' ELSE 'low' END
+            SELECT CASE measured_rank WHEN 4 THEN 'hires-lossless' WHEN 3 THEN 'lossless' ELSE 'lossy' END
             FROM delivered_quality_backfill WHERE variant_id = ProviderItemAudioVariants.id),
           updated_at = CURRENT_TIMESTAMP
       WHERE id IN (SELECT variant_id FROM delivered_quality_backfill)
