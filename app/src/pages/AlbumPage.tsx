@@ -991,28 +991,6 @@ const AlbumPage = () => {
     return badges;
   }, [album?.quality, headerPlanOffers]);
 
-  // Measured quality of the files on disk, shown beside (never instead of)
-  // the provider-advertised badge so a gap between offer and delivery shows.
-  const localQualityBadges = useMemo(() => {
-    const record = (album || {}) as { stereo_local_quality?: string | null; spatial_local_quality?: string | null };
-    const values = [record.stereo_local_quality, record.spatial_local_quality]
-      .map((value) => String(value || "").trim())
-      .filter((value) => value && value.toUpperCase() !== "UNKNOWN");
-    return [...new Set(values)];
-  }, [album]);
-  const renderLocalQualityBadges = () => localQualityBadges.length === 0 ? null : (
-    <>
-      <Text size={200} aria-hidden>Files:</Text>
-      {localQualityBadges.map((quality) => (
-        <QualityBadge
-          key={`local-${quality}`}
-          quality={quality}
-          tooltip="Measured from the downloaded files on disk"
-        />
-      ))}
-    </>
-  );
-
   const renderAlbumArtists = () => {
     if (albumArtists.length > 1) {
       return (
@@ -1736,17 +1714,13 @@ const AlbumPage = () => {
                       size="medium"
                       offers={headerPlanOffers}
                     />
-                    {renderLocalQualityBadges()}
                   </div>
                 ) : headerQualityBadges.length > 0 ? (
                   <div className={styles.metadataBadges}>
                     {headerQualityBadges.map((badge) => (
                       <QualityBadge key={badge.key} quality={badge.quality} />
                     ))}
-                    {renderLocalQualityBadges()}
                   </div>
-                ) : localQualityBadges.length > 0 ? (
-                  <div className={styles.metadataBadges}>{renderLocalQualityBadges()}</div>
                 ) : null}
                 <div className={styles.metadataFacts}>
                   <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>

@@ -49,35 +49,6 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
             WHEN release_match.match_state = 'accepted' THEN 'verified'
             ELSE release_match.match_state
           END AS match_status,
-          -- Measured quality of the files this edition actually has on disk
-          -- (TrackFiles.quality comes from ffprobe: bit depth, sample rate,
-          -- codec). Shown NEXT TO the provider-advertised quality, never
-          -- instead of it, so a gap between what was offered and what was
-          -- delivered stays visible.
-          (
-            SELECT local_file.quality
-            FROM TrackFiles local_file
-            WHERE local_file.album_edition_id = release.id
-              AND local_file.file_type = 'track'
-              AND local_file.quality IS NOT NULL
-              AND UPPER(TRIM(local_file.quality)) NOT IN ('', 'UNKNOWN')
-              AND (
-                (CASE WHEN EXISTS (
-                  SELECT 1
-                  FROM json_each(COALESCE(NULLIF(quality_profile.allowed_source_formats, ''), '[]')) allowed
-                  WHERE allowed.value = 'spatial'
-                ) THEN 1 ELSE 0 END) = (CASE WHEN UPPER(local_file.quality) = 'DOLBY_ATMOS' THEN 1 ELSE 0 END)
-              )
-            ORDER BY
-              CASE UPPER(local_file.quality)
-                WHEN 'DOLBY_ATMOS' THEN 0
-                WHEN 'HIRES_LOSSLESS' THEN 1
-                WHEN 'LOSSLESS' THEN 2
-                WHEN 'HIGH' THEN 3
-                ELSE 4
-              END
-            LIMIT 1
-          ) AS local_quality,
           (
             SELECT ${planTrackDisplayQualitySql("plan_track", "variant")}
             FROM AcquisitionPlanTracks plan_track
@@ -171,7 +142,6 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         stereo.provider_cover AS stereo_cover,
         stereo.release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
-        stereo.local_quality AS stereo_local_quality,
         stereo.match_status AS stereo_match_status,
         spatial.provider AS spatial_provider,
         spatial.provider_id AS spatial_provider_id,
@@ -179,7 +149,6 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         spatial.provider_cover AS spatial_cover,
         spatial.release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
-        spatial.local_quality AS spatial_local_quality,
         spatial.match_status AS spatial_match_status
       FROM Albums rg
       LEFT JOIN ArtistMetadata a ON a.mbid = rg.artist_mbid
@@ -581,14 +550,12 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         stereo_provider_id: releaseGroup.stereo_provider_id || null,
         stereo_provider_url: releaseGroup.stereo_provider_url || null,
         stereo_quality: releaseGroup.stereo_quality || null,
-        stereo_local_quality: releaseGroup.stereo_local_quality || null,
         stereo_match_status: releaseGroup.stereo_match_status || null,
         stereo_release_mbid: releaseGroup.stereo_release_mbid || null,
         spatial_provider: includeSpatial ? releaseGroup.spatial_provider || null : null,
         spatial_provider_id: includeSpatial ? releaseGroup.spatial_provider_id || null : null,
         spatial_provider_url: includeSpatial ? releaseGroup.spatial_provider_url || null : null,
         spatial_quality: includeSpatial ? releaseGroup.spatial_quality || null : null,
-        spatial_local_quality: includeSpatial ? releaseGroup.spatial_local_quality || null : null,
         spatial_match_status: includeSpatial ? releaseGroup.spatial_match_status || null : null,
         spatial_release_mbid: includeSpatial ? releaseGroup.spatial_release_mbid || null : null,
         selected_provider: releaseGroup.selected_provider || null,
