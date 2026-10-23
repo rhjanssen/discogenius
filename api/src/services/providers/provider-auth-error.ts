@@ -25,7 +25,16 @@ export function normalizeProviderId(provider: string): string {
  * Streamrip output, history rows from before this type existed).
  * Transient network text does not match.
  */
-const AUTH_FAILURE_TEXT = /token has expired|TIDAL token refresh failed \(HTTP 401\b|invalid\s+arl|arl\s+(?:expired|invalid)|deezer arl is invalid|needs_reauth/iu;
+const AUTH_FAILURE_TEXT = /tidal login expired|TIDAL token refresh failed \(HTTP 401\b|invalid\s+arl|arl\s+(?:expired|invalid)|deezer arl is invalid|needs_reauth/iu;
+/**
+ * An expired ACCESS token ("The token has expired. (Expired on time)" from a
+ * TIDAL API call) is not a dead login: the refresh token renews it. Treating
+ * it as one marked TIDAL needs_reauth and held every download until a manual
+ * re-login (23 Oct 2026). Only the refresh endpoint decides that a login is
+ * dead, and it throws ProviderAuthError. History rows written before that
+ * distinction still count as auth failures so a reconnect retries them.
+ */
+const HISTORICAL_AUTH_FAILURE_TEXT = /token has expired/iu;
 
 export function errorIndicatesProviderAuth(error: unknown): boolean {
   if (error instanceof ProviderAuthError) return true;
@@ -45,5 +54,6 @@ export function asProviderAuthError(provider: string, error: unknown): ProviderA
 }
 
 export function isHistoricalAuthFailure(error: string | null | undefined): boolean {
-  return AUTH_FAILURE_TEXT.test(String(error || ""));
+  const text = String(error || "");
+  return AUTH_FAILURE_TEXT.test(text) || HISTORICAL_AUTH_FAILURE_TEXT.test(text);
 }

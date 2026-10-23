@@ -7,6 +7,8 @@ import {
   clearStoredTidalToken,
   refreshStoredTidalToken,
   isTidalRefreshPaused,
+  tidalUnauthorizedRejectsToken,
+  type TidalRefreshRequest,
 } from "./tidal-auth.js";
 import { tidalVideoQualityTag } from "./tidal-quality.js";
 import { resolveTidalVideoQualityTag } from "./tidal-video-probe.js";
@@ -96,7 +98,41 @@ export async function saveToken(token: TidalToken) {
 
 let lastRefreshAttempt = 0;
 const REFRESH_COOLDOWN_MS = 60_000;
-let tokenRefreshPromise: Promise<void> | null = null;
+// The access token TIDAL rejected while no replacement could be obtained
+// (refresh paused or failed). Requests carrying it are answered locally until
+// the stored token changes, instead of sending TIDAL a stream of doomed
+// requests that each ask for another refresh.
+let unrefreshableRejectedAccessToken: string | null = null;
+// An access token this close to its expiry is treated as expired.
+const ACCESS_TOKEN_EXPIRY_SKEW_SECONDS = 30;
+
+/** No usable TIDAL access token right now; the refresh token may still be fine. */
+export class TidalSessionUnavailableError extends Error {
+  readonly status = 401;
+
+  constructor(message = "TIDAL session is not available yet; waiting for a token refresh") {
+    super(message);
+    this.name = "TidalSessionUnavailableError";
+  }
+}
+
+export function resetTidalSessionStateForTests(): void {
+  unrefreshableRejectedAccessToken = null;
+  lastRefreshAttempt = 0;
+}
+
+function accessTokenExpired(token: TidalToken, nowMs = Date.now()): boolean {
+  return typeof token.expires_at === "number"
+    && token.expires_at - Math.floor(nowMs / 1000) <= ACCESS_TOKEN_EXPIRY_SKEW_SECONDS;
+}
+
+async function readUnauthorizedBody(response: Response): Promise<unknown> {
+  try {
+    return await response.clone().json();
+  } catch {
+    return null;
+  }
+}
 
 let lastUserInfoCache: any = null;
 let lastUserInfoFetchedAt = 0;
@@ -463,7 +499,11 @@ export async function getUserInfo(options?: { refreshOn401?: boolean }) {
     }, "sessions");
 
     // If token expired, refresh it through the provider-owned TIDAL auth flow.
-    if (sessionResponse.status === 401 && refreshOn401) {
+    if (
+      sessionResponse.status === 401
+      && refreshOn401
+      && tidalUnauthorizedRejectsToken(await readUnauthorizedBody(sessionResponse))
+    ) {
       // Avoid spamming refresh if we just tried
       if (Date.now() - lastRefreshAttempt < REFRESH_COOLDOWN_MS) {
         return token.user
@@ -481,7 +521,7 @@ export async function getUserInfo(options?: { refreshOn401?: boolean }) {
       }
 
       lastRefreshAttempt = Date.now();
-      await refreshTidalToken(true);
+      await refreshTidalToken({ rejectedAccessToken: token.access_token });
 
       // Retry with new token
       const newToken = loadToken();
@@ -668,14 +708,15 @@ export async function tidalApiRequest(endpoint: string): Promise<unknown> {
 }
 
 /**
- * Refresh the stored TIDAL token when it is close to expiry.
- * The refreshed token is re-synced to the downloader (tiddl) on save.
+ * Refresh the stored TIDAL token when it is close to expiry, or when TIDAL
+ * rejected the current access token (request.rejectedAccessToken). The auth
+ * module decides whether TIDAL is actually called; see
+ * refreshStoredTidalToken. The refreshed token is re-synced to tiddl on save.
  */
-export async function refreshTidalToken(force: boolean = false): Promise<void> {
+export async function refreshTidalToken(request: TidalRefreshRequest = {}): Promise<void> {
   const token = loadToken();
 
-  // Skip refresh if token is still valid (unless forced)
-  if (!force && !shouldRefreshToken(token)) {
+  if (!request.rejectedAccessToken && !shouldRefreshToken(token)) {
     return;
   }
 
@@ -683,18 +724,39 @@ export async function refreshTidalToken(force: boolean = false): Promise<void> {
     return;
   }
 
-  console.log('🕖 [TIDAL] Refreshing TIDAL token...');
-  await refreshStoredTidalToken();
+  await refreshStoredTidalToken(request);
 }
 
-async function refreshTidalTokenOnce(force: boolean = true): Promise<void> {
-  if (!tokenRefreshPromise) {
-    tokenRefreshPromise = refreshTidalToken(force).finally(() => {
-      tokenRefreshPromise = null;
-    });
-  }
+/**
+ * The access token to send with a TIDAL request. An expired token is
+ * refreshed first; when that is impossible (refresh paused or failing) the
+ * request fails locally instead of reaching TIDAL with a dead token.
+ */
+export async function usableTidalAccessToken(): Promise<string> {
+  let token = loadToken();
+  if (!token?.access_token) throw new Error("Not authenticated");
 
-  return tokenRefreshPromise;
+  if (accessTokenExpired(token)) {
+    await refreshTidalToken();
+    token = loadToken();
+    if (!token?.access_token || accessTokenExpired(token)) {
+      throw new TidalSessionUnavailableError();
+    }
+  }
+  if (unrefreshableRejectedAccessToken !== null) {
+    if (token.access_token === unrefreshableRejectedAccessToken) {
+      // TIDAL rejected this token but the refresh was not allowed yet (the
+      // minimum interval after the last refresh, or a pause). Asking again is
+      // free until that gate opens; the refresh itself stays single-flight.
+      await refreshTidalToken({ rejectedAccessToken: token.access_token });
+      token = loadToken();
+      if (!token?.access_token || token.access_token === unrefreshableRejectedAccessToken) {
+        throw new TidalSessionUnavailableError();
+      }
+    }
+    unrefreshableRejectedAccessToken = null;
+  }
+  return token.access_token;
 }
 
 async function tidalRawRequest(
@@ -703,13 +765,12 @@ async function tidalRawRequest(
   options: RequestInit = {},
   context = endpoint,
 ): Promise<Response> {
-  const token = loadToken();
-  if (!token?.access_token) throw new Error("Not authenticated");
+  const accessToken = await usableTidalAccessToken();
 
   const url = `${baseUrl}${endpoint}`;
-  const makeRequest = (accessToken: string) => {
+  const makeRequest = (bearer: string) => {
     const headers = new Headers(options.headers as any);
-    headers.set("Authorization", `Bearer ${accessToken}`);
+    headers.set("Authorization", `Bearer ${bearer}`);
     headers.set("Accept", headers.get("Accept") || "application/json");
     headers.set("X-Tidal-Token", headers.get("X-Tidal-Token") || TIDAL_CLIENT_TOKEN);
     return tidalFetchWithRetry(url, {
@@ -718,25 +779,43 @@ async function tidalRawRequest(
     }, context);
   };
 
-  let response = await makeRequest(token.access_token);
+  let response = await makeRequest(accessToken);
 
-  if (response.status === 401) {
-    console.log(`[TidalAPI] 401 Unauthorized for ${context}, refreshing token once...`);
-    await refreshTidalTokenOnce(true);
-    const refreshedToken = loadToken();
-    if (refreshedToken?.access_token && refreshedToken.access_token !== token.access_token) {
-      response = await makeRequest(refreshedToken.access_token);
+  // TIDAL also answers 401 for endpoint/asset refusals (lyrics, region-locked
+  // items). A new token cannot change those, so only a 401 that rejects the
+  // token itself leads to a refresh.
+  if (response.status === 401 && tidalUnauthorizedRejectsToken(await readUnauthorizedBody(response))) {
+    console.log(`[TidalAPI] Access token rejected for ${context}; refreshing once`);
+    await refreshTidalToken({ rejectedAccessToken: accessToken });
+    const refreshed = loadToken();
+    if (refreshed?.access_token && refreshed.access_token !== accessToken) {
+      response = await makeRequest(refreshed.access_token);
+    } else {
+      unrefreshableRejectedAccessToken = accessToken;
     }
   }
 
   return response;
 }
 
+/**
+ * True when a TIDAL request error means "this resource has nothing for us":
+ * 404, or a 401 that refuses the endpoint/asset rather than the token.
+ * Session problems (TidalSessionUnavailableError, token rejections) are not.
+ */
+export function tidalErrorIsDefinitiveAbsence(error: unknown): boolean {
+  if (error instanceof TidalSessionUnavailableError) return false;
+  const status = (error as { status?: unknown } | null)?.status;
+  if (status === 404) return true;
+  return status === 401 && (error as { tokenRejected?: unknown }).tokenRejected === false;
+}
+
 async function parseTidalJsonResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
     let detail = `Tidal API error: ${response.status} ${response.statusText}`;
+    let body: any = null;
     try {
-      const body = await response.json() as any;
+      body = await response.json() as any;
       if (body?.userMessage) detail = body.userMessage;
       else if (body?.status || body?.subStatus) {
         detail = `Tidal API error: ${body.status || response.status} (subStatus ${body.subStatus ?? "n/a"})`;
@@ -744,8 +823,9 @@ async function parseTidalJsonResponse(response: Response): Promise<unknown> {
     } catch {
       /* ignore */
     }
-    const error = new Error(detail) as Error & { status?: number };
+    const error = new Error(detail) as Error & { status?: number; tokenRejected?: boolean };
     error.status = response.status;
+    error.tokenRejected = response.status === 401 && tidalUnauthorizedRejectsToken(body);
     throw error;
   }
 
@@ -793,25 +873,7 @@ async function tidalApiRequestPaginated(endpoint: string, limit: number = 100) {
 
     console.log(`[TidalPaginated] Fetching page ${pageCount}: offset=${offset}, limit=${limit}`);
 
-    const doFetch = async (accessToken: string) =>
-      tidalFetchWithRetry(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/json",
-          "X-Tidal-Token": TIDAL_CLIENT_TOKEN,
-        },
-      }, url.toString());
-
-    let response = await doFetch(token.access_token);
-
-    if (!response.ok && response.status === 401) {
-      console.log('[TidalAPI] 401 Unauthorized (Paginated), attempting to refresh token...');
-      await refreshTidalToken(true);
-      const newToken = loadToken();
-      if (newToken) {
-        response = await doFetch(newToken.access_token);
-      }
-    }
+    const response = await tidalRawRequest("", url.toString(), {}, url.toString());
 
     if (!response.ok) {
       const error = new Error(`Tidal API error: ${response.status} ${response.statusText}`) as Error & { status?: number };
@@ -1789,7 +1851,7 @@ export async function getArtistBio(artistId: string): Promise<TidalTextMeta | nu
     const data = await tidalApiRequest(`/artists/${artistId}/bio?countryCode=${cc}`) as any;
     return extractTidalTextMeta(data);
   } catch (error: any) {
-    if (error?.status === 404 || error?.message?.includes("404")) return null;
+    if (tidalErrorIsDefinitiveAbsence(error) || error?.message?.includes("404")) return null;
     console.warn(`[getArtistBio] Failed for ${artistId}:`, error?.message || error);
     throw error;
   }

@@ -1,10 +1,10 @@
 import { withSqliteWriteGate } from "../../../database.js";
 import { ProviderAuthError } from "../provider-auth-error.js";
-import { providerNeedsReauth, recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
+import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
 import fs from "fs";
 import path from "path";
 import { CONFIG_DIR, updateConfig } from "../../config/config.js";
-import { clearTiddlAuth, syncTokenToTiddl } from "./tiddl.js";
+import { clearTiddlAuth, readTiddlAuth, syncTokenToTiddl } from "./tiddl.js";
 import { resolveTidalAuthClientConfig } from "../../config/provider-client-config.js";
 
 const TIDAL_AUTH_DIR = path.join(CONFIG_DIR, "providers", "tidal");
@@ -31,10 +31,25 @@ export const TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 export const TIDAL_REFRESH_EXPIRY_WINDOW_SECONDS = 25 * 60;
 let tidalRefreshBlockedUntilMs = 0;
 let tidalRefreshInFlight: Promise<TidalAuthToken | null> | null = null;
+// After a failed refresh (network, 5xx, a 4xx that does not prove the refresh
+// token dead) wait before calling TIDAL again: 1, 2, 4 ... 30 minutes. An
+// expired token makes every API request ask for a refresh, so without this a
+// failing refresh endpoint would be hit once per request.
+const TIDAL_REFRESH_FAILURE_BACKOFF_BASE_MS = 60 * 1000;
+const TIDAL_REFRESH_FAILURE_BACKOFF_MAX_MS = 30 * 60 * 1000;
+let tidalRefreshFailures = 0;
+let tidalRefreshFailureRetryAtMs = 0;
+
+export function tidalRefreshFailureBackoffMs(failures: number): number {
+    const exponent = Math.max(0, Math.floor(failures) - 1);
+    return Math.min(TIDAL_REFRESH_FAILURE_BACKOFF_MAX_MS, TIDAL_REFRESH_FAILURE_BACKOFF_BASE_MS * 2 ** Math.min(exponent, 10));
+}
 
 export function resetTidalRefreshBackoffForTests(): void {
     tidalRefreshBlockedUntilMs = 0;
     tidalRefreshInFlight = null;
+    tidalRefreshFailures = 0;
+    tidalRefreshFailureRetryAtMs = 0;
     fs.rmSync(TIDAL_REFRESH_PAUSE_FILE, { force: true });
 }
 
@@ -108,6 +123,8 @@ export interface TidalAuthToken {
     expires_at?: number;
     /** Epoch ms of the last successful refresh or login (not secret). */
     refreshed_at?: number;
+    /** Epoch ms at which TIDAL rejected this refresh token (not secret). */
+    refresh_rejected_at?: number;
     user?: TidalAuthUser;
 }
 
@@ -256,6 +273,59 @@ export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {
     return true;
 }
 
+/**
+ * tiddl refreshes the token on its own: every `tiddl download` refreshes when
+ * the token in its auth.json expires within 10 minutes, and again on any 401.
+ * Those refreshes count towards TIDAL's abuse limit just like ours, and the
+ * result used to be discarded because the next download overwrote auth.json
+ * with our stored token. So tiddl only ever receives a token with more than
+ * that margin left; when we cannot provide one, the download waits instead
+ * of letting each tiddl process try its own refresh.
+ */
+export const TIDDL_EARLY_EXPIRE_SECONDS = 600;
+const TIDDL_HANDOFF_MARGIN_SECONDS = TIDDL_EARLY_EXPIRE_SECONDS + 5 * 60;
+
+export async function prepareTidalTokenForDownloader(): Promise<void> {
+    let token = loadStoredTidalToken();
+    if (!token?.access_token) {
+        return;
+    }
+    const nowMs = Date.now();
+    if (tokenExpiresWithinRefreshWindow(token, nowMs) && !isTidalRefreshPaused(nowMs)) {
+        try {
+            token = (await refreshStoredTidalToken()) ?? token;
+        } catch (error) {
+            if (error instanceof ProviderAuthError) throw error;
+            console.warn("[TIDAL-AUTH] Token refresh before download failed:", error instanceof Error ? error.message : "unknown");
+        }
+    }
+    const expiresAt = tidalTokenExpiresAt(token);
+    if (expiresAt !== undefined && expiresAt - Math.floor(Date.now() / 1000) <= TIDDL_HANDOFF_MARGIN_SECONDS) {
+        throw new Error("TIDAL session is not available yet; waiting for a token refresh");
+    }
+    syncTokenToTiddl(token);
+}
+
+/**
+ * Keep a token tiddl refreshed by itself (it still may, on a 401) instead of
+ * overwriting it with our older one before the next download.
+ */
+export async function adoptTiddlRefreshedToken(): Promise<boolean> {
+    const stored = loadStoredTidalToken();
+    const tiddl = readTiddlAuth();
+    if (!stored?.access_token || !tiddl?.token || tiddl.token === stored.access_token) return false;
+    if (!tiddl.refresh_token || tiddl.refresh_token !== stored.refresh_token) return false;
+    const storedExpiry = tidalTokenExpiresAt(stored) ?? 0;
+    if (!Number.isFinite(tiddl.expires_at) || tiddl.expires_at <= storedExpiry) return false;
+    await saveStoredTidalToken({
+        ...stored,
+        access_token: tiddl.token,
+        expires_at: tiddl.expires_at,
+        refreshed_at: Date.now(),
+    });
+    return true;
+}
+
 export function clearStoredTidalToken(): void {
     try {
         if (fs.existsSync(TIDAL_AUTH_TOKEN_FILE)) {
@@ -289,19 +359,65 @@ function tokenExpiresWithinRefreshWindow(token: TidalAuthToken, nowMs: number): 
     return expiresAt - Math.floor(nowMs / 1000) < TIDAL_REFRESH_EXPIRY_WINDOW_SECONDS;
 }
 
+export interface TidalRefreshRequest {
+    /**
+     * The access token TIDAL just rejected with a token-specific 401
+     * (see tidalUnauthorizedRejectsToken). Without this evidence a token that
+     * is not close to expiry is never refreshed.
+     */
+    rejectedAccessToken?: string | null;
+}
+
+/**
+ * True when a TIDAL 401 body says the access token itself is invalid or
+ * expired (subStatus 11xxx, or a message about the token). TIDAL also answers
+ * 401 for endpoint- or asset-level refusals (lyrics, region-locked playback,
+ * subStatus 4xxx); a new token cannot fix those, so they must not refresh.
+ */
+export function tidalUnauthorizedRejectsToken(body: unknown): boolean {
+    if (!body || typeof body !== "object") return false;
+    const record = body as { subStatus?: unknown; userMessage?: unknown; description?: unknown; error?: unknown };
+    const subStatus = Number(record.subStatus);
+    if (Number.isFinite(subStatus) && subStatus >= 11000 && subStatus < 12000) return true;
+    const text = [record.userMessage, record.description, record.error]
+        .filter((value): value is string => typeof value === "string")
+        .join("\n");
+    return /\btoken\b/i.test(text);
+}
+
+/** Seconds-since-epoch expiry of a stored token, if known. */
+export function tidalTokenExpiresAt(token: Pick<TidalAuthToken, "access_token" | "expires_at"> | null | undefined): number | undefined {
+    if (!token?.access_token) return undefined;
+    return token.expires_at ?? getJwtExpiry(token.access_token);
+}
+
 /**
  * Refresh the stored TIDAL token. Single-flight: concurrent callers share one
- * request. A token that is not close to expiry and was refreshed less than
- * TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS ago is returned as-is without calling
- * TIDAL, whatever the caller asked for.
+ * request. Only two things justify calling TIDAL's refresh endpoint:
+ *  - the access token expires within TIDAL_REFRESH_EXPIRY_WINDOW_SECONDS, or
+ *  - TIDAL rejected the current access token with a token-specific 401
+ *    (request.rejectedAccessToken === stored token), and the last successful
+ *    refresh is older than TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS.
+ * Anything else returns the stored token unchanged. Every extra refresh counts
+ * towards TIDAL's abuse_detected limit, which blocks refreshes for hours and
+ * lets the token expire (23 Oct 2026).
  */
-export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> {
+export async function refreshStoredTidalToken(request: TidalRefreshRequest = {}): Promise<TidalAuthToken | null> {
     if (!tidalRefreshInFlight) {
-        tidalRefreshInFlight = performTidalTokenRefresh().finally(() => {
+        tidalRefreshInFlight = performTidalTokenRefresh(request).finally(() => {
             tidalRefreshInFlight = null;
         });
     }
     return tidalRefreshInFlight;
+}
+
+function markStoredRefreshTokenRejected(token: TidalAuthToken, now: number): void {
+    try {
+        ensureAuthDir();
+        fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify({ ...token, refresh_rejected_at: now }, null, 2), "utf-8");
+    } catch (error) {
+        console.error("[TIDAL-AUTH] Failed to mark refresh token as rejected:", error instanceof Error ? error.message : "unknown");
+    }
 }
 
 function tidalRefreshIsAuthFailure(status: number, errorCode: string, errorDescription: string): boolean {
@@ -310,28 +426,55 @@ function tidalRefreshIsAuthFailure(status: number, errorCode: string, errorDescr
     return /token has expired/i.test(`${errorCode}\n${errorDescription}`);
 }
 
-async function performTidalTokenRefresh(): Promise<TidalAuthToken | null> {
+async function performTidalTokenRefresh(request: TidalRefreshRequest): Promise<TidalAuthToken | null> {
     if (isTidalRefreshPaused()) {
-        return null;
-    }
-    // A dead login cannot be refreshed. Stop calling TIDAL until a re-login
-    // saves a new token; repeating the 401 is what failed the whole queue.
-    if (providerNeedsReauth("tidal")) {
         return null;
     }
     const token = loadStoredTidalToken();
     if (!token?.refresh_token) {
         return null;
     }
-    const now = Date.now();
-    if (
-        !tokenExpiresWithinRefreshWindow(token, now)
-        && typeof token.refreshed_at === "number"
-        && now - token.refreshed_at < TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS
-    ) {
-        return token;
+    // A refresh token TIDAL already rejected cannot be refreshed. Stop calling
+    // TIDAL until a re-login saves a new token; repeating the 401 is what
+    // failed the whole queue. This is a fact about the refresh token, recorded
+    // on the token itself: the provider-wide needs_reauth state can also come
+    // from other evidence (a download that hit an expired access token), and
+    // gating on it turned one expired access token into a permanent outage
+    // with a perfectly valid refresh token (23 Oct 2026).
+    if (token.refresh_rejected_at) {
+        return null;
     }
+    const now = Date.now();
+    if (!tokenExpiresWithinRefreshWindow(token, now)) {
+        const rejected = Boolean(request.rejectedAccessToken) && request.rejectedAccessToken === token.access_token;
+        if (!rejected) {
+            // No evidence the current token is bad: either nobody claimed so,
+            // or another caller already replaced the rejected token.
+            return token;
+        }
+        if (typeof token.refreshed_at === "number" && now - token.refreshed_at < TIDAL_MIN_FORCED_REFRESH_INTERVAL_MS) {
+            return token;
+        }
+    }
+    if (now < tidalRefreshFailureRetryAtMs) {
+        return null;
+    }
+    try {
+        return await requestTidalTokenRefresh(token, now);
+    } catch (error) {
+        if (!(error instanceof ProviderAuthError) && !isTidalRefreshPaused()) {
+            tidalRefreshFailures += 1;
+            const waitMs = tidalRefreshFailureBackoffMs(tidalRefreshFailures);
+            tidalRefreshFailureRetryAtMs = Date.now() + waitMs;
+            console.warn(`[TIDAL] Token refresh failed; next attempt in ${Math.round(waitMs / 60_000)} minute(s)`);
+        }
+        throw error;
+    }
+}
+
+async function requestTidalTokenRefresh(token: TidalAuthToken & { refresh_token: string }, now: number): Promise<TidalAuthToken | null> {
     const tidalClient = getTidalAuthClientConfig();
+    console.log(`[TIDAL] Refreshing TIDAL token (${tokenExpiresWithinRefreshWindow(token, now) ? "expiring" : "rejected by TIDAL"})`);
 
     const response = await fetch(`${TIDAL_AUTH_BASE}/oauth2/token`, {
         method: "POST",
@@ -362,6 +505,7 @@ async function performTidalTokenRefresh(): Promise<TidalAuthToken | null> {
             console.warn(`[TIDAL] Token refresh paused for ${Math.round(pauseMs / 60_000)} minutes after HTTP 403 abuse_detected`);
         }
         if (tidalRefreshIsAuthFailure(response.status, errorCode, errorDescription)) {
+            markStoredRefreshTokenRejected(token, now);
             const authMessage = "Tidal login expired (token has expired).";
             try {
                 await recordProviderAuthFailure("tidal", authMessage);
@@ -373,6 +517,8 @@ async function performTidalTokenRefresh(): Promise<TidalAuthToken | null> {
         throw new Error(`TIDAL token refresh failed (HTTP ${response.status}${errorCode ? `: ${errorCode}` : ""})`);
     }
     clearTidalRefreshPause();
+    tidalRefreshFailures = 0;
+    tidalRefreshFailureRetryAtMs = 0;
 
     const data = await response.json() as {
         access_token: string;
@@ -394,6 +540,14 @@ async function performTidalTokenRefresh(): Promise<TidalAuthToken | null> {
     return refreshed;
 }
 
+async function recordTidalSessionUsable(): Promise<void> {
+    try {
+        await recordProviderAuthOk("tidal");
+    } catch (error) {
+        console.error("[TIDAL-AUTH] Failed to record auth state:", error instanceof Error ? error.message : "unknown");
+    }
+}
+
 export async function startTidalDeviceLogin(): Promise<{
     alreadyLoggedIn?: boolean;
     userCode?: string;
@@ -405,14 +559,16 @@ export async function startTidalDeviceLogin(): Promise<{
     // token, or one whose refresh was rejected, must lead to a fresh login;
     // otherwise the connect button silently returns to the library.
     const existing = loadStoredTidalToken();
-    if (existing?.access_token && !providerNeedsReauth("tidal")) {
+    if (existing?.access_token && !existing.refresh_rejected_at) {
         const nowSeconds = Math.floor(Date.now() / 1000);
         if (typeof existing.expires_at === "number" && existing.expires_at > nowSeconds + 60) {
+            await recordTidalSessionUsable();
             return { alreadyLoggedIn: true };
         }
         try {
             const refreshed = await refreshStoredTidalToken();
             if (refreshed && typeof refreshed.expires_at === "number" && refreshed.expires_at > nowSeconds + 60) {
+                await recordTidalSessionUsable();
                 return { alreadyLoggedIn: true };
             }
         } catch {

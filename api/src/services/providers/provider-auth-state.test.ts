@@ -13,7 +13,11 @@ const { appEvents } = await import("../commands/app-events.js");
 after(() => closeActiveSchemaDb(dbModule, tempDir));
 
 test("auth text classifies expired logins and ignores transient network errors", () => {
-  assert.equal(errors.errorIndicatesProviderAuth(new Error("token has expired")), true);
+  // An expired ACCESS token is renewed by the refresh token; only the refresh
+  // endpoint (ProviderAuthError / "Tidal login expired") proves a dead login.
+  assert.equal(errors.errorIndicatesProviderAuth(new Error("The token has expired. (Expired on time)")), false);
+  assert.equal(errors.errorIndicatesProviderAuth(new Error("Tidal login expired (token has expired).")), true);
+  assert.equal(errors.isHistoricalAuthFailure("The token has expired. (Expired on time)"), true);
   assert.equal(errors.errorIndicatesProviderAuth(new Error("TIDAL token refresh failed (HTTP 401: invalid_token)")), true);
   assert.equal(errors.errorIndicatesProviderAuth(new Error("Invalid ARL: reconnect Deezer")), true);
   assert.equal(errors.errorIndicatesProviderAuth(new Error("Deezer ARL is invalid or expired.")), true);
@@ -23,7 +27,8 @@ test("auth text classifies expired logins and ignores transient network errors",
   assert.equal(errors.errorIndicatesProviderAuth(new Error("read ECONNRESET")), false);
   assert.equal(errors.errorIndicatesProviderAuth(new Error("fetch failed")), false);
   assert.equal(errors.errorIndicatesProviderAuth(new errors.ProviderAuthError("deezer", "nope")), true);
-  const wrapped = errors.asProviderAuthError("Tidal", new Error("token has expired"));
+  assert.equal(errors.asProviderAuthError("Tidal", new Error("The token has expired. (Expired on time)")), null);
+  const wrapped = errors.asProviderAuthError("Tidal", new Error("Tidal login expired (token has expired)."));
   assert.equal(wrapped?.provider, "tidal");
   assert.equal(errors.asProviderAuthError("deezer", new Error("socket hang up")), null);
 });

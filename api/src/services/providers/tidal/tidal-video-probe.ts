@@ -5,7 +5,8 @@
  * 720p or 480p). We ask for HIGH playbackinfo, then read the HLS master
  * playlist's RESOLUTION lines — the same source tiddl downloads from.
  */
-import { getCountryCode, loadToken, refreshTidalToken } from "./tidal.js";
+import { getCountryCode, loadToken, refreshTidalToken, usableTidalAccessToken } from "./tidal.js";
+import { tidalUnauthorizedRejectsToken } from "./tidal-auth.js";
 import {
   isUntrustedTidalCatalogVideoQuality,
   tidalVideoQualityTag,
@@ -54,12 +55,13 @@ async function probeOnce(
       + `&countryCode=${encodeURIComponent(countryCode)}`;
     const { ok, status, data } = await fetchJson(url, accessToken);
     if (!ok || !data?.manifest) {
-      // Only 401 means the access token is rejected. 403 is a per-video
-      // entitlement/region refusal; refreshing the token cannot fix it.
-      if (status === 401) {
+      // Only a token-specific 401 means the access token is rejected. 403,
+      // and a 401 about the asset (region/entitlement, subStatus 4xxx), are
+      // per-video refusals; refreshing the token cannot fix them.
+      if (status === 401 && tidalUnauthorizedRejectsToken(data)) {
         return "unauthorized";
       }
-      if (status === 403) {
+      if (status === 401 || status === 403) {
         return null;
       }
       continue;
@@ -96,19 +98,23 @@ export async function probeTidalVideoQuality(videoId: string): Promise<TidalVide
   const id = String(videoId || "").trim();
   if (!id) return null;
 
-  let token = loadToken();
-  if (!token?.access_token) return null;
+  let accessToken: string;
+  try {
+    // Refreshes only a token that has really expired; never on a probe result.
+    accessToken = await usableTidalAccessToken();
+  } catch {
+    return null;
+  }
   const cc = getCountryCode();
 
-  const first = await probeOnce(id, token.access_token, cc);
+  const first = await probeOnce(id, accessToken, cc);
   if (first !== "unauthorized") return first;
 
   try {
-    await refreshTidalToken(true);
+    await refreshTidalToken({ rejectedAccessToken: accessToken });
     const refreshed = loadToken();
-    if (!refreshed?.access_token || refreshed.access_token === token.access_token) return null;
-    token = refreshed;
-    const retry = await probeOnce(id, token.access_token, cc);
+    if (!refreshed?.access_token || refreshed.access_token === accessToken) return null;
+    const retry = await probeOnce(id, refreshed.access_token, cc);
     return retry === "unauthorized" ? null : retry;
   } catch (error) {
     console.warn(`[TIDAL] Video quality probe token refresh failed for ${id}:`, error);

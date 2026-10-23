@@ -385,8 +385,12 @@ export class TidalProvider implements StreamingProvider {
         provider: data?.lyricsProvider || this.name,
         raw: data,
       };
-    } catch {
-      return null;
+    } catch (error) {
+      // "No lyrics" is an answer: 404, or a 401 refusing the lyrics endpoint
+      // itself. Anything else (session, network) is thrown so callers do not
+      // remember a transient failure as absence.
+      if (tidal.tidalErrorIsDefinitiveAbsence(error)) return null;
+      throw error;
     }
   }
 
@@ -450,7 +454,7 @@ export class TidalProvider implements StreamingProvider {
         tokenExpired = hoursUntilExpiry < 0;
 
         if (tokenExpired) {
-          await tidal.refreshTidalToken(true);
+          await tidal.refreshTidalToken();
           token = tidal.loadToken();
 
           if (token?.expires_at && token.access_token) {
