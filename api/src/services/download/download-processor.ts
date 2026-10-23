@@ -2299,6 +2299,7 @@ export class DownloadProcessor {
                 provider: entry.provider || payload.provider,
                 providerId: entry.providerId || payload.providerId || providerId,
                 trackOffers: resolvedTrackOffers as any,
+                downloadPath: entry.downloadPath,
             });
             const importPayload: ImportDownloadCommand = {
                 // Source the provider identity from the offer that actually

@@ -358,21 +358,60 @@ export class TrackLyricsMaterializer {
 }
 
 /**
+ * Provider track ids whose downloader already delivered synchronized lyrics
+ * in the download workspace (tiddl names files by track id and writes the
+ * TIDAL lyrics as an adjacent .lrc). The import reads that sidecar, so
+ * fetching the same lyrics again from the provider API only adds requests.
+ */
+export function trackIdsWithDeliveredSyncedLyrics(downloadPath: string | null | undefined, providerTrackIds: string[]): Set<string> {
+  const delivered = new Set<string>();
+  const wanted = new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean));
+  if (!downloadPath || wanted.size === 0) return delivered;
+  const pending = [downloadPath];
+  while (pending.length > 0) {
+    const dir = pending.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(full);
+        continue;
+      }
+      const extension = path.extname(entry.name).toLowerCase();
+      if (extension === ".lrc" || extension === ".txt") continue;
+      const id = path.basename(entry.name, path.extname(entry.name));
+      if (!wanted.has(id) || delivered.has(id)) continue;
+      if (findAdjacentLyricSidecar(full)?.synchronized) delivered.add(id);
+    }
+  }
+  return delivered;
+}
+
+/**
  * Fetch provider lyrics for the given provider track ids without touching the
  * library. Download completion calls this so the disk-exclusive import slot
  * never waits on lyric APIs. Failures resolve to "not prefetched" (absent key),
- * so the import falls back to its normal lookup.
+ * so the import falls back to its normal lookup. Tracks whose downloader
+ * already delivered synchronized lyrics are skipped.
  */
 export async function prefetchProviderLyrics(
   provider: string,
   providerTrackIds: string[],
   concurrency = 4,
+  downloadPath?: string | null,
 ): Promise<Record<string, ResolvedLyrics | null>> {
   const metadata = getConfigSection("metadata");
   const quality = getConfigSection("quality");
   const out: Record<string, ResolvedLyrics | null> = {};
   if (!provider || (!metadata.save_lyrics && !quality.embed_lyrics)) return out;
-  const ids = Array.from(new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean)));
+  const delivered = trackIdsWithDeliveredSyncedLyrics(downloadPath, providerTrackIds);
+  const ids = Array.from(new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean)))
+    .filter((id) => !delivered.has(id));
   let next = 0;
   const worker = async () => {
     while (next < ids.length) {

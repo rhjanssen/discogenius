@@ -1620,6 +1620,7 @@ export async function prefetchImportNetworkData(payload: {
     provider?: string | null;
     providerId: string;
     trackOffers?: Array<{ providerTrackId?: string | null }> | null;
+    downloadPath?: string | null;
 }): Promise<{ prefetchedLyrics?: Record<string, unknown> }> {
     const provider = String(payload.provider || "").trim();
     if (!provider || (payload.type !== "album" && payload.type !== "track")) return {};
@@ -1648,7 +1649,7 @@ export async function prefetchImportNetworkData(payload: {
             `).all(provider, payload.providerId) as Array<{ id: string }>).map((row) => String(row.id));
         }
         const { prefetchProviderLyrics } = await import("./track-lyrics-materializer.js");
-        return { prefetchedLyrics: await prefetchProviderLyrics(provider, trackIds) };
+        return { prefetchedLyrics: await prefetchProviderLyrics(provider, trackIds, 4, payload.downloadPath) };
     } catch (error) {
         console.warn(`[ImportDownload] Lyrics prefetch failed for ${payload.type} ${payload.providerId}:`, error);
         return {};
