@@ -309,7 +309,11 @@ class LibraryMetadataBackfillService {
                       COALESCE(
                         provider_release.cover_id,
                         provider_release.artwork_url
-                      ) AS cover
+                      ) AS cover,
+                      -- A composite's primary source may be another album's
+                      -- release (a greatest-hits built from studio albums).
+                      CASE WHEN matched_release.release_group_id = selected_release.release_group_id
+                        THEN 1 ELSE 0 END AS owns_cover
                     FROM LibraryEditions library_release
                     JOIN AlbumEditions selected_release
                       ON selected_release.id = library_release.edition_id
@@ -322,6 +326,8 @@ class LibraryMetadataBackfillService {
                     JOIN ProviderEditionMatches release_match
                       ON release_match.id = plan_source.provider_edition_match_id
                      AND release_match.match_state = 'accepted'
+                    JOIN AlbumEditions matched_release
+                      ON matched_release.id = release_match.edition_id
                     JOIN ProviderItems provider_release
                       ON provider_release.id = release_match.provider_edition_item_id
                     WHERE library_release.library_id = ?
@@ -337,6 +343,7 @@ class LibraryMetadataBackfillService {
                     version?: string | null;
                     release_date?: string | null;
                     cover?: string | null;
+                    owns_cover?: number | null;
                 } | undefined
                 : undefined;
             const albumProviderItem = selectedPlan
@@ -454,7 +461,7 @@ class LibraryMetadataBackfillService {
                                 await resolveEditionArtwork({
                                     releaseMbid: canonicalReleaseMbid,
                                     libraryId: sourceAlbum.library_id,
-                                    providerCandidates: albumProviderItem ? [{
+                                    providerCandidates: albumProviderItem && selectedPlan?.owns_cover === 1 ? [{
                                         provider: albumProviderItem.provider,
                                         entityId: albumProviderItem.provider_id,
                                         imageId: albumProviderItem.cover,

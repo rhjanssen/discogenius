@@ -960,3 +960,34 @@ test("composite-plan-keeps-provider-cover-of-its-own-release", async () => {
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: album });
   assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(album))), HASH_C);
 });
+
+test("composite-of-versions-of-the-same-album-keeps-the-provider-cover", async () => {
+  // The 16-bit album gap-filled with hi-res versions of some of its tracks:
+  // every source is a provider release of THIS release group, so the provider
+  // cover belongs to the album.
+  const db = dbModule.db;
+  const album = "rg-composite-same-album-versions";
+  insertTestAlbum(db, album, "Same Album");
+  insertTestProviderCandidate(db, { releaseGroupMbid: album, providerId: `${album}-album-c-16bit`, title: "Same Album" });
+  const ownEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(`${album}-release`) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderItems (entity_type, provider, provider_id, title, version)
+    VALUES ('release', 'test-hybrid-provider', ?, 'Same Album', 'Hi-Res')
+  `).run(`${album}-album-c-hires`);
+  const hiRes = db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES ((SELECT id FROM ProviderItems WHERE provider_id = ?), ?, 'source_subset', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(`${album}-album-c-hires`, ownEdition.id);
+  seedCompositePlan(db, album, [providerMatchIdFor(db, album), Number(hiRes.lastInsertRowid)]);
+
+  const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(album);
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.entityId),
+    [`${album}-album-c-16bit`, `${album}-album-c-hires`],
+    "Every version of this album on the provider stays a cover candidate, in plan order",
+  );
+  await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: album });
+  assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(album))), HASH_C);
+});
