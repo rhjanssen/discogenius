@@ -52,8 +52,12 @@ export function releaseGroupLibraryStateCte(wantedGroupsSql: string): string {
       plan.composition AS plan_composition,
       plan.coverage AS plan_coverage,
       plan.target_track_count AS plan_target_track_count,
-      COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
-      provider_item.cover_id AS asset_id,
+      -- A composite plan's source album may belong to another album (a
+      -- greatest-hits assembled from studio albums). Its cover is not ours.
+      CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        THEN COALESCE(provider_item.artwork_url, provider_item.cover_id) END AS cover,
+      CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        THEN provider_item.cover_id END AS asset_id,
       provider_item.explicit,
       COALESCE(CAST(provider_item.popularity AS REAL), 0) AS popularity,
       ROW_NUMBER() OVER (
@@ -101,6 +105,8 @@ export function releaseGroupLibraryStateCte(wantedGroupsSql: string): string {
     LEFT JOIN ProviderEditionMatches release_match
       ON release_match.id = plan_source.provider_edition_match_id
      AND release_match.match_state = 'accepted'
+    LEFT JOIN AlbumEditions matched_release
+      ON matched_release.id = release_match.edition_id
     LEFT JOIN ProviderItems provider_item
       ON provider_item.id = release_match.provider_edition_item_id
      AND (

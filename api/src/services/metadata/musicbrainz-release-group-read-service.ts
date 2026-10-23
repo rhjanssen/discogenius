@@ -41,10 +41,11 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
           COALESCE(provider_release.provider, plan.provider) AS provider,
           provider_release.provider_id AS provider_id,
           provider_release.provider_url AS provider_url,
-          COALESCE(
+          -- A composite's primary source can be another album's release.
+          CASE WHEN matched_release.release_group_id = selected_group.id THEN COALESCE(
             provider_release.cover_id,
             provider_release.artwork_url
-          ) AS provider_cover,
+          ) END AS provider_cover,
           CASE
             WHEN release_match.match_state = 'accepted' THEN 'verified'
             ELSE release_match.match_state
@@ -102,6 +103,8 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         LEFT JOIN ProviderEditionMatches release_match
           ON release_match.id = plan_source.provider_edition_match_id
          AND release_match.match_state = 'accepted'
+        LEFT JOIN AlbumEditions matched_release
+          ON matched_release.id = release_match.edition_id
         LEFT JOIN ProviderItems provider_release
           ON provider_release.id = release_match.provider_edition_item_id
         WHERE selected_group.mbid = ?

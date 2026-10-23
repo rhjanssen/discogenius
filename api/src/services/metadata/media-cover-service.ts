@@ -1753,6 +1753,36 @@ async function persistResolvedFallbackArtwork(
   }
 }
 
+async function discardProviderFallbackArtwork(
+  table: "Albums",
+  mbid: string | null | undefined,
+  coverType: string,
+): Promise<void> {
+  const canonicalMbid = String(mbid || "").trim();
+  if (!canonicalMbid) return;
+  try {
+    await withSqliteWriteGate(() => {
+      const row = db.prepare(`SELECT images FROM ${table} WHERE mbid = ?`).get(canonicalMbid) as {
+        images?: string | null;
+      } | undefined;
+      const parsed = row?.images ? JSON.parse(row.images) : [];
+      const existing = Array.isArray(parsed) ? parsed : [];
+      const replacedTypes = new Set(canonicalArtworkCoverTypes("Album", coverType));
+      const retained = existing.filter((image) => (
+        !image
+        || typeof image !== "object"
+        || !isProviderFallbackImage(image)
+        || !replacedTypes.has(imageCoverType(image))
+      ));
+      if (retained.length === existing.length) return;
+      db.prepare(`UPDATE ${table} SET images = ?, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?`)
+        .run(JSON.stringify(retained), canonicalMbid);
+    }, "media-cover:fallback");
+  } catch (error) {
+    console.warn(`[MediaCoverService] Failed to discard fallback artwork for ${table}:${canonicalMbid}:`, error);
+  }
+}
+
 export async function resolveProviderArtworkUrl(
   candidates: ProviderArtworkCandidate[],
   entityType: ProviderArtworkEntityType,
@@ -1896,31 +1926,45 @@ export async function resolveAlbumArtwork(options: {
     return null;
   };
 
+  const providerCandidates = [
+    ...(options.providerCandidates || []),
+    ...loadAlbumProviderArtworkCandidates(options.albumMbid),
+  ];
+  // Only a provider release matched to an edition of THIS album may supply its
+  // cover. With none (a composite of other albums or of singles) the stored
+  // provider fallback is not this album's artwork either, so it ranks after
+  // the canonical cover instead of in front of it.
+  const primaryCandidates = providerCandidates.filter((candidate) => !candidate.supplemental);
+
   const resolveProvider = async (): Promise<string | null> => {
-    const providerCandidates = [
-      ...(options.providerCandidates || []),
-      ...loadAlbumProviderArtworkCandidates(options.albumMbid),
-    ];
-    const primaryCandidates = providerCandidates.filter((candidate) => !candidate.supplemental);
-    // A composite built from singles has no matching album cover. Do not
-    // promote a single/EP companion image onto the album.
-    if (primaryCandidates.length === 0) {
-      return cacheSource(storedProviderFallbackUrl, "provider", true);
-    }
-    const candidates = primaryCandidates;
-    const supplemental = false;
+    if (primaryCandidates.length === 0) return null;
     const providerUrl = await resolveProviderArtworkUrl(
-      candidates,
+      primaryCandidates,
       "album",
       // Fetch the origin image as the cached source; local derivatives serve UI.
       options.size ?? "origin",
     );
     if (providerUrl) {
       await persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
-      const cached = await cacheSource(providerUrl, "provider", supplemental);
+      const cached = await cacheSource(providerUrl, "provider");
       if (cached) return cached;
     }
-    return cacheSource(storedProviderFallbackUrl, "provider", supplemental);
+    return cacheSource(storedProviderFallbackUrl, "provider");
+  };
+
+  const resolveUnverifiedProviderFallback = async (): Promise<string | null> => {
+    if (primaryCandidates.length > 0) return null;
+    return cacheSource(storedProviderFallbackUrl, "provider", true);
+  };
+
+  const resolveCanonicalOwner = async (): Promise<string | null> => {
+    const canonical = await resolveCanonical();
+    // A provider fallback stored while no release of this album backed it
+    // would keep advertising that other album's cover to readers.
+    if (canonical && primaryCandidates.length === 0 && storedProviderFallbackUrl) {
+      await discardProviderFallbackArtwork("Albums", options.albumMbid, "Cover");
+    }
+    return canonical;
   };
 
   const manualResolved = await resolveManual();
@@ -1928,8 +1972,8 @@ export async function resolveAlbumArtwork(options: {
     return manualResolved;
   }
   const resolved = configuredArtworkPreference() === "provider"
-    ? await resolveProvider() || await resolveCanonical()
-    : await resolveCanonical() || await resolveProvider();
+    ? await resolveProvider() || await resolveCanonicalOwner() || await resolveUnverifiedProviderFallback()
+    : await resolveCanonicalOwner() || await resolveProvider() || await resolveUnverifiedProviderFallback();
   return resolved || existingAlbumMediaCoverUrl(options.albumMbid);
 }
 
@@ -2360,6 +2404,13 @@ export function loadAlbumProviderArtworkCandidates(
         ON source.plan_id = plan.id
       JOIN ProviderEditionMatches release_match
         ON release_match.id = source.provider_edition_match_id
+      -- A composite plan borrows tracks from other provider albums (a
+      -- greatest-hits built from the studio albums). Those source albums are
+      -- matched to THEIR OWN editions; their cover belongs to another album.
+      -- Only a source matched to an edition of this album is this album.
+      JOIN AlbumEditions matched_release
+        ON matched_release.id = release_match.edition_id
+       AND matched_release.release_group_id = release_group.id
       JOIN ProviderItems provider_item
         ON provider_item.id = release_match.provider_edition_item_id
       WHERE release_group.mbid = ?
