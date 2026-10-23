@@ -85,3 +85,25 @@ test("artwork preference library failures cannot report a fully applied source s
   }), /Artwork preference update incomplete/);
   assert.equal(progress.some(update => update.progress === 100),false);
 });
+
+test("scoped artwork reapply reconciles only the named artists", async () => {
+  const events: string[] = [];
+  const progress: Array<{progress?:number;description?:string}> = [];
+  await maintenanceModule.runConfigPruneMaintenance({
+    ...configPruneJob(true),
+    payload: { refreshArtworkPreference: true, artistIds: ["artist-b", "artist-a", "artist-b", " "] },
+  }, {
+    updateCommandDescription: update => progress.push({...update}),
+  }, {
+    pruneDisabledMetadata: async () => { events.push("prune"); },
+    reconcileLibraryMetadata: async () => { events.push("library"); return {downloaded:0,failed:0,skipped:0}; },
+    reconcileArtistMetadata: async (artistId, options) => {
+      events.push(artistId);
+      assert.equal(options.repairMissingOnly,false);
+      assert.equal(options.writeEmbeddedMediaMetadata,true);
+      return {downloaded:1,failed:0,skipped:0};
+    },
+  });
+  assert.deepEqual(events,["artist-b","artist-a"],"no library-wide pass and each artist once");
+  assert.match(String(progress.at(-1)?.description),/reconciled 2 library metadata file\(s\), 0 failed/);
+});

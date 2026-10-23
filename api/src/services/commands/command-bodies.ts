@@ -348,6 +348,11 @@ export interface ConfigPruneCommand extends CommandBodyCommon {
    * Explicit library artwork replacement; ordinary repair remains missing-only.
    */
   refreshArtworkPreference?: boolean;
+  /**
+   * Limit the artwork replacement to these artists (catalog ids or mbids).
+   * Absent means the whole library, as after an artwork preference change.
+   */
+  artistIds?: string[];
   cleanupArtworkCache?: boolean;
 }
 
