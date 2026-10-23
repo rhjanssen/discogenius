@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ProviderAuthBanner, type ProviderAuthBannerItem } from "@/components/ProviderAuthBanner";
+import { ProviderAuthBanner, providerAuthWaitingText, type ProviderAuthBannerItem } from "@/components/ProviderAuthBanner";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
 import { useToast } from "@/hooks/useToast";
 import { api } from "@/services/api";
@@ -10,11 +10,8 @@ const QUERY_KEY = ["provider-auth-health"] as const;
 function providerLabel(provider: string): string {
   if (provider === "tidal") return "Tidal";
   if (provider === "deezer") return "Deezer";
+  if (provider === "apple-music") return "Apple Music";
   return provider;
-}
-
-function heldText(held: number): string {
-  return held === 1 ? "1 album wacht" : `${held} albums wachten`;
 }
 
 /** Polls login state, toasts once per server transition, and shows the banner. */
@@ -42,7 +39,7 @@ export function ProviderAuthNotice() {
         title: typeof payload.banner === "string" && payload.banner
           ? payload.banner
           : `${providerLabel(provider)} opnieuw koppelen`,
-        description: heldText(Number.isFinite(held) ? held : 0),
+        description: providerAuthWaitingText(providerLabel(provider), Number.isFinite(held) ? held : 0),
         variant: "destructive",
       });
       return;
@@ -57,13 +54,13 @@ export function ProviderAuthNotice() {
   }, [lastEvent, queryClient, toast]);
 
   const items: ProviderAuthBannerItem[] = (data?.providers ?? [])
-    .filter((row) => row.status === "needs_reauth" && row.banner && row.href && row.settingsLabel)
+    .filter((row) => row.status === "needs_reauth" && row.banner && row.href)
     .map((row) => ({
       provider: row.provider,
+      label: providerLabel(row.provider),
       banner: row.banner as string,
       held: row.held,
       href: row.href as string,
-      settingsLabel: row.settingsLabel as string,
     }));
 
   const retry = () => {

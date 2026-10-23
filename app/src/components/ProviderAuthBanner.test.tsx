@@ -1,47 +1,79 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
-import { ProviderAuthBanner } from "./ProviderAuthBanner";
+import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { ProviderAuthBanner, providerAuthWaitingText } from "./ProviderAuthBanner";
 
 afterEach(cleanup);
 
-describe("ProviderAuthBanner", () => {
-  it("announces the held count and a link to the provider field", () => {
-    const onRetry = vi.fn();
-    render(
-      <MemoryRouter>
+function CurrentLocation() {
+  const location = useLocation();
+  return <output data-testid="location">{`${location.pathname}${location.search}${location.hash}`}</output>;
+}
+
+function renderBanner(onRetry = vi.fn(), retrying = false) {
+  render(
+    <FluentProvider theme={webLightTheme}>
+      <MemoryRouter initialEntries={["/"]}>
         <ProviderAuthBanner
           items={[{
-            provider: "deezer",
-            banner: "Deezer opnieuw koppelen",
+            provider: "tidal",
+            label: "Tidal",
+            banner: "Tidal opnieuw inloggen",
             held: 3,
-            href: "/auth?provider=deezer#deezer-arl",
-            settingsLabel: "Naar Deezer-ARL",
+            href: "/auth?provider=tidal#provider-connect-tidal",
           }]}
           onRetry={onRetry}
+          retrying={retrying}
         />
-      </MemoryRouter>,
-    );
+        <Routes>
+          <Route path="*" element={<CurrentLocation />} />
+        </Routes>
+      </MemoryRouter>
+    </FluentProvider>,
+  );
+  return onRetry;
+}
 
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("Actie nodig");
-    expect(alert).toHaveTextContent("Deezer opnieuw koppelen");
-    expect(alert).toHaveTextContent("3 albums wachten");
-    expect(screen.getByRole("link", { name: "Naar Deezer-ARL" })).toHaveAttribute(
-      "href",
-      "/auth?provider=deezer#deezer-arl",
-    );
+describe("ProviderAuthBanner", () => {
+  it("shows the server title, what is waiting, and a reconnect link", () => {
+    renderBanner();
+    expect(screen.getByText("Tidal opnieuw inloggen")).toBeInTheDocument();
+    expect(screen.getByText(/3 albums wachten tot Tidal weer verbonden is\./)).toBeInTheDocument();
+    const reconnect = screen.getByRole("link", { name: "Opnieuw verbinden" });
+    expect(reconnect).toHaveAttribute("href", "/auth?provider=tidal#provider-connect-tidal");
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Mislukte albums opnieuw proberen" }));
+  it("opens the reconnect flow inside the app", () => {
+    renderBanner();
+    fireEvent.click(screen.getByRole("link", { name: "Opnieuw verbinden" }));
+    expect(screen.getByTestId("location")).toHaveTextContent("/auth?provider=tidal#provider-connect-tidal");
+  });
+
+  it("retries held albums and blocks double clicks while busy", () => {
+    const onRetry = renderBanner();
+    fireEvent.click(screen.getByRole("button", { name: "Opnieuw proberen" }));
     expect(onRetry).toHaveBeenCalledOnce();
+    cleanup();
+    const busy = renderBanner(vi.fn(), true);
+    fireEvent.click(screen.getByRole("button", { name: "Bezig…" }));
+    expect(busy).not.toHaveBeenCalled();
+  });
+
+  it("words the waiting count for 0, 1 and many albums", () => {
+    expect(providerAuthWaitingText("Tidal", 0)).toBe("Downloads via Tidal wachten tot Tidal weer verbonden is.");
+    expect(providerAuthWaitingText("Tidal", 1)).toBe("1 album wacht tot Tidal weer verbonden is.");
+    expect(providerAuthWaitingText("Tidal", 80534)).toBe("80.534 albums wachten tot Tidal weer verbonden is.");
   });
 
   it("renders nothing when every provider is usable", () => {
     render(
-      <MemoryRouter>
-        <ProviderAuthBanner items={[]} onRetry={vi.fn()} />
-      </MemoryRouter>,
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter>
+          <ProviderAuthBanner items={[]} onRetry={vi.fn()} />
+        </MemoryRouter>
+      </FluentProvider>,
     );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("Opnieuw verbinden")).not.toBeInTheDocument();
   });
 });
