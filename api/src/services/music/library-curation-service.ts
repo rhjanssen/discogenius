@@ -510,6 +510,7 @@ export class LibraryCurationService {
     }
 
     const allScopedSelections: ScopedCurationSelection[] = [];
+    const releasableFileEditionIds = new Set<number>();
     const proposedRepresentativesByReleaseGroup = new Map<number, Map<number, CurationEditionCandidate>>();
     const overruledReleaseGroupIds = new Set<number>();
     const redundancyEnabled = filtering.enable_redundancy_filter !== false;
@@ -568,6 +569,21 @@ export class LibraryCurationService {
       const scopedResult = timer.phase("cover-optimisation",
         () => curateLibraryReleases(curatedCandidatesInScope, redundancyEnabled, compilationPolicy));
 
+      // An edition with files on disk may only be released when the planner
+      // weighed it and every recording it carries is attainable through the
+      // selection that replaces it. Editions it never saw keep their files.
+      {
+        const selectedInScope = new Set(scopedResult.selectedEditionIds);
+        const coveredUnits = new Set<number>();
+        for (const c of curatedCandidatesInScope) {
+          if (selectedInScope.has(c.editionId)) for (const u of c.attainableUnitIds) coveredUnits.add(u);
+        }
+        for (const c of curatedCandidatesInScope) {
+          if (selectedInScope.has(c.editionId) || c.protected || c.attainableUnitIds.size === 0) continue;
+          if ([...c.attainableUnitIds].every((u) => coveredUnits.has(u))) releasableFileEditionIds.add(c.editionId);
+        }
+      }
+
       for (const [rgId, repEditionId] of scopedResult.representativeEditionIdByReleaseGroup) {
         const repCand = curatedCandidatesInScope.find((c) => c.editionId === repEditionId);
         if (repCand) {
@@ -595,6 +611,7 @@ export class LibraryCurationService {
     }
 
     const selectedEditionIdsSet = new Set(allScopedSelections.map((s) => s.editionId));
+    for (const editionId of selectedEditionIdsSet) releasableFileEditionIds.delete(editionId);
     const selectedReleaseGroupIdsSet = new Set(allScopedSelections.map((s) => s.releaseGroupId));
 
     const reconciledRepresentativeMap = new Map<number, number>();
@@ -750,6 +767,7 @@ export class LibraryCurationService {
       ),
       reasonByEditionId,
       scopedLibraryArtistIds: scopedArtistIds ?? undefined,
+      releasableFileEditionIds,
     }));
 
     for (const editionId of combinedResult.selectedEditionIds) {

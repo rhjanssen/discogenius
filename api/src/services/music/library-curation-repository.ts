@@ -188,6 +188,12 @@ export class LibraryCurationRepository {
      * still claims — is what makes a per-artist pass safe.
      */
     scopedLibraryArtistIds?: readonly number[];
+    /**
+     * Editions with files that curation may still unmonitor: the planner
+     * weighed them and the remaining selection covers every recording they
+     * carry. Any other edition with files stays monitored.
+     */
+    releasableFileEditionIds?: ReadonlySet<number>;
   }): void {
     this.db.transaction(() => {
       const overruledReleaseGroupIds = [...(input.reasonByReleaseGroupId?.keys() ?? [])];
@@ -220,8 +226,14 @@ export class LibraryCurationRepository {
                 AND scope.library_artist_id IN (${artistPlaceholders})
             )`
         : "";
+      const releasable = input.releasableFileEditionIds ?? new Set<number>();
       const replaceableEditionRowIds = (this.db.prepare(`
-        SELECT monitored_edition.id
+        SELECT monitored_edition.id, monitored_edition.edition_id,
+          EXISTS (
+            SELECT 1 FROM TrackFiles owned_file
+            WHERE owned_file.library_id = monitored_edition.library_id
+              AND owned_file.album_edition_id = monitored_edition.edition_id
+          ) AS has_files
         FROM LibraryEditions monitored_edition
         JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
         LEFT JOIN LibraryAlbums library_album
@@ -231,16 +243,13 @@ export class LibraryCurationRepository {
           AND COALESCE(library_album.locked, 0) = 0
           AND (monitored_edition.selection_mode = 'auto' ${overruledScope})
           ${ownedByThisPass}
-          AND NOT EXISTS (
-            SELECT 1 FROM TrackFiles owned_file
-            WHERE owned_file.library_id = monitored_edition.library_id
-              AND owned_file.album_edition_id = monitored_edition.edition_id
-          )
       `).all(
         input.libraryId,
         ...overruledReleaseGroupIds,
         ...(scopedArtistIds ?? []),
-      ) as Array<{ id: number }>).map(({ id }) => id);
+      ) as Array<{ id: number; edition_id: number; has_files: number }>)
+        .filter((row) => !row.has_files || releasable.has(row.edition_id))
+        .map(({ id }) => id);
 
       if (replaceableEditionRowIds.length > 0) {
         const rowPlaceholders = replaceableEditionRowIds.map(() => "?").join(",");
