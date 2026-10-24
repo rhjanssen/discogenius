@@ -1154,3 +1154,95 @@ test("Bad Blood X Apple titles cover the canonical edition's renamed disc-2 trac
     );
   });
 });
+
+// YouTube Music lists one official music video in every slot it has no audio
+// track for. The real "Everlasting" single (MPREb_3dpMXXfeY0w) shows
+// xBbOVxfFuMc as both the 2:38 original and the 4:25 extended mix; matching
+// each slot on its own facts promised two recordings from one download and the
+// import failed with "2 exact offer contexts; refusing ambiguous provenance".
+test("one provider item standing in for two different slots is accepted for neither", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-e', 'Artist E');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-e', 1, 'Everlasting'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-e', 1, 'Everlasting'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
+        (1, 'rec-original', 'Everlasting', 157594),
+        (2, 'rec-extended', 'Everlasting (extended mix)', 264986);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES
+        (1, 't-original', 1, 1, 1, 1, 'Everlasting', 157594),
+        (2, 't-extended', 1, 2, 1, 2, 'Everlasting (extended mix)', 264986))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 4,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "MPREb_3dpMXXfeY0w",
+        title: "Everlasting",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "xBbOVxfFuMc", title: "Everlasting (Extended Mix)", durationMs: 265000,
+          contextualTitle: "Everlasting", contextualDurationMs: 158000, mediumPosition: 1, position: 1,
+        }),
+        trackMember({
+          providerId: "xBbOVxfFuMc", title: "Everlasting (Extended Mix)", durationMs: 265000,
+          contextualTitle: "Everlasting (Extended Mix)", contextualDurationMs: 265000, mediumPosition: 1, position: 2,
+        }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 0, "one piece of audio cannot be proven to be either slot");
+    const accepted = db.prepare(
+      "SELECT COUNT(*) AS n FROM ProviderTrackMatches WHERE match_state = 'accepted'",
+    ).get() as { n: number };
+    assert.equal(accepted.n, 0);
+  });
+});
+
+test("one provider item listed twice with the same title and runtime still matches", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-r', 'Artist R');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-r', 1, 'Repeat'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-r', 1, 'Repeat'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-song', 'Song', 200000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES
+        (1, 't-song', 1, 1, 1, 1, 'Song', 200000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 4,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "repeat-release",
+        title: "Repeat",
+        availability: "available",
+      },
+      members: [
+        trackMember({ providerId: "p-song", title: "Song", durationMs: 200000, mediumPosition: 1, position: 1 }),
+        trackMember({ providerId: "p-song", title: "Song", durationMs: 200000, mediumPosition: 1, position: 2 }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 1, "the same audio listed twice is not a conflict");
+  });
+});

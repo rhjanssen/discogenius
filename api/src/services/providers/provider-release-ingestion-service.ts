@@ -181,6 +181,60 @@ function providerTrack(member: ProviderReleaseMemberFacts): MatchProviderTrack {
   };
 }
 
+/** Same tolerance the matcher grants one recording measured twice. */
+const SHARED_ITEM_DURATION_GRACE_MS = 10_000;
+
+function normalizedContextTitle(member: ProviderReleaseMemberFacts): string {
+  return String(member.contextualTitle || member.item.title || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Sources whose provider item fills several slots of this release that
+ * describe different content.
+ *
+ * YouTube Music substitutes one official music video for every slot it has no
+ * audio track for, so its "Everlasting" single lists xBbOVxfFuMc as both
+ * "Everlasting" (2:38) and "Everlasting (Extended Mix)" (4:25). Each slot's
+ * contextual title and runtime match a different canonical track perfectly,
+ * but the item has one piece of audio, which is at most one of them. Matching
+ * each slot on its own facts promised two recordings from one download, and the
+ * import then rightly refused the file as ambiguous provenance.
+ *
+ * Which slot the audio really is cannot be read from the listing, so none of
+ * them is accepted: the canonical tracks stay open for another provider. A
+ * provider listing the same audio twice under the same title and runtime is
+ * not a conflict.
+ */
+function sourcesWithConflictingSharedItem(audioSources: readonly AudioSource[]): Set<number> {
+  const byItem = new Map<string, number[]>();
+  audioSources.forEach((source, sourceIndex) => {
+    const key = `${source.member.item.provider}:${source.member.item.providerId}`;
+    const indexes = byItem.get(key) ?? [];
+    indexes.push(sourceIndex);
+    byItem.set(key, indexes);
+  });
+  const conflicted = new Set<number>();
+  for (const indexes of byItem.values()) {
+    if (indexes.length < 2) continue;
+    const members = indexes.map((index) => audioSources[index].member);
+    const titles = new Set(members.map(normalizedContextTitle));
+    const durations = members
+      .map((member) => member.contextualDurationMs ?? member.item.durationMs)
+      .filter((value): value is number => value != null);
+    const durationSpread = durations.length > 1
+      ? Math.max(...durations) - Math.min(...durations)
+      : 0;
+    if (titles.size > 1 || durationSpread > SHARED_ITEM_DURATION_GRACE_MS) {
+      for (const index of indexes) conflicted.add(index);
+    }
+  }
+  return conflicted;
+}
+
 export class ProviderReleaseIngestionService {
   private readonly catalog: ProviderCatalogRepository;
   private readonly matches: ProviderMatchRepository;
@@ -468,6 +522,7 @@ export class ProviderReleaseIngestionService {
       }
     }
 
+    const conflictedSources = sourcesWithConflictingSharedItem(audioSources);
     const sourceMargins = evidence.map((sourceEvidence) => tierAwareMargin(sourceEvidence));
     const targetMargins = targets.map((_, targetIndex) =>
       tierAwareMargin(evidence.map((sourceEvidence) => sourceEvidence[targetIndex])));
@@ -479,6 +534,7 @@ export class ProviderReleaseIngestionService {
         method: evidence[source.sourceIndex][targetIndex].method,
       }))
         .filter((edge) => {
+          if (conflictedSources.has(edge.source.sourceIndex)) return false;
           if (edge.matchScore < TRACK_MATCH_THRESHOLD) return false;
           if (edge.matchScore === 1) return true;
           return sourceMargins[edge.source.sourceIndex] >= MIN_AMBIGUITY_MARGIN

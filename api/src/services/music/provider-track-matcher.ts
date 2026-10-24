@@ -268,8 +268,11 @@ export const TRACK_MATCH_THRESHOLD = 0.55;
  *    qualifiers, and a gross duration mismatch vetoes the title-only fallback.
  * 3: live at/from/in collapse to one venue token; a Recording's other edition
  *    titles are tried as names of the same performance (Bad Blood X disc 2).
+ * 4: one provider item listed in several slots of a release that describe
+ *    different content (YouTube Music's music-video stand-ins) is accepted for
+ *    none of them; see provider-release-ingestion-service.
  */
-export const PROVIDER_TRACK_MATCHER_VERSION = 3;
+export const PROVIDER_TRACK_MATCHER_VERSION = 4;
 
 function normalizeIsrc(value: string | null | undefined): string {
     return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
