@@ -322,6 +322,12 @@ export const CurationSettingsSection = ({
                     onChange: (checked) => void onUpdate({ enable_redundancy_filter: checked }),
                 })}
                 {renderToggleRow({
+                    title: "Fewest albums",
+                    description: "Off (default, original discography): keep the artist's own releases and take a compilation only for tracks no original release has. On: cover every track with as few releases as possible, so a compilation can replace the albums it repeats.",
+                    checked: curationConfig?.compilation_policy === "fewest_albums",
+                    onChange: (checked) => void onUpdate({ compilation_policy: checked ? "fewest_albums" : "original_discography" }),
+                })}
+                {renderToggleRow({
                     title: "Require a download source",
                     description: "Only auto-monitor releases that at least one connected service can download.",
                     checked: curationConfig?.require_provider_availability === true,

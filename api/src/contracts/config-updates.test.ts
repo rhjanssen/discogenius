@@ -88,6 +88,7 @@ test("config update parsers return only validated partial updates", () => {
     include_video_official_audio: true,
     prefer_explicit: true,
     enable_redundancy_filter: true,
+    compilation_policy: "original_discography",
     require_provider_availability: true,
   });
   assert.deepEqual(filteringUpdate, {

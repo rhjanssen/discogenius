@@ -374,6 +374,7 @@ const SettingsPage = () => {
                 include_video_visualizer: false,
                 include_video_official_audio: false,
                 enable_redundancy_filter: true,
+                compilation_policy: "original_discography",
                 prefer_explicit: true,
                 require_provider_availability: false,
             });

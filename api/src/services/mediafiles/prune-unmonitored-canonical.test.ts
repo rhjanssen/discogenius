@@ -113,6 +113,7 @@ function insertFile(o: {
   albumEditionId?: number | null;
   releaseMbid?: string | null;
   quality?: string | null;
+  folder?: string;
 }) {
   tfId += 1;
   const info = db.prepare(`
@@ -133,7 +134,7 @@ function insertFile(o: {
     o.releaseMbid ?? null,
     o.rec ?? null,
     o.providerId ? "tidal" : null, o.providerEntityType ?? null, o.providerId ?? null, o.slot,
-    `C:/lib/f${tfId}`, `f${tfId}`, "C:/lib", `f${tfId}`, "flac", o.fileType, o.quality ?? null,
+    `${o.folder ?? "C:/lib"}/f${tfId}`, `f${tfId}`, "C:/lib", `f${tfId}`, "flac", o.fileType, o.quality ?? null,
   );
   return Number(info.lastInsertRowid);
 }
@@ -419,4 +420,26 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
     "prune must not leave TrackFiles pointing at deleted paths",
   );
   assert.ok(result.deleted >= 1);
+});
+
+test("prune preview counts what cleanup would delete, by folder, compilations apart, and deletes nothing", () => {
+  seedArtist();
+  seedLibraryGroup("rg-keep", 1);
+  seedLibraryGroup("rg-studio-old", 0);
+  seedLibraryGroup("rg-hits", 0);
+  db.prepare("UPDATE Albums SET secondary_types = ? WHERE mbid = 'rg-hits'").run(JSON.stringify(["compilation"]));
+  insertFile({ fileType: "track", slot: "stereo", rg: "rg-keep", folder: "C:/lib/Keep" });
+  insertFile({ fileType: "track", slot: "stereo", rg: "rg-studio-old", folder: "C:/lib/Studio" });
+  insertFile({ fileType: "track", slot: "stereo", rg: "rg-hits", folder: "C:/lib/Hits" });
+  insertFile({ fileType: "track", slot: "stereo", rg: "rg-hits", folder: "C:/lib/Hits" });
+  const before = (db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n;
+
+  const preview = LibraryFilesService.previewUnmonitoredFiles();
+
+  assert.deepEqual(
+    { files: preview.files, folders: preview.folders, compilation: preview.compilationFolders, other: preview.otherFolders },
+    { files: 3, folders: 2, compilation: 1, other: 1 },
+  );
+  assert.deepEqual(preview.samples, { compilation: ["C:/lib/Hits"], other: ["C:/lib/Studio"] });
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n, before);
 });

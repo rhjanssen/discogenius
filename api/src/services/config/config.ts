@@ -1,3 +1,5 @@
+import { COMPILATION_POLICY_CONTRACT_VALUES as COMPILATION_POLICY_VALUES, type CompilationPolicyContract as CompilationPolicy } from "../../contracts/config.js";
+const DEFAULT_COMPILATION_POLICY: CompilationPolicy = "original_discography";
 import { db } from "../../database.js";
 import path from "path";
 import { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR } from "./bootstrap.js";
@@ -72,6 +74,7 @@ export interface FilteringConfig {
   include_video_official_audio: boolean;
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
+  compilation_policy: CompilationPolicy; // Compilations only fill gaps, or compete for fewest albums
   require_provider_availability: boolean; // Only mark release groups wanted when a provider offer exists
 }
 
@@ -227,6 +230,7 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   filtering: {
     enable_redundancy_filter: true,
+    compilation_policy: DEFAULT_COMPILATION_POLICY,
     prefer_explicit: true,
     include_album: true,
     include_ep: true,
@@ -349,6 +353,9 @@ function normalizeMonitoringConfig(raw?: Partial<MonitoringConfig>): MonitoringC
 function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConfig {
   return {
     enable_redundancy_filter: raw?.enable_redundancy_filter ?? DEFAULT_CONFIG.filtering.enable_redundancy_filter,
+    compilation_policy: (COMPILATION_POLICY_VALUES as readonly string[]).includes(String(raw?.compilation_policy))
+      ? raw!.compilation_policy as CompilationPolicy
+      : DEFAULT_CONFIG.filtering.compilation_policy,
     prefer_explicit: raw?.prefer_explicit ?? DEFAULT_CONFIG.filtering.prefer_explicit,
     include_album: raw?.include_album ?? DEFAULT_CONFIG.filtering.include_album,
     include_ep: raw?.include_ep ?? DEFAULT_CONFIG.filtering.include_ep,

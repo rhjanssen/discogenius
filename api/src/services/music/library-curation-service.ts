@@ -4,6 +4,7 @@ import { getConfigSection } from "../config/config.js";
 import {
   comparePrimaryEditionCandidates,
   curateLibraryReleases,
+  DEFAULT_COMPILATION_POLICY,
   editionTitleMatchesAlbum,
   type CanonicalMediumKind,
   type CurationEditionCandidate,
@@ -512,6 +513,7 @@ export class LibraryCurationService {
     const proposedRepresentativesByReleaseGroup = new Map<number, Map<number, CurationEditionCandidate>>();
     const overruledReleaseGroupIds = new Set<number>();
     const redundancyEnabled = filtering.enable_redundancy_filter !== false;
+    const compilationPolicy = filtering.compilation_policy ?? DEFAULT_COMPILATION_POLICY;
 
     for (const libraryArtist of libraryArtists) {
       const scopedCandidates = allCandidates
@@ -564,7 +566,7 @@ export class LibraryCurationService {
       }
 
       const scopedResult = timer.phase("cover-optimisation",
-        () => curateLibraryReleases(curatedCandidatesInScope, redundancyEnabled));
+        () => curateLibraryReleases(curatedCandidatesInScope, redundancyEnabled, compilationPolicy));
 
       for (const [rgId, repEditionId] of scopedResult.representativeEditionIdByReleaseGroup) {
         const repCand = curatedCandidatesInScope.find((c) => c.editionId === repEditionId);

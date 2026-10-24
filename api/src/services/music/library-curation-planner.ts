@@ -1,3 +1,4 @@
+import type { CompilationPolicyContract } from "../../contracts/config.js";
 import { normalizeTitle } from "../mediafiles/import-matching-utils.js";
 
 export type CanonicalMediumKind = "digital" | "cd" | "vinyl" | "other";
@@ -76,6 +77,22 @@ export interface LibraryCurationResult {
   attainableUnitIds: Set<number>;
   decisions: CurationEditionDecision[];
 }
+
+/**
+ * How compilations take part in curation.
+ * - original_discography: the artist's own releases come first; a compilation
+ *   is only taken for recordings no original release delivers (demos, live or
+ *   alternative versions), and never pushes an original out.
+ * - fewest_albums: cover every recording with as few releases as possible,
+ *   compilations competing on equal terms.
+ */
+export type CompilationPolicy = CompilationPolicyContract;
+export const DEFAULT_COMPILATION_POLICY: CompilationPolicy = "original_discography";
+
+/** secondaryTypeRank of Compilation, DJ-mix and mixtape releases. */
+const COMPILATION_SECONDARY_RANK = 3;
+const isCompilation = (c: CurationEditionCandidate): boolean =>
+  (c.secondaryTypeRank ?? 0) >= COMPILATION_SECONDARY_RANK;
 
 const mediumRank: Record<CanonicalMediumKind, number> = {
   digital: 0,
@@ -326,6 +343,7 @@ function selectSupplementalCover(
 function pruneRedundantEditions(
   selected: CurationEditionCandidate[],
   initialRepresentatives: Map<number, CurationEditionCandidate>,
+  policy: CompilationPolicy,
 ): CurationEditionCandidate[] {
   const isRep = (c: CurationEditionCandidate): boolean =>
     initialRepresentatives.get(c.releaseGroupId)?.editionId === c.editionId;
@@ -369,7 +387,9 @@ function pruneRedundantEditions(
 
       const priorityOk = [...candUnits].every((unitId) => {
         const coveringOther = otherSelected.filter((other) => other.attainableUnitIds.has(unitId));
-        return coveringOther.some((other) => compareProductPriority(other, candidate) <= 0);
+        return coveringOther.some((other) =>
+          compareProductPriority(other, candidate) <= 0
+          && !(policy === "original_discography" && isCompilation(other) && !isCompilation(candidate)));
       });
 
       if (priorityOk) {
@@ -391,6 +411,7 @@ function pruneRedundantEditions(
 export function curateLibraryReleases(
   inputCandidates: ReadonlyArray<CurationEditionCandidate>,
   redundancyEnabled: boolean,
+  compilationPolicy: CompilationPolicy = DEFAULT_COMPILATION_POLICY,
 ): LibraryCurationResult {
   const candidates = inputCandidates
     .filter((candidate) => candidate.attainableUnitIds.size > 0 || candidate.protected)
@@ -404,8 +425,18 @@ export function curateLibraryReleases(
     groups.set(candidate.releaseGroupId, group);
   }
 
+  // Which release groups are anchored with a representative before gap-fill.
+  // Original discography: every non-compilation group (and protected picks).
+  // Fewest albums: only protected picks; set cover decides the rest.
+  const anchored = (group: readonly CurationEditionCandidate[]): boolean => {
+    if (group.some((c) => c.protected)) return true;
+    if (compilationPolicy === "fewest_albums") return false;
+    return !group.every(isCompilation);
+  };
+
   const representatives = new Map<number, CurationEditionCandidate>();
   for (const [rgId, group] of groups) {
+    if (!anchored(group)) continue;
     const rep = selectRepresentativeEdition(group);
     if (rep) {
       representatives.set(rgId, rep);
@@ -439,19 +470,26 @@ export function curateLibraryReleases(
         && [...c.attainableUnitIds].some((u) => novelSupplementalUnits.has(u)),
     );
 
-    const supplementalCover = selectSupplementalCover(
-      eligibleSupplemental,
-      novelSupplementalUnits,
-    );
-    for (const s of supplementalCover) {
-      selectedMap.set(s.editionId, s);
+    // Original discography fills gaps from the artist's own releases first;
+    // a compilation only covers what is still missing after that.
+    const tiers = compilationPolicy === "original_discography"
+      ? [eligibleSupplemental.filter((c) => !isCompilation(c)), eligibleSupplemental.filter(isCompilation)]
+      : [eligibleSupplemental];
+    const stillWanted = new Set(novelSupplementalUnits);
+    for (const tier of tiers) {
+      const reachable = new Set([...stillWanted].filter((u) => tier.some((c) => c.attainableUnitIds.has(u))));
+      const pool = tier.filter((c) => [...c.attainableUnitIds].some((u) => reachable.has(u)));
+      for (const s of selectSupplementalCover(pool, reachable)) {
+        selectedMap.set(s.editionId, s);
+        for (const u of s.attainableUnitIds) stillWanted.delete(u);
+      }
     }
   }
 
   let selected = [...selectedMap.values()];
 
   if (redundancyEnabled) {
-    selected = pruneRedundantEditions(selected, representatives);
+    selected = pruneRedundantEditions(selected, representatives, compilationPolicy);
   }
 
   const survivingByGroup = new Map<number, CurationEditionCandidate[]>();

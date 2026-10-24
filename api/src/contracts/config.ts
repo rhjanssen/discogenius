@@ -11,6 +11,8 @@ import {
   expectString,
 } from "./runtime.js";
 
+export const COMPILATION_POLICY_CONTRACT_VALUES = ["original_discography", "fewest_albums"] as const;
+export type CompilationPolicyContract = (typeof COMPILATION_POLICY_CONTRACT_VALUES)[number];
 export const AUDIO_QUALITY_VALUES = ["low", "normal", "high", "max"] as const;
 export type AudioQualityValue = (typeof AUDIO_QUALITY_VALUES)[number];
 
@@ -154,6 +156,7 @@ export interface FilteringConfigContract {
   include_video_official_audio: boolean;
   prefer_explicit: boolean;
   enable_redundancy_filter: boolean;
+  compilation_policy: CompilationPolicyContract;
   require_provider_availability: boolean;
 }
 
@@ -335,6 +338,9 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     ),
     prefer_explicit: expectBoolean(record.prefer_explicit, "curation.prefer_explicit"),
     enable_redundancy_filter: expectBoolean(record.enable_redundancy_filter, "curation.enable_redundancy_filter"),
+    compilation_policy: record.compilation_policy === undefined
+      ? "original_discography"
+      : expectOneOf(record.compilation_policy, COMPILATION_POLICY_CONTRACT_VALUES, "curation.compilation_policy"),
     require_provider_availability: expectBoolean(record.require_provider_availability, "curation.require_provider_availability"),
   };
 }

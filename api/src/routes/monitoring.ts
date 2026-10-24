@@ -2,6 +2,7 @@ import { CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
 import { isSqliteBusyError, withDbWrite } from "../database.js";
 import { parseMonitoringConfigUpdate } from "../contracts/config-updates.js";
+import { LibraryFilesService } from "../services/mediafiles/library-files.js";
 import { getObjectBody, isRequestValidationError } from "../utils/request-validation.js";
 import {
   getMonitoringStatus,
@@ -47,6 +48,15 @@ router.get("/status", (_, res) => {
     };
 
     res.json(response);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+// Read-only: what "Remove unmonitored files" would delete now.
+router.get("/prune-preview", (_, res) => {
+  try {
+    res.json(LibraryFilesService.previewUnmonitoredFiles());
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

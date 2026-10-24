@@ -3640,6 +3640,61 @@ export class LibraryFilesService {
     return this.pruneUnmonitoredFiles(artist.id);
   }
 
+  /**
+   * Read-only: what "Remove unmonitored files" would delete right now, as
+   * library track files grouped by album folder and split into compilation
+   * and other releases. Folder sweeps of untracked leftovers are not counted.
+   */
+  static previewUnmonitoredFiles(sampleSize = 25): {
+    artists: number;
+    files: number;
+    folders: number;
+    compilationFolders: number;
+    otherFolders: number;
+    samples: { compilation: string[]; other: string[] };
+  } {
+    const artists = db.prepare(`
+      SELECT a.mbid AS id
+      FROM ArtistMetadata a
+      WHERE ${buildLibraryArtistMonitoredExistsSql("a")}
+    `).all() as Array<{ id: string }>;
+    const secondaryTypes = db.prepare(`
+      SELECT release_group.secondary_types
+      FROM TrackFiles lf
+      JOIN Albums release_group ON release_group.id = COALESCE(
+        lf.release_group_id,
+        (SELECT edition.release_group_id FROM AlbumEditions edition WHERE edition.id = lf.album_edition_id)
+      )
+      WHERE lf.id = ?
+    `);
+    const folders = new Map<string, boolean>();
+    let files = 0;
+    let artistCount = 0;
+    for (const artist of artists) {
+      if (!isArtistLibraryMonitored(artist.id)) continue;
+      const rows = this.selectUnmonitoredFileRows(artist.id);
+      if (rows.length === 0) continue;
+      artistCount += 1;
+      for (const row of rows) {
+        files += 1;
+        const folder = path.dirname(row.file_path);
+        if (folders.get(folder) === true) continue;
+        const types = (secondaryTypes.get(row.id) as { secondary_types?: string | null } | undefined)?.secondary_types;
+        folders.set(folder, /compilation|dj-mix|mixtape/i.test(String(types || "")));
+      }
+    }
+    const compilation = [...folders].filter(([, c]) => c).map(([f]) => f);
+    const other = [...folders].filter(([, c]) => !c).map(([f]) => f);
+    return {
+      artists: artistCount,
+      files,
+      folders: folders.size,
+      compilationFolders: compilation.length,
+      otherFolders: other.length,
+      samples: { compilation: compilation.slice(0, sampleSize), other: other.slice(0, sampleSize) },
+    };
+  }
+
   static async pruneUnmonitoredFilesForMonitoredArtists(): Promise<{ artists: number; deleted: number; missing: number; errors: number }> {
     if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
       return { artists: 0, deleted: 0, missing: 0, errors: 0 };

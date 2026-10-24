@@ -129,6 +129,7 @@ const FILTERING_UPDATE_KEYS = [
   "include_video_official_audio",
   "prefer_explicit",
   "enable_redundancy_filter",
+  "compilation_policy",
   "require_provider_availability",
 ] as const satisfies readonly (keyof FilteringConfigContract)[];
 
