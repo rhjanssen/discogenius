@@ -1310,6 +1310,29 @@ export class OrganizerService {
     return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
   }
 
+  /** The destination folder names its release (`{mbid-…}`); the caller's
+   * release must agree with it. Without a known release nothing is moved. */
+  private static resolveSidecarFolderRelease(
+    expectedPath: string,
+    releaseMbid?: string | null,
+    releaseGroupMbid?: string | null,
+  ): { releaseMbid: string; releaseGroupMbid: string | null } | null {
+    const folderMbid = [...path.basename(path.dirname(expectedPath)).matchAll(/\{mbid-([0-9a-f-]{36})\}/gi)]
+      .map((match) => match[1].toLowerCase()).pop() ?? null;
+    const requested = String(releaseMbid || "").trim().toLowerCase() || null;
+    if (requested && folderMbid && requested !== folderMbid) {
+      // The folder on disk is what the sidecar sits in; it decides.
+      console.warn(`[Organizer] Sidecar release ${requested} differs from folder release ${folderMbid}; using the folder for ${expectedPath}`);
+    }
+    const mbid = folderMbid ?? requested;
+    if (!mbid) return null;
+    const edition = db.prepare(`SELECT album.mbid AS release_group_mbid FROM AlbumEditions edition
+      LEFT JOIN Albums album ON album.id = edition.release_group_id WHERE edition.mbid = ?`)
+      .get(mbid) as { release_group_mbid: string | null } | undefined;
+    if (!edition && mbid !== requested) return null;
+    return { releaseMbid: mbid, releaseGroupMbid: edition?.release_group_mbid ?? (String(releaseGroupMbid || "").trim() || null) };
+  }
+
   private static async relocateSingletonSidecar(params: {
     artistId: string;
     albumId?: string | null;
@@ -1318,8 +1341,16 @@ export class OrganizerService {
     fileType: "cover" | "video_cover" | "nfo";
     quality?: string | null;
     namingTemplate?: string | null;
+    /** The exact release the destination folder belongs to. Album-level
+     * sidecars are owned by one release; another release's file is never
+     * moved here or re-owned. Required whenever albumId is given. */
+    releaseMbid?: string | null;
+    releaseGroupMbid?: string | null;
   }): Promise<string> {
     const normalizedExpectedPath = this.normalizeResolvedPath(params.expectedPath);
+    const release = params.albumId
+      ? this.resolveSidecarFolderRelease(params.expectedPath, params.releaseMbid, params.releaseGroupMbid)
+      : null;
     const artistMbid = resolveArtistMbid(params.artistId);
     if (!artistMbid) {
       throw new Error(`[Organizer] Cannot resolve canonical artist MBID for ${params.artistId}`);
@@ -1332,18 +1363,14 @@ export class OrganizerService {
       ? db.prepare(`
         SELECT id, file_path, library_root
         FROM MetadataFiles
-        WHERE (
-            canonical_release_group_mbid = ?
-            OR canonical_release_mbid = ?
-            OR provider_id = ?
-          )
+        WHERE (canonical_release_mbid = ? OR file_path = ?)
           AND canonical_track_mbid IS NULL
           AND canonical_recording_mbid IS NULL
           AND library_slot = ?
           AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_type = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
-      `).all(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath)
+      `).all(release?.releaseMbid ?? null, params.expectedPath, slotValue, params.libraryRoot, params.fileType, params.expectedPath)
       : db.prepare(`
         SELECT id, file_path, library_root
         FROM MetadataFiles
@@ -1427,24 +1454,22 @@ export class OrganizerService {
         quality: params.quality || null,
         namingTemplate: params.namingTemplate || null,
         expectedPath: params.expectedPath,
+        canonicalReleaseGroupMbid: release?.releaseGroupMbid ?? null,
+        canonicalReleaseMbid: release?.releaseMbid ?? null,
       });
 
-      if (params.albumId) {
+      if (params.albumId && release) {
         const leftover = db.prepare(`
           SELECT id, file_path, library_root
           FROM MetadataFiles
-          WHERE (
-              canonical_release_group_mbid = ?
-              OR canonical_release_mbid = ?
-              OR provider_id = ?
-            )
+          WHERE canonical_release_mbid = ?
             AND canonical_track_mbid IS NULL
             AND canonical_recording_mbid IS NULL
             AND library_slot = ?
             AND COALESCE(library_root, '') = COALESCE(?, '')
             AND file_type = ?
             AND file_path != ?
-        `).all(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath) as Array<{
+        `).all(release.releaseMbid, slotValue, params.libraryRoot, params.fileType, params.expectedPath) as Array<{
           id: number;
           file_path: string;
           library_root: string;
@@ -1458,7 +1483,7 @@ export class OrganizerService {
             await withSqliteWriteGate(() => db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(row.id), "import:sidecar-facts");
           }
         }
-      } else {
+      } else if (!params.albumId) {
         await withSqliteWriteGate(() => db.prepare(`
           DELETE FROM MetadataFiles
           WHERE artist_id = ?
@@ -2566,6 +2591,8 @@ export class OrganizerService {
           expectedPath: albumCoverPath,
           libraryRoot: targetRoot,
           fileType: "cover",
+          releaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid || null,
+          releaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover) {
@@ -2619,6 +2646,8 @@ export class OrganizerService {
           expectedPath: albumVideoCoverPath,
           libraryRoot: targetRoot,
           fileType: "video_cover",
+          releaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid || null,
+          releaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover && albumVideoCoverId && !fs.existsSync(albumVideoCoverPath)) {
@@ -3220,6 +3249,8 @@ export class OrganizerService {
           expectedPath: albumCoverPath,
           libraryRoot: targetRoot,
           fileType: "cover",
+          releaseMbid: trackIdentity.canonicalReleaseMbid || null,
+          releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover) {
@@ -3269,6 +3300,8 @@ export class OrganizerService {
           expectedPath: albumVideoCoverPath,
           libraryRoot: targetRoot,
           fileType: "video_cover",
+          releaseMbid: trackIdentity.canonicalReleaseMbid || null,
+          releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover && albumVideoCoverId && !fs.existsSync(albumVideoCoverPath)) {
