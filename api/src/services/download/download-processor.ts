@@ -462,6 +462,30 @@ const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 
 const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS', 2, 1);
 const MAX_PENDING_IMPORTS = readIntEnv('DISCOGENIUS_MAX_PENDING_IMPORTS', 4, 1);
 const DOWNLOAD_LEASE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_LEASE_MS', 90_000, 1_000);
+/** How long shutdown waits for running imports to finish. A killed import is
+ * failed closed on restart (it may have moved half an album), so finishing it
+ * is worth most of the container's stop grace period (compose: 180s). */
+const SHUTDOWN_IMPORT_DRAIN_MS = readIntEnv('DISCOGENIUS_SHUTDOWN_IMPORT_DRAIN_MS', 75_000, 0);
+
+/** Wait until every running import settles, or until the deadline. Returns the
+ * command ids still running when it gave up. Never throws: an import's own
+ * failure is recorded by the import itself. */
+export async function drainActiveImports(
+    running: ReadonlyMap<number, { promise: Promise<unknown> }>,
+    deadlineMs: number,
+): Promise<number[]> {
+    const ids = [...running.keys()];
+    if (ids.length === 0) return [];
+    const settled = new Set<number>();
+    let timer: NodeJS.Timeout | undefined;
+    const allDone = Promise.all(ids.map((id) => Promise.resolve(running.get(id)!.promise)
+        .catch(() => undefined)
+        .then(() => { settled.add(id); })));
+    const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, deadlineMs); });
+    await Promise.race([allDone, timeout]);
+    clearTimeout(timer);
+    return ids.filter((id) => !settled.has(id));
+}
 
 /** One id per process start. Docker reuses the same pid, so a pid prefix would
  * treat the previous boot's still-live import lease as ours and skip CAS. */
@@ -3287,6 +3311,16 @@ export class DownloadProcessor {
         clearTimeout(this.retryWakeTimer);
         this.retryWakeTimer = undefined;
         this.haltProcessing();
+        // Downloads were aborted above and are requeued on restart. Imports
+        // mutate the library, so let the running ones finish instead.
+        if (this.activeImports.size > 0) {
+            console.log(`[DOWNLOAD-PROCESSOR] Waiting up to ${Math.round(SHUTDOWN_IMPORT_DRAIN_MS / 1000)}s for ${this.activeImports.size} running import(s) to finish...`);
+            const unfinished = await drainActiveImports(this.activeImports, SHUTDOWN_IMPORT_DRAIN_MS);
+            if (unfinished.length > 0) {
+                console.warn(`[DOWNLOAD-PROCESSOR] Import(s) still running at shutdown: ${unfinished.map((id) => `#${id}`).join(', ')}`);
+            }
+        }
+        this.flushProgressBuffer();
         console.log('[DOWNLOAD-PROCESSOR] Queue suspended');
     }
 
