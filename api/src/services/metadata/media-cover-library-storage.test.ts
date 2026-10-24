@@ -110,3 +110,55 @@ test('video artwork refuses conflicting canonical tags and audio or dangling anc
   database.db.prepare('UPDATE MetadataFiles SET track_file_id=NULL WHERE id=?').run(f.id);
   assert.equal(storage.artworkLinkOwnsTrackedPath(f.identity,f.file,f.id),false);
 });
+
+test("publishing an edition cover takes over the row a sibling edition left at the shared album path", () => {
+  const key = `shared-folder-${++sequence}`;
+  const artist = Number(database.db.prepare("INSERT INTO ArtistMetadata(mbid,name) VALUES (?,'Shared artist')").run(key).lastInsertRowid);
+  const album = Number(database.db.prepare("INSERT INTO Albums(mbid,title,artist_metadata_id,artist_mbid) VALUES (?,'Shared album',?,?)").run(`${key}-rg`,artist,key).lastInsertRowid);
+  for (const suffix of ["a","b"]) database.db.prepare("INSERT INTO AlbumEditions(mbid,release_group_id,release_group_mbid,artist_mbid,title) VALUES (?,?,?,?,'Edition')").run(`${key}-${suffix}`,album,`${key}-rg`,key);
+  const file = path.join(root,`${key}-cover.jpg`), folder = path.join(root,`${key}-cache`);
+  fs.mkdirSync(folder); fs.writeFileSync(file,"edition b bytes");
+  const hash = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  const id = Number(database.db.prepare(`INSERT INTO MetadataFiles
+    (artist_id,file_path,relative_path,library_root,extension,type,file_type,canonical_release_group_mbid,canonical_release_mbid)
+    VALUES ('fixture',?,?,?,'jpg','artwork','cover',?,?)`).run(file,path.basename(file),root,`${key}-rg`,`${key}-a`).lastInsertRowid);
+  const editionB: ArtworkIdentity = {coverEntity:"Edition",entityId:`${key}-b`,coverType:"cover"};
+
+  const claimed = storage.claimPublishedArtworkRow(editionB,file);
+  assert.equal(claimed,id);
+  storage.rememberLibraryCoverSidecar(editionB,folder,file,hash,claimed);
+  assert.equal(storage.findLibraryCoverMaster(editionB,folder,hash),file);
+  assert.equal(storage.findLibraryCoverMaster({coverEntity:"Album",entityId:`${key}-rg`,coverType:"cover"},folder,hash),null,
+    "claiming for an edition does not invent album links");
+  const row = database.db.prepare("SELECT canonical_release_group_mbid AS rg, canonical_release_mbid AS rel FROM MetadataFiles WHERE id=?").get(id);
+  assert.deepEqual({...row as object},{rg:`${key}-rg`,rel:`${key}-b`});
+  assert.equal(storage.artworkLinkOwnsTrackedPath({coverEntity:"Edition",entityId:`${key}-a`,coverType:"cover"},file,id),false,
+    "the previous edition no longer owns bytes it did not write");
+});
+
+test("publishing album art keeps a matching edition owner and drops a foreign one", () => {
+  const key = `album-claim-${++sequence}`;
+  const artist = Number(database.db.prepare("INSERT INTO ArtistMetadata(mbid,name) VALUES (?,'Album artist')").run(key).lastInsertRowid);
+  const album = Number(database.db.prepare("INSERT INTO Albums(mbid,title,artist_metadata_id,artist_mbid) VALUES (?,'Album',?,?)").run(`${key}-rg`,artist,key).lastInsertRowid);
+  database.db.prepare("INSERT INTO AlbumEditions(mbid,release_group_id,release_group_mbid,artist_mbid,title) VALUES (?,?,?,?,'Edition')").run(`${key}-ed`,album,`${key}-rg`,key);
+  const file = path.join(root,`${key}.jpg`);
+  fs.writeFileSync(file,"album bytes");
+  const id = Number(database.db.prepare(`INSERT INTO MetadataFiles
+    (artist_id,file_path,relative_path,library_root,extension,type,file_type,canonical_release_group_mbid,canonical_release_mbid)
+    VALUES ('fixture',?,?,?,'jpg','artwork','cover','stale-rg','stale-edition')`).run(file,path.basename(file),root).lastInsertRowid);
+  const identity: ArtworkIdentity = {coverEntity:"Album",entityId:`${key}-rg`,coverType:"cover"};
+  assert.equal(storage.claimPublishedArtworkRow(identity,file),id);
+  assert.deepEqual({...database.db.prepare("SELECT canonical_release_group_mbid AS rg, canonical_release_mbid AS rel FROM MetadataFiles WHERE id=?").get(id) as object},
+    {rg:`${key}-rg`,rel:null});
+  database.db.prepare("UPDATE MetadataFiles SET canonical_release_group_mbid='other', canonical_release_mbid=? WHERE id=?").run(`${key}-ed`,id);
+  storage.claimPublishedArtworkRow(identity,file);
+  assert.deepEqual({...database.db.prepare("SELECT canonical_release_group_mbid AS rg, canonical_release_mbid AS rel FROM MetadataFiles WHERE id=?").get(id) as object},
+    {rg:`${key}-rg`,rel:`${key}-ed`});
+});
+
+test("publishing never rewrites video art owners and has no row to claim on a fresh path", () => {
+  const f = youtubeArtworkFixture();
+  const other = Number(database.db.prepare("INSERT INTO Recordings(title,is_video,youtube_video_id) VALUES ('Unrelated',1,?)").run(f.key+'-x').lastInsertRowid);
+  assert.equal(storage.claimPublishedArtworkRow({coverEntity:"Video",entityId:String(other),coverType:"cover"},f.file),undefined);
+  assert.equal(storage.claimPublishedArtworkRow({coverEntity:"Edition",entityId:"none",coverType:"cover"},path.join(root,"absent.jpg")),undefined);
+});

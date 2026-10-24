@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { db, isSqliteBusyError } from "../../database.js";
 import { ArtworkMutationJournal } from "./artwork-mutation-journal.js";
-import { rememberLibraryCoverSidecar } from "./media-cover-library-storage.js";
+import { claimPublishedArtworkRow, rememberLibraryCoverSidecar } from "./media-cover-library-storage.js";
 import { storeArtworkSource, type ArtworkIdentity, type ArtworkSource } from "./media-cover-state.js";
 import {
   discardArtworkMaterializeFollowUps,
@@ -68,10 +68,8 @@ export function commitArtworkSidecar(options: {
       if (options.unchanged) options.assertWitnesses();
       else options.assertSource();
       db.transaction(() => {
-        const row = db.prepare(`SELECT id FROM MetadataFiles
-          WHERE file_path = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')`)
-          .get(options.destination) as { id: number } | undefined;
-        rememberLibraryCoverSidecar(options.scope, options.folder, options.destination, options.hash, row?.id);
+        const rowId = claimPublishedArtworkRow(options.scope, options.destination);
+        rememberLibraryCoverSidecar(options.scope, options.folder, options.destination, options.hash, rowId);
         if (options.source) storeArtworkSource(options.scope, { ...options.source, contentHash: options.hash });
         if (intentId) ArtworkMutationJournal.markCommitted(intentId);
       })();

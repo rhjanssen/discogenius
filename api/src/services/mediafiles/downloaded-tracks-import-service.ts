@@ -243,8 +243,11 @@ export async function ensureDestAlbumArtworkForFileIds(
         }
     }
 
-    if (failures.length > 0) {
-        throw new Error(`Failed to materialize canonical album artwork. ${failures[0]}`);
+    // Artwork is decoration on imported media. The audio is already in place
+    // and tracked, so a cover problem is reported and left to the metadata
+    // backfill instead of failing (and later re-downloading) the whole album.
+    for (const failure of failures) {
+        console.warn(`[ImportDownload] Album artwork not materialized; import kept: ${failure}`);
     }
 }
 

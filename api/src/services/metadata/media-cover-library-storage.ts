@@ -69,6 +69,44 @@ export function artworkLinkOwnsTrackedPath(identity: ArtworkIdentity, filePath: 
   return !row || ownsArtwork(row, identity);
 }
 
+/** Publishing bytes to a library path makes the publishing scope that file's
+ * owner. The row at the path describes the file, so a stale owner (another
+ * edition sharing the album folder, or a reconciled canonical id) is moved to
+ * the scope that just wrote it instead of failing the publication. Video art
+ * owners derive from TrackFiles and are never rewritten here; an unowned video
+ * row stays unlinked and every reader fails closed on it. */
+export function claimPublishedArtworkRow(identity: ArtworkIdentity, filePath: string): number | undefined {
+  const row = db.prepare(`SELECT id,file_path,file_type,track_file_id,canonical_artist_mbid,
+    canonical_release_group_mbid,canonical_release_mbid,canonical_recording_mbid
+    FROM MetadataFiles WHERE file_path = ? AND file_type IN ('cover','artwork','video_thumbnail','video_cover')`)
+    .get(filePath) as (ArtworkFileRow & { id: number }) | undefined;
+  if (!row) return undefined;
+  if (ownsArtwork(row, identity)) return row.id;
+  if (identity.coverEntity === "Video") return undefined;
+  const id = String(identity.entityId);
+  const fileType = row.file_type === "video_thumbnail" || row.file_type === "video_cover" ? "cover" : row.file_type;
+  if (identity.coverEntity === "Artist") {
+    db.prepare(`UPDATE MetadataFiles SET file_type=?, track_file_id=NULL, canonical_artist_mbid=?,
+      canonical_release_group_mbid=NULL, canonical_release_mbid=NULL, canonical_track_mbid=NULL,
+      canonical_recording_mbid=NULL, last_updated=CURRENT_TIMESTAMP WHERE id=?`).run(fileType, id, row.id);
+  } else if (identity.coverEntity === "Album") {
+    const keepsEdition = row.canonical_release_mbid ? Boolean(db.prepare(`SELECT 1 FROM AlbumEditions edition
+      JOIN Albums album ON album.id = edition.release_group_id WHERE edition.mbid = ? AND album.mbid = ?`)
+      .get(row.canonical_release_mbid, id)) : false;
+    db.prepare(`UPDATE MetadataFiles SET file_type=?, track_file_id=NULL, canonical_release_group_mbid=?,
+      canonical_release_mbid=?, canonical_track_mbid=NULL, canonical_recording_mbid=NULL,
+      last_updated=CURRENT_TIMESTAMP WHERE id=?`).run(fileType, id, keepsEdition ? row.canonical_release_mbid : null, row.id);
+  } else {
+    const album = db.prepare(`SELECT album.mbid FROM AlbumEditions edition
+      JOIN Albums album ON album.id = edition.release_group_id WHERE edition.mbid = ?`).get(id) as { mbid: string | null } | undefined;
+    db.prepare(`UPDATE MetadataFiles SET file_type=?, track_file_id=NULL,
+      canonical_release_group_mbid=COALESCE(?, canonical_release_group_mbid), canonical_release_mbid=?,
+      canonical_track_mbid=NULL, canonical_recording_mbid=NULL, last_updated=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(fileType, album?.mbid ?? null, id, row.id);
+  }
+  return row.id;
+}
+
 function manifestPath(folder: string, coverType: string): string {
   return path.join(folder, `.${coverType}.library.json`);
 }
