@@ -511,6 +511,11 @@ export class LibraryCurationService {
 
     const allScopedSelections: ScopedCurationSelection[] = [];
     const releasableFileEditionIds = new Set<number>();
+    const fileOwningEditionIds = new Set(
+      (this.db.prepare(
+        "SELECT DISTINCT album_edition_id AS edition_id FROM TrackFiles WHERE library_id = ? AND album_edition_id IS NOT NULL",
+      ).all(input.libraryId) as Array<{ edition_id: number }>).map((row) => row.edition_id),
+    );
     const proposedRepresentativesByReleaseGroup = new Map<number, Map<number, CurationEditionCandidate>>();
     const overruledReleaseGroupIds = new Set<number>();
     const redundancyEnabled = filtering.enable_redundancy_filter !== false;
@@ -584,6 +589,28 @@ export class LibraryCurationService {
         }
       }
 
+      // An album curation keeps stays monitored through every edition that
+      // already has files, so swapping editions never deletes music only to
+      // download the same recordings again.
+      {
+        const keptGroups = new Set(scopedResult.selectedReleaseGroupIds);
+        const selectedInScope = new Set(scopedResult.selectedEditionIds);
+        for (const c of curatedCandidatesInScope) {
+          if (selectedInScope.has(c.editionId) || !keptGroups.has(c.releaseGroupId) || !fileOwningEditionIds.has(c.editionId)) continue;
+          allScopedSelections.push({
+            libraryArtistId: libraryArtist.library_artist_id,
+            editionId: c.editionId,
+            releaseGroupId: c.releaseGroupId,
+            role: "supplemental",
+            reason: "discography_gap_fill",
+            contributedUnitIds: [],
+            scopeTypes: (candidateScopes.get(c.editionId) || [])
+              .filter((scope) => scope.libraryArtistId === libraryArtist.library_artist_id)
+              .map((scope) => scope.scopeType),
+          });
+        }
+      }
+
       for (const [rgId, repEditionId] of scopedResult.representativeEditionIdByReleaseGroup) {
         const repCand = curatedCandidatesInScope.find((c) => c.editionId === repEditionId);
         if (repCand) {
@@ -613,6 +640,12 @@ export class LibraryCurationService {
     const selectedEditionIdsSet = new Set(allScopedSelections.map((s) => s.editionId));
     for (const editionId of selectedEditionIdsSet) releasableFileEditionIds.delete(editionId);
     const selectedReleaseGroupIdsSet = new Set(allScopedSelections.map((s) => s.releaseGroupId));
+    // Swapping one edition of a kept album for another would delete files only
+    // to download the same recordings again. Only editions of albums curation
+    // drops altogether may give up their files.
+    for (const candidate of allCandidates) {
+      if (selectedReleaseGroupIdsSet.has(candidate.releaseGroupId)) releasableFileEditionIds.delete(candidate.editionId);
+    }
 
     const reconciledRepresentativeMap = new Map<number, number>();
     for (const rgId of selectedReleaseGroupIdsSet) {
