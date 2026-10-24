@@ -3651,8 +3651,20 @@ export class LibraryFilesService {
     folders: number;
     compilationFolders: number;
     otherFolders: number;
-    samples: { compilation: string[]; other: string[] };
+    /** Folders whose album curation still keeps through another edition. */
+    keptAlbumFolders: number;
+    samples: { compilation: string[]; other: string[]; keptAlbum: string[] };
   } {
+    const keptAlbum = db.prepare(`
+      SELECT 1
+      FROM TrackFiles lf
+      JOIN AlbumEditions owned ON owned.id = lf.album_edition_id
+      JOIN AlbumEditions sibling ON sibling.release_group_id = owned.release_group_id
+      JOIN LibraryEditions monitored ON monitored.edition_id = sibling.id AND monitored.library_id = lf.library_id
+      WHERE lf.id = ?
+      LIMIT 1
+    `);
+    const keptFolders = new Set<string>();
     const artists = db.prepare(`
       SELECT a.mbid AS id
       FROM ArtistMetadata a
@@ -3678,6 +3690,7 @@ export class LibraryFilesService {
       for (const row of rows) {
         files += 1;
         const folder = path.dirname(row.file_path);
+        if (!keptFolders.has(folder) && keptAlbum.get(row.id)) keptFolders.add(folder);
         if (folders.get(folder) === true) continue;
         const types = (secondaryTypes.get(row.id) as { secondary_types?: string | null } | undefined)?.secondary_types;
         folders.set(folder, /compilation|dj-mix|mixtape/i.test(String(types || "")));
@@ -3691,7 +3704,12 @@ export class LibraryFilesService {
       folders: folders.size,
       compilationFolders: compilation.length,
       otherFolders: other.length,
-      samples: { compilation: compilation.slice(0, sampleSize), other: other.slice(0, sampleSize) },
+      keptAlbumFolders: keptFolders.size,
+      samples: {
+        compilation: compilation.slice(0, sampleSize),
+        other: other.slice(0, sampleSize),
+        keptAlbum: [...keptFolders].slice(0, sampleSize),
+      },
     };
   }
 

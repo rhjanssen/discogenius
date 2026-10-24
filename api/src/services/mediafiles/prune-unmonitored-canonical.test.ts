@@ -440,6 +440,7 @@ test("prune preview counts what cleanup would delete, by folder, compilations ap
     { files: preview.files, folders: preview.folders, compilation: preview.compilationFolders, other: preview.otherFolders },
     { files: 3, folders: 2, compilation: 1, other: 1 },
   );
-  assert.deepEqual(preview.samples, { compilation: ["C:/lib/Hits"], other: ["C:/lib/Studio"] });
+  assert.deepEqual(preview.samples, { compilation: ["C:/lib/Hits"], other: ["C:/lib/Studio"], keptAlbum: [] });
+  assert.equal(preview.keptAlbumFolders, 0, "no folder belongs to an album curation still keeps");
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n, before);
 });
