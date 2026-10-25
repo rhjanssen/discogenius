@@ -1246,3 +1246,140 @@ test("one provider item listed twice with the same title and runtime still match
     assert.equal(result.acceptedTrackCount, 1, "the same audio listed twice is not a conflict");
   });
 });
+
+// Matcher v4 compared only the provider's own slot titles and runtimes, so two
+// listings of one item with the same title and the same runtime were both
+// accepted. A multi-disc "Intro" is two canonical tracks and one download.
+test("one provider item viable for two identical-title slots is accepted for neither", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-intro', 'Artist Intro');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-intro', 1, 'Twins'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-intro', 1, 'Twins'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
+        (1, 'rec-intro-1', 'Intro', 90000),
+        (2, 'rec-intro-2', 'Intro', 90000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES
+        (1, 't-intro-1', 1, 1, 1, 1, 'Intro', 90000),
+        (2, 't-intro-2', 1, 2, 2, 1, 'Intro', 90000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 5,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "twins-release",
+        title: "Twins",
+        availability: "available",
+      },
+      members: [
+        trackMember({ providerId: "p-intro", title: "Intro", durationMs: 90000, mediumPosition: 1, position: 1 }),
+        trackMember({ providerId: "p-intro", title: "Intro", durationMs: 90000, mediumPosition: 2, position: 1 }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 0, "one audio file cannot fill two identical intros");
+    const accepted = db.prepare(
+      "SELECT COUNT(*) AS n FROM ProviderTrackMatches WHERE match_state = 'accepted'",
+    ).get() as { n: number };
+    assert.equal(accepted.n, 0);
+  });
+});
+
+// Five seconds is inside the matcher's duration grace and inside v4's shared-item
+// spread, so v4 still accepted both slots. The item is still one recording.
+test("one provider item viable for two slots within the duration grace is accepted for neither", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-grace', 'Artist Grace');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-grace', 1, 'Grace'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-grace', 1, 'Grace'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES
+        (1, 'rec-song-a', 'Song', 200000),
+        (2, 'rec-song-b', 'Song', 205000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES
+        (1, 't-song-a', 1, 1, 1, 1, 'Song', 200000),
+        (2, 't-song-b', 1, 2, 1, 2, 'Song', 205000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 5,
+      release: {
+        provider: "deezer",
+        entityType: "release",
+        providerId: "grace-release",
+        title: "Grace",
+        availability: "available",
+      },
+      members: [
+        trackMember({ providerId: "dz-song", title: "Song", durationMs: 200000, mediumPosition: 1, position: 1 }),
+        trackMember({ providerId: "dz-song", title: "Song", durationMs: 205000, mediumPosition: 1, position: 2 }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 0, "a 5s twin is still one provider item");
+  });
+});
+
+// Distinct provider items may share a title and a runtime. They are different
+// downloads, so each slot keeps its own match.
+test("two provider items with the same title and runtime still match both slots", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-pair', 'Artist Pair');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-pair', 1, 'Pair'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-pair', 1, 'Pair'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
+      INSERT INTO Recordings (id, mbid, title, length_ms, isrcs) VALUES
+        (1, 'rec-pair-a', 'Intro', 90000, '["GBPAIR000001"]'),
+        (2, 'rec-pair-b', 'Intro', 90000, '["GBPAIR000002"]');
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES
+        (1, 't-pair-a', 1, 1, 1, 1, 'Intro', 90000),
+        (2, 't-pair-b', 1, 2, 2, 1, 'Intro', 90000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
+    `);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 5,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "pair-release",
+        title: "Pair",
+        availability: "available",
+      },
+      members: [
+        trackMember({
+          providerId: "p-intro-a", title: "Intro", durationMs: 90000,
+          mediumPosition: 1, position: 1, isrc: "GBPAIR000001",
+        }),
+        trackMember({
+          providerId: "p-intro-b", title: "Intro", durationMs: 90000,
+          mediumPosition: 2, position: 1, isrc: "GBPAIR000002",
+        }),
+      ],
+    });
+
+    assert.equal(result.acceptedTrackCount, 2, "distinct provider items stay distinct downloads");
+  });
+});

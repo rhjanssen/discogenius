@@ -271,8 +271,13 @@ export const TRACK_MATCH_THRESHOLD = 0.55;
  * 4: one provider item listed in several slots of a release that describe
  *    different content (YouTube Music's music-video stand-ins) is accepted for
  *    none of them; see provider-release-ingestion-service.
+ * 5: one provider item that is a viable match for more than one canonical track
+ *    is accepted for none of them, even when every slot shares a title and a
+ *    runtime inside the 10s grace (multi-disc "Intro", deluxe twins). A
+ *    duplicate listing of a single track still matches. See
+ *    provider-release-ingestion-service.
  */
-export const PROVIDER_TRACK_MATCHER_VERSION = 4;
+export const PROVIDER_TRACK_MATCHER_VERSION = 5;
 
 function normalizeIsrc(value: string | null | undefined): string {
     return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");

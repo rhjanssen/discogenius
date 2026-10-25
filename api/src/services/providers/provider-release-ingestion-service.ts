@@ -207,7 +207,9 @@ function normalizedContextTitle(member: ProviderReleaseMemberFacts): string {
  * Which slot the audio really is cannot be read from the listing, so none of
  * them is accepted: the canonical tracks stay open for another provider. A
  * provider listing the same audio twice under the same title and runtime is
- * not a conflict.
+ * not a conflict when only one canonical track can claim it. When that same
+ * listing is a viable match for two canonical tracks, {@link sharedItemSourcesToDrop}
+ * refuses every slot: one download is still one recording.
  */
 function sourcesWithConflictingSharedItem(audioSources: readonly AudioSource[]): Set<number> {
   const byItem = new Map<string, number[]>();
@@ -233,6 +235,60 @@ function sourcesWithConflictingSharedItem(audioSources: readonly AudioSource[]):
     }
   }
   return conflicted;
+}
+
+/**
+ * Sources to withhold because one provider item is a viable match for more
+ * than one canonical track.
+ *
+ * Version 4 only compared the provider's own slot titles and runtimes, so two
+ * listings of the same item with the same title and a runtime inside the 10s
+ * grace were both accepted. That is right when they describe one canonical
+ * track listed twice, and wrong when they describe two: a multi-disc "Intro"
+ * or a deluxe twin. The file that arrives has one identity, and the import
+ * refuses it once two offers name that identity.
+ *
+ * Viability uses the same bar as the assignment edges (threshold, perfect
+ * identity, and the tier margin). A duplicate listing of a single track is
+ * left to the one-to-one assigner, which keeps one of them.
+ */
+function sharedItemSourcesToDrop(
+  audioSources: readonly { member: ProviderReleaseMemberFacts; sourceIndex: number }[],
+  evidence: readonly (readonly TrackMatchEvidence[])[],
+  sourceMargins: readonly number[],
+  targetMargins: readonly number[],
+  alreadyConflicted: ReadonlySet<number>,
+): Set<number> {
+  const byItem = new Map<string, number[]>();
+  for (const source of audioSources) {
+    if (alreadyConflicted.has(source.sourceIndex)) continue;
+    const key = `${source.member.item.provider}:${source.member.item.providerId}`;
+    const indexes = byItem.get(key) ?? [];
+    indexes.push(source.sourceIndex);
+    byItem.set(key, indexes);
+  }
+  const dropped = new Set<number>();
+  for (const indexes of byItem.values()) {
+    if (indexes.length < 2) continue;
+    const viableTargets = new Set<number>();
+    for (const sourceIndex of indexes) {
+      const row = evidence[sourceIndex] ?? [];
+      for (let targetIndex = 0; targetIndex < row.length; targetIndex += 1) {
+        const score = row[targetIndex]?.score || 0;
+        if (score < TRACK_MATCH_THRESHOLD) continue;
+        if (score !== 1
+          && (sourceMargins[sourceIndex] < MIN_AMBIGUITY_MARGIN
+            || targetMargins[targetIndex] < MIN_AMBIGUITY_MARGIN)) {
+          continue;
+        }
+        viableTargets.add(targetIndex);
+      }
+    }
+    if (viableTargets.size > 1) {
+      for (const sourceIndex of indexes) dropped.add(sourceIndex);
+    }
+  }
+  return dropped;
 }
 
 export class ProviderReleaseIngestionService {
@@ -526,6 +582,15 @@ export class ProviderReleaseIngestionService {
     const sourceMargins = evidence.map((sourceEvidence) => tierAwareMargin(sourceEvidence));
     const targetMargins = targets.map((_, targetIndex) =>
       tierAwareMargin(evidence.map((sourceEvidence) => sourceEvidence[targetIndex])));
+    for (const sourceIndex of sharedItemSourcesToDrop(
+      audioSources,
+      evidence,
+      sourceMargins,
+      targetMargins,
+      conflictedSources,
+    )) {
+      conflictedSources.add(sourceIndex);
+    }
     const edges = targets.map((_target, targetIndex) =>
       audioSources.map((source) => ({
         sourceKey: String(source.memberId),
