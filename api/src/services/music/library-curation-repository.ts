@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { jsonList, SQL_JSON_LIST } from "../../utils/sql-id-list.js";
 import type { LibraryCurationResult } from "./library-curation-planner.js";
 import {
   applyLibrarySettingsFromConfig,
@@ -287,6 +288,21 @@ export class LibraryCurationRepository {
           DELETE FROM LibraryEditions
           WHERE id IN (${rowPlaceholders})${unclaimed}
         `).run(...replaceableEditionRowIds);
+      }
+
+      // Overruling withdraws manual protection for this pass. The album row
+      // stays when a file-backed edition stays, but it is automatic again:
+      // leaving it manual would keep a monitored album with no editions once
+      // the automatic ones leave, and the empty-album delete only retires
+      // selection_mode = 'auto'. A locked album is untouched.
+      if (overruledReleaseGroupIds.length > 0) {
+        this.db.prepare(`
+          UPDATE LibraryAlbums
+          SET selection_mode = 'auto', updated_at = CURRENT_TIMESTAMP
+          WHERE library_id = ?
+            AND locked = 0
+            AND release_group_id IN ${SQL_JSON_LIST}
+        `).run(input.libraryId, jsonList(overruledReleaseGroupIds));
       }
 
       // An Album row exists because at least one of its Editions is monitored.

@@ -213,3 +213,110 @@ test("automatic curation releases a file-owning edition whose recordings the sel
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("overruling a manual album returns it to automatic selection", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-library-curation-overrule-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createCurrentDomainSchema(db);
+    const repository = new LibraryCurationRepository(db);
+    const libraries = repository.bootstrapDefaultLibraries({
+      stereoRoot: "/library/stereo-music",
+      spatialRoot: "/library/spatial-music",
+      videoRoot: "/library/music-videos",
+    });
+    db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
+    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (10, 'group-over', 1, 'Over')").run();
+    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (11, 'group-lock', 1, 'Lock')").run();
+    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (12, 'group-keep', 1, 'Keep')").run();
+    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (10, 'ed-over', 10, 'Overruled')").run();
+    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (11, 'ed-next', 10, 'Next')").run();
+    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (12, 'ed-lock', 11, 'Locked')").run();
+    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (13, 'ed-keep', 12, 'Kept')").run();
+    const libraryArtistId = repository.upsertLibraryArtist({
+      libraryId: libraries.stereoId,
+      managedArtistId: 1,
+      monitored: true,
+      creditedScope: "release_and_track_credit",
+    });
+    const pass = (
+      selected: number[],
+      groups: Array<[number, number]>,
+      reasons?: Map<number, string>,
+    ) => repository.replaceAutomaticCuration({
+      libraryId: libraries.stereoId,
+      result: {
+        representativeEditionIdByReleaseGroup: new Map(groups),
+        supplementalEditionIds: [],
+        selectedEditionIds: selected,
+        selectedReleaseGroupIds: groups.map(([groupId]) => groupId),
+        attainableUnitIds: new Set(),
+        decisions: [],
+      },
+      releaseGroupIdByReleaseId: new Map(selected.map((editionId) => {
+        const group = groups.find(([, edition]) => edition === editionId);
+        return [editionId, group?.[0] ?? 0];
+      })),
+      scopes: selected.map((editionId) => ({ editionId, libraryArtistId, scopeType: "primary" as const })),
+      curationVersion: 2,
+      reasonByReleaseGroupId: reasons,
+    });
+    pass([10, 12, 13], [[10, 10], [11, 12], [12, 13]]);
+    db.prepare(`
+      UPDATE LibraryAlbums SET selection_mode = 'manual'
+      WHERE library_id = ? AND release_group_id IN (10, 11, 12)
+    `).run(libraries.stereoId);
+    db.prepare(`
+      UPDATE LibraryEditions SET selection_mode = 'manual', reason = 'user'
+      WHERE library_id = ? AND edition_id IN (10, 12, 13)
+    `).run(libraries.stereoId);
+    db.prepare(`
+      UPDATE LibraryAlbums SET locked = 1 WHERE library_id = ? AND release_group_id = 11
+    `).run(libraries.stereoId);
+
+    pass(
+      [11, 12, 13],
+      [[10, 11], [11, 12], [12, 13]],
+      new Map([[10, "curation_override_unreachable_recordings"], [11, "curation_override_unreachable_recordings"]]),
+    );
+
+    assert.equal(
+      (db.prepare(`
+        SELECT selection_mode FROM LibraryAlbums WHERE library_id = ? AND release_group_id = 10
+      `).get(libraries.stereoId) as { selection_mode: string }).selection_mode,
+      "auto",
+    );
+    assert.equal(
+      (db.prepare(`
+        SELECT selection_mode FROM LibraryEditions WHERE library_id = ? AND edition_id = 11
+      `).get(libraries.stereoId) as { selection_mode: string }).selection_mode,
+      "auto",
+    );
+    assert.equal(
+      db.prepare("SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = 10").get(libraries.stereoId),
+      undefined,
+    );
+    assert.deepEqual(
+      db.prepare(`
+        SELECT selection_mode, locked FROM LibraryAlbums WHERE library_id = ? AND release_group_id = 11
+      `).get(libraries.stereoId),
+      { selection_mode: "manual", locked: 1 },
+    );
+    assert.equal(
+      (db.prepare(`
+        SELECT selection_mode FROM LibraryEditions WHERE library_id = ? AND edition_id = 12
+      `).get(libraries.stereoId) as { selection_mode: string }).selection_mode,
+      "manual",
+    );
+    assert.equal(
+      (db.prepare(`
+        SELECT selection_mode FROM LibraryAlbums WHERE library_id = ? AND release_group_id = 12
+      `).get(libraries.stereoId) as { selection_mode: string }).selection_mode,
+      "manual",
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
