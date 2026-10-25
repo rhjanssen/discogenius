@@ -30,6 +30,8 @@ Wanted work is `LibraryAlbums` (the release group). Coverage is `LibraryEditions
 
 Score provider albums against candidate MusicBrainz *releases* for the artist, not against a provider-invented release group. Evidence order: MB external links, UPC/ISRC, then title/version/date/type/shape. Online Servarr catalog often lacks ISRC/UPC; local-MB fills them. `provider-release-group-matcher.ts` still has a release-group-shaped entry point. Composite coverage belongs in acquisition plans, not in a generic match graph. A plan may combine several editions from one provider; cross-provider composites are unsupported.
 
+Track matches store `matcher_version`. An automatic edge older than the current matcher is not an acquisition candidate and is not a download fallback. A manual edge stays. Matcher version 5 accepts a provider item for none of the canonical tracks when that item is a viable match for more than one of them, including when every slot shares a title and a runtime inside the 10s grace. A duplicate listing of one track still matches. Two distinct provider items that share a title or an ISRC still match both slots. The planner assigns one provider item to one track. A stored plan that still names a stale automatic match, or the same provider item twice, is blocked at download evaluation (`offer_refresh_required`, `ambiguous_offer`) before any bytes are fetched. Artist refresh replays stale automatic matches. Planning does not rematch inside the write gate.
+
 ## Type policy
 
 Filter on the release group: album, EP, single, compilation, live, remix. Apply filters before solving coverage. Provider availability does not put a group in scope. A wanted album with no offer stays wanted and unavailable.

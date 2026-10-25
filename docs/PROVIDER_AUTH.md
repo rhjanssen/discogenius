@@ -56,6 +56,11 @@ leaked mobile app id, and does not drive a browser login.
 - If a gw response sends a new `Set-Cookie` `arl`, that cookie is saved. The
   value is never logged.
 - Deezer downloads stay single-flight, with a short jitter between requests.
+- Album metadata resolve uses one `requests` session. The streamrip bridge
+  serializes that session (pool size 1, blocking). A full connection pool,
+  timeout, or traceback is a bounded same-offer retry and does not mark the
+  release unavailable. Not-found, auth, region, and quality failures stay
+  permanent. `max_connections` in the generated toml only limits file transfers.
 
 ## What Robert sees
 

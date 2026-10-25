@@ -165,3 +165,12 @@ not reselected. A null `managed_tag_fingerprint` opens that file once and then
 stores the catalogue hash. Commands without `fileWorkCheckpoint` keep today's
 fail-closed attempt budget. Imports are not replayed.
 
+## Offer provenance before bytes
+
+Download evaluation refuses a plan before the provider is called when an
+automatic match is older than the current matcher (`offer_refresh_required`)
+or when two tracks that still need a file share one provider item
+(`ambiguous_offer`). The import's exact-offer check stays in place. A file
+is not fetched only to be refused as ambiguous provenance. See
+`docs/CURATION_DEDUPLICATION.md`.
+
