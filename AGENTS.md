@@ -55,7 +55,10 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - **Hi-Res needs ffmpeg**: TIDAL ships hi-res as FLAC-in-MP4; tiddl extracts via
   ffmpeg.
 - **Matching**: one shared matcher scores slot-candidate tracks. Beware
-  camelCase vs snake_case differences between callers.
+  camelCase vs snake_case differences between callers. A matcher version bump
+  must not make stored automatic matches non-candidates. Readers keep using
+  them. The shared-item rule is applied to the stored rows, and a local replay
+  rewrites the cache without provider traffic. `matcher_version` is not a veto.
 - **Online catalog** (default) strips ISRC/UPC. Use local-MB mode for exact
   ISRC/UPC; otherwise match on MBID + duration + title distance.
 

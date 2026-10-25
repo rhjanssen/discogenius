@@ -167,10 +167,10 @@ fail-closed attempt budget. Imports are not replayed.
 
 ## Offer provenance before bytes
 
-Download evaluation refuses a plan before the provider is called when an
-automatic match is older than the current matcher (`offer_refresh_required`)
-or when two tracks that still need a file share one provider item
-(`ambiguous_offer`). The import's exact-offer check stays in place. A file
-is not fetched only to be refused as ambiguous provenance. See
-`docs/CURATION_DEDUPLICATION.md`.
+Download evaluation refuses a plan before the provider is called when the
+same provider edition still accepts that item for another canonical track, or
+when two tracks that still need a file share one provider item
+(`ambiguous_offer`). An older `matcher_version` is not a reason to wait.
+The import's exact-offer check stays in place. A file is not fetched only to
+be refused as ambiguous provenance. See `docs/CURATION_DEDUPLICATION.md`.
 
