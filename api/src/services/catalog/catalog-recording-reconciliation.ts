@@ -78,15 +78,13 @@ export function reconcileRecordingRedirects(db:Database.Database, tracks:readonl
             db.prepare("UPDATE TrackFiles SET canonical_recording_mbid=?,needs_rename=1 WHERE recording_id=?").run(newMbid,old.id);
             db.prepare("UPDATE TrackFiles SET recording_id=?,canonical_recording_mbid=?,needs_rename=1 WHERE canonical_recording_mbid=?")
                 .run(target.id,newMbid,oldMbid);
-            // Identical credits are already represented by the canonical target.
-            // Differing credits at the same ordinal still trigger rollback.
-            db.prepare(`DELETE FROM RecordingArtistCredits WHERE recording_id=? AND ordinal IN (
-                SELECT source.ordinal FROM RecordingArtistCredits source
-                JOIN RecordingArtistCredits destination ON destination.recording_id=? AND destination.ordinal=source.ordinal
-                WHERE source.recording_id=? AND source.artist_id=destination.artist_id
-                  AND source.credited_name=destination.credited_name AND source.join_phrase=destination.join_phrase
-                  AND source.role IS destination.role
-            )`).run(old.id,target.id,old.id);
+            // Recording credits are derived catalogue facts (MusicBrainz or the
+            // release-group fallback), never user decisions, and are rebuilt on
+            // refresh. The canonical target's credits win as a whole; the merged
+            // recording's credits only fill a target that has none. Mixing the
+            // two sets per ordinal would produce a credit list neither source has.
+            const targetHasCredits=db.prepare('SELECT 1 FROM RecordingArtistCredits WHERE recording_id=? LIMIT 1').get(target.id);
+            if(targetHasCredits) db.prepare('DELETE FROM RecordingArtistCredits WHERE recording_id=?').run(old.id);
             for(const [table,column] of RECORDING_OWNERS){
                 if(table==='Tracks') continue;
                 db.prepare(`UPDATE "${table}" SET "${column}"=? WHERE "${column}"=?`).run(target.id,old.id);

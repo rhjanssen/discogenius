@@ -184,8 +184,19 @@ test('claimed plans leave all ownership and waiting payloads unchanged',()=>fixt
     const id=plan();db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,command_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,123,'{}',1)").run(id);
     const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/owned by a download/);assert.equal(snapshot(),before);
 }));
+test('differing derived credits keep the canonical target credit list instead of blocking the merge',()=>fixture(()=>{
+    db.exec("INSERT INTO RecordingArtistCredits(recording_id,artist_id,ordinal,credited_name,join_phrase) VALUES(2,1,0,'Target credit',' & ')");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT recording_id,artist_id,ordinal,credited_name,join_phrase FROM RecordingArtistCredits').all(),[{recording_id:2,artist_id:1,ordinal:0,credited_name:'Target credit',join_phrase:' & '}]);
+    assert.deepEqual(db.prepare("SELECT recording_id FROM Tracks WHERE id=1").get(),{recording_id:2});
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('a target without credits inherits the merged recording credits',()=>fixture(()=>{
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT recording_id,artist_id,ordinal,credited_name FROM RecordingArtistCredits').all(),[{recording_id:2,artist_id:1,ordinal:0,credited_name:'Artist'}]);
+}));
 test('a uniqueness collision rolls back earlier owner transfers even when caught by caller',()=>fixture(()=>{
-    db.exec("INSERT INTO RecordingArtistCredits(recording_id,artist_id,ordinal,credited_name) VALUES(2,1,0,'Conflicting credit')");
+    db.exec("INSERT INTO RecordingRelations(source_recording_id,target_recording_id,source_foreign_recording_id,target_foreign_recording_id,relation_type) VALUES(2,3,'new','other','version')");
     const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/UNIQUE/);assert.equal(snapshot(),before);
 }));
 test('standalone waiting intent and inconsistent file identities are preserved for reconciliation',()=>fixture(()=>{

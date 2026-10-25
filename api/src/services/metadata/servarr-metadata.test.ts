@@ -694,11 +694,33 @@ for (const recordingRedirect of [false,true]) test(`catalog occurrence replaceme
   } finally {db.prepare('DELETE FROM TrackFiles WHERE id=?').run(fileId);}
 });
 
-test("a conflicting recording credit leaves the release group incomplete instead of failing the refresh", async () => {
-  resetCatalog();
+function redirectFixture() {
   const { db } = dbModule;
   const payload = twoTrackPayload();
   fetchReturning(payload);
+  return { db, payload };
+}
+
+test("a preserved identity conflict leaves the release group incomplete instead of failing the refresh", async () => {
+  resetCatalog();
+  const { db, payload } = redirectFixture();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  db.prepare(
+    "INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES ('redirect-target', 'Redirect target', 'artist-mbid', 1)",
+  ).run();
+  const before = db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get();
+  Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get(), before);
+  assert.ok(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original));
+  assert.equal((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+});
+
+test("differing derived recording credits do not block a MusicBrainz recording merge", async () => {
+  resetCatalog();
+  const { db, payload } = redirectFixture();
   await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
   const original = payload.Releases[0].Tracks[0].RecordingId;
   const artistId = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id;
@@ -709,15 +731,13 @@ test("a conflicting recording credit leaves the release group incomplete instead
   db.prepare("DELETE FROM RecordingArtistCredits WHERE recording_id = ?").run(source.id);
   db.prepare("INSERT INTO RecordingArtistCredits (recording_id, artist_id, ordinal, credited_name) VALUES (?, ?, 0, 'Source credit')").run(source.id, artistId);
   db.prepare("INSERT INTO RecordingArtistCredits (recording_id, artist_id, ordinal, credited_name) VALUES (?, ?, 0, 'Other credit')").run(targetId, artistId);
-  const before = db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get();
   Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
   fetchReturning(payload);
   await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
-  assert.deepEqual(db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get(), before);
-  assert.ok(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original));
-  assert.equal((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null);
-  assert.equal((db.prepare("SELECT credited_name FROM RecordingArtistCredits WHERE recording_id = ?").get(source.id) as { credited_name: string }).credited_name, "Source credit");
-  assert.equal((db.prepare("SELECT credited_name FROM RecordingArtistCredits WHERE recording_id = ?").get(targetId) as { credited_name: string }).credited_name, "Other credit");
+  assert.deepEqual(db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get(), { recording_mbid: "redirect-target" });
+  assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original), undefined);
+  assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+  assert.deepEqual(db.prepare("SELECT credited_name FROM RecordingArtistCredits WHERE recording_id = ?").all(targetId), [{ credited_name: "Other credit" }]);
 });
 
 function addOwnedTrack(trackMbid: string): number {
