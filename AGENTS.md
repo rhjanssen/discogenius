@@ -58,7 +58,12 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   camelCase vs snake_case differences between callers. A matcher version bump
   must not make stored automatic matches non-candidates. Readers keep using
   them. The shared-item rule is applied to the stored rows, and a local replay
-  rewrites the cache without provider traffic. `matcher_version` is not a veto.
+  rewrites the cache without provider traffic. `matcher_version` is not a veto
+  and it stays inside the acquisition-plan fingerprint. A replay that finds
+  the same automatic assignments updates that hash and the version stamp; it
+  does not rebuild the plan. An acquisition plan owned by a download or import
+  defers only the release being rewritten. It is retried later. It is not a
+  process-lifetime failure, and it must not roll back the rest of the batch.
 - **Online catalog** (default) strips ISRC/UPC. Use local-MB mode for exact
   ISRC/UPC; otherwise match on MBID + duration + title distance.
 
@@ -161,7 +166,7 @@ from. Same reason `foreign_release_id` keeps its name.
   `TrackFiles.id` it produced; callers never re-find rows by `provider_id`, and
   never position-match two lists. Missing or ambiguous identity is an error.
 - Never assume one selected edition per album.
-- Every acquisition plan is mono-provider. A composite may use several editions from one provider, never TIDAL plus Deezer (or any other cross-provider mix).
+- Every acquisition plan is mono-provider. A composite may use several editions from one provider, never TIDAL plus Deezer (or any other cross-provider mix). A per-track fallback inside an album download stays on the command provider. A whole-album fallback switches the provider and remaps every offer.
 - **MusicBrainz / the configured catalog provider is the source of truth for
   audio.** Video recordings are catalog identity with a MusicBrainz `mbid`
   and/or a YouTube `youtube_video_id`. Public YouTube listing is core catalog
