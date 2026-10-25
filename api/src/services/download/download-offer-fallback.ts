@@ -1,5 +1,4 @@
 import { db } from "../../database.js";
-import { PROVIDER_TRACK_MATCHER_VERSION } from "../music/provider-track-matcher.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import {
   compareAudioOffersByQualityThenProvider,
@@ -209,10 +208,6 @@ export function listRankedTrackOffers(options: {
      AND ${availabilitySql("variant.availability")}
     WHERE item.entity_type = 'track'
       AND (
-        track_match.decision_source <> 'automatic'
-        OR track_match.matcher_version >= ?
-      )
-      AND (
         (? != '' AND track.mbid = ?)
         OR (? != '' AND recording.mbid = ?)
       )
@@ -225,7 +220,7 @@ export function listRankedTrackOffers(options: {
       )
       AND ${availabilitySql("item.availability")}
       AND (parent.id IS NULL OR ${availabilitySql("parent.availability")})
-  `).all(PROVIDER_TRACK_MATCHER_VERSION, trackMbid, trackMbid, recordingMbid, recordingMbid) as AudioOfferRow[];
+  `).all(trackMbid, trackMbid, recordingMbid, recordingMbid) as AudioOfferRow[];
 
   const slot = String(options.librarySlot || "stereo").trim().toLowerCase();
   if (slot === "spatial") {
@@ -301,10 +296,6 @@ export function listRankedAlbumTrackOffers(options: {
       ON variant.provider_item_id = item.id
      AND ${availabilitySql("variant.availability")}
     WHERE track_match.match_state = 'accepted'
-      AND (
-        track_match.decision_source <> 'automatic'
-        OR track_match.matcher_version >= ?
-      )
       AND item.provider = ?
       AND parent.provider = ?
       AND CAST(parent.provider_id AS TEXT) = CAST(? AS TEXT)
@@ -315,7 +306,6 @@ export function listRankedAlbumTrackOffers(options: {
       AND ${availabilitySql("item.availability")}
       AND ${availabilitySql("parent.availability")}
   `).all(
-    PROVIDER_TRACK_MATCHER_VERSION,
     provider,
     provider,
     providerAlbumId,

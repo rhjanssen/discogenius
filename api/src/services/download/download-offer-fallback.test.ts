@@ -494,7 +494,7 @@ test("listRankedVideoOffers prefers resolution, then codec, then provider priori
   }
 });
 
-test("a stale automatic track match is not a download fallback", () => {
+test("an older automatic track match stays a download fallback", () => {
   seedCanonicalAlbum(db, {
     releaseGroupMbid: "rg-stale", releaseMbid: "rel-stale",
     artistMbid: "artist-stale", artistName: "Bastille", title: "Wild Life",
@@ -506,10 +506,8 @@ test("a stale automatic track match is not a download fallback", () => {
     variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
   });
   db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 3, decision_source = 'automatic'").run();
-  assert.deepEqual(listRankedTrackOffers({ trackMbid: "t-stale", recordingMbid: "r-stale" }), []);
-  assert.deepEqual(listRankedAlbumTrackOffers({
+  assert.equal(listRankedTrackOffers({ trackMbid: "t-stale", recordingMbid: "r-stale" })[0]?.providerId, "td-stale-t");
+  assert.equal(listRankedAlbumTrackOffers({
     provider: "tidal", providerAlbumId: "td-stale", trackMbid: "t-stale", recordingMbid: "r-stale",
-  }), []);
-  db.prepare("UPDATE ProviderTrackMatches SET decision_source = 'manual'").run();
-  assert.equal(listRankedTrackOffers({ trackMbid: "t-stale" })[0]?.providerId, "td-stale-t");
+  })[0]?.providerId, "td-stale-t");
 });

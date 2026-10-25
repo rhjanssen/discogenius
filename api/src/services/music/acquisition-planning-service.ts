@@ -11,7 +11,6 @@ import {
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { resourceAcquisitionPlanKey, persistedResourceAcquisitionPlanKey } from "./acquisition-plan-identity.js";
-import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import {
   editionMixFormatWithRecordings,
   editionRendition,
@@ -27,10 +26,14 @@ import {
  * never reaches a plan that was already current. Callers persist this version
  * with the plan; a mismatch recomputes.
  *
- * 2: automatic matches older than the current track matcher are not candidates,
- *    and one provider item is assigned to at most one track.
+ * 2: superseded before deploy. It dropped every automatic match older than the
+ *    current matcher, which empties the candidate set on a version bump.
+ * 3: a stored automatic match of any matcher version stays a candidate. One
+ *    provider item the stored matches offer for more than one canonical track
+ *    is a candidate for none of them. A duplicate listing of one track stays.
+ *    One provider item is still assigned to at most one track.
  */
-export const ACQUISITION_PLANNER_VERSION = 2;
+export const ACQUISITION_PLANNER_VERSION = 3;
 
 const QUALITY_VALUES = new Set<NormalizedAudioQuality>([
   "lossy",
@@ -90,6 +93,28 @@ interface PlanningContextRow {
   edition_disambiguation: string | null;
 }
 
+/**
+ * One automatic provider item offered for more than one canonical track is a
+ * candidate for none of them. Manual rows stay. A duplicate listing of one
+ * track (one track id) stays. Variant rows of the same edge do not multiply
+ * the track set.
+ */
+function dropSharedItemCandidates(rows: readonly CandidateRow[]): CandidateRow[] {
+  const automaticTracksByItem = new Map<number, Set<number>>();
+  for (const row of rows) {
+    if (row.decision_source === "manual") continue;
+    const tracks = automaticTracksByItem.get(row.provider_item_id) ?? new Set<number>();
+    tracks.add(row.track_id);
+    automaticTracksByItem.set(row.provider_item_id, tracks);
+  }
+  const blocked = new Set<number>();
+  for (const [itemId, tracks] of automaticTracksByItem) {
+    if (tracks.size > 1) blocked.add(itemId);
+  }
+  if (blocked.size === 0) return [...rows];
+  return rows.filter((row) => row.decision_source === "manual" || !blocked.has(row.provider_item_id));
+}
+
 interface CandidateRow {
   provider: string;
   provider_edition_match_id: number;
@@ -100,6 +125,7 @@ interface CandidateRow {
   provider_item_id: number;
   provider_track_match_id: number;
   matcher_version: number;
+  decision_source: string;
   track_id: number;
   track_explicit: number | null;
   track_variant_id: number | null;
@@ -249,7 +275,7 @@ export class AcquisitionPlanningService {
     };
 
     const planTimer = createCurationPhaseTimer();
-    const rows = planTimer.phase(`plan:candidate-sql[ed${input.editionId}]`, () => this.db.prepare(`
+    const loadedRows = planTimer.phase(`plan:candidate-sql[ed${input.editionId}]`, () => this.db.prepare(`
       -- Which provider tracks may source this Edition's Tracks.
       --
       -- Anchored on the target Edition's Recordings, not on provider albums
@@ -288,10 +314,6 @@ export class AcquisitionPlanningService {
         JOIN ProviderTrackMatches track_match
           ON track_match.track_id = source_track.id
          AND track_match.match_state = 'accepted'
-         AND (
-           track_match.decision_source <> 'automatic'
-           OR track_match.matcher_version >= ?
-         )
       ),
       -- Tier 2: two provider tracks carrying the SAME ISRC.
       --
@@ -352,10 +374,6 @@ export class AcquisitionPlanningService {
         JOIN ProviderTrackMatches sibling_match
           ON sibling_match.provider_edition_member_id = sibling_member.id
          AND sibling_match.match_state = 'accepted'
-         AND (
-           sibling_match.decision_source <> 'automatic'
-           OR sibling_match.matcher_version >= ?
-         )
         WHERE sibling_edition.release_group_id = (
           SELECT release_group_id FROM AlbumEditions WHERE id = ?
         )
@@ -382,6 +400,7 @@ export class AcquisitionPlanningService {
         member.member_item_id AS provider_item_id,
         track_match.id AS provider_track_match_id,
         track_match.matcher_version AS matcher_version,
+        track_match.decision_source AS decision_source,
         target_track.id AS track_id,
         member_item.explicit AS track_explicit,
         track_variant.id AS track_variant_id,
@@ -424,21 +443,13 @@ export class AcquisitionPlanningService {
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
-      -- A stored automatic match is a cached verdict. One from an older matcher
-      -- is not evidence: artist refresh replays it, and until then another
-      -- provider's current match may cover the track. A manual decision stays.
-      AND (
-        track_match.decision_source <> 'automatic'
-        OR track_match.matcher_version >= ?
-      )
       ORDER BY release_match.id, target_track.id, track_match.id, track_variant.id, release_variant.id
-    `).all(
-      input.editionId,
-      PROVIDER_TRACK_MATCHER_VERSION,
-      PROVIDER_TRACK_MATCHER_VERSION,
-      input.editionId,
-      PROVIDER_TRACK_MATCHER_VERSION,
-    ) as CandidateRow[]);
+    `).all(input.editionId, input.editionId) as CandidateRow[]);
+    // Matcher version is a cache stamp, not a veto. A bump must not empty the
+    // candidate set. The shared-item rule is applied to the stored rows: one
+    // automatic provider item offered for more than one canonical track is a
+    // candidate for none of them. A duplicate listing of one track stays.
+    const rows = dropSharedItemCandidates(loadedRows);
 
     const sourceById = new Map<number, AcquisitionSourceCandidate>();
     const matchById = new Map<string, AcquisitionSourceCandidate["trackMatches"][number]>();
@@ -525,7 +536,7 @@ export class AcquisitionPlanningService {
       candidateDigest.update([
         row.provider_edition_match_id, row.relation, row.source_track_count,
         row.release_explicit, row.provider_edition_member_id, row.provider_item_id,
-        row.provider_track_match_id, row.matcher_version,
+        row.provider_track_match_id, row.matcher_version, row.decision_source,
         row.track_id, row.track_explicit,
         row.track_variant_id, row.track_quality, row.track_codec, row.track_bitrate,
         row.track_bit_depth, row.track_sample_rate, row.track_availability,

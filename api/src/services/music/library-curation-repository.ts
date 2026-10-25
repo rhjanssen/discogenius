@@ -290,30 +290,21 @@ export class LibraryCurationRepository {
       }
 
       // An Album row exists because at least one of its Editions is monitored.
-      // A whole-library pass rebuilds them all; a scoped pass may only retire
-      // the ones whose last Edition it just removed.
-      if (scopedArtistIds) {
-        this.db.prepare(`
-          DELETE FROM LibraryAlbums
-          WHERE library_id = ? AND locked = 0 AND selection_mode = 'auto'
-            AND NOT EXISTS (
-              SELECT 1
-              FROM LibraryEditions monitored_edition
-              JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-              WHERE monitored_edition.library_id = LibraryAlbums.library_id
-                AND edition.release_group_id = LibraryAlbums.release_group_id
-            )
-        `).run(input.libraryId);
-      } else {
-        this.db.prepare(`
-          DELETE FROM LibraryAlbums
-          WHERE library_id = ? AND locked = 0
-            AND (selection_mode = 'auto'
-                 ${overruledReleaseGroupIds.length === 0
-                   ? ""
-                   : `OR release_group_id IN (${overruledPlaceholders})`})
-        `).run(input.libraryId, ...overruledReleaseGroupIds);
-      }
+      // Retire an automatic album only once none of its editions remain. A
+      // file-backed edition this pass did not select stays monitored, and
+      // deleting its album would fail the invariant (or, if the check were
+      // skipped, let housekeeping treat the release as unmonitored).
+      this.db.prepare(`
+        DELETE FROM LibraryAlbums
+        WHERE library_id = ? AND locked = 0 AND selection_mode = 'auto'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM LibraryEditions monitored_edition
+            JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+            WHERE monitored_edition.library_id = LibraryAlbums.library_id
+              AND edition.release_group_id = LibraryAlbums.release_group_id
+          )
+      `).run(input.libraryId);
 
       const insertGroup = this.db.prepare(`
         INSERT INTO LibraryAlbums (

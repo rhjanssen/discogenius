@@ -653,22 +653,33 @@ test("a removed provider track cannot remain in a composite acquisition plan", a
   }
 });
 
-test("one provider item is not offered twice and a stale match is not downloaded", async () => {
+test("an older automatic match still downloads, and one shared item is planned for neither track", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-shared-item-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
     await createActiveSchema(db);
     seedStandardDeluxeFixture(db);
+    db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 3, decision_source = 'automatic'").run();
+    const service = new AcquisitionPlanningService(db);
+    const args = { libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1 };
+    const stalePlanId = service.compute(args);
+    assert.ok(stalePlanId, "matcher version is not a candidate veto");
+    const staleEvaluation = evaluateAcquisitionDownload(db, stalePlanId!, { allowUnverifiedProjection: true });
+    assert.equal(staleEvaluation.status, "ready");
+    assert.ok(buildAcquisitionDownloadCommand(db, stalePlanId!));
+
+    // The stored plan's assignment identity must not be rebuilt against a
+    // member we are about to retarget. Clear it, then share the item.
+    db.prepare("UPDATE LibraryEditions SET preferred_plan_key = NULL WHERE id = 1").run();
+    db.exec("DELETE FROM AcquisitionPlans");
     db.prepare("UPDATE ProviderEditionMembers SET member_item_id = 101 WHERE id = 1002").run();
     db.prepare(`
       UPDATE ProviderTrackMatches SET provider_track_item_id = 101
       WHERE provider_edition_member_id = 1002
     `).run();
-    const service = new AcquisitionPlanningService(db);
-    const args = { libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1 };
     const planId = service.compute(args);
-    assert.ok(planId);
+    assert.ok(planId, "unique siblings still cover the edition");
     const identities = db.prepare(`
       SELECT item.provider || ':' || item.provider_id AS identity
       FROM AcquisitionPlanTracks plan_track
@@ -677,20 +688,71 @@ test("one provider item is not offered twice and a stale match is not downloaded
       JOIN ProviderItems item ON item.id = member.member_item_id
       WHERE plan_track.plan_id = ?
     `).all(planId) as Array<{ identity: string }>;
+    assert.equal(identities.some((row) => row.identity === "tidal:standard-1"), false);
     assert.equal(new Set(identities.map((row) => row.identity)).size, identities.length);
     const offers = buildAcquisitionDownloadCommand(db, planId!)?.body.trackOffers ?? [];
+    assert.equal(offers.some((offer) => offer.providerTrackId === "standard-1"), false);
     assert.equal(new Set(offers.map((offer) => offer.providerTrackId)).size, offers.length);
 
-    db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 3, decision_source = 'automatic'").run();
+    db.prepare(`
+      UPDATE ProviderTrackMatches SET decision_source = 'manual'
+      WHERE provider_edition_match_id = 10
+    `).run();
+    db.prepare(`
+      UPDATE ProviderTrackMatches SET match_state = 'rejected'
+      WHERE provider_edition_match_id = 20
+    `).run();
+    const manualPlanId = service.compute(args);
+    assert.ok(manualPlanId, "a manual match stays usable at any matcher version");
+    const manualIdentities = db.prepare(`
+      SELECT item.provider_id AS provider_id
+      FROM AcquisitionPlanTracks plan_track
+      JOIN ProviderTrackMatches track_match ON track_match.id = plan_track.provider_track_match_id
+      JOIN ProviderEditionMembers member ON member.id = track_match.provider_edition_member_id
+      JOIN ProviderItems item ON item.id = member.member_item_id
+      WHERE plan_track.plan_id = ?
+    `).all(manualPlanId) as Array<{ provider_id: string }>;
+    assert.equal(manualIdentities.filter((row) => row.provider_id === "standard-1").length, 1);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a stored plan is blocked when the same edition still accepts that item for another track", async () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-same-edition-share-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    await createActiveSchema(db);
+    seedStandardDeluxeFixture(db);
+    db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 4").run();
+    const planId = new AcquisitionPlanningService(db).compute({
+      libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1,
+    });
+    assert.ok(planId);
+    db.prepare(`
+      INSERT INTO ProviderEditionMembers (
+        id, provider_edition_item_id, member_item_id, medium_position, position
+      ) VALUES (1099, 10, 101, 1, 9)
+    `).run();
+    db.prepare(`
+      INSERT INTO ProviderTrackMatches (
+        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
+        recording_id, match_state, decision_source, confidence, method, matcher_version
+      ) VALUES (5099, 101, 1099, 10, 1, 1, 'accepted', 'automatic', 1, 'fixture', 4)
+    `).run();
+    assert.equal(
+      evaluateAcquisitionDownload(db, planId!, { allowUnverifiedProjection: true }).status,
+      "ready",
+      "a duplicate listing of the same track is not a shared-item conflict",
+    );
+    db.prepare("UPDATE ProviderTrackMatches SET track_id = 2, recording_id = 2 WHERE id = 5099").run();
     assert.deepEqual(
       evaluateAcquisitionDownload(db, planId!, { allowUnverifiedProjection: true }),
-      { status: "blocked", reason: "offer_refresh_required" },
+      { status: "blocked", reason: "ambiguous_offer" },
     );
     assert.equal(buildAcquisitionDownloadCommand(db, planId!), null);
-    assert.equal(service.compute(args), null, "an older automatic verdict is not a candidate");
-
-    db.prepare("UPDATE ProviderTrackMatches SET decision_source = 'manual'").run();
-    assert.ok(service.compute(args), "a manual match stays usable at any matcher version");
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });
@@ -731,7 +793,7 @@ test("a stored plan that names one provider track for two slots is not downloade
   }
 });
 
-test("a stale automatic provider yields the plan to a current provider", async () => {
+test("an older automatic provider stays ahead of a current lower-priority provider", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-stale-fallback-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
@@ -782,7 +844,7 @@ test("a stale automatic provider yields the plan to a current provider", async (
     assert.ok(planId);
     assert.equal(
       (db.prepare("SELECT provider FROM AcquisitionPlans WHERE id = ?").get(planId) as { provider: string }).provider,
-      "qobuz",
+      "tidal",
     );
   } finally {
     db.close();
