@@ -13,6 +13,7 @@
  * to the badge.
  */
 import assert from "node:assert/strict";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import test, { after } from "node:test";
 import {
   closeActiveSchemaDb,
@@ -91,7 +92,7 @@ function ingestDualStreamRelease(provider: string, spatialFormat: string) {
       availability: "available",
     },
     canonicalReleaseId: 1,
-    matcherVersion: 1,
+    matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
     releaseAudioVariants: [
       {
         variantKey: "lossless",

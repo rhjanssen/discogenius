@@ -1289,3 +1289,47 @@ test("clean vs unknown plan explicitness ranks tie and keep provider priority", 
   });
   assert.equal(plansAppleFirst[0].provider, "apple-music");
 });
+
+test("one provider item fills one track and the other track falls back", () => {
+  const sharedItem = 42;
+  const plans = enumerateAcquisitionPlans({
+    orderedTrackIds: [1, 2],
+    profile: high,
+    providerPriority: ["tidal"],
+    sources: [{
+      provider: "tidal",
+      providerEditionMatchId: 1,
+      relation: "exact",
+      sourceTrackCount: 2,
+      albumDownloadSafe: true,
+      trackMatches: [
+        {
+          providerTrackMatchId: 1,
+          providerEditionMemberId: 11,
+          providerItemId: sharedItem,
+          trackId: 1,
+          variants: [{ id: 1, quality: "lossless", available: true }],
+        },
+        {
+          providerTrackMatchId: 2,
+          providerEditionMemberId: 12,
+          providerItemId: sharedItem,
+          trackId: 2,
+          variants: [{ id: 1, quality: "lossless", available: true }],
+        },
+        {
+          providerTrackMatchId: 3,
+          providerEditionMemberId: 13,
+          providerItemId: 99,
+          trackId: 2,
+          variants: [{ id: 2, quality: "lossless", available: true }],
+        },
+      ],
+    }],
+  });
+  assert.equal(plans.length, 1);
+  assert.deepEqual(
+    plans[0].tracks.map((track) => [track.trackId, track.providerEditionMemberId]),
+    [[1, 11], [2, 13]],
+  );
+});

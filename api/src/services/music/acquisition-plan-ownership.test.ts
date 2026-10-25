@@ -6,6 +6,7 @@ import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { ProviderMatchRepository } from "./provider-match-repository.js";
 
 import { assertAcquisitionPlansQuiescent } from "./acquisition-plan-ownership.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 
 const { tempDir } = prepareActiveSchemaEnv("plan-ownership");
 const { ProviderReleaseIngestionService } = await import("../providers/provider-release-ingestion-service.js");
@@ -29,7 +30,7 @@ function fixture(run: () => void): void {
       INSERT INTO ProviderItems(id,provider,entity_type,provider_id,title) VALUES(1,'tidal','release','source-release','Original'),(2,'tidal','track','source-track','Song');
       INSERT INTO ProviderEditionMembers(id,provider_edition_item_id,member_item_id,medium_position,position) VALUES(1,1,2,1,1);
       INSERT INTO ProviderEditionMatches(id,provider_edition_item_id,edition_id,relation,match_state,decision_source,confidence,method,matcher_version) VALUES(1,1,1,'exact','accepted','automatic',1,'proof',1);
-      INSERT INTO ProviderTrackMatches(id,provider_track_item_id,provider_edition_member_id,provider_edition_match_id,track_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,2,1,1,1,1,'accepted','automatic',1,'proof',1);
+      INSERT INTO ProviderTrackMatches(id,provider_track_item_id,provider_edition_member_id,provider_edition_match_id,track_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,2,1,1,1,1,'accepted','automatic',1,'proof',${PROVIDER_TRACK_MATCHER_VERSION});
       INSERT INTO ProviderItemAudioVariants(id,provider_item_id,variant_key,quality_class) VALUES(1,2,'lossless','lossless');
     `);
     db.prepare(`INSERT INTO AcquisitionPlans(id,library_id,edition_id,provider,composition,download_mode,state,plan_key,coverage,target_track_count,planner_version,policy_hash,computed_at)
@@ -98,7 +99,7 @@ for (const locked of [0, 1]) test(`provider refresh preserves the exact manual o
         AND COALESCE(provider,json_extract(payload,'$.provider'))=?`).all(library,'release','tidal') as Array<{detail:string}>;
     assert.ok(lookup.some(row => row.detail.includes('SEARCH') && row.detail.includes('idx_download_queue_waiting_intent')));
     assert.equal(lookup.some(row => row.detail.includes('SCAN')),false);
-    const result = new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:repeat+2,
+    const result = new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:PROVIDER_TRACK_MATCHER_VERSION,
       release:{provider:'tidal',entityType:'release',providerId:'source-release',title:'Refreshed source'},
       members:[{item:{provider:'tidal',entityType:'track',providerId:'source-track',title:'Song'},mediumPosition:1,position:1}]});
     assert.equal(result.acceptedTrackCount,1);
@@ -124,7 +125,7 @@ test("an unavailable manual offer retains its identity and refuses a waiting dow
     WHERE plan.library_id=?`).get(library);
   assert.deepEqual(selected,{state:'unavailable',plan_key:before.preferred_plan_key});
   assert.equal(resolveWaitingAcquisitionPlan(db,-1,{libraryId:library,releaseMbid:'release',provider:'tidal'},'tidal'),null);
-  new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:3,
+  new ProviderReleaseIngestionService(db).ingest({canonicalReleaseId:1,matcherVersion:PROVIDER_TRACK_MATCHER_VERSION,
     release:{provider:'tidal',entityType:'release',providerId:'source-release',title:'Returned source'},
     members:[{item:{provider:'tidal',entityType:'track',providerId:'source-track',title:'Song'},mediumPosition:1,position:1}]});
   const recovered = db.prepare(`SELECT plan.state,plan.plan_key FROM AcquisitionPlans plan JOIN LibraryEditions selected

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { emitLibraryUpdated } from "../commands/app-events.js";
-import { AcquisitionPlanningService, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
+import { ACQUISITION_PLANNER_VERSION, AcquisitionPlanningService, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { parseMediaFormats } from "./media-formats.js";
 import { editionRendition, planEligibleForEdition } from "./rendition-policy.js";
@@ -681,7 +681,7 @@ export class LibraryReleaseSelectionService {
       libraryId: input.libraryId,
       editionId: input.editionId,
       providerPriority: getAcquisitionProviderPriority(),
-      plannerVersion: 1,
+      plannerVersion: ACQUISITION_PLANNER_VERSION,
     });
     return this.getAvailability(input.releaseGroupMbid);
   }
@@ -864,7 +864,7 @@ export class LibraryReleaseSelectionService {
       libraryId: input.libraryId,
       editionId: input.editionId,
       providerPriority: getAcquisitionProviderPriority(),
-      plannerVersion: 1,
+      plannerVersion: ACQUISITION_PLANNER_VERSION,
       preferredProviderEditionMatchId: input.providerEditionMatchId,
     });
     if (input.providerEditionMatchId != null) {

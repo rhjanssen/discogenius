@@ -1,4 +1,5 @@
 import { after } from "node:test";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 /**
  * Release status decides which *Editions* automatic curation may choose. It
  * never removes a Release Group from the discography.
@@ -85,7 +86,7 @@ function seedProviderExactMatch(
       INSERT INTO ProviderTrackMatches (
         id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', ${PROVIDER_TRACK_MATCHER_VERSION})
     `).run(trackMatchId, providerTrackItemId, memberId, releaseMatchId, trackId, recordingId);
   });
 }

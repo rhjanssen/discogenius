@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import test, { after } from "node:test";
 import {
   closeActiveSchemaDb,
@@ -72,7 +73,7 @@ test("manual library selection pins the exact provider edition on the active sch
         availability: "available",
       },
       canonicalReleaseId: 1,
-      matcherVersion: 1,
+      matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
       releaseAudioVariants: [{
         variantKey: "lossless",
         qualityClass: "lossless",
@@ -114,7 +115,7 @@ test("manual library selection pins the exact provider edition on the active sch
         availability: "available",
       },
       canonicalReleaseId: 1,
-      matcherVersion: 1,
+      matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
       releaseAudioVariants: [{
         variantKey: "hires",
         qualityClass: "hires-lossless",
@@ -537,7 +538,7 @@ test("getAvailability returns authoritative displayQuality for Atmos selected va
         availability: "available",
       },
       canonicalReleaseId: 1,
-      matcherVersion: 1,
+      matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
       releaseAudioVariants: [{
         variantKey: "atmos-key",
         qualityClass: "spatial",

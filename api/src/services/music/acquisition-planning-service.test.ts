@@ -5,6 +5,7 @@ import path from "node:path";
 import test, { after } from "node:test";
 import Database from "better-sqlite3";
 import { prepareActiveSchemaEnv, createActiveSchema, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 const { tempDir: activeTempDir } = prepareActiveSchemaEnv("planning-active");
 const activeDbModule = await import("../../database.js");
 after(() => closeActiveSchemaDb(activeDbModule, activeTempDir));
@@ -115,7 +116,7 @@ db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title, artist_mbid
       INSERT INTO ProviderTrackMatches (
         id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, 10, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+      ) VALUES (?, ?, ?, 10, ?, ?, 'accepted', 'automatic', 1, 'fixture', ${PROVIDER_TRACK_MATCHER_VERSION})
     `).run(5000 + trackId, 100 + trackId, 1000 + trackId, trackId, trackId);
   }
   for (let trackId = 1; trackId <= 3; trackId += 1) {
@@ -123,7 +124,7 @@ db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title, artist_mbid
       INSERT INTO ProviderTrackMatches (
         id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, 20, ?, ?, 'accepted', 'automatic', 0.95, 'fixture', 1)
+      ) VALUES (?, ?, ?, 20, ?, ?, 'accepted', 'automatic', 0.95, 'fixture', ${PROVIDER_TRACK_MATCHER_VERSION})
     `).run(6000 + trackId, 200 + trackId, 3000 + trackId, trackId, trackId);
   }
   return 1;
@@ -400,13 +401,13 @@ db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title, artist_mbid
       INSERT INTO ProviderTrackMatches (
         id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
         track_id, recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, 10, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+      ) VALUES (?, ?, ?, 10, ?, ?, 'accepted', 'automatic', 1, 'fixture', ${PROVIDER_TRACK_MATCHER_VERSION})
     `).run(5000 + position, 100 + position, 1000 + position, position, position);
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
         id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
         track_id, recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, 20, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+      ) VALUES (?, ?, ?, 20, ?, ?, 'accepted', 'automatic', 1, 'fixture', ${PROVIDER_TRACK_MATCHER_VERSION})
     `).run(6000 + position, 200 + position, 3000 + position, 10 + position, 10 + position);
   }
 }
@@ -646,6 +647,143 @@ test("a removed provider track cannot remain in a composite acquisition plan", a
       WHERE item.provider_id = 'deluxe-1'
     `).all();
     assert.equal(chosen.length, 0, "a positive variant cannot override an unavailable resource");
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("one provider item is not offered twice and a stale match is not downloaded", async () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-shared-item-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    await createActiveSchema(db);
+    seedStandardDeluxeFixture(db);
+    db.prepare("UPDATE ProviderEditionMembers SET member_item_id = 101 WHERE id = 1002").run();
+    db.prepare(`
+      UPDATE ProviderTrackMatches SET provider_track_item_id = 101
+      WHERE provider_edition_member_id = 1002
+    `).run();
+    const service = new AcquisitionPlanningService(db);
+    const args = { libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1 };
+    const planId = service.compute(args);
+    assert.ok(planId);
+    const identities = db.prepare(`
+      SELECT item.provider || ':' || item.provider_id AS identity
+      FROM AcquisitionPlanTracks plan_track
+      JOIN ProviderTrackMatches track_match ON track_match.id = plan_track.provider_track_match_id
+      JOIN ProviderEditionMembers member ON member.id = track_match.provider_edition_member_id
+      JOIN ProviderItems item ON item.id = member.member_item_id
+      WHERE plan_track.plan_id = ?
+    `).all(planId) as Array<{ identity: string }>;
+    assert.equal(new Set(identities.map((row) => row.identity)).size, identities.length);
+    const offers = buildAcquisitionDownloadCommand(db, planId!)?.body.trackOffers ?? [];
+    assert.equal(new Set(offers.map((offer) => offer.providerTrackId)).size, offers.length);
+
+    db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 3, decision_source = 'automatic'").run();
+    assert.deepEqual(
+      evaluateAcquisitionDownload(db, planId!, { allowUnverifiedProjection: true }),
+      { status: "blocked", reason: "offer_refresh_required" },
+    );
+    assert.equal(buildAcquisitionDownloadCommand(db, planId!), null);
+    assert.equal(service.compute(args), null, "an older automatic verdict is not a candidate");
+
+    db.prepare("UPDATE ProviderTrackMatches SET decision_source = 'manual'").run();
+    assert.ok(service.compute(args), "a manual match stays usable at any matcher version");
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a stored plan that names one provider track for two slots is not downloaded", async () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-ambiguous-offer-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    await createActiveSchema(db);
+    seedStandardDeluxeFixture(db);
+    const planId = new AcquisitionPlanningService(db).compute({
+      libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1,
+    });
+    assert.ok(planId);
+    db.prepare(`
+      UPDATE ProviderEditionMembers
+      SET member_item_id = (
+        SELECT member.member_item_id
+        FROM AcquisitionPlanTracks plan_track
+        JOIN ProviderTrackMatches track_match ON track_match.id = plan_track.provider_track_match_id
+        JOIN ProviderEditionMembers member ON member.id = track_match.provider_edition_member_id
+        WHERE plan_track.plan_id = ?
+        ORDER BY plan_track.track_id
+        LIMIT 1
+      )
+    `).run(planId);
+    assert.deepEqual(
+      evaluateAcquisitionDownload(db, planId!, { allowUnverifiedProjection: true }),
+      { status: "blocked", reason: "ambiguous_offer" },
+    );
+    assert.equal(buildAcquisitionDownloadCommand(db, planId!), null);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a stale automatic provider yields the plan to a current provider", async () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-stale-fallback-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    await createActiveSchema(db);
+    seedStandardDeluxeFixture(db);
+    db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 3").run();
+    db.prepare(`
+      INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
+      VALUES (30, 'qobuz', 'release', 'qobuz-album', 'Album A', 'available')
+    `).run();
+    db.prepare(`
+      INSERT INTO ProviderEditionMatches (
+        id, provider_edition_item_id, edition_id, relation, match_state,
+        decision_source, confidence, method, matcher_version,
+        matched_track_count, source_track_count, target_track_count,
+        source_coverage, target_coverage
+      ) VALUES (30, 30, 1, 'exact', 'accepted', 'automatic', 1, 'fixture', ?, 4, 4, 4, 1, 1)
+    `).run(PROVIDER_TRACK_MATCHER_VERSION);
+    for (let trackId = 1; trackId <= 4; trackId += 1) {
+      db.prepare(`
+        INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
+        VALUES (?, 'qobuz', 'track', ?, ?, 'available')
+      `).run(300 + trackId, `qobuz-${trackId}`, `Qobuz ${trackId}`);
+      db.prepare(`
+        INSERT INTO ProviderEditionMembers (
+          id, provider_edition_item_id, member_item_id, medium_position, position
+        ) VALUES (?, 30, ?, 1, ?)
+      `).run(8000 + trackId, 300 + trackId, trackId);
+      db.prepare(`
+        INSERT INTO ProviderItemAudioVariants (
+          id, provider_item_id, variant_key, quality_class, availability
+        ) VALUES (?, ?, 'lossless', 'lossless', 'available')
+      `).run(5000 + trackId, 300 + trackId);
+      db.prepare(`
+        INSERT INTO ProviderTrackMatches (
+          id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
+          recording_id, match_state, decision_source, confidence, method, matcher_version
+        ) VALUES (?, ?, ?, 30, ?, ?, 'accepted', 'automatic', 1, 'fixture', ?)
+      `).run(
+        7000 + trackId, 300 + trackId, 8000 + trackId, trackId, trackId,
+        PROVIDER_TRACK_MATCHER_VERSION,
+      );
+    }
+    const planId = new AcquisitionPlanningService(db).compute({
+      libraryId: 1, editionId: 1, providerPriority: ["tidal", "qobuz"], plannerVersion: 1,
+    });
+    assert.ok(planId);
+    assert.equal(
+      (db.prepare("SELECT provider FROM AcquisitionPlans WHERE id = ?").get(planId) as { provider: string }).provider,
+      "qobuz",
+    );
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });

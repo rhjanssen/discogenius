@@ -10,6 +10,7 @@ import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { prepareActiveSchemaEnv, closeActiveSchemaDb } from "../../test-support/active-schema-fixture.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 const { tempDir: activeTempDir } = prepareActiveSchemaEnv("curation-files-active");
 const activeDbModule = await import("../../database.js");
 const { createBaselineSchemaV41 } = activeDbModule;
@@ -75,7 +76,7 @@ function seedProviderExactMatch(
       INSERT INTO ProviderTrackMatches (
         id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', ${PROVIDER_TRACK_MATCHER_VERSION})
     `).run(trackMatchId, providerTrackItemId, memberId, releaseMatchId, trackId, recordingId);
   });
 }

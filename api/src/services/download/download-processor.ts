@@ -225,6 +225,12 @@ export function remapAlbumTrackOffersForFallback(
         if (candidates.length !== 1) return null;
         remapped.push(applyFallbackTrackOffer(current, candidates[0]));
     }
+    const identities = new Set<string>();
+    for (const offer of remapped) {
+      const identity = `${offer.provider}:${offer.providerTrackId}`;
+      if (identities.has(identity)) return null;
+      identities.add(identity);
+    }
     return remapped;
 }
 

@@ -37,6 +37,13 @@ export interface AcquisitionAudioVariant {
 export interface AcquisitionTrackMatch {
   providerTrackMatchId: number;
   providerEditionMemberId: number;
+  /**
+   * The provider item this membership downloads. Two memberships can share it
+   * (one video standing in for two slots). When present, the item fills at
+   * most one track; a missing id is left alone so callers that only know the
+   * membership still plan.
+   */
+  providerItemId?: number | null;
   trackId: number;
   /** Provider-native explicit flag; null when the provider does not say. */
   explicit?: boolean | null;
@@ -118,6 +125,7 @@ interface TrackOption extends OptimizedAcquisitionTrack {
   cutoffSatisfied: boolean;
   relationRank: number;
   explicit: boolean | null;
+  providerItemId: number | null;
 }
 
 // planKey is derived once the plan is final, so candidates carry everything but.
@@ -897,6 +905,7 @@ function buildProviderPlans(
           cutoffSatisfied: cutoffSatisfied(profile, variant.quality),
           relationRank: relationRank[source.relation],
           explicit: optionExplicit,
+          providerItemId: match.providerItemId ?? null,
         };
         const options = optionsByTrack.get(match.trackId) || [];
         options.push(option);
@@ -922,15 +931,19 @@ function buildProviderPlans(
   const materialize = (allowedSourceIds: readonly number[]): CandidatePlan | null => {
     const allowedSources = new Set(allowedSourceIds);
     const usedMembers = new Set<number>();
+    const usedProviderItems = new Set<number>();
     const tracks: TrackOption[] = [];
     for (const trackId of orderedTrackIds) {
       const option = bestOption(
         (optionsByTrack.get(trackId) || []).filter((candidate) =>
           allowedSources.has(candidate.providerEditionMatchId)
-          && !usedMembers.has(candidate.providerEditionMemberId)),
+          && !usedMembers.has(candidate.providerEditionMemberId)
+          && (candidate.providerItemId == null
+            || !usedProviderItems.has(candidate.providerItemId))),
       );
       if (!option) continue;
       usedMembers.add(option.providerEditionMemberId);
+      if (option.providerItemId != null) usedProviderItems.add(option.providerItemId);
       tracks.push(option);
     }
     if (tracks.length === 0) return null;

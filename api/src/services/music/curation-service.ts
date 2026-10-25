@@ -2,7 +2,7 @@ import { db, withSqliteWriteGate } from "../../database.js";
 import {
   loadArtistMetadataIdentity,
 } from "./managed-artists.js";
-import { getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
+import { ACQUISITION_PLANNER_VERSION, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
 import { LibraryCurationService } from "./library-curation-service.js";
 import { curateArtistVideos } from "./video-curation-service.js";
 
@@ -80,7 +80,7 @@ export class CurationService {
       await withSqliteWriteGate(() => curation.curateLibrary({
         libraryId: library.id,
         curationVersion: 1,
-        acquisitionPlannerVersion: 1,
+        acquisitionPlannerVersion: ACQUISITION_PLANNER_VERSION,
         providerPriority,
         scope: { libraryArtistIds },
       }), "curation:audio-library");

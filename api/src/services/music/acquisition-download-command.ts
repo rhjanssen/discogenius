@@ -8,6 +8,7 @@ import {
 } from "../commands/command-bodies.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { formatTrackDisplayTitle } from "../../utils/display-title.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 
 interface PlanHeader {
   plan_id: number;
@@ -46,6 +47,8 @@ interface PlanTrack {
   position: number;
   provider_track_id: string;
   provider_track_item_id: number;
+  matcher_version: number;
+  decision_source: string;
   provider_release_id: string;
   provider_edition_item_id: number;
   provider_audio_variant_id: number;
@@ -212,6 +215,8 @@ export function evaluateAcquisitionDownload(
       track.position,
       member_item.provider_id AS provider_track_id,
       member_item.id AS provider_track_item_id,
+      track_match.matcher_version,
+      track_match.decision_source,
       release_item.provider_id AS provider_release_id,
       release_item.id AS provider_edition_item_id,
       plan_track.provider_audio_variant_id,
@@ -260,11 +265,30 @@ export function evaluateAcquisitionDownload(
     return { status: "blocked", reason: "missing_assignments" };
   }
 
+  const missingTracks = tracks.filter((track) => !track.complete);
+  // Already-imported tracks are not downloaded, so a stale match on a file
+  // that is present must not block verification. A track that would actually
+  // be fetched still has to rest on a current automatic verdict: otherwise the
+  // download spends the offer and the import refuses the file.
+  if (missingTracks.some((track) =>
+    track.decision_source === "automatic"
+    && track.matcher_version < PROVIDER_TRACK_MATCHER_VERSION
+  )) {
+    return { status: "blocked", reason: "offer_refresh_required" };
+  }
+  const offeredProviderTracks = new Set<string>();
+  for (const track of missingTracks) {
+    const identity = `${header.provider}:${track.provider_track_id}`;
+    if (offeredProviderTracks.has(identity)) {
+      return { status: "blocked", reason: "ambiguous_offer" };
+    }
+    offeredProviderTracks.add(identity);
+  }
+
   const forceTracks = requestedTrackIds.size > 0
     || header.download_mode === "tracks"
     || tracks.some((track) => Boolean(track.complete));
   const acquisitionMode: DownloadAlbumAcquisitionMode = forceTracks ? "trackOffers" : "album";
-  const missingTracks = tracks.filter((track) => !track.complete);
   const trackOffers: DownloadTrackOffer[] = missingTracks.map((track) => ({
     provider: header.provider,
     providerTrackId: track.provider_track_id,

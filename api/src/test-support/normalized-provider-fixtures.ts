@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "../services/music/provider-track-matcher.js";
 
 export interface AcceptedProviderTrackFixture {
   provider: string;
@@ -337,13 +338,14 @@ export function seedAcceptedProviderTrackMatch(
       provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
       track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
-    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test_fixture', ?)
   `).run(
     providerTrack.id,
     member.id,
     releaseMatch.providerEditionMatchId,
     track.id,
     track.recording_id,
+    PROVIDER_TRACK_MATCHER_VERSION,
   );
   const trackMatch = db.prepare(`
     SELECT id

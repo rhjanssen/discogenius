@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, test } from "node:test";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "../music/provider-track-matcher.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -232,7 +233,7 @@ test("listRankedTrackOffers accepts an exact parentless provider track match", (
       decisionSource: "automatic",
       confidence: 0.99,
       method: "isrc",
-      matcherVersion: 1,
+      matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
     },
   });
 
@@ -491,4 +492,24 @@ test("listRankedVideoOffers prefers resolution, then codec, then provider priori
   } finally {
     manager.getProviderPriority = originalPriority;
   }
+});
+
+test("a stale automatic track match is not a download fallback", () => {
+  seedCanonicalAlbum(db, {
+    releaseGroupMbid: "rg-stale", releaseMbid: "rel-stale",
+    artistMbid: "artist-stale", artistName: "Bastille", title: "Wild Life",
+    tracks: [{ trackMbid: "t-stale", recordingMbid: "r-stale", title: "Wild World" }],
+  });
+  seedAlbumOffer({
+    provider: "tidal", providerEditionId: "td-stale", providerTrackId: "td-stale-t",
+    releaseMbid: "rel-stale", trackMbid: "t-stale",
+    variants: [{ qualityClass: "lossless", providerQualityLabel: "LOSSLESS" }],
+  });
+  db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 3, decision_source = 'automatic'").run();
+  assert.deepEqual(listRankedTrackOffers({ trackMbid: "t-stale", recordingMbid: "r-stale" }), []);
+  assert.deepEqual(listRankedAlbumTrackOffers({
+    provider: "tidal", providerAlbumId: "td-stale", trackMbid: "t-stale", recordingMbid: "r-stale",
+  }), []);
+  db.prepare("UPDATE ProviderTrackMatches SET decision_source = 'manual'").run();
+  assert.equal(listRankedTrackOffers({ trackMbid: "t-stale" })[0]?.providerId, "td-stale-t");
 });

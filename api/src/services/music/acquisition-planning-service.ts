@@ -11,12 +11,26 @@ import {
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { resourceAcquisitionPlanKey, persistedResourceAcquisitionPlanKey } from "./acquisition-plan-identity.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import {
   editionMixFormatWithRecordings,
   editionRendition,
   planEligibleForEdition,
   planEligibleForMixFormat,
 } from "./rendition-policy.js";
+
+/**
+ * Bump when the planner's choice changes without the candidate rows changing.
+ *
+ * The fingerprint hashes those rows. A stored plan whose rows still match is
+ * reused, so an optimizer change such as "one provider item fills one track"
+ * never reaches a plan that was already current. Callers persist this version
+ * with the plan; a mismatch recomputes.
+ *
+ * 2: automatic matches older than the current track matcher are not candidates,
+ *    and one provider item is assigned to at most one track.
+ */
+export const ACQUISITION_PLANNER_VERSION = 2;
 
 const QUALITY_VALUES = new Set<NormalizedAudioQuality>([
   "lossy",
@@ -83,7 +97,9 @@ interface CandidateRow {
   source_track_count: number;
   release_explicit: number | null;
   provider_edition_member_id: number;
+  provider_item_id: number;
   provider_track_match_id: number;
+  matcher_version: number;
   track_id: number;
   track_explicit: number | null;
   track_variant_id: number | null;
@@ -272,6 +288,10 @@ export class AcquisitionPlanningService {
         JOIN ProviderTrackMatches track_match
           ON track_match.track_id = source_track.id
          AND track_match.match_state = 'accepted'
+         AND (
+           track_match.decision_source <> 'automatic'
+           OR track_match.matcher_version >= ?
+         )
       ),
       -- Tier 2: two provider tracks carrying the SAME ISRC.
       --
@@ -332,6 +352,10 @@ export class AcquisitionPlanningService {
         JOIN ProviderTrackMatches sibling_match
           ON sibling_match.provider_edition_member_id = sibling_member.id
          AND sibling_match.match_state = 'accepted'
+         AND (
+           sibling_match.decision_source <> 'automatic'
+           OR sibling_match.matcher_version >= ?
+         )
         WHERE sibling_edition.release_group_id = (
           SELECT release_group_id FROM AlbumEditions WHERE id = ?
         )
@@ -355,7 +379,9 @@ export class AcquisitionPlanningService {
         release_match.source_track_count,
         release_item.explicit AS release_explicit,
         member.id AS provider_edition_member_id,
+        member.member_item_id AS provider_item_id,
         track_match.id AS provider_track_match_id,
+        track_match.matcher_version AS matcher_version,
         target_track.id AS track_id,
         member_item.explicit AS track_explicit,
         track_variant.id AS track_variant_id,
@@ -398,8 +424,21 @@ export class AcquisitionPlanningService {
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
+      -- A stored automatic match is a cached verdict. One from an older matcher
+      -- is not evidence: artist refresh replays it, and until then another
+      -- provider's current match may cover the track. A manual decision stays.
+      AND (
+        track_match.decision_source <> 'automatic'
+        OR track_match.matcher_version >= ?
+      )
       ORDER BY release_match.id, target_track.id, track_match.id, track_variant.id, release_variant.id
-    `).all(input.editionId, input.editionId) as CandidateRow[]);
+    `).all(
+      input.editionId,
+      PROVIDER_TRACK_MATCHER_VERSION,
+      PROVIDER_TRACK_MATCHER_VERSION,
+      input.editionId,
+      PROVIDER_TRACK_MATCHER_VERSION,
+    ) as CandidateRow[]);
 
     const sourceById = new Map<number, AcquisitionSourceCandidate>();
     const matchById = new Map<string, AcquisitionSourceCandidate["trackMatches"][number]>();
@@ -423,6 +462,7 @@ export class AcquisitionPlanningService {
         trackMatch = {
           providerTrackMatchId: row.provider_track_match_id,
           providerEditionMemberId: row.provider_edition_member_id,
+          providerItemId: row.provider_item_id,
           trackId: row.track_id,
           explicit: row.track_explicit == null ? null : Boolean(row.track_explicit),
           variants: [],
@@ -484,7 +524,8 @@ export class AcquisitionPlanningService {
     for (const row of rows) {
       candidateDigest.update([
         row.provider_edition_match_id, row.relation, row.source_track_count,
-        row.release_explicit, row.provider_edition_member_id, row.provider_track_match_id,
+        row.release_explicit, row.provider_edition_member_id, row.provider_item_id,
+        row.provider_track_match_id, row.matcher_version,
         row.track_id, row.track_explicit,
         row.track_variant_id, row.track_quality, row.track_codec, row.track_bitrate,
         row.track_bit_depth, row.track_sample_rate, row.track_availability,
@@ -646,7 +687,7 @@ export interface MonitoredEditionRef {
 export function replanMonitoredEditions(
   db: Database.Database,
   editions: readonly MonitoredEditionRef[],
-  plannerVersion = 1,
+  plannerVersion = ACQUISITION_PLANNER_VERSION,
 ): number {
   if (editions.length === 0) return 0;
   const providerPriority = getAcquisitionProviderPriority();

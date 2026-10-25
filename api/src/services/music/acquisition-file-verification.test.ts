@@ -5,6 +5,7 @@ import {spawnSync} from 'node:child_process';
 import { after, beforeEach, test } from 'node:test';
 import { prepareActiveSchemaEnv, openActiveSchemaDb, closeActiveSchemaDb } from '../../test-support/active-schema-fixture.js';
 import { seedTestLibrary } from '../../test-support/library-fixtures.js';
+import { PROVIDER_TRACK_MATCHER_VERSION } from './provider-track-matcher.js';
 const { tempDir } = prepareActiveSchemaEnv('acquisition-file-verification');
 const { db, dbModule } = await openActiveSchemaDb();
 const { withVerifiedAcquisitionFiles, importedQualitySatisfies, importedFidelitySatisfies } = await import('./acquisition-file-verification.js');
@@ -28,7 +29,7 @@ db.exec(`
   INSERT INTO ProviderItems(id,provider,entity_type,provider_id,title) VALUES(1,'tidal','release','source-release','Bad Blood'),(2,'tidal','track','source-track','Pompeii');
   INSERT INTO ProviderEditionMembers(id,provider_edition_item_id,member_item_id,medium_position,position) VALUES(1,1,2,1,1);
   INSERT INTO ProviderEditionMatches(id,provider_edition_item_id,edition_id,relation,match_state,decision_source,confidence,method,matcher_version) VALUES(1,1,1,'exact','accepted','automatic',1,'proof',1);
-  INSERT INTO ProviderTrackMatches(id,provider_track_item_id,provider_edition_member_id,provider_edition_match_id,track_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,2,1,1,1,1,'accepted','automatic',1,'proof',1);
+  INSERT INTO ProviderTrackMatches(id,provider_track_item_id,provider_edition_member_id,provider_edition_match_id,track_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,2,1,1,1,1,'accepted','automatic',1,'proof',${PROVIDER_TRACK_MATCHER_VERSION});
   INSERT INTO ProviderItemAudioVariants(id,provider_item_id,variant_key,quality_class,bit_depth,sample_rate,codec) VALUES(1,2,'lossless','lossless',16,44100,'flac');
 `);
 db.prepare(`INSERT INTO AcquisitionPlans(id,library_id,edition_id,provider,composition,download_mode,state,plan_key,coverage,target_track_count,planner_version,policy_hash,computed_at)

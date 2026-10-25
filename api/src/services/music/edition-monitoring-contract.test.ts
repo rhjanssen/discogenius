@@ -16,6 +16,7 @@
  *   Apple standard    — exact match to standard, and a SUBSET match to deluxe
  */
 import assert from "node:assert/strict";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import test, { after } from "node:test";
 import {
   closeActiveSchemaDb,
@@ -107,7 +108,7 @@ function ingestProviderEdition(input: {
       availability: "available",
     },
     canonicalReleaseId: input.canonicalReleaseId,
-    matcherVersion: 1,
+    matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
     releaseAudioVariants: [{
       variantKey: input.quality,
       qualityClass: input.quality,
