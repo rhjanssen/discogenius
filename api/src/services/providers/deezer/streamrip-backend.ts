@@ -69,6 +69,8 @@ export function renderStreamripConfig(arl: string): string {
 folder = "/downloads"
 source_subdirectories = false
 disc_subdirectories = false
+# max_connections limits file transfers only. Deezer metadata resolve shares
+# one requests session and is serialized in streamrip-bridge.py.
 concurrency = false
 max_connections = 1
 requests_per_minute = 20
@@ -267,6 +269,9 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
     } else if (/quality.*(?:unavailable|not available|restricted)|format.*not available/iu.test(line)) {
       kind = "quality";
     } else if (/domain name not found|name resolution|enotfound|eai_again|dns/iu.test(line)) {
+      kind = "transient";
+      permanent = false;
+    } else if (/connection pool is full|httpsconnectionpool|httpconnectionpool|max retries exceeded|discarding connection/iu.test(line)) {
       kind = "transient";
       permanent = false;
     } else if (/not found|no longer available|unavailable/iu.test(line)) {

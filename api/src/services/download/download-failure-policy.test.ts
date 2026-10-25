@@ -21,6 +21,32 @@ test("classifyDownloadFailure treats tiddl exit-1 / traceback as transient", () 
   assert.equal(classifyDownloadFailure(new Error("429 Too Many Requests")), "transient");
 });
 
+test("a Deezer connection pool failure wrapped as not available is retried", async () => {
+  const wrapped = new Error(
+    "streamrip exited with code 1: Track 3135553 not available for stream on deezer: Connection pool is full",
+  );
+  assert.equal(classifyDownloadFailure(wrapped), "transient");
+  assert.equal(classifyDownloadFailure(new Error("HTTPSConnectionPool(host='api.deezer.com'): Max retries exceeded")), "transient");
+  assert.equal(classifyDownloadFailure(new Error("Traceback (most recent call last): Connection pool is full, discarding connection")), "transient");
+  let calls = 0;
+  const result = await executeWithSameOfferRetries({ sleep: async () => undefined }, async () => {
+    calls += 1;
+    if (calls < 3) throw wrapped;
+    return "file";
+  });
+  assert.equal(result, "file");
+  assert.equal(calls, 3);
+});
+
+test("catalogue, region, and entitlement failures stay permanent beside transport wording", () => {
+  assert.equal(classifyDownloadFailure(new Error("Track not available in your country")), "permanent");
+  assert.equal(classifyDownloadFailure(new Error("Traceback (most recent call last): track not found")), "permanent");
+  assert.equal(classifyDownloadFailure(new Error("Album unavailable")), "permanent");
+  assert.equal(classifyDownloadFailure(new Error("track no longer available")), "permanent");
+  assert.equal(classifyDownloadFailure(new Error("quality unavailable")), "permanent");
+  assert.equal(classifyDownloadFailure(new Error("Deezer requested quality unavailable: no media URL")), "permanent");
+});
+
 test("classifyDownloadFailure treats 404 / not found as permanent", () => {
   assert.equal(classifyDownloadFailure(new Error("tiddl exited with code 1: track not found")), "permanent");
   assert.equal(classifyDownloadFailure(new Error("HTTP 404 Not Found")), "permanent");
