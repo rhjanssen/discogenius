@@ -904,6 +904,119 @@ export class ProviderReleaseIngestionService {
   }
 
   /**
+   * True when this replay would store the same automatic assignments that are
+   * already on disk. A version bump can then skip match replacement.
+   *
+   * `write: null` counts as unchanged only when that edition has no automatic
+   * rows. A stale automatic match on an edition this pass did not decide is a
+   * change: UPC mode leaves those rows for retirement.
+   */
+  storedReplayAssignmentsUnchanged(plan: StoredReplayPlan): boolean {
+    const stored = this.db.prepare(`
+      SELECT edition_match.edition_id AS edition_id,
+             track_match.provider_edition_member_id AS member_id,
+             track_match.track_id AS track_id,
+             track_match.recording_id AS recording_id,
+             track_match.match_state AS match_state,
+             track_match.matcher_version AS matcher_version
+      FROM ProviderTrackMatches track_match
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.id = track_match.provider_edition_match_id
+      WHERE edition_match.provider_edition_item_id = ?
+        AND track_match.decision_source = 'automatic'
+    `).all(plan.providerEditionItemId) as Array<{
+      edition_id: number;
+      member_id: number;
+      track_id: number | null;
+      recording_id: number;
+      match_state: string;
+      matcher_version: number;
+    }>;
+    const decided = new Set(plan.decisions.map((decision) => decision.editionId));
+    if (stored.some((row) => row.matcher_version < plan.matcherVersion && !decided.has(row.edition_id))) {
+      return false;
+    }
+    const key = (
+      memberId: number,
+      trackId: number | null,
+      recordingId: number,
+      matchState: string,
+    ) => `${memberId}\u0001${trackId ?? ""}\u0001${recordingId}\u0001${matchState}`;
+    for (const decision of plan.decisions) {
+      const actual = stored
+        .filter((row) => row.edition_id === decision.editionId)
+        .map((row) => key(row.member_id, row.track_id, row.recording_id, row.match_state))
+        .sort();
+      if (!decision.write) {
+        if (actual.length > 0) return false;
+        continue;
+      }
+      const proposed = decision.write.trackMatches
+        .map((match) => key(
+          match.providerEditionMemberId,
+          match.trackId,
+          match.recordingId,
+          match.matchState,
+        ))
+        .sort();
+      if (proposed.join("\u0002") !== actual.join("\u0002")) return false;
+    }
+    return true;
+  }
+
+  /** Automatic matches of decided editions that a version bump would touch. */
+  staleAutomaticMatchIds(plan: StoredReplayPlan): number[] {
+    const editionIds = plan.decisions
+      .filter((decision) => decision.write)
+      .map((decision) => decision.editionId);
+    if (editionIds.length === 0) return [];
+    return (this.db.prepare(`
+      SELECT track_match.id AS id
+      FROM ProviderTrackMatches track_match
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.id = track_match.provider_edition_match_id
+      WHERE edition_match.provider_edition_item_id = ?
+        AND edition_match.edition_id IN ${SQL_JSON_LIST}
+        AND track_match.decision_source = 'automatic'
+        AND track_match.matcher_version < ?
+      ORDER BY track_match.id
+    `).all(
+      plan.providerEditionItemId,
+      jsonList(editionIds),
+      plan.matcherVersion,
+    ) as Array<{ id: number }>).map((row) => row.id);
+  }
+
+  /**
+   * Stamp the current matcher version onto unchanged automatic rows.
+   * Does not invalidate plans. The caller updates policy hashes to match.
+   */
+  bumpStoredReplayVersion(plan: StoredReplayPlan): void {
+    const matchIds = this.staleAutomaticMatchIds(plan);
+    if (matchIds.length > 0) {
+      this.db.prepare(`
+        UPDATE ProviderTrackMatches
+        SET matcher_version = ?
+        WHERE id IN ${SQL_JSON_LIST}
+          AND decision_source = 'automatic'
+          AND matcher_version < ?
+      `).run(plan.matcherVersion, jsonList(matchIds), plan.matcherVersion);
+    }
+    const editionIds = plan.decisions
+      .filter((decision) => decision.write)
+      .map((decision) => decision.editionId);
+    if (editionIds.length === 0) return;
+    this.db.prepare(`
+      UPDATE ProviderEditionMatches
+      SET matcher_version = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE provider_edition_item_id = ?
+        AND decision_source = 'automatic'
+        AND match_state = 'accepted'
+        AND edition_id IN ${SQL_JSON_LIST}
+    `).run(plan.matcherVersion, plan.providerEditionItemId, jsonList(editionIds));
+  }
+
+  /**
    * Persist a prepared replay. SQL only: matching already ran outside the
    * write gate. The caller replans the returned editions in the same
    * transaction so a reader never sees the plans marked stale.

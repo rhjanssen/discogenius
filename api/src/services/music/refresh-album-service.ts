@@ -1,6 +1,7 @@
 import { tidalTrackAvailability } from "../providers/tidal/tidal-availability.js";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { replanMonitoredEditions } from "./acquisition-planning-service.js";
+import { AcquisitionPlanInUseError } from "./acquisition-plan-ownership.js";
 import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import { AlbumRefreshLevel, type RefreshOptions } from "./scan-types.js";
 import { shouldRefreshAlbum as shouldRefreshAlbumPolicy, shouldRefreshTrackSet } from "../config/refresh-policy.js";
@@ -923,20 +924,33 @@ export class RefreshAlbumService {
         });
         if (!plan) return null;
 
-        return withSqliteWriteGate(() => db.transaction(() => {
-            const committed = service.commitStoredReplay(plan);
-            replanMonitoredEditions(db, committed.replan);
-            if (committed.retired > 0) {
-                console.log(
-                    `[RefreshAlbumService] Retired ${committed.retired} track match(es) for ${providerId}:${albumId} `
-                    + `that matcher version ${PROVIDER_TRACK_MATCHER_VERSION} did not reproduce`,
+        try {
+            return await withSqliteWriteGate(() => db.transaction(() => {
+                const committed = service.commitStoredReplay(plan);
+                replanMonitoredEditions(db, committed.replan);
+                if (committed.retired > 0) {
+                    console.log(
+                        `[RefreshAlbumService] Retired ${committed.retired} track match(es) for ${providerId}:${albumId} `
+                        + `that matcher version ${PROVIDER_TRACK_MATCHER_VERSION} did not reproduce`,
+                    );
+                }
+                return {
+                    acceptedTrackCount: committed.acceptedTrackCount,
+                    ambiguousTrackCount: committed.ambiguousTrackCount,
+                };
+            })(), `rematch-stored-release:${providerId}:${albumId}`);
+        } catch (error) {
+            if (error instanceof AcquisitionPlanInUseError) {
+                // The matches stay stale. The next refresh retries this release
+                // alone; committing them and skipping the replan would leave a
+                // download holding a plan whose sources just moved.
+                console.warn(
+                    `[RefreshAlbumService] deferring rematch of ${providerId}:${albumId}: ${error.message}`,
                 );
+                return null;
             }
-            return {
-                acceptedTrackCount: committed.acceptedTrackCount,
-                ambiguousTrackCount: committed.ambiguousTrackCount,
-            };
-        })(), `rematch-stored-release:${providerId}:${albumId}`);
+            throw error;
+        }
     }
 
     /**

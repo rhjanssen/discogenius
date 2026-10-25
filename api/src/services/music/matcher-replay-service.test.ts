@@ -226,3 +226,187 @@ test("a monitored edition with a missing file is replayed before an earlier stal
   assert.equal(needed.matcher_version, PROVIDER_TRACK_MATCHER_VERSION);
   assert.equal(early.matcher_version, 4);
 });
+
+function matcherVersion(trackMatchId: number): number {
+  return (db.prepare(
+    "SELECT matcher_version FROM ProviderTrackMatches WHERE id = ?",
+  ).get(trackMatchId) as { matcher_version: number }).matcher_version;
+}
+
+test("an in-use plan defers only its release and the replay continues", async () => {
+  resetStoredMatcherReplayForTests();
+  seedRelease({
+    editionId: 70,
+    releaseItemId: 700,
+    tracks: [
+      { trackId: 700, title: "Owned", position: 1, itemId: 1700, providerTrackId: "owned" },
+    ],
+  });
+  seedRelease({
+    editionId: 71,
+    releaseItemId: 710,
+    tracks: [
+      { trackId: 710, title: "Free", position: 1, itemId: 1710, providerTrackId: "free" },
+    ],
+  });
+  seedRelease({
+    editionId: 72,
+    releaseItemId: 720,
+    tracks: [
+      { trackId: 720, title: "Later", position: 1, itemId: 1720, providerTrackId: "later" },
+    ],
+  });
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = 'Stereo'").get() as { id: number };
+  const monitor = db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, reason, curation_version)
+    VALUES (?, ?, 'auto', 'fixture', 1)
+  `);
+  monitor.run(library.id, 70);
+  monitor.run(library.id, 71);
+  db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      id, library_id, edition_id, provider, composition, download_mode, state,
+      plan_key, coverage, target_track_count, planner_version, policy_hash, computed_at
+    ) VALUES (?, ?, 70, 'tidal', 'single_source', 'album', 'current', 'owned-70', 1, 1, 3, 'owned', CURRENT_TIMESTAMP)
+  `).run(7001, library.id);
+  db.prepare(`
+    INSERT INTO commands (name, payload, status)
+    VALUES ('DownloadAlbum', ?, 'started')
+  `).run(JSON.stringify({ acquisitionPlanId: 7001 }));
+
+  await replayMatcherVersionBatch({ limit: 6 });
+  assert.equal(matcherVersion(710), PROVIDER_TRACK_MATCHER_VERSION);
+  assert.equal(matcherVersion(700), 4);
+  assert.equal(matcherVersion(720), 4);
+
+  await replayMatcherVersionBatch({ limit: 6 });
+  assert.equal(matcherVersion(720), PROVIDER_TRACK_MATCHER_VERSION, "the cursor walk is not pinned by the in-use release");
+  assert.equal(matcherVersion(700), 4);
+
+  db.prepare("DELETE FROM commands WHERE json_extract(payload, '$.acquisitionPlanId') = 7001").run();
+  await replayMatcherVersionBatch({ limit: 6 });
+  assert.equal(matcherVersion(700), PROVIDER_TRACK_MATCHER_VERSION);
+});
+
+test("a version-only replay bumps the plan hash without rebuilding it", async () => {
+  resetStoredMatcherReplayForTests();
+  seedRelease({
+    editionId: 80,
+    releaseItemId: 800,
+    tracks: [
+      { trackId: 800, title: "Steady", position: 1, itemId: 1800, providerTrackId: "steady" },
+    ],
+  });
+  db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (id, provider_item_id, variant_key, quality_class, availability)
+    VALUES (1800, 1800, 'lossless', 'lossless', 'available')
+  `).run();
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = 'Stereo'").get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, reason, curation_version)
+    VALUES (?, 80, 'auto', 'fixture', 1)
+  `).run(library.id);
+  const { AcquisitionPlanningService, ACQUISITION_PLANNER_VERSION, getAcquisitionProviderPriority } = await import("./acquisition-planning-service.js");
+  const planner = new AcquisitionPlanningService(db);
+  const planId = planner.compute({
+    libraryId: library.id,
+    editionId: 80,
+    providerPriority: getAcquisitionProviderPriority(),
+    plannerVersion: ACQUISITION_PLANNER_VERSION,
+  });
+  assert.ok(planId);
+  const before = db.prepare(`
+    SELECT id, policy_hash, computed_at FROM AcquisitionPlans WHERE id = ?
+  `).get(planId) as { id: number; policy_hash: string; computed_at: string };
+  const tracksBefore = db.prepare(`
+    SELECT id FROM AcquisitionPlanTracks WHERE plan_id = ? ORDER BY id
+  `).all(planId);
+
+  await replayMatcherVersionBatch({ limit: 6 });
+  assert.equal(matcherVersion(800), PROVIDER_TRACK_MATCHER_VERSION);
+  const after = db.prepare(`
+    SELECT id, policy_hash, computed_at, state FROM AcquisitionPlans WHERE id = ?
+  `).get(planId) as { id: number; policy_hash: string; computed_at: string; state: string };
+  assert.equal(after.id, before.id);
+  assert.equal(after.state, "current");
+  assert.equal(after.computed_at, before.computed_at);
+  assert.notEqual(after.policy_hash, before.policy_hash);
+  assert.deepEqual(
+    db.prepare("SELECT id FROM AcquisitionPlanTracks WHERE plan_id = ? ORDER BY id").all(planId),
+    tracksBefore,
+  );
+
+  planner.compute({
+    libraryId: library.id,
+    editionId: 80,
+    providerPriority: getAcquisitionProviderPriority(),
+    plannerVersion: ACQUISITION_PLANNER_VERSION,
+  });
+  assert.equal(
+    (db.prepare("SELECT computed_at FROM AcquisitionPlans WHERE id = ?").get(planId) as { computed_at: string }).computed_at,
+    before.computed_at,
+  );
+
+  db.prepare(`
+    UPDATE ProviderItemAudioVariants
+    SET quality_class = 'hires-lossless', variant_key = 'hires'
+    WHERE id = 1800
+  `).run();
+  planner.compute({
+    libraryId: library.id,
+    editionId: 80,
+    providerPriority: getAcquisitionProviderPriority(),
+    plannerVersion: ACQUISITION_PLANNER_VERSION,
+  });
+  const rebuilt = db.prepare(`
+    SELECT computed_at FROM AcquisitionPlans WHERE library_id = ? AND edition_id = 80 ORDER BY rank LIMIT 1
+  `).get(library.id) as { computed_at: string } | undefined;
+  assert.ok(rebuilt);
+  assert.notEqual(rebuilt.computed_at, before.computed_at);
+});
+
+test("artist rematch defers an in-use release and commits its neighbour", async () => {
+  resetStoredMatcherReplayForTests();
+  seedRelease({
+    editionId: 90,
+    releaseItemId: 900,
+    tracks: [
+      { trackId: 900, title: "Held", position: 1, itemId: 1900, providerTrackId: "held" },
+    ],
+  });
+  seedRelease({
+    editionId: 91,
+    releaseItemId: 910,
+    tracks: [
+      { trackId: 910, title: "Open", position: 1, itemId: 1910, providerTrackId: "open" },
+    ],
+  });
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = 'Stereo'").get() as { id: number };
+  const monitor = db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, reason, curation_version)
+    VALUES (?, ?, 'auto', 'fixture', 1)
+  `);
+  monitor.run(library.id, 90);
+  monitor.run(library.id, 91);
+  db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      id, library_id, edition_id, provider, composition, download_mode, state,
+      plan_key, coverage, target_track_count, planner_version, policy_hash, computed_at
+    ) VALUES (9001, ?, 90, 'tidal', 'single_source', 'album', 'current', 'held-90', 1, 1, 3, 'held', CURRENT_TIMESTAMP)
+  `).run(library.id);
+  db.prepare(`
+    INSERT INTO commands (name, payload, status)
+    VALUES ('DownloadAlbum', ?, 'started')
+  `).run(JSON.stringify({ acquisitionPlanId: 9001 }));
+  const { RefreshAlbumService } = await import("./refresh-album-service.js");
+
+  assert.equal(await RefreshAlbumService.rematchStoredProviderRelease("tidal", "release-900"), null);
+  assert.equal(matcherVersion(900), 4);
+  assert.ok(await RefreshAlbumService.rematchStoredProviderRelease("tidal", "release-910"));
+  assert.equal(matcherVersion(910), PROVIDER_TRACK_MATCHER_VERSION);
+  assert.equal(matcherVersion(900), 4);
+
+  db.prepare("DELETE FROM commands WHERE json_extract(payload, '$.acquisitionPlanId') = 9001").run();
+  assert.ok(await RefreshAlbumService.rematchStoredProviderRelease("tidal", "release-900"));
+  assert.equal(matcherVersion(900), PROVIDER_TRACK_MATCHER_VERSION);
+});

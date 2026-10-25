@@ -178,104 +178,11 @@ export function eligiblePlansForEdition<
     && planEligibleForMixFormat(plan.qualityTier, mixFormat));
 }
 
-export class AcquisitionPlanningService {
-  private readonly repository: AcquisitionPlanRepository;
+function loadAcquisitionCandidateRows(db: Database.Database, editionId: number): CandidateRow[] {
+  return db.prepare(ACQUISITION_CANDIDATE_SQL).all(editionId, editionId) as CandidateRow[];
+}
 
-  constructor(private readonly db: Database.Database) {
-    this.repository = new AcquisitionPlanRepository(db);
-  }
-
-  /**
-   * Build every viable acquisition plan for one canonical Edition in one Library.
-   *
-   * Deliberately does not require a `LibraryEditions` row. Plans are generated
-   * during the provider-matching phase, before curation decides what to monitor,
-   * so that curation can weigh real provider availability and the Album page can
-   * offer the alternatives sitting under Editions nobody monitors yet.
-   *
-   * Returns the id of the plan the monitored Edition ended up executing, or
-   * null when there is no viable plan (or nothing monitored to record a choice
-   * on).
-   */
-  compute(input: {
-    libraryId: number;
-    editionId: number;
-    providerPriority: readonly string[];
-    plannerVersion: number;
-    preferredProviderEditionMatchId?: number;
-    /** Explicit single-source lock. Never implied by a preference. */
-    exclusiveSource?: boolean;
-  }): number | null {
-    const context = this.db.prepare(`
-      SELECT
-        monitored_edition.id AS library_edition_id,
-        monitored_edition.selection_mode,
-        COALESCE(library_album.locked, 0) AS locked,
-        library.quality_profile_id,
-        profile.allowed_source_formats,
-        profile.preference_order,
-        profile.cutoff,
-        profile.continue_upgrades,
-        monitored_edition.preferred_plan_key,
-        monitored_edition.plan_selection_mode,
-        primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id,
-        edition.title AS edition_title,
-        edition.disambiguation AS edition_disambiguation
-      FROM Libraries library
-      JOIN AlbumEditions edition ON edition.id = ?
-      JOIN quality_profiles profile ON profile.id = library.quality_profile_id
-      LEFT JOIN LibraryAlbums library_album
-        ON library_album.library_id = library.id
-       AND library_album.release_group_id = edition.release_group_id
-      LEFT JOIN LibraryEditions monitored_edition
-        ON monitored_edition.library_id = library.id
-       AND monitored_edition.edition_id = edition.id
-      LEFT JOIN AcquisitionPlans current_plan
-        ON current_plan.library_id = monitored_edition.library_id
-       AND current_plan.edition_id = monitored_edition.edition_id
-       AND current_plan.plan_key = monitored_edition.preferred_plan_key
-      LEFT JOIN AcquisitionPlanSources primary_source
-        ON primary_source.plan_id = current_plan.id
-       AND primary_source.role = 'primary'
-      WHERE library.id = ?
-    `).get(input.editionId, input.libraryId) as PlanningContextRow | undefined;
-    if (!context) {
-      throw new Error(
-        `Library ${input.libraryId} or edition ${input.editionId} was not found`,
-      );
-    }
-    if (context.preferred_plan_key) {
-      const current = this.db.prepare("SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=? AND plan_key=?")
-        .get(input.libraryId,input.editionId,context.preferred_plan_key) as {id:number}|undefined;
-      if (current) context.preferred_plan_key = persistedResourceAcquisitionPlanKey(this.db,current.id) ?? context.preferred_plan_key;
-    }
-
-    const orderedTrackIds = (this.db.prepare(`
-      SELECT id
-      FROM Tracks
-      WHERE album_edition_id = ?
-      ORDER BY medium_position, position, id
-    `).all(input.editionId) as Array<{ id: number }>).map(({ id }) => id);
-    if (orderedTrackIds.length === 0) {
-      this.repository.clear(input.libraryId, input.editionId);
-      return null;
-    }
-
-    const allowedQualities = parseQualityList(context.allowed_source_formats);
-    const preferenceOrder = parseQualityList(context.preference_order);
-    const cutoff = parseQuality(context.cutoff);
-    if (allowedQualities.length === 0 || preferenceOrder.length === 0 || !cutoff) {
-      throw new Error(`Quality profile ${context.quality_profile_id} has invalid normalized policy`);
-    }
-    const profile: AcquisitionQualityProfile = {
-      allowedQualities: new Set(allowedQualities),
-      preferenceOrder,
-      cutoff,
-      continueUpgradesAfterCutoff: Boolean(context.continue_upgrades),
-    };
-
-    const planTimer = createCurationPhaseTimer();
-    const loadedRows = planTimer.phase(`plan:candidate-sql[ed${input.editionId}]`, () => this.db.prepare(`
+const ACQUISITION_CANDIDATE_SQL = `
       -- Which provider tracks may source this Edition's Tracks.
       --
       -- Anchored on the target Edition's Recordings, not on provider albums
@@ -444,7 +351,237 @@ export class AcquisitionPlanningService {
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
       ORDER BY release_match.id, target_track.id, track_match.id, track_variant.id, release_variant.id
-    `).all(input.editionId, input.editionId) as CandidateRow[]);
+    `;
+
+function digestCandidateRows(rows: readonly CandidateRow[]): string {
+  const candidateDigest = crypto.createHash("sha256");
+  for (const row of rows) {
+    candidateDigest.update([
+      row.provider_edition_match_id, row.relation, row.source_track_count,
+      row.release_explicit, row.provider_edition_member_id, row.provider_item_id,
+      row.provider_track_match_id, row.matcher_version, row.decision_source,
+      row.track_id, row.track_explicit,
+      row.track_variant_id, row.track_quality, row.track_codec, row.track_bitrate,
+      row.track_bit_depth, row.track_sample_rate, row.track_availability,
+      row.release_variant_id, row.release_quality, row.release_codec, row.release_bitrate,
+      row.release_bit_depth, row.release_sample_rate, row.release_availability,
+    ].join(""));
+    candidateDigest.update("");
+  }
+  return candidateDigest.digest("hex");
+}
+
+function policyHashForCandidateRows(input: {
+  rows: readonly CandidateRow[];
+  trackIds: readonly number[];
+  qualityProfileId: number;
+  allowedQualities: readonly NormalizedAudioQuality[];
+  preferenceOrder: readonly NormalizedAudioQuality[];
+  cutoff: NormalizedAudioQuality;
+  continueUpgradesAfterCutoff: boolean;
+  providerPriority: readonly string[];
+  preferredProviderEditionMatchId: number | null;
+}): string {
+  return crypto.createHash("sha256").update(JSON.stringify({
+    candidates: digestCandidateRows(input.rows),
+    trackIds: input.trackIds,
+    qualityProfileId: input.qualityProfileId,
+    allowedQualities: input.allowedQualities,
+    preferenceOrder: input.preferenceOrder,
+    cutoff: input.cutoff,
+    continueUpgradesAfterCutoff: input.continueUpgradesAfterCutoff,
+    providerPriority: input.providerPriority,
+    preferredProviderEditionMatchId: input.preferredProviderEditionMatchId,
+  })).digest("hex");
+}
+
+/**
+ * Policy hashes for one edition before and after a matcher-version bump.
+ *
+ * The candidate read stays outside the write gate. `hashAfter` substitutes the
+ * new matcher version on the automatic matches the bump will touch, and nothing
+ * else, so it is the hash `compute()` would store after that bump. Returns null
+ * when the edition has no plannable profile; the caller replans instead.
+ */
+export function previewEditionPolicyHashes(
+  db: Database.Database,
+  input: {
+    libraryId: number;
+    editionId: number;
+    providerPriority: readonly string[];
+    bumpedTrackMatchIds: ReadonlySet<number>;
+    nextMatcherVersion: number;
+  },
+): { hashBefore: string; hashAfter: string } | null {
+  const context = db.prepare(`
+    SELECT
+      COALESCE(library_album.locked, 0) AS locked,
+      library.quality_profile_id,
+      profile.allowed_source_formats,
+      profile.preference_order,
+      profile.cutoff,
+      profile.continue_upgrades,
+      primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id
+    FROM Libraries library
+    JOIN AlbumEditions edition ON edition.id = ?
+    JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+    LEFT JOIN LibraryAlbums library_album
+      ON library_album.library_id = library.id
+     AND library_album.release_group_id = edition.release_group_id
+    LEFT JOIN LibraryEditions monitored_edition
+      ON monitored_edition.library_id = library.id
+     AND monitored_edition.edition_id = edition.id
+    LEFT JOIN AcquisitionPlans current_plan
+      ON current_plan.library_id = monitored_edition.library_id
+     AND current_plan.edition_id = monitored_edition.edition_id
+     AND current_plan.plan_key = monitored_edition.preferred_plan_key
+    LEFT JOIN AcquisitionPlanSources primary_source
+      ON primary_source.plan_id = current_plan.id
+     AND primary_source.role = 'primary'
+    WHERE library.id = ?
+  `).get(input.editionId, input.libraryId) as {
+    locked: number;
+    quality_profile_id: number;
+    allowed_source_formats: string;
+    preference_order: string;
+    cutoff: string;
+    continue_upgrades: number;
+    current_primary_provider_edition_match_id: number | null;
+  } | undefined;
+  if (!context) return null;
+  const orderedTrackIds = (db.prepare(`
+    SELECT id FROM Tracks
+    WHERE album_edition_id = ?
+    ORDER BY medium_position, position, id
+  `).all(input.editionId) as Array<{ id: number }>).map(({ id }) => id);
+  if (orderedTrackIds.length === 0) return null;
+  const allowedQualities = parseQualityList(context.allowed_source_formats);
+  const preferenceOrder = parseQualityList(context.preference_order);
+  const cutoff = parseQuality(context.cutoff);
+  if (allowedQualities.length === 0 || preferenceOrder.length === 0 || !cutoff) return null;
+  const rows = dropSharedItemCandidates(loadAcquisitionCandidateRows(db, input.editionId));
+  const shared = {
+    trackIds: orderedTrackIds,
+    qualityProfileId: context.quality_profile_id,
+    allowedQualities,
+    preferenceOrder,
+    cutoff,
+    continueUpgradesAfterCutoff: Boolean(context.continue_upgrades),
+    providerPriority: input.providerPriority,
+    preferredProviderEditionMatchId: context.locked
+      ? context.current_primary_provider_edition_match_id
+      : null,
+  };
+  const bumped = rows.map((row) =>
+    row.decision_source !== "manual" && input.bumpedTrackMatchIds.has(row.provider_track_match_id)
+      ? { ...row, matcher_version: input.nextMatcherVersion }
+      : row,
+  );
+  return {
+    hashBefore: policyHashForCandidateRows({ ...shared, rows }),
+    hashAfter: policyHashForCandidateRows({ ...shared, rows: bumped }),
+  };
+}
+
+export class AcquisitionPlanningService {
+  private readonly repository: AcquisitionPlanRepository;
+
+  constructor(private readonly db: Database.Database) {
+    this.repository = new AcquisitionPlanRepository(db);
+  }
+
+  /**
+   * Build every viable acquisition plan for one canonical Edition in one Library.
+   *
+   * Deliberately does not require a `LibraryEditions` row. Plans are generated
+   * during the provider-matching phase, before curation decides what to monitor,
+   * so that curation can weigh real provider availability and the Album page can
+   * offer the alternatives sitting under Editions nobody monitors yet.
+   *
+   * Returns the id of the plan the monitored Edition ended up executing, or
+   * null when there is no viable plan (or nothing monitored to record a choice
+   * on).
+   */
+  compute(input: {
+    libraryId: number;
+    editionId: number;
+    providerPriority: readonly string[];
+    plannerVersion: number;
+    preferredProviderEditionMatchId?: number;
+    /** Explicit single-source lock. Never implied by a preference. */
+    exclusiveSource?: boolean;
+  }): number | null {
+    const context = this.db.prepare(`
+      SELECT
+        monitored_edition.id AS library_edition_id,
+        monitored_edition.selection_mode,
+        COALESCE(library_album.locked, 0) AS locked,
+        library.quality_profile_id,
+        profile.allowed_source_formats,
+        profile.preference_order,
+        profile.cutoff,
+        profile.continue_upgrades,
+        monitored_edition.preferred_plan_key,
+        monitored_edition.plan_selection_mode,
+        primary_source.provider_edition_match_id AS current_primary_provider_edition_match_id,
+        edition.title AS edition_title,
+        edition.disambiguation AS edition_disambiguation
+      FROM Libraries library
+      JOIN AlbumEditions edition ON edition.id = ?
+      JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+      LEFT JOIN LibraryAlbums library_album
+        ON library_album.library_id = library.id
+       AND library_album.release_group_id = edition.release_group_id
+      LEFT JOIN LibraryEditions monitored_edition
+        ON monitored_edition.library_id = library.id
+       AND monitored_edition.edition_id = edition.id
+      LEFT JOIN AcquisitionPlans current_plan
+        ON current_plan.library_id = monitored_edition.library_id
+       AND current_plan.edition_id = monitored_edition.edition_id
+       AND current_plan.plan_key = monitored_edition.preferred_plan_key
+      LEFT JOIN AcquisitionPlanSources primary_source
+        ON primary_source.plan_id = current_plan.id
+       AND primary_source.role = 'primary'
+      WHERE library.id = ?
+    `).get(input.editionId, input.libraryId) as PlanningContextRow | undefined;
+    if (!context) {
+      throw new Error(
+        `Library ${input.libraryId} or edition ${input.editionId} was not found`,
+      );
+    }
+    if (context.preferred_plan_key) {
+      const current = this.db.prepare("SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=? AND plan_key=?")
+        .get(input.libraryId,input.editionId,context.preferred_plan_key) as {id:number}|undefined;
+      if (current) context.preferred_plan_key = persistedResourceAcquisitionPlanKey(this.db,current.id) ?? context.preferred_plan_key;
+    }
+
+    const orderedTrackIds = (this.db.prepare(`
+      SELECT id
+      FROM Tracks
+      WHERE album_edition_id = ?
+      ORDER BY medium_position, position, id
+    `).all(input.editionId) as Array<{ id: number }>).map(({ id }) => id);
+    if (orderedTrackIds.length === 0) {
+      this.repository.clear(input.libraryId, input.editionId);
+      return null;
+    }
+
+    const allowedQualities = parseQualityList(context.allowed_source_formats);
+    const preferenceOrder = parseQualityList(context.preference_order);
+    const cutoff = parseQuality(context.cutoff);
+    if (allowedQualities.length === 0 || preferenceOrder.length === 0 || !cutoff) {
+      throw new Error(`Quality profile ${context.quality_profile_id} has invalid normalized policy`);
+    }
+    const profile: AcquisitionQualityProfile = {
+      allowedQualities: new Set(allowedQualities),
+      preferenceOrder,
+      cutoff,
+      continueUpgradesAfterCutoff: Boolean(context.continue_upgrades),
+    };
+
+    const planTimer = createCurationPhaseTimer();
+    const loadedRows = planTimer.phase(`plan:candidate-sql[ed${input.editionId}]`, () =>
+      loadAcquisitionCandidateRows(this.db, input.editionId));
     // Matcher version is a cache stamp, not a veto. A bump must not empty the
     // candidate set. The shared-item rule is applied to the stored rows: one
     // automatic provider item offered for more than one canonical track is a
@@ -531,22 +668,8 @@ export class AcquisitionPlanningService {
      * by construction: if the digest is unchanged, no reachable input changed,
      * and the plans that exist are the plans this pass would produce.
      */
-    const candidateDigest = crypto.createHash("sha256");
-    for (const row of rows) {
-      candidateDigest.update([
-        row.provider_edition_match_id, row.relation, row.source_track_count,
-        row.release_explicit, row.provider_edition_member_id, row.provider_item_id,
-        row.provider_track_match_id, row.matcher_version, row.decision_source,
-        row.track_id, row.track_explicit,
-        row.track_variant_id, row.track_quality, row.track_codec, row.track_bitrate,
-        row.track_bit_depth, row.track_sample_rate, row.track_availability,
-        row.release_variant_id, row.release_quality, row.release_codec, row.release_bitrate,
-        row.release_bit_depth, row.release_sample_rate, row.release_availability,
-      ].join(""));
-      candidateDigest.update("");
-    }
-    const policyHash = crypto.createHash("sha256").update(JSON.stringify({
-      candidates: candidateDigest.digest("hex"),
+    const policyHash = policyHashForCandidateRows({
+      rows,
       trackIds: orderedTrackIds,
       qualityProfileId: context.quality_profile_id,
       allowedQualities,
@@ -559,7 +682,7 @@ export class AcquisitionPlanningService {
           ? context.current_primary_provider_edition_match_id
           : null
       ),
-    })).digest("hex");
+    });
 
     // Nothing this plan is derived from has changed, so rebuilding it would
     // reproduce it exactly. Skipping is what makes a refresh cheap without
