@@ -464,9 +464,10 @@ const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOAD
 const MAX_PENDING_IMPORTS = readIntEnv('DISCOGENIUS_MAX_PENDING_IMPORTS', 4, 1);
 const DOWNLOAD_LEASE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_LEASE_MS', 90_000, 1_000);
 /** How long shutdown waits for running imports to finish. A killed import is
- * failed closed on restart (it may have moved half an album), so finishing it
- * is worth most of the container's stop grace period (compose: 180s). */
-const SHUTDOWN_IMPORT_DRAIN_MS = readIntEnv('DISCOGENIUS_SHUTDOWN_IMPORT_DRAIN_MS', 75_000, 0);
+ * failed closed on restart once it changed files (it may have moved half an
+ * album), so finishing it is worth most of the stop grace period (compose:
+ * 180s). Imports on the HDD take 1-3 minutes. */
+const SHUTDOWN_IMPORT_DRAIN_MS = readIntEnv('DISCOGENIUS_SHUTDOWN_IMPORT_DRAIN_MS', 140_000, 0);
 
 /** Wait until every running import settles, or until the deadline. Returns the
  * command ids still running when it gave up. Never throws: an import's own
@@ -526,6 +527,9 @@ type DurableImportHandoff = {
     executionStartedAt?: string | null;
     /** TrackFiles ids the import had already placed before artwork, lyrics, or tags. */
     importTouchedFileIds?: number[];
+    /** 1 = this attempt writes libraryMutationStartedAt before its first file change. */
+    mutationCheckpoint?: number;
+    libraryMutationStartedAt?: string | null;
 };
 
 type InterruptedDownloadRow = {
@@ -551,6 +555,36 @@ function isUnsafeInterruptedImport(payload: Record<string, any>): boolean {
     const state = String(payload.downloadState?.state || '');
     const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
     return state === 'importing' || Boolean(handoff?.executionStartedAt);
+}
+
+/** Started, but killed before touching staged or library files (for example
+ * while waiting for a disk permit during shutdown). Safe to run again. */
+function isUntouchedInterruptedImport(payload: Record<string, any>): boolean {
+    const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+    return Boolean(handoff?.executionStartedAt)
+        && handoff?.mutationCheckpoint === 1
+        && !handoff.libraryMutationStartedAt
+        && !(Array.isArray(handoff.importTouchedFileIds) && handoff.importTouchedFileIds.length > 0)
+        && Boolean(handoff.importPayload);
+}
+
+/** Put an untouched import back in its parked importPending shape, ownerless,
+ * so the scheduler re-adopts it on the same attempt. */
+function reparkUntouchedImport(id: number, payload: Record<string, any>): boolean {
+    const handoff = payload.downloadImportHandoff as DurableImportHandoff;
+    const next = {
+        ...payload,
+        downloadState: { ...(payload.downloadState || {}), state: 'importPending', statusMessage: 'Waiting to import' },
+        downloadImportHandoff: { ...handoff, executionStartedAt: null },
+    };
+    const result = db.prepare(`
+        UPDATE commands
+        SET payload = ?, worker_id = NULL, lease_expires_at = NULL,
+            progress_phase = 'waiting to import', blocked_reason = 'waiting on import slot',
+            updated_at = ?
+        WHERE id = ? AND status = 'started'
+    `).run(JSON.stringify(next), new Date().toISOString(), id);
+    return result.changes === 1;
 }
 
 function isParkedImportPending(payload: Record<string, any>): boolean {
@@ -589,6 +623,12 @@ export function recoverInterruptedDownloadAttempts(
             // The scheduler re-adopts this handoff in place. Requeueing it would
             // burn an attempt and leave status='queued', which is the only shape
             // the old recovery claim could see.
+            continue;
+        }
+
+        if (isUntouchedInterruptedImport(payload)) {
+            if (reparkUntouchedImport(row.id, payload)) requeued += 1;
+            else ignored += 1;
             continue;
         }
 
@@ -939,6 +979,7 @@ export class DownloadProcessor {
                     importPayload,
                     resolved,
                     executionStartedAt: new Date().toISOString(),
+                    mutationCheckpoint: 1,
                 };
                 await withSqliteWriteGate(() => {
                     const phaseUpdate = CommandQueueManager.updateState(commandId, {

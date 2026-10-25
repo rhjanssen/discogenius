@@ -89,6 +89,27 @@ function rememberImportTouchedFiles(commandId: number, fileIds: readonly number[
     }, "import:touched-files");
 }
 
+/** Durable point of no return: from here the import changes the staged files or
+ * the library. A worker killed before this mark is replayed on restart instead
+ * of failed closed. */
+function markImportLibraryMutationStarted(commandId: number): void {
+    withSqliteWriteGate(() => {
+        const current = CommandQueueManager.get(commandId);
+        if (!current || current.status !== "started") return;
+        const payload = (current.payload ?? {}) as Record<string, any>;
+        const handoff = payload.downloadImportHandoff && typeof payload.downloadImportHandoff === "object"
+            ? payload.downloadImportHandoff
+            : null;
+        if (!handoff || handoff.libraryMutationStartedAt) return;
+        CommandQueueManager.updateState(commandId, {
+            workerId: current.worker_id || undefined,
+            payloadPatch: {
+                downloadImportHandoff: { ...handoff, libraryMutationStartedAt: new Date().toISOString() },
+            } as any,
+        });
+    }, "import:mutation-start");
+}
+
 function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
     return Array.from(new Set(
         Object.values(organizeResult.importedTrackFileIds || {})
@@ -1214,6 +1235,7 @@ export class DownloadedTracksImportService {
             console.warn(`[ImportDownload] Download workspace missing or empty for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
         } else {
             cancellationCheckpoint("before organizing downloaded files");
+            markImportLibraryMutationStarted(job.id);
             if (type !== "video" && job.payload.libraryId != null) {
                 options.updateState({
                     progress: 10,

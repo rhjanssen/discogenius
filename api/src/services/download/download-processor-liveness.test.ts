@@ -564,6 +564,64 @@ test('watchdog terminates a heartbeating worker whose command stopped making pro
     assert.equal(CommandQueueManager.get(id)?.worker_id, owner);
 });
 
+test('an import killed before its first file change is reparked and resumed on the same attempt', () => {
+    const id = pushTrack('untouched-import');
+    const owner = 'download-attempt:untouched';
+    claim(id, owner);
+    db.prepare('UPDATE commands SET attempt = 2 WHERE id = ?').run(id);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progressPhase: 'importing',
+        blockedReason: 'waiting on disk',
+        payloadPatch: {
+            downloadState: { state: 'importing', progress: 100 },
+            downloadImportHandoff: {
+                importPayload: { type: 'track', provider: 'synthetic', providerId: 'track-untouched-import', path: path.join(tempDir, 'untouched-staging') },
+                resolved: { title: 'Untouched import', artist: 'Lease Fixture', cover: null },
+                executionStartedAt: '2026-01-01T00:00:01.000Z',
+                mutationCheckpoint: 1,
+            },
+        } as any,
+    });
+
+    const recovered = recoverInterruptedDownloadAttempts('Dedicated download worker restarted before the attempt completed', new Date('2026-01-01T00:00:10.000Z'));
+    assert.deepEqual(recovered, { requeued: 1, failed: 0, ignored: 0 });
+    const row = CommandQueueManager.get(id)!;
+    assert.equal(row.status, 'started');
+    assert.equal(row.attempt, 2);
+    assert.equal(row.payload.downloadState?.state, 'importPending');
+
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    processor.scheduleQueueWithWriteLock();
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [id]);
+    assert.equal(CommandQueueManager.get(id)!.attempt, 2);
+});
+
+test('an import killed after its first file change still fails closed', () => {
+    const id = pushTrack('mutated-import');
+    const owner = 'download-attempt:mutated';
+    claim(id, owner);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progressPhase: 'importing',
+        payloadPatch: {
+            downloadState: { state: 'importing', progress: 40 },
+            downloadImportHandoff: {
+                importPayload: { type: 'track', provider: 'synthetic', providerId: 'track-mutated-import', path: path.join(tempDir, 'mutated-staging') },
+                resolved: { title: 'Mutated import', artist: 'Lease Fixture', cover: null },
+                executionStartedAt: '2026-01-01T00:00:01.000Z',
+                mutationCheckpoint: 1,
+                libraryMutationStartedAt: '2026-01-01T00:00:02.000Z',
+            },
+        } as any,
+    });
+    const recovered = recoverInterruptedDownloadAttempts('Synthetic worker exit during import', new Date('2026-01-01T00:00:10.000Z'));
+    assert.deepEqual(recovered, { requeued: 0, failed: 1, ignored: 0 });
+    assert.equal(CommandQueueManager.get(id)!.status, 'failed');
+});
+
 test('a parked import-pending download keeps its attempt across restart recovery', () => {
     const id = pushTrack('parked-import');
     const owner = 'download-attempt:parked';
