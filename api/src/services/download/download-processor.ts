@@ -90,6 +90,7 @@ import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-e
 import { asProviderAuthError, ProviderAuthError } from '../providers/provider-auth-error.js';
 import { providersNeedingReauth, providerNeedsReauth, queueHoldMessage, recordProviderAuthFailure } from '../providers/provider-auth-state.js';
 import { probeDeezerBeforeDownloadBatch, startDeezerAuthProbeLoop } from '../providers/deezer/deezer-arl-health.js';
+import { startAppleWrapperHoldProbeLoop } from '../providers/apple-music/apple-music-auth.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
 import {
@@ -1881,6 +1882,7 @@ export class DownloadProcessor {
         }
 
         startDeezerAuthProbeLoop();
+        startAppleWrapperHoldProbeLoop();
 
         // The download queue is event-driven, not polled: it runs on app
         // startup, when items are added, and when the previous item finishes.

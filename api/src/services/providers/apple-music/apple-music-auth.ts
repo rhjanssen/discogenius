@@ -630,6 +630,45 @@ export async function getWrapperLoginStatus(): Promise<AppleWrapperLoginStatus> 
   return reconciled;
 }
 
+/** Held Apple jobs are re-checked this often; no network when nothing is held. */
+export const APPLE_WRAPPER_HOLD_PROBE_INTERVAL_MS = 2 * 60 * 1000;
+
+let appleHoldProbeLoop: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Clears the Apple hold once the wrapper answers again. Does nothing (no port
+ * check, no file read) while Apple is not marked needs_reauth. Status only,
+ * never credentials.
+ */
+export async function runAppleWrapperHoldProbe(
+  deps: { needsReauth?: () => boolean; loginStatus?: () => Promise<AppleWrapperLoginStatus> } = {},
+): Promise<"idle" | "cleared" | "still_held"> {
+  const needsReauth = deps.needsReauth ?? (() => providerNeedsReauth("apple-music"));
+  if (!needsReauth()) return "idle";
+  await (deps.loginStatus ?? getWrapperLoginStatus)();
+  return needsReauth() ? "still_held" : "cleared";
+}
+
+export function startAppleWrapperHoldProbeLoop(): void {
+  if (appleHoldProbeLoop) return;
+  appleHoldProbeLoop = setInterval(() => {
+    void runAppleWrapperHoldProbe()
+      .then((result) => {
+        if (result === "cleared") console.log("[APPLE] Wrapper answers again; released held Apple downloads.");
+      })
+      .catch((error) => {
+        console.error("[APPLE] Wrapper hold probe failed:", error instanceof Error ? error.message : "unknown");
+      });
+  }, APPLE_WRAPPER_HOLD_PROBE_INTERVAL_MS);
+  appleHoldProbeLoop.unref?.();
+}
+
+export function stopAppleWrapperHoldProbeLoop(): void {
+  if (!appleHoldProbeLoop) return;
+  clearInterval(appleHoldProbeLoop);
+  appleHoldProbeLoop = null;
+}
+
 /**
  * Ask the wrapper supervisor to kill and relaunch its decryption server.
  * Used right before an Apple download when ports 10020/20020 do not answer:
