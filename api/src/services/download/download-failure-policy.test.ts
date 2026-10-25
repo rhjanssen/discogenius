@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
+import type { RankedDownloadOffer } from "./download-offer-fallback.js";
 
 process.env.DISCOGENIUS_DOWNLOAD_SAME_OFFER_ATTEMPTS = "3";
 process.env.DISCOGENIUS_DOWNLOAD_SAME_OFFER_BACKOFF_MS = "100";
@@ -11,6 +12,7 @@ const {
   executeWithSameOfferRetries,
   isDownloadCancellationError,
 } = await import("./download-failure-policy.js");
+const { makeOfferAttemptKey, nextOfferAfterTried } = await import("./download-offer-fallback.js");
 
 test("classifyDownloadFailure treats tiddl exit-1 / traceback as transient", () => {
   assert.equal(
@@ -36,6 +38,51 @@ test("a Deezer connection pool failure wrapped as not available is retried", asy
   });
   assert.equal(result, "file");
   assert.equal(calls, 3);
+});
+
+test("a Deezer traceback around an unstreamable track is permanent", () => {
+  const unstreamable = new Error(
+    "streamrip exited with code 1: Traceback (most recent call last):\n"
+    + "Track 3135553 not available for stream on deezer: no rights",
+  );
+  assert.equal(classifyDownloadFailure(unstreamable), "permanent");
+  assert.equal(
+    classifyDownloadFailure(new Error("Traceback (most recent call last): not available for stream on deezer")),
+    "permanent",
+  );
+  assert.equal(
+    classifyDownloadFailure(new Error("not available for stream on deezer: ReadTimeout")),
+    "transient",
+    "a real timeout still overrides the catalogue wrapper",
+  );
+});
+
+test("exhausted transient retries still try the next provider", async () => {
+  const offers: RankedDownloadOffer[] = [
+    { provider: "deezer", providerId: "dz-1", quality: "lossless" },
+    { provider: "tidal", providerId: "td-1", quality: "lossless" },
+  ];
+  const tried = new Set<string>([makeOfferAttemptKey(offers[0].provider, offers[0].providerId)]);
+  const attempts: string[] = [];
+  let current = offers[0];
+  let downloaded: string | null = null;
+  while (downloaded == null) {
+    try {
+      downloaded = await executeWithSameOfferRetries({ sleep: async () => undefined }, async () => {
+        attempts.push(current.provider);
+        if (current.provider === "deezer") throw new Error("ECONNRESET");
+        return current.provider;
+      });
+    } catch (error) {
+      const next = nextOfferAfterTried(offers, tried);
+      assert.ok(next, "same-offer exhaustion must still reach the next provider");
+      tried.add(makeOfferAttemptKey(next.provider, next.providerId));
+      current = next;
+      assert.ok(error);
+    }
+  }
+  assert.equal(downloaded, "tidal");
+  assert.deepEqual(attempts, ["deezer", "deezer", "deezer", "tidal"]);
 });
 
 test("catalogue, region, and entitlement failures stay permanent beside transport wording", () => {
@@ -149,4 +196,7 @@ test("executeWithSameOfferRetries does not retry cancellations", async () => {
   );
   assert.equal(calls, 1);
   assert.equal(isDownloadCancellationError(new Error("Download cancelled")), true);
+  assert.equal(isDownloadCancellationError(new Error("The operation was aborted")), true);
+  assert.equal(isDownloadCancellationError(new Error("ECONNABORTED")), false);
+  assert.equal(classifyDownloadFailure(new Error("ECONNABORTED")), "transient");
 });

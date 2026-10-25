@@ -62,12 +62,17 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\bentitlement\b/i,
   /\bgeo(?:graphically)?[- ]?restricted\b/i,
   /\bformat.*not available\b/i,
+  /\bnot available for stream\b/i,
 ];
 
 /**
  * Transport failures streamrip reports while resolving an album. They are
  * often wrapped as "not available for stream", which is not a catalogue fact.
  * A specific permanent cause in the same text still wins.
+ *
+ * A bare Python traceback is not transport evidence. Streamrip prints one for
+ * catalogue failures too, and treating it as transport made an unstreamable
+ * Deezer track retry instead of falling back.
  */
 const TRANSIENT_TRANSPORT_PATTERNS: RegExp[] = [
   /connection pool is full/i,
@@ -78,10 +83,11 @@ const TRANSIENT_TRANSPORT_PATTERNS: RegExp[] = [
   /max retries exceeded/i,
   /\beconnreset\b/i,
   /\beconnrefused\b/i,
+  /\beconnaborted\b/i,
   /\betimedout\b/i,
   /\btimed out\b/i,
-  /\btimeout\b/i,
-  /\btraceback\b/i,
+  // No word boundary: requests names the exception ReadTimeout / ConnectTimeout.
+  /timeout/i,
 ];
 
 /**
@@ -146,7 +152,8 @@ function errorText(error: unknown): string {
 export function isDownloadCancellationError(error: unknown): boolean {
   const text = errorText(error).toLowerCase();
   return text.includes("download cancelled")
-    || text.includes("aborted")
+    // Word boundary so ECONNABORTED stays a transport failure, not a cancel.
+    || /\baborted\b/.test(text)
     || (error instanceof Error && error.name === "AbortError");
 }
 

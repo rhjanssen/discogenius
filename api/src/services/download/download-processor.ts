@@ -3005,8 +3005,7 @@ export class DownloadProcessor {
                 let offer = { ...offers[index] };
                 const tried = new Set<string>();
                 const ranked = listRankedTrackOffers({ trackMbid: offer.canonicalTrackMbid,
-                    recordingMbid: offer.canonicalRecordingMbid, librarySlot: slot })
-                    .filter(candidate => candidate.provider === defaultProvider);
+                    recordingMbid: offer.canonicalRecordingMbid, librarySlot: slot });
                 while (true) {
                     const provider = offer.provider || defaultProvider;
                     tried.add(makeOfferAttemptKey(provider, offer.providerTrackId));
@@ -3042,11 +3041,14 @@ export class DownloadProcessor {
                 const tried = new Set<string>([
                     makeOfferAttemptKey(primaryOfferProvider, offer.providerTrackId),
                 ]);
+                // Same-offer retries stay on this provider. When they are exhausted,
+                // or the failure is permanent, the next ranked offer may be another
+                // provider. Filtering to the album provider here dropped that fallback.
                 const ranked = listRankedTrackOffers({
                     trackMbid: offer.canonicalTrackMbid,
                     recordingMbid: offer.canonicalRecordingMbid,
                     librarySlot: slot,
-                }).filter(candidate => candidate.provider === defaultProvider);
+                });
 
                 const trackIndex = resolveDownloadTrackOfferIndex(tracks, offer);
                 if (trackIndex < 0) {
