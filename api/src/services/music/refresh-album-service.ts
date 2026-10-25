@@ -1,5 +1,6 @@
 import { tidalTrackAvailability } from "../providers/tidal/tidal-availability.js";
 import { db, withSqliteWriteGate } from "../../database.js";
+import { replanMonitoredEditions } from "./acquisition-planning-service.js";
 import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import { AlbumRefreshLevel, type RefreshOptions } from "./scan-types.js";
 import { shouldRefreshAlbum as shouldRefreshAlbumPolicy, shouldRefreshTrackSet } from "../config/refresh-policy.js";
@@ -914,91 +915,28 @@ export class RefreshAlbumService {
         `).get(providerId, albumId) as Record<string, any> | undefined;
         if (!releaseRow) return null;
 
-        const memberRows = db.prepare(`
-            SELECT
-              member.medium_position, member.position, member.number,
-              member.contextual_title, member.contextual_duration_ms,
-              item.entity_type, item.provider_id, item.title, item.version,
-              item.isrc, item.duration_ms, item.release_date, item.explicit,
-              item.availability, item.provider_url, item.cover_id, item.artwork_url,
-              item.replay_gain, item.peak, item.bpm, item.musical_key, item.copyright
-            FROM ProviderEditionMembers member
-            JOIN ProviderItems item ON item.id = member.member_item_id
-            WHERE member.provider_edition_item_id = ?
-            ORDER BY member.medium_position, member.position, member.id
-        `).all(releaseRow.id) as Array<Record<string, any>>;
-        if (memberRows.length === 0) return null;
-
-        return withSqliteWriteGate(() => {
-        const ingested = new ProviderReleaseIngestionService(db).ingest({
-            canonicalReleaseId: canonicalRelease.id,
-            matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
-            release: {
-                provider: providerId,
-                entityType: "release",
-                providerId: String(albumId),
-                title: textOrNull(releaseRow.title),
-                version: textOrNull(releaseRow.version),
-                providerType: textOrNull(releaseRow.provider_type),
-                upc: textOrNull(releaseRow.upc),
-                durationMs: positiveNumberOrNull(releaseRow.duration_ms),
-                releaseDate: textOrNull(releaseRow.release_date),
-                explicit: releaseRow.explicit == null ? null : Boolean(releaseRow.explicit),
-                availability: textOrNull(releaseRow.availability) || "available",
-                checkedAt: textOrNull(releaseRow.checked_at) || new Date().toISOString(),
-                providerUrl: textOrNull(releaseRow.provider_url),
-                coverId: textOrNull(releaseRow.cover_id),
-                artworkUrl: textOrNull(releaseRow.artwork_url),
-                volumeCount: positiveNumberOrNull(releaseRow.volume_count),
-                copyright: textOrNull(releaseRow.copyright),
-            },
-            members: memberRows.map((row) => ({
-                item: {
-                    provider: providerId,
-                    entityType: row.entity_type === "video" ? "video" as const : "track" as const,
-                    providerId: String(row.provider_id),
-                    title: textOrNull(row.title),
-                    version: textOrNull(row.version),
-                    isrc: textOrNull(row.isrc),
-                    durationMs: positiveNumberOrNull(row.duration_ms),
-                    releaseDate: textOrNull(row.release_date),
-                    explicit: row.explicit == null ? null : Boolean(row.explicit),
-                    availability: textOrNull(row.availability) || "available",
-                    providerUrl: textOrNull(row.provider_url),
-                    coverId: textOrNull(row.cover_id),
-                    artworkUrl: textOrNull(row.artwork_url),
-                    replayGain: finiteNumberOrNull(row.replay_gain),
-                    peak: finiteNumberOrNull(row.peak),
-                    bpm: finiteNumberOrNull(row.bpm),
-                    musicalKey: textOrNull(row.musical_key),
-                    copyright: textOrNull(row.copyright),
-                },
-                mediumPosition: Number(row.medium_position || 1),
-                position: Number(row.position || 0),
-                number: textOrNull(row.number),
-                contextualTitle: textOrNull(row.contextual_title),
-                contextualDurationMs: positiveNumberOrNull(row.contextual_duration_ms),
-            })),
+        // Score outside the write gate. The gate below only commits the
+        // decisions and replans the editions those decisions touched.
+        const service = new ProviderReleaseIngestionService(db);
+        const plan = service.prepareStoredReplay(releaseRow.id, {
+            canonicalEditionId: canonicalRelease.id,
         });
-        // A provider release can be matched to several canonical Editions, and
-        // this replay re-derives the best one — so anything still carrying an
-        // older verdict is a decision the current matcher declined to make.
-        // Retiring it is what makes the replay converge; otherwise a re-target
-        // silently leaves the old Edition match behind, still asserting a match
-        // the matcher would now refuse.
-        const retired = new ProviderReleaseIngestionService(db)
-            .retireStaleTrackMatches(releaseRow.id, PROVIDER_TRACK_MATCHER_VERSION);
-        if (retired > 0) {
-            console.log(
-                `[RefreshAlbumService] Retired ${retired} track match(es) for ${providerId}:${albumId} `
-                + `that matcher version ${PROVIDER_TRACK_MATCHER_VERSION} did not reproduce`,
-            );
-        }
-        return {
-            acceptedTrackCount: ingested.acceptedTrackCount,
-            ambiguousTrackCount: ingested.ambiguousTrackCount,
-        };
-        }, `rematch-stored-release:${providerId}:${albumId}`);
+        if (!plan) return null;
+
+        return withSqliteWriteGate(() => db.transaction(() => {
+            const committed = service.commitStoredReplay(plan);
+            replanMonitoredEditions(db, committed.replan);
+            if (committed.retired > 0) {
+                console.log(
+                    `[RefreshAlbumService] Retired ${committed.retired} track match(es) for ${providerId}:${albumId} `
+                    + `that matcher version ${PROVIDER_TRACK_MATCHER_VERSION} did not reproduce`,
+                );
+            }
+            return {
+                acceptedTrackCount: committed.acceptedTrackCount,
+                ambiguousTrackCount: committed.ambiguousTrackCount,
+            };
+        })(), `rematch-stored-release:${providerId}:${albumId}`);
     }
 
     /**

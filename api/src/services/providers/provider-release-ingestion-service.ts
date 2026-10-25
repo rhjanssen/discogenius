@@ -20,7 +20,9 @@ import {
   type MatchTargetTrack,
   type TrackMatchEvidence,
 } from "../music/provider-track-matcher.js";
-import { replanMonitoredEditions } from "../music/acquisition-planning-service.js";
+import { replanMonitoredEditions, type MonitoredEditionRef } from "../music/acquisition-planning-service.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "../music/provider-track-matcher.js";
+import { jsonList, SQL_JSON_LIST } from "../../utils/sql-id-list.js";
 
 const MIN_AMBIGUITY_MARGIN = 0.1;
 
@@ -113,6 +115,33 @@ export interface ProviderReleaseMemberFacts {
   contextualDurationMs?: number | null;
   credits?: readonly ProviderArtistCreditFacts[];
   audioVariants?: readonly ProviderAudioVariantInput[];
+}
+
+export interface StoredReplayDecision {
+  editionId: number;
+  acceptedTrackCount: number;
+  ambiguousTrackCount: number;
+  write: {
+    decision: ProviderMatchDecision;
+    targetTrackIds: number[];
+    sourceMemberIds: number[];
+    trackMatches: ProviderTrackMatchInput[];
+  } | null;
+}
+
+export interface StoredReplayPlan {
+  providerEditionItemId: number;
+  matcherVersion: number;
+  decisions: StoredReplayDecision[];
+  acceptedTrackCount: number;
+  ambiguousTrackCount: number;
+}
+
+export interface StoredReplayCommit {
+  acceptedTrackCount: number;
+  ambiguousTrackCount: number;
+  retired: number;
+  replan: MonitoredEditionRef[];
 }
 
 export interface ProviderReleaseIngestionInput {
@@ -487,15 +516,14 @@ export class ProviderReleaseIngestionService {
     const titlesByRecording = new Map<number, string[]>();
     if (canonicalTracks.length > 0) {
       const recordingIds = [...new Set(canonicalTracks.map((track) => track.recording_id))];
-      const placeholders = recordingIds.map(() => "?").join(",");
       const siblingTitles = this.db.prepare(`
         SELECT sibling.recording_id AS recording_id, sibling.title AS title
         FROM Tracks sibling
         JOIN AlbumEditions sibling_edition ON sibling_edition.id = sibling.album_edition_id
         JOIN AlbumEditions target_edition ON target_edition.id = ?
         WHERE sibling_edition.release_group_id = target_edition.release_group_id
-          AND sibling.recording_id IN (${placeholders})
-      `).all(editionId, ...recordingIds) as Array<{ recording_id: number; title: string | null }>;
+          AND sibling.recording_id IN ${SQL_JSON_LIST}
+      `).all(editionId, jsonList(recordingIds)) as Array<{ recording_id: number; title: string | null }>;
       for (const row of siblingTitles) {
         const title = String(row.title || "").trim();
         if (!title) continue;
@@ -544,15 +572,64 @@ export class ProviderReleaseIngestionService {
     identityRecordingIds: number[];
     relation: string | null;
   } {
+    const built = this.buildEditionMatch(input);
+    if (!built.write) {
+      return {
+        releaseMatchId: null,
+        acceptedTrackCount: built.acceptedTrackCount,
+        ambiguousTrackCount: built.ambiguousTrackCount,
+        acceptedRecordingIds: [],
+        identityRecordingIds: [],
+        relation: null,
+      };
+    }
+    const result = this.matches.replaceReleaseMatch({
+      providerEditionItemId: input.providerEditionItemId,
+      editionId: input.editionId,
+      decision: built.write.decision,
+      targetTrackIds: new Set(built.write.targetTrackIds),
+      sourceMemberIds: new Set(built.write.sourceMemberIds),
+      trackMatches: built.write.trackMatches,
+    });
+    return {
+      releaseMatchId: result.releaseMatchId,
+      acceptedTrackCount: built.acceptedTrackCount,
+      ambiguousTrackCount: built.ambiguousTrackCount,
+      acceptedRecordingIds: built.acceptedRecordingIds,
+      identityRecordingIds: built.identityRecordingIds,
+      relation: result.relation.relation,
+    };
+  }
+
+  /**
+   * Score one edition from stored member rows. No writes: the caller commits.
+   */
+  private buildEditionMatch(input: {
+    providerEditionItemId: number;
+    editionId: number;
+    audioSources: readonly AudioSource[];
+    matcherVersion: number;
+    decisionSource: ProviderMatchDecision["decisionSource"];
+  }): {
+    acceptedTrackCount: number;
+    ambiguousTrackCount: number;
+    acceptedRecordingIds: number[];
+    identityRecordingIds: number[];
+    write: {
+      decision: ProviderMatchDecision;
+      targetTrackIds: number[];
+      sourceMemberIds: number[];
+      trackMatches: ProviderTrackMatchInput[];
+    } | null;
+  } {
     const targets = this.loadCanonicalTracks(input.editionId);
     if (targets.length === 0 || input.audioSources.length === 0) {
       return {
-        releaseMatchId: null,
         acceptedTrackCount: 0,
         ambiguousTrackCount: 0,
         acceptedRecordingIds: [],
         identityRecordingIds: [],
-        relation: null,
+        write: null,
       };
     }
 
@@ -683,37 +760,197 @@ export class ProviderReleaseIngestionService {
     const ambiguousTrackCount = trackMatches.filter((match) => match.matchState === "ambiguous").length;
     if (acceptedTrackCount === 0) {
       return {
-        releaseMatchId: null,
         acceptedTrackCount,
         ambiguousTrackCount,
         acceptedRecordingIds: [],
         identityRecordingIds: [],
-        relation: null,
+        write: null,
       };
     }
-    const result = this.matches.replaceReleaseMatch({
-      providerEditionItemId: input.providerEditionItemId,
-      editionId: input.editionId,
-      decision: {
-        matchState: "accepted",
-        decisionSource: input.decisionSource,
-        confidence: acceptedTrackCount / Math.max(targets.length, audioSources.length, 1),
-        method: "normalized_track_assignment",
-        evidence: { ambiguousTrackCount },
-        matcherVersion: input.matcherVersion,
-      },
-      targetTrackIds: new Set(targets.map((target) => target.id)),
-      sourceMemberIds: new Set(audioSources.map((source) => source.memberId)),
-      trackMatches,
-    });
     return {
-      releaseMatchId: result.releaseMatchId,
       acceptedTrackCount,
       ambiguousTrackCount,
       acceptedRecordingIds,
       identityRecordingIds,
-      relation: result.relation.relation,
+      write: {
+        decision: {
+          matchState: "accepted",
+          decisionSource: input.decisionSource,
+          confidence: acceptedTrackCount / Math.max(targets.length, audioSources.length, 1),
+          method: "normalized_track_assignment",
+          evidence: { ambiguousTrackCount },
+          matcherVersion: input.matcherVersion,
+        },
+        targetTrackIds: targets.map((target) => target.id),
+        sourceMemberIds: audioSources.map((source) => source.memberId),
+        trackMatches,
+      },
     };
+  }
+
+  /**
+   * Re-decide one stored provider release from catalogue rows already on disk.
+   *
+   * No provider traffic and no writes. Identity mode (a UPC that hits edition
+   * barcodes) re-decides only those editions, matching ingest. Otherwise every
+   * accepted linked edition is re-decided, plus the caller's canonical edition
+   * when artist refresh has just selected one that is not linked yet.
+   * Returns null only when the item is not a stored release.
+   */
+  prepareStoredReplay(
+    providerEditionItemId: number,
+    options?: { canonicalEditionId?: number | null },
+  ): StoredReplayPlan | null {
+    const release = this.db.prepare(`
+      SELECT id, provider, upc
+      FROM ProviderItems
+      WHERE id = ? AND entity_type = 'release'
+    `).get(providerEditionItemId) as { id: number; provider: string; upc: string | null } | undefined;
+    if (!release) return null;
+
+    const memberRows = this.db.prepare(`
+      SELECT
+        member.id AS member_id,
+        member.medium_position,
+        member.position,
+        member.contextual_title,
+        member.contextual_duration_ms,
+        item.provider_id,
+        item.title,
+        item.version,
+        item.isrc,
+        item.duration_ms,
+        item.explicit
+      FROM ProviderEditionMembers member
+      JOIN ProviderItems item ON item.id = member.member_item_id
+      WHERE member.provider_edition_item_id = ?
+        AND item.entity_type = 'track'
+      ORDER BY member.medium_position, member.position, member.id
+    `).all(providerEditionItemId) as Array<{
+      member_id: number;
+      medium_position: number;
+      position: number;
+      contextual_title: string | null;
+      contextual_duration_ms: number | null;
+      provider_id: string;
+      title: string | null;
+      version: string | null;
+      isrc: string | null;
+      duration_ms: number | null;
+      explicit: number | null;
+    }>;
+
+    const audioSources: AudioSource[] = memberRows.map((row) => ({
+      memberId: row.member_id,
+      member: {
+        item: {
+          provider: release.provider,
+          entityType: "track",
+          providerId: String(row.provider_id),
+          title: row.title,
+          version: row.version,
+          isrc: row.isrc,
+          durationMs: row.duration_ms,
+          explicit: row.explicit == null ? null : Boolean(row.explicit),
+        },
+        mediumPosition: Number(row.medium_position || 1),
+        position: Number(row.position || 0),
+        contextualTitle: row.contextual_title,
+        contextualDurationMs: row.contextual_duration_ms,
+      },
+    }));
+
+    const upcEditionIds = normalizeBarcodeDigits(release.upc)
+      ? this.findEditionIdsByBarcode(normalizeBarcodeDigits(release.upc))
+      : [];
+    const linkedEditionIds = (this.db.prepare(`
+      SELECT DISTINCT edition_id AS id
+      FROM ProviderEditionMatches
+      WHERE provider_edition_item_id = ?
+        AND match_state = 'accepted'
+    `).all(providerEditionItemId) as Array<{ id: number }>).map((row) => row.id);
+    const editionIds = upcEditionIds.length > 0
+      ? upcEditionIds
+      : [...new Set([
+        ...linkedEditionIds,
+        ...(options?.canonicalEditionId ? [options.canonicalEditionId] : []),
+      ])];
+
+    const decisions = editionIds.map((editionId) => {
+      const built = this.buildEditionMatch({
+        providerEditionItemId,
+        editionId,
+        audioSources,
+        matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
+        decisionSource: "automatic",
+      });
+      return {
+        editionId,
+        acceptedTrackCount: built.acceptedTrackCount,
+        ambiguousTrackCount: built.ambiguousTrackCount,
+        write: built.write,
+      };
+    });
+    const canonical = options?.canonicalEditionId == null
+      ? decisions[0]
+      : decisions.find((decision) => decision.editionId === options.canonicalEditionId);
+    return {
+      providerEditionItemId,
+      matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
+      decisions,
+      acceptedTrackCount: canonical?.acceptedTrackCount ?? 0,
+      ambiguousTrackCount: canonical?.ambiguousTrackCount ?? 0,
+    };
+  }
+
+  /**
+   * Persist a prepared replay. SQL only: matching already ran outside the
+   * write gate. The caller replans the returned editions in the same
+   * transaction so a reader never sees the plans marked stale.
+   */
+  commitStoredReplay(plan: StoredReplayPlan): StoredReplayCommit {
+    const run = (): StoredReplayCommit => {
+      const before = this.monitoredEditionsForRelease(plan.providerEditionItemId);
+      for (const decision of plan.decisions) {
+        if (!decision.write) continue;
+        this.matches.replaceReleaseMatch({
+          providerEditionItemId: plan.providerEditionItemId,
+          editionId: decision.editionId,
+          decision: decision.write.decision,
+          targetTrackIds: new Set(decision.write.targetTrackIds),
+          sourceMemberIds: new Set(decision.write.sourceMemberIds),
+          trackMatches: decision.write.trackMatches,
+        });
+      }
+      const retired = this.retireStaleTrackMatches(plan.providerEditionItemId, plan.matcherVersion);
+      const after = this.monitoredEditionsForRelease(plan.providerEditionItemId);
+      const seen = new Set<string>();
+      const replan: MonitoredEditionRef[] = [];
+      for (const edition of [...before, ...after]) {
+        const key = `${edition.libraryId}:${edition.editionId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        replan.push(edition);
+      }
+      return {
+        acceptedTrackCount: plan.acceptedTrackCount,
+        ambiguousTrackCount: plan.ambiguousTrackCount,
+        retired,
+        replan,
+      };
+    };
+    return this.db.transaction(run)();
+  }
+
+  private monitoredEditionsForRelease(providerEditionItemId: number): MonitoredEditionRef[] {
+    return this.db.prepare(`
+      SELECT DISTINCT library_edition.library_id AS libraryId,
+        library_edition.edition_id AS editionId
+      FROM LibraryEditions library_edition
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.edition_id = library_edition.edition_id
+      WHERE edition_match.provider_edition_item_id = ?
+    `).all(providerEditionItemId) as MonitoredEditionRef[];
   }
 
   /**
@@ -751,8 +988,7 @@ export class ProviderReleaseIngestionService {
       // match being retired is stale, and the FK will not let it dangle.
       this.invalidateDependentAcquisitionPlans(providerEditionItemId);
 
-      const placeholders = staleIds.map(() => "?").join(",");
-      this.db.prepare(`DELETE FROM ProviderTrackMatches WHERE id IN (${placeholders})`).run(...staleIds);
+      this.db.prepare(`DELETE FROM ProviderTrackMatches WHERE id IN ${SQL_JSON_LIST}`).run(jsonList(staleIds));
       this.db.prepare(`
         UPDATE ProviderEditionMatches SET match_state='rejected', matched_track_count=0,
           source_coverage=0, target_coverage=0, updated_at=CURRENT_TIMESTAMP

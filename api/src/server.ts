@@ -378,6 +378,14 @@ const server = app.listen(port, () => {
 
   scheduleStartupMaintenance();
 
+  // Local matcher replay. Stored automatic matches stay candidates until this
+  // pass rewrites them; it must not block listen and it does not call providers.
+  import("./services/music/matcher-replay-service.js").then(({ startStoredMatcherReplay }) => {
+    startStoredMatcherReplay();
+  }).catch((error) => {
+    console.error("Failed to start stored matcher replay:", error);
+  });
+
   // Always start the off-thread command worker pool at boot (no toggle). Both
   // the command executor and the download processor's import step dispatch
   // heavy work here so it never blocks the main HTTP/SSE thread.
