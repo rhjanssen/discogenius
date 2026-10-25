@@ -3004,8 +3004,11 @@ export class DownloadProcessor {
             for (let index = 0; index < offers.length; index++) {
                 let offer = { ...offers[index] };
                 const tried = new Set<string>();
-                const ranked = listRankedTrackOffers({ trackMbid: offer.canonicalTrackMbid,
-                    recordingMbid: offer.canonicalRecordingMbid, librarySlot: slot });
+                const ranked = listRankedTrackOffers({
+                    trackMbid: offer.canonicalTrackMbid,
+                    recordingMbid: offer.canonicalRecordingMbid,
+                    librarySlot: slot,
+                }).filter((candidate) => candidate.provider === defaultProvider);
                 while (true) {
                     const provider = offer.provider || defaultProvider;
                     tried.add(makeOfferAttemptKey(provider, offer.providerTrackId));
@@ -3041,14 +3044,15 @@ export class DownloadProcessor {
                 const tried = new Set<string>([
                     makeOfferAttemptKey(primaryOfferProvider, offer.providerTrackId),
                 ]);
-                // Same-offer retries stay on this provider. When they are exhausted,
-                // or the failure is permanent, the next ranked offer may be another
-                // provider. Filtering to the album provider here dropped that fallback.
+                // Same-offer retries stay on this provider. The next offer must too,
+                // preserving exact same-provider fallback provenance for the subsequent
+                // importer. A whole-album fallback switches the command provider and
+                // remaps every offer; a per-track offer cannot change provider alone.
                 const ranked = listRankedTrackOffers({
                     trackMbid: offer.canonicalTrackMbid,
                     recordingMbid: offer.canonicalRecordingMbid,
                     librarySlot: slot,
-                });
+                }).filter((candidate) => candidate.provider === defaultProvider);
 
                 const trackIndex = resolveDownloadTrackOfferIndex(tracks, offer);
                 if (trackIndex < 0) {
