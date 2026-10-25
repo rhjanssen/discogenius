@@ -170,3 +170,13 @@ test("post-import catalog helpers bind multi-file id lists as one JSON parameter
   await assert.doesNotReject(() => importModule.ensureAlbumCatalogGenresForFileIds(ids));
   await assert.doesNotReject(() => importModule.ensureDestAlbumArtworkForFileIds(ids));
 });
+
+test("hybrid import names each offered track the organizer did not place", async () => {
+    const { describeUnorganizedTrackOffers } = await import("./downloaded-tracks-import-service.js");
+    const missing = describeUnorganizedTrackOffers([
+        { provider: "tidal", providerTrackId: "1", title: "Kept", trackNum: 1, volumeNum: 1 },
+        { provider: "deezer", providerTrackId: "2", title: "Lost", trackNum: 7, volumeNum: 2 },
+        { provider: "deezer", providerTrackId: "2", title: "Lost", trackNum: 7, volumeNum: 2 },
+    ], ["1"]);
+    assert.deepEqual(missing, ['2-7 "Lost" (deezer:2)']);
+});

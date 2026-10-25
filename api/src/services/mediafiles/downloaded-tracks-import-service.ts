@@ -110,6 +110,24 @@ function markImportLibraryMutationStarted(commandId: number): void {
     }, "import:mutation-start");
 }
 
+/** Offered tracks the organizer did not place, labelled for logs and history. */
+export function describeUnorganizedTrackOffers(
+    offers: readonly { provider: string; providerTrackId: string; title?: string; trackNum?: number | null; volumeNum?: number | null }[],
+    processedTrackIds: readonly string[],
+): string[] {
+    const processed = new Set(processedTrackIds.map(String));
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const offer of offers) {
+        const key = `${offer.provider}:${offer.providerTrackId}`;
+        if (processed.has(String(offer.providerTrackId)) || seen.has(key)) continue;
+        seen.add(key);
+        const position = offer.trackNum != null ? `${offer.volumeNum ?? 1}-${offer.trackNum} ` : "";
+        out.push(`${position}${offer.title ? `"${offer.title}" ` : ""}(${key})`);
+    }
+    return out;
+}
+
 function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
     return Array.from(new Set(
         Object.values(organizeResult.importedTrackFileIds || {})
@@ -1536,6 +1554,10 @@ export class DownloadedTracksImportService {
                         type,
                         providerId,
                         originalJobId: originalJobId ?? null,
+                        unorganizedTrackOffers: isTrackOffersJob
+                            ? describeUnorganizedTrackOffers(job.payload.trackOffers ?? [], organizeResult.processedTrackIds)
+                            : undefined,
+                        totalTracksInStaging: organizeResult.totalTracksInStaging,
                         processedTrackIds: {
                             count: organizeResult.processedTrackIds.length,
                             expected: isTrackOffersJob
@@ -1551,9 +1573,18 @@ export class DownloadedTracksImportService {
 
         if (hardIncomplete) {
             const processed = organizeResult.processedTrackIds.length;
+            const missing = describeUnorganizedTrackOffers(
+                Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
+                organizeResult.processedTrackIds,
+            );
+            console.warn(
+                `[ImportDownload] Hybrid album ${providerId}: ${organizeResult.totalTracksInStaging} file(s) in staging; `
+                + `not organized: ${missing.join("; ") || "none identified"}`,
+            );
             throw new Error(
-                `Hybrid album import incomplete for ${providerId}: organized ${processed}/${trackOfferCount} offered tracks. ` +
-                `Refusing to mark the job complete.`,
+                `Hybrid album import incomplete for ${providerId}: organized ${processed}/${trackOfferCount} offered tracks `
+                + `(${organizeResult.totalTracksInStaging} in staging). Not organized: ${missing.slice(0, 5).join("; ")}`
+                + `${missing.length > 5 ? ` and ${missing.length - 5} more` : ""}. Refusing to mark the job complete.`,
             );
         }
 
