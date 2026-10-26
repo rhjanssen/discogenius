@@ -673,7 +673,13 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
 
   async getRelationshipBundle(recordingMbids: string[], releaseMbids: string[]) {
     const { fetchRelationshipBundle } = await import("./musicbrainz-relationship-query.js");
-    return fetchRelationshipBundle((sql, values) => this.query(sql, values), recordingMbids, releaseMbids);
+    // this.query constrains its row type to pg.QueryResultRow. The relationship
+    // reader asks for its own row shapes, so bridge the two with one cast.
+    return fetchRelationshipBundle(
+      async <T>(sql: string, values: unknown[]) => (await this.query(sql, values)) as T[],
+      recordingMbids,
+      releaseMbids,
+    );
   }
 
   async lookupByUPC(upc: string): Promise<CatalogUpcLookupResult> {
