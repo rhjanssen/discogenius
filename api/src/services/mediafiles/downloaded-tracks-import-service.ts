@@ -780,7 +780,7 @@ export function selectProvenanceOffer(
         }
     }
     if (new Set(candidates.map((offer) => offer.providerTrackItemId)).size === 1) return candidates[0];
-    refuse();
+    return refuse();
 }
 
 export function persistDownloadedProviderProvenance(
